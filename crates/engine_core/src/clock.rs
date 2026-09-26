@@ -124,7 +124,7 @@ impl FixedClock {
         FrameReport {
             fixed_steps,
             dropped_seconds,
-            interpolation: interpolation.min(f32::from_bits(1.0_f32.to_bits() - 1)),
+            interpolation: crate::math::min(interpolation, f32::from_bits(1.0_f32.to_bits() - 1)),
         }
     }
 }

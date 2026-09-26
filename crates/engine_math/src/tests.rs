@@ -148,3 +148,43 @@ fn exhaustive_accuracy_below_the_limit() {
     assert!(max_abs < 1.2e-7, "{max_abs}");
     assert!(max_ulps_pi <= 2, "{max_ulps_pi}");
 }
+
+#[test]
+// Compares with the standard functions the engine disallows elsewhere.
+#[allow(clippy::disallowed_methods)]
+fn min_max_and_clamp_follow_the_wasm_lane_rules() {
+    let bits = |value: f32| value.to_bits();
+    // `b < a ? b : a` and `a < b ? b : a`, including NaN and signed zeros.
+    for (a, b) in [
+        (1.0_f32, 2.0_f32),
+        (2.0, 1.0),
+        (-3.5, 3.5),
+        (0.0, -0.0),
+        (-0.0, 0.0),
+        (f32::NAN, 1.0),
+        (1.0, f32::NAN),
+        (f32::INFINITY, f32::NEG_INFINITY),
+        (f32::from_bits(1), 0.0),
+    ] {
+        let expected_min = if b < a { b } else { a };
+        let expected_max = if a < b { b } else { a };
+        assert_eq!(bits(min(a, b)), bits(expected_min), "min({a}, {b})");
+        assert_eq!(bits(max(a, b)), bits(expected_max), "max({a}, {b})");
+    }
+    assert_eq!(bits(min(0.0, -0.0)), bits(0.0));
+    assert_eq!(bits(min(-0.0, 0.0)), bits(-0.0));
+    assert!(min(f32::NAN, 1.0).is_nan());
+    assert_eq!(min(1.0, f32::NAN), 1.0);
+    assert_eq!(clamp(5.0, 0.0, 1.0), 1.0);
+    assert_eq!(clamp(-5.0, 0.0, 1.0), 0.0);
+    assert_eq!(clamp(0.25, 0.0, 1.0), 0.25);
+    assert!(clamp(f32::NAN, 0.0, 1.0).is_nan());
+    // No panic on an inverted range: the upper bound wins.
+    assert_eq!(clamp(0.5, 1.0, 0.0), 0.0);
+    // Agrees with the standard functions on ordinary values.
+    for x in samples(1_000.0, 10_000) {
+        assert_eq!(min(x, 1.0), x.min(1.0));
+        assert_eq!(max(x, -1.0), x.max(-1.0));
+        assert_eq!(clamp(x, -2.0, 3.0), x.clamp(-2.0, 3.0));
+    }
+}

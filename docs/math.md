@@ -61,7 +61,8 @@ relaxed-SIMD fused multiply-add in these paths; its rounding depends on hardware
 ### Patterns for large populations
 
 - Compute sine and cosine together with `sin_cos` when both are needed.
-- For bulk work, batch four angles into a `Vec4` for `sin_cos4`.
+- For bulk work, batch four angles into a `Vec4` for `sin_cos4`, most easily
+  with `math::for_each4` (below).
 - Periodic motion at a fixed step can avoid trigonometry per tick: keep
   `(sin, cos)` per object, rotate it by a precomputed step each tick
   (four multiplies, two adds) and renormalize.
@@ -76,3 +77,50 @@ With the standard functions, trigonometry grows more expensive as angles grow
 (the Stress Lab's gameplay cost about 20% more after its first minute). The engine
 routine does not depend on magnitude below `REDUCTION_LIMIT`, but compare
 gameplay-heavy workloads at matched scene time anyway.
+
+## Minimum, maximum and clamping
+
+Use `math::min`, `math::max` and `math::clamp` for `f32`. `clippy.toml` disallows
+`f32::min`, `f32::max` and `f32::clamp` in workspace code. Rust lowers them (and a
+plain `if b < a { b } else { a }`) to a float `select`, and V8 and SpiderMonkey
+compile a float `select` to a data-dependent branch, which mispredicts when values
+differ per object. The engine versions compile to one SIMD instruction in Wasm
+(`f32x4.pmin`/`pmax` on a splat) and to the same comparison natively, so every
+target gives the same bits:
+
+| Function | Result |
+| --- | --- |
+| `min(a, b)` | `b` when `b < a`, otherwise `a` |
+| `max(a, b)` | `b` when `a < b`, otherwise `a` |
+| `clamp(x, low, high)` | `min(max(x, low), high)` |
+
+NaN in either argument and equal values such as `0.0` and `-0.0` return `a`,
+unlike `f32::min`, which prefers the non-NaN argument. `clamp` keeps NaN `x` and
+does not panic when `low > high`: the result is then `high`. glam's `Vec3A` and
+`Vec4` `min`, `max` and `clamp` already use `pmin`/`pmax`; its scalar-field `Vec3`
+methods compare lane by lane and branch, so prefer `Vec3A` in hot loops.
+
+## Four lanes at a time
+
+`math::for_each4(items, kernel)` calls `kernel` with up to four items at a time
+(`Lanes4`): load one `f32` per lane with `Lanes4::load` (absent lanes read zero),
+compute on `Vec4` lanes, and write each item back with `Lanes4::for_each`. It
+works on any iterator, including `Query::iter_mut`:
+
+```rust
+math::for_each4(query.iter_mut(), |lanes| {
+    let angle = lanes.load(|(spin, _)| spin.speed) * t;
+    let (sin, cos) = math::sin_cos4(angle * 0.5);
+    lanes.for_each(|lane, (_, transform)| {
+        transform.rotation = Quat::from_xyzw(0.0, sin[lane], 0.0, cos[lane]);
+    });
+});
+```
+
+`sin_cos4` gives every lane the scalar function's bits, and glam's rotation
+constructors take `sin_cos` of half the angle, so a kernel written with the same
+operations reproduces the one-at-a-time results exactly. The Stress Lab animates
+this way (`move_lanes`, tested bit for bit against the one-at-a-time version).
+In-page A/B in Firefox at 90,000 moving objects, three loads: gameplay per tick
+3.14-3.27 ms one at a time, 2.16-2.36 ms four at a time (about 11 ns less per
+object).

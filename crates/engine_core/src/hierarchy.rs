@@ -504,6 +504,9 @@ pub struct GlobalTransforms {
     pub(crate) order: Vec<usize>,
     path: Vec<usize>,
     dirty: Dirty,
+    // Nodes whose local or output revision changed since GPU presentation
+    // last gathered (decision 014): its gather visits only these.
+    pub(crate) changes: ChangeLog,
     last_scan: Option<Tick>,
     incomplete: bool,
     report: HierarchyReport,
@@ -533,6 +536,7 @@ impl FromWorld for GlobalTransforms {
             order: Vec::new(),
             path: Vec::new(),
             dirty: Dirty::default(),
+            changes: ChangeLog::default(),
             last_scan: None,
             incomplete: true,
             report: HierarchyReport::default(),
@@ -580,6 +584,84 @@ impl Dirty {
     }
 }
 
+/// Nodes whose cached local or output revision changed since the log was
+/// last drained, each listed once. GPU presentation's gather drains it and
+/// visits only these nodes instead of every node (decision 014). Past a
+/// quarter of the nodes the log stops listing and reports `overflow`: the
+/// next gather walks every node. Rebuilds and full scans also overflow it.
+pub(crate) struct ChangeLog {
+    nodes: Vec<u32>,
+    // Per node: the drain generation in which it was last listed.
+    marks: Vec<u32>,
+    generation: u32,
+    limit: usize,
+    overflow: bool,
+}
+
+impl Default for ChangeLog {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            marks: Vec::new(),
+            generation: 1,
+            limit: 0,
+            // Nothing drained this node space yet.
+            overflow: true,
+        }
+    }
+}
+
+impl ChangeLog {
+    /// Starts a new node space: every node counts as changed.
+    fn reset(&mut self, nodes: usize) {
+        self.nodes.clear();
+        self.marks.clear();
+        self.marks.resize(nodes, 0);
+        self.generation = 1;
+        self.limit = nodes / 4;
+        self.overflow = true;
+    }
+
+    /// Lists `index` once per drain. One flag test after overflow.
+    #[inline(always)]
+    fn record(&mut self, index: usize) {
+        if self.overflow {
+            return;
+        }
+        let mark = &mut self.marks[index];
+        if *mark != self.generation {
+            *mark = self.generation;
+            if self.nodes.len() == self.limit {
+                self.overflow = true;
+            } else {
+                self.nodes.push(index as u32);
+            }
+        }
+    }
+
+    /// Changes since the last drain: every node listed, or `None` after an
+    /// overflow. Hand the list back with [`Self::restore`].
+    pub(crate) fn take(&mut self) -> Option<Vec<u32>> {
+        (!self.overflow).then(|| std::mem::take(&mut self.nodes))
+    }
+
+    /// Ends a drain: later changes are listed again. Keeps the capacity of a
+    /// list returned by [`Self::take`].
+    pub(crate) fn restore(&mut self, nodes: Option<Vec<u32>>) {
+        if let Some(nodes) = nodes {
+            self.nodes = nodes;
+        }
+        self.nodes.clear();
+        self.overflow = false;
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            // Marks from 2^32 drains ago must not pass as current.
+            self.marks.fill(0);
+            self.generation = 1;
+        }
+    }
+}
+
 struct Scan {
     topology_changed: bool,
     // Rows whose local pose or identity keys changed.
@@ -599,6 +681,7 @@ struct Nodes<'a> {
     revisions: &'a mut [u64],
     flags: &'a mut [bool],
     invalid_transforms: &'a mut usize,
+    changes: &'a mut ChangeLog,
 }
 
 /// Index of a source whose row left the retained table order. Out of line
@@ -636,6 +719,7 @@ impl Nodes<'_> {
             revisions,
             flags,
             invalid_transforms,
+            changes,
         } = self;
         Self {
             locals: &mut locals[..len],
@@ -646,6 +730,7 @@ impl Nodes<'_> {
             revisions: &mut revisions[..len],
             flags: &mut flags[..len],
             invalid_transforms,
+            changes,
         }
     }
 
@@ -766,6 +851,7 @@ impl Nodes<'_> {
         work.deferred += 1;
         *revision = work.value_ids.next();
         work.written += 1;
+        self.changes.record(index);
     }
 
     /// Publishes an evaluated global; returns whether it changed. Unchanged
@@ -824,6 +910,7 @@ impl Nodes<'_> {
         if publish {
             *revision = work.value_ids.next();
             work.written += 1;
+            self.changes.record(index);
         }
         changed
     }
@@ -978,6 +1065,7 @@ impl GlobalTransforms {
             revisions,
             dirty,
             report,
+            changes,
             ..
         } = self;
         let Dirty {
@@ -1000,6 +1088,7 @@ impl GlobalTransforms {
             revisions,
             flags,
             invalid_transforms: &mut report.invalid_transforms,
+            changes,
         }
         .trimmed(len);
         let mut observer = interpolation
@@ -1087,6 +1176,7 @@ impl GlobalTransforms {
                         continue;
                     }
                     local_revisions[index] = next_revision;
+                    nodes.changes.record(index);
                     // A changed leaf under a parent not waiting for this
                     // boundary evaluates now, while its pose is hot, instead of in
                     // the parent-first pass. A parent marked later in this scan
@@ -1130,6 +1220,8 @@ impl GlobalTransforms {
         let _profile = engine_profile::span("hierarchy", "change_tick_scan");
         engine_profile::counter("hierarchy.full_scan", 1.0);
         self.dirty.clear();
+        // Rare: consumers of the change log walk every node once.
+        self.changes.overflow = true;
         let threshold = self.dense_threshold();
         let mut count = 0;
         let mut metadata = 0;
@@ -1327,6 +1419,7 @@ impl GlobalTransforms {
         // Every node is dirty, which always selects dense parent-first traversal.
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
+        self.changes.reset(self.links.len());
         // A structural rebuild conservatively reissues output revisions. No
         // duplicate full-pose buffer is retained solely to preserve those stamps.
         report.invalid_transforms = report.transforms;
@@ -1352,6 +1445,7 @@ impl GlobalTransforms {
             path,
             dirty,
             report,
+            changes,
             ..
         } = self;
         let len = links.len();
@@ -1364,6 +1458,7 @@ impl GlobalTransforms {
             revisions,
             flags: &mut dirty.flags,
             invalid_transforms: &mut report.invalid_transforms,
+            changes,
         }
         .trimmed(len);
         let mut observer = interpolation

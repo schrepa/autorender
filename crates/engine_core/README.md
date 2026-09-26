@@ -128,8 +128,9 @@ Until the tick is due, GPU frames present the previous interval;
 until due, or until `reveal_ticks_ahead`), and exact extraction, stepping and
 resets call it themselves. `tick_completed_ahead()` reports a completed tick that
 is not yet due, and `gpu_current()` borrows the cached current poses with their
-`GpuPresentation::current_version`, so a renderer can stage them before the due
-frame gathers the same version. `BrowserApp` does all of this by default with GPU
+`GpuPresentation::current_version` and the stamp count of that version's gather
+(`GpuCurrent`), so a renderer can stage them before the due frame gathers the
+same version when that gather uploads them all. `BrowserApp` does all of this by default with GPU
 presentation (`set_tick_pipelining`).
 
 ## Render interpolation

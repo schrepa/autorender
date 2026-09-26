@@ -22,7 +22,7 @@ impl FlyCameraController {
             0.0
         };
         let pitch = if pitch.is_finite() {
-            pitch.clamp(-1.48, 1.48)
+            math::clamp(pitch, -1.48, 1.48)
         } else {
             0.0
         };
@@ -50,7 +50,7 @@ impl FlyCameraController {
 
     pub fn with_speed(mut self, units_per_second: f32) -> Self {
         if units_per_second.is_finite() {
-            self.speed = units_per_second.clamp(0.0, 1000.0);
+            self.speed = math::clamp(units_per_second, 0.0, 1000.0);
         }
         self
     }
@@ -80,7 +80,11 @@ fn fly_camera(
     mut camera: ResMut<Camera>,
 ) {
     control.yaw = (control.yaw - input.look_yaw * control.sensitivity) % std::f32::consts::TAU;
-    control.pitch = (control.pitch - input.look_pitch * control.sensitivity).clamp(-1.48, 1.48);
+    control.pitch = math::clamp(
+        control.pitch - input.look_pitch * control.sensitivity,
+        -1.48,
+        1.48,
+    );
     let rotation = Quat::from_rotation_y(control.yaw) * Quat::from_rotation_x(control.pitch);
     let forward = rotation * -Vec3::Z;
     let right = rotation * Vec3::X;

@@ -3,8 +3,8 @@ mod gpu;
 mod presentation;
 
 pub use gpu::{
-    GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo,
-    NodePose,
+    GpuCurrent, GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
+    NODE_VALID, NodeInfo, NodePose,
 };
 
 use presentation::Display;
@@ -1181,8 +1181,8 @@ pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
         interpolation.observe_invalid();
         interpolation.gpu_pending = Some(alpha);
-        world.resource_scope(|_world, hierarchy: Mut<HierarchyScratch>| {
-            interpolation.gather_gpu(&hierarchy, alpha);
+        world.resource_scope(|_world, mut hierarchy: Mut<HierarchyScratch>| {
+            interpolation.gather_gpu(&mut hierarchy, alpha);
         });
         // This view carries no hold: consumers apply the latest gather now.
         interpolation.gpu.presented();
@@ -1205,7 +1205,7 @@ pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {
 /// consumers at their applied inputs must keep that node space.
 pub(crate) fn gather_ahead(world: &mut World) -> bool {
     world.resource_scope(|world, mut interpolation: Mut<InterpolationState>| {
-        world.resource_scope(|_world, hierarchy: Mut<HierarchyScratch>| {
+        world.resource_scope(|_world, mut hierarchy: Mut<HierarchyScratch>| {
             if !interpolation.gathered_topology(&hierarchy) {
                 return false;
             }
@@ -1215,7 +1215,7 @@ pub(crate) fn gather_ahead(world: &mut World) -> bool {
                 interpolation.gpu.sequence(),
                 interpolation.gpu.shift_sequence(),
             );
-            interpolation.gather_gpu(&hierarchy, alpha);
+            interpolation.gather_gpu(&mut hierarchy, alpha);
             if interpolation.gpu.sequence() != sequence {
                 interpolation.gpu.gathered_ahead(prior);
             }

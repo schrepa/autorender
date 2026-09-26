@@ -18,14 +18,46 @@ use crate::gpu_data::{
     BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, PRESENTATION_SHADER,
     PresentationFrame, frustum_uniform,
 };
-use crate::gpu_uploads::changed_ranges;
+use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
 use crate::uploads::UploadRange;
 
+/// Presentation stages a profiling capture times as separate passes: the
+/// previous-pose shift, parent composition, culling, scanning (group sums
+/// and draw arguments) and scattering of visible slots.
+#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+pub(crate) const STAGE_COUNT: usize = 5;
+const SHIFT: usize = 0;
+const COMPOSE: usize = 1;
+const CULL: usize = 2;
+const SCAN: usize = 3;
+const SCATTER: usize = 4;
+
+/// Timestamp queries of one frame's presentation stages: stage `s` writes
+/// query `2 + 2s` when its pass begins and `3 + 2s` when it ends.
+#[derive(Clone, Copy)]
+pub(crate) struct StageStamps<'a> {
+    query_set: &'a wgpu::QuerySet,
+}
+
+impl<'a> StageStamps<'a> {
+    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+    pub(crate) fn new(query_set: &'a wgpu::QuerySet) -> Self {
+        Self { query_set }
+    }
+
+    fn writes(self, stage: usize) -> wgpu::ComputePassTimestampWrites<'a> {
+        let begin = 2 + 2 * stage as u32;
+        wgpu::ComputePassTimestampWrites {
+            query_set: self.query_set,
+            beginning_of_pass_write_index: Some(begin),
+            end_of_pass_write_index: Some(begin + 1),
+        }
+    }
+}
+
 const GROUP: u32 = 256;
 const PARENT_GROUP: u32 = 64;
-// Each `shift_previous` invocation copies four floats.
-const SHIFT_FLOATS: u64 = 4 * 256;
 const ARGS_GROUP: u32 = 64;
 const LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const READBACKS: usize = 3;
@@ -40,6 +72,7 @@ struct Pipelines {
     shift_previous: wgpu::ComputePipeline,
     compose_parents: wgpu::ComputePipeline,
     cull: wgpu::ComputePipeline,
+    sum_groups: wgpu::ComputePipeline,
     scan_groups: wgpu::ComputePipeline,
     batch_args: wgpu::ComputePipeline,
     scatter: wgpu::ComputePipeline,
@@ -49,6 +82,7 @@ struct BindGroups {
     shift_previous: wgpu::BindGroup,
     compose_parents: wgpu::BindGroup,
     cull: wgpu::BindGroup,
+    sum_groups: wgpu::BindGroup,
     scan_groups: wgpu::BindGroup,
     batch_args: wgpu::BindGroup,
     scatter: wgpu::BindGroup,
@@ -84,6 +118,8 @@ pub(crate) struct GpuPrepared {
     pub prestaged: bool,
     /// Inputs gathered ahead of their due frame were held, not applied.
     pub held: bool,
+    /// Stages timed in their own passes (bit per stage), for profiling.
+    pub timed: u8,
 }
 
 pub(crate) struct GpuPresentationPass {
@@ -105,6 +141,8 @@ pub(crate) struct GpuPresentationPass {
     parent_capacity: usize,
     candidate_capacity: usize,
     candidates: wgpu::Buffer,
+    // The same candidates in slot order, for culling.
+    slot_candidates: wgpu::Buffer,
     scan: wgpu::Buffer,
     visible_ids: wgpu::Buffer,
     batch_capacity: usize,
@@ -119,9 +157,14 @@ pub(crate) struct GpuPresentationPass {
     candidate_count: u32,
     batch_count: u32,
     level_ranges: Vec<(u32, u32)>,
-    // Changed ranges of the current, previous, info and authority streams.
+    // Changed ranges of the current, previous, info and authority streams,
+    // and a node bitmap for planning them from listed records.
     ranges: [Vec<UploadRange>; 4],
+    upload_bits: Vec<u64>,
     candidate_staging: Vec<CandidateData>,
+    slot_staging: Vec<CandidateData>,
+    // Per slot: its candidate's draw-group position (`u32::MAX`: none).
+    slot_positions: Vec<u32>,
     batch_staging: Vec<BatchData>,
     readbacks: Vec<VisibleReadback>,
     // Current poses staged between frames for the next gather, with the
@@ -175,6 +218,7 @@ impl GpuPresentationPass {
             shift_previous: pipeline("shift_previous"),
             compose_parents: pipeline("compose_parents"),
             cull: pipeline("cull"),
+            sum_groups: pipeline("sum_groups"),
             scan_groups: pipeline("scan_groups"),
             batch_args: pipeline("batch_args"),
             scatter: pipeline("scatter"),
@@ -225,6 +269,7 @@ impl GpuPresentationPass {
             parent_capacity: 0,
             candidate_capacity: 0,
             candidates: empty("engine/presentation-candidates"),
+            slot_candidates: empty("engine/presentation-slot-candidates"),
             scan: empty("engine/presentation-scan"),
             visible_ids: storage(
                 device,
@@ -249,7 +294,10 @@ impl GpuPresentationPass {
             batch_count: 0,
             level_ranges: Vec::new(),
             ranges: Default::default(),
+            upload_bits: Vec::new(),
             candidate_staging: Vec::new(),
+            slot_staging: Vec::new(),
+            slot_positions: Vec::new(),
             batch_staging: Vec::new(),
             readbacks: Vec::new(),
             prestaged: None,
@@ -265,6 +313,7 @@ impl GpuPresentationPass {
             &self.composed,
             &self.parents,
             &self.candidates,
+            &self.slot_candidates,
             &self.scan,
             &self.visible_ids,
             &self.batches,
@@ -341,6 +390,12 @@ impl GpuPresentationPass {
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            self.slot_candidates = storage(
+                device,
+                "engine/presentation-slot-candidates",
+                capacity * size_of::<CandidateData>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
             // Flags, one sum per group, and the total.
             self.scan = storage(
                 device,
@@ -399,7 +454,7 @@ impl GpuPresentationPass {
             shift_previous: group(
                 &pipelines.shift_previous,
                 "engine/presentation-shift-group",
-                &[entry(13, &self.locals)],
+                &[entry(2, &self.info), entry(13, &self.locals)],
             ),
             compose_parents: group(
                 &pipelines.compose_parents,
@@ -422,11 +477,16 @@ impl GpuPresentationPass {
                     entry(2, &self.info),
                     entry(3, &self.authority),
                     entry(4, &self.composed),
-                    entry(6, &self.candidates),
                     entry(7, &self.batches),
                     entry(8, poses),
                     entry(9, &self.scan),
+                    entry(14, &self.slot_candidates),
                 ],
+            ),
+            sum_groups: group(
+                &pipelines.sum_groups,
+                "engine/presentation-sum-group",
+                &[entry(0, &self.frame), entry(9, &self.scan)],
             ),
             scan_groups: group(
                 &pipelines.scan_groups,
@@ -479,6 +539,7 @@ impl GpuPresentationPass {
         batch_meta: impl Fn(&DrawBatch) -> (u32, Aabb),
         poses: &wgpu::Buffer,
         poses_generation: u64,
+        stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
         let mut prepared = GpuPrepared::default();
         let nodes = gpu.info.len();
@@ -521,12 +582,20 @@ impl GpuPresentationPass {
                             let mut pass =
                                 encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                                     label: Some("engine/presentation-shift"),
-                                    timestamp_writes: None,
+                                    timestamp_writes: stamps.map(|stamps| stamps.writes(SHIFT)),
                                 });
+                            if stamps.is_some() {
+                                prepared.timed |= 1 << SHIFT;
+                            }
                             pass.set_pipeline(&self.pipelines.shift_previous);
                             pass.set_bind_group(0, &groups.shift_previous, &[]);
-                            let floats = (self.node_capacity * size_of::<NodePose>() / 4) as u64;
-                            pass.dispatch_workgroups(floats.div_ceil(SHIFT_FLOATS) as u32, 1, 1);
+                            // One invocation per node; the pass copies only
+                            // nodes the last applied gather made active.
+                            pass.dispatch_workgroups(
+                                (self.node_capacity as u32).div_ceil(GROUP),
+                                1,
+                                1,
+                            );
                         }
                         queue.submit([encoder.finish()]);
                         prepared.shifted = true;
@@ -574,13 +643,27 @@ impl GpuPresentationPass {
             // and dense streams without scanning their stamps.
             let consecutive = since.is_some_and(|since| since + 1 == gpu.sequence);
             let mut total = 0;
-            for ((ranges, (_, _, _, stride, stamps)), &stamped) in
-                self.ranges.iter_mut().zip(&streams).zip(&gpu.stamped)
+            let bits = &mut self.upload_bits;
+            for (((ranges, (_, _, _, stride, stamps)), &stamped), listed) in self
+                .ranges
+                .iter_mut()
+                .zip(&streams)
+                .zip(&gpu.stamped)
+                .zip(gpu.stamped_nodes)
             {
                 match since {
                     Some(_) if consecutive && stamped == 0 => ranges.clear(),
-                    Some(since) if !consecutive || stamped * 4 < stamps.len() * 3 => {
-                        changed_ranges(stamps, since, *stride, ranges);
+                    Some(since) if !consecutive || !whole_stream(stamped, stamps.len()) => {
+                        // One gather behind, its list names the records
+                        // stamped since: no scan of every stamp.
+                        match listed.filter(|_| consecutive) {
+                            Some(nodes) => {
+                                listed_ranges(nodes, stamps.len(), *stride, bits, ranges);
+                            }
+                            None => {
+                                changed_ranges(stamps, since, *stride, ranges);
+                            }
+                        }
                     }
                     _ => {
                         ranges.clear();
@@ -699,17 +782,40 @@ impl GpuPresentationPass {
                     bounds_min: bounds.min().extend(0.0).to_array(),
                     bounds_max: bounds.max().extend(0.0).to_array(),
                 });
-                self.candidate_staging
-                    .extend(
-                        plan.ordered_instances[range]
-                            .iter()
-                            .map(|&slot| CandidateData {
-                                slot: slot as u32,
-                                node: slot_nodes[slot],
-                                batch: index as u32,
-                                pad: 0,
-                            }),
-                    );
+                let base = self.candidate_staging.len() as u32;
+                self.candidate_staging.extend(
+                    plan.ordered_instances[range]
+                        .iter()
+                        .zip(base..)
+                        .map(|(&slot, position)| CandidateData {
+                            slot: slot as u32,
+                            node: slot_nodes[slot],
+                            batch: index as u32,
+                            position,
+                        }),
+                );
+            }
+            // The same candidates in slot order, placed by slot in linear time.
+            let slots = self
+                .candidate_staging
+                .iter()
+                .map(|candidate| candidate.slot as usize + 1)
+                .max()
+                .unwrap_or(0);
+            if self.slot_positions.len() < slots {
+                self.slot_positions.resize(slots, u32::MAX);
+            }
+            for candidate in &self.candidate_staging {
+                self.slot_positions[candidate.slot as usize] = candidate.position;
+            }
+            self.slot_staging.clear();
+            self.slot_staging.reserve_exact(candidates);
+            for position in &mut self.slot_positions[..slots] {
+                if *position != u32::MAX {
+                    self.slot_staging
+                        .push(self.candidate_staging[*position as usize]);
+                    *position = u32::MAX;
+                }
             }
             if !self.candidate_staging.is_empty() {
                 queue.write_buffer(
@@ -717,12 +823,17 @@ impl GpuPresentationPass {
                     0,
                     bytemuck::cast_slice(&self.candidate_staging),
                 );
+                queue.write_buffer(
+                    &self.slot_candidates,
+                    0,
+                    bytemuck::cast_slice(&self.slot_staging),
+                );
             }
             if !self.batch_staging.is_empty() {
                 queue.write_buffer(&self.batches, 0, bytemuck::cast_slice(&self.batch_staging));
             }
             prepared.group_upload_bytes =
-                (self.candidate_staging.len() * size_of::<CandidateData>()
+                (2 * self.candidate_staging.len() * size_of::<CandidateData>()
                     + self.batch_staging.len() * size_of::<BatchData>()) as u64;
             self.candidate_count = candidates as u32;
             self.batch_count = plan.batches.len() as u32;
@@ -754,22 +865,23 @@ impl GpuPresentationPass {
         prepared
     }
 
-    /// Records blending, composition, culling and compaction.
+    /// Records blending, composition, culling and compaction in one compute
+    /// pass. With `stamps` (profiling captures) each stage gets its own timed
+    /// pass instead; returns the stages timed, one bit each.
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
-    ) {
+        stamps: Option<StageStamps<'_>>,
+    ) -> u8 {
         let Some(groups) = self.bind_groups.as_ref() else {
-            return;
+            return 0;
         };
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("engine/presentation"),
-                timestamp_writes: timestamps,
-            });
-            if !self.level_ranges.is_empty() {
+        let compose = !self.level_ranges.is_empty();
+        let candidates = self.candidate_count != 0;
+        // Dispatches of each stage, in order.
+        let record = |pass: &mut wgpu::ComputePass<'_>, stage: usize| match stage {
+            COMPOSE => {
                 pass.set_pipeline(&self.pipelines.compose_parents);
                 pass.set_bind_group(0, &groups.compose_parents, &[]);
                 for (level, &(start, end)) in self.level_ranges.iter().enumerate() {
@@ -779,20 +891,57 @@ impl GpuPresentationPass {
                     }
                 }
             }
-            if self.candidate_count != 0 {
+            CULL => {
+                // Flags in slot order, then their sums in draw-group order.
                 let workgroups = self.candidate_count.div_ceil(GROUP);
                 pass.set_pipeline(&self.pipelines.cull);
                 pass.set_bind_group(0, &groups.cull, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.set_pipeline(&self.pipelines.sum_groups);
+                pass.set_bind_group(0, &groups.sum_groups, &[]);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+            SCAN => {
                 pass.set_pipeline(&self.pipelines.scan_groups);
                 pass.set_bind_group(0, &groups.scan_groups, &[]);
                 pass.dispatch_workgroups(1, 1, 1);
                 pass.set_pipeline(&self.pipelines.batch_args);
                 pass.set_bind_group(0, &groups.batch_args, &[]);
                 pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
+            }
+            _ => {
                 pass.set_pipeline(&self.pipelines.scatter);
                 pass.set_bind_group(0, &groups.scatter, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.dispatch_workgroups(self.candidate_count.div_ceil(GROUP), 1, 1);
+            }
+        };
+        let stages = [
+            (COMPOSE, compose),
+            (CULL, candidates),
+            (SCAN, candidates),
+            (SCATTER, candidates),
+        ];
+        let mut timed = 0;
+        if let Some(stamps) = stamps {
+            for (stage, runs) in stages {
+                if runs {
+                    let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                        label: Some("engine/presentation-stage"),
+                        timestamp_writes: Some(stamps.writes(stage)),
+                    });
+                    record(&mut pass, stage);
+                    timed |= 1 << stage;
+                }
+            }
+        } else {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/presentation"),
+                timestamp_writes: None,
+            });
+            for (stage, runs) in stages {
+                if runs {
+                    record(&mut pass, stage);
+                }
             }
         }
         if self.candidate_count != 0 {
@@ -804,6 +953,7 @@ impl GpuPresentationPass {
                 readback.state.set(Readback::Recorded);
             }
         }
+        timed
     }
 
     fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&VisibleReadback> {

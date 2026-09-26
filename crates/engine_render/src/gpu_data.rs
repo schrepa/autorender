@@ -108,14 +108,15 @@ pub(crate) struct PresentationFrame {
     pub absolute_view_projection: [[f32; 4]; 4],
 }
 
-/// One candidate slot, its hierarchy node and its draw group (16 bytes).
+/// One candidate slot, its hierarchy node, its draw group and its index in
+/// draw-group order (16 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CandidateData {
     pub slot: u32,
     pub node: u32,
     pub batch: u32,
-    pub pad: u32,
+    pub position: u32,
 }
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
@@ -435,6 +436,12 @@ mod tests {
         assert_eq!(size_of::<engine_core::NodePose>(), 40);
         assert_eq!(size_of::<engine_core::NodeInfo>(), 8);
         let module = naga::front::wgsl::parse_str(PRESENTATION_SHADER).unwrap();
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("presentation shader validates");
         let size = |name: &str| {
             let (_, ty) = module
                 .types

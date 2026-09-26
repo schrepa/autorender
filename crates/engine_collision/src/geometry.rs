@@ -1,5 +1,6 @@
 use std::cell::Cell;
 
+use engine_core::math;
 use glam::{DMat3, DVec3, Mat3, Mat4, Vec3};
 use parry3d::{
     math::Pose,
@@ -105,7 +106,7 @@ impl AffineShape {
             }
         };
         // Round broadphase bounds outward at the scene's current magnitude.
-        let margin = 16.0 * f32::EPSILON * (center.abs() + half).max_element().max(1.0);
+        let margin = 16.0 * f32::EPSILON * math::max((center.abs() + half).max_element(), 1.0);
         let bounds = Bounds {
             min: center - half,
             max: center + half,
@@ -464,7 +465,7 @@ impl NarrowScratch {
                 return Err(CollisionError::NumericalFailure);
             }
             if !options.stop_at_penetration
-                && displacement.dot(normal) >= -1.0e-6 * displacement.length().max(1.0)
+                && displacement.dot(normal) >= -1.0e-6 * math::max(displacement.length(), 1.0)
             {
                 return Ok(None);
             }

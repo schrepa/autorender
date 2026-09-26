@@ -1,4 +1,5 @@
-//! Branch-free trigonometry for the engine and games.
+//! Branch-free trigonometry, minimum, maximum and clamping for the engine and
+//! games.
 //!
 //! Browsers compile a data-dependent branch or a float `select` in Wasm as a
 //! conditional jump. The standard library's `sinf`/`cosf` (musl, through
@@ -87,6 +88,47 @@ pub fn sin(x: f32) -> f32 {
 #[inline]
 pub fn cos(x: f32) -> f32 {
     sin_cos(x).1
+}
+
+/// The smaller of `a` and `b`: `b` when `b < a`, otherwise `a`. This is the
+/// lane rule of Wasm `f32x4.pmin`, so a NaN in either argument, and equal
+/// values such as `0.0` and `-0.0`, return `a`. Branch-free in every browser:
+/// Rust's `f32::min` (and `if b < a { b } else { a }` on its own) compiles to
+/// a float `select`, which browsers turn into a data-dependent jump.
+#[inline]
+pub fn min(a: f32, b: f32) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{f32x4_extract_lane, f32x4_pmin, f32x4_splat};
+        f32x4_extract_lane::<0>(f32x4_pmin(f32x4_splat(a), f32x4_splat(b)))
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        if b < a { b } else { a }
+    }
+}
+
+/// The larger of `a` and `b`: `b` when `a < b`, otherwise `a` (the lane rule
+/// of Wasm `f32x4.pmax`; see [`min`]).
+#[inline]
+pub fn max(a: f32, b: f32) -> f32 {
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    {
+        use core::arch::wasm32::{f32x4_extract_lane, f32x4_pmax, f32x4_splat};
+        f32x4_extract_lane::<0>(f32x4_pmax(f32x4_splat(a), f32x4_splat(b)))
+    }
+    #[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+    {
+        if a < b { b } else { a }
+    }
+}
+
+/// `x` limited to `low..=high`: `min(max(x, low), high)`, the order glam's
+/// SIMD vectors clamp in. NaN `x` stays NaN; unlike `f32::clamp` nothing
+/// panics when `low > high` (the result is then `high`).
+#[inline]
+pub fn clamp(x: f32, low: f32, high: f32) -> f32 {
+    min(max(x, low), high)
 }
 
 /// Arguments beyond the fast path's exact reduction: rare, so a

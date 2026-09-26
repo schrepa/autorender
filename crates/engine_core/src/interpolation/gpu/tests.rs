@@ -103,7 +103,13 @@ impl SimulatedGpu {
         };
         if view.shift_sequence > since {
             if view.shift && since + 1 == view.sequence {
-                self.previous.clone_from(&self.current);
+                // As the renderer's shift pass: only nodes the gather applied
+                // last made active published a current pose to keep.
+                for (index, info) in self.info.iter().enumerate() {
+                    if info[1] & NODE_ACTIVE != 0 {
+                        self.previous[index] = self.current[index];
+                    }
+                }
                 self.blend_ok = true;
             } else {
                 self.blend_ok = false;
@@ -128,9 +134,19 @@ impl SimulatedGpu {
                 view.info_stamps,
                 view.authority_stamps,
             ];
-            for (stamps, &bound) in stamps.iter().zip(&view.stamped) {
+            for ((stamps, &bound), list) in stamps.iter().zip(&view.stamped).zip(view.stamped_nodes)
+            {
                 let stamped = stamps.iter().filter(|&&stamp| stamp > since).count();
                 assert!(stamped <= bound, "{stamped} stamped records > {bound}");
+                // A published list names exactly the records stamped since.
+                if let Some(list) = list {
+                    let mut listed = list.to_vec();
+                    listed.sort_unstable();
+                    let newer: Vec<u32> = (0..stamps.len() as u32)
+                        .filter(|&index| stamps[index as usize] > since)
+                        .collect();
+                    assert_eq!(listed, newer);
+                }
             }
         }
         copy(&mut self.current, view.current, view.current_stamps, since);
@@ -380,6 +396,109 @@ fn gathered_inputs_reproduce_dense_and_sparse_cpu_presentation() {
         for alpha in [0.1, 0.6] {
             assert_gpu_inputs_match(&mut engine, &mut gpu, alpha);
         }
+    }
+}
+
+/// Nodes the latest gather visited, and all nodes.
+fn visited(engine: &Engine) -> (usize, usize) {
+    let world = engine.app.world();
+    (
+        world.resource::<PresentedTransforms>().gpu.visited,
+        world.resource::<GlobalTransforms>().len(),
+    )
+}
+
+#[test]
+fn sparse_gathers_follow_changes_and_match_cpu_presentation() {
+    // Mostly static: groups of static leaves under static roots, a few
+    // movers with and without interpolation, and a static parent that
+    // starts and stops moving under static children. Every sparse gather
+    // also checks itself against a full walk (`gather_nodes`).
+    let mut engine = engine();
+    let step = Vec3::new(0.25, 0.0, 0.125);
+    let mut leaves = Vec::new();
+    let mut links = Vec::new();
+    for group in 0..5 {
+        let root = spawn(&mut engine, Vec3::X * 10.0 * group as f32, None, false);
+        for leaf in 0..60 {
+            let moving = group < 3 && leaf % 13 == 0;
+            let entity = spawn(
+                &mut engine,
+                Vec3::new(leaf as f32, 0.0, group as f32),
+                moving.then_some((step, 0.05)),
+                moving && group % 2 == 0,
+            );
+            leaves.push(entity);
+            links.push((entity, Some(root)));
+        }
+    }
+    let parent = spawn(&mut engine, Vec3::splat(-5.0), None, false);
+    let children: Vec<Entity> = (0..6)
+        .map(|index| spawn(&mut engine, Vec3::Y * index as f32, None, index % 2 == 0))
+        .collect();
+    links.extend(children.iter().map(|&child| (child, Some(parent))));
+    set_parents(engine.app.world_mut(), &links).unwrap();
+    let mut gpu = SimulatedGpu::default();
+    let mut sparse = 0;
+    for tick in 0..48 {
+        let world = engine.app.world_mut();
+        match tick % 12 {
+            // The parent moves for a while: its children inherit its display.
+            2 => {
+                world.entity_mut(parent).insert(Spin { step, turn: 0.1 });
+            }
+            6 => {
+                world.entity_mut(parent).remove::<Spin>();
+            }
+            // A static leaf starts moving, then a mover stops.
+            3 => {
+                world
+                    .entity_mut(leaves[5 + tick])
+                    .insert(Spin { step, turn: -0.2 });
+            }
+            8 => {
+                world.entity_mut(leaves[13]).remove::<Spin>();
+            }
+            // A singular scale invalidates a static leaf until repaired.
+            9 => {
+                edit_transform(world, leaves[20], |pose| pose.scale.y = 0.0).unwrap();
+            }
+            10 => {
+                edit_transform(world, leaves[20], |pose| pose.scale.y = 1.0).unwrap();
+            }
+            _ => {}
+        }
+        run(&mut engine, 1);
+        for alpha in [0.3, 0.8] {
+            assert_gpu_inputs_match(&mut engine, &mut gpu, alpha);
+        }
+        let (visited, nodes) = visited(&engine);
+        sparse += usize::from(visited < nodes);
+    }
+    // After a rebuild, the first gather makes every node active (all moved)
+    // and the second walks them all to settle them.
+    assert!(sparse >= 46, "{sparse} of 48 gathers were sparse");
+}
+
+#[test]
+fn gathers_without_changes_visit_no_node() {
+    let mut engine = engine();
+    for index in 0..200 {
+        spawn(&mut engine, Vec3::X * index as f32, None, false);
+    }
+    // The first gather in a node space activates every node and the second
+    // settles them, both walking every node.
+    for _ in 0..2 {
+        run(&mut engine, 1);
+        engine.extract_gpu_frame(1.0, 0.5).unwrap();
+        assert_eq!(visited(&engine), (200, 200));
+    }
+    // Every tick advances the interpolation revision and gathers again, but
+    // nothing moved: no node is visited.
+    for _ in 0..3 {
+        run(&mut engine, 1);
+        engine.extract_gpu_frame(1.0, 0.5).unwrap();
+        assert_eq!(visited(&engine), (0, 200));
     }
 }
 

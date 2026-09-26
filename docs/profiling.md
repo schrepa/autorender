@@ -38,7 +38,7 @@ development configuration.
 | Core CPU | Browser frame/input, fixed ticks and named schedules, hierarchy input scans/topology rebuilds/dirty propagation, interpolation history/presentation, combined extraction scan/assets/culling/copy, instance counters |
 | Collision | Synchronization/cache and BVH rebuilds, ray/overlap/shape-cast spans, sensor detection, aggregated BVH traversal and precise-test time/counts |
 | Render CPU | Source validation/indexing, stable instance grouping/draw ranges, residency retirement, surface acquisition, asset uploads, packing, queue writes, encoding and submission |
-| GPU | Asynchronous timestamps for the opaque pass and, on GPU-presented frames, the presentation compute pass when `timestamp-query` is supported; capture/frame/submission IDs accompany each duration |
+| GPU | Asynchronous timestamps for the opaque pass and, on GPU-presented frames, the presentation compute passes and each presentation stage when `timestamp-query` is supported; capture/frame/submission IDs accompany each duration |
 | Memory | Rust allocation/deallocation/reallocation counts, requested/freed/live bytes and lifetime peak; per-frame trends, extraction/batch/staging capacities, GPU instance-buffer and resident asset payload bytes; Wasm capacity and optional JS heap samples |
 | Browser | RAF cadence and callback durations, Wasm/host boundaries, supported long-task and long-animation-frame entries with bounded attribution; optional agent CPU sampling |
 
@@ -188,7 +188,9 @@ gather is reused. `interpolation.gpu_current_changed`, `.gpu_previous_changed`,
 stamped (current poses are the hierarchy's cached locals, never copied), and
 `interpolation.gpu_shift` is 1 when consumers copy current poses into previous
 ones on the GPU instead of receiving explicit previous poses;
-`interpolation.gpu_parents` counts active parents composed before candidates, and
+`interpolation.gpu_parents` counts active parents composed before candidates,
+`interpolation.gpu_visited` counts the nodes the gather visited (every node for a
+full walk, only nodes whose inputs can differ otherwise), and
 `memory.gpu_input_bytes` reports the gathered CPU arrays.
 `extraction.gpu_structure_reused` is 1 when unchanged renderables skipped the
 per-renderable pass. The renderer reports `render.gpu_presentation`,
@@ -201,8 +203,15 @@ poses staged by the preceding frame, see below) and `render.gpu_visible_readback
 the latest completed visible count. On these frames
 `render.instances` is that count within the budget and lags by a few frames, and
 pose and slot-ID write counters stay zero. `memory.gpu_presentation_bytes` covers
-the pass's GPU buffers. GPU samples named `presentation_compute` time the compute
-pass separately from `opaque_meshes`; count both as GPU work.
+the pass's GPU buffers. GPU samples named `presentation_compute` time the frame's
+compute passes separately from `opaque_meshes`; count both as GPU work. During a
+capture each presentation stage runs as its own timed pass and reports
+`presentation_compose`, `presentation_cull`, `presentation_scan` (group sums and
+draw arguments) and `presentation_scatter` samples; `presentation_compute` then
+spans the first to the last of them. `presentation_shift` times the per-tick copy
+of previous poses, submitted before the frame's uploads and not included in
+`presentation_compute`. Splitting the stages adds pass boundaries, so compare
+per-stage samples within captures rather than with uncaptured frames.
 
 With pipelined ticks ([decision 015](adr-015-pipelined-fixed-ticks.md)) a tick's
 stages appear as `fixed_tick_begin` and `fixed_tick_end` spans, usually in

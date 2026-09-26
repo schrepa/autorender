@@ -50,12 +50,30 @@ pass's decisions:
 - Active nodes with children, sorted by depth, with one end offset per level.
 
 Each record carries the gather sequence that last changed it, and the gather
-publishes how many records it stamped per stream (`GpuPresentation::stamped`).
+publishes how many records it stamped per stream (`GpuPresentation::stamped`)
+and, while they number at most a quarter of the nodes, which ones
+(`GpuPresentation::stamped_nodes`).
 A gather runs only when the topology revision, hierarchy output revision or
-interpolation revision differs from the last gather, normally once per fixed tick. A topology rebuild
+interpolation revision differs from the last gather, normally once per fixed
+tick (the interpolation revision advances at every tick boundary). A topology rebuild
 starts a new input identity, which consumers treat as a full upload. Unchanged
 local pairs keep their stamps, so a static child of a moving parent is not
-re-sent. A frame that only changes the fraction performs no gather and, while
+re-sent.
+
+A gather visits only the nodes whose inputs can differ from the last gather,
+so its cost follows the changes rather than the node count. Propagation lists
+every node whose cached local or output revision changed since the last gather
+(`GlobalTransforms::changes`, at most a quarter of the nodes). The gather then
+visits, depth by depth, the nodes active at the last gather, every
+interpolation record's node (blend decisions follow the tick), the listed
+nodes, and the children of every visited node whose snap or active decision
+changed. Any other node was inactive, has no record and an unchanged parent,
+so it stays inactive with unchanged authority rows. A new node space, an
+overflowed list, or more than a third of the nodes to visit walks every node
+in parent-first order instead; so do the two gathers after a rebuild (the first
+activates every node, the second settles them). Test builds check every sparse
+gather against a full walk of the same state (`interpolation.gpu_visited`
+counts visited nodes). A frame that only changes the fraction performs no gather and, while
 renderables, sources, assets and topology are unchanged, skips the retained
 per-renderable pass (`extraction.gpu_structure_reused`); only the camera is
 updated. GPU frames list every candidate in `visible_indices()` and expose
@@ -70,8 +88,12 @@ uploaded, as at most 64 coalesced ranges (a full write beyond 75% density),
 through the mapped staging ring for 256 KiB or more and `writeBuffer` otherwise.
 One gather behind, the published counts decide instead: a stream without stamped
 records is skipped and one at least 75% stamped is written whole, without
-scanning its stamps. A gather that sets `shift` is preceded by a separate
-`shift_previous` dispatch submitted before its uploads.
+scanning its stamps; other streams plan the same ranges from their listed
+nodes through a node bitmap when the gather listed them. A gather that sets
+`shift` is preceded by a separate `shift_previous` dispatch submitted before its
+uploads. It copies the current pose of every node the last applied gather made
+active (its flags are still in the info buffer): only those published a pose,
+and a gather sends any other blending node's previous pose explicitly.
 
 Current poses can also be staged a frame early. `Engine::gpu_current` exposes
 the hierarchy's cached locals with `GpuPresentation::current_version` (topology
@@ -81,20 +103,32 @@ tick completes ahead of its due frame ([decision 015](adr-015-pipelined-fixed-ti
 into a mapped staging buffer right away. The due frame's gather then has the same
 version, and when it uploads every current pose the renderer records a GPU copy
 from that buffer instead of staging them again (`render.gpu_current_prestaged`).
-Any other outcome drops the staged buffer back to the ring unused. This moves the
+Any other outcome drops the staged buffer back to the ring unused, so the renderer
+stages ahead only when the gather of that version stamped at least three quarters
+of the current poses (`GpuCurrent::stamped`): a mostly static scene uploads its few
+changed poses in the due frame instead of copying every pose. This moves the
 largest per-tick CPU copy (3.6 MB at 90,000 moving objects) from the frame that
 presents a tick to the frame that completes it.
-Candidate and group records (slot, node, draw group; group start, count, index
-count and local bounds) upload only when the retained structure, source revision
-or input identity changes. Each frame then writes one 192-byte uniform (fraction,
+Candidate and group records (slot, node, draw group and position in draw-group
+order; group start, count, index count and local bounds) upload only when the
+retained structure, source revision or input identity changes. Candidates upload
+twice: in draw-group order for compaction, and in slot order for culling. Each frame then writes one 192-byte uniform (fraction,
 counts, budget, culling flag, frustum planes and the absolute view-projection)
-and records one compute pass:
+and records one compute pass (profiling captures time each stage in its own
+pass; see `docs/profiling.md`):
 
 1. `compose_parents`, one dispatch per depth level, composes active parents in
    parent-first order into a per-node buffer of displayed and current matrices.
-2. `cull`, one thread per candidate, composes its node over that parent (or over
-   authority rows), validates it, writes the slot's pose rows into the retained
-   pose buffer and tests visibility; workgroups reduce visible counts.
+2. `cull`, one thread per candidate in slot order, composes its node over that
+   parent (or over authority rows), validates it, writes the slot's pose rows
+   into the retained pose buffer, tests visibility, and writes the flag at the
+   candidate's draw-group position. Slot order follows node order closely, so
+   pose, node and authority records stream; in draw-group order each group's
+   candidates sit far apart. At 250,000 objects in eight meshes and textures
+   this halved the stage (2.19-2.41 ms to 1.18-1.23 ms, Firefox, Intel Xe-LPG),
+   about the cost of a single draw group.
+   `sum_groups` then reduces the flags of every 256 candidates in draw-group
+   order.
 3. `scan_groups` turns group sums into exclusive offsets and a total.
 4. `batch_args` writes one indirect draw per draw group, applying the instance
    budget, and each group's first visible offset.

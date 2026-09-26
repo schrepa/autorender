@@ -31,9 +31,10 @@ pub use hierarchy::{
 };
 pub use input::{ActionId, ActionInput};
 pub use interpolation::{
-    GpuPresentation, InterpolateTransform, InterpolationError, NO_PARENT, NODE_ACTIVE, NODE_BLEND,
-    NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PresentationMode, PresentationState,
-    PresentedTransform, PresentedTransforms, reset_all_interpolation, reset_interpolation,
+    GpuCurrent, GpuPresentation, InterpolateTransform, InterpolationError, NO_PARENT, NODE_ACTIVE,
+    NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PresentationMode,
+    PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
+    reset_interpolation,
 };
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
@@ -400,20 +401,17 @@ impl Engine {
     }
 
     /// GPU presentation's current poses — the hierarchy's cached locals in
-    /// upload layout — and their [`GpuPresentation::current_version`] now,
-    /// `None` before GPU presentation first gathered. A renderer can stage them
-    /// between frames, e.g. once a tick completes ahead of its due frame, and
-    /// copy them when a gather with the same version uploads every pose.
-    pub fn gpu_current(&self) -> Option<(&[NodePose], (u64, u64))> {
+    /// upload layout — with their [`GpuPresentation::current_version`] now and
+    /// how many the latest gather of that version stamped; `None` before GPU
+    /// presentation first gathered. A renderer can stage them between frames,
+    /// e.g. once a tick completes ahead of its due frame, and copy them when a
+    /// gather with the same version uploads every pose. Gathers that stamped
+    /// few poses upload only those, so staging every pose ahead would be wasted.
+    pub fn gpu_current(&self) -> Option<GpuCurrent<'_>> {
         let world = self.app.world();
-        if !world.get_resource::<PresentedTransforms>()?.gathers_gpu() {
-            return None;
-        }
-        let hierarchy = world.get_resource::<GlobalTransforms>()?;
-        Some((
-            &hierarchy.locals,
-            (hierarchy.topology_revision, hierarchy.revision),
-        ))
+        world
+            .get_resource::<PresentedTransforms>()?
+            .gpu_current(world.get_resource::<GlobalTransforms>()?)
     }
 
     fn finish_pending_tick(&mut self) {

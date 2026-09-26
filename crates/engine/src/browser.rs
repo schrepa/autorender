@@ -199,9 +199,9 @@ impl BrowserApp {
                 // A tick just completed ahead: stage its current poses now, so
                 // the frame that gathers them only records their GPU copy.
                 if self.engine.tick_completed_ahead()
-                    && let Some((poses, version)) = self.engine.gpu_current()
+                    && let Some(current) = self.engine.gpu_current()
                 {
-                    self.renderer.prestage_gpu_current(poses, version);
+                    self.renderer.prestage_gpu_current(current);
                 }
                 self.stats.simulation_ms += self.performance.now() - start;
             }
@@ -304,7 +304,7 @@ impl BrowserApp {
         let _profile = engine_profile::span("cpu", "browser.input");
         fn bounded(value: f32, limit: f32) -> f32 {
             if value.is_finite() {
-                value.clamp(-limit, limit)
+                engine_core::math::clamp(value, -limit, limit)
             } else {
                 0.0
             }

@@ -13,6 +13,7 @@ use crate::gpu_data::{
     CameraUniform, ColorData, InstanceData, PoseData, SHADER, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
+use crate::gpu_uploads;
 use crate::retained_uploads::RetainedUploads;
 use crate::staging::{self, StagingRing};
 use crate::uploads::UploadCache;
@@ -460,15 +461,21 @@ impl Renderer {
     /// Copies GPU presentation's current poses into a staging buffer between
     /// frames, e.g. right after a fixed tick completes ahead of its due frame.
     /// The next GPU frame copies them on the GPU instead of staging them again
-    /// when its gather still has `version` and uploads every current pose.
-    pub fn prestage_gpu_current(&mut self, poses: &[engine_core::NodePose], version: (u64, u64)) {
-        let bytes: &[u8] = bytemuck::cast_slice(poses);
-        if self.suspended || !self.gpu_frame || bytes.len() < staging::MIN_STAGED_BYTES {
+    /// when its gather still has the same version and uploads every current
+    /// pose. Poses whose gather stamped fewer than three quarters of them
+    /// upload record by record instead, so they are not staged here.
+    pub fn prestage_gpu_current(&mut self, current: engine_core::GpuCurrent<'_>) {
+        let bytes: &[u8] = bytemuck::cast_slice(current.poses);
+        if self.suspended
+            || !self.gpu_frame
+            || bytes.len() < staging::MIN_STAGED_BYTES
+            || !gpu_uploads::whole_stream(current.stamped, current.poses.len())
+        {
             return;
         }
         let _profile = engine_profile::span("render", "prestage_current");
         if let Some(prestaged) = self.pose_uploads.prestage(&self.device, bytes) {
-            self.gpu_presentation.prestage(prestaged, version);
+            self.gpu_presentation.prestage(prestaged, current.version);
         }
     }
 
@@ -836,8 +843,14 @@ impl Renderer {
             self.uploads.commit_instances();
         }
         let mut input_copies = None;
+        #[cfg(feature = "profiling")]
+        let query_slot = self.profiler.reserve(&self.device);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
+            #[cfg(feature = "profiling")]
+            let stamps = self.profiler.stage_stamps(query_slot);
+            #[cfg(not(feature = "profiling"))]
+            let stamps = None;
             Some(self.gpu_presentation.prepare(
                 &self.device,
                 &self.queue,
@@ -854,13 +867,16 @@ impl Renderer {
                 },
                 &self.instance_buffer,
                 self.pose_generation,
+                stamps,
             ))
         } else {
             None
         };
-        drop(profile_writes);
         #[cfg(feature = "profiling")]
-        let query_slot = self.profiler.reserve(&self.device);
+        if let Some(prepared) = &gpu_prepared {
+            self.profiler.timed_stages(query_slot, prepared.timed);
+        }
+        drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = frame
             .texture
@@ -872,11 +888,14 @@ impl Renderer {
             });
         if gpu_mode {
             #[cfg(feature = "profiling")]
-            let timestamps = self.profiler.compute_writes(query_slot);
+            let stamps = self.profiler.stage_stamps(query_slot);
             #[cfg(not(feature = "profiling"))]
-            let timestamps = None;
-            self.gpu_presentation
-                .encode(&self.device, &mut encoder, timestamps);
+            let stamps = None;
+            let _timed = self
+                .gpu_presentation
+                .encode(&self.device, &mut encoder, stamps);
+            #[cfg(feature = "profiling")]
+            self.profiler.timed_stages(query_slot, _timed);
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

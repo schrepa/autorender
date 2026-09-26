@@ -234,7 +234,7 @@ impl Frustum {
             }
             // Covers CPU plane/support rounding and shader model/VP rounding.
             // The floor also covers subnormal flushing within MAX_COEFFICIENT.
-            if distance < -ROUNDING_MARGIN * bound.max(1.0) {
+            if distance < -ROUNDING_MARGIN * crate::math::max(bound, 1.0) {
                 return true;
             }
         }

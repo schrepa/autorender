@@ -5,7 +5,7 @@
 use glam::{Mat3, Mat4, Vec3A, Vec4};
 
 use super::MAX_NORMAL_INVERSE_NORM;
-use crate::Transform;
+use crate::{Transform, math};
 
 const COEFFICIENT_LIMIT: f32 = 1_048_576.0; // 2^20
 const MIN_LINEAR_SCALE: f32 = 1.0 / 1024.0; // 2^-10
@@ -117,7 +117,9 @@ impl Certificate {
     #[inline(always)]
     pub(crate) fn admits(&self, local: &Transform) -> bool {
         let near_unit = (local.rotation.length_squared() - 1.0).abs() <= 1.0e-3;
-        let scale = local.scale.abs();
+        // SIMD lanes: `Vec3`'s scalar `max_element` compiles to float selects,
+        // which browsers turn into branches on every leaf's scale.
+        let scale = Vec3A::from(local.scale).abs();
         let largest = scale.max_element();
         let product = (scale.x * scale.y) * scale.z;
         let cube = (largest * largest) * largest;
@@ -238,12 +240,13 @@ fn conditioned_fallback(matrix: Mat4, determinant: f32, scale: f32) -> bool {
         .max(cofactors.z_axis.abs())
         .max_element();
     let determinant = basis.x_axis.dot(cofactors.x_axis).abs();
-    let maximum_column_sum = basis
-        .x_axis
-        .abs()
-        .element_sum()
-        .max(basis.y_axis.abs().element_sum())
-        .max(basis.z_axis.abs().element_sum());
+    let maximum_column_sum = math::max(
+        math::max(
+            basis.x_axis.abs().element_sum(),
+            basis.y_axis.abs().element_sum(),
+        ),
+        basis.z_axis.abs().element_sum(),
+    );
     let inverse_norm = maximum_column_sum * (cofactor_scale / determinant);
     inverse_norm.is_finite() && inverse_norm <= MAX_NORMAL_INVERSE_NORM
 }
@@ -414,12 +417,13 @@ mod tests {
             .max(cofactors.z_axis.abs())
             .max_element();
         let determinant = basis.x_axis.dot(cofactors.x_axis).abs();
-        let maximum_column_sum = basis
-            .x_axis
-            .abs()
-            .element_sum()
-            .max(basis.y_axis.abs().element_sum())
-            .max(basis.z_axis.abs().element_sum());
+        let maximum_column_sum = math::max(
+            math::max(
+                basis.x_axis.abs().element_sum(),
+                basis.y_axis.abs().element_sum(),
+            ),
+            basis.z_axis.abs().element_sum(),
+        );
         let inverse_norm = maximum_column_sum * (cofactor_scale / determinant);
         inverse_norm.is_finite() && inverse_norm <= MAX_NORMAL_INVERSE_NORM
     }
@@ -546,7 +550,7 @@ mod tests {
                 let z = Vec3A::from_vec4(matrix.z_axis);
                 let largest = x.abs().max(y.abs()).max(z.abs()).max_element();
                 let ratio = x.dot(y.cross(z)).abs() / (COMMON_DETERMINANT_MARGIN * largest.powi(3));
-                tightest = tightest.min(ratio);
+                tightest = math::min(tightest, ratio);
             }
             // The root certificate covers identity parents the same way.
             if Certificate::ROOT.admits(&child) {

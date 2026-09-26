@@ -94,11 +94,15 @@ Frames whose `RenderFrame::gpu()` is present use GPU presentation
 ([decision 014](../../docs/adr-014-gpu-presentation-and-culling.md)). Node inputs
 upload only the records whose core stamps are newer than the last uploaded gather
 (at most 64 coalesced ranges; a full write beyond 75% density; staged at 256 KiB
-or more), and candidate/draw-group records only when the frame's structure,
+or more), planned from the gather's listed nodes through a node bitmap when it
+listed them (`GpuPresentation::stamped_nodes`) instead of scanning every stamp,
+and candidate/draw-group records only when the frame's structure,
 source revision or input identity changes. `presentation.wgsl` then composes
 active parents level by level, blends, composes, validates and culls every
-candidate, writes its 48-byte pose rows into the same slot-indexed pose buffer,
-and compacts visible slot IDs per draw group with a two-level scan. Each group
+candidate in slot order (its records stream in memory order), writes its 48-byte
+pose rows into the same slot-indexed pose buffer and its visibility flag at its
+draw-group position, and compacts visible slot IDs per draw group with a
+two-level scan. Each group
 draws with `draw_indexed_indirect` from its own region of the ID buffer, so no
 `indirect-first-instance` feature is needed. Per frame, the CPU writes one
 192-byte uniform and records a few dispatches. The instance budget is applied in
@@ -208,10 +212,12 @@ to `writeBuffer`. GPU-presented frames report `render.gpu_presentation`,
 a full write or used staging, whether current poses came from
 `prestage_gpu_current` (`render.gpu_current_prestaged`), parent depth levels and
 `render.gpu_visible_readback`; their `render.instances` is the budgeted read-back
-count. `prestage_gpu_current(poses, version)` copies current poses into a mapped
-staging buffer between frames (`prestage_current` scope); the next GPU frame
-whose inputs have that version and upload every current pose copies them on the
-GPU instead of staging them again. A view with `GpuPresentation::hold` (inputs
+count. `prestage_gpu_current(current)` copies current poses into a mapped
+staging buffer between frames (`prestage_current` scope) when their gather
+stamped at least three quarters of them (`GpuCurrent::stamped`); the next GPU
+frame whose inputs have that version and upload every current pose copies them
+on the GPU instead of staging them again. Gathers stamping fewer poses upload
+only those records in the frame. A view with `GpuPresentation::hold` (inputs
 gathered ahead of their due frame) applies nothing: the pass presents the inputs
 applied last at the view's fraction (`render.gpu_held`), and a later view without
 `hold` applies the gather. `render.instance_full_upload`

@@ -5,10 +5,21 @@ use std::{cell::Cell, rc::Rc};
 
 use serde_json::{Value, json};
 
+use crate::gpu_presentation::{STAGE_COUNT, StageStamps};
+
 const SLOTS: usize = 3;
 const SAMPLE_LIMIT: usize = 4_096;
-// Render pass begin/end, then the optional presentation compute pass.
-const QUERIES: u32 = 4;
+/// Names of the GPU presentation stages, indexed like `StageStamps` stages.
+/// Captures run each stage as its own pass (see `GpuPresentationPass::encode`).
+pub(crate) const STAGES: [&str; STAGE_COUNT] = [
+    "presentation_shift",
+    "presentation_compose",
+    "presentation_cull",
+    "presentation_scan",
+    "presentation_scatter",
+];
+// Render pass begin/end, then begin/end of each presentation stage.
+const QUERIES: u32 = 2 + 2 * STAGE_COUNT as u32;
 const QUERY_BYTES: u64 = QUERIES as u64 * 8;
 
 #[derive(Clone, Copy)]
@@ -31,8 +42,8 @@ struct Slot {
     readback: wgpu::Buffer,
     mapped: Rc<Cell<MapState>>,
     origin: Option<Origin>,
-    // Whether this submission also timed the presentation compute pass.
-    compute: bool,
+    // Presentation stages this submission timed, one bit per `STAGES` entry.
+    stages: u8,
 }
 
 impl Slot {
@@ -57,7 +68,7 @@ impl Slot {
             }),
             mapped: Rc::new(Cell::new(MapState::Pending)),
             origin: None,
-            compute: false,
+            stages: 0,
         }
     }
 }
@@ -65,7 +76,9 @@ impl Slot {
 struct Sample {
     origin: Origin,
     duration_ms: f64,
+    // First to last timed stage of the frame's own compute passes.
     compute_ms: Option<f64>,
+    stages: [Option<f64>; STAGES.len()],
 }
 
 /// Retains one capture and a small reusable ring. A new capture clears samples,
@@ -144,7 +157,7 @@ impl GpuProfiler {
             submission: self.submission,
         });
         slot.mapped.set(MapState::Pending);
-        slot.compute = false;
+        slot.stages = 0;
         self.submitted += 1;
         Some(index)
     }
@@ -160,24 +173,24 @@ impl GpuProfiler {
         })
     }
 
-    /// Times the presentation compute pass of a GPU-presented frame.
-    pub(crate) fn compute_writes(
-        &mut self,
-        index: Option<usize>,
-    ) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
-        let slot = &mut self.slots[index?];
-        slot.compute = true;
-        Some(wgpu::ComputePassTimestampWrites {
-            query_set: &slot.queries,
-            beginning_of_pass_write_index: Some(2),
-            end_of_pass_write_index: Some(3),
-        })
+    /// Times the presentation stages of a GPU-presented frame, each in its
+    /// own pass. Report the stages that ran with [`Self::timed_stages`].
+    pub(crate) fn stage_stamps(&self, index: Option<usize>) -> Option<StageStamps<'_>> {
+        Some(StageStamps::new(&self.slots[index?].queries))
+    }
+
+    /// Records the stages (bits of `STAGES`) whose passes wrote timestamps.
+    pub(crate) fn timed_stages(&mut self, index: Option<usize>, stages: u8) {
+        if let Some(index) = index {
+            self.slots[index].stages |= stages;
+        }
     }
 
     pub(crate) fn resolve(&self, index: Option<usize>, encoder: &mut wgpu::CommandEncoder) {
         if let Some(index) = index {
             let slot = &self.slots[index];
-            let queries = if slot.compute { QUERIES } else { 2 };
+            // Queries of stages that did not run are never read.
+            let queries = if slot.stages != 0 { QUERIES } else { 2 };
             encoder.resolve_query_set(&slot.queries, 0..queries, &slot.resolve, 0);
             encoder.copy_buffer_to_buffer(
                 &slot.resolve,
@@ -227,12 +240,34 @@ impl GpuProfiler {
                 end.checked_sub(start)
                     .map(|ticks| ticks as f64 * period_ns / 1_000_000.0)
             };
+            let stamp = |bytes: &[u8], query: usize| {
+                Some(u64::from_le_bytes(
+                    bytes.get(query * 8..query * 8 + 8)?.try_into().ok()?,
+                ))
+            };
+            let mut stages = [None; STAGES.len()];
             let (duration, compute_ms) =
                 slot.readback
                     .get_mapped_range(..)
                     .ok()
                     .map_or((None, None), |bytes| {
-                        let compute = slot.compute.then(|| elapsed(&bytes, 16)).flatten();
+                        let timed = |stage: usize| slot.stages & (1 << stage) != 0;
+                        for (stage, value) in stages.iter_mut().enumerate() {
+                            if timed(stage) {
+                                *value = elapsed(&bytes, 16 + 16 * stage)
+                                    .filter(|value| value.is_finite());
+                            }
+                        }
+                        // The frame's own compute passes: every stage but the
+                        // shift, which is submitted before the frame's uploads.
+                        let first = (1..STAGES.len()).find(|&stage| timed(stage));
+                        let last = (1..STAGES.len()).rev().find(|&stage| timed(stage));
+                        let compute = first.zip(last).and_then(|(first, last)| {
+                            let start = stamp(&bytes, 2 + 2 * first)?;
+                            let end = stamp(&bytes, 3 + 2 * last)?;
+                            end.checked_sub(start)
+                                .map(|ticks| ticks as f64 * period_ns / 1_000_000.0)
+                        });
                         (
                             elapsed(&bytes, 0),
                             compute.filter(|value| value.is_finite()),
@@ -248,6 +283,7 @@ impl GpuProfiler {
                     origin,
                     duration_ms,
                     compute_ms,
+                    stages,
                 });
             } else {
                 self.errors = self.errors.saturating_add(1);
@@ -270,7 +306,7 @@ impl GpuProfiler {
             "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
             "capture_id": self.capture.map(|id| id.to_string()),
             "active": active,
-            "scope": "opaque render pass, plus separate presentation_compute samples for GPU-presented frames (decision 014); excludes uploads, queue latency, presentation and timestamp readback",
+            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing); excludes uploads, queue latency, presentation and timestamp readback",
             "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
             "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
             "precision": "browser may quantize timestamp values; zero durations remain valid samples",
@@ -308,8 +344,14 @@ impl GpuProfiler {
                     let compute = sample
                         .compute_ms
                         .map(|compute| entry(sample, "presentation_compute", compute));
+                    let stages = STAGES
+                        .iter()
+                        .zip(sample.stages)
+                        .filter_map(|(name, value)| Some(entry(sample, name, value?)));
                     std::iter::once(entry(sample, "opaque_meshes", sample.duration_ms))
                         .chain(compute)
+                        .chain(stages)
+                        .collect::<Vec<_>>()
                 })
                 .collect(),
         );

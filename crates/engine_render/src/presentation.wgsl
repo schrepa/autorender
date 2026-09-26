@@ -44,7 +44,8 @@ struct Candidate {
     slot: u32,
     node: u32,
     batch: u32,
-    pad: u32,
+    // Index in draw-group order, where its visibility flag goes.
+    position: u32,
 }
 
 struct Batch {
@@ -89,6 +90,9 @@ struct Level {
 @group(0) @binding(12) var<storage, read_write> draws: array<DrawArgs>;
 // The same `locals` buffer, written only by `shift_previous`.
 @group(0) @binding(13) var<storage, read_write> locals_shift: array<f32>;
+// The candidates again, in slot order (close to node order): culling streams
+// pose, node and authority records instead of striding across draw groups.
+@group(0) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -298,15 +302,19 @@ fn outside(m: mat4x4<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool
 
 // After one quiet fixed tick the last published current poses are this
 // interval's previous poses (decision 014): copy them on the GPU instead of
-// uploading them. The capacity follows from the buffer's two halves.
+// uploading them. Only nodes active in the last applied gather published a
+// pose, and `info` still holds that gather's flags: a gather sends every
+// other node's previous pose explicitly before it blends. One node per
+// invocation; the capacity follows from the buffer's two halves.
 @compute @workgroup_size(256)
 fn shift_previous(@builtin(global_invocation_id) id: vec3<u32>) {
-    let half = arrayLength(&locals_shift) / 2u;
-    let offset = id.x * 4u;
-    if offset >= half {
+    let node = id.x;
+    if node >= arrayLength(&info) || (info[node].y & NODE_ACTIVE) == 0u {
         return;
     }
-    for (var index = offset; index < min(offset + 4u, half); index++) {
+    let half = arrayLength(&locals_shift) / 2u;
+    let start = node * POSE_FLOATS;
+    for (var index = start; index < start + POSE_FLOATS; index++) {
         locals_shift[half + index] = locals_shift[index];
     }
 }
@@ -322,31 +330,42 @@ fn compose_parents(@builtin(global_invocation_id) id: vec3<u32>) {
     composed[node] = compose(node);
 }
 
-// Poses and visibility of every candidate, with per-group visible counts.
+// Poses and visibility of every candidate, visited in slot order: each
+// flag lands at the candidate's draw-group position for `sum_groups`.
 @compute @workgroup_size(256)
-fn cull(
+fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.candidates {
+        return;
+    }
+    let candidate = slot_candidates[id.x];
+    var visible = 0u;
+    let flags = info[candidate.node].y;
+    if (flags & NODE_VALID) != 0u {
+        var model: mat4x4<f32>;
+        if (flags & NODE_ACTIVE) != 0u {
+            model = rows_matrix(compose(candidate.node).display);
+        } else {
+            model = rows_matrix(authority[candidate.node]);
+        }
+        poses[candidate.slot] = matrix_rows(model);
+        let batch = batches[candidate.batch];
+        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
+            visible = 1u;
+        }
+    }
+    scan[candidate.position] = visible;
+}
+
+// Visible count of every group of 256 candidates in draw-group order.
+@compute @workgroup_size(256)
+fn sum_groups(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group: vec3<u32>,
 ) {
     var visible = 0u;
     if id.x < frame.candidates {
-        let candidate = candidates[id.x];
-        let flags = info[candidate.node].y;
-        if (flags & NODE_VALID) != 0u {
-            var model: mat4x4<f32>;
-            if (flags & NODE_ACTIVE) != 0u {
-                model = rows_matrix(compose(candidate.node).display);
-            } else {
-                model = rows_matrix(authority[candidate.node]);
-            }
-            poses[candidate.slot] = matrix_rows(model);
-            let batch = batches[candidate.batch];
-            if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
-                visible = 1u;
-            }
-        }
-        scan[id.x] = visible;
+        visible = scan[id.x];
     }
     shared_values[lane] = visible;
     workgroupBarrier();

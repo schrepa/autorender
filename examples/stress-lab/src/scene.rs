@@ -147,7 +147,7 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
 
 fn position_for_index(index: u32, config: &StressConfig) -> Vec3 {
     if config.dense_colliders && index < config.colliders {
-        let side = (config.colliders as f32).cbrt().ceil().max(1.0) as u32;
+        let side = math::max((config.colliders as f32).cbrt().ceil(), 1.0) as u32;
         let center = (side - 1) as f32 * 0.125;
         return Vec3::new(
             (index % side) as f32 * 0.25 - center,
@@ -249,7 +249,17 @@ fn animate(
 ) {
     let start = metrics::now_ms();
     let t = (time.elapsed_seconds % 10_000.0) as f32;
-    for (motion, mut transform) in &mut objects {
+    move_lanes(t, objects.iter_mut());
+    metrics.animation_ms += metrics::now_ms() - start;
+}
+
+/// The motion of one object at a time: the reference for [`move_lanes`].
+#[cfg(test)]
+fn move_each<'a, T: std::ops::DerefMut<Target = Transform>>(
+    t: f32,
+    objects: impl Iterator<Item = (&'a Motion, T)>,
+) {
+    for (motion, mut transform) in objects {
         let angle = t * motion.speed + motion.phase;
         let wave = math::sin(angle);
         transform.translation = motion.anchor + Vec3::Y * (wave * 0.6);
@@ -257,7 +267,29 @@ fn animate(
             * Quat::from_rotation_y(angle * 0.7)
             * Quat::from_rotation_z(wave * 0.12);
     }
-    metrics.animation_ms += metrics::now_ms() - start;
+}
+
+/// Each object bobs and turns about its anchor, four objects at a time with
+/// the engine's SIMD helpers: the operations of `move_each` per lane, so
+/// the same bits (glam's rotation constructors take `sin_cos` of half the
+/// angle).
+fn move_lanes<'a, T: std::ops::DerefMut<Target = Transform>>(
+    t: f32,
+    objects: impl Iterator<Item = (&'a Motion, T)>,
+) {
+    math::for_each4(objects, |lanes| {
+        let angle =
+            lanes.load(|(motion, _)| motion.speed) * t + lanes.load(|(motion, _)| motion.phase);
+        let (wave, _) = math::sin_cos4(angle);
+        let (yaw_sin, yaw_cos) = math::sin_cos4(angle * 0.7 * 0.5);
+        let (roll_sin, roll_cos) = math::sin_cos4(wave * 0.12 * 0.5);
+        lanes.for_each(|lane, (motion, transform)| {
+            transform.translation = motion.anchor + Vec3::Y * (wave[lane] * 0.6);
+            transform.rotation = motion.rotation
+                * Quat::from_xyzw(0.0, yaw_sin[lane], 0.0, yaw_cos[lane])
+                * Quat::from_xyzw(0.0, 0.0, roll_sin[lane], roll_cos[lane]);
+        });
+    });
 }
 
 fn query_workload(
@@ -347,7 +379,42 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
     };
     engine.app.insert_resource(camera);
     engine.app.insert_resource(
-        FlyCameraController::from_camera(&camera).with_speed((span * 0.3).clamp(22.0, 220.0)),
+        FlyCameraController::from_camera(&camera).with_speed(math::clamp(span * 0.3, 22.0, 220.0)),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn four_lane_animation_writes_the_same_bits() {
+        let motions: Vec<Motion> = (0..37)
+            .map(|index| Motion {
+                anchor: Vec3::new(index as f32, 0.5, -2.0),
+                rotation: Quat::from_rotation_y(index as f32 * 0.16),
+                phase: index as f32 * 0.731,
+                speed: 0.3 + (index % 15) as f32 * 0.05,
+            })
+            .collect();
+        let bits = |transform: &Transform| {
+            transform
+                .translation
+                .to_array()
+                .into_iter()
+                .chain(transform.rotation.to_array())
+                .map(f32::to_bits)
+                .collect::<Vec<_>>()
+        };
+        for t in [0.0, 1.25, 97.5, 1_234.567, 9_999.9] {
+            let mut each = vec![Transform::default(); motions.len()];
+            let mut lanes = each.clone();
+            move_each(t, motions.iter().zip(each.iter_mut()));
+            move_lanes(t, motions.iter().zip(lanes.iter_mut()));
+            for (each, lanes) in each.iter().zip(&lanes) {
+                assert_eq!(bits(each), bits(lanes), "t = {t}");
+            }
+        }
+    }
 }
