@@ -1,0 +1,22 @@
+[package]
+name = "engine_collision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+profiling = ["engine_profile/enabled", "engine_core/profiling"]
+attribution = ["engine_core/attribution"]
+
+[dependencies]
+engine_core.workspace = true
+engine_profile.workspace = true
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+glam.workspace = true
+parry3d.workspace = true
+
+[lints]
+workspace = true

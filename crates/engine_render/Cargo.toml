@@ -1,0 +1,29 @@
+[package]
+name = "engine_render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Owned WebGPU resources and instanced 3D rendering for the browser engine"
+
+[features]
+profiling = ["engine_profile/enabled", "engine_core/profiling", "dep:serde_json"]
+
+[dependencies]
+engine_core.workspace = true
+engine_profile.workspace = true
+bytemuck.workspace = true
+glam.workspace = true
+serde_json = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+web-sys.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+naga.workspace = true
+
+[lints]
+workspace = true

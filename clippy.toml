@@ -1,0 +1,7 @@
+# Engine trigonometry is branch-free and gives the same bits on native targets
+# and in browsers; the standard functions mispredict in Wasm (docs/math.md).
+disallowed-methods = [
+    { path = "f32::sin", reason = "use engine::math::sin (docs/math.md)" },
+    { path = "f32::cos", reason = "use engine::math::cos (docs/math.md)" },
+    { path = "f32::sin_cos", reason = "use engine::math::sin_cos (docs/math.md)" },
+]

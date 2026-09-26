@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a101b" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Stress Lab — Browser Engine</title>
+  </head>
+  <body class="stress">
+    <main>
+      <header>
+        <a class="brand" href="/stress.html"><span class="brand-icon">▦</span> STRESS LAB <span class="tag">BROWSER ENGINE</span></a>
+        <nav><a href="/playground.html">Crystal Garden ↗</a><a href="/">Orbit ↗</a><span id="status" role="status"><i></i> Initializing</span></nav>
+      </header>
+      <section class="intro">
+        <div><p class="eyebrow">WORKLOAD EXPLORER / REPRODUCIBLE LOAD</p><h1>Find the ceiling.</h1><p class="description">Start with 90,000 textured objects. Isolate a cost. Record the result.</p></div>
+        <div class="run-identity"><span id="active-preset">MAXIMUM VISUAL LOAD</span><small id="active-summary">Preparing the field…</small></div>
+      </section>
+      <div class="lab-layout">
+        <section class="viewport" aria-label="Interactive engine stress scene">
+          <canvas id="scene" tabindex="0" aria-label="Stress field. Drag to look, WASD to move, Q and E to change elevation."></canvas>
+          <div class="scene-label"><span class="live-dot"></span> <span id="scene-count">90,000 OBJECTS</span><span id="pixel-size"></span></div>
+          <div class="frame-badge"><strong id="fps">—<small> FPS</small></strong><span id="live-cadence">Waiting for frames</span></div>
+          <div id="message" class="message" role="status">Building the stress field…</div>
+          <div class="viewport-bottom"><span>DRAG TO LOOK <b>·</b> WASD TO FLY <b>·</b> Q / E ELEVATION</span><button id="reset" type="button">Reset view ↗</button></div>
+        </section>
+        <aside class="lab-controls" aria-label="Stress workload controls">
+          <div class="panel-heading"><span>WORKLOAD</span><div><button id="quick-profile" type="button" hidden disabled>Profile 5s</button> <button id="quick-record" type="button" disabled>Record</button> <button id="pause" type="button" aria-pressed="false">Pause</button></div></div>
+          <label class="control-wide">Preset<select id="preset" disabled>
+            <option value="visual">Maximum visual · 90k objects</option>
+            <option value="mixed">Mixed · 10k objects + collision</option>
+            <option value="motion">Transforms · 50k moving objects</option>
+            <option value="queries">Queries · 10k colliders</option>
+            <option value="sensors">Dense sensors · budget pressure</option>
+          </select></label>
+          <p id="preset-note" class="panel-note">Rendering, extraction, batching and texture sampling at maximum object count.</p>
+          <fieldset id="workload-fields" disabled>
+            <div class="controls-grid">
+              <label>Objects<select id="objects"><option>1000</option><option>10000</option><option>25000</option><option>50000</option><option selected>90000</option><option>120000</option><option>150000</option><option>200000</option><option>250000</option></select></label>
+              <label>Moving objects<select id="moving"><option value="0">0%</option><option value="10">10%</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option></select></label>
+              <label>Colliders<input id="colliders" type="number" min="0" max="10000" step="100" value="0" /></label>
+              <label>Sensors<input id="sensors" type="number" min="0" max="100" value="0" /><span class="field-unit">% of colliders</span></label>
+              <label>Queries / tick<select id="queries"><option>0</option><option>32</option><option>128</option><option>256</option><option>512</option></select></label>
+              <label>Mesh batches<select id="meshes"><option>1</option><option>8</option><option selected>32</option></select></label>
+              <label class="control-wide">Seed<input id="seed" type="number" min="0" max="4294967295" value="1337" /></label>
+            </div>
+            <div class="toggle-grid">
+              <label><input id="hierarchy" type="checkbox" /> Parent hierarchies</label>
+              <label><input id="interpolation" type="checkbox" /> Interpolation</label>
+              <label><input id="textures" type="checkbox" checked /> Textures</label>
+              <label><input id="dense" type="checkbox" /> Dense collider clusters</label>
+            </div>
+            <button id="apply" class="primary" type="button">Apply &amp; restart workload</button>
+          </fieldset>
+          <div class="view-controls">
+            <label>View<select id="view" disabled><option value="overview">Overview</option><option value="close">Inside the field</option><option value="away">Look away</option></select></label>
+            <label>Resolution<select id="resolution" disabled><option value="0.5">50%</option><option value="0.75">75%</option><option value="1" selected>100%</option><option value="1.5">150%</option></select></label>
+            <label class="check-control"><input id="culling" type="checkbox" checked disabled /> Frustum culling</label>
+          </div>
+          <p id="notice" class="panel-note" role="status">Changes apply together. Same seed and settings reproduce the same field.</p>
+        </aside>
+      </div>
+      <section class="dashboard lab-dashboard" aria-label="CPU timings">
+        <div class="metric"><span>SIMULATION</span><strong id="simulation">—<small> ms</small></strong><p>Fixed ticks + presentation</p></div>
+        <div class="metric"><span>EXTRACTION</span><strong id="extraction">—<small> ms</small></strong><p>World → render snapshot</p></div>
+        <div class="metric"><span>RENDER CPU</span><strong id="render-cpu">—<small> ms</small></strong><p>Prepare, upload and submit</p></div>
+        <div class="metric"><span>DRAW CALLS</span><strong id="draws">—</strong><p id="uploads">Waiting for frame</p></div>
+        <div class="metric"><span>FRAME BUDGET</span><strong id="frame-budget">—</strong><p>CPU sum / 16.67 ms at 60 Hz</p></div>
+      </section>
+      <section class="analysis-grid">
+        <div class="analysis-panel">
+          <div class="panel-heading"><span>CPU FRAME HISTORY</span><span class="chart-key"><i class="sim"></i> Simulation <i class="extract"></i> Extraction <i class="render"></i> Render</span></div>
+          <svg id="timing-chart" viewBox="0 0 640 115" role="img" aria-label="Recent CPU stage timings sampled four times a second">
+            <line id="budget-line" x1="0" x2="640" y1="60" y2="60" stroke="#678074" stroke-dasharray="4 5" />
+            <path id="sim-path" fill="none" stroke="#78e1ba" stroke-width="2" />
+            <path id="extract-path" fill="none" stroke="#839cff" stroke-width="2" />
+            <path id="render-path" fill="none" stroke="#f4b267" stroke-width="2" />
+          </svg>
+          <div class="chart-caption"><span id="chart-scale">Scale 33.3 ms · 30 second window</span><span>Dashed line: 16.67 ms</span></div>
+          <p id="pressure" class="pressure">Waiting for timing samples.</p>
+          <p class="panel-note">CPU render is not GPU time. Compare resolution and camera views to investigate pixel cost; compare motion, hierarchy and collision settings to isolate CPU work.</p>
+        </div>
+        <div class="analysis-panel">
+          <div class="panel-heading"><span>COLLISION &amp; RESIDENCY</span><span id="collision-state" class="health">Waiting</span></div>
+          <dl class="details-grid">
+            <div><dt>Drawn / candidates</dt><dd id="drawn">—</dd></div><div><dt>Transform nodes</dt><dd id="nodes">—</dd></div>
+            <div><dt>Cache sync CPU</dt><dd id="sync-time">—</dd></div><div><dt>Sensor detection CPU</dt><dd id="sensor-time">—</dd></div>
+            <div><dt>Queries CPU / calls</dt><dd id="query-time">—</dd></div><div><dt>Sensor pairs / candidates</dt><dd id="pairs">—</dd></div>
+            <div><dt>Resident GPU payload</dt><dd id="gpu-bytes">—</dd></div><div><dt>Collision cache payload</dt><dd id="cache-bytes">—</dd></div>
+            <div><dt>Query errors / hits</dt><dd id="query-errors">—</dd></div><div><dt>Dropped simulation time</dt><dd id="dropped">—</dd></div>
+          </dl>
+          <p class="panel-note">Collision timings are included in simulation. Payload counters exclude allocator and driver overhead. Dense sensors deliberately exercise bounded overflow.</p>
+        </div>
+      </section>
+      <section class="record-panel">
+        <div><h2>Capture a baseline.</h2><p id="record-status">30 warm-up frames, then 10 seconds. Camera and controls lock during recording.</p></div>
+        <div class="record-actions"><button id="record" class="primary" disabled>Record 10 seconds</button><button id="export" disabled>Export JSON ↗</button><button id="share" disabled>Copy workload link</button></div>
+      </section>
+      <section class="profile-panel" aria-label="Detailed profiling">
+        <div class="profile-heading"><div><p class="eyebrow">OPTIONAL INSTRUMENTATION</p><h2>See inside a frame.</h2><p id="profile-status" role="status">Detailed captures are available in the profiling build. Ordinary recording remains available above.</p></div>
+          <div class="record-actions"><button id="profile" class="primary" disabled>Detailed profile · 5 seconds</button><button id="profile-export" disabled>Export trace JSON ↗</button></div>
+        </div>
+        <dl class="profile-metrics"><div><dt>CPU &amp; collision</dt><dd id="profile-cpu">Scopes, queries and counters</dd></div><div><dt>GPU</dt><dd id="profile-gpu">Timestamp support checked at capture</dd></div><div><dt>Memory</dt><dd id="profile-memory">Allocator, Wasm and optional JS heap</dd></div><div><dt>Browser</dt><dd id="profile-browser">Supported long tasks and animation frames</dd></div></dl>
+        <p class="panel-note">A five-second capture locks the workload and camera. Export includes a Chrome/Perfetto trace, raw measurements and exact settings. GPU durations are attributed to CPU frames without claiming clock alignment. Instrumentation adds overhead; memory counters cover separate scopes, and browser GC events are unavailable.</p>
+      </section>
+      <footer><span>DETERMINISTIC FIELD <b>/</b> BOUNDED LOAD</span><span id="render-time">CPU submission timing · GPU time is not measured</span></footer>
+    </main>
+    <script type="module" src="/src/stress.ts"></script>
+  </body>
+</html>

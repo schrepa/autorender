@@ -1,0 +1,3978 @@
+{
+  "version": 4,
+  "id": "crystal-garden",
+  "revision": 5,
+  "camera": {
+    "position": [
+      17,
+      21,
+      26
+    ],
+    "target": [
+      0,
+      0,
+      0
+    ],
+    "fov_degrees": 48,
+    "near": 0.1,
+    "far": 150
+  },
+  "textures": [
+    {
+      "id": "garden.image0",
+      "width": 64,
+      "height": 64,
+      "rgba8": "dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP9kNx7/pWcz/55jNf+ycTf/q205/6RpO/+4dz3/pmg0/2Q3Hv+zcjj/rG46/6VqPP+ubTP/p2k1/6BlN/+0czn/ZDce/6ZrPf+vbjT/qGo2/6FmOP+1dDr/rnA8/5xhM/9kNx7/qWs3/6JnOf+2dTv/r3E9/51iNP+xcDb/qmw4/3SAhP+4v7T/vcS5/7e+s/+8w7j/wci9/7vCt//Ax7z/usG2/7/Gu/+5wLX/vsW6/7i/tP+9xLn/t76z/7zDuP90gIT/u8K3/8DHvP+6wbb/v8a7/7nAtf++xbr/uL+0/73Euf+3vrP/vMO4/8HIvf+7wrf/wMe8/7rBtv+/xrv/ZDce/6xuOv+dYjT/tHM5/6VnM/+hZjj/uHc9/6lrN/9kNx7/sXA2/61vO/+eYzX/tXQ6/6ZoNP+iZzn/rm0z/2Q3Hv+maz3/snE3/65wPP+fZDb/tnU7/6dpNf+jaDr/ZDce/6ttOf+cYTP/s3I4/69xPf+gZTf/t3Y8/6hqNv90gIT/t76z/7/Gu/+8w7j/ucC1/8HIvf++xbr/u8K3/7i/tP/Ax7z/vcS5/7rBtv+3vrP/v8a7/7zDuP+5wLX/dICE/77Fuv+7wrf/uL+0/8DHvP+9xLn/usG2/7e+s/+/xrv/vMO4/7nAtf/ByL3/vsW6/7vCt/+4v7T/wMe8/2Q3Hv+oajb/nGEz/7Z1O/+qbDj/nmM1/7h3Pf+sbjr/ZDce/69uNP+ucDz/omc5/7FwNv+lZzP/pGk7/7NyOP9kNx7/pms9/7V0Ov+pazf/nWI0/7d2PP+rbTn/n2Q2/2Q3Hv+tbzv/oWY4/7BvNf+vcT3/o2g6/7JxN/+maDT/dICE/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/3SAhP/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf9kNx7/rG89/6NpPf+1dT3/rG89/6NpPf+1dT3/rG89/2Q3Hv+1dT3/rG89/6NpPf+1dT3/rG89/6NpPf+1dT3/ZDce/6NpPf+1dT3/rG89/6NpPf+1dT3/rG89/6NpPf9kNx7/rG89/6NpPf+1dT3/rG89/6NpPf+1dT3/rG89/3SAhP/Ax7z/uL+0/7vCt/++xbr/wci9/7nAtf+8w7j/v8a7/7e+s/+6wbb/vcS5/8DHvP+4v7T/u8K3/77Fuv90gIT/ucC1/7zDuP+/xrv/t76z/7rBtv+9xLn/wMe8/7i/tP+7wrf/vsW6/8HIvf+5wLX/vMO4/7/Gu/+3vrP/ZDce/6hrOf+iaDz/rGw0/6ZpN/+gZjr/tXU9/6RnNf9kNx7/s3M7/6JlM/+cYjb/sXE5/6tuPP+aYDT/r283/2Q3Hv+jaT3/rW01/6dqOP+hZzv/q2sz/6VoNv+fZTn/ZDce/6NmNP+dYzf/snI6/6xvPf+bYTX/sHA4/6ptO/90gIT/v8a7/7rBtv/Ax7z/u8K3/8HIvf+8w7j/t76z/73Euf+4v7T/vsW6/7nAtf+/xrv/usG2/8DHvP+7wrf/dICE/7zDuP+3vrP/vcS5/7i/tP++xbr/ucC1/7/Gu/+6wbb/wMe8/7vCt//ByL3/vMO4/7e+s/+9xLn/uL+0/2Q3Hv+kZzX/oWc7/65uNv+rbjz/nWM3/7V1Pf+najj/ZDce/7FxOf+jZjT/oGY6/61tNf+qbTv/nGI2/7R0PP9kNx7/o2k9/7BwOP+iZTP/n2U5/6xsNP+pbDr/m2E1/2Q3Hv+laDb/omg8/69vN/+sbz3/nmQ4/6trM/+oazn/dICE/77Fuv+8w7j/usG2/7i/tP/ByL3/v8a7/73Euf+7wrf/ucC1/7e+s//Ax7z/vsW6/7zDuP+6wbb/uL+0/3SAhP+/xrv/vcS5/7vCt/+5wLX/t76z/8DHvP++xbr/vMO4/7rBtv+4v7T/wci9/7/Gu/+9xLn/u8K3/7nAtf9kNx7/q248/6BmOv+wcDj/pWg2/5pgNP+1dT3/qm07/2Q3Hv+vbzf/pGc1/5lfM/+0dDz/qWw6/55kOP+ubjb/ZDce/6NpPf+zczv/qGs5/51jN/+tbTX/omUz/6JoPP9kNx7/p2o4/5xiNv+sbDT/rG89/6FnO/+xcTn/pmk3/3SAhP+9xLn/vsW6/7/Gu//Ax7z/wci9/7e+s/+4v7T/ucC1/7rBtv+7wrf/vMO4/73Euf++xbr/v8a7/8DHvP90gIT/t76z/7i/tP+5wLX/usG2/7vCt/+8w7j/vcS5/77Fuv+/xrv/wMe8/8HIvf+3vrP/uL+0/7nAtf+6wbb/ZDce/6dqOP+fZTn/snI6/6ptO/+iaDz/tXU9/6JlM/9kNx7/rW01/6VoNv+dYzf/sHA4/6hrOf+gZjr/s3M7/2Q3Hv+jaT3/q2sz/6NmNP+bYTX/rm42/6ZpN/+eZDj/ZDce/6lsOv+hZzv/tHQ8/6xvPf+ZXzP/rGw0/6RnNf90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/2Q3Hv+jZjT/nmQ4/7R0PP+kZzX/n2U5/7V1Pf+laDb/ZDce/6trM/+maTf/oWc7/6xsNP+najj/omg8/61tNf9kNx7/o2k9/65uNv+pbDr/mV8z/69vN/+qbTv/mmA0/2Q3Hv+rbjz/m2E1/7FxOf+sbz3/nGI2/7JyOv+iZTP/v8a7/7vCt/+3vrP/vsW6/7rBtv/ByL3/vcS5/7nAtf90gIT/vMO4/7i/tP+/xrv/u8K3/7e+s/++xbr/usG2/8HIvf+9xLn/ucC1/8DHvP+8w7j/uL+0/7/Gu/+7wrf/dICE/77Fuv+6wbb/wci9/73Euf+5wLX/wMe8/7zDuP9kNx7/qm07/51jN/+razP/qWw6/5xiNv+1dT3/qGs5/2Q3Hv+0dDz/p2o4/5pgNP+zczv/pmk3/5lfM/+ycjr/ZDce/6NpPf+xcTn/pGc1/6JoPP+wcDj/o2Y0/6FnO/9kNx7/omUz/6BmOv+ubjb/rG89/59lOf+tbTX/q248/7vCt/+6wbb/ucC1/7i/tP+3vrP/wci9/8DHvP+/xrv/dICE/73Euf+8w7j/u8K3/7rBtv+5wLX/uL+0/7e+s//ByL3/wMe8/7/Gu/++xbr/vcS5/7zDuP+7wrf/usG2/3SAhP+4v7T/t76z/8HIvf/Ax7z/v8a7/77Fuv+9xLn/ZDce/6ZpN/+cYjb/rW01/6NmNP+ZXzP/tXU9/6tuPP9kNx7/snI6/6hrOf+eZDj/r283/6VoNv+bYTX/rGw0/2Q3Hv+jaT3/tHQ8/6ptO/+gZjr/sXE5/6dqOP+dYzf/ZDce/6RnNf+aYDT/q2sz/6xvPf+iaDz/s3M7/6lsOv+3vrP/ucC1/7vCt/+9xLn/v8a7/8HIvf+4v7T/usG2/3SAhP++xbr/wMe8/7e+s/+5wLX/u8K3/73Euf+/xrv/wci9/7i/tP+6wbb/vMO4/77Fuv/Ax7z/t76z/7nAtf90gIT/vcS5/7/Gu//ByL3/uL+0/7rBtv+8w7j/vsW6/2Q3Hv+iZTP/m2E1/69vN/+oazn/oWc7/7V1Pf+jZjT/ZDce/7BwOP+pbDr/omg8/6trM/+kZzX/nWM3/7FxOf9kNx7/o2k9/6xsNP+laDb/nmQ4/7JyOv+rbjz/mV8z/2Q3Hv+maTf/n2U5/7NzO/+sbz3/mmA0/65uNv+najj/vsW6/7i/tP+9xLn/t76z/7zDuP/ByL3/u8K3/8DHvP90gIT/v8a7/7nAtf++xbr/uL+0/73Euf+3vrP/vMO4/8HIvf+7wrf/wMe8/7rBtv+/xrv/ucC1/77Fuv+4v7T/dICE/7e+s/+8w7j/wci9/7vCt//Ax7z/usG2/7/Gu/9kNx7/qWw6/5pgNP+xcTn/omUz/55kOP+1dT3/pmk3/2Q3Hv+ubjb/qm07/5thNf+ycjr/o2Y0/59lOf+razP/ZDce/6NpPf+vbzf/q248/5xiNv+zczv/pGc1/6BmOv9kNx7/qGs5/5lfM/+wcDj/rG89/51jN/+0dDz/pWg2/7rBtv+3vrP/v8a7/7zDuP+5wLX/wci9/77Fuv+7wrf/dICE/8DHvP+9xLn/usG2/7e+s/+/xrv/vMO4/7nAtf/ByL3/vsW6/7vCt/+4v7T/wMe8/73Euf+6wbb/t76z/3SAhP+8w7j/ucC1/8HIvf++xbr/u8K3/7i/tP/Ax7z/ZDce/6VoNv+ZXzP/s3M7/6dqOP+bYTX/tXU9/6lsOv9kNx7/rGw0/6tuPP+fZTn/rm42/6JlM/+hZzv/sHA4/2Q3Hv+jaT3/snI6/6ZpN/+aYDT/tHQ8/6hrOf+cYjb/ZDce/6ptO/+eZDj/rW01/6xvPf+gZjr/r283/6NmNP/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/3SAhP/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf90gIT/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/2Q3Hv+vcT3/pms9/7h3Pf+vcT3/pms9/7h3Pf+vcT3/ZDce/7h3Pf+vcT3/pms9/7h3Pf+vcT3/pms9/7h3Pf9kNx7/pms9/7h3Pf+vcT3/pms9/7h3Pf+vcT3/pms9/2Q3Hv+vcT3/pms9/7h3Pf+vcT3/pms9/7h3Pf+vcT3/vcS5/8DHvP+4v7T/u8K3/77Fuv/ByL3/ucC1/7zDuP90gIT/t76z/7rBtv+9xLn/wMe8/7i/tP+7wrf/vsW6/8HIvf+5wLX/vMO4/7/Gu/+3vrP/usG2/73Euf/Ax7z/dICE/7vCt/++xbr/wci9/7nAtf+8w7j/v8a7/7e+s/9kNx7/q205/6VqPP+vbjT/qWs3/6NoOv+4dz3/p2k1/2Q3Hv+2dTv/pWcz/59kNv+0czn/rnA8/51iNP+ycTf/ZDce/6ZrPf+wbzX/qmw4/6RpO/+ubTP/qGo2/6JnOf9kNx7/pmg0/6BlN/+1dDr/r3E9/55jNf+zcjj/rW87/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/ZDce/6prNf+nazv/mWA2/7FyPP+jZzf/oGc9/61uOP9kNx7/nGM5/6lqNP+majr/mF81/7BxO/+iZjb/n2Y8/2Q3Hv+pbT3/m2I4/6hpM/+laTn/l140/69wOv+hZTX/ZDce/6tsNv+obDz/mmE3/7JzPf+kaDj/ll0z/65vOf90gIT/vsW6/7zDuP+6wbb/uL+0/8HIvf+/xrv/vcS5/7vCt/+5wLX/t76z/8DHvP++xbr/vMO4/7rBtv+4v7T/dICE/7/Gu/+9xLn/u8K3/7nAtf+3vrP/wMe8/77Fuv+8w7j/usG2/7i/tP/ByL3/v8a7/73Euf+7wrf/ucC1/2Q3Hv+xcjz/pmo6/5tiOP+rbDb/oGQ0/6BnPf+wcTv/ZDce/5phN/+qazX/n2Mz/59mPP+vcDr/pGg4/5lgNv9kNx7/qW09/55lO/+ubzn/o2c3/5hfNf+oaTP/qGw8/2Q3Hv+tbjj/omY2/5deNP+ycz3/p2s7/5xjOf+sbTf/dICE/73Euf++xbr/v8a7/8DHvP/ByL3/t76z/7i/tP+5wLX/usG2/7vCt/+8w7j/vcS5/77Fuv+/xrv/wMe8/3SAhP+3vrP/uL+0/7nAtf+6wbb/u8K3/7zDuP+9xLn/vsW6/7/Gu//Ax7z/wci9/7e+s/+4v7T/ucC1/7rBtv9kNx7/rW44/6VpOf+dZDr/sHE7/6hsPP+gZz3/qGkz/2Q3Hv+YXzX/q2w2/6NnN/+bYjj/rm85/6ZqOv+eZTv/ZDce/6ltPf+WXTP/qWo0/6FlNf+ZYDb/rG03/6RoOP9kNx7/r3A6/6drO/+fZjz/snM9/59jM/+XXjT/qms1/3SAhP+8w7j/wMe8/7nAtf+9xLn/wci9/7rBtv++xbr/t76z/7vCt/+/xrv/uL+0/7zDuP/Ax7z/ucC1/73Euf90gIT/usG2/77Fuv+3vrP/u8K3/7/Gu/+4v7T/vMO4/8DHvP+5wLX/vcS5/8HIvf+6wbb/vsW6/7e+s/+7wrf/ZDce/6xsNP+najj/omg8/61tNf+oazn/o2k9/65uNv9kNx7/mV8z/69vN/+qbTv/mmA0/7BwOP+rbjz/m2E1/2Q3Hv+sbz3/nGI2/7JyOv+iZTP/nWM3/7NzO/+jZjT/ZDce/7R0PP+kZzX/n2U5/7V1Pf+laDb/oGY6/6trM/90gIT/u8K3/7e+s/++xbr/usG2/8HIvf+9xLn/ucC1/8DHvP+8w7j/uL+0/7/Gu/+7wrf/t76z/77Fuv+6wbb/dICE/73Euf+5wLX/wMe8/7zDuP+4v7T/v8a7/7vCt/+3vrP/vsW6/7rBtv/ByL3/vcS5/7nAtf/Ax7z/vMO4/2Q3Hv+zczv/pmk3/5lfM/+ycjr/pWg2/6NpPf+xcTn/ZDce/6JoPP+wcDj/o2Y0/6FnO/+vbzf/omUz/6BmOv9kNx7/rG89/59lOf+tbTX/q248/55kOP+sbDT/qm07/2Q3Hv+razP/qWw6/5xiNv+1dT3/qGs5/5thNf+0dDz/dICE/7rBtv+5wLX/uL+0/7e+s//ByL3/wMe8/7/Gu/++xbr/vcS5/7zDuP+7wrf/usG2/7nAtf+4v7T/t76z/3SAhP/Ax7z/v8a7/77Fuv+9xLn/vMO4/7vCt/+6wbb/ucC1/7i/tP+3vrP/wci9/8DHvP+/xrv/vsW6/73Euf9kNx7/r283/6VoNv+bYTX/rGw0/6JlM/+jaT3/tHQ8/2Q3Hv+gZjr/sXE5/6dqOP+dYzf/rm42/6RnNf+aYDT/ZDce/6xvPf+iaDz/s3M7/6lsOv+fZTn/sHA4/6ZpN/9kNx7/rW01/6NmNP+ZXzP/tXU9/6tuPP+hZzv/snI6/3SAhP+5wLX/u8K3/73Euf+/xrv/wci9/7i/tP+6wbb/vMO4/77Fuv/Ax7z/t76z/7nAtf+7wrf/vcS5/7/Gu/90gIT/uL+0/7rBtv+8w7j/vsW6/8DHvP+3vrP/ucC1/7vCt/+9xLn/v8a7/8HIvf+4v7T/usG2/7zDuP++xbr/ZDce/6trM/+kZzX/nWM3/7FxOf+qbTv/o2k9/6xsNP9kNx7/nmQ4/7JyOv+rbjz/mV8z/61tNf+maTf/n2U5/2Q3Hv+sbz3/mmA0/65uNv+najj/oGY6/7R0PP+iZTP/ZDce/69vN/+oazn/oWc7/7V1Pf+jZjT/nGI2/7BwOP90gIT/uL+0/73Euf+3vrP/vMO4/8HIvf+7wrf/wMe8/7rBtv+/xrv/ucC1/77Fuv+4v7T/vcS5/7e+s/+8w7j/dICE/7vCt//Ax7z/usG2/7/Gu/+5wLX/vsW6/7i/tP+9xLn/t76z/7zDuP/ByL3/u8K3/8DHvP+6wbb/v8a7/2Q3Hv+ycjr/o2Y0/59lOf+razP/p2o4/6NpPf+vbzf/ZDce/5xiNv+zczv/pGc1/6BmOv+sbDT/qGs5/5lfM/9kNx7/rG89/51jN/+0dDz/pWg2/6FnO/+tbTX/qWw6/2Q3Hv+xcTn/omUz/55kOP+1dT3/pmk3/6JoPP+ubjb/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP90gIT/dICE/3SAhP9kNx7/rm42/6JlM/+hZzv/sHA4/6RnNf+jaT3/snI6/2Q3Hv+aYDT/tHQ8/6hrOf+cYjb/q2sz/6ptO/+eZDj/ZDce/6xvPf+gZjr/r283/6NmNP+iaDz/sXE5/6VoNv9kNx7/s3M7/6dqOP+bYTX/tXU9/6lsOv+dYzf/rGw0/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/dICE/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/wci9/3SAhP/ByL3/wci9/8HIvf/ByL3/wci9/8HIvf/ByL3/ZDce/7V1Pf+sbz3/o2k9/7V1Pf+sbz3/o2k9/7V1Pf9kNx7/o2k9/7V1Pf+sbz3/o2k9/7V1Pf+sbz3/o2k9/2Q3Hv+sbz3/o2k9/7V1Pf+sbz3/o2k9/7V1Pf+sbz3/ZDce/7V1Pf+sbz3/o2k9/7V1Pf+sbz3/o2k9/7V1Pf+9xLn/wMe8/7i/tP+7wrf/vsW6/8HIvf+5wLX/vMO4/3SAhP+3vrP/usG2/73Euf/Ax7z/uL+0/7vCt/++xbr/wci9/7nAtf+8w7j/v8a7/7e+s/+6wbb/vcS5/8DHvP90gIT/u8K3/77Fuv/ByL3/ucC1/7zDuP+/xrv/t76z/2Q3Hv+xcTn/q248/5pgNP+vbzf/qWw6/6NpPf+tbTX/ZDce/6FnO/+razP/pWg2/59lOf+0dDz/o2Y0/51jN/9kNx7/rG89/5thNf+wcDj/qm07/5lfM/+ubjb/qGs5/2Q3Hv+sbDT/pmk3/6BmOv+1dT3/pGc1/55kOP+zczv/ucC1/7/Gu/+6wbb/wMe8/7vCt//ByL3/vMO4/7e+s/90gIT/uL+0/77Fuv+5wLX/v8a7/7rBtv/Ax7z/u8K3/8HIvf+8w7j/t76z/73Euf+4v7T/vsW6/7nAtf+/xrv/dICE/8DHvP+7wrf/wci9/7zDuP+3vrP/vcS5/7i/tP9kNx7/rW01/6ptO/+cYjb/tHQ8/6ZpN/+jaT3/sHA4/2Q3Hv+fZTn/rGw0/6lsOv+bYTX/s3M7/6VoNv+iaDz/ZDce/6xvPf+eZDj/q2sz/6hrOf+aYDT/snI6/6RnNf9kNx7/rm42/6tuPP+dYzf/tXU9/6dqOP+ZXzP/sXE5/8DHvP++xbr/vMO4/7rBtv+4v7T/wci9/7/Gu/+9xLn/dICE/7nAtf+3vrP/wMe8/77Fuv+8w7j/usG2/7i/tP/ByL3/v8a7/73Euf+7wrf/ucC1/7e+s//Ax7z/vsW6/3SAhP+6wbb/uL+0/8HIvf+/xrv/vcS5/7vCt/+5wLX/ZDce/7R0PP+pbDr/nmQ4/65uNv+jZjT/o2k9/7NzO/9kNx7/nWM3/61tNf+iZTP/omg8/7JyOv+najj/nGI2/2Q3Hv+sbz3/oWc7/7FxOf+maTf/m2E1/6trM/+rbjz/ZDce/7BwOP+laDb/mmA0/7V1Pf+qbTv/n2U5/69vN/+8w7j/vcS5/77Fuv+/xrv/wMe8/8HIvf+3vrP/uL+0/3SAhP+6wbb/u8K3/7zDuP+9xLn/vsW6/7/Gu//Ax7z/wci9/7e+s/+4v7T/ucC1/7rBtv+7wrf/vMO4/73Euf90gIT/v8a7/8DHvP/ByL3/t76z/7i/tP+5wLX/usG2/2Q3Hv+tbjj/pWk5/51kOv+wcTv/qGw8/6BnPf+oaTP/ZDce/5hfNf+rbDb/o2c3/5tiOP+ubzn/pmo6/55lO/9kNx7/qW09/5ZdM/+pajT/oWU1/5lgNv+sbTf/pGg4/2Q3Hv+vcDr/p2s7/59mPP+ycz3/n2Mz/5deNP+qazX/uL+0/7zDuP/Ax7z/ucC1/73Euf/ByL3/usG2/77Fuv90gIT/u8K3/7/Gu/+4v7T/vMO4/8DHvP+5wLX/vcS5/8HIvf+6wbb/vsW6/7e+s/+7wrf/v8a7/7i/tP+8w7j/dICE/7nAtf+9xLn/wci9/7rBtv++xbr/t76z/7vCt/9kNx7/qWo0/6RoOP+fZjz/qms1/6VpOf+gZz3/q2w2/2Q3Hv+WXTP/rG03/6drO/+XXjT/rW44/6hsPP+YXzX/ZDce/6ltPf+ZYDb/r3A6/59jM/+aYTf/sHE7/6BkNP9kNx7/sXI8/6FlNf+cYzn/snM9/6JmNv+dZDr/qGkz/7/Gu/+7wrf/t76z/77Fuv+6wbb/wci9/73Euf+5wLX/dICE/7zDuP+4v7T/v8a7/7vCt/+3vrP/vsW6/7rBtv/ByL3/vcS5/7nAtf/Ax7z/vMO4/7i/tP+/xrv/u8K3/3SAhP++xbr/usG2/8HIvf+9xLn/ucC1/8DHvP+8w7j/ZDce/7BxO/+jZzf/ll0z/69wOv+iZjb/oGc9/65vOf9kNx7/n2Y8/61uOP+gZDT/nmU7/6xtN/+fYzP/nWQ6/2Q3Hv+pbT3/nGM5/6prNf+obDz/m2I4/6lqNP+nazv/ZDce/6hpM/+majr/mWA2/7JzPf+laTn/mF81/7FyPP/lwlb/M3c//zJ3Pv8xdz3/MHc8/zqCRv85gkX/OIJE/zeCQ/82eUL/NXlB/zR5QP8zeT//Mnk+/zF5Pf8weTz/OoRG/zmERf84e0T/N3tD/zZ7Qv81e0H/NHtA/zN7P/8yez7/MXs9/zB7PP/lwlb/OX1F/zh9RP83fUP/Nn1C/+O4S/8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv/juEv/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/MHQ8/zJ3Pv80ekD/Nn1C/ziARP86g0b/MXs9/zN+P/81eEH/N3tD/zl+Rf8wdjz/5cJW/zR8QP82f0L/OIJE/zqFRv8xdD3/M3c//zV6Qf83fUP/OYBF/zB4PP8yez7/NH5A/zaBQv84e0T/On5G/zF2Pf8zeT//NXxB/zd/Q/8aQ07/K3mH/y17if8vfYv/MX+N/zOBj/81g5H/LHqI/xpDTv8wfoz/MoCO/zSCkP8reYf/LXuJ/y99i//juEv/GkNO/zWDkf8seoj/LnyK/zB+jP8ygI7/NIKQ/yt5h/8aQ07/L32L/zF/jf8zgY//NYOR/yx6iP8ufIr/47hL/zd8Q/8xdz3/Nn1C/zB4PP81fkH/OoRG/zR/QP85fEX/M3c//zh9RP8yeD7/N35D/zF5Pf82f0L/MHo8/zWAQf86fUb/5cJW/zl+Rf8zeT//OH9E/zJ6Pv83gEP/MXs9/zaBQv8wczz/NXlB/zp/Rv80ekD/OYBF/zN7P/84gUT/GkNO/zKAjv8seoj/MX+N/yt5h/8wfoz/NYOR/y99i/8aQ07/LnyK/zOBj/8te4n/MoCO/yx6iP/juEv/K3mH/xpDTv81g5H/L32L/zSCkP8ufIr/M4GP/y17if8ygI7/GkNO/zF/jf8reYf/MH6M/zWDkf8vfYv/47hL/y58iv8zeT//MHc8/+XCVv81fkH/Mnw+/zqFRv83ekP/NHhA/zF2Pf85f0X/Nn1C/zN7P/8weTz/OIJE/zWAQf8ydT7/On5G/zd8Q/80ekD/MXg9/zmBRf82f0L/M30//zB7PP84e0T/NXlB/zJ3Pv86gEb/N35D/+XCVv8xej3/OYNF/xpDTv8ufIr/K3mH/zOBj/8wfoz/LXuJ/zWDkf8ygI7/GkNO/yx6iP80gpD/MX+N/y58iv/juEv/M4GP/zB+jP8aQ07/NYOR/zKAjv8vfYv/LHqI/zSCkP8xf43/LnyK/xpDTv8zgY//MH6M/y17if81g5H/47hL/y99i/8seoj/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv/lwlb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv8aQ07/NYOR/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/xpDTv81g5H/NYOR/zWDkf/juEv/NYOR/zWDkf81g5H/GkNO/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/zWDkf8aQ07/NYOR/zWDkf81g5H/47hL/zWDkf81g5H/NYOR/zZ+Qv85gkX/MXs9/zR/QP83ekP/On5G/zJ3Pv81e0H/OH9E/zB4PP8zfD//NoBC/zmERf8xdD3/NHhA/zd8Q/86gEb/Mnk+/zV9Qf/lwlb/MHo8/zN+P/82eUL/OX1F/zF2Pf80ekD/N35D/zqCRv8yez7/NX9B/ziDRP8wczz/GkNO/zF/jf80gpD/LHqI/y99i/8ygI7/NYOR/y17if8aQ07/M4GP/yt5h//juEv/MX+N/zSCkP8seoj/L32L/xpDTv81g5H/LXuJ/zB+jP8zgY//K3mH/y58iv8xf43/GkNO/yx6iP8vfYv/47hL/zWDkf8te4n/MH6M/zOBj/8yez7/OIJE/zN+P/85fEX/5cJW/zp/Rv81e0H/MHc8/zZ+Qv8xej3/N4FD/zJ9Pv84e0T/M3c//zl+Rf80ekD/OoFG/zV9Qf8weTz/NoBC/zF8Pf83ekP/MnY+/zh9RP8zeT//OYBF/zR8QP86g0b/NX9B/zB7PP82eUL/5cJW/xpDTv8te4n/M4GP/y58iv80gpD/L32L/zWDkf8wfoz/GkNO/zF/jf/juEv/MoCO/y17if8zgY//LnyK/zSCkP8aQ07/NYOR/zB+jP8reYf/MX+N/yx6iP8ygI7/LXuJ/xpDTv8ufIr/47hL/y99i/81g5H/MH6M/yt5h/8xf43/OYNF/zeCQ/81eEH/M3c//zF2Pf86gEb/OH9E/zZ+Qv80fUD/Mnw+/zB7PP85fEX/N3tD/zV6Qf8zeT//MXg9/+XCVv84gUT/NoBC/zR/QP8ydT7/MHQ8/zl+Rf83fUP/NXxB/zN7P/8xej3/OoRG/ziDRP82eUL/NHhA/zJ3Pv8aQ07/NIKQ/zKAjv8wfoz/LnyK/yx6iP81g5H/M4GP/xpDTv/juEv/LXuJ/yt5h/80gpD/MoCO/zB+jP8ufIr/GkNO/zWDkf8zgY//MX+N/y99i/8te4n/K3mH/zSCkP8aQ07/47hL/y58iv8seoj/NYOR/zOBj/8xf43/L32L/zWAQf/lwlb/N3tD/zh9RP85f0X/OoFG/zB4PP8xej3/Mnw+/zN+P/80d0D/NXlB/zZ7Qv83fUP/OH9E/zmBRf86g0b/MHo8/zF8Pf8ydT7/M3c//+XCVv81e0H/Nn1C/zd/Q/84gUT/OYNF/zqFRv8wczz/MXU9/zJ3Pv8zeT//GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv/juEv/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/47hL/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8xdD3/NXlB/zl+Rf8yeD7/Nn1C/zqCRv/lwlb/N4FD/zB7PP80d0D/OHxE/zF2Pf81e0H/OYBF/zJ6Pv82f0L/OoRG/zN+P/83ekP/MHQ8/zR5QP84fkT/MXg9/zV9Qf85gkX/Mnw+/zaBQv86fUb/M3c//zd8Q/8wdjz/NHtA/xpDTv8seoj/MH6M/zSCkP8te4n/MX+N/zWDkf/juEv/GkNO/yt5h/8vfYv/M4GP/yx6iP8wfoz/NIKQ/y17if8aQ07/NYOR/y58iv8ygI7/K3mH/y99i/8zgY//47hL/xpDTv80gpD/LXuJ/zF/jf81g5H/LnyK/zKAjv8reYf/OHxE/zR5QP8wdjz/N35D/zN7P/86g0b/NoBC/zJ9Pv85fEX/NXlB/zF2Pf84fkT/NHtA/zB4PP83gEP/M30//zqFRv82eUL/5cJW/zl+Rf81e0H/MXg9/ziARP80fUD/MHo8/zeCQ/8zdj//On5G/zZ7Qv8yeD7/OYBF/zV9Qf8aQ07/M4GP/y99i/8reYf/MoCO/y58iv/juEv/MX+N/xpDTv80gpD/MH6M/yx6iP8zgY//L32L/yt5h/8ygI7/GkNO/zWDkf8xf43/LXuJ/zSCkP8wfoz/47hL/zOBj/8aQ07/K3mH/zKAjv8ufIr/NYOR/zF/jf8te4n/NIKQ/zR5QP8zeT//Mnk+/+XCVv8weTz/OoRG/zmERf84e0T/N3tD/zZ7Qv81e0H/NHtA/zN7P/8yez7/MXs9/zB7PP86fUb/OX1F/zh9RP83fUP/Nn1C/zV9Qf80fUD/5cJW/zJ9Pv8xdD3/MHQ8/zp/Rv85f0X/OH9E/zd/Q/82f0L/GkNO/y99i/8ufIr/LXuJ/yx6iP/juEv/NYOR/zSCkP8aQ07/MoCO/zF/jf8wfoz/L32L/y58iv8te4n/LHqI/xpDTv81g5H/NIKQ/zOBj/8ygI7/47hL/zB+jP8vfYv/GkNO/y17if8seoj/K3mH/zWDkf80gpD/M4GP/zKAjv8wdjz/Mnk+/zR8QP82f0L/OIJE/zqFRv8xdD3/M3c//+XCVv83fUP/OYBF/zB4PP8yez7/NH5A/zaBQv84e0T/On5G/zF2Pf8zeT//NXxB/zd/Q/85gkX/MHo8/zJ9Pv80d0D/NnpC/zh9RP86gEb/MXg9/zN7P/81fkH/N4FD/xpDTv8reYf/LXuJ/y99i//juEv/M4GP/zWDkf8seoj/GkNO/zB+jP8ygI7/NIKQ/yt5h/8te4n/L32L/zF/jf8aQ07/NYOR/yx6iP8ufIr/47hL/zKAjv80gpD/K3mH/xpDTv8vfYv/MX+N/zOBj/81g5H/LHqI/y58iv8wfoz/N35D/zF5Pf82f0L/MHo8/zWAQf86fUb/NHhA/zl+Rf8zeT//OH9E/zJ6Pv83gEP/MXs9/zaBQv8wczz/NXlB/zp/Rv80ekD/OYBF/zN7P//lwlb/Mnw+/zeCQ/8xdD3/NnpC/zB1PP81e0H/OoFG/zR8QP85gkX/M30//ziDRP8aQ07/MoCO/yx6iP/juEv/K3mH/zB+jP81g5H/L32L/xpDTv8ufIr/M4GP/y17if8ygI7/LHqI/zF/jf8reYf/GkNO/zWDkf8vfYv/47hL/y58iv8zgY//LXuJ/zKAjv8aQ07/MX+N/yt5h/8wfoz/NYOR/y99i/80gpD/LnyK/zN7P/8weTz/OIJE/zWAQf8ydT7/5cJW/zd8Q/80ekD/MXg9/zmBRf82f0L/M30//zB7PP84e0T/NXlB/zJ3Pv86gEb/N35D/zR8QP8xej3/OYNF/zaBQv8zdj//MHQ8/zh9RP/lwlb/Mnk+/zqCRv83gEP/NH5A/zF8Pf85fEX/GkNO/y58iv/juEv/M4GP/zB+jP8te4n/NYOR/zKAjv8aQ07/LHqI/zSCkP8xf43/LnyK/yt5h/8zgY//MH6M/xpDTv81g5H/47hL/y99i/8seoj/NIKQ/zF/jf8ufIr/GkNO/zOBj/8wfoz/LXuJ/zWDkf8ygI7/L32L/yx6iP86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/5cJW/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/xpDTv/juEv/NYOR/zWDkf81g5H/NYOR/zWDkf81g5H/GkNO/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/zWDkf8aQ07/47hL/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/xpDTv81g5H/NYOR/zWDkf81g5H/NYOR/zWDkf81g5H/NoBC/zmERf8xdD3/NHhA/zd8Q/86gEb/Mnk+/zV9Qf84gUT/MHo8/zN+P/82eUL/OX1F/zF2Pf80ekD/N35D/zqCRv8yez7/NX9B/ziDRP8wczz/M3c//+XCVv85f0X/MXg9/zR8QP83gEP/OoRG/zJ9Pv81eEH/OHxE/zB1PP/juEv/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/47hL/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/zJ9Pv84e0T/M3c//zl+Rf80ekD/OoFG/zV9Qf/lwlb/NoBC/zF8Pf83ekP/MnY+/zh9RP8zeT//OYBF/zR8QP86g0b/NX9B/zB7PP82eUL/MXU9/zd8Q/8yeD7/OH9E/zN7P/85gkX/NH5A/+XCVv81eEH/MHQ8/zZ7Qv8xdz3/GkNO/y17if8zgY//LnyK/zSCkP8vfYv/NYOR/zB+jP8aQ07/MX+N/yx6iP8ygI7/LXuJ/zOBj/8ufIr/47hL/xpDTv81g5H/MH6M/yt5h/8xf43/LHqI/zKAjv8te4n/GkNO/y58iv80gpD/L32L/zWDkf8wfoz/K3mH/+O4S/85fEX/N3tD/zV6Qf8zeT//MXg9/zqCRv84gUT/NoBC/zR/QP8ydT7/MHQ8/zl+Rf/lwlb/NXxB/zN7P/8xej3/OoRG/ziDRP82eUL/NHhA/zJ3Pv8wdjz/OYBF/zd/Q/81fkH/M30//zF8Pf86fUb/OHxE/zZ7Qv80ekD/Mnk+/xpDTv80gpD/MoCO/zB+jP8ufIr/LHqI/zWDkf8zgY//GkNO/y99i/8te4n/K3mH/zSCkP8ygI7/47hL/y58iv8aQ07/NYOR/zOBj/8xf43/L32L/y17if8reYf/NIKQ/xpDTv8wfoz/LnyK/yx6iP81g5H/M4GP/+O4S/8vfYv/NXlB/zZ7Qv83fUP/OH9E/zmBRf86g0b/MHo8/zF8Pf8ydT7/M3c//zR5QP81e0H/Nn1C/zd/Q/84gUT/OYNF/zqFRv8wczz/MXU9/zJ3Pv8zeT//NHtA/zV9Qf82f0L/5cJW/ziDRP85fEX/On5G/zB1PP8xdz3/Mnk+/zN7P/8aQ07/MH6M/zF/jf8ygI7/M4GP/zSCkP81g5H/K3mH/xpDTv8te4n/LnyK/y99i/8wfoz/47hL/zKAjv8zgY//GkNO/zWDkf8reYf/LHqI/y17if8ufIr/L32L/zB+jP8aQ07/MoCO/zOBj/80gpD/NYOR/+O4S/8seoj/LXuJ/zF2Pf81e0H/OYBF/zJ6Pv82f0L/OoRG/zN+P/83ekP/MHQ8/+XCVv84fkT/MXg9/zV9Qf85gkX/Mnw+/zaBQv86fUb/M3c//zd8Q/8wdjz/NHtA/ziARP8xej3/NX9B/zmERf8ydT7/NnpC/zp/Rv8zeT//5cJW/zB4PP80fUD/GkNO/yx6iP8wfoz/NIKQ/y17if8xf43/NYOR/y58iv8aQ07/K3mH/y99i/8zgY//47hL/zB+jP80gpD/LXuJ/xpDTv81g5H/LnyK/zKAjv8reYf/L32L/zOBj/8seoj/GkNO/zSCkP8te4n/MX+N/+O4S/8ufIr/MoCO/yt5h/84fkT/NHtA/zB4PP83gEP/M30//zqFRv82eUL/MnY+/zl+Rf81e0H/MXg9/ziARP80fUD/MHo8/+XCVv8zdj//On5G/zZ7Qv8yeD7/OYBF/zV9Qf8xej3/OIJE/zR/QP8wczz/N3tD/zN4P/86gEb/Nn1C/zJ6Pv85gkX/NX9B/xpDTv8zgY//L32L/yt5h/8ygI7/LnyK/zWDkf8xf43/GkNO/zSCkP8wfoz/47hL/zOBj/8vfYv/K3mH/zKAjv8aQ07/NYOR/zF/jf8te4n/NIKQ/zB+jP8seoj/M4GP/xpDTv8reYf/MoCO/+O4S/81g5H/MX+N/y17if80gpD/NHtA/zN7P/8yez7/MXs9/zB7PP86fUb/OX1F/zh9RP83fUP/Nn1C/zV9Qf80fUD/M30//zJ9Pv8xdD3/MHQ8/zp/Rv85f0X/OH9E/zd/Q/82f0L/NX9B/zR/QP8zdj//MnY+/zF2Pf/lwlb/OoFG/zmBRf84gUT/N4FD/zaBQv8aQ07/L32L/y58iv8te4n/LHqI/yt5h/81g5H/NIKQ/xpDTv8ygI7/47hL/zB+jP8vfYv/LnyK/y17if8seoj/GkNO/zWDkf80gpD/M4GP/zKAjv8xf43/MH6M/y99i/8aQ07/LXuJ/+O4S/8reYf/NYOR/zSCkP8zgY//MoCO/zB4PP8yez7/NH5A/zaBQv84e0T/On5G/zF2Pf8zeT//NXxB/zd/Q/85gkX/5cJW/zJ9Pv80d0D/NnpC/zh9RP86gEb/MXg9/zN7P/81fkH/N4FD/zmERf8wczz/MnY+/zR5QP82fEL/OH9E/zqCRv8xej3/M30//zWAQf/lwlb/GkNO/yt5h/8te4n/L32L/zF/jf8zgY//NYOR/yx6iP8aQ07/47hL/zKAjv80gpD/K3mH/y17if8vfYv/MX+N/xpDTv81g5H/LHqI/y58iv8wfoz/MoCO/zSCkP8reYf/GkNO/+O4S/8xf43/M4GP/zWDkf8seoj/LnyK/zB+jP83gEP/MXs9/zaBQv8wczz/NXlB/zp/Rv80ekD/OYBF/zN7P/84gUT/Mnw+/zeCQ/8xdD3/NnpC/zB1PP81e0H/5cJW/zR8QP85gkX/M30//ziDRP8ydT7/N3tD/zF2Pf82fEL/MHc8/zV9Qf86g0b/NH5A/zmERf8zdj//OHxE/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/47hL/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/GkNO/+O4S/8aQ07/GkNO/xpDTv8aQ07/GkNO/xpDTv8aQ07/M30//+XCVv84e0T/NXlB/zJ3Pv86gEb/N35D/zR8QP8xej3/OYNF/zaBQv8zdj//MHQ8/zh9RP81e0H/Mnk+/zqCRv83gEP/NH5A/zF8Pf85fEX/NnpC/zN4P/8wdjz/OH9E/zV9Qf8yez7/OoRG/+XCVv80d0D/MXU9/zl+Rf8aQ07/LnyK/yt5h/8zgY//MH6M/y17if81g5H/47hL/xpDTv8seoj/NIKQ/zF/jf8ufIr/K3mH/zOBj/8wfoz/GkNO/zWDkf8ygI7/L32L/yx6iP80gpD/MX+N/+O4S/8aQ07/M4GP/zB+jP8te4n/NYOR/zKAjv8vfYv/LHqI/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv/lwlb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/OoFG/zqCRv86g0b/OoRG/zqFRv86fUb/On5G/zp/Rv86gEb/GkNO/zWDkf81g5H/NYOR/zWDkf81g5H/47hL/zWDkf8aQ07/NYOR/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/xpDTv81g5H/NYOR/zWDkf81g5H/NYOR/+O4S/81g5H/GkNO/zWDkf81g5H/NYOR/zWDkf81g5H/NYOR/zWDkf82eUL/OX1F/zF2Pf80ekD/N35D/zqCRv8yez7/NX9B/ziDRP8wczz/M3c//zZ7Qv85f0X/MXg9/zR8QP83gEP/OoRG/zJ9Pv/lwlb/OHxE/zB1PP8zeT//Nn1C/zmBRf8xej3/NH5A/zeCQ/86fUb/MnY+/zV6Qf84fkT/MHc8/xpDTv8xf43/NIKQ/yx6iP8vfYv/47hL/zWDkf8te4n/GkNO/zOBj/8reYf/LnyK/zF/jf80gpD/LHqI/y99i/8aQ07/NYOR/y17if8wfoz/M4GP/+O4S/8ufIr/MX+N/xpDTv8seoj/L32L/zKAjv81g5H/LXuJ/zB+jP8zgY//MnY+/zh9RP8zeT//5cJW/zR8QP86g0b/NX9B/zB7PP82eUL/MXU9/zd8Q/8yeD7/OH9E/zN7P/85gkX/NH5A/zqFRv81eEH/MHQ8/zZ7Qv8xdz3/N35D/zJ6Pv84gUT/M30//zmERf80d0D/On5G/zV6Qf8wdjz/5cJW/zF5Pf8aQ07/LXuJ/zOBj/8ufIr/47hL/y99i/81g5H/MH6M/xpDTv8xf43/LHqI/zKAjv8te4n/M4GP/y58iv80gpD/GkNO/zWDkf8wfoz/K3mH/+O4S/8seoj/MoCO/y17if8aQ07/LnyK/zSCkP8vfYv/NYOR/zB+jP8reYf/MX+N/zl+Rf83fUP/NXxB/zN7P/8xej3/OoRG/ziDRP82eUL/NHhA/zJ3Pv8wdjz/OYBF/zd/Q/81fkH/M30//+XCVv86fUb/OHxE/zZ7Qv80ekD/Mnk+/zB4PP85gkX/N4FD/zWAQf8zdj//MXU9/zp/Rv84fkT/Nn1C/zR8QP8yez7/GkNO/zSCkP8ygI7/47hL/y58iv8seoj/NYOR/zOBj/8aQ07/L32L/y17if8reYf/NIKQ/zKAjv8wfoz/LnyK/xpDTv81g5H/M4GP/+O4S/8vfYv/LXuJ/yt5h/80gpD/GkNO/zB+jP8ufIr/LHqI/zWDkf8zgY//MX+N/y99i//lwlb/Nn1C/zd/Q/84gUT/OYNF/zqFRv8wczz/MXU9/zJ3Pv8zeT//NHtA/zV9Qf82f0L/N4FD/ziDRP85fEX/On5G/zB1PP8xdz3/Mnk+/+XCVv80fUD/NX9B/zaBQv83ekP/OHxE/zl+Rf86gEb/MHc8/zF5Pf8yez7/M30//xpDTv8wfoz/47hL/zKAjv8zgY//NIKQ/zWDkf8reYf/GkNO/y17if8ufIr/L32L/zB+jP8xf43/MoCO/zOBj/8aQ07/NYOR/+O4S/8seoj/LXuJ/y58iv8vfYv/MH6M/xpDTv8ygI7/M4GP/zSCkP81g5H/K3mH/yx6iP8te4n/MXg9/zV9Qf85gkX/Mnw+/zaBQv/lwlb/M3c//zd8Q/8wdjz/NHtA/ziARP8xej3/NX9B/zmERf8ydT7/NnpC/zp/Rv8zeT//N35D/zB4PP80fUD/OIJE/zF8Pf81eEH/OX1F/zJ3Pv82fEL/OoFG/zN7P/83gEP/MHo8/zR/QP8aQ07/47hL/zB+jP80gpD/LXuJ/zF/jf81g5H/LnyK/xpDTv8reYf/L32L/zOBj/8seoj/MH6M/zSCkP8te4n/GkNO/+O4S/8ufIr/MoCO/yt5h/8vfYv/M4GP/yx6iP8aQ07/NIKQ/y17if8xf43/NYOR/y58iv8ygI7/K3mH/w=="
+    }
+  ],
+  "materials": [
+    {
+      "id": "ground",
+      "color": [
+        0.045,
+        0.075,
+        0.1,
+        1
+      ]
+    },
+    {
+      "id": "stone",
+      "color": [
+        0.15,
+        0.24,
+        0.29,
+        1
+      ]
+    },
+    {
+      "id": "edge",
+      "color": [
+        0.09,
+        0.48,
+        0.43,
+        1
+      ]
+    },
+    {
+      "id": "player",
+      "color": [
+        0.65,
+        0.94,
+        0.88,
+        1
+      ]
+    },
+    {
+      "id": "crystal",
+      "color": [
+        0.84,
+        0.38,
+        0.85,
+        1
+      ]
+    },
+    {
+      "id": "gold",
+      "color": [
+        0.98,
+        0.59,
+        0.17,
+        1
+      ]
+    },
+    {
+      "id": "path",
+      "color": [
+        0.08,
+        0.15,
+        0.19,
+        1
+      ]
+    },
+    {
+      "id": "garden.material0",
+      "color": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "texture": "garden.image0"
+    },
+    {
+      "id": "garden.material1",
+      "color": [
+        1,
+        1,
+        1,
+        1
+      ],
+      "texture": "garden.image0"
+    }
+  ],
+  "meshes": [
+    {
+      "id": "box",
+      "source": {
+        "kind": "cube"
+      }
+    },
+    {
+      "id": "floor",
+      "source": {
+        "kind": "plane"
+      }
+    },
+    {
+      "id": "gem",
+      "source": {
+        "kind": "octahedron"
+      }
+    },
+    {
+      "id": "spire",
+      "source": {
+        "kind": "inline",
+        "vertices": [
+          {
+            "position": [
+              -1,
+              0,
+              1
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              0.8944272
+            ]
+          },
+          {
+            "position": [
+              1,
+              0,
+              1
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              0.8944272
+            ]
+          },
+          {
+            "position": [
+              0,
+              2,
+              0
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              0.8944272
+            ]
+          },
+          {
+            "position": [
+              1,
+              0,
+              1
+            ],
+            "normal": [
+              0.8944272,
+              0.4472136,
+              0
+            ]
+          },
+          {
+            "position": [
+              1,
+              0,
+              -1
+            ],
+            "normal": [
+              0.8944272,
+              0.4472136,
+              0
+            ]
+          },
+          {
+            "position": [
+              0,
+              2,
+              0
+            ],
+            "normal": [
+              0.8944272,
+              0.4472136,
+              0
+            ]
+          },
+          {
+            "position": [
+              1,
+              0,
+              -1
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              -0.8944272
+            ]
+          },
+          {
+            "position": [
+              -1,
+              0,
+              -1
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              -0.8944272
+            ]
+          },
+          {
+            "position": [
+              0,
+              2,
+              0
+            ],
+            "normal": [
+              0,
+              0.4472136,
+              -0.8944272
+            ]
+          },
+          {
+            "position": [
+              -1,
+              0,
+              -1
+            ],
+            "normal": [
+              -0.8944272,
+              0.4472136,
+              0
+            ]
+          },
+          {
+            "position": [
+              -1,
+              0,
+              1
+            ],
+            "normal": [
+              -0.8944272,
+              0.4472136,
+              0
+            ]
+          },
+          {
+            "position": [
+              0,
+              2,
+              0
+            ],
+            "normal": [
+              -0.8944272,
+              0.4472136,
+              0
+            ]
+          }
+        ],
+        "indices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ]
+      }
+    },
+    {
+      "id": "garden.node1.p0.mesh",
+      "source": {
+        "kind": "inline",
+        "vertices": [
+          {
+            "position": [
+              -1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              1.6
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0.35,
+              -1.6
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              -1.6
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.6,
+              0,
+              1.6
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              1.425
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.9,
+              -1.425
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              -1.425
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.425,
+              0.35,
+              1.425
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              1.25
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.98,
+              -1.25
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              -1.25
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.4921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.25,
+              0.9,
+              1.25
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.0078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              0.85
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.99,
+              -0.85
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              -0.85
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -0.85,
+              2.87,
+              0.85
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.04,
+              2.99,
+              1.04
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              0.5358244
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.04,
+              2.99,
+              1.04
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              0.5358244
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0,
+              3.65,
+              0
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              0.5358244
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.04,
+              2.99,
+              1.04
+            ],
+            "normal": [
+              0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              1.04,
+              2.99,
+              -1.04
+            ],
+            "normal": [
+              0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0,
+              3.65,
+              0
+            ],
+            "normal": [
+              0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              1.04,
+              2.99,
+              -1.04
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              -0.5358244
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.04,
+              2.99,
+              -1.04
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              -0.5358244
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0,
+              3.65,
+              0
+            ],
+            "normal": [
+              0,
+              0.8443294,
+              -0.5358244
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          },
+          {
+            "position": [
+              -1.04,
+              2.99,
+              -1.04
+            ],
+            "normal": [
+              -0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              -1.04,
+              2.99,
+              1.04
+            ],
+            "normal": [
+              -0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.9921875
+            ]
+          },
+          {
+            "position": [
+              0,
+              3.65,
+              0
+            ],
+            "normal": [
+              -0.5358244,
+              0.8443294,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.5078125
+            ]
+          }
+        ],
+        "indices": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3,
+          4,
+          5,
+          6,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14,
+          12,
+          14,
+          15,
+          16,
+          17,
+          18,
+          16,
+          18,
+          19,
+          20,
+          21,
+          22,
+          20,
+          22,
+          23,
+          24,
+          25,
+          26,
+          24,
+          26,
+          27,
+          28,
+          29,
+          30,
+          28,
+          30,
+          31,
+          32,
+          33,
+          34,
+          32,
+          34,
+          35,
+          36,
+          37,
+          38,
+          36,
+          38,
+          39,
+          40,
+          41,
+          42,
+          40,
+          42,
+          43,
+          44,
+          45,
+          46,
+          44,
+          46,
+          47,
+          48,
+          49,
+          50,
+          48,
+          50,
+          51,
+          52,
+          53,
+          54,
+          52,
+          54,
+          55,
+          56,
+          57,
+          58,
+          56,
+          58,
+          59,
+          60,
+          61,
+          62,
+          60,
+          62,
+          63,
+          64,
+          65,
+          66,
+          64,
+          66,
+          67,
+          68,
+          69,
+          70,
+          68,
+          70,
+          71,
+          72,
+          73,
+          74,
+          72,
+          74,
+          75,
+          76,
+          77,
+          78,
+          76,
+          78,
+          79,
+          80,
+          81,
+          82,
+          80,
+          82,
+          83,
+          84,
+          85,
+          86,
+          84,
+          86,
+          87,
+          88,
+          89,
+          90,
+          88,
+          90,
+          91,
+          92,
+          93,
+          94,
+          92,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107
+        ]
+      }
+    },
+    {
+      "id": "garden.node1.p1.mesh",
+      "source": {
+        "kind": "inline",
+        "vertices": [
+          {
+            "position": [
+              -0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              0.24
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              2.33,
+              -0.24
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              -0.24
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.24,
+              0.98,
+              0.24
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              0,
+              0,
+              1
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              0,
+              0,
+              -1
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              -1,
+              0,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              0.625
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.87,
+              -0.625
+            ],
+            "normal": [
+              0,
+              1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              -0.625
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.4921875
+            ]
+          },
+          {
+            "position": [
+              0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.9921875,
+              0.0078125
+            ]
+          },
+          {
+            "position": [
+              -0.625,
+              2.15,
+              0.625
+            ],
+            "normal": [
+              0,
+              -1,
+              0
+            ],
+            "uv": [
+              0.5078125,
+              0.0078125
+            ]
+          }
+        ],
+        "indices": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3,
+          4,
+          5,
+          6,
+          4,
+          6,
+          7,
+          8,
+          9,
+          10,
+          8,
+          10,
+          11,
+          12,
+          13,
+          14,
+          12,
+          14,
+          15,
+          16,
+          17,
+          18,
+          16,
+          18,
+          19,
+          20,
+          21,
+          22,
+          20,
+          22,
+          23,
+          24,
+          25,
+          26,
+          24,
+          26,
+          27,
+          28,
+          29,
+          30,
+          28,
+          30,
+          31,
+          32,
+          33,
+          34,
+          32,
+          34,
+          35,
+          36,
+          37,
+          38,
+          36,
+          38,
+          39,
+          40,
+          41,
+          42,
+          40,
+          42,
+          43,
+          44,
+          45,
+          46,
+          44,
+          46,
+          47
+        ]
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": "ground",
+      "name": "ground",
+      "mesh": "floor",
+      "material": "ground",
+      "transform": {
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          24,
+          1,
+          24
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "player",
+      "name": "player",
+      "mesh": "box",
+      "material": "player",
+      "transform": {
+        "translation": [
+          0,
+          0.6,
+          7
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          1.2,
+          1.2
+        ]
+      },
+      "tags": [
+        "player"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 2,
+        "filter": 5,
+        "sensor": false
+      }
+    },
+    {
+      "id": "north-wall",
+      "name": "north wall",
+      "mesh": "box",
+      "material": "edge",
+      "transform": {
+        "translation": [
+          0,
+          0.35,
+          -12
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          24,
+          0.7,
+          0.3
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "south-wall",
+      "name": "south wall",
+      "mesh": "box",
+      "material": "edge",
+      "transform": {
+        "translation": [
+          0,
+          0.35,
+          12
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          24,
+          0.7,
+          0.3
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "east-wall",
+      "name": "east wall",
+      "mesh": "box",
+      "material": "edge",
+      "transform": {
+        "translation": [
+          12,
+          0.35,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.3,
+          0.7,
+          24
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "west-wall",
+      "name": "west wall",
+      "mesh": "box",
+      "material": "edge",
+      "transform": {
+        "translation": [
+          -12,
+          0.35,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.3,
+          0.7,
+          24
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "block-1",
+      "name": "block 1",
+      "mesh": "box",
+      "material": "stone",
+      "transform": {
+        "translation": [
+          -4,
+          1,
+          -1
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2,
+          2,
+          5
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "block-2",
+      "name": "block 2",
+      "mesh": "box",
+      "material": "stone",
+      "transform": {
+        "translation": [
+          4,
+          1,
+          -1
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2,
+          2,
+          5
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "block-3",
+      "name": "block 3",
+      "mesh": "box",
+      "material": "stone",
+      "transform": {
+        "translation": [
+          -7,
+          0.6,
+          4
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2,
+          1.2,
+          2
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "block-4",
+      "name": "block 4",
+      "mesh": "box",
+      "material": "stone",
+      "transform": {
+        "translation": [
+          7,
+          0.6,
+          4
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2,
+          1.2,
+          2
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "block-5",
+      "name": "block 5",
+      "mesh": "box",
+      "material": "stone",
+      "transform": {
+        "translation": [
+          0,
+          0.5,
+          -7
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          2,
+          1.2,
+          2
+        ]
+      },
+      "tags": [
+        "solid"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    },
+    {
+      "id": "crystal-1",
+      "name": "crystal 1",
+      "mesh": "gem",
+      "material": "crystal",
+      "transform": {
+        "translation": [
+          0,
+          1,
+          4.5
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "crystal-2",
+      "name": "crystal 2",
+      "mesh": "gem",
+      "material": "gold",
+      "transform": {
+        "translation": [
+          -7,
+          1,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "crystal-3",
+      "name": "crystal 3",
+      "mesh": "gem",
+      "material": "crystal",
+      "transform": {
+        "translation": [
+          7,
+          1,
+          0
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "crystal-4",
+      "name": "crystal 4",
+      "mesh": "gem",
+      "material": "gold",
+      "transform": {
+        "translation": [
+          -5,
+          1,
+          -7
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "crystal-5",
+      "name": "crystal 5",
+      "mesh": "gem",
+      "material": "crystal",
+      "transform": {
+        "translation": [
+          5,
+          1,
+          -7
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "crystal-6",
+      "name": "crystal 6",
+      "mesh": "gem",
+      "material": "gold",
+      "transform": {
+        "translation": [
+          0,
+          1,
+          -10
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          0.85,
+          1.2,
+          0.85
+        ]
+      },
+      "tags": [
+        "pickup"
+      ],
+      "collider": {
+        "shape": {
+          "kind": "sphere",
+          "radius": 0.8
+        },
+        "memberships": 4,
+        "filter": 2,
+        "sensor": true
+      }
+    },
+    {
+      "id": "path-1",
+      "name": "path 1",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          8
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-2",
+      "name": "path 2",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          5.5
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-3",
+      "name": "path 3",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          3
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-4",
+      "name": "path 4",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          0.5
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-5",
+      "name": "path 5",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          -2
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-6",
+      "name": "path 6",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          -4.5
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "path-7",
+      "name": "path 7",
+      "mesh": "box",
+      "material": "path",
+      "transform": {
+        "translation": [
+          0,
+          0.025,
+          -7
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.8,
+          0.05,
+          1.3
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "spire-west",
+      "name": "spire west",
+      "mesh": "spire",
+      "material": "crystal",
+      "transform": {
+        "translation": [
+          -9,
+          0,
+          -9
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          1.6,
+          1.2
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "spire-east",
+      "name": "spire east",
+      "mesh": "spire",
+      "material": "gold",
+      "transform": {
+        "translation": [
+          9,
+          0,
+          -9
+        ],
+        "rotation_degrees": [
+          0,
+          0,
+          0
+        ],
+        "scale": [
+          1.2,
+          1.6,
+          1.2
+        ]
+      },
+      "tags": []
+    },
+    {
+      "id": "west-lantern",
+      "name": "West garden lantern",
+      "prefab": "garden-lantern",
+      "transform": {
+        "translation": [
+          -8,
+          0,
+          -5
+        ]
+      }
+    },
+    {
+      "id": "east-lantern",
+      "name": "East garden lantern",
+      "prefab": "garden-lantern",
+      "transform": {
+        "translation": [
+          8,
+          0,
+          -5
+        ]
+      }
+    },
+    {
+      "id": "player-accessory",
+      "name": "Golden shoulder crystal",
+      "parent": "player",
+      "mesh": "gem",
+      "material": "gold",
+      "transform": {
+        "translation": [
+          0.62,
+          0.55,
+          0
+        ],
+        "scale": [
+          0.35,
+          0.5,
+          0.35
+        ]
+      }
+    },
+    {
+      "id": "ground-collider",
+      "name": "Ground collision volume",
+      "parent": "ground",
+      "transform": {
+        "translation": [
+          0,
+          -0.5,
+          0
+        ]
+      },
+      "collider": {
+        "shape": {
+          "kind": "cuboid",
+          "half_extents": [
+            0.5,
+            0.5,
+            0.5
+          ]
+        },
+        "memberships": 1,
+        "filter": 2,
+        "sensor": false
+      }
+    }
+  ],
+  "prefabs": [
+    {
+      "id": "garden-lantern",
+      "entities": [
+        {
+          "id": "planter",
+          "name": "Stone planter",
+          "mesh": "garden.node1.p0.mesh",
+          "material": "garden.material0",
+          "tags": [
+            "imported"
+          ]
+        },
+        {
+          "id": "lantern",
+          "name": "Garden lantern",
+          "mesh": "garden.node1.p1.mesh",
+          "material": "garden.material1",
+          "tags": [
+            "imported"
+          ]
+        }
+      ]
+    }
+  ]
+}

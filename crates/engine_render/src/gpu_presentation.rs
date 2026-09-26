@@ -1,0 +1,873 @@
+//! GPU presentation (decision 014): uploads gathered interpolation inputs and
+//! candidate draw groups, then records compute passes that blend, compose,
+//! validate and cull displayed poses and compact visible slots per group for
+//! indirect draws. Per-frame CPU work is a uniform write and a few dispatches;
+//! inputs upload only when core's gather sequence advanced (normally once per
+//! fixed tick) and groups only when the candidate structure changed. After a
+//! quiet tick only current poses upload: a small pass first copies the last
+//! current poses into the previous half of the pose buffer.
+
+use std::{cell::Cell, rc::Rc};
+
+use engine_core::{
+    Aabb, GpuPresentation, MAX_HIERARCHY_DEPTH, NodeInfo, NodePose, PoseRows, RenderFrame,
+};
+
+use crate::batches::{BatchPlan, DrawBatch};
+use crate::gpu_data::{
+    BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, PRESENTATION_SHADER,
+    PresentationFrame, frustum_uniform,
+};
+use crate::gpu_uploads::changed_ranges;
+use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
+use crate::uploads::UploadRange;
+
+const GROUP: u32 = 256;
+const PARENT_GROUP: u32 = 64;
+// Each `shift_previous` invocation copies four floats.
+const SHIFT_FLOATS: u64 = 4 * 256;
+const ARGS_GROUP: u32 = 64;
+const LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
+const READBACKS: usize = 3;
+// Uniform offset alignment between the per-depth `Level` records.
+const LEVEL_STRIDE: u64 = 256;
+// Beyond this bound the CPU frustum also fails open (see culling.rs).
+const MAX_COEFFICIENT: f32 = 1.0e15;
+// Bindings need at least one element; exceeds every record stride.
+const MIN_STORAGE_BYTES: u64 = 256;
+
+struct Pipelines {
+    shift_previous: wgpu::ComputePipeline,
+    compose_parents: wgpu::ComputePipeline,
+    cull: wgpu::ComputePipeline,
+    scan_groups: wgpu::ComputePipeline,
+    batch_args: wgpu::ComputePipeline,
+    scatter: wgpu::ComputePipeline,
+}
+
+struct BindGroups {
+    shift_previous: wgpu::BindGroup,
+    compose_parents: wgpu::BindGroup,
+    cull: wgpu::BindGroup,
+    scan_groups: wgpu::BindGroup,
+    batch_args: wgpu::BindGroup,
+    scatter: wgpu::BindGroup,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Readback {
+    Idle,
+    Recorded,
+    Pending,
+}
+
+struct VisibleReadback {
+    buffer: wgpu::Buffer,
+    state: Rc<Cell<Readback>>,
+    value: Rc<Cell<Option<u32>>>,
+}
+
+/// Per-frame outcome for profiling counters and stats.
+#[derive(Default)]
+pub(crate) struct GpuPrepared {
+    pub candidates: u32,
+    pub node_upload_bytes: u64,
+    pub group_upload_bytes: u64,
+    pub full_node_upload: bool,
+    pub staged: bool,
+    pub parent_levels: usize,
+    /// This frame copied current poses into previous slots on the GPU.
+    pub shifted: bool,
+    /// Blending is suspended after a missed copy until the next applied one.
+    pub blend: bool,
+    /// Current poses were copied from a buffer staged ahead of this frame.
+    pub prestaged: bool,
+    /// Inputs gathered ahead of their due frame were held, not applied.
+    pub held: bool,
+}
+
+pub(crate) struct GpuPresentationPass {
+    pipelines: Pipelines,
+    frame: wgpu::Buffer,
+    levels: wgpu::Buffer,
+    // One group per depth level: auto layouts have no dynamic offsets.
+    level_groups: Vec<wgpu::BindGroup>,
+    node_capacity: usize,
+    // Current poses in slots [0, node_capacity), previous poses after them.
+    locals: wgpu::Buffer,
+    // Previous poses are consistent with the gathers this pass applied.
+    blend: bool,
+    info: wgpu::Buffer,
+    authority: wgpu::Buffer,
+    composed: wgpu::Buffer,
+    composed_capacity: usize,
+    parents: wgpu::Buffer,
+    parent_capacity: usize,
+    candidate_capacity: usize,
+    candidates: wgpu::Buffer,
+    scan: wgpu::Buffer,
+    visible_ids: wgpu::Buffer,
+    batch_capacity: usize,
+    batches: wgpu::Buffer,
+    batch_bases: wgpu::Buffer,
+    draws: wgpu::Buffer,
+    bind_groups: Option<BindGroups>,
+    // Identity of the pose storage bound for writing; rebuild groups on change.
+    poses_generation: Option<u64>,
+    uploaded: Option<(u64, u64)>,
+    groups_key: Option<(u64, u64, u64, u64)>,
+    candidate_count: u32,
+    batch_count: u32,
+    level_ranges: Vec<(u32, u32)>,
+    // Changed ranges of the current, previous, info and authority streams.
+    ranges: [Vec<UploadRange>; 4],
+    candidate_staging: Vec<CandidateData>,
+    batch_staging: Vec<BatchData>,
+    readbacks: Vec<VisibleReadback>,
+    // Current poses staged between frames for the next gather, with the
+    // `GpuPresentation::current_version` they were copied at.
+    prestaged: Option<(Prestaged, (u64, u64))>,
+    last_visible: Rc<Cell<Option<u32>>>,
+}
+
+fn storage(
+    device: &wgpu::Device,
+    label: &str,
+    bytes: u64,
+    extra: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes.max(MIN_STORAGE_BYTES).next_multiple_of(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
+        mapped_at_creation: false,
+    })
+}
+
+fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
+    }
+}
+
+fn grow(needed: usize) -> usize {
+    needed.max(1_024).next_power_of_two()
+}
+
+impl GpuPresentationPass {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/presentation.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(PRESENTATION_SHADER.into()),
+        });
+        let pipeline = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: None,
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let pipelines = Pipelines {
+            shift_previous: pipeline("shift_previous"),
+            compose_parents: pipeline("compose_parents"),
+            cull: pipeline("cull"),
+            scan_groups: pipeline("scan_groups"),
+            batch_args: pipeline("batch_args"),
+            scatter: pipeline("scatter"),
+        };
+        let frame = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/presentation-frame"),
+            size: size_of::<PresentationFrame>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let levels = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/presentation-levels"),
+            size: LEVELS as u64 * LEVEL_STRIDE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let level_layout = pipelines.compose_parents.get_bind_group_layout(1);
+        let level_groups = (0..LEVELS as u64)
+            .map(|level| {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("engine/presentation-level-group"),
+                    layout: &level_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &levels,
+                            offset: level * LEVEL_STRIDE,
+                            size: wgpu::BufferSize::new(16),
+                        }),
+                    }],
+                })
+            })
+            .collect();
+        let empty = |label| storage(device, label, 0, wgpu::BufferUsages::empty());
+        Self {
+            pipelines,
+            frame,
+            levels,
+            level_groups,
+            node_capacity: 0,
+            locals: empty("engine/presentation-locals"),
+            blend: false,
+            info: empty("engine/presentation-info"),
+            authority: empty("engine/presentation-authority"),
+            composed: empty("engine/presentation-composed"),
+            composed_capacity: 0,
+            parents: empty("engine/presentation-parents"),
+            parent_capacity: 0,
+            candidate_capacity: 0,
+            candidates: empty("engine/presentation-candidates"),
+            scan: empty("engine/presentation-scan"),
+            visible_ids: storage(
+                device,
+                "engine/presentation-visible-ids",
+                0,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            batch_capacity: 0,
+            batches: empty("engine/presentation-batches"),
+            batch_bases: empty("engine/presentation-batch-bases"),
+            draws: storage(
+                device,
+                "engine/presentation-draws",
+                0,
+                wgpu::BufferUsages::INDIRECT,
+            ),
+            bind_groups: None,
+            poses_generation: None,
+            uploaded: None,
+            groups_key: None,
+            candidate_count: 0,
+            batch_count: 0,
+            level_ranges: Vec::new(),
+            ranges: Default::default(),
+            candidate_staging: Vec::new(),
+            batch_staging: Vec::new(),
+            readbacks: Vec::new(),
+            prestaged: None,
+            last_visible: Rc::new(Cell::new(None)),
+        }
+    }
+
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        [
+            &self.locals,
+            &self.info,
+            &self.authority,
+            &self.composed,
+            &self.parents,
+            &self.candidates,
+            &self.scan,
+            &self.visible_ids,
+            &self.batches,
+            &self.batch_bases,
+            &self.draws,
+        ]
+        .iter()
+        .map(|buffer| buffer.size())
+        .sum()
+    }
+
+    /// Latest visible instance count read back from the GPU, a few frames old.
+    pub(crate) fn visible(&self) -> Option<u32> {
+        self.last_visible.get()
+    }
+
+    fn ensure_nodes(&mut self, device: &wgpu::Device, nodes: usize, parents: usize) {
+        if nodes > self.node_capacity {
+            self.node_capacity = grow(nodes);
+            let capacity = self.node_capacity as u64;
+            self.locals = storage(
+                device,
+                "engine/presentation-locals",
+                2 * capacity * size_of::<NodePose>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.info = storage(
+                device,
+                "engine/presentation-info",
+                capacity * size_of::<NodeInfo>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.authority = storage(
+                device,
+                "engine/presentation-authority",
+                capacity * size_of::<PoseRows>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.uploaded = None;
+            self.bind_groups = None;
+            // Composed parents are indexed by node; resize with the node space.
+            self.composed_capacity = 0;
+        }
+        if parents != 0 && self.composed_capacity < self.node_capacity {
+            self.composed_capacity = self.node_capacity;
+            self.composed = storage(
+                device,
+                "engine/presentation-composed",
+                self.composed_capacity as u64 * COMPOSED_BYTES,
+                wgpu::BufferUsages::empty(),
+            );
+            self.bind_groups = None;
+        }
+        if parents > self.parent_capacity {
+            self.parent_capacity = grow(parents);
+            self.parents = storage(
+                device,
+                "engine/presentation-parents",
+                self.parent_capacity as u64 * 4,
+                wgpu::BufferUsages::empty(),
+            );
+            self.bind_groups = None;
+        }
+    }
+
+    fn ensure_groups(&mut self, device: &wgpu::Device, candidates: usize, batches: usize) {
+        if candidates > self.candidate_capacity {
+            self.candidate_capacity = grow(candidates);
+            let capacity = self.candidate_capacity as u64;
+            let groups = capacity.div_ceil(u64::from(GROUP));
+            self.candidates = storage(
+                device,
+                "engine/presentation-candidates",
+                capacity * size_of::<CandidateData>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            // Flags, one sum per group, and the total.
+            self.scan = storage(
+                device,
+                "engine/presentation-scan",
+                (capacity + groups + 1) * 4,
+                wgpu::BufferUsages::COPY_SRC,
+            );
+            self.visible_ids = storage(
+                device,
+                "engine/presentation-visible-ids",
+                capacity * 4,
+                wgpu::BufferUsages::VERTEX,
+            );
+            self.groups_key = None;
+            self.bind_groups = None;
+        }
+        if batches > self.batch_capacity {
+            self.batch_capacity = batches.max(64).next_power_of_two();
+            let capacity = self.batch_capacity as u64;
+            self.batches = storage(
+                device,
+                "engine/presentation-batches",
+                capacity * size_of::<BatchData>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.batch_bases = storage(
+                device,
+                "engine/presentation-batch-bases",
+                capacity * 4,
+                wgpu::BufferUsages::empty(),
+            );
+            self.draws = storage(
+                device,
+                "engine/presentation-draws",
+                capacity * DRAW_ARGS_BYTES,
+                wgpu::BufferUsages::INDIRECT,
+            );
+            self.groups_key = None;
+            self.bind_groups = None;
+        }
+    }
+
+    fn bind_groups(&mut self, device: &wgpu::Device, poses: &wgpu::Buffer) {
+        if self.bind_groups.is_some() {
+            return;
+        }
+        let group = |pipeline: &wgpu::ComputePipeline, label, entries: &[wgpu::BindGroupEntry]| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(label),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries,
+            })
+        };
+        let pipelines = &self.pipelines;
+        self.bind_groups = Some(BindGroups {
+            shift_previous: group(
+                &pipelines.shift_previous,
+                "engine/presentation-shift-group",
+                &[entry(13, &self.locals)],
+            ),
+            compose_parents: group(
+                &pipelines.compose_parents,
+                "engine/presentation-compose-group",
+                &[
+                    entry(0, &self.frame),
+                    entry(1, &self.locals),
+                    entry(2, &self.info),
+                    entry(3, &self.authority),
+                    entry(4, &self.composed),
+                    entry(5, &self.parents),
+                ],
+            ),
+            cull: group(
+                &pipelines.cull,
+                "engine/presentation-cull-group",
+                &[
+                    entry(0, &self.frame),
+                    entry(1, &self.locals),
+                    entry(2, &self.info),
+                    entry(3, &self.authority),
+                    entry(4, &self.composed),
+                    entry(6, &self.candidates),
+                    entry(7, &self.batches),
+                    entry(8, poses),
+                    entry(9, &self.scan),
+                ],
+            ),
+            scan_groups: group(
+                &pipelines.scan_groups,
+                "engine/presentation-scan-group",
+                &[entry(0, &self.frame), entry(9, &self.scan)],
+            ),
+            batch_args: group(
+                &pipelines.batch_args,
+                "engine/presentation-args-group",
+                &[
+                    entry(0, &self.frame),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(12, &self.draws),
+                ],
+            ),
+            scatter: group(
+                &pipelines.scatter,
+                "engine/presentation-scatter-group",
+                &[
+                    entry(0, &self.frame),
+                    entry(6, &self.candidates),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(11, &self.visible_ids),
+                ],
+            ),
+        });
+    }
+
+    /// Holds current poses staged between frames for the next gather to copy.
+    pub(crate) fn prestage(&mut self, prestaged: Prestaged, version: (u64, u64)) {
+        self.prestaged = Some((prestaged, version));
+    }
+
+    /// Uploads changed inputs, groups and the frame uniform. Large node
+    /// uploads record staged copies into `copies`, submitted before the frame.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        staging_ring: &mut StagingRing,
+        copies: &mut Option<wgpu::CommandEncoder>,
+        frame: &RenderFrame<'_>,
+        gpu: &GpuPresentation<'_>,
+        plan: &BatchPlan,
+        batch_meta: impl Fn(&DrawBatch) -> (u32, Aabb),
+        poses: &wgpu::Buffer,
+        poses_generation: u64,
+    ) -> GpuPrepared {
+        let mut prepared = GpuPrepared::default();
+        let nodes = gpu.info.len();
+        // A held gather waits for its due frame: keep presenting the inputs
+        // applied last, in their node space and parent buffers.
+        let held = gpu.hold
+            && self
+                .uploaded
+                .is_some_and(|(identity, _)| identity == gpu.identity);
+        prepared.held = held;
+        self.ensure_nodes(device, nodes, if held { 0 } else { gpu.parents.len() });
+        let candidates = plan.ordered_instances.len();
+        self.ensure_groups(device, candidates, plan.batches.len());
+        if self.poses_generation != Some(poses_generation) {
+            self.poses_generation = Some(poses_generation);
+            self.bind_groups = None;
+        }
+        self.bind_groups(device, poses);
+
+        // Node inputs: records newer than the last uploaded gather.
+        let since = match self.uploaded {
+            Some((identity, sequence)) if identity == gpu.identity => Some(sequence),
+            _ => None,
+        };
+        if !held && since != Some(gpu.sequence) {
+            prepared.full_node_upload = since.is_none();
+            match since {
+                // A complete upload carries every previous pose explicitly.
+                None => self.blend = true,
+                Some(since) if gpu.shift_sequence > since => {
+                    if gpu.shift && since + 1 == gpu.sequence {
+                        // Submitted before this gather's writes: queued writes and
+                        // staged copies take effect at the next submission.
+                        let groups = self.bind_groups.as_ref().expect("bound above");
+                        let mut encoder =
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("engine/presentation-shift"),
+                            });
+                        {
+                            let mut pass =
+                                encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                                    label: Some("engine/presentation-shift"),
+                                    timestamp_writes: None,
+                                });
+                            pass.set_pipeline(&self.pipelines.shift_previous);
+                            pass.set_bind_group(0, &groups.shift_previous, &[]);
+                            let floats = (self.node_capacity * size_of::<NodePose>() / 4) as u64;
+                            pass.dispatch_workgroups(floats.div_ceil(SHIFT_FLOATS) as u32, 1, 1);
+                        }
+                        queue.submit([encoder.finish()]);
+                        prepared.shifted = true;
+                        self.blend = true;
+                    } else {
+                        // A copy was missed: previous poses stay inconsistent
+                        // until a copy this pass applies in order.
+                        self.blend = false;
+                    }
+                }
+                Some(_) => {}
+            }
+            let pose_stride = size_of::<NodePose>();
+            let streams = [
+                (
+                    &self.locals,
+                    0,
+                    bytemuck::cast_slice::<NodePose, u8>(gpu.current),
+                    pose_stride,
+                    gpu.current_stamps,
+                ),
+                (
+                    &self.locals,
+                    (self.node_capacity * pose_stride) as u64,
+                    bytemuck::cast_slice::<NodePose, u8>(gpu.previous),
+                    pose_stride,
+                    gpu.previous_stamps,
+                ),
+                (
+                    &self.info,
+                    0,
+                    bytemuck::cast_slice::<NodeInfo, u8>(gpu.info),
+                    size_of::<NodeInfo>(),
+                    gpu.info_stamps,
+                ),
+                (
+                    &self.authority,
+                    0,
+                    bytemuck::cast_slice::<PoseRows, u8>(gpu.authority),
+                    size_of::<PoseRows>(),
+                    gpu.authority_stamps,
+                ),
+            ];
+            // One gather behind, the gather's per-stream counts decide clean
+            // and dense streams without scanning their stamps.
+            let consecutive = since.is_some_and(|since| since + 1 == gpu.sequence);
+            let mut total = 0;
+            for ((ranges, (_, _, _, stride, stamps)), &stamped) in
+                self.ranges.iter_mut().zip(&streams).zip(&gpu.stamped)
+            {
+                match since {
+                    Some(_) if consecutive && stamped == 0 => ranges.clear(),
+                    Some(since) if !consecutive || stamped * 4 < stamps.len() * 3 => {
+                        changed_ranges(stamps, since, *stride, ranges);
+                    }
+                    _ => {
+                        ranges.clear();
+                        if !stamps.is_empty() {
+                            ranges.push(UploadRange {
+                                start: 0,
+                                end: stamps.len(),
+                            });
+                        }
+                    }
+                }
+            }
+            // Current poses staged ahead of this frame replace their whole-stream
+            // copy when unchanged since, after any shift submitted above.
+            let current_bytes = size_of_val(gpu.current) as u64;
+            if let Some((prestaged, _)) = self.prestaged.take().filter(|(prestaged, version)| {
+                *version == gpu.current_version
+                    && prestaged.bytes() == current_bytes
+                    && matches!(self.ranges[0].as_slice(),
+                        [range] if range.start == 0 && range.end == gpu.current.len())
+            }) {
+                let encoder = copies.get_or_insert_with(|| {
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("engine/presentation-input-copies"),
+                    })
+                });
+                prestaged.copy_to(encoder, &self.locals, 0);
+                self.ranges[0].clear();
+                prepared.prestaged = true;
+            }
+            for (ranges, (_, _, _, stride, _)) in self.ranges.iter().zip(&streams) {
+                total += ranges
+                    .iter()
+                    .map(|range| (range.end - range.start) * stride)
+                    .sum::<usize>();
+            }
+            prepared.node_upload_bytes =
+                total as u64 + if prepared.prestaged { current_bytes } else { 0 };
+            // Every stream shares one staging buffer when the total is large.
+            if total >= staging::MIN_STAGED_BYTES {
+                let segments: Vec<Segment<'_>> = streams
+                    .iter()
+                    .zip(&self.ranges)
+                    .map(
+                        |(&(destination, base, records, stride, _), ranges)| Segment {
+                            destination,
+                            base,
+                            records,
+                            stride,
+                            ranges,
+                        },
+                    )
+                    .collect();
+                let encoder = copies.get_or_insert_with(|| {
+                    device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("engine/presentation-input-copies"),
+                    })
+                });
+                prepared.staged =
+                    staging_ring.record_segments(device, encoder, &segments) == Staged::Recorded;
+            }
+            if !prepared.staged {
+                for (ranges, &(buffer, base, bytes, stride, _)) in self.ranges.iter().zip(&streams)
+                {
+                    for range in ranges {
+                        queue.write_buffer(
+                            buffer,
+                            base + (range.start * stride) as u64,
+                            &bytes[range.start * stride..range.end * stride],
+                        );
+                    }
+                }
+            }
+            if !gpu.parents.is_empty() {
+                queue.write_buffer(&self.parents, 0, bytemuck::cast_slice(gpu.parents));
+            }
+            self.level_ranges.clear();
+            let mut start = 0;
+            for &end in gpu.levels {
+                self.level_ranges.push((start, end));
+                start = end;
+            }
+            for (level, &(start, end)) in self.level_ranges.iter().enumerate() {
+                queue.write_buffer(
+                    &self.levels,
+                    level as u64 * LEVEL_STRIDE,
+                    bytemuck::cast_slice(&[start, end, 0, 0]),
+                );
+            }
+            self.uploaded = Some((gpu.identity, gpu.sequence));
+        }
+        prepared.parent_levels = self.level_ranges.len();
+        prepared.blend = self.blend;
+
+        // Candidate groups: rebuilt with the candidate structure or node space.
+        let key = (
+            frame.identity(),
+            frame.structure_revision(),
+            frame.source_revision(),
+            gpu.identity,
+        );
+        if self.groups_key != Some(key) {
+            let slot_nodes = frame.slot_nodes();
+            self.candidate_staging.clear();
+            self.candidate_staging.reserve_exact(candidates);
+            self.batch_staging.clear();
+            self.batch_staging.reserve_exact(plan.batches.len());
+            for (index, batch) in plan.batches.iter().enumerate() {
+                let (index_count, bounds) = batch_meta(batch);
+                let range = batch.instances.start as usize..batch.instances.end as usize;
+                self.batch_staging.push(BatchData {
+                    start: batch.instances.start,
+                    count: batch.instances.end - batch.instances.start,
+                    index_count,
+                    pad: 0,
+                    bounds_min: bounds.min().extend(0.0).to_array(),
+                    bounds_max: bounds.max().extend(0.0).to_array(),
+                });
+                self.candidate_staging
+                    .extend(
+                        plan.ordered_instances[range]
+                            .iter()
+                            .map(|&slot| CandidateData {
+                                slot: slot as u32,
+                                node: slot_nodes[slot],
+                                batch: index as u32,
+                                pad: 0,
+                            }),
+                    );
+            }
+            if !self.candidate_staging.is_empty() {
+                queue.write_buffer(
+                    &self.candidates,
+                    0,
+                    bytemuck::cast_slice(&self.candidate_staging),
+                );
+            }
+            if !self.batch_staging.is_empty() {
+                queue.write_buffer(&self.batches, 0, bytemuck::cast_slice(&self.batch_staging));
+            }
+            prepared.group_upload_bytes =
+                (self.candidate_staging.len() * size_of::<CandidateData>()
+                    + self.batch_staging.len() * size_of::<BatchData>()) as u64;
+            self.candidate_count = candidates as u32;
+            self.batch_count = plan.batches.len() as u32;
+            self.groups_key = Some(key);
+        }
+        prepared.candidates = self.candidate_count;
+
+        // A view-projection the CPU frustum rejects disables culling there too.
+        let view_projection = frame.snapshot().view_projection;
+        let (planes, absolute) = frustum_uniform(view_projection);
+        let bounded = absolute
+            .iter()
+            .flatten()
+            .all(|value| value.is_finite() && *value <= MAX_COEFFICIENT)
+            && planes.iter().flatten().all(|value| value.is_finite());
+        let uniform = PresentationFrame {
+            alpha: gpu.alpha,
+            candidates: self.candidate_count,
+            budget: frame.instance_budget().min(u32::MAX as usize) as u32,
+            culling: u32::from(frame.culling() && bounded),
+            groups: self.candidate_count.div_ceil(GROUP),
+            batches: self.batch_count,
+            node_capacity: self.node_capacity as u32,
+            blend: u32::from(self.blend),
+            planes,
+            absolute_view_projection: absolute,
+        };
+        queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
+        prepared
+    }
+
+    /// Records blending, composition, culling and compaction.
+    pub(crate) fn encode(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        timestamps: Option<wgpu::ComputePassTimestampWrites<'_>>,
+    ) {
+        let Some(groups) = self.bind_groups.as_ref() else {
+            return;
+        };
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/presentation"),
+                timestamp_writes: timestamps,
+            });
+            if !self.level_ranges.is_empty() {
+                pass.set_pipeline(&self.pipelines.compose_parents);
+                pass.set_bind_group(0, &groups.compose_parents, &[]);
+                for (level, &(start, end)) in self.level_ranges.iter().enumerate() {
+                    if end > start {
+                        pass.set_bind_group(1, &self.level_groups[level], &[]);
+                        pass.dispatch_workgroups((end - start).div_ceil(PARENT_GROUP), 1, 1);
+                    }
+                }
+            }
+            if self.candidate_count != 0 {
+                let workgroups = self.candidate_count.div_ceil(GROUP);
+                pass.set_pipeline(&self.pipelines.cull);
+                pass.set_bind_group(0, &groups.cull, &[]);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.set_pipeline(&self.pipelines.scan_groups);
+                pass.set_bind_group(0, &groups.scan_groups, &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+                pass.set_pipeline(&self.pipelines.batch_args);
+                pass.set_bind_group(0, &groups.batch_args, &[]);
+                pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
+                pass.set_pipeline(&self.pipelines.scatter);
+                pass.set_bind_group(0, &groups.scatter, &[]);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+            }
+        }
+        if self.candidate_count != 0 {
+            // Read back the total visible count without waiting for it.
+            let total = u64::from(self.candidate_count + self.candidate_count.div_ceil(GROUP)) * 4;
+            let scan = self.scan.clone();
+            if let Some(readback) = self.idle_readback(device) {
+                encoder.copy_buffer_to_buffer(&scan, total, &readback.buffer, 0, 4);
+                readback.state.set(Readback::Recorded);
+            }
+        }
+    }
+
+    fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&VisibleReadback> {
+        if let Some(index) = self
+            .readbacks
+            .iter()
+            .position(|readback| readback.state.get() == Readback::Idle)
+        {
+            return Some(&self.readbacks[index]);
+        }
+        if self.readbacks.len() == READBACKS {
+            return None;
+        }
+        self.readbacks.push(VisibleReadback {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/presentation-visible-readback"),
+                size: 4,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            state: Rc::new(Cell::new(Readback::Idle)),
+            value: Rc::clone(&self.last_visible),
+        });
+        self.readbacks.last()
+    }
+
+    /// Requests maps of read-backs recorded in the frame just submitted.
+    pub(crate) fn after_submit(&mut self) {
+        for readback in &self.readbacks {
+            if readback.state.get() != Readback::Recorded {
+                continue;
+            }
+            readback.state.set(Readback::Pending);
+            let state = Rc::clone(&readback.state);
+            let value = Rc::clone(&readback.value);
+            let buffer = readback.buffer.clone();
+            readback
+                .buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    if result.is_ok() {
+                        if let Ok(view) = buffer.slice(..).get_mapped_range() {
+                            let bytes: [u8; 4] = view[..4].try_into().unwrap_or([0; 4]);
+                            value.set(Some(u32::from_le_bytes(bytes)));
+                        }
+                        buffer.unmap();
+                    }
+                    state.set(Readback::Idle);
+                });
+        }
+    }
+
+    /// Visible-ID region and indirect arguments of plan batch `index`.
+    pub(crate) fn draw_source<'a>(
+        &'a self,
+        batch: &DrawBatch,
+        index: usize,
+    ) -> (wgpu::BufferSlice<'a>, &'a wgpu::Buffer, u64) {
+        let start = u64::from(batch.instances.start) * 4;
+        let end = u64::from(batch.instances.end) * 4;
+        (
+            self.visible_ids.slice(start..end),
+            &self.draws,
+            index as u64 * DRAW_ARGS_BYTES,
+        )
+    }
+}

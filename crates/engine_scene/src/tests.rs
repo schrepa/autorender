@@ -1,0 +1,471 @@
+use engine_core::{
+    AssetBudget, AssetLibrary, Camera, Mesh, Mesh3d, Transform, bevy_ecs::world::World,
+};
+
+use crate::{MeshSource, SceneDocument, SceneEntity, SceneMesh};
+
+const SOURCE: &str = r#"{
+  "version": 1,
+  "id": "test-scene",
+  "revision": 4,
+  "materials": [{"id": "teal", "color": [0.1, 0.8, 0.6, 1.0]}],
+  "meshes": [{"id": "box", "source": {"kind": "cube"}}],
+  "entities": [{
+    "id": "player", "name": "Player", "mesh": "box", "material": "teal",
+    "transform": {"translation": [0.0, 1.0, 0.0], "rotation_degrees": [0.0, 90.0, 0.0]},
+    "tags": ["spin"]
+  }]
+}"#;
+
+fn document() -> SceneDocument {
+    SceneDocument::from_json(SOURCE).unwrap()
+}
+
+fn world(budget: AssetBudget) -> World {
+    let mut world = World::new();
+    world.insert_resource(AssetLibrary::new(budget));
+    world.insert_resource(Camera::default());
+    world
+}
+
+#[test]
+fn canonical_roundtrip_preserves_authored_identity_and_defaults() {
+    let document = document();
+    let source = document.to_json().unwrap();
+    let restored = SceneDocument::from_json(&source).unwrap();
+    assert_eq!(restored.to_json().unwrap(), source);
+    assert_eq!(restored.id, "test-scene");
+    assert_eq!(restored.revision, 4);
+    assert_eq!(restored.entities[0].id, "player");
+    assert_eq!(restored.entities[0].transform.scale, [1.0; 3]);
+    assert!(!source.contains("generation"));
+    assert!(!source.contains("handle"));
+}
+
+#[test]
+fn rejects_future_versions_and_unknown_fields() {
+    let error = SceneDocument::from_json(&SOURCE.replace(
+        "\"version\": 1",
+        &format!("\"version\": {}", crate::SCENE_VERSION + 1),
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "unsupported_version");
+    assert_eq!(error.path, "$.version");
+    for malformed in [
+        SOURCE.replace("\"revision\": 4", "\"revision\": 4, \"typo\": true"),
+        SOURCE.replace("\"kind\": \"cube\"", "\"kind\": \"cube\", \"typo\": true"),
+        SOURCE.replace("\"translation\"", "\"translatoin\""),
+    ] {
+        assert_eq!(
+            SceneDocument::from_json(&malformed).unwrap_err().code,
+            "invalid_json"
+        );
+    }
+}
+
+#[test]
+fn rejects_duplicate_ids_and_missing_references_with_paths() {
+    let mut document = document();
+    document.entities.push(document.entities[0].clone());
+    let error = document.validate().unwrap_err();
+    assert_eq!(error.code, "duplicate_id");
+    assert_eq!(error.path, "$.entities[1].id");
+    document.entities.pop();
+    document.entities[0].mesh = Some("missing".into());
+    let error = document.validate().unwrap_err();
+    assert_eq!(error.code, "unknown_reference");
+    assert_eq!(error.path, "$.entities[0].mesh");
+    document.entities[0].mesh = Some("box".into());
+    document.materials.push(document.materials[0].clone());
+    assert_eq!(document.validate().unwrap_err().path, "$.materials[1].id");
+    document.materials.pop();
+    document.meshes.push(document.meshes[0].clone());
+    assert_eq!(document.validate().unwrap_err().path, "$.meshes[1].id");
+}
+
+#[test]
+fn rejects_nonfinite_singular_and_overflowing_transforms() {
+    for value in [0.0, -1.0, 0.000_001, f32::NAN, f32::INFINITY, f32::MAX] {
+        let mut document = document();
+        document.entities[0].transform.scale[1] = value;
+        let error = document.validate().unwrap_err();
+        assert_eq!(error.code, "invalid_scale");
+        assert_eq!(error.path, "$.entities[0].transform.scale[1]");
+    }
+    let mut document = document();
+    document.entities[0].transform.translation[0] = f32::NAN;
+    assert_eq!(document.validate().unwrap_err().code, "invalid_number");
+    document.entities[0].transform.translation[0] = 0.0;
+    document.entities[0].transform.rotation_degrees[2] = f32::INFINITY;
+    assert_eq!(document.validate().unwrap_err().code, "invalid_number");
+}
+
+#[test]
+fn rejects_bad_lens_and_coincident_camera() {
+    let mut document = document();
+    document.camera.fov_degrees = 180.0;
+    assert_eq!(
+        document.validate().unwrap_err().path,
+        "$.camera.fov_degrees"
+    );
+    document.camera.fov_degrees = 55.0;
+    document.camera.near = 0.0;
+    assert_eq!(document.validate().unwrap_err().path, "$.camera.near");
+    document.camera.near = 0.1;
+    document.camera.far = 0.05;
+    assert_eq!(document.validate().unwrap_err().path, "$.camera.far");
+    document.camera.far = 500.0;
+    document.camera.target = document.camera.position;
+    assert_eq!(document.validate().unwrap_err().path, "$.camera.target");
+}
+
+#[test]
+fn bounds_input_names_and_game_tags() {
+    assert_eq!(
+        SceneDocument::from_json(&" ".repeat(1024 * 1024 + 1))
+            .unwrap_err()
+            .code,
+        "source_too_large"
+    );
+    let mut document = document();
+    document.id = "invalid id".into();
+    assert_eq!(document.validate().unwrap_err().code, "invalid_id");
+    document.id = "x".repeat(65);
+    assert_eq!(document.validate().unwrap_err().code, "invalid_id");
+    document.id = "scene".into();
+    document.entities[0].name = "line\nbreak".into();
+    assert_eq!(document.validate().unwrap_err().code, "invalid_name");
+    document.entities[0].name.clear();
+    document.entities[0].tags.push("spin".into());
+    assert_eq!(document.validate().unwrap_err().code, "duplicate_tag");
+    document.entities[0].tags = (0..17).map(|index| format!("tag-{index}")).collect();
+    assert_eq!(document.validate().unwrap_err().code, "count_limit");
+}
+
+#[test]
+fn rejects_invalid_inline_mesh_before_world_mutation() {
+    let mut document = document();
+    document.meshes.push(SceneMesh {
+        id: "broken".into(),
+        source: MeshSource::Inline {
+            vertices: vec![crate::SceneVertex {
+                position: [0.0; 3],
+                normal: [0.0, 1.0, 0.0],
+                uv: [0.0; 2],
+            }],
+            indices: vec![0, 1, 2],
+        },
+    });
+    let mut world = world(AssetBudget::default());
+    let error = document.instantiate(&mut world).unwrap_err();
+    assert_eq!(error.code, "invalid_mesh");
+    assert_eq!(error.path, "$.meshes[1].source");
+    assert_eq!(world.resource::<AssetLibrary>().mesh_count(), 0);
+    assert_eq!(world.query::<&SceneEntity>().iter(&world).count(), 0);
+}
+
+#[test]
+fn requires_explicit_asset_owner() {
+    let error = document().instantiate(&mut World::new()).unwrap_err();
+    assert_eq!(error.code, "missing_asset_library");
+}
+
+#[test]
+fn material_capacity_failure_rolls_back_meshes_and_keeps_existing_resources() {
+    let mut world = world(AssetBudget {
+        max_materials: 0,
+        ..AssetBudget::default()
+    });
+    let existing = world
+        .resource_mut::<AssetLibrary>()
+        .insert_mesh(Mesh::plane())
+        .unwrap();
+    let original_bytes = world.resource::<AssetLibrary>().resident_bytes();
+    let original_camera = *world.resource::<Camera>();
+    let mut document = document();
+    document.camera.position = [3.0, 4.0, 5.0];
+    let error = document.instantiate(&mut world).unwrap_err();
+    assert_eq!(error.code, "asset_budget_exceeded");
+    assert_eq!(error.path, "$.materials[0]");
+    let assets = world.resource::<AssetLibrary>();
+    assert_eq!(assets.mesh_count(), 1);
+    assert_eq!(assets.material_count(), 0);
+    assert_eq!(assets.resident_bytes(), original_bytes);
+    assert!(assets.mesh(existing).is_some());
+    assert_eq!(world.query::<&SceneEntity>().iter(&world).count(), 0);
+    assert_eq!(
+        world.resource::<Camera>().position,
+        original_camera.position
+    );
+}
+
+#[test]
+fn partial_mesh_insertion_rolls_back_on_capacity_failure() {
+    let mut world = world(AssetBudget {
+        max_meshes: 1,
+        ..AssetBudget::default()
+    });
+    let mut document = document();
+    document.meshes.push(SceneMesh {
+        id: "ground".into(),
+        source: MeshSource::Plane {},
+    });
+    let error = document.instantiate(&mut world).unwrap_err();
+    assert_eq!(error.path, "$.meshes[1]");
+    assert_eq!(world.resource::<AssetLibrary>().mesh_count(), 0);
+    assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), 0);
+    assert_eq!(world.query::<&SceneEntity>().iter(&world).count(), 0);
+}
+
+#[test]
+fn instantiation_sets_authored_transform_and_identity() {
+    let mut world = world(AssetBudget::default());
+    let document = document();
+    let instance = document.instantiate(&mut world).unwrap();
+    assert_eq!(instance.id(), "test-scene");
+    assert_eq!(instance.revision(), 4);
+    assert_eq!(instance.entity_count(), 1);
+    assert!(instance.entity("nonexistent").is_none());
+    let entity = instance.entity("player").unwrap();
+    let identity = world.get::<SceneEntity>(entity).unwrap();
+    assert_eq!(identity.authored_id, "player");
+    assert_eq!(identity.tags, ["spin"]);
+    let transform = world.get::<Transform>(entity).unwrap();
+    assert_eq!(transform.translation.to_array(), [0.0, 1.0, 0.0]);
+    let rotated_x = transform.rotation * engine_core::glam::Vec3::X;
+    assert!((rotated_x - engine_core::glam::Vec3::NEG_Z).length() < 0.000_001);
+    instance.despawn(&mut world);
+}
+
+#[test]
+fn explicit_disposal_preserves_unrelated_entities_and_other_instances() {
+    let mut world = world(AssetBudget::default());
+    let unrelated = world.spawn(Transform::default()).id();
+    let first = document().instantiate(&mut world).unwrap();
+    let second = document().instantiate(&mut world).unwrap();
+    let first_entity = first.entity("player").unwrap();
+    let second_entity = second.entity("player").unwrap();
+    let stale_mesh = world.get::<Mesh3d>(first_entity).unwrap().mesh;
+    assert_ne!(first_entity, second_entity);
+    first.despawn(&mut world);
+    assert!(world.get_entity(first_entity).is_err());
+    assert!(world.get_entity(second_entity).is_ok());
+    assert!(world.get_entity(unrelated).is_ok());
+    let assets = world.resource::<AssetLibrary>();
+    assert_eq!(assets.mesh_count(), 1);
+    assert_eq!(assets.material_count(), 1);
+    assert!(assets.mesh(stale_mesh).is_none());
+    second.despawn(&mut world);
+    assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), 0);
+    assert_eq!(world.query::<&Transform>().iter(&world).count(), 1);
+    assert_eq!(world.query::<&SceneEntity>().iter(&world).count(), 0);
+}
+
+#[test]
+fn failed_reload_preserves_old_instance_and_camera() {
+    let mut world = world(AssetBudget {
+        max_meshes: 1,
+        ..AssetBudget::default()
+    });
+    let old = document().instantiate(&mut world).unwrap();
+    let old_entity = old.entity("player").unwrap();
+    let old_camera = *world.resource::<Camera>();
+    let mut replacement = document();
+    replacement.revision += 1;
+    replacement.camera.position = [7.0, 8.0, 9.0];
+    assert!(replacement.instantiate(&mut world).is_err());
+    assert!(world.get_entity(old_entity).is_ok());
+    assert_eq!(world.resource::<AssetLibrary>().mesh_count(), 1);
+    assert_eq!(world.resource::<AssetLibrary>().material_count(), 1);
+    assert_eq!(world.resource::<Camera>().position, old_camera.position);
+    assert_eq!(old.revision(), 4);
+    old.despawn(&mut world);
+}
+
+#[test]
+fn disposal_tolerates_entities_removed_by_gameplay() {
+    let mut world = world(AssetBudget::default());
+    let instance = document().instantiate(&mut world).unwrap();
+    world.despawn(instance.entity("player").unwrap());
+    let unrelated = world.spawn(Transform::default()).id();
+    instance.despawn(&mut world);
+    assert!(world.get_entity(unrelated).is_ok());
+    assert_eq!(world.resource::<AssetLibrary>().mesh_count(), 0);
+}
+
+#[test]
+fn errors_have_stable_serializable_structure() {
+    let mut document = document();
+    document.version = crate::SCENE_VERSION + 1;
+    let value = serde_json::to_value(document.validate().unwrap_err()).unwrap();
+    assert_eq!(value["code"], "unsupported_version");
+    assert_eq!(value["path"], "$.version");
+    assert!(
+        value["message"]
+            .as_str()
+            .unwrap()
+            .contains("expected version 1")
+    );
+}
+
+fn textured_document() -> SceneDocument {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut document = document();
+    document.version = crate::SCENE_VERSION;
+    document.textures.push(crate::SceneTexture {
+        id: "tiles".into(),
+        width: 2,
+        height: 1,
+        rgba8: STANDARD.encode([255, 80, 20, 255, 40, 180, 240, 255]),
+    });
+    document.materials[0].texture = Some("tiles".into());
+    document
+}
+
+#[test]
+fn authored_texture_roundtrip_resolves_dependency_and_disposes_owned_pixels() {
+    let document = textured_document();
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let (id, texture_handle) = instance.textures().next().unwrap();
+    assert_eq!(id, "tiles");
+    let mesh = world
+        .get::<Mesh3d>(instance.entity("player").unwrap())
+        .unwrap();
+    let assets = world.resource::<AssetLibrary>();
+    assert_eq!(
+        assets.material(mesh.material).unwrap().texture(),
+        Some(texture_handle)
+    );
+    assert_eq!(assets.texture_bytes(), 8);
+    assert_eq!(
+        assets.texture(texture_handle).unwrap().pixels()[..4],
+        [255, 80, 20, 255]
+    );
+    instance.despawn(&mut world);
+    let assets = world.resource::<AssetLibrary>();
+    assert_eq!(assets.texture_count(), 0);
+    assert_eq!(assets.resident_bytes(), 0);
+    assert!(assets.texture(texture_handle).is_none());
+}
+
+#[test]
+fn legacy_scenes_stay_readable_and_new_texture_semantics_require_version_two() {
+    let legacy = document();
+    assert_eq!(legacy.version, 1);
+    assert!(!legacy.to_json().unwrap().contains("textures"));
+    let mut textured = textured_document();
+    textured.version = 1;
+    assert_eq!(textured.validate().unwrap_err().code, "version_required");
+    textured.version = crate::SCENE_VERSION;
+    assert!(textured.validate().is_ok());
+}
+
+#[test]
+fn serialization_stops_at_source_budget_for_large_valid_rust_documents() {
+    let mut document = document();
+    let entity = document.entities.pop().unwrap();
+    for index in 0..10_000 {
+        let mut entity = entity.clone();
+        entity.id = format!("object-{index}");
+        document.entities.push(entity);
+    }
+    assert!(document.validate().is_ok());
+    assert_eq!(document.to_json().unwrap_err().code, "source_too_large");
+}
+
+#[test]
+fn rejects_texture_reference_encoding_dimensions_and_alpha_before_mutation() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    let mut broken = textured_document();
+    broken.materials[0].texture = Some("missing".into());
+    assert_eq!(
+        broken.validate().unwrap_err().path,
+        "$.materials[0].texture"
+    );
+    let mut cases = Vec::new();
+    let mut value = textured_document();
+    value.textures[0].rgba8 = "!".repeat(12);
+    cases.push(value);
+    let mut value = textured_document();
+    value.textures[0].width = 0;
+    cases.push(value);
+    let mut value = textured_document();
+    value.textures[0].width = u32::MAX;
+    cases.push(value);
+    let mut value = textured_document();
+    value.textures[0].rgba8 = STANDARD.encode([0u8; 8]);
+    cases.push(value);
+    let mut value = textured_document();
+    value.textures[0].rgba8 = STANDARD.encode([255u8; 4]);
+    cases.push(value);
+    for value in cases {
+        let mut world = world(AssetBudget::default());
+        let entity_count = world.entities().len();
+        assert_eq!(
+            value.instantiate(&mut world).unwrap_err().code,
+            "invalid_texture"
+        );
+        assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), 0);
+        assert_eq!(world.entities().len(), entity_count);
+    }
+}
+
+#[test]
+fn texture_admission_and_late_material_failure_roll_back_new_assets() {
+    for budget in [
+        AssetBudget {
+            max_textures: 0,
+            ..AssetBudget::default()
+        },
+        AssetBudget {
+            max_materials: 0,
+            ..AssetBudget::default()
+        },
+    ] {
+        let mut world = world(budget);
+        let existing = world
+            .resource_mut::<AssetLibrary>()
+            .insert_mesh(Mesh::plane())
+            .unwrap();
+        let bytes = world.resource::<AssetLibrary>().resident_bytes();
+        let camera = world.resource::<Camera>().position;
+        let error = textured_document().instantiate(&mut world).unwrap_err();
+        assert_eq!(error.code, "asset_budget_exceeded");
+        let assets = world.resource::<AssetLibrary>();
+        assert_eq!(assets.resident_bytes(), bytes);
+        assert_eq!(assets.texture_count(), 0);
+        assert_eq!(assets.material_count(), 0);
+        assert!(assets.mesh(existing).is_some());
+        assert_eq!(world.resource::<Camera>().position, camera);
+    }
+}
+
+#[test]
+fn failed_textured_replacement_preserves_old_texture_and_entities() {
+    let mut world = world(AssetBudget {
+        max_textures: 1,
+        ..AssetBudget::default()
+    });
+    let old = textured_document().instantiate(&mut world).unwrap();
+    let texture = old.textures().next().unwrap().1;
+    let entity = old.entity("player").unwrap();
+    let bytes = world.resource::<AssetLibrary>().resident_bytes();
+    assert!(textured_document().instantiate(&mut world).is_err());
+    assert!(world.get_entity(entity).is_ok());
+    assert!(world.resource::<AssetLibrary>().texture(texture).is_some());
+    assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), bytes);
+    old.despawn(&mut world);
+}
+
+#[cfg(feature = "schema")]
+#[test]
+fn generated_schema_rejects_unknown_properties_and_describes_source_variants() {
+    let schema: serde_json::Value = serde_json::from_str(&SceneDocument::schema_json()).unwrap();
+    assert_eq!(schema["additionalProperties"], false);
+    assert!(schema["properties"]["version"].is_object());
+    let text = schema.to_string();
+    assert!(text.contains("octahedron"));
+    assert!(text.contains("inline"));
+}

@@ -1,0 +1,20 @@
+{
+  "name": "browser-engine-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "node --test scripts/input.test.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.1"
+  }
+}

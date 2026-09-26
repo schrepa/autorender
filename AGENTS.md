@@ -1,0 +1,52 @@
+# Repository map
+
+Read `README.md` for setup and `docs/architecture.md` for the frame and ownership contracts.
+`engine-repository-guide.md` is the original design input, not a list of already implemented features.
+
+- `crates/engine_core`: Bevy-based gameplay API, clocks, scene data, render extraction. No GPU or browser imports.
+- `crates/engine_collision`: opt-in affine primitive collision, bounded spatial queries, sensor snapshots.
+- `crates/engine_math`: branch-free, deterministic `f32` trigonometry used by the engine, games and the vendored glam.
+- `crates/engine_assets`: validated immutable CPU assets, typed handles, bounded ownership.
+- `crates/engine_scene`: versioned authoring, scene validation, transactional instantiation, explicit disposal.
+- `crates/engine_dev`: optional inspection protocol, generated schemas, guarded native source saves.
+- `crates/engine_render`: GPU resources, upload layouts, WGSL, capability and surface handling.
+- `crates/engine_profile`: optional bounded CPU collector and executable-selected allocator accounting; disabled hooks have no external dependencies. See `docs/profiling.md`.
+- `crates/engine`: public façade and browser composition.
+- `examples/orbit-demo`: game client and its generated Wasm binding surface.
+- `examples/playground`: authored game, movement/collection plugin, scene reload example.
+- `examples/stress-lab`: deterministic configurable stress workloads, demo phase timers, production measurement UI. See `docs/stress-lab.md`.
+- `web`: thin TypeScript host, input/lifecycle handling, diagnostics display.
+- `tools/xtask`: shared build and verification commands.
+- `tools/assetc`: native bounded static GLB/PNG conversion; never a runtime dependency.
+- `vendor/glam`: glam 0.30.9 with only its `f32` sine/cosine routed to `engine_math`; see `vendor/glam/VENDORED.md`.
+
+Agent development is the primary workflow. Read `docs/agent-workflow.md`; use `cargo xtask agent` for browser sessions and `cargo xtask scene` for structured validation/saves. Discover registered data before assuming fields. Distinguish source changes from temporary controls and verify returned revisions. Never blindly retry an uncertain mutation.
+
+For textured models read `docs/asset-import.md`. Use `cargo xtask asset import` and its shared scene validation; never add image decoders to the browser frame loop. Reserve generated import IDs within their namespace. Reimport with explicit `--replace` and the saved revision. Texture/UV scenes require version 2 or later; versions 1/2 retain their original semantics. Verify per-ID CPU/GPU readiness and capture the rendered result after reload.
+
+For parents and reusable objects read `docs/adr-006-hierarchy-and-prefabs.md`. Scene version 3 supports `parent`, `prefabs` and one-entry placements. `Transform` is local; inspect `GlobalTransform` for world matrices and `Hierarchy` for source identity. Page children with `inspect` and a `parent` selector. Use checked `set_parent`/`set_parents`; gameplay must not write derived globals. Prefabs share scene assets, cannot nest, and do not imply cascade disposal. Preserve scene ownership. `--as-prefab` imports a definition without creating a placement.
+
+For Rust edits, start `cargo xtask agent watch`; see `docs/rust-iteration.md`. While editing, use `node web/scripts/agent.mjs development`, `sessions`, and runtime commands so compiler errors cannot prevent the client from launching. A successful Rust rebuild resets gameplay and returns a new session/build ID. Failed builds preserve the previous runtime. Read diagnostics and discover the new session before sending further mutations.
+
+For transform mutation read `docs/adr-011-in-place-transforms.md` and `docs/adr-013-canonical-poses-and-retained-rendering.md`. Use ordinary `Query<&mut Transform>` for frequent gameplay updates or `edit_transform` for immediate world edits. Read authoritative poses from `Res<GlobalTransforms>` and last-prepared poses from `Res<PresentedTransforms>` via `get(entity)`. `GlobalTransform` and `PresentedTransform` are copyable read values, not components; `Changed<GlobalTransform>` is no longer an observation API. Read after named boundaries or compare store output revisions with validated `TransformIndex` hints. `Parent` stays immutable; use checked parent helpers. `TransformEdits` remains a deferred replacement API with ordinary insertion observers; chain dependent systems before reading queued edits. An engine-owned `Changed<Transform>` filter checks metadata before fetching payloads; unchanged boundaries still visit timestamps. Successful refreshes advance the ECS change tick without advancing gameplay clocks. `bypass_change_detection` and manual change-tick edits opt out and are unsupported for transform updates. See `docs/migrations/0.1-canonical-poses.md` for typed-reader migration; agent pose JSON names/shapes remain unchanged.
+
+For performance work read `docs/benchmarking.md` and decision 007. Use `cargo xtask benchmark` (or the direct Node runner) with a fixed configuration and retain its JSON report. Compare identical metadata and inspect per-run variation before claiming improvement. `visible_instances` is pre-budget; `instances` is submitted count; `render_candidates` is total renderables. Visibility does not own entities or evict still-referenced GPU assets. Agent `camera`, `culling` and `benchmark` controls require pause and are temporary; step benchmarks clear input and advance gameplay.
+
+For transform/presentation optimization read `docs/adr-012-transform-validation-and-presentation.md`. The common matrix path proves the existing admission predicate; keep its fallback and review numerical proofs on math-library upgrades. Certified leaves defer their world matrices (`docs/adr-016-deferred-leaf-globals.md`); reads compose the same bits, and certificate bounds need the same review. Dense presentation consumes source history hints in parent-first order. Small-angle rotations use normalized linear interpolation, with larger turns using spherical interpolation; exact-current captures and authoritative simulation poses retain their contracts. Compare fractional `present` workloads as well as `step` workloads when measuring changes.
+
+For detailed profiling read `docs/profiling.md`. `cargo xtask profile` builds separate profiling artifacts; `--attribution` keeps hot helpers out of line for function-level sampling (compare shares, then confirm on the ordinary build). Discover `ProfileCapture`, then use agent `profile` from a paused session; it resumes ordinary frames and pauses after saving bounded trace/CPU-profile artifacts. Inspect capability gaps, completeness and profiler overhead. GPU durations correlate by frame ID, not calibrated CPU/GPU clocks; memory scopes are not total process memory.
+
+For smooth rendering read `docs/adr-008-render-interpolation.md`. Games opt local fixed-simulation motion in with `InterpolateTransform`. Authoritative transforms remain unchanged; inspect `PresentedTransform` and `PresentationState` for the last prepared extraction. Reset interpolation on teleports. Default paused step/render/capture are exact current state; explicit `present {alpha}` or `capture {alpha}` previews a fractional pose without advancing clocks. Use matched setup ticks for present/render benchmarks.
+
+For GPU presentation read `docs/adr-014-gpu-presentation-and-culling.md`. Ordinary interpolated browser frames blend, compose, validate and cull on the GPU; the CPU pass stays the exact reference for captures, `present` previews and inspection. After a GPU frame `PresentationState::gpu_pending()` is true and `PresentedTransforms` is stale: call `Engine::prepare_presented_transforms` (refused once inputs change) or opt out with `BrowserApp::set_gpu_presentation(false)`; never feed display poses back into simulation. Preview the GPU path with `present`/`capture` `{alpha, gpu: true}`; GPU-frame visible counts are read back a few frames late. Keep shader constants exact and tested against core, run `web/scripts/gpu-presentation-smoke.mjs` after presentation, culling or shader changes, compare `?presentation=cpu` in the same build, and report frames with and without a fixed tick separately.
+For tick pipelining read `docs/adr-015-pipelined-fixed-ticks.md`. With GPU presentation `BrowserApp` runs one stage of the next fixed tick after each submitted frame and presents the previous interval until that tick is due. `Presentation` systems can observe an in-flight tick's gameplay effects and fixed time before its transforms, and its input is sampled up to two frames early; exact extraction, steps, resets and dev commands complete a started tick first. Opt out with `set_tick_pipelining(false)`, compare `?pipeline=off` in the Stress Lab, and count ticks as `fixed_tick` plus `fixed_tick_end` spans.
+
+For collision read `docs/adr-009-collision-and-spatial-queries.md`. Install `CollisionPlugin` explicitly; author v4 `collider` fields independently of meshes. Query authoritative `CollisionWorld`, refresh after out-of-band edits, and handle completeness/errors. Sensor consumers run in `FixedPostSimulation` after `CollisionSystems::Detect`. Agents discover `Collider`/`CollisionWorld` and use `raycast`, `overlap`, `shape_cast`, and non-consuming `collision_events`. Geometry queries never advance simulation or consume events.
+
+For trigonometry read `docs/math.md`. Use `math::sin`, `math::cos`, `math::sin_cos` and `math::sin_cos4` from the prelude; glam's `f32` rotation constructors and `slerp` already use the same routine, and clippy disallows `f32::sin`/`cos`/`sin_cos`. Keep the routine free of data-dependent branches and float selects, and reapply the two-function patch when upgrading glam.
+
+Use `cargo xtask build`, `lint`, `test`, `assets`, and `docs`. Run `cargo xtask schema` after changing authored scene types; commit the generated schema. Browser smoke checks are documented in `web/README.md`.
+Keep gameplay extensions in plugins/systems using the public façade. Use named schedules and explicit ordering.
+Update contracts and examples when public behavior changes. Make performance claims only from measured browser workloads.
+Do not add worker threading, additional asset formats, or a render graph without a concrete use case.
+Do not hand-edit generated `web/pkg`, `web/dist`, `target`, or lockfiles.

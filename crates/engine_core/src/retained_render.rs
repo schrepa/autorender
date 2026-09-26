@@ -1,0 +1,882 @@
+//! Engine-owned render records. Structural admission resolves immutable assets;
+//! ordinary frames update poses and visibility without rebuilding those records.
+
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+
+use bevy_ecs::{
+    change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick},
+    entity::{Entity, EntityHashMap},
+    prelude::*,
+    system::SystemState,
+};
+use glam::Mat4;
+
+use crate::hierarchy::HierarchyScratch;
+
+use crate::{
+    Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
+    Mesh3d, MeshHandle, PresentedTransforms, RenderInstance, RenderMesh, RenderQuery,
+    RenderSnapshot, RenderTexture, TextureHandle, Transform, TransformIndex,
+    culling::{Classification, Frustum},
+    hierarchy::ChangeWindow,
+};
+
+// Change stamps of render sources, read in contiguous table slices. GPU-presented
+// frames skip the per-renderable pass when nothing structural changed.
+type SourceStamps = SystemState<(
+    Query<'static, 'static, Ref<'static, Mesh3d>>,
+    Query<'static, 'static, Ref<'static, Cube>>,
+)>;
+
+static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
+
+/// An affine model matrix as its transposed top three rows: row `r` holds the
+/// three basis coefficients and the translation of world coordinate `r`. This
+/// is the retained upload layout, so renderers copy it without repacking.
+pub type PoseRows = [[f32; 4]; 3];
+
+const IDENTITY_ROWS: PoseRows = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
+
+/// Exact coefficient copies; the fourth row of an admitted affine matrix is
+/// always [0, 0, 0, 1] and is not stored.
+#[inline]
+pub(crate) fn pose_rows(model: Mat4) -> PoseRows {
+    let rows = model.transpose();
+    [
+        rows.x_axis.to_array(),
+        rows.y_axis.to_array(),
+        rows.z_axis.to_array(),
+    ]
+}
+
+/// A synchronous read lease over engine-owned render records.
+///
+/// Only the engine constructs this value. Revisions certify immutable data for
+/// this lease, unlike caller-mutable [`RenderSnapshot`]. Slots are stable across
+/// ordinary frames, but may be reused after removal; structure revisions cover
+/// reuse. `visible_indices` is the complete bounded submission order. Inactive
+/// slots in `snapshot().instances` must never be submitted or validated as draws.
+///
+/// Poses are read with [`Self::model`] from the prepared presented store; the
+/// snapshot's `RenderInstance::model` fields are not maintained for retained
+/// frames. Owned snapshots from [`crate::Engine::extract`] still carry models.
+#[derive(Clone, Copy)]
+pub struct RenderFrame<'a> {
+    owner: &'a RetainedRender,
+    poses: &'a PresentedTransforms,
+    hierarchy: &'a HierarchyScratch,
+}
+
+impl<'a> RenderFrame<'a> {
+    /// Slot metadata (mesh, texture, color), counters, camera and sources.
+    pub fn snapshot(self) -> &'a RenderSnapshot {
+        &self.owner.snapshot
+    }
+    /// Displayed model matrix of an active slot, read from the pose prepared
+    /// for this frame through the slot's validated store index. Inactive slots
+    /// return an arbitrary finite matrix that must never be submitted.
+    #[inline]
+    pub fn model(self, slot: usize) -> Mat4 {
+        self.owner
+            .pose_indices
+            .get(slot)
+            .and_then(|&index| self.poses.prepared_matrix(index as usize))
+            .unwrap_or(Mat4::IDENTITY)
+    }
+    pub fn identity(self) -> u64 {
+        self.owner.identity
+    }
+    pub fn sequence(self) -> u64 {
+        self.owner.sequence
+    }
+    pub fn structure_revision(self) -> u64 {
+        self.owner.structure_revision
+    }
+    /// Slot ownership, mesh/texture keys and source-array revision. Visibility
+    /// changes alone preserve this stamp so renderers can retain slot buckets.
+    pub fn source_revision(self) -> u64 {
+        self.owner.source_revision
+    }
+    pub fn pose_revision(self) -> u64 {
+        self.owner.pose_revision
+    }
+    pub fn color_revision(self) -> u64 {
+        self.owner.color_revision
+    }
+    pub fn visible_indices(self) -> &'a [usize] {
+        &self.owner.visible
+    }
+    /// Per-slot stamps; compare within this stream, never across stream identities.
+    pub fn pose_changes(self) -> &'a [u64] {
+        &self.owner.pose_changes
+    }
+    /// [`Self::model`] of every slot in upload layout, parallel to the
+    /// snapshot instances. A slot's rows are rewritten exactly when its
+    /// [`Self::pose_changes`] stamp advances, while extraction already holds
+    /// the matrix. Inactive slots hold arbitrary finite rows that must never
+    /// be submitted.
+    pub fn pose_rows(self) -> &'a [PoseRows] {
+        &self.owner.pose_rows
+    }
+    /// GPU presentation inputs when this frame leaves blending, composition and
+    /// culling to the GPU (decision 014). Then `visible_indices` lists every
+    /// candidate slot, [`Self::model`] and `pose_rows` are not prepared, and
+    /// the renderer culls with [`Self::culling`] and [`Self::instance_budget`].
+    pub fn gpu(self) -> Option<GpuPresentation<'a>> {
+        self.owner
+            .gpu
+            .then(|| self.poses.gpu_presentation(self.hierarchy))
+    }
+    /// Hierarchy node index of each slot (the index space of
+    /// [`GpuPresentation`] records); `u32::MAX` for never-mapped slots.
+    pub fn slot_nodes(self) -> &'a [u32] {
+        &self.owner.pose_indices
+    }
+    /// Whether frustum culling applies to this frame.
+    pub fn culling(self) -> bool {
+        self.owner.culling
+    }
+    /// Maximum submitted instances; later visible instances are dropped.
+    pub fn instance_budget(self) -> usize {
+        self.owner.budget
+    }
+    pub fn color_changes(self) -> &'a [u64] {
+        &self.owner.color_changes
+    }
+}
+
+struct ResolvedSource {
+    mesh_index: usize,
+    texture_index: Option<usize>,
+    mesh: MeshHandle,
+    texture: Option<TextureHandle>,
+    color: [f32; 4],
+}
+
+const NO_SOURCE: u32 = u32::MAX;
+
+/// Change ticks of a slot's Cube and Mesh3d sources. Absent components are
+/// distinguished by `present`; `UNKNOWN` never equals an observed key.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SourceKey {
+    ticks: [u32; 2],
+    present: u8,
+}
+
+impl SourceKey {
+    const UNKNOWN: Self = Self {
+        ticks: [0; 2],
+        present: 0,
+    };
+
+    #[inline]
+    fn new(cube: Option<Tick>, mesh: Option<Tick>) -> Self {
+        Self {
+            ticks: [cube.map_or(0, Tick::get), mesh.map_or(0, Tick::get)],
+            present: 0b100 | u8::from(cube.is_some()) | (u8::from(mesh.is_some()) << 1),
+        }
+    }
+}
+
+/// Per-slot state every retained frame reads and updates for a moving slot,
+/// in 32 bytes. Ownership stays in `RetainedRender::owners`; the presented
+/// store hint is `pose_indices`.
+#[derive(Clone, Copy)]
+struct SlotFrame {
+    // Published presented revisions are never 0.
+    pose_revision: u64,
+    // Source indices of the resolved mesh/texture; NO_SOURCE when unresolved
+    // (mesh) or untextured (texture).
+    mesh: u32,
+    texture: u32,
+    source: SourceKey,
+    outside: bool,
+}
+
+impl SlotFrame {
+    const NEW: Self = Self {
+        pose_revision: 0,
+        mesh: NO_SOURCE,
+        texture: NO_SOURCE,
+        source: SourceKey::UNKNOWN,
+        outside: false,
+    };
+}
+
+#[derive(Default)]
+struct Sources {
+    meshes: Vec<RenderMesh>,
+    // Local bounds of each mesh source, read by culling through slot indices.
+    bounds: Vec<Aabb>,
+    textures: Vec<RenderTexture>,
+    mesh_indices: HashMap<MeshHandle, usize>,
+    texture_indices: HashMap<TextureHandle, usize>,
+    mesh_used: Vec<bool>,
+    texture_used: Vec<bool>,
+    previous_mesh_used: Vec<bool>,
+    previous_texture_used: Vec<bool>,
+}
+
+impl Sources {
+    fn clear(&mut self) {
+        self.meshes.clear();
+        self.bounds.clear();
+        self.textures.clear();
+        self.mesh_indices.clear();
+        self.texture_indices.clear();
+        self.mesh_used.clear();
+        self.texture_used.clear();
+        self.previous_mesh_used.clear();
+        self.previous_texture_used.clear();
+    }
+
+    fn resolve(
+        &mut self,
+        assets: &AssetLibrary,
+        cube_mesh: MeshHandle,
+        cube: Option<&Cube>,
+        mesh3d: Option<&Mesh3d>,
+    ) -> Option<ResolvedSource> {
+        let (handle, color, texture_handle) = if let Some(mesh3d) = mesh3d {
+            let material = assets.material(mesh3d.material)?;
+            (mesh3d.mesh, material.color(), material.texture())
+        } else {
+            (cube_mesh, cube?.color, None)
+        };
+        let mesh = assets.mesh(handle)?;
+        // Resolve all weak handles before retaining any source for this record.
+        let texture = match texture_handle {
+            Some(handle) => Some(assets.texture(handle)?),
+            None => None,
+        };
+        let mesh_index = *self.mesh_indices.entry(handle).or_insert_with(|| {
+            let index = self.meshes.len();
+            self.meshes.push(RenderMesh {
+                handle,
+                mesh: Arc::clone(mesh),
+            });
+            self.bounds.push(mesh.bounds());
+            self.mesh_used.push(false);
+            index
+        });
+        let texture_index = texture_handle.zip(texture).map(|(handle, texture)| {
+            *self.texture_indices.entry(handle).or_insert_with(|| {
+                let index = self.textures.len();
+                self.textures.push(RenderTexture {
+                    handle,
+                    texture: Arc::clone(texture),
+                });
+                self.texture_used.push(false);
+                index
+            })
+        });
+        Some(ResolvedSource {
+            mesh_index,
+            texture_index,
+            mesh: handle,
+            texture: texture_handle,
+            color,
+        })
+    }
+
+    fn publish(&mut self, snapshot: &mut RenderSnapshot, force: bool) -> bool {
+        if !force
+            && self.mesh_used == self.previous_mesh_used
+            && self.texture_used == self.previous_texture_used
+        {
+            return false;
+        }
+        snapshot.meshes.clear();
+        snapshot.textures.clear();
+        snapshot.meshes.extend(
+            self.meshes
+                .iter()
+                .zip(&self.mesh_used)
+                .filter(|(_, used)| **used)
+                .map(|(mesh, _)| mesh.clone()),
+        );
+        snapshot.textures.extend(
+            self.textures
+                .iter()
+                .zip(&self.texture_used)
+                .filter(|(_, used)| **used)
+                .map(|(texture, _)| texture.clone()),
+        );
+        self.previous_mesh_used.clone_from(&self.mesh_used);
+        self.previous_texture_used.clone_from(&self.texture_used);
+        true
+    }
+}
+
+pub(crate) struct RetainedRender {
+    identity: u64,
+    sequence: u64,
+    structure_revision: u64,
+    source_revision: u64,
+    pose_revision: u64,
+    color_revision: u64,
+    snapshot: RenderSnapshot,
+    // Owner of each slot; None for free slots. Parallel to `frames`.
+    owners: Vec<Option<Entity>>,
+    frames: Vec<SlotFrame>,
+    // Slots visited by the current preparation, one bit each.
+    visited: Vec<u64>,
+    entities: EntityHashMap<usize>,
+    free: Vec<usize>,
+    // Slot cached per query row. Freeing a slot clears every entry naming it,
+    // so a matching Entity alone proves the cached slot is still its own.
+    query_slots: Vec<Option<(Entity, usize)>>,
+    visible: Vec<usize>,
+    // Presented-store index of each slot's pose, validated for its entity
+    // whenever the slot is active. u32 covers the bounded transform store.
+    pose_indices: Vec<u32>,
+    pose_changes: Vec<u64>,
+    pose_rows: Vec<PoseRows>,
+    color_changes: Vec<u64>,
+    asset_revision: Option<(u64, u64)>,
+    sources: Sources,
+    last_scan: Option<Tick>,
+    view: Option<([u32; 16], bool)>,
+    frustum: Option<Frustum>,
+    culling: bool,
+    budget: usize,
+    // Mode of the last preparation, and the hierarchy topology its candidate
+    // node indices belong to when it was GPU-presented.
+    gpu: bool,
+    gpu_topology: Option<u64>,
+    source_stamps: Option<SourceStamps>,
+}
+
+impl Default for RetainedRender {
+    fn default() -> Self {
+        let identity = NEXT_STREAM
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("render stream identities exhausted");
+        Self {
+            identity,
+            sequence: 0,
+            structure_revision: 0,
+            source_revision: 0,
+            pose_revision: 0,
+            color_revision: 0,
+            snapshot: RenderSnapshot::default(),
+            owners: Vec::new(),
+            frames: Vec::new(),
+            visited: Vec::new(),
+            entities: EntityHashMap::default(),
+            free: Vec::new(),
+            query_slots: Vec::new(),
+            visible: Vec::new(),
+            pose_indices: Vec::new(),
+            pose_changes: Vec::new(),
+            pose_rows: Vec::new(),
+            color_changes: Vec::new(),
+            asset_revision: None,
+            sources: Sources::default(),
+            last_scan: None,
+            view: None,
+            frustum: None,
+            culling: false,
+            budget: 0,
+            gpu: false,
+            gpu_topology: None,
+            source_stamps: None,
+        }
+    }
+}
+
+impl RetainedRender {
+    /// `poses` must be the store read by the latest [`Self::prepare`].
+    pub(crate) fn frame<'a>(
+        &'a self,
+        poses: &'a PresentedTransforms,
+        hierarchy: &'a HierarchyScratch,
+    ) -> RenderFrame<'a> {
+        RenderFrame {
+            owner: self,
+            poses,
+            hierarchy,
+        }
+    }
+
+    fn slot(
+        &mut self,
+        entity: Entity,
+        row: usize,
+        world: &World,
+        globals: &GlobalTransforms,
+        cube: MeshHandle,
+    ) -> Option<usize> {
+        if let Some(Some((cached_entity, index))) = self.query_slots.get(row)
+            && *cached_entity == entity
+        {
+            debug_assert_eq!(self.owners[*index], Some(entity));
+            return Some(*index);
+        }
+        let index = if let Some(&index) = self.entities.get(&entity) {
+            index
+        } else {
+            // Canonical transform admission bounds retained render identity too.
+            globals.get(entity)?;
+            if self.free.is_empty() && self.owners.len() == MAX_TRANSFORM_NODES {
+                // A full scene may be replaced between two extractions. Reclaim
+                // stale owners before admitting the new scene, not a frame later.
+                // This scan happens only on structural admission at capacity.
+                self.free
+                    .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
+                for (index, owner) in self.owners.iter_mut().enumerate() {
+                    if let Some(old) = *owner
+                        && (world.get::<Transform>(old).is_none()
+                            || (world.get::<Cube>(old).is_none()
+                                && world.get::<Mesh3d>(old).is_none())
+                            || globals.get(old).is_none())
+                    {
+                        self.entities.remove(&old);
+                        *owner = None;
+                        self.frames[index].mesh = NO_SOURCE;
+                        self.free.push(index);
+                    }
+                }
+                self.forget_freed_rows();
+            }
+            let index = if let Some(index) = self.free.pop() {
+                self.owners[index] = Some(entity);
+                self.frames[index] = SlotFrame::NEW;
+                // New owner invalidates both retained GPU channels, including
+                // an identical color that was never submitted for this owner.
+                self.pose_indices[index] = u32::MAX;
+                self.pose_changes[index] = 0;
+                self.color_changes[index] = 0;
+                index
+            } else {
+                if self.owners.len() == MAX_TRANSFORM_NODES {
+                    return None;
+                }
+                let index = self.owners.len();
+                if index == self.owners.capacity() {
+                    let capacity = (index.max(16) * 2).min(MAX_TRANSFORM_NODES);
+                    self.owners.reserve_exact(capacity - index);
+                    self.frames.reserve_exact(capacity - index);
+                    self.snapshot.instances.reserve_exact(capacity - index);
+                    self.pose_indices.reserve_exact(capacity - index);
+                    self.pose_changes.reserve_exact(capacity - index);
+                    self.pose_rows.reserve_exact(capacity - index);
+                    self.color_changes.reserve_exact(capacity - index);
+                }
+                self.owners.push(Some(entity));
+                self.frames.push(SlotFrame::NEW);
+                // Retained frames read poses through `pose_indices`.
+                self.snapshot.instances.push(RenderInstance {
+                    mesh: cube,
+                    texture: None,
+                    model: Mat4::IDENTITY,
+                    color: [1.0; 4],
+                });
+                self.pose_indices.push(u32::MAX);
+                self.pose_changes.push(0);
+                self.pose_rows.push(IDENTITY_ROWS);
+                self.color_changes.push(0);
+                index
+            };
+            self.entities.insert(entity, index);
+            self.structure_revision = self.sequence;
+            self.source_revision = self.sequence;
+            index
+        };
+        if let Some(cached) = self.query_slots.get_mut(row) {
+            *cached = Some((entity, index));
+        }
+        Some(index)
+    }
+
+    /// Creates the source stamp window used by GPU-presented frames.
+    pub(crate) fn ensure_source_scan(&mut self, world: &mut World) {
+        if self.source_stamps.is_none() {
+            self.source_stamps = Some(SystemState::new(world));
+        }
+    }
+
+    /// Whether any Mesh3d or Cube changed since the previous call, consuming
+    /// that window. The caller advances the world change tick afterwards.
+    fn sources_changed(&mut self, world: &World) -> bool {
+        let Some(stamps) = self.source_stamps.as_mut() else {
+            return true;
+        };
+        let Ok((meshes, cubes)) = stamps.get(world) else {
+            // Conservatively run the full pass.
+            return true;
+        };
+        let mut changed = false;
+        for meshes in meshes
+            .contiguous_iter()
+            .expect("Mesh3d uses dense table storage")
+        {
+            let (_, ticks) = ContiguousRef::split(meshes);
+            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
+            changed |= window.any(ticks.changed());
+        }
+        for cubes in cubes
+            .contiguous_iter()
+            .expect("Cube uses dense table storage")
+        {
+            let (_, ticks) = ContiguousRef::split(cubes);
+            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
+            changed |= window.any(ticks.changed());
+        }
+        stamps.meta_mut().set_last_run(world.read_change_tick());
+        changed
+    }
+
+    /// Row caches must never name a slot their entity no longer owns; call
+    /// after freeing slots, before any later lookup.
+    fn forget_freed_rows(&mut self) {
+        for cached in &mut self.query_slots {
+            if let Some((entity, index)) = *cached
+                && self.owners.get(index) != Some(&Some(entity))
+            {
+                *cached = None;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare(
+        &mut self,
+        world: &World,
+        query: &mut RenderQuery,
+        cube_mesh: MeshHandle,
+        aspect: f32,
+        culling: bool,
+        budget: usize,
+        gpu: bool,
+    ) {
+        let _profile = engine_profile::span("cpu", "extraction_retained_updates_culling");
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .expect("render sequence exhausted");
+        let sequence = self.sequence;
+        if self.gpu && !gpu {
+            // GPU frames neither culled nor prepared CPU poses. Recompute both
+            // for every slot, and their rows, on the first CPU frame after them.
+            self.view = None;
+            for frame in &mut self.frames {
+                frame.pose_revision = 0;
+            }
+        }
+        self.culling = culling;
+        self.budget = budget;
+        let globals = world.resource::<GlobalTransforms>();
+        let stamps_changed = gpu && self.sources_changed(world);
+        let scan_tick = world.read_change_tick();
+        let aged = self
+            .last_scan
+            .is_none_or(|last| scan_tick.get().wrapping_sub(last.get()) > MAX_CHANGE_AGE);
+        self.last_scan = Some(scan_tick);
+        let assets = world.resource::<AssetLibrary>();
+        let revision = assets.revision();
+        let assets_changed = self.asset_revision != Some(revision) || revision.1 == u64::MAX;
+        if assets_changed {
+            self.sources.clear();
+            self.asset_revision = Some(revision);
+        }
+        self.sources.mesh_used.fill(false);
+        self.sources.texture_used.fill(false);
+        let view = world.resource::<Camera>().view_projection(aspect);
+        let total = query.iter(world).len();
+        if gpu
+            && self.gpu
+            && self.gpu_topology == Some(globals.topology_revision)
+            && !aged
+            && !assets_changed
+            && !stamps_changed
+            && total == self.snapshot.render_candidates
+        {
+            // Same renderables, sources, assets and node indices: candidates,
+            // slots and colors are unchanged, and the GPU culls. Only the camera
+            // moves on to this frame.
+            self.snapshot.view_projection = view;
+            engine_profile::counter("extraction.gpu_structure_reused", 1.0);
+            return;
+        }
+        engine_profile::counter("extraction.gpu_structure_reused", 0.0);
+        let view_key = (view.to_cols_array().map(f32::to_bits), culling);
+        let view_changed = !gpu && self.view != Some(view_key);
+        if view_changed {
+            self.view = Some(view_key);
+            self.frustum = culling.then(|| Frustum::new(view)).flatten();
+        }
+        let hint_count = total.min(MAX_TRANSFORM_NODES);
+        if self.query_slots.capacity() < hint_count {
+            self.query_slots
+                .reserve_exact(hint_count.saturating_sub(self.query_slots.len()));
+        }
+        self.query_slots.resize(hint_count, None);
+        // GPU frames list every candidate; the GPU applies the budget.
+        let output_bound = if gpu { total } else { total.min(budget) }.min(MAX_TRANSFORM_NODES);
+        if self.visible.capacity() < output_bound {
+            self.visible
+                .reserve_exact(output_bound.saturating_sub(self.visible.len()));
+        }
+        self.snapshot.view_projection = view;
+        self.snapshot.render_candidates = total;
+        self.snapshot.visible_instances = 0;
+        self.snapshot.culled_instances = 0;
+        self.snapshot.invalid_transforms = 0;
+        self.snapshot.missing_assets = 0;
+        self.snapshot.dropped_instances = 0;
+        let presented = world.resource::<PresentedTransforms>();
+        let mut structure_changed = assets_changed;
+        let mut sources_changed = assets_changed;
+        let mut submitted = 0;
+        let mut seen = 0;
+        let mut resolved_count = 0;
+        let mut pose_count = 0;
+        let mut color_count = 0;
+        let mut culling_tests = 0;
+        let mut culling_interior = 0;
+        let mut culling_reused = 0;
+        // Slots can only be admitted up to the query size during this pass.
+        let visited_words = (self.owners.len() + total)
+            .min(MAX_TRANSFORM_NODES)
+            .div_ceil(64);
+        self.visited.clear();
+        self.visited.resize(visited_words, 0);
+        for (row, (entity, has_transform, cube, mesh3d)) in query.iter(world).enumerate() {
+            if !has_transform {
+                self.snapshot.invalid_transforms += 1;
+                continue;
+            }
+            let Some(index) = self.slot(entity, row, world, globals, cube_mesh) else {
+                self.snapshot.invalid_transforms += 1;
+                continue;
+            };
+            self.visited[index / 64] |= 1 << (index % 64);
+            seen += 1;
+            let frame = &mut self.frames[index];
+            let source = SourceKey::new(
+                cube.as_ref().map(|value| value.last_changed()),
+                mesh3d.as_ref().map(|value| value.last_changed()),
+            );
+            // Every live slot is (re)resolved when assets change or the window
+            // ages; new owners start from an unknown source key.
+            let source_changed = aged || assets_changed || frame.source != source;
+            if source_changed {
+                let record = &mut self.snapshot.instances[index];
+                resolved_count += 1;
+                frame.source = source;
+                let resolved =
+                    self.sources
+                        .resolve(assets, cube_mesh, cube.as_deref(), mesh3d.as_deref());
+                frame.mesh = resolved
+                    .as_ref()
+                    .map_or(NO_SOURCE, |value| value.mesh_index as u32);
+                frame.texture = resolved
+                    .as_ref()
+                    .and_then(|value| value.texture_index)
+                    .map_or(NO_SOURCE, |texture| texture as u32);
+                if let Some(ResolvedSource {
+                    mesh,
+                    texture,
+                    color,
+                    ..
+                }) = resolved
+                {
+                    let keys_changed = record.mesh != mesh || record.texture != texture;
+                    structure_changed |= keys_changed;
+                    sources_changed |= keys_changed;
+                    record.mesh = mesh;
+                    record.texture = texture;
+                    if self.color_changes[index] == 0
+                        || record.color.map(f32::to_bits) != color.map(f32::to_bits)
+                    {
+                        record.color = color;
+                        self.color_changes[index] = sequence;
+                        color_count += 1;
+                    }
+                }
+            }
+            if gpu {
+                // Node indices only; blending, validity and culling run on the
+                // GPU. Invalid admitted nodes stay candidates and are hidden there.
+                let mut hint = TransformIndex(self.pose_indices[index] as usize);
+                let Some((global, _)) = globals.get_indexed_with_revision(entity, &mut hint) else {
+                    self.snapshot.invalid_transforms += 1;
+                    continue;
+                };
+                self.pose_indices[index] = hint.0 as u32;
+                // Counters partition candidates as on the CPU path; here
+                // `visible_instances` counts valid listed candidates before
+                // GPU culling.
+                if global.matrix().is_none() {
+                    self.snapshot.invalid_transforms += 1;
+                } else if frame.mesh == NO_SOURCE {
+                    self.snapshot.missing_assets += 1;
+                } else {
+                    self.snapshot.visible_instances += 1;
+                }
+                if frame.mesh == NO_SOURCE {
+                    continue;
+                }
+                if let Some(previous) = self.visible.get_mut(submitted) {
+                    structure_changed |= *previous != index;
+                    *previous = index;
+                } else {
+                    self.visible.push(index);
+                    structure_changed = true;
+                }
+                submitted += 1;
+                self.sources.mesh_used[frame.mesh as usize] = true;
+                if frame.texture != NO_SOURCE {
+                    self.sources.texture_used[frame.texture as usize] = true;
+                }
+                continue;
+            }
+            // extract_frame prepared presentation from this same refreshed
+            // hierarchy immediately before this pass. Every admitted display
+            // is valid exactly when its authoritative pose is valid, so the
+            // presented read alone keeps the authoritative validity gate.
+            // The slot's pose index is the store hint; it is validated against
+            // the full Entity before use.
+            let mut hint = TransformIndex(self.pose_indices[index] as usize);
+            let pose = presented.get_indexed(entity, &mut hint);
+            debug_assert_eq!(
+                pose.map(|pose| pose.matrix().is_some()),
+                globals.get(entity).map(|global| global.matrix().is_some()),
+                "presented validity must match the authoritative boundary"
+            );
+            let Some((model, pose_revision)) =
+                pose.and_then(|pose| Some((pose.matrix()?, pose.revision())))
+            else {
+                self.snapshot.invalid_transforms += 1;
+                continue;
+            };
+            // Frames read the prepared pose through this validated index
+            // instead of copying the matrix here.
+            self.pose_indices[index] = hint.0 as u32;
+            let pose_changed = frame.pose_revision != pose_revision
+                || pose_revision == 0
+                || pose_revision == u64::MAX;
+            if pose_changed {
+                frame.pose_revision = pose_revision;
+                self.pose_changes[index] = sequence;
+                // Written with the stamp while the matrix is at hand, so no
+                // later pass re-reads the presented store to repack it.
+                self.pose_rows[index] = pose_rows(model);
+                pose_count += 1;
+            }
+            if frame.mesh == NO_SOURCE {
+                self.snapshot.missing_assets += 1;
+                continue;
+            }
+            if view_changed || pose_changed || source_changed {
+                let bounds = self.sources.bounds[frame.mesh as usize];
+                frame.outside = self.frustum.as_ref().is_some_and(|frustum| {
+                    culling_tests += 1;
+                    let classification = frustum.classify(model, bounds);
+                    culling_interior += usize::from(classification == Classification::Interior);
+                    classification.outside()
+                });
+            } else if self.frustum.is_some() {
+                culling_reused += 1;
+            }
+            if frame.outside {
+                self.snapshot.culled_instances += 1;
+            } else {
+                self.snapshot.visible_instances += 1;
+                if submitted == budget {
+                    self.snapshot.dropped_instances += 1;
+                    continue;
+                }
+                if let Some(previous) = self.visible.get_mut(submitted) {
+                    structure_changed |= *previous != index;
+                    *previous = index;
+                } else {
+                    self.visible.push(index);
+                    structure_changed = true;
+                }
+                submitted += 1;
+            }
+            self.sources.mesh_used[frame.mesh as usize] = true;
+            if frame.texture != NO_SOURCE {
+                self.sources.texture_used[frame.texture as usize] = true;
+            }
+        }
+        if submitted != self.visible.len() {
+            self.visible.truncate(submitted);
+            structure_changed = true;
+        }
+        // Each entity owns one slot and visits it at most once, so equal counts
+        // prove every owned slot was visited.
+        if seen != self.entities.len() {
+            self.free
+                .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
+            for (index, owner) in self.owners.iter_mut().enumerate() {
+                if self.visited[index / 64] & (1 << (index % 64)) == 0
+                    && let Some(entity) = owner.take()
+                {
+                    self.entities.remove(&entity);
+                    self.frames[index].mesh = NO_SOURCE;
+                    self.free.push(index);
+                    structure_changed = true;
+                    sources_changed = true;
+                }
+            }
+            self.forget_freed_rows();
+        }
+        let ownership_changed = self.sources.publish(&mut self.snapshot, assets_changed);
+        structure_changed |= ownership_changed;
+        sources_changed |= ownership_changed;
+        if structure_changed {
+            self.structure_revision = sequence;
+        }
+        if sources_changed {
+            self.source_revision = sequence;
+        }
+        if pose_count != 0 {
+            self.pose_revision = sequence;
+        }
+        if color_count != 0 {
+            self.color_revision = sequence;
+        }
+        self.gpu = gpu;
+        self.gpu_topology = gpu.then_some(globals.topology_revision);
+        engine_profile::counter("extraction.candidates", total as f64);
+        engine_profile::counter("extraction.instances", submitted as f64);
+        engine_profile::counter("extraction.culled", self.snapshot.culled_instances as f64);
+        engine_profile::counter("extraction.retained_resolved", resolved_count as f64);
+        engine_profile::counter("extraction.retained_pose_updates", pose_count as f64);
+        engine_profile::counter("extraction.retained_color_updates", color_count as f64);
+        engine_profile::counter("extraction.culling_tests", culling_tests as f64);
+        engine_profile::counter("extraction.culling_interior", culling_interior as f64);
+        engine_profile::counter("extraction.culling_reused", culling_reused as f64);
+        engine_profile::counter(
+            "extraction.instance_capacity_bytes",
+            (self.snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,
+        );
+        engine_profile::counter(
+            "memory.retained_render_capacity_bytes",
+            (self.owners.capacity() * size_of::<Option<Entity>>()
+                + self.frames.capacity() * size_of::<SlotFrame>()
+                + self.visited.capacity() * size_of::<u64>()
+                + self.query_slots.capacity() * size_of::<Option<(Entity, usize)>>()
+                + (self.visible.capacity() + self.free.capacity()) * size_of::<usize>()
+                + self.pose_indices.capacity() * size_of::<u32>()
+                + (self.pose_changes.capacity() + self.color_changes.capacity()) * size_of::<u64>()
+                + self.pose_rows.capacity() * size_of::<PoseRows>()) as f64,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests;

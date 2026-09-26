@@ -1,0 +1,40 @@
+name: Verify engine
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal --component clippy --component rustfmt --target wasm32-unknown-unknown
+          rustup show active-toolchain
+      - name: Cache Cargo dependencies and builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
+      - name: Install matching Wasm binding generator
+        run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
+      - run: cargo xtask assets
+      - run: cargo xtask lint
+      - run: cargo xtask test
+      - run: cargo xtask build
+      - run: cargo xtask docs

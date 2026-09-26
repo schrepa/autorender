@@ -1,0 +1,753 @@
+//! Native source import; cooked output is the runtime's validated scene format.
+
+use std::{
+    collections::BTreeMap,
+    fs::{File, OpenOptions},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+
+use engine_assetc::{
+    IMPORTER_VERSION, ImportError, MAX_INPUT_BYTES, import_glb, import_glb_prefab, source_sha256,
+};
+use engine_dev::authoring;
+use engine_scene::SceneDocument;
+use serde_json::{Value, json};
+
+pub fn asset(arguments: &[String]) -> Result<(), String> {
+    let result = command(arguments);
+    let succeeded = result.is_ok();
+    println!(
+        "{}",
+        match result {
+            Ok(result) => json!({"version":1,"ok":true,"result":result}),
+            Err(error) => json!({"version":1,"ok":false,"error":error}),
+        }
+    );
+    if succeeded {
+        Ok(())
+    } else {
+        Err("asset import failed; see its JSON result".into())
+    }
+}
+
+fn command(arguments: &[String]) -> Result<Value, ImportError> {
+    let options = Options::parse(arguments)?;
+    let bytes = read_source(&options.file)?;
+    let imported = if options.as_prefab {
+        import_glb_prefab(&bytes, &options.id)?
+    } else {
+        import_glb(&bytes, &options.id)?
+    };
+    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>()});
+    let (report, document) = if let Some(output) = &options.output {
+        let source = imported.to_json()?;
+        write_new(output, &source)?;
+        (
+            json!({"path":output,"revision":imported.revision.to_string(),"persisted":true,"source_bytes":source.len(),"mode":"create"}),
+            imported,
+        )
+    } else {
+        let target = options.into.as_ref().expect("validated target");
+        let original = authoring::read_scene_source(target).map_err(dev_error)?;
+        let current = SceneDocument::from_json(&original)?;
+        let revision = options.revision.expect("validated revision");
+        if current.revision != revision {
+            return Err(ImportError::new(
+                "revision_conflict",
+                "$.revision",
+                format!(
+                    "expected revision {revision}, saved source is {}",
+                    current.revision
+                ),
+            ));
+        }
+        let candidate = merge(current, imported, &options.id, options.replace)?;
+        let source = candidate.to_json()?;
+        let report = authoring::save_scene(target, &source, revision).map_err(dev_error)?;
+        (
+            json!({"path":report.path,"revision":report.revision,"persisted":report.persisted,"source_bytes":report.source_bytes,"mode":if options.replace {"replace_namespace"} else {"append"}}),
+            candidate,
+        )
+    };
+    Ok(json!({
+        "save":report,"scene":document.id,"imported":counts,
+        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2-static-diffuse","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":"baked","textures":"opaque-srgb-rgba8","sampler":"clamp-linear-single-mip","lighting":"engine-diffuse-not-gltf-pbr"}}
+    }))
+}
+
+#[derive(Default)]
+struct Options {
+    file: PathBuf,
+    id: String,
+    output: Option<PathBuf>,
+    into: Option<PathBuf>,
+    revision: Option<u64>,
+    replace: bool,
+    as_prefab: bool,
+}
+
+impl Options {
+    fn parse(arguments: &[String]) -> Result<Self, ImportError> {
+        let invalid = || {
+            ImportError::new(
+                "invalid_arguments",
+                "$",
+                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
+            )
+        };
+        if arguments.first().is_none_or(|command| command != "import") {
+            return Err(invalid());
+        }
+        let mut values = BTreeMap::new();
+        let mut arguments = arguments[1..].iter();
+        let mut replace = false;
+        let mut as_prefab = false;
+        while let Some(flag) = arguments.next() {
+            if flag == "--replace" || flag == "--as-prefab" {
+                let present = if flag == "--replace" {
+                    &mut replace
+                } else {
+                    &mut as_prefab
+                };
+                if *present {
+                    return Err(invalid());
+                }
+                *present = true;
+                continue;
+            }
+            if !matches!(
+                flag.as_str(),
+                "--file" | "--id" | "--output" | "--into" | "--expected-revision"
+            ) {
+                return Err(invalid());
+            }
+            let value = arguments
+                .next()
+                .filter(|value| !value.starts_with("--"))
+                .ok_or_else(invalid)?;
+            if values.insert(flag.as_str(), value.as_str()).is_some() {
+                return Err(invalid());
+            }
+        }
+        let file = PathBuf::from(values.get("--file").ok_or_else(invalid)?);
+        let id = values.get("--id").ok_or_else(invalid)?.to_string();
+        let output = values.get("--output").map(PathBuf::from);
+        let into = values.get("--into").map(PathBuf::from);
+        let revision = values
+            .get("--expected-revision")
+            .map(|revision| {
+                revision.parse::<u64>().map_err(|_| {
+                    ImportError::new(
+                        "invalid_revision",
+                        "--expected-revision",
+                        "expected an unsigned 64-bit decimal integer",
+                    )
+                })
+            })
+            .transpose()?;
+        if output.is_some() == into.is_some()
+            || (into.is_some() != revision.is_some())
+            || (replace && into.is_none())
+        {
+            return Err(invalid());
+        }
+        Ok(Self {
+            file,
+            id,
+            output,
+            into,
+            revision,
+            replace,
+            as_prefab,
+        })
+    }
+}
+
+fn merge(
+    mut current: SceneDocument,
+    mut imported: SceneDocument,
+    id: &str,
+    replace: bool,
+) -> Result<SceneDocument, ImportError> {
+    let as_prefab = !imported.prefabs.is_empty();
+    let existing_prefab = current.prefabs.iter().any(|prefab| prefab.id == id);
+    let existing_flat = current
+        .entities
+        .iter()
+        .any(|entity| generated(&entity.id, id, Kind::Entity));
+    let existing_assets = current
+        .meshes
+        .iter()
+        .any(|mesh| generated(&mesh.id, id, Kind::Mesh))
+        || current
+            .materials
+            .iter()
+            .any(|material| generated(&material.id, id, Kind::Material))
+        || current
+            .textures
+            .iter()
+            .any(|texture| generated(&texture.id, id, Kind::Texture));
+    if (as_prefab && existing_flat)
+        || (!as_prefab && existing_prefab)
+        || (existing_assets && !existing_flat && !existing_prefab)
+    {
+        return Err(ImportError::new(
+            "namespace_mode_conflict",
+            "--id",
+            "namespace belongs to another or ambiguous import mode; use a new namespace or explicitly migrate its authoring data before import",
+        ));
+    }
+    current.version = engine_scene::SCENE_VERSION;
+    if replace {
+        let retained = if as_prefab {
+            current
+                .prefabs
+                .iter()
+                .filter(|prefab| prefab.id == id)
+                .flat_map(|prefab| prefab.entities.iter())
+                .collect::<Vec<_>>()
+        } else {
+            current
+                .entities
+                .iter()
+                .filter(|entity| generated(&entity.id, id, Kind::Entity))
+                .collect::<Vec<_>>()
+        };
+        let replacements = if as_prefab {
+            imported
+                .prefabs
+                .iter_mut()
+                .flat_map(|prefab| prefab.entities.iter_mut())
+                .collect::<Vec<_>>()
+        } else {
+            imported.entities.iter_mut().collect::<Vec<_>>()
+        };
+        preserve_colliders(&retained, replacements)?;
+        let previous: BTreeMap<_, _> = current
+            .entities
+            .iter()
+            .filter(|entity| generated(&entity.id, id, Kind::Entity))
+            .map(|entity| (entity.id.clone(), entity.clone()))
+            .collect();
+        if as_prefab {
+            current.prefabs.retain(|prefab| prefab.id != id);
+        } else {
+            current
+                .entities
+                .retain(|entity| !generated(&entity.id, id, Kind::Entity));
+        }
+        current
+            .meshes
+            .retain(|mesh| !generated(&mesh.id, id, Kind::Mesh));
+        current
+            .materials
+            .retain(|material| !generated(&material.id, id, Kind::Material));
+        current
+            .textures
+            .retain(|texture| !generated(&texture.id, id, Kind::Texture));
+        for mut entity in imported.entities {
+            if let Some(old) = previous.get(&entity.id) {
+                entity.transform = old.transform;
+                entity.name.clone_from(&old.name);
+                entity.tags.clone_from(&old.tags);
+                entity.parent.clone_from(&old.parent);
+                entity.collider = old.collider;
+            }
+            current.entities.push(entity);
+        }
+    } else {
+        current.entities.extend(imported.entities);
+    }
+    current.meshes.extend(imported.meshes);
+    current.materials.extend(imported.materials);
+    current.textures.extend(imported.textures);
+    current.prefabs.extend(imported.prefabs);
+    current.revision = current.revision.checked_add(1).ok_or_else(|| {
+        ImportError::new(
+            "revision_exhausted",
+            "$.revision",
+            "scene revision cannot advance past u64::MAX",
+        )
+    })?;
+    current.validate()?;
+    Ok(current)
+}
+
+fn preserve_colliders(
+    previous: &[&engine_scene::SceneObject],
+    replacements: Vec<&mut engine_scene::SceneObject>,
+) -> Result<(), ImportError> {
+    let mut replacements: BTreeMap<_, _> = replacements
+        .into_iter()
+        .map(|entity| (entity.id.clone(), entity))
+        .collect();
+    for old in previous {
+        let Some(collider) = old.collider else {
+            continue;
+        };
+        let Some(replacement) = replacements.get_mut(&old.id) else {
+            return Err(ImportError::new(
+                "collider_reimport_conflict",
+                "--replace",
+                format!(
+                    "reimport removes '{}' with an authored collider; explicitly remove or relocate that collider in source first",
+                    old.id
+                ),
+            ));
+        };
+        replacement.collider = Some(collider);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Entity,
+    Mesh,
+    Material,
+    Texture,
+}
+
+fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
+    let Some(suffix) = value
+        .strip_prefix(namespace)
+        .and_then(|suffix| suffix.strip_prefix('.'))
+    else {
+        return false;
+    };
+    let decimal =
+        |value: &str| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
+    match kind {
+        Kind::Texture => suffix.strip_prefix("image").is_some_and(decimal),
+        Kind::Material => suffix.strip_prefix("material").is_some_and(decimal),
+        Kind::Entity | Kind::Mesh => {
+            let suffix = if matches!(kind, Kind::Mesh) {
+                let Some(suffix) = suffix.strip_suffix(".mesh") else {
+                    return false;
+                };
+                suffix
+            } else {
+                suffix
+            };
+            suffix
+                .strip_prefix("node")
+                .and_then(|suffix| suffix.split_once(".p"))
+                .is_some_and(|(node, primitive)| decimal(node) && decimal(primitive))
+        }
+    }
+}
+
+fn read_source(path: &Path) -> Result<Vec<u8>, ImportError> {
+    let file = File::open(path).map_err(|error| io_error(path, error))?;
+    if file
+        .metadata()
+        .map_err(|error| io_error(path, error))?
+        .len()
+        > MAX_INPUT_BYTES as u64
+    {
+        return Err(ImportError::new(
+            "input_too_large",
+            path.display().to_string(),
+            "GLB source exceeds 16 MiB",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_INPUT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error(path, error))?;
+    if bytes.len() > MAX_INPUT_BYTES {
+        return Err(ImportError::new(
+            "input_too_large",
+            path.display().to_string(),
+            "GLB source exceeds 16 MiB",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn write_new(path: &Path, source: &str) -> Result<(), ImportError> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AlreadyExists { ImportError::new("output_exists", path.display().to_string(), "output exists; use a new path or revision-checked --into with explicit --replace") } else { io_error(path, error) }
+    })?;
+    let result = file
+        .write_all(source.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = result {
+        let cleanup = std::fs::remove_file(path);
+        return Err(ImportError::new(
+            "source_io",
+            path.display().to_string(),
+            match cleanup {
+                Ok(()) => error.to_string(),
+                Err(cleanup) => format!("{error}; cannot remove incomplete output: {cleanup}"),
+            },
+        ));
+    }
+    Ok(())
+}
+
+fn io_error(path: &Path, error: std::io::Error) -> ImportError {
+    ImportError::new("source_io", path.display().to_string(), error.to_string())
+}
+fn dev_error(error: engine_dev::DevError) -> ImportError {
+    ImportError::new(error.code, error.path, error.message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn prefab_fixture() -> SceneDocument {
+        import_glb_prefab(
+            include_bytes!("../../../assets/source/garden-prop.glb"),
+            "garden",
+        )
+        .unwrap()
+    }
+
+    fn root(id: &str, prefab: Option<&str>) -> engine_scene::SceneObject {
+        engine_scene::SceneObject {
+            id: id.into(),
+            name: id.into(),
+            mesh: None,
+            material: None,
+            parent: None,
+            prefab: prefab.map(str::to_owned),
+            collider: None,
+            transform: engine_scene::SceneTransform::default(),
+            tags: Vec::new(),
+        }
+    }
+
+    fn fixture() -> SceneDocument {
+        import_glb(
+            include_bytes!("../../../assets/source/garden-prop.glb"),
+            "garden",
+        )
+        .unwrap()
+    }
+
+    fn collider() -> engine_scene::SceneCollider {
+        engine_scene::SceneCollider {
+            shape: engine_scene::SceneColliderShape::Sphere { radius: 0.4 },
+            memberships: 2,
+            filter: 5,
+            sensor: true,
+        }
+    }
+
+    #[test]
+    fn replacement_preserves_placement_and_is_explicit() {
+        let mut current = fixture();
+        current.entities[0].transform.translation = [5.0, 1.0, 2.0];
+        current.entities[0].tags = vec!["scenery".into()];
+        current.entities[0].name = "Placed garden prop".into();
+        current.entities[0].parent = Some("group".into());
+        current.entities[0].collider = Some(collider());
+        current.entities.push(root("group", None));
+        assert_eq!(
+            merge(current.clone(), fixture(), "garden", false)
+                .unwrap_err()
+                .code,
+            "duplicate_id"
+        );
+        let replacement = merge(current, fixture(), "garden", true).unwrap();
+        assert_eq!(replacement.revision, 2);
+        let placed = replacement
+            .entities
+            .iter()
+            .find(|entity| entity.id == "garden.node1.p0")
+            .unwrap();
+        assert_eq!(placed.transform.translation, [5.0, 1.0, 2.0]);
+        assert_eq!(placed.tags, ["scenery"]);
+        assert_eq!(placed.name, "Placed garden prop");
+        assert_eq!(placed.parent.as_deref(), Some("group"));
+        assert_eq!(placed.collider, Some(collider()));
+        assert_eq!(replacement.entities.len(), fixture().entities.len() + 1);
+    }
+
+    #[test]
+    fn prefab_reimport_preserves_all_placements_and_shared_asset_ids() {
+        let mut current = prefab_fixture();
+        let mut west = root("west", Some("garden"));
+        west.transform.translation = [-5.0, 0.0, 3.0];
+        west.transform.rotation_degrees[1] = 30.0;
+        west.tags = vec!["scenery".into()];
+        west.collider = Some(collider());
+        let mut east = root("east", Some("garden"));
+        east.transform.translation = [5.0, 0.0, 3.0];
+        east.parent = Some("group".into());
+        current.entities = vec![west, east, root("group", None)];
+        current.prefabs[0].entities[0].collider = Some(collider());
+        let placements = serde_json::to_value(&current.entities).unwrap();
+        let asset_ids: Vec<_> = current.meshes.iter().map(|mesh| mesh.id.clone()).collect();
+        let mut imported = prefab_fixture();
+        let engine_scene::MeshSource::Inline { vertices, .. } = &mut imported.meshes[0].source
+        else {
+            panic!("expected inline mesh")
+        };
+        vertices[0].position[1] += 0.5;
+        let replacement = merge(current, imported, "garden", true).unwrap();
+        assert_eq!(
+            serde_json::to_value(&replacement.entities).unwrap(),
+            placements
+        );
+        assert_eq!(replacement.prefabs.len(), 1);
+        assert_eq!(
+            replacement.prefabs[0].entities[0].collider,
+            Some(collider())
+        );
+        assert_eq!(
+            replacement
+                .meshes
+                .iter()
+                .map(|mesh| mesh.id.clone())
+                .collect::<Vec<_>>(),
+            asset_ids
+        );
+        assert_eq!(replacement.textures.len(), 1);
+        assert_eq!(replacement.revision, 2);
+        replacement.validate().unwrap();
+    }
+
+    #[test]
+    fn namespace_modes_and_duplicate_prefabs_require_explicit_resolution() {
+        assert_eq!(
+            merge(fixture(), prefab_fixture(), "garden", true)
+                .unwrap_err()
+                .code,
+            "namespace_mode_conflict"
+        );
+        assert_eq!(
+            merge(prefab_fixture(), fixture(), "garden", true)
+                .unwrap_err()
+                .code,
+            "namespace_mode_conflict"
+        );
+        assert_eq!(
+            merge(prefab_fixture(), prefab_fixture(), "garden", false)
+                .unwrap_err()
+                .code,
+            "duplicate_id"
+        );
+        let mut ambiguous = fixture();
+        ambiguous.entities.clear();
+        assert_eq!(
+            merge(ambiguous, prefab_fixture(), "garden", true)
+                .unwrap_err()
+                .code,
+            "namespace_mode_conflict"
+        );
+        let other = import_glb_prefab(
+            include_bytes!("../../../assets/source/garden-prop.glb"),
+            "garden2",
+        )
+        .unwrap();
+        let merged = merge(prefab_fixture(), other, "garden2", false).unwrap();
+        assert_eq!(merged.prefabs.len(), 2);
+        assert_eq!(merged.meshes.len(), 4);
+    }
+
+    #[test]
+    fn reimport_cannot_silently_remove_an_authored_collider() {
+        for prefab in [false, true] {
+            let mut current = if prefab { prefab_fixture() } else { fixture() };
+            let mut imported = current.clone();
+            if prefab {
+                current.prefabs[0].entities[0].collider = Some(collider());
+                imported.prefabs[0].entities.remove(0);
+            } else {
+                current.entities[0].collider = Some(collider());
+                imported.entities.remove(0);
+            }
+            let before = current.to_json().unwrap();
+            let error = merge(current.clone(), imported, "garden", true).unwrap_err();
+            assert_eq!(error.code, "collider_reimport_conflict");
+            assert_eq!(current.to_json().unwrap(), before);
+        }
+    }
+
+    #[test]
+    fn prefab_flag_is_explicit_and_duplicate_flags_are_rejected() {
+        let mut arguments: Vec<String> = [
+            "import",
+            "--file",
+            "model.glb",
+            "--id",
+            "garden",
+            "--output",
+            "new.scene.json",
+            "--as-prefab",
+        ]
+        .map(str::to_owned)
+        .into();
+        assert!(Options::parse(&arguments).unwrap().as_prefab);
+        arguments.push("--as-prefab".into());
+        assert_eq!(
+            Options::parse(&arguments).err().unwrap().code,
+            "invalid_arguments"
+        );
+    }
+
+    #[test]
+    fn replacement_only_matches_generated_names_in_exact_namespace() {
+        for (value, kind) in [
+            ("garden.node1.p0", Kind::Entity),
+            ("garden.node1.p0.mesh", Kind::Mesh),
+            ("garden.image0", Kind::Texture),
+            ("garden.material12", Kind::Material),
+        ] {
+            assert!(generated(value, "garden", kind));
+        }
+        for value in [
+            "garden2.node1.p0",
+            "garden.node1.p0.custom",
+            "garden.node.p0",
+            "garden.plant",
+        ] {
+            assert!(!generated(value, "garden", Kind::Entity));
+        }
+    }
+
+    #[test]
+    fn output_cannot_overwrite_an_existing_source() {
+        let path = std::env::temp_dir().join(format!(
+            "engine-import-existing-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, "original").unwrap();
+        assert_eq!(
+            write_new(&path, "replacement").unwrap_err().code,
+            "output_exists"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "original");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cli_revision_conflicts_and_invalid_sources_preserve_saved_bytes() {
+        let directory =
+            std::env::temp_dir().join(format!("engine-import-cas-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let source = directory.join("model.glb");
+        let target = directory.join("scene.json");
+        std::fs::write(
+            &source,
+            include_bytes!("../../../assets/source/garden-prop.glb"),
+        )
+        .unwrap();
+        let mut initial = fixture();
+        initial.entities[0].collider = Some(collider());
+        let original = initial.to_json().unwrap();
+        std::fs::write(&target, &original).unwrap();
+        let mut arguments = vec![
+            "import".into(),
+            "--file".into(),
+            source.to_string_lossy().into_owned(),
+            "--id".into(),
+            "garden".into(),
+            "--into".into(),
+            target.to_string_lossy().into_owned(),
+            "--expected-revision".into(),
+            "0".into(),
+            "--replace".into(),
+        ];
+        assert_eq!(command(&arguments).unwrap_err().code, "revision_conflict");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), original);
+        arguments[8] = "1".into();
+        let report = command(&arguments).unwrap();
+        assert_eq!(report["save"]["revision"], "2");
+        assert_eq!(report["provenance"]["importer_version"], IMPORTER_VERSION);
+        let saved = std::fs::read_to_string(&target).unwrap();
+        let saved_scene = SceneDocument::from_json(&saved).unwrap();
+        assert_eq!(saved_scene.entities[0].collider, Some(collider()));
+        let mut invalid = saved_scene;
+        invalid.revision += 1;
+        invalid.entities[0].collider.as_mut().unwrap().shape =
+            engine_scene::SceneColliderShape::Sphere { radius: 0.0 };
+        let error = authoring::save_scene(&target, &serde_json::to_string(&invalid).unwrap(), 2)
+            .unwrap_err();
+        assert_eq!(error.code, "invalid_collider");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
+        std::fs::write(&source, b"invalid glb").unwrap();
+        arguments[8] = "2".into();
+        assert_eq!(command(&arguments).unwrap_err().code, "invalid_glb");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
+        std::fs::remove_file(source).unwrap();
+        std::fs::remove_file(target).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn prefab_cli_reports_no_placement_and_rejects_dangling_reference_without_save() {
+        let directory =
+            std::env::temp_dir().join(format!("engine-prefab-import-cas-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let source = directory.join("model.glb");
+        let target = directory.join("scene.json");
+        std::fs::write(
+            &source,
+            include_bytes!("../../../assets/source/garden-prop.glb"),
+        )
+        .unwrap();
+        let mut current = prefab_fixture();
+        current.entities = vec![root("west", Some("garden")), root("east", Some("garden"))];
+        let mut external = current.prefabs[0].entities[1].clone();
+        external.id = "external-part".into();
+        current.entities.push(external);
+        std::fs::write(&target, current.to_json().unwrap()).unwrap();
+        let mut arguments = vec![
+            "import".into(),
+            "--file".into(),
+            source.to_string_lossy().into_owned(),
+            "--id".into(),
+            "garden".into(),
+            "--into".into(),
+            target.to_string_lossy().into_owned(),
+            "--expected-revision".into(),
+            "1".into(),
+            "--replace".into(),
+            "--as-prefab".into(),
+        ];
+        let report = command(&arguments).unwrap();
+        assert_eq!(report["imported"]["entities"], 0);
+        assert_eq!(report["imported"]["prefabs"], 1);
+        assert_eq!(report["imported"]["prefab_entities"], 2);
+        assert_eq!(report["provenance"]["settings"]["authoring"], "prefab");
+        let saved = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(command(&arguments).unwrap_err().code, "revision_conflict");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
+        std::fs::write(&source, without_second_primitive()).unwrap();
+        arguments[8] = "2".into();
+        assert_eq!(command(&arguments).unwrap_err().code, "unknown_reference");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
+        std::fs::remove_file(source).unwrap();
+        std::fs::remove_file(target).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    fn without_second_primitive() -> Vec<u8> {
+        let fixture = include_bytes!("../../../assets/source/garden-prop.glb");
+        let json_length = u32::from_le_bytes(fixture[12..16].try_into().unwrap()) as usize;
+        let mut json: Value = serde_json::from_slice(&fixture[20..20 + json_length]).unwrap();
+        json["meshes"][0]["primitives"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        let mut json = serde_json::to_vec(&json).unwrap();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let binary_chunk = &fixture[20 + json_length..];
+        let mut bytes = b"glTF".to_vec();
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&((20 + json.len() + binary_chunk.len()) as u32).to_le_bytes());
+        bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"JSON");
+        bytes.extend_from_slice(&json);
+        bytes.extend_from_slice(binary_chunk);
+        bytes
+    }
+}
