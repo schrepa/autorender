@@ -19,14 +19,16 @@ use std::{
     rc::Rc,
 };
 
-use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+use engine_core::{
+    AlphaMode, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3, math,
+};
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
     BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
     ShadowUniform,
 };
-use crate::shadow_fit::{LightBasis, MapRegion, view_sphere};
+use crate::shadow_fit::{LightBasis, MapRegion, frustum_footprint, view_sphere};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 /// Horizontal strips of the kept map; a dirty one is redrawn per frame.
@@ -1214,19 +1216,48 @@ impl ShadowPass {
                 None => [0.0; 4],
             };
             let row = |axis: Vec3| axis.extend(0.0).to_array();
+            // Casters matter only above receivers a map shadows: within the
+            // view frustum up to how far the map reaches, widened by the
+            // lookups' normal offset and texel gathers. Maps keep their
+            // regions; selection skips casters beyond that part of them.
+            let selection = |depth: f32, region: &MapRegion, texel: f32| {
+                let margin = texel * (NORMAL_OFFSET_TEXELS + 2.0);
+                match frustum_footprint(&basis, snapshot.view_projection, eye, depth) {
+                    Some((low, high)) => (
+                        [
+                            math::max(region.rect[0], low.x - margin),
+                            math::max(region.rect[1], low.y - margin),
+                            math::min(region.rect[2], high.x + margin),
+                            math::min(region.rect[3], high.y + margin),
+                        ],
+                        math::min(region.depth[1], high.z + margin),
+                    ),
+                    None => (region.rect, region.depth[1]),
+                }
+            };
             let mut near_rects = [[0.0; 4]; MAX_CASCADES];
             let mut near_depths = [0.0; 4];
-            for (index, (_, region)) in near.iter().enumerate() {
-                near_rects[index] = region.rect;
-                near_depths[index] = region.depth[1];
+            for (index, (reach, region)) in near.iter().enumerate() {
+                (near_rects[index], near_depths[index]) =
+                    selection(*reach, region, region.texel(near_resolution));
             }
+            // The far maps shadow receivers up to the shadow distance, and
+            // sun shafts (decision 024) sample them along view rays.
+            let shafts = snapshot.sun_shafts.sanitized();
+            let far_reach = if shafts.enabled() {
+                math::max(settings.distance, shafts.distance)
+            } else {
+                settings.distance
+            };
+            let (moving_rect, moving_depth) = selection(far_reach, &far, far.texel(resolution));
             let cull = ShadowCullUniform {
                 light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],
                 near: near_rects,
                 far: far.rect,
                 refresh: refresh_rect,
+                moving: moving_rect,
                 near_depths,
-                depths: [0.0, far.depth[1], far.depth[1], 0.0],
+                depths: [0.0, far.depth[1], far.depth[1], moving_depth],
                 candidates,
                 groups: groups as u32,
                 capacity: self.id_capacity as u32,

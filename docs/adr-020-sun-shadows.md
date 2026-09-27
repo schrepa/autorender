@@ -45,7 +45,14 @@ flattening casters in front of a map onto its near plane:
 A compute pass after GPU presentation's culling visits every candidate,
 visible or culled, reads the pose culling wrote, transforms its mesh bounds
 into light space, and appends its slot to the instance IDs of each map it
-can darken, counting indirect draws per mesh (up to 128 meshes). On
+can darken, counting indirect draws per mesh (up to 128 meshes). A caster
+can only darken receivers under it along the sun: each near cascade and the
+moving map select casters over the part of their region where visible
+receivers can be, the light-space bounds of the view frustum up to the
+cascade's reach (or the shadow distance, or the sun shafts' when longer),
+widened by the lookups' normal offset and texel gathers. Maps keep their
+regions, so selection changes no texel; the kept map selects from its whole
+region, which every view reuses. On
 GPU-presented frames it also keeps, per slot, a 32-bit key of the pose and
 mesh, a stillness count and the kept strips the slot was last drawn into; a
 kept slot that moves, or one that becomes still, marks strips dirty in a

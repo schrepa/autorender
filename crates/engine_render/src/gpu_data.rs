@@ -649,9 +649,12 @@ pub(crate) struct ShadowCullUniform {
     pub near: [[f32; 4]; MAX_CASCADES],
     pub far: [f32; 4],
     pub refresh: [f32; 4],
+    /// The part of the far maps the moving map selects casters from: where
+    /// visible receivers can be.
+    pub moving: [f32; 4],
     /// Light-space depth beyond which casters cannot darken receivers of
     /// each near cascade; then (y and z) of the far maps and the refreshed
-    /// region.
+    /// region, and (w) of the moving map's selection.
     pub near_depths: [f32; 4],
     pub depths: [f32; 4],
     pub candidates: u32,
@@ -1411,7 +1414,7 @@ mod tests {
         assert_eq!(size(SHADER, "Shadow"), size_of::<ShadowUniform>());
         assert_eq!(size_of::<ShadowUniform>(), 400);
         assert_eq!(size(SHADOW_SHADER, "Cull"), size_of::<ShadowCullUniform>());
-        assert_eq!(size_of::<ShadowCullUniform>(), 224);
+        assert_eq!(size_of::<ShadowCullUniform>(), 240);
         // Members sit where Rust puts them (decision 028's arrays).
         let offset = |source: &str, name: &str, member: &str| {
             let module = naga::front::wgsl::parse_str(source).unwrap();

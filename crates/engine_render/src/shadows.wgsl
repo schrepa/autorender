@@ -18,9 +18,12 @@ struct Cull {
     near: array<vec4<f32>, 4>,
     far: vec4<f32>,
     refresh: vec4<f32>,
+    // Where visible receivers of the far maps can be: the moving map
+    // selects its casters there.
+    moving: vec4<f32>,
     // Light-space depth beyond which casters cannot darken a receiver of
     // each near cascade; then (y and z) of the far maps and the refreshed
-    // region.
+    // region, and (w) of the moving map's selection.
     near_depths: vec4<f32>,
     depths: vec4<f32>,
     candidates: u32,
@@ -237,7 +240,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     if moving {
-        if overlaps(cull.far, low, high, cull.depths.y) {
+        if overlaps(cull.moving, low, high, cull.depths.w) {
             append(MOVING_MAP, batch.group, candidate.slot);
         }
     }

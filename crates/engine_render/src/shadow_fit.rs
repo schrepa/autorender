@@ -117,6 +117,41 @@ impl MapRegion {
     }
 }
 
+/// Light-space bounds of the part of the view frustum of `view_projection`
+/// (looking from `eye`) within view depth `depth`: where the receivers of a
+/// map that shadows that far can be. `None` for an unusable projection.
+pub(crate) fn frustum_footprint(
+    basis: &LightBasis,
+    view_projection: Mat4,
+    eye: Vec3,
+    depth: f32,
+) -> Option<(Vec3, Vec3)> {
+    let inverse = view_projection.inverse();
+    let unproject = |x: f32, y: f32, z: f32| {
+        let point = inverse * Vec4::new(x, y, z, 1.0);
+        point.truncate() / point.w
+    };
+    let far_center = unproject(0.0, 0.0, 1.0);
+    let direction = (far_center - unproject(0.0, 0.0, 0.0)).try_normalize()?;
+    let far_depth = (far_center - eye).dot(direction);
+    if !(far_depth.is_finite() && far_depth > 0.0 && depth > 0.0) {
+        return None;
+    }
+    // Corners at `depth` lie along the rays through the far plane's.
+    let scale = math::min(depth, far_depth) / far_depth;
+    let mut low = Vec3::splat(f32::MAX);
+    let mut high = Vec3::splat(f32::MIN);
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        let far = eye + (unproject(x, y, 1.0) - eye) * scale;
+        for point in [unproject(x, y, 0.0), far] {
+            let light = basis.apply(point);
+            low = low.min(light);
+            high = high.max(light);
+        }
+    }
+    (low.is_finite() && high.is_finite()).then_some((low, high))
+}
+
 /// The smallest sphere around the part of the view frustum of
 /// `view_projection` (looking from `eye`) within view depth `reach`: the
 /// region the near shadow map covers. `None` for an unusable projection.
@@ -242,5 +277,42 @@ mod tests {
         let basis = LightBasis::new(Vec3::Y);
         let region = MapRegion::of_sphere(&basis, center, radius, 1024);
         assert!((region.texel(1024) - 2.0 * radius / 1024.0).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn frustum_footprint_holds_every_point_of_the_view_within_its_depth() {
+        let camera = Camera {
+            position: Vec3::new(4.0, 30.0, 9.0),
+            target: Vec3::new(40.0, 0.0, -60.0),
+            ..Camera::default()
+        };
+        let view_projection = camera.view_projection(2262.0 / 987.0);
+        let basis = LightBasis::new(Vec3::new(0.6, 0.35, -0.4));
+        let (low, high) =
+            frustum_footprint(&basis, view_projection, camera.position, 100.0).unwrap();
+        let inverse = view_projection.inverse();
+        let direction = (camera.target - camera.position).normalize();
+        // Points across the view at depths up to the footprint's lie inside.
+        for step in 0..=24 {
+            let x = step as f32 / 12.0 - 1.0;
+            for y in [-1.0, -0.3, 0.4, 1.0] {
+                let far = inverse * Vec4::new(x, y, 1.0, 1.0);
+                let ray = (far.truncate() / far.w - camera.position).normalize();
+                for depth in [camera.near, 20.0, 60.0, 100.0] {
+                    let point = basis.apply(camera.position + ray * (depth / ray.dot(direction)));
+                    // Both sides unproject through the far plane in f32.
+                    let slack = Vec3::splat(1.0e-2);
+                    assert!(
+                        point.cmpge(low - slack).all() && point.cmple(high + slack).all(),
+                        "x {x} y {y} depth {depth}: {point} not in {low}..{high}"
+                    );
+                }
+            }
+        }
+        // A shallower footprint is no larger.
+        let (near_low, near_high) =
+            frustum_footprint(&basis, view_projection, camera.position, 10.0).unwrap();
+        assert!(near_low.cmpge(low).all() && near_high.cmple(high).all());
+        assert!(frustum_footprint(&basis, Mat4::ZERO, Vec3::ZERO, 10.0).is_none());
     }
 }
