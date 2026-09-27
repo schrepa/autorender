@@ -33,7 +33,9 @@ flattening casters in front of a map onto its near plane:
   the view within the near distance, moved in whole texels, and is redrawn
   every frame;
 - the kept far map covers the region and holds casters whose pose has not
-  changed for 8 frames. It is redrawn whole when the sun, the region or the
+  changed for 8 frames (180 once a kept caster moved again: casters that
+  pause stay in the moving map instead of redrawing kept strips at every
+  pause). It is redrawn whole when the sun, the region or the
   resolution changes, and otherwise only where it is dirty: one of 16
   horizontal strips per frame, cleared under a scissor;
 - the moving far map covers the region too and holds every other caster

@@ -155,7 +155,8 @@ shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_c
 `bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and
 `light_cluster_overflow` read back late (overflow means shorter light ranges
 are needed); `sun_shafts`, `reflections` and `refraction`; `transparent_draws` and
-`particles`; `decals` and `dropped_decals`. `Mesh3d` reports each material's `surface`, `opacity` and
+`particles`; `decals` and `dropped_decals`; `occluded_instances`, the visible instances occlusion culling left undrawn (read back late,
+null without it). `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

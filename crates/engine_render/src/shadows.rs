@@ -115,7 +115,7 @@ pub(crate) struct Poses<'a> {
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ShadowEncoded {
     /// Passes timed (bit 0 selection, bit 1 depth maps).
-    pub timed: u8,
+    pub timed: u16,
     /// Indexed draws, one per mesh group and map drawn.
     pub draws: u32,
 }
@@ -1392,7 +1392,7 @@ impl ShadowPass {
         if self.maps.is_none() || self.pipelines.is_none() {
             return ShadowEncoded::default();
         }
-        let mut timed = u8::from(timestamps.is_some()) << 1;
+        let mut timed = u16::from(timestamps.is_some()) << 1;
         let draws = Cell::new(0_u32);
         let groups = self.groups.len() as u64;
         if frame.source != Source::Snapshot {
@@ -1423,7 +1423,7 @@ impl ShadowPass {
                 pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
                 pass.set_pipeline(&pipelines.count);
                 pass.dispatch_workgroups(1, 1, 1);
-                timed |= u8::from(timestamps.is_some());
+                timed |= u16::from(timestamps.is_some());
             }
         }
         if frame.read_dirty {
@@ -1532,24 +1532,29 @@ impl ShadowPass {
                 draws.set(draws.get() + 1);
             }
         };
-        // The first depth pass writes the begin timestamp, the last the end.
-        let first_map = if frame.cascades > 0 { 0 } else { MOVING_MAP };
-        let last = if frame.refresh.is_some() {
-            KEPT_MAP
-        } else {
-            MOVING_MAP
-        };
+        // Profiled frames time the near cascades together, the moving map and
+        // the kept map (effects 11, 12 and 13 of the profiler).
+        let last_cascade = (frame.cascades as usize).saturating_sub(1);
         let writes = |map: usize| {
             timestamps.and_then(|(query_set, first)| {
-                let begin = (map == first_map).then_some(first + 2);
-                let end = (map == last).then_some(first + 3);
-                (begin.is_some() || end.is_some()).then_some(wgpu::RenderPassTimestampWrites {
+                let (effect, begin, end) = match map {
+                    MOVING_MAP => (12, true, true),
+                    KEPT_MAP => (13, true, true),
+                    cascade => (11, cascade == 0, cascade == last_cascade),
+                };
+                let base = first + 2 * effect;
+                (begin || end).then_some(wgpu::RenderPassTimestampWrites {
                     query_set,
-                    beginning_of_pass_write_index: begin,
-                    end_of_pass_write_index: end,
+                    beginning_of_pass_write_index: begin.then_some(base),
+                    end_of_pass_write_index: end.then_some(base + 1),
                 })
             })
         };
+        if timestamps.is_some() {
+            timed |= u16::from(frame.cascades > 0) << 11
+                | 1 << 12
+                | u16::from(frame.refresh.is_some()) << 13;
+        }
         // Each near cascade in use (map and view matrix `cascade`), then the
         // moving map.
         let cascades = (0..frame.cascades as usize).map(|cascade| {

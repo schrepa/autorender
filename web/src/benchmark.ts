@@ -4,7 +4,7 @@ import type { RuntimeStats } from "./host";
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
 const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom", "sun_shafts", "reflections", "refraction"] as const;
 // Read back a few frames late: null until then.
-const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow"] as const;
+const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances"] as const;
 export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number]> & Record<typeof casterFields[number], number | null>;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };

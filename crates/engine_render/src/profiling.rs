@@ -18,15 +18,34 @@ pub(crate) const STAGES: [&str; STAGE_COUNT] = [
     "presentation_scan",
     "presentation_scatter",
 ];
-/// Passes of shadows (decision 020) and screen effects (decision 021), each
-/// timed from its begin to its end query.
-pub(crate) const EFFECTS: [&str; 5] = [
+/// Passes of shadows (decision 020), screen effects (decisions 021, 024 and
+/// 025), local light binning (decision 023), decals (decision 039) and
+/// transparency (decision 026), each timed from its begin to its end query.
+/// `shadow_maps` spans the near cascades' begin (or the moving map's) to the
+/// kept map's end (or the moving map's), from the per-map queries.
+pub(crate) const EFFECTS: [&str; 15] = [
     "shadow_select",
     "shadow_maps",
     "ambient_occlusion",
     "bloom",
     "post_composite",
+    "reflections",
+    "sun_shafts",
+    "light_bins",
+    "decals",
+    "transparent",
+    "transparent_composite",
+    "shadow_near",
+    "shadow_moving",
+    "shadow_kept",
+    // Occlusion culling (decision 040): the depth pyramid, the test and
+    // phase two's compaction.
+    "occlusion",
 ];
+const SHADOW_MAPS: usize = 1;
+const SHADOW_NEAR: usize = 11;
+const SHADOW_MOVING: usize = 12;
+const SHADOW_KEPT: usize = 13;
 // Render pass begin/end, begin/end of each presentation stage, then of the
 // temporal antialiasing resolve (decision 017), then of each effect.
 const RESOLVE_QUERY: u32 = 2 + 2 * STAGE_COUNT as u32;
@@ -59,7 +78,7 @@ struct Slot {
     // Whether this submission timed a temporal antialiasing resolve.
     resolved: bool,
     // Effects this submission timed, one bit per `EFFECTS` entry.
-    effects: u8,
+    effects: u16,
 }
 
 impl Slot {
@@ -228,7 +247,7 @@ impl GpuProfiler {
     }
 
     /// Records the effects (bits of `EFFECTS`) whose passes wrote timestamps.
-    pub(crate) fn timed_effects(&mut self, index: Option<usize>, effects: u8) {
+    pub(crate) fn timed_effects(&mut self, index: Option<usize>, effects: u16) {
         if let Some(index) = index {
             self.slots[index].effects |= effects;
         }
@@ -328,10 +347,32 @@ impl GpuProfiler {
                             }
                         }
                         for (effect, value) in effects.iter_mut().enumerate() {
-                            if slot.effects & (1 << effect) != 0 {
+                            if effect != SHADOW_MAPS && slot.effects & (1 << effect) != 0 {
                                 *value = elapsed(&bytes, (EFFECT_QUERY as usize + 2 * effect) * 8)
                                     .filter(|value| value.is_finite());
                             }
+                        }
+                        // The maps together: first map's begin to last map's end.
+                        if slot.effects & (1 << SHADOW_MAPS) != 0 {
+                            let query = |effect: usize, end: usize| {
+                                EFFECT_QUERY as usize + 2 * effect + end
+                            };
+                            let timed_map = |effect: usize| slot.effects & (1 << effect) != 0;
+                            let first = if timed_map(SHADOW_NEAR) {
+                                SHADOW_NEAR
+                            } else {
+                                SHADOW_MOVING
+                            };
+                            let last = if timed_map(SHADOW_KEPT) {
+                                SHADOW_KEPT
+                            } else {
+                                SHADOW_MOVING
+                            };
+                            effects[SHADOW_MAPS] = stamp(&bytes, query(first, 0))
+                                .zip(stamp(&bytes, query(last, 1)))
+                                .and_then(|(start, end)| end.checked_sub(start))
+                                .map(|ticks| ticks as f64 * period_ns / 1_000_000.0)
+                                .filter(|value| value.is_finite());
                         }
                         // The frame's own compute passes: every stage but the
                         // shift, which is submitted before the frame's uploads.
@@ -383,7 +424,7 @@ impl GpuProfiler {
             "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
             "capture_id": self.capture.map(|id| id.to_string()),
             "active": active,
-            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), and ambient_occlusion, bloom and post_composite (decision 021); excludes uploads, queue latency, presentation and timestamp readback",
+            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving and shadow_kept per map, and occlusion (decision 040: the depth pyramid, test and second compaction; opaque_meshes then spans both drawing phases); excludes uploads, queue latency, presentation and timestamp readback",
             "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
             "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
             "precision": "browser may quantize timestamp values; zero durations remain valid samples",

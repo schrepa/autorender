@@ -21,6 +21,10 @@ pub struct RenderStats {
     /// GPU-culled frames only: the pre-budget visible count read back from the
     /// latest completed frame, a few frames old; `None` before the first one.
     pub gpu_visible: Option<u32>,
+    /// GPU-culled frames with occlusion culling (decision 040): visible
+    /// instances the occlusion test left undrawn, read back with
+    /// `gpu_visible`; `None` otherwise.
+    pub occluded_instances: Option<u32>,
     /// Number of distinct meshes retained on the GPU.
     pub resident_meshes: u32,
     /// Vertex/index bytes initialized for meshes first seen this frame.
@@ -96,6 +100,8 @@ mod gpu_data;
 mod batches;
 #[cfg(any(target_arch = "wasm32", test))]
 mod decals;
+#[cfg(target_arch = "wasm32")]
+mod depth_pyramid;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;
 #[cfg(any(target_arch = "wasm32", test))]

@@ -24,8 +24,15 @@ struct Frame {
     motion: u32,
     // Joints of skinned slots' palettes (decision 036).
     joints: u32,
-    pad1: u32,
-    pad2: u32,
+    // Candidate flags the compaction passes gather: VISIBLE without
+    // occlusion culling; PHASE1, then PHASE2, with it (decision 040).
+    mask: u32,
+    // Nonzero when occlusion culling splits drawing into two phases.
+    occlusion: u32,
+    // The projection the frame rasterizes.
+    view_projection: mat4x4<f32>,
+    // Viewport width and height in pixels, and the depth pyramid's levels.
+    viewport: vec4<f32>,
 }
 
 // One local pose per node in 10 floats: [t.xyz, s.x, r.xyzw, s.yz]. Current
@@ -107,6 +114,11 @@ struct Level {
 @group(0) @binding(15) var<storage, read> joint_nodes: array<u32>;
 @group(0) @binding(16) var<storage, read> inverse_binds: array<Rows>;
 @group(0) @binding(17) var<storage, read_write> palette: array<Rows>;
+// Occlusion culling (decision 040): the farthest depth of each 2x2 block of
+// the depth buffer, then of each 2x2 block of the level below, after phase
+// one; and the count of candidates phase two finds hidden.
+@group(0) @binding(18) var depth_pyramid: texture_2d<f32>;
+@group(0) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -119,6 +131,17 @@ const MOVED_SLOT: u32 = 0x80000000u;
 const VISIBLE: u32 = 1u;
 const MOVING: u32 = 2u;
 const VALID: u32 = 4u;
+// Occlusion culling (decision 040): candidates drawn before the depth
+// pyramid, candidates the pyramid does not hide drawn after it, and the
+// persistent mark of a candidate the last test found hidden.
+const PHASE1: u32 = 8u;
+const PHASE2: u32 = 16u;
+const OCCLUDED: u32 = 32u;
+// Depth a box must lie beyond the pyramid to count as hidden: more than
+// depth-buffer steps and the projection's rounding, so boxes touching what
+// is in front of them (a sign on a wall) keep drawing in phase one, in the
+// same order as without occlusion culling.
+const HIDDEN_MARGIN: f32 = 1.0e-6;
 const LINEAR_ROTATION_DOT: f32 = 0.9995;
 const GROUP: u32 = 256u;
 // Exact hex literals: browsers reject decimal spellings above f32::MAX.
@@ -357,10 +380,12 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let candidate = slot_candidates[id.x];
-    var visible = 0u;
+    // The last test's mark survives until this frame's test replaces it.
+    let previous = scan[candidate.position] & OCCLUDED;
+    var visible = previous;
     let flags = info[candidate.node].y;
     if (flags & NODE_VALID) != 0u {
-        visible = VALID;
+        visible = previous | VALID;
         var model: mat4x4<f32>;
         if (flags & NODE_ACTIVE) != 0u {
             model = rows_matrix(compose(candidate.node).display);
@@ -380,9 +405,102 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
             if frame.motion != 0u && ((flags & NODE_ACTIVE) != 0u || skinned) {
                 visible |= MOVING;
             }
+            // Phase one draws what the last test did not hide, and what
+            // occlusion culling never hides: meshes with joints and
+            // transparent draw groups.
+            let occludable = frame.occlusion != 0u && !skinned && batch.bounds_max.w == 0.0;
+            if !occludable || previous == 0u {
+                visible |= PHASE1;
+            }
         }
     }
     scan[candidate.position] = visible;
+}
+
+// Whether the pyramid of phase one's depths hides the box `bounds_min` to
+// `bounds_max` posed by `pose`: its projection's nearest depth lies beyond
+// the farthest depth of every pyramid texel its screen rectangle touches.
+// Boxes reaching the eye plane, or too large for the pyramid, are not hidden.
+fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
+    let clip_from_local = frame.view_projection * rows_matrix(pose);
+    var low = vec3<f32>(F32_MAX);
+    var high = vec2<f32>(-F32_MAX);
+    for (var corner = 0u; corner < 8u; corner++) {
+        let local = vec3<f32>(
+            select(bounds_min.x, bounds_max.x, (corner & 1u) != 0u),
+            select(bounds_min.y, bounds_max.y, (corner & 2u) != 0u),
+            select(bounds_min.z, bounds_max.z, (corner & 4u) != 0u));
+        let clip = clip_from_local * vec4<f32>(local, 1.0);
+        if !(clip.w > 1.0e-6) {
+            return false;
+        }
+        let ndc = clip.xyz / clip.w;
+        low = min(low, ndc);
+        high = max(high, ndc.xy);
+    }
+    // Non-finite corners fail these comparisons and are not hidden.
+    if !(low.z >= 0.0 && low.z <= 1.0 && all(low.xy >= vec2<f32>(-F32_MAX))
+            && all(high <= vec2<f32>(F32_MAX))) {
+        return false;
+    }
+    // Pixels the rectangle touches, rows downward, within the viewport.
+    let size = frame.viewport.xy;
+    let first = clamp(floor(vec2<f32>(low.x * 0.5 + 0.5, 0.5 - high.y * 0.5) * size),
+        vec2<f32>(0.0), size - 1.0);
+    let last = clamp(floor(vec2<f32>(high.x * 0.5 + 0.5, 0.5 - low.y * 0.5) * size),
+        vec2<f32>(0.0), size - 1.0);
+    // Level-zero texels are 2x2 pixels; each level halves them again. The
+    // first level where the rectangle spans at most 2x2 texels.
+    var a = vec2<u32>(first) / 2u;
+    var b = vec2<u32>(last) / 2u;
+    let levels = u32(frame.viewport.z);
+    var mip = 0u;
+    loop {
+        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || mip + 1u >= levels {
+            break;
+        }
+        a = a / 2u;
+        b = b / 2u;
+        mip += 1u;
+    }
+    if b.x - a.x > 1u || b.y - a.y > 1u {
+        return false;
+    }
+    let farthest = max(
+        max(textureLoad(depth_pyramid, a, mip).r, textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
+        max(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r, textureLoad(depth_pyramid, b, mip).r));
+    return low.z > farthest + HIDDEN_MARGIN;
+}
+
+// Occlusion culling (decision 040) after phase one drew and the depth
+// pyramid was built: every frustum-visible candidate that can be hidden is
+// tested. Those phase one skipped draw in phase two unless hidden (and count
+// as hidden); every test's result marks the candidate for the next frame's
+// phase one.
+@compute @workgroup_size(256)
+fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.candidates {
+        return;
+    }
+    let candidate = slot_candidates[id.x];
+    var flags = scan[candidate.position];
+    if (flags & VISIBLE) == 0u {
+        return;
+    }
+    let batch = batches[candidate.batch];
+    if batch.bounds_min.w != 0.0 || batch.bounds_max.w != 0.0 {
+        return;
+    }
+    let is_hidden = hidden(poses[candidate.slot], batch.bounds_min.xyz, batch.bounds_max.xyz);
+    flags = (flags & ~OCCLUDED) | select(0u, OCCLUDED, is_hidden);
+    if (flags & PHASE1) == 0u {
+        if is_hidden {
+            atomicAdd(&occlusion_counts[0], 1u);
+        } else {
+            flags |= PHASE2;
+        }
+    }
+    scan[candidate.position] = flags;
 }
 
 // Skinned slots' palettes (decision 036): each joint's displayed pose,
@@ -422,7 +540,7 @@ fn sum_groups(
 ) {
     var visible = 0u;
     if id.x < frame.candidates {
-        visible = scan[id.x] & VISIBLE;
+        visible = select(0u, 1u, (scan[id.x] & frame.mask) != 0u);
     }
     shared_values[lane] = visible;
     workgroupBarrier();
@@ -488,7 +606,7 @@ fn visible_before(position: u32) -> u32 {
     let group = position / GROUP;
     var value = scan[frame.candidates + group];
     for (var index = group * GROUP; index < position; index++) {
-        value += scan[index] & VISIBLE;
+        value += select(0u, 1u, (scan[index] & frame.mask) != 0u);
     }
     return value;
 }
@@ -522,7 +640,7 @@ fn scatter(
     if id.x < frame.candidates {
         stored = scan[id.x];
     }
-    let flag = stored & VISIBLE;
+    let flag = select(0u, 1u, (stored & frame.mask) != 0u);
     shared_values[lane] = flag;
     workgroupBarrier();
     for (var offset = 1u; offset < GROUP; offset = offset << 1u) {

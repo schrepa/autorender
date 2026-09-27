@@ -213,6 +213,8 @@ const params = new URLSearchParams(location.search);
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
 const taa = params.get("taa") === "on" ? "on" : "off";
+// ?occlusion=off draws every frustum-visible object (decision 040), for A/B.
+const occlusion = params.get("occlusion") === "off" ? "off" : "on";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
@@ -275,6 +277,7 @@ boot({
     runtime.set_gpu_presentation(presentation === "gpu");
     runtime.set_tick_pipelining(pipeline === "on");
     runtime.set_temporal_antialiasing(taa === "on");
+    runtime.set_occlusion_culling(occlusion === "on");
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
     runtime.set_effects(initialEffects);
@@ -297,7 +300,7 @@ boot({
           metadata() {
             const data = snapshot(runtime);
             return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, look: choice("look").value, effects: choice("effects").value,
+              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, occlusion, look: choice("look").value, effects: choice("effects").value,
               build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
               start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
               viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
@@ -369,7 +372,7 @@ el("record").addEventListener("click", () => {
   try {
     const data = snapshot(game);
     recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, look: choice("look").value, effects: choice("effects").value,
+      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, occlusion, look: choice("look").value, effects: choice("effects").value,
       build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
       start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
       scroll: [window.scrollX, window.scrollY],

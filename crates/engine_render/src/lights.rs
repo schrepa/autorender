@@ -492,18 +492,27 @@ mod gpu {
         /// Records this frame's binning: clears the clusters, counts every
         /// light's clusters, gives the clusters their list ranges, fills the
         /// lists and copies the totals for read-back.
+        /// With `timestamps` (a query set and two indices), the binning pass
+        /// writes its begin and end queries.
         pub(crate) fn encode(
             &mut self,
             device: &wgpu::Device,
             encoder: &mut wgpu::CommandEncoder,
             frame: &LightFrame,
+            timestamps: Option<(&wgpu::QuerySet, u32)>,
         ) {
             encoder.clear_buffer(&self.counts, 0, None);
             encoder.clear_buffer(&self.totals, 0, None);
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("engine/light-binning"),
-                    timestamp_writes: None,
+                    timestamp_writes: timestamps.map(|(query_set, first)| {
+                        wgpu::ComputePassTimestampWrites {
+                            query_set,
+                            beginning_of_pass_write_index: Some(first),
+                            end_of_pass_write_index: Some(first + 1),
+                        }
+                    }),
                 });
                 let workgroups = frame.count.div_ceil(WORKGROUP);
                 pass.set_bind_group(0, &self.compute_groups[frame.group].1, &[]);

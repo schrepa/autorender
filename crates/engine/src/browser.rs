@@ -148,6 +148,9 @@ pub struct FrameStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Visible instances occlusion culling left undrawn (decision 040), read
+    /// back a few frames late; `None` without occlusion culling.
+    pub occluded_instances: Option<u32>,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -210,6 +213,9 @@ pub struct BrowserStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Visible instances occlusion culling left undrawn (decision 040), read
+    /// back a few frames late; undefined without occlusion culling.
+    pub occluded_instances: Option<u32>,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -267,6 +273,7 @@ impl From<FrameStats> for BrowserStats {
             dropped_particles: stats.dropped_particles,
             decals: stats.decals,
             dropped_decals: stats.dropped_decals,
+            occluded_instances: stats.occluded_instances,
         }
     }
 }
@@ -352,6 +359,19 @@ impl BrowserApp {
 
     pub fn temporal_antialiasing(&self) -> bool {
         self.renderer.temporal_antialiasing()
+    }
+
+    /// Occlusion culling of GPU-presented frames (decision 040), on by
+    /// default: frames that cull without an instance budget draw what the
+    /// last frame showed, test every other frustum-visible instance against
+    /// a depth pyramid of those depths, then draw only what it does not hide.
+    /// Output is unchanged; hidden instances cost no drawing.
+    pub fn set_occlusion_culling(&mut self, enabled: bool) {
+        self.renderer.set_occlusion_culling(enabled);
+    }
+
+    pub fn occlusion_culling(&self) -> bool {
+        self.renderer.occlusion_culling()
     }
 
     /// Advance once per animation frame; input is a bounded, owned value.
@@ -612,6 +632,7 @@ impl BrowserApp {
             dropped_particles: rendered.dropped_particles,
             decals: rendered.decals,
             dropped_decals: rendered.dropped_decals,
+            occluded_instances: rendered.occluded_instances,
         };
         Ok(())
     }

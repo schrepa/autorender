@@ -99,6 +99,15 @@ const VALID: u32 = 4u;
 // back and redrawn one per frame.
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
+// A kept slot that moves again becomes restless: it waits this much longer
+// before it is kept again, so props that pause and vehicles that stop stay
+// in the per-frame map instead of redrawing kept strips at every pause.
+const KEEP_AFTER_RESTLESS: u32 = 180u;
+const MOVING_UNTIL_RESTLESS: u32 = 236u;
+// Stillness state bits: the count in the low byte, then the kept strips,
+// then this flag.
+const RESTLESS: u32 = 0x80000000u;
+const STRIP_MASK: u32 = 0xffffu;
 // Near cascades are maps 0 to 3; the far maps follow.
 const MOVING_MAP: u32 = 4u;
 const KEPT_MAP: u32 = 5u;
@@ -185,35 +194,39 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     let low = light_center - light_half;
     let high = light_center + light_half;
     // Non-finite bounds fail every comparison and cast nothing.
-    var still = MOVING_UNTIL;
+    var moving = true;
     var kept = false;
     if classify {
         let key = pose_key(pose, batch.group);
         let state = stillness[candidate.slot];
         var count = state.y & 0xffu;
-        var strips = state.y >> 8u;
+        var strips = (state.y >> 8u) & STRIP_MASK;
+        var restless = state.y & RESTLESS;
+        var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
         if state.x == key {
             count = min(count + 1u, 255u);
         } else {
             // A kept slot that moved leaves its shadow in the strips it was
-            // drawn into: redraw them.
-            if count >= KEEP_AFTER && strips != 0u {
+            // drawn into: redraw them, and keep it moving longer next time.
+            if count >= keep_after && strips != 0u {
                 atomicOr(&counters.dirty[0], strips);
+                restless = RESTLESS;
+                keep_after = KEEP_AFTER_RESTLESS;
             }
             count = 0u;
             strips = 0u;
         }
-        if count == KEEP_AFTER && overlaps(cull.far, low, high, cull.depths.y) {
+        if count == keep_after && overlaps(cull.far, low, high, cull.depths.y) {
             // Newly still: its strips must be drawn with it.
             atomicOr(&counters.dirty[0], strip_bits(low.y, high.y));
         }
-        still = count;
-        kept = count >= KEEP_AFTER;
+        moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
+        kept = count >= keep_after;
         if kept && (cull.mode & REFRESH) != 0u && overlaps(cull.refresh, low, high, cull.depths.z) {
             append(KEPT_MAP, batch.group, candidate.slot);
             strips = strip_bits(low.y, high.y);
         }
-        let packed = count | (strips << 8u);
+        let packed = count | (strips << 8u) | restless;
         if state.x != key || state.y != packed {
             stillness[candidate.slot] = vec2<u32>(key, packed);
         }
@@ -223,7 +236,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             append(cascade, batch.group, candidate.slot);
         }
     }
-    if still < MOVING_UNTIL || !classify {
+    if moving {
         if overlaps(cull.far, low, high, cull.depths.y) {
             append(MOVING_MAP, batch.group, candidate.slot);
         }

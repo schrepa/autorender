@@ -390,6 +390,8 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
 pub(crate) const SHADER: &str = concat!(include_str!("scene.wgsl"), include_str!("meshes.wgsl"));
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
+/// The depth pyramid of occlusion culling (decision 040).
+pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
 /// Temporal antialiasing resolve (decision 017), after the shared effects.
 pub(crate) const TEMPORAL_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
@@ -745,7 +747,7 @@ pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2]
     ]
 }
 
-/// `Frame` uniform of `presentation.wgsl`: 208 bytes, WGSL uniform layout.
+/// `Frame` uniform of `presentation.wgsl`: 288 bytes, WGSL uniform layout.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct PresentationFrame {
@@ -766,8 +768,22 @@ pub(crate) struct PresentationFrame {
     pub motion: u32,
     /// Joints of skinned slots' palettes (decision 036).
     pub joints: u32,
-    pub pad: [u32; 2],
+    /// Candidate flags compaction gathers: [`FLAG_VISIBLE`] without
+    /// occlusion culling, [`FLAG_PHASE1`] or [`FLAG_PHASE2`] with it
+    /// (decision 040).
+    pub mask: u32,
+    /// Nonzero when occlusion culling splits drawing into two phases.
+    pub occlusion: u32,
+    /// The projection the frame rasterizes.
+    pub view_projection: [[f32; 4]; 4],
+    /// Viewport width and height in pixels, and the depth pyramid's levels.
+    pub viewport: [f32; 4],
 }
+
+/// Candidate flags of `presentation.wgsl` the compaction passes gather.
+pub(crate) const FLAG_VISIBLE: u32 = 1;
+pub(crate) const FLAG_PHASE1: u32 = 8;
+pub(crate) const FLAG_PHASE2: u32 = 16;
 
 /// Bit of a visible slot ID marking a slot whose displayed pose can differ
 /// from the previous frame's (decision 017); slot indices stay below it.
@@ -1479,6 +1495,10 @@ mod tests {
             bits(SHADOW_SHADER, "VALID"),
             bits(PRESENTATION_SHADER, "VALID")
         );
+        // Compaction masks the renderer writes into the frame uniform.
+        assert_eq!(bits(PRESENTATION_SHADER, "VISIBLE"), FLAG_VISIBLE);
+        assert_eq!(bits(PRESENTATION_SHADER, "PHASE1"), FLAG_PHASE1);
+        assert_eq!(bits(PRESENTATION_SHADER, "PHASE2"), FLAG_PHASE2);
     }
 
     #[test]
@@ -1494,6 +1514,7 @@ mod tests {
             PARTICLE_SHADER,
             TRANSPARENT_SHADER,
             SHAFTS_SHADER,
+            DEPTH_PYRAMID_SHADER,
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             naga::valid::Validator::new(
@@ -1580,13 +1601,19 @@ mod tests {
 
     #[test]
     fn presentation_layouts_match_wgsl() {
-        assert_eq!(size_of::<PresentationFrame>(), 208);
+        assert_eq!(size_of::<PresentationFrame>(), 288);
         assert_eq!(std::mem::offset_of!(PresentationFrame, planes), 32);
         assert_eq!(
             std::mem::offset_of!(PresentationFrame, absolute_view_projection),
             128
         );
         assert_eq!(std::mem::offset_of!(PresentationFrame, motion), 192);
+        assert_eq!(std::mem::offset_of!(PresentationFrame, mask), 200);
+        assert_eq!(
+            std::mem::offset_of!(PresentationFrame, view_projection),
+            208
+        );
+        assert_eq!(std::mem::offset_of!(PresentationFrame, viewport), 272);
         assert_eq!(size_of::<CandidateData>(), 16);
         assert_eq!(size_of::<BatchData>(), 48);
         // Ten floats per pose, matching POSE_FLOATS in the shader.
@@ -1607,7 +1634,7 @@ mod tests {
                 .unwrap();
             ty.inner.size(module.to_ctx())
         };
-        assert_eq!(size("Frame"), 208);
+        assert_eq!(size("Frame"), 288);
         let (_, pose_floats) = module
             .constants
             .iter()

@@ -16,8 +16,8 @@ use engine_core::{
 
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::gpu_data::{
-    BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, PRESENTATION_SHADER,
-    PresentationFrame, frustum_uniform,
+    BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, FLAG_PHASE1, FLAG_PHASE2,
+    FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, frustum_uniform,
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
@@ -79,6 +79,7 @@ struct Pipelines {
     scan_groups: wgpu::ComputePipeline,
     batch_args: wgpu::ComputePipeline,
     scatter: wgpu::ComputePipeline,
+    occlusion_test: wgpu::ComputePipeline,
 }
 
 struct BindGroups {
@@ -92,6 +93,12 @@ struct BindGroups {
     scan_groups: wgpu::BindGroup,
     batch_args: wgpu::BindGroup,
     scatter: wgpu::BindGroup,
+    // Phase two of occlusion culling (decision 040): the same compaction
+    // over its own uniform, draw arguments and visible IDs.
+    sum_groups2: wgpu::BindGroup,
+    scan_groups2: wgpu::BindGroup,
+    batch_args2: wgpu::BindGroup,
+    scatter2: wgpu::BindGroup,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -105,7 +112,16 @@ struct VisibleReadback {
     buffer: wgpu::Buffer,
     state: Rc<Cell<Readback>>,
     value: Rc<Cell<Option<u32>>>,
+    occluded: Rc<Cell<Option<u32>>>,
 }
+
+// The occlusion test group's pose buffer index, pyramid generation, buffer
+// generation and pose storage generation.
+type OcclusionKey = (usize, u64, u64, Option<u64>);
+
+// Totals read back: phase one's (or the only) visible count, phase two's,
+// and the candidates phase two found hidden.
+const TOTALS_BYTES: u64 = 12;
 
 /// Per-frame outcome for profiling counters and stats.
 #[derive(Default)]
@@ -155,6 +171,18 @@ pub(crate) struct GpuPresentationPass {
     batches: wgpu::Buffer,
     batch_bases: wgpu::Buffer,
     draws: wgpu::Buffer,
+    // Occlusion culling (decision 040): phase two's uniform, draw arguments
+    // and visible IDs, the hidden count, the totals read back, and the test's
+    // group with the pose buffer index, pyramid generation, buffer generation
+    // and pose storage generation it binds.
+    frame_phase2: wgpu::Buffer,
+    draws2: wgpu::Buffer,
+    visible_ids2: wgpu::Buffer,
+    occlusion_counts: wgpu::Buffer,
+    totals: wgpu::Buffer,
+    occlusion_group: Option<(OcclusionKey, wgpu::BindGroup)>,
+    // This frame draws in two phases.
+    occlusion: bool,
     bind_groups: Option<BindGroups>,
     // Advances when candidate, batch or scan storage is replaced.
     buffers_generation: u64,
@@ -189,6 +217,7 @@ pub(crate) struct GpuPresentationPass {
     // `GpuPresentation::current_version` they were copied at.
     prestaged: Option<(Prestaged, (u64, u64))>,
     last_visible: Rc<Cell<Option<u32>>>,
+    last_occluded: Rc<Cell<Option<u32>>>,
 }
 
 fn storage(
@@ -241,13 +270,18 @@ impl GpuPresentationPass {
             scan_groups: pipeline("scan_groups"),
             batch_args: pipeline("batch_args"),
             scatter: pipeline("scatter"),
+            occlusion_test: pipeline("occlusion_test"),
         };
-        let frame = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/presentation-frame"),
-            size: size_of::<PresentationFrame>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = |label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size_of::<PresentationFrame>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        };
+        let frame = uniform("engine/presentation-frame");
+        let frame_phase2 = uniform("engine/presentation-frame-phase2");
         let levels = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/presentation-levels"),
             size: LEVELS as u64 * LEVEL_STRIDE,
@@ -305,6 +339,33 @@ impl GpuPresentationPass {
                 0,
                 wgpu::BufferUsages::INDIRECT,
             ),
+            frame_phase2,
+            draws2: storage(
+                device,
+                "engine/presentation-draws2",
+                0,
+                wgpu::BufferUsages::INDIRECT,
+            ),
+            visible_ids2: storage(
+                device,
+                "engine/presentation-visible-ids2",
+                0,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            occlusion_counts: storage(
+                device,
+                "engine/presentation-occlusion-counts",
+                16,
+                wgpu::BufferUsages::COPY_SRC,
+            ),
+            totals: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/presentation-totals"),
+                size: 16,
+                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            occlusion_group: None,
+            occlusion: false,
             bind_groups: None,
             buffers_generation: 0,
             poses_generation: None,
@@ -329,6 +390,7 @@ impl GpuPresentationPass {
             readbacks: Vec::new(),
             prestaged: None,
             last_visible: Rc::new(Cell::new(None)),
+            last_occluded: Rc::new(Cell::new(None)),
         }
     }
 
@@ -346,6 +408,8 @@ impl GpuPresentationPass {
             &self.batches,
             &self.batch_bases,
             &self.draws,
+            &self.draws2,
+            &self.visible_ids2,
             &self.joint_nodes,
             &self.inverse_binds,
         ]
@@ -357,6 +421,17 @@ impl GpuPresentationPass {
     /// Latest visible instance count read back from the GPU, a few frames old.
     pub(crate) fn visible(&self) -> Option<u32> {
         self.last_visible.get()
+    }
+
+    /// Latest count of visible instances occlusion culling left undrawn
+    /// (decision 040), read back with [`Self::visible`].
+    pub(crate) fn occluded(&self) -> Option<u32> {
+        self.last_occluded.get()
+    }
+
+    /// Whether this frame draws in two phases around the occlusion test.
+    pub(crate) fn occlusion(&self) -> bool {
+        self.occlusion
     }
 
     fn ensure_nodes(&mut self, device: &wgpu::Device, nodes: usize, parents: usize) {
@@ -438,6 +513,12 @@ impl GpuPresentationPass {
                 capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
+            self.visible_ids2 = storage(
+                device,
+                "engine/presentation-visible-ids2",
+                capacity * 4,
+                wgpu::BufferUsages::VERTEX,
+            );
             self.groups_key = None;
             self.bind_groups = None;
             self.buffers_generation += 1;
@@ -460,6 +541,12 @@ impl GpuPresentationPass {
             self.draws = storage(
                 device,
                 "engine/presentation-draws",
+                capacity * DRAW_ARGS_BYTES,
+                wgpu::BufferUsages::INDIRECT,
+            );
+            self.draws2 = storage(
+                device,
+                "engine/presentation-draws2",
                 capacity * DRAW_ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             );
@@ -562,6 +649,39 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(11, &self.visible_ids),
+                ],
+            ),
+            sum_groups2: group(
+                &pipelines.sum_groups,
+                "engine/presentation-sum-group2",
+                &[entry(0, &self.frame_phase2), entry(9, &self.scan)],
+            ),
+            scan_groups2: group(
+                &pipelines.scan_groups,
+                "engine/presentation-scan-group2",
+                &[entry(0, &self.frame_phase2), entry(9, &self.scan)],
+            ),
+            batch_args2: group(
+                &pipelines.batch_args,
+                "engine/presentation-args-group2",
+                &[
+                    entry(0, &self.frame_phase2),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(12, &self.draws2),
+                ],
+            ),
+            scatter2: group(
+                &pipelines.scatter,
+                "engine/presentation-scatter-group2",
+                &[
+                    entry(0, &self.frame_phase2),
+                    entry(6, &self.candidates),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(11, &self.visible_ids2),
                 ],
             ),
         });
@@ -671,7 +791,10 @@ impl GpuPresentationPass {
     /// draw group and whether its mesh has joints; `shadow_groups`
     /// distinguishes plans whose batch records carry shadow groups. Skinned
     /// slots' palettes (decision 036) are written into `palette`, of the
-    /// pose storage generation, from the frame's joints.
+    /// pose storage generation, from the frame's joints. With `occlusion`
+    /// (the viewport's width and height and the depth pyramid's levels),
+    /// frames that cull without an instance budget draw in two phases around
+    /// the occlusion test (decision 040).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -690,6 +813,7 @@ impl GpuPresentationPass {
         poses_generation: u64,
         view_projection: glam::Mat4,
         motion: bool,
+        occlusion: Option<(u32, u32, u32)>,
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
         let mut prepared = GpuPrepared::default();
@@ -937,7 +1061,11 @@ impl GpuPresentationPass {
                         .min()
                         .extend(if skinned { 1.0 } else { 0.0 })
                         .to_array(),
-                    bounds_max: bounds.max().extend(0.0).to_array(),
+                    // Transparent groups are never occluded (decision 040).
+                    bounds_max: bounds
+                        .max()
+                        .extend(if batch.transparent { 1.0 } else { 0.0 })
+                        .to_array(),
                 });
                 let base = self.candidate_staging.len() as u32;
                 self.candidate_staging.extend(
@@ -1005,11 +1133,19 @@ impl GpuPresentationPass {
             .flatten()
             .all(|value| value.is_finite() && *value <= MAX_COEFFICIENT)
             && planes.iter().flatten().all(|value| value.is_finite());
-        let uniform = PresentationFrame {
+        let culling = frame.culling() && bounded;
+        // Occlusion culling needs culling and no instance budget: a budget
+        // keeps the first visible instances of one submission order.
+        self.occlusion = occlusion.is_some()
+            && culling
+            && self.candidate_count != 0
+            && frame.instance_budget() >= self.candidate_count as usize;
+        let (width, height, levels) = occlusion.unwrap_or((1, 1, 0));
+        let mut uniform = PresentationFrame {
             alpha: gpu.alpha,
             candidates: self.candidate_count,
             budget: frame.instance_budget().min(u32::MAX as usize) as u32,
-            culling: u32::from(frame.culling() && bounded),
+            culling: u32::from(culling),
             groups: self.candidate_count.div_ceil(GROUP),
             batches: self.batch_count,
             node_capacity: self.node_capacity as u32,
@@ -1018,9 +1154,20 @@ impl GpuPresentationPass {
             absolute_view_projection: absolute,
             motion: u32::from(motion),
             joints: self.joint_count,
-            pad: [0; 2],
+            mask: if self.occlusion {
+                FLAG_PHASE1
+            } else {
+                FLAG_VISIBLE
+            },
+            occlusion: u32::from(self.occlusion),
+            view_projection: view_projection.to_cols_array_2d(),
+            viewport: [width as f32, height as f32, levels as f32, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
+        if self.occlusion {
+            uniform.mask = FLAG_PHASE2;
+            queue.write_buffer(&self.frame_phase2, 0, bytemuck::bytes_of(&uniform));
+        }
         prepared
     }
 
@@ -1122,15 +1269,115 @@ impl GpuPresentationPass {
             }
         }
         if self.candidate_count != 0 {
-            // Read back the total visible count without waiting for it.
-            let total = u64::from(self.candidate_count + self.candidate_count.div_ceil(GROUP)) * 4;
-            let scan = self.scan.clone();
-            if let Some(readback) = self.idle_readback(device) {
-                encoder.copy_buffer_to_buffer(&scan, total, &readback.buffer, 0, 4);
-                readback.state.set(Readback::Recorded);
+            // The (phase one) visible total; frames without occlusion
+            // culling read it back now, without waiting for it.
+            encoder.clear_buffer(&self.totals, 0, None);
+            encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 0, 4);
+            if !self.occlusion {
+                self.read_back_totals(device, encoder);
             }
         }
         timed
+    }
+
+    // Byte offset of the compaction's total in the scan buffer.
+    fn total_offset(&self) -> u64 {
+        u64::from(self.candidate_count + self.candidate_count.div_ceil(GROUP)) * 4
+    }
+
+    fn read_back_totals(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let totals = self.totals.clone();
+        if let Some(readback) = self.idle_readback(device) {
+            encoder.copy_buffer_to_buffer(&totals, 0, &readback.buffer, 0, TOTALS_BYTES);
+            readback.state.set(Readback::Recorded);
+        }
+    }
+
+    /// Occlusion culling (decision 040) after phase one drew and `pyramid`
+    /// (its view and generation) holds its depths: tests every
+    /// frustum-visible candidate, then compacts phase two's draws, and reads
+    /// back both phases' totals and the hidden count. With `timestamp` (a
+    /// query set and index), the pass writes it when it ends.
+    pub(crate) fn encode_occlusion(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pyramid: (&wgpu::TextureView, u64),
+        poses: &wgpu::Buffer,
+        timestamp: Option<(&wgpu::QuerySet, u32)>,
+    ) {
+        if !self.occlusion {
+            return;
+        }
+        let Some(groups) = self.bind_groups.as_ref() else {
+            return;
+        };
+        let key = (
+            self.poses_index,
+            pyramid.1,
+            self.buffers_generation,
+            self.poses_generation,
+        );
+        if self
+            .occlusion_group
+            .as_ref()
+            .is_none_or(|(built, _)| *built != key)
+        {
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/presentation-occlusion-group"),
+                layout: &self.pipelines.occlusion_test.get_bind_group_layout(0),
+                entries: &[
+                    entry(0, &self.frame),
+                    entry(7, &self.batches),
+                    entry(8, poses),
+                    entry(9, &self.scan),
+                    entry(14, &self.slot_candidates),
+                    wgpu::BindGroupEntry {
+                        binding: 18,
+                        resource: wgpu::BindingResource::TextureView(pyramid.0),
+                    },
+                    entry(19, &self.occlusion_counts),
+                ],
+            });
+            self.occlusion_group = Some((key, group));
+        }
+        encoder.clear_buffer(&self.occlusion_counts, 0, None);
+        let workgroups = self.candidate_count.div_ceil(GROUP);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/presentation-occlusion"),
+                timestamp_writes: timestamp.map(|(query_set, index)| {
+                    wgpu::ComputePassTimestampWrites {
+                        query_set,
+                        beginning_of_pass_write_index: None,
+                        end_of_pass_write_index: Some(index),
+                    }
+                }),
+            });
+            pass.set_pipeline(&self.pipelines.occlusion_test);
+            pass.set_bind_group(
+                0,
+                &self.occlusion_group.as_ref().expect("built above").1,
+                &[],
+            );
+            pass.dispatch_workgroups(workgroups, 1, 1);
+            // Phase two's compaction over its own mask and outputs.
+            pass.set_pipeline(&self.pipelines.sum_groups);
+            pass.set_bind_group(0, &groups.sum_groups2, &[]);
+            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.set_pipeline(&self.pipelines.scan_groups);
+            pass.set_bind_group(0, &groups.scan_groups2, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&self.pipelines.batch_args);
+            pass.set_bind_group(0, &groups.batch_args2, &[]);
+            pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
+            pass.set_pipeline(&self.pipelines.scatter);
+            pass.set_bind_group(0, &groups.scatter2, &[]);
+            pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+        encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 4, 4);
+        encoder.copy_buffer_to_buffer(&self.occlusion_counts, 0, &self.totals, 8, 4);
+        self.read_back_totals(device, encoder);
     }
 
     fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&VisibleReadback> {
@@ -1147,12 +1394,13 @@ impl GpuPresentationPass {
         self.readbacks.push(VisibleReadback {
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/presentation-visible-readback"),
-                size: 4,
+                size: 16,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
             state: Rc::new(Cell::new(Readback::Idle)),
             value: Rc::clone(&self.last_visible),
+            occluded: Rc::clone(&self.last_occluded),
         });
         self.readbacks.last()
     }
@@ -1166,6 +1414,7 @@ impl GpuPresentationPass {
             readback.state.set(Readback::Pending);
             let state = Rc::clone(&readback.state);
             let value = Rc::clone(&readback.value);
+            let occluded = Rc::clone(&readback.occluded);
             let buffer = readback.buffer.clone();
             readback
                 .buffer
@@ -1173,8 +1422,15 @@ impl GpuPresentationPass {
                 .map_async(wgpu::MapMode::Read, move |result| {
                     if result.is_ok() {
                         if let Ok(view) = buffer.slice(..).get_mapped_range() {
-                            let bytes: [u8; 4] = view[..4].try_into().unwrap_or([0; 4]);
-                            value.set(Some(u32::from_le_bytes(bytes)));
+                            let word = |index: usize| {
+                                let bytes: [u8; 4] =
+                                    view[index * 4..index * 4 + 4].try_into().unwrap_or([0; 4]);
+                                u32::from_le_bytes(bytes)
+                            };
+                            // Visible: drawn in either phase, or hidden.
+                            let hidden = word(2);
+                            value.set(Some(word(0).saturating_add(word(1)).saturating_add(hidden)));
+                            occluded.set(Some(hidden));
                         }
                         buffer.unmap();
                     }
@@ -1183,18 +1439,21 @@ impl GpuPresentationPass {
         }
     }
 
-    /// Visible-ID region and indirect arguments of plan batch `index`.
+    /// Visible-ID region and indirect arguments of plan batch `index` in
+    /// drawing phase `phase` (1 only after the occlusion test, decision 040).
     pub(crate) fn draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
         index: usize,
+        phase: usize,
     ) -> (wgpu::BufferSlice<'a>, &'a wgpu::Buffer, u64) {
         let start = u64::from(batch.instances.start) * 4;
         let end = u64::from(batch.instances.end) * 4;
-        (
-            self.visible_ids.slice(start..end),
-            &self.draws,
-            index as u64 * DRAW_ARGS_BYTES,
-        )
+        let (ids, draws) = if phase == 0 {
+            (&self.visible_ids, &self.draws)
+        } else {
+            (&self.visible_ids2, &self.draws2)
+        };
+        (ids.slice(start..end), draws, index as u64 * DRAW_ARGS_BYTES)
     }
 }

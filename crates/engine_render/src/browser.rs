@@ -10,6 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
 use crate::decals::DecalPass;
+use crate::depth_pyramid::DepthPyramid;
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, InstanceData, LightingUniform, PoseData, SHADER,
     ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
@@ -175,6 +176,10 @@ pub struct Renderer {
     // Decals (decision 039): records and pipelines, created with the first
     // frame that draws them.
     decals: Option<DecalPass>,
+    // Occlusion culling of GPU-presented frames (decision 040), on unless
+    // turned off, and its depth pyramid.
+    occlusion_culling: bool,
+    depth_pyramid: Option<DepthPyramid>,
     // Poses of odd temporal frames with the colors, for transparent draws
     // of pose storage generation `.0`.
     alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
@@ -609,6 +614,8 @@ impl Renderer {
             transparent_pipelines: Default::default(),
             particles: None,
             decals: None,
+            occlusion_culling: true,
+            depth_pyramid: None,
             alternate_pose_group: None,
             palettes,
             palette_capacity: 1,
@@ -717,6 +724,22 @@ impl Renderer {
                 self.pose_generation += 1;
             }
         }
+    }
+
+    /// Enables occlusion culling of GPU-presented frames (decision 040), on
+    /// by default: frames that cull without an instance budget draw what the
+    /// last frame found visible, test every other visible candidate against
+    /// a depth pyramid of those depths, then draw what it does not hide.
+    /// Disabling releases the pyramid.
+    pub fn set_occlusion_culling(&mut self, enabled: bool) {
+        self.occlusion_culling = enabled;
+        if !enabled {
+            self.depth_pyramid = None;
+        }
+    }
+
+    pub fn occlusion_culling(&self) -> bool {
+        self.occlusion_culling
     }
 
     pub fn temporal_antialiasing(&self) -> bool {
@@ -1209,6 +1232,24 @@ impl Renderer {
         let mut input_copies = None;
         #[cfg(feature = "profiling")]
         let query_slot = self.profiler.reserve(&self.device);
+        // Occlusion culling (decision 040): the depth pyramid of this frame's
+        // depth buffer, sized before presentation plans two phases.
+        let occlusion = if gpu_mode && self.occlusion_culling {
+            let device = &self.device;
+            let pyramid = self
+                .depth_pyramid
+                .get_or_insert_with(|| DepthPyramid::new(device));
+            let (width, height) = (self.configuration.width, self.configuration.height);
+            let levels = pyramid.prepare(
+                device,
+                &self.depth.view,
+                self.depth_generation,
+                (width, height),
+            );
+            Some((width, height, levels))
+        } else {
+            None
+        };
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
             let shadows = &self.shadows;
@@ -1253,6 +1294,7 @@ impl Renderer {
                     temporal_frame
                         .as_ref()
                         .is_some_and(|temporal| temporal.motion_valid),
+                    occlusion,
                     stamps,
                 ),
             )
@@ -1565,7 +1607,15 @@ impl Renderer {
         let effect_queries = self.profiler.effect_queries(query_slot);
         #[cfg(not(feature = "profiling"))]
         let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
-        let mut _effects_timed = 0_u8;
+        let mut _effects_timed = 0_u16;
+        // Timestamp writes of effect `index` of the profiler's `EFFECTS`.
+        let effect_writes = |index: u32| {
+            effect_queries.map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: Some(first + 2 * index),
+                end_of_pass_write_index: Some(first + 2 * index + 1),
+            })
+        };
         let mut shadow_draws = 0;
         if let Some(shadow_frame) = &shadow_frame {
             let meshes = &self.meshes;
@@ -1592,7 +1642,13 @@ impl Renderer {
             shadow_draws = encoded.draws;
         }
         if let (Some(frame), Some(lights)) = (&light_frame, self.lights.as_mut()) {
-            lights.encode(&self.device, &mut encoder, frame);
+            lights.encode(
+                &self.device,
+                &mut encoder,
+                frame,
+                effect_queries.map(|(set, first)| (set, first + 14)),
+            );
+            _effects_timed |= u16::from(effect_queries.is_some()) << 7;
         }
         if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
             pass.prepare_pose_groups(
@@ -1636,14 +1692,57 @@ impl Renderer {
             .post_pipelines
             .as_ref()
             .filter(|_| post_frame.is_some());
-        {
+        // Occlusion culling (decision 040) draws in two phases: what the last
+        // test left visible, then, after the depth pyramid of those depths and
+        // the test, what the test newly finds visible.
+        let phases = if gpu_mode && self.gpu_presentation.occlusion() {
+            2
+        } else {
+            1
+        };
+        for phase in 0..phases {
+            if phase == 1
+                && let Some((pyramid, generation)) =
+                    self.depth_pyramid.as_ref().and_then(DepthPyramid::view)
+            {
+                let odd = temporal_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.parity == 1);
+                let poses = if odd {
+                    self.alternate_poses.as_ref().expect("created above")
+                } else {
+                    &self.instance_buffer
+                };
+                let timed = |index: u32, begin: bool| {
+                    effect_queries.map(|(set, first)| (set, first + 2 * index + u32::from(!begin)))
+                };
+                self.depth_pyramid
+                    .as_ref()
+                    .expect("viewed above")
+                    .encode(&mut encoder, timed(14, true));
+                self.gpu_presentation.encode_occlusion(
+                    &self.device,
+                    &mut encoder,
+                    (pyramid, generation),
+                    poses,
+                    timed(14, false),
+                );
+                _effects_timed |= u16::from(effect_queries.is_some()) << 14;
+            }
+            let load = |clear| {
+                if phase == 0 {
+                    wgpu::LoadOp::Clear(clear)
+                } else {
+                    wgpu::LoadOp::Load
+                }
+            };
             let attachment = |view, clear| {
                 Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        load: load(clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })
@@ -1673,19 +1772,37 @@ impl Renderer {
                     1
                 }
             };
-            // Ambient occlusion, decals and the transparent passes read the
-            // depth buffer afterwards.
+            // Ambient occlusion, decals, the transparent passes and a second
+            // phase read the depth buffer afterwards.
             let keep_depth = post_frame
                 .is_some_and(|frame| frame.occlusion || frame.reflections || frame.shafts)
                 || transparency
-                || decal_frame.is_some();
+                || decal_frame.is_some()
+                || phase + 1 < phases;
+            // Profiled frames time both phases as one opaque span.
+            #[cfg(feature = "profiling")]
+            let timestamp_writes = self.profiler.writes(query_slot).map(|mut writes| {
+                if phase != 0 {
+                    writes.beginning_of_pass_write_index = None;
+                }
+                if phase + 1 != phases {
+                    writes.end_of_pass_write_index = None;
+                }
+                writes
+            });
+            #[cfg(not(feature = "profiling"))]
+            let timestamp_writes = None;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
                 color_attachments: &targets[..count],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        load: if phase == 0 {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: if keep_depth {
                             wgpu::StoreOp::Store
                         } else {
@@ -1694,10 +1811,7 @@ impl Renderer {
                     }),
                     stencil_ops: None,
                 }),
-                #[cfg(not(feature = "profiling"))]
-                timestamp_writes: None,
-                #[cfg(feature = "profiling")]
-                timestamp_writes: self.profiler.writes(query_slot),
+                timestamp_writes,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -1781,7 +1895,8 @@ impl Renderer {
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     if gpu_mode {
                         // Visible slots of this group, compacted and counted on the GPU.
-                        let (ids, draws, offset) = self.gpu_presentation.draw_source(batch, index);
+                        let (ids, draws, offset) =
+                            self.gpu_presentation.draw_source(batch, index, phase);
                         pass.set_vertex_buffer(1, ids);
                         pass.draw_indexed_indirect(draws, offset);
                     } else {
@@ -1790,12 +1905,14 @@ impl Renderer {
                 }
             }
             // Last, so depth testing leaves the sky only uncovered pixels.
-            pass.set_pipeline(match temporal_pass {
-                Some((_, temporal)) => temporal.sky_pipeline(),
-                None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
-            });
-            pass.set_bind_group(0, &self.camera_bind_group, &[]);
-            pass.draw(0..3, 0..1);
+            if phase + 1 == phases {
+                pass.set_pipeline(match temporal_pass {
+                    Some((_, temporal)) => temporal.sky_pipeline(),
+                    None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
+                });
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
         if let (Some(_), Some(decals)) = (&decal_frame, self.decals.as_ref()) {
             let target = post.map_or(&view, |post| post.targets().0);
@@ -1811,10 +1928,11 @@ impl Renderer {
                     },
                 })],
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: effect_writes(8),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            _effects_timed |= u16::from(effect_queries.is_some()) << 8;
             decals.draw(
                 &mut pass,
                 &self.camera_bind_group,
@@ -1840,7 +1958,7 @@ impl Renderer {
                     label: Some("engine/transparent-accumulation"),
                     color_attachments: &attachments,
                     depth_stencil_attachment: depth.clone(),
-                    timestamp_writes: None,
+                    timestamp_writes: effect_writes(9),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -1916,7 +2034,7 @@ impl Renderer {
                         pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                         if gpu_mode {
                             let (ids, draws, offset) =
-                                self.gpu_presentation.draw_source(batch, index);
+                                self.gpu_presentation.draw_source(batch, index, 0);
                             pass.set_vertex_buffer(1, ids);
                             pass.draw_indexed_indirect(draws, offset);
                         } else {
@@ -1952,11 +2070,13 @@ impl Renderer {
                 label: Some("engine/transparent-composite"),
                 color_attachments: &attachments[..count],
                 depth_stencil_attachment: depth,
-                timestamp_writes: None,
+                timestamp_writes: effect_writes(10),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
             transparent.composite(&mut pass, post.is_some());
+            _effects_timed |= u16::from(effect_queries.is_some()) << 9
+                | u16::from(effect_queries.is_some()) << 10;
             if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
                 particles.draw_additive(&mut pass, &self.camera_bind_group, frame, post.is_some());
             }
@@ -1964,7 +2084,10 @@ impl Renderer {
         if let (Some(post_frame), Some(post)) = (post_frame, post) {
             let queries = effect_queries.map(|(set, first)| (set, first + 4));
             post.encode_effects(&mut encoder, post_frame, &self.camera_bind_group, queries);
-            _effects_timed |= u8::from(post_frame.occlusion) << 2 | u8::from(post_frame.bloom) << 3;
+            _effects_timed |= u16::from(post_frame.occlusion) << 2
+                | u16::from(post_frame.bloom) << 3
+                | u16::from(post_frame.reflections) << 5
+                | u16::from(post_frame.shafts) << 6;
             if temporal_pass.is_none() {
                 let queries = effect_queries.map(|(set, first)| (set, first + 8));
                 post.encode_composite(&mut encoder, &view, queries);
@@ -2035,6 +2158,11 @@ impl Renderer {
                 _ => instance_count as u32,
             },
             gpu_visible,
+            occluded_instances: if gpu_mode && self.occlusion_culling {
+                self.gpu_presentation.occluded()
+            } else {
+                None
+            },
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
@@ -2140,6 +2268,9 @@ impl Renderer {
             );
             engine_profile::counter("render.particles", f64::from(stats.particles));
             engine_profile::counter("render.decals", f64::from(stats.decals));
+            if let Some(occluded) = stats.occluded_instances {
+                engine_profile::counter("render.occluded_instances", f64::from(occluded));
+            }
             engine_profile::counter(
                 "memory.gpu_transparent_bytes",
                 (self
@@ -2204,7 +2335,11 @@ impl Renderer {
             }
             engine_profile::counter(
                 "memory.gpu_presentation_bytes",
-                self.gpu_presentation.capacity_bytes() as f64,
+                (self.gpu_presentation.capacity_bytes()
+                    + self
+                        .depth_pyramid
+                        .as_ref()
+                        .map_or(0, DepthPyramid::capacity_bytes)) as f64,
             );
             engine_profile::counter("render.instance_write_ranges", instance_write_ranges as f64);
             engine_profile::counter(

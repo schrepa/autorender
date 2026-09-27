@@ -230,6 +230,13 @@ impl StressGame {
     pub fn temporal_antialiasing(&self) -> bool {
         self.app.temporal_antialiasing()
     }
+    /// Occlusion culling of GPU-presented frames (on by default).
+    pub fn set_occlusion_culling(&mut self, enabled: bool) {
+        self.app.set_occlusion_culling(enabled);
+    }
+    pub fn occlusion_culling(&self) -> bool {
+        self.app.occlusion_culling()
+    }
     pub fn reset_camera(&mut self) {
         set_view(&mut self.app.engine, "overview").expect("known view");
     }

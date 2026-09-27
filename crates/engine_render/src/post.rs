@@ -476,7 +476,8 @@ impl PostPass {
     /// group `camera` of the main passes) and bloom after the opaque and
     /// transparent passes. With `timestamps` (a query set and its first
     /// index), occlusion writes queries `first` and `first + 1`, bloom
-    /// `first + 2` and `first + 3`.
+    /// `first + 2` and `first + 3`, reflections `first + 6` and `first + 7`
+    /// and shafts `first + 8` and `first + 9`.
     pub(crate) fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -507,7 +508,7 @@ impl PostPass {
                 "engine/post-reflections",
                 &targets.reflections,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                None,
+                timestamps.map(|(set, first)| (set, Some(first + 6), Some(first + 7))),
             );
             pass.set_pipeline(&self.reflections);
             pass.set_bind_group(0, group, &[]);
@@ -521,7 +522,7 @@ impl PostPass {
                 "engine/post-shafts",
                 &targets.shafts,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                None,
+                timestamps.map(|(set, first)| (set, Some(first + 8), Some(first + 9))),
             );
             pass.set_pipeline(&self.shafts);
             pass.set_bind_group(0, camera, &[]);

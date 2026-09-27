@@ -222,8 +222,15 @@ add a `taa_resolve` GPU sample for the full-screen resolve; their
 compare it at identical sizes.
 
 Shadows ([decision 020](adr-020-sun-shadows.md)) add `shadow_select`, the
-caster selection pass, and `shadow_maps`, from the first to the last depth
-pass. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
+caster selection pass, `shadow_maps`, from the first to the last depth pass,
+and per map `shadow_near` (every near cascade), `shadow_moving` and
+`shadow_kept` (on frames that redraw it). Reflections and sun shafts add
+`reflections` and `sun_shafts`, local lights `light_bins`, decals `decals`,
+transparency `transparent` and `transparent_composite`, and occlusion culling
+([decision 040](adr-040-occlusion-culling.md)) `occlusion` (the depth
+pyramid, the test and the second compaction), with `opaque_meshes` spanning
+both drawing phases and `render.occluded_instances` counting what it left
+undrawn. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
 add `ambient_occlusion`, `bloom` (every level down and up) and, on frames
 without temporal antialiasing, `post_composite`. Counters report
 `render.shadow_refresh` (0 no kept-map redraw, 1 a strip, 2 the whole map),
