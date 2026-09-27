@@ -1,6 +1,6 @@
 use engine::prelude::*;
 
-use crate::{FrameMetrics, StressConfig, StressScene, city, metrics};
+use crate::{FrameMetrics, StressConfig, StressScene, city, metrics, metro};
 
 const GROUP_SIZE: u32 = 32;
 const SPACING: f32 = 2.4;
@@ -59,6 +59,19 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
             });
             (city.moving_nodes, city.bounds)
         }
+        StressScene::Metro => {
+            let city = metro::populate(world, &config)?;
+            world.insert_resource(Workload {
+                transform_nodes: city.transform_nodes,
+                moving_nodes: city.moving_nodes,
+                sensor_nodes: city.sensor_nodes,
+                probes: city.probes,
+                overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
+            });
+            // Glass refracts what is behind it (decision 038).
+            world.insert_resource(Refraction::default());
+            (city.moving_nodes, city.bounds)
+        }
     };
     // Shadows (decision 020) keep the whole scene in one map, seen from
     // every view.
@@ -84,14 +97,17 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     }
     set_view(&mut engine, "overview")?;
     engine.app.add_plugins(FlyCameraPlugin);
-    if moving_nodes > 0 {
+    // The metro's billboards change pictures whether or not anything moves.
+    if config.scene == StressScene::Metro {
+        metro::add_systems(&mut engine.app);
+    } else if moving_nodes > 0 {
         match config.scene {
             StressScene::Field => {
                 engine
                     .app
                     .add_systems(FixedSimulation, animate.in_set(Animation));
             }
-            StressScene::City => city::add_systems(&mut engine.app),
+            _ => city::add_systems(&mut engine.app),
         }
     }
     if config.queries_per_tick > 0 {
@@ -430,7 +446,7 @@ pub fn lamp_intensity(scene: StressScene, name: &str) -> Result<f32, String> {
     Ok(match name {
         "scene" => match scene {
             StressScene::Field => 1.0,
-            StressScene::City => 0.35,
+            StressScene::City | StressScene::Metro => 0.35,
         },
         "golden" => 0.35,
         "dusk" => 0.8,
@@ -447,7 +463,7 @@ pub fn look(scene: StressScene, name: &str) -> Result<Atmosphere, String> {
     Ok(match name {
         "scene" => match scene {
             StressScene::Field => Atmosphere::night(),
-            StressScene::City => Atmosphere::golden_hour(),
+            StressScene::City | StressScene::Metro => Atmosphere::golden_hour(),
         },
         "golden" => Atmosphere::golden_hour(),
         "dusk" => Atmosphere::dusk(),
@@ -461,6 +477,25 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
     let config = engine.app.world().resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
     let camera = match view {
+        "overview" if config.scene == StressScene::Metro => {
+            let (position, target) = metro::overview(config);
+            Camera {
+                position,
+                target,
+                far: 5000.0,
+                vertical_fov_radians: 55.0_f32.to_radians(),
+                ..Camera::default()
+            }
+        }
+        "close" if config.scene == StressScene::Metro => {
+            let (position, target) = metro::close_view(config);
+            Camera {
+                position,
+                target,
+                far: 5000.0,
+                ..Camera::default()
+            }
+        }
         "overview" => Camera {
             position: Vec3::new(span * 0.46, span * 0.62, span * 0.8),
             target: Vec3::ZERO,

@@ -5,13 +5,14 @@ import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressGame } from "../pkg/stress_lab";
 import "./stress.css";
 
-type Scene = "field" | "city";
+type Scene = "field" | "city" | "metro";
 type Config = {
   seed: number; renderables: number; moving_percent: number; hierarchy: boolean;
   interpolation: boolean; colliders: number; sensor_percent: number; dense_colliders: boolean;
   queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean; scene: Scene;
+  compressed_textures: boolean;
 };
-const scenes: Scene[] = ["field", "city"];
+const scenes: Scene[] = ["field", "city", "metro"];
 type Snapshot = {
   version: number; generation: number; frame: string; tick: string; config: Config;
   renderables: number; transform_nodes: number; moving_nodes: number; sensor_nodes: number;
@@ -34,11 +35,14 @@ const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
 const baseline: Config = { seed: 1337, renderables: 90000, moving_percent: 0, hierarchy: false, interpolation: false,
-  colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true, scene: "field" };
+  colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true, scene: "field",
+  compressed_textures: false };
 const presets: Record<string, { title: string; note: string; config: Config }> = {
   visual: { title: "MAXIMUM VISUAL LOAD", note: "Rendering, extraction, batching and texture sampling at maximum object count.", config: baseline },
   city: { title: "WILD CITY", note: "52 building, vehicle and machine shapes: skyscrapers, traffic, trains, drones, cranes and Ferris wheels. Moving objects are the traffic.",
     config: { ...baseline, scene: "city", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64 } },
+  metro: { title: "METRO", note: "The city with every engine feature: glTF maps over procedural textures (BC7 where supported), refracting glass, masked foliage, tints and rotating ads, skinned people, keyframed props, thousands of lights and particles.",
+    config: { ...baseline, scene: "metro", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64, compressed_textures: true } },
   mixed: { title: "MIXED WORKLOAD", note: "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
     config: { ...baseline, renderables: 10000, moving_percent: 25, hierarchy: true, interpolation: true, colliders: 1000, sensor_percent: 10, queries_per_tick: 32, mesh_variety: 8 } },
   motion: { title: "TRANSFORM PRESSURE", note: "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
@@ -106,7 +110,8 @@ function fill(config: Config) {
     }
     input.value = String(config[field]);
   }
-  for (const [id, field] of [["hierarchy", "hierarchy"], ["interpolation", "interpolation"], ["textures", "textured"], ["dense", "dense_colliders"], ["culling", "culling"]] as const) {
+  for (const [id, field] of [["hierarchy", "hierarchy"], ["interpolation", "interpolation"], ["textures", "textured"], ["dense", "dense_colliders"], ["culling", "culling"],
+    ["compressed", "compressed_textures"]] as const) {
     el<HTMLInputElement>(id).checked = config[field];
   }
   choice("scene").value = config.scene;
@@ -115,10 +120,27 @@ function readConfig(): Config {
   return { seed: number("seed"), renderables: number("objects"), moving_percent: number("moving"), colliders: number("colliders"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
-    scene: choice("scene").value as Scene };
+    scene: choice("scene").value as Scene, compressed_textures: checked("compressed") };
 }
-function apply(config: Config, title: string) {
+/** Whether the adapter samples BC7, which compressed metro textures need. */
+let blockCompression: boolean | undefined;
+async function detectBlockCompression(): Promise<boolean> {
+  type Adapter = { features: ReadonlySet<string> };
+  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(options?: { powerPreference?: string }): Promise<Adapter | null> } }).gpu;
+  const adapter = await gpu?.requestAdapter({ powerPreference: "high-performance" }).catch(() => null);
+  return adapter?.features.has("texture-compression-bc") ?? false;
+}
+/** `config` with compressed textures off where BC7 is unavailable. */
+function supported(config: Config): Config {
+  if (!config.compressed_textures || blockCompression !== false) return config;
+  notice("This GPU lacks texture-compression-bc: textures stay RGBA8.", true);
+  const fallback = { ...config, compressed_textures: false };
+  fill(fallback);
+  return fallback;
+}
+function apply(requested: Config, title: string) {
   if (!controls) return;
+  const config = supported(requested);
   if (profiler?.busy || recorder.active) { notice("Finish the active capture before changing the workload.", true); return; }
   try {
     controls.mutate(runtime => runtime.configure(JSON.stringify(config)));
@@ -194,8 +216,9 @@ const taa = params.get("taa") === "on" ? "on" : "off";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
-// no-lights, no-shafts, no-reflections and no-particles, turns effects off.
-const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles"];
+// no-lights, no-shafts, no-reflections, no-particles and no-refraction,
+// turns effects off.
+const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles", "refraction"];
 const requestedEffects = params.get("effects") ?? "all";
 const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectNames.some(name => token === `no-${name}`))
   ? requestedEffects : "all";
@@ -205,7 +228,11 @@ if (params.has("config")) {
     if (source.length > 2000) throw new Error("Workload link is too large.");
     const parsed = JSON.parse(source) as Partial<Config>;
     // Links from before scenes existed build the tower field.
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) parsed.scene ??= "field";
+    // and before compressed textures, without them.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      parsed.scene ??= "field";
+      parsed.compressed_textures ??= false;
+    }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.keys(parsed).length !== Object.keys(baseline).length ||
         Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof Config] !== typeof value) || !scenes.includes(parsed.scene as Scene)) {
       throw new Error("Expected the complete workload configuration.");
@@ -239,6 +266,8 @@ boot({
         }
       } catch { /* A missing optional fingerprint remains explicit in the export. */ }
     }
+    blockCompression = await detectBlockCompression();
+    activeConfig = supported(activeConfig);
     return StressGame.create(canvas, JSON.stringify(activeConfig));
   },
   ready(runtime, host) {

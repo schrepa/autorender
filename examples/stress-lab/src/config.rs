@@ -10,6 +10,10 @@ pub enum StressScene {
     Field,
     /// A procedural city of diverse buildings, traffic and machines.
     City,
+    /// The city's plan built with every engine feature: glTF materials over
+    /// procedural textures, glass, skinned people, keyframed props, lights
+    /// and effects.
+    Metro,
 }
 
 /// Configuration changes rebuild the owned workload outside the frame loop.
@@ -30,6 +34,9 @@ pub struct StressConfig {
     pub textured: bool,
     pub culling: bool,
     pub scene: StressScene,
+    /// Metro textures as BC7 blocks with their mip chains (decision 037),
+    /// for devices with `texture-compression-bc`; RGBA8 otherwise.
+    pub compressed_textures: bool,
 }
 
 impl Default for StressConfig {
@@ -48,6 +55,7 @@ impl Default for StressConfig {
             textured: true,
             culling: true,
             scene: StressScene::Field,
+            compressed_textures: false,
         }
     }
 }

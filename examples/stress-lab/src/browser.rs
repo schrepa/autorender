@@ -3,7 +3,7 @@ use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use crate::{
-    FrameMetrics, StressConfig, create_workload, lamp_intensity, look, set_view,
+    FrameMetrics, StressConfig, StressScene, create_workload, lamp_intensity, look, set_view,
     stress_observation, stress_shafts,
 };
 
@@ -50,11 +50,11 @@ impl StressGame {
         Ok(())
     }
 
-    /// Rendering effects: `all`, `none`, or all but one with `no-shadows`,
-    /// `no-occlusion` or `no-bloom` (decisions 020 and 021).
+    /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
+    /// exclusions (decisions 020 to 026 and 038).
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
         // `all`, `none`, or comma-separated `no-<effect>` exclusions.
-        const EFFECTS: [&str; 7] = [
+        const EFFECTS: [&str; 8] = [
             "shadows",
             "occlusion",
             "bloom",
@@ -62,6 +62,7 @@ impl StressGame {
             "shafts",
             "reflections",
             "particles",
+            "refraction",
         ];
         let mut on = [true; EFFECTS.len()];
         match name {
@@ -92,6 +93,7 @@ impl StressGame {
             shafts,
             reflections,
             particles,
+            refraction,
         ] = on;
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
         let lamps = lamp_intensity(scene, &self.look).map_err(js_error)?;
@@ -124,6 +126,12 @@ impl StressGame {
             local.intensity = lamps;
         }
         world.resource_mut::<Particles>().enabled = particles;
+        // Only the metro has glass that refracts (decision 038).
+        if refraction && scene == StressScene::Metro {
+            world.insert_resource(Refraction::default());
+        } else {
+            world.remove_resource::<Refraction>();
+        }
         self.effects = name.into();
         Ok(())
     }
@@ -321,17 +329,19 @@ fn development_tools() -> engine::dev_browser::DevBrowser {
             "type":"object", "additionalProperties":false,
             "properties":{
                 "seed":{"type":"integer","minimum":0,"maximum":4294967295u64},
-                "renderables":{"type":"integer","minimum":1,"maximum":250000},
+                "renderables":{"type":"integer","minimum":1,"maximum":4000000},
                 "moving_percent":{"type":"integer","minimum":0,"maximum":100},
                 "hierarchy":{"type":"boolean"}, "interpolation":{"type":"boolean"},
                 "colliders":{"type":"integer","minimum":0,"maximum":10000},
                 "sensor_percent":{"type":"integer","minimum":0,"maximum":100},
                 "dense_colliders":{"type":"boolean"},
                 "queries_per_tick":{"type":"integer","minimum":0,"maximum":512},
-                "mesh_variety":{"enum":[1,8,32]}, "textured":{"type":"boolean"}, "culling":{"type":"boolean"}
+                "mesh_variety":{"enum":[1,8,32,64]}, "textured":{"type":"boolean"}, "culling":{"type":"boolean"},
+                "scene":{"enum":["field","city","metro"]}, "compressed_textures":{"type":"boolean"}
             },
             "required":["seed","renderables","moving_percent","hierarchy","interpolation","colliders",
-                "sensor_percent","dense_colliders","queries_per_tick","mesh_variety","textured","culling"]
+                "sensor_percent","dense_colliders","queries_per_tick","mesh_variety","textured","culling",
+                "scene","compressed_textures"]
         })),
         |config| serde_json::to_value(config).expect("configuration contains finite integer values"),
     ).expect("stress inspector registration is valid");

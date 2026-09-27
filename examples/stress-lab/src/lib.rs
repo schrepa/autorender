@@ -4,6 +4,7 @@ mod browser;
 mod city;
 mod config;
 mod metrics;
+mod metro;
 mod scene;
 mod shapes;
 

@@ -94,34 +94,34 @@ const CRANE: [f32; 3] = [1.0, 0.72, 0.1];
 const DIRT: [f32; 3] = [0.55, 0.42, 0.3];
 
 /// Deterministic draws from a seed.
-struct Rng(u32);
+pub(crate) struct Rng(u32);
 
 impl Rng {
-    fn new(seed: u32, a: i32, b: i32) -> Self {
+    pub(crate) fn new(seed: u32, a: i32, b: i32) -> Self {
         Self(hash(
             seed ^ hash((a as u32).wrapping_mul(73_856_093) ^ (b as u32).wrapping_mul(19_349_663)),
         ))
     }
-    fn next(&mut self) -> u32 {
+    pub(crate) fn next(&mut self) -> u32 {
         self.0 = hash(self.0.wrapping_add(0x9e37_79b9));
         self.0
     }
-    fn unit(&mut self) -> f32 {
+    pub(crate) fn unit(&mut self) -> f32 {
         (self.next() >> 8) as f32 / 16_777_216.0
     }
-    fn range(&mut self, low: f32, high: f32) -> f32 {
+    pub(crate) fn range(&mut self, low: f32, high: f32) -> f32 {
         low + (high - low) * self.unit()
     }
-    fn below(&mut self, count: u32) -> u32 {
+    pub(crate) fn below(&mut self, count: u32) -> u32 {
         self.next() % count
     }
-    fn chance(&mut self, percent: u32) -> bool {
+    pub(crate) fn chance(&mut self, percent: u32) -> bool {
         self.below(100) < percent
     }
-    fn pick<T: Copy>(&mut self, items: &[T]) -> T {
+    pub(crate) fn pick<T: Copy>(&mut self, items: &[T]) -> T {
         items[self.below(items.len() as u32) as usize]
     }
-    fn sign(&mut self) -> f32 {
+    pub(crate) fn sign(&mut self) -> f32 {
         if self.chance(50) { 1.0 } else { -1.0 }
     }
 }
@@ -132,10 +132,10 @@ impl Rng {
 /// a positive speed (units per second), clockwise for a negative one.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Travel {
-    center: Vec3,
-    half: Vec2,
-    speed: f32,
-    phase: f32,
+    pub(crate) center: Vec3,
+    pub(crate) half: Vec2,
+    pub(crate) speed: f32,
+    pub(crate) phase: f32,
 }
 
 /// Around a horizontal circle (angle `a`: `center + radius (cos a, 0, -sin a)`,
@@ -143,46 +143,46 @@ pub(crate) struct Travel {
 /// by its own facing angle about Y.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Orbit {
-    center: Vec3,
-    radius: f32,
-    speed: f32,
-    phase: f32,
-    bob: f32,
-    facing_speed: f32,
-    facing_phase: f32,
+    pub(crate) center: Vec3,
+    pub(crate) radius: f32,
+    pub(crate) speed: f32,
+    pub(crate) phase: f32,
+    pub(crate) bob: f32,
+    pub(crate) facing_speed: f32,
+    pub(crate) facing_phase: f32,
 }
 
 /// Around the circle `center + u cos a + v sin a`, keeping its rotation.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Wheel {
-    center: Vec3,
-    u: Vec3,
-    v: Vec3,
-    speed: f32,
-    phase: f32,
+    pub(crate) center: Vec3,
+    pub(crate) u: Vec3,
+    pub(crate) v: Vec3,
+    pub(crate) speed: f32,
+    pub(crate) phase: f32,
 }
 
 /// `base` then a turn about local Y (or Z), in place.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Spin {
-    base: Quat,
-    axis_z: bool,
-    speed: f32,
-    phase: f32,
+    pub(crate) base: Quat,
+    pub(crate) axis_z: bool,
+    pub(crate) speed: f32,
+    pub(crate) phase: f32,
 }
 
 /// Along `axis` from `anchor` by `amplitude sin a`.
 #[derive(Component, Clone, Copy, Debug)]
 pub(crate) struct Slide {
-    anchor: Vec3,
-    axis: Vec3,
-    amplitude: f32,
-    speed: f32,
-    phase: f32,
+    pub(crate) anchor: Vec3,
+    pub(crate) axis: Vec3,
+    pub(crate) amplitude: f32,
+    pub(crate) speed: f32,
+    pub(crate) phase: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Motion {
+pub(crate) enum Motion {
     Travel(Travel),
     Orbit(Orbit),
     Wheel(Wheel),
@@ -277,7 +277,7 @@ impl Slide {
 
 impl Motion {
     /// The transform this motion gives `rest` at time `t`.
-    fn apply(&self, rest: Transform, t: f32) -> Transform {
+    pub(crate) fn apply(&self, rest: Transform, t: f32) -> Transform {
         let mut transform = rest;
         match self {
             Motion::Travel(travel) => {
@@ -429,7 +429,7 @@ struct Anchor {
 }
 
 /// `frame` then `local`, for an unscaled `frame`.
-fn compose(frame: &Transform, local: &Transform) -> Transform {
+pub(crate) fn compose(frame: &Transform, local: &Transform) -> Transform {
     Transform {
         translation: frame.translation + frame.rotation * local.translation,
         rotation: frame.rotation * local.rotation,
@@ -437,7 +437,7 @@ fn compose(frame: &Transform, local: &Transform) -> Transform {
     }
 }
 
-fn part_at(translation: Vec3, scale: Vec3) -> Transform {
+pub(crate) fn part_at(translation: Vec3, scale: Vec3) -> Transform {
     Transform {
         translation,
         rotation: Quat::IDENTITY,
@@ -445,7 +445,7 @@ fn part_at(translation: Vec3, scale: Vec3) -> Transform {
     }
 }
 
-fn turned(translation: Vec3, yaw: f32, scale: Vec3) -> Transform {
+pub(crate) fn turned(translation: Vec3, yaw: f32, scale: Vec3) -> Transform {
     Transform {
         translation,
         rotation: Quat::from_rotation_y(yaw),
