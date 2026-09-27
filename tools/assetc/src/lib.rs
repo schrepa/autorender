@@ -89,6 +89,7 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<SceneDocument, ImportError> 
         id: id.to_owned(),
         revision: 1,
         camera: SceneCamera::default(),
+        environment: None,
         textures: Vec::new(),
         materials: Vec::new(),
         meshes: Vec::new(),

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_assets::{MaterialHandle, Mesh, MeshHandle, Texture, TextureHandle};
+use engine_assets::{MaterialHandle, Mesh, MeshHandle, Surface, Texture, TextureHandle};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 
 use crate::NodePose;
@@ -202,6 +202,8 @@ pub struct RenderInstance {
     pub texture: Option<TextureHandle>,
     pub model: Mat4,
     pub color: [f32; 4],
+    /// The material's surface response; cubes are [`Surface::MATTE`].
+    pub surface: Surface,
 }
 
 /// One referenced mesh, retained independently of its library's lifetime.
@@ -224,8 +226,16 @@ pub struct RenderSnapshot {
     pub view_projection: Mat4,
     /// The camera's position ([`Camera::eye`]), for view-dependent lighting.
     pub camera_position: Vec3,
+    /// Presentation time ([`crate::FrameTime::elapsed_seconds`]) for animated
+    /// surfaces such as ripples.
+    pub elapsed_seconds: f32,
     /// The scene's lighting, sanitized ([`crate::Atmosphere::sanitized`]).
     pub atmosphere: crate::Atmosphere,
+    /// Sun shadows (decision 020), sanitized.
+    pub shadows: crate::Shadows,
+    /// Ambient occlusion and bloom (decision 021), sanitized.
+    pub ambient_occlusion: crate::AmbientOcclusion,
+    pub bloom: crate::Bloom,
     pub instances: Vec<RenderInstance>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;

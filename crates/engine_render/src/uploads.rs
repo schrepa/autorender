@@ -77,13 +77,11 @@ impl UploadCache {
         for (position, &index) in order.iter().enumerate() {
             let source = &instances[index];
             if let Some(previous) = staging.get_mut(position) {
-                let matrix: &[f32; 16] = source.model.as_ref();
-                if bytemuck::bytes_of(&previous.model) == bytemuck::bytes_of(matrix)
-                    && bytemuck::bytes_of(&previous.color) == bytemuck::bytes_of(&source.color)
-                {
+                let record = InstanceData::from(source);
+                if bytemuck::bytes_of(previous) == bytemuck::bytes_of(&record) {
                     continue;
                 }
-                *previous = InstanceData::from(source);
+                *previous = record;
             } else {
                 staging.push(InstanceData::from(source));
             }
@@ -172,6 +170,7 @@ mod tests {
                 texture: None,
                 model: Mat4::from_translation(position),
                 color: [1.0; 4],
+                surface: engine_core::Surface::MATTE,
             })
             .to_vec()
     }
@@ -179,7 +178,7 @@ mod tests {
     #[test]
     fn static_cache_camera_reuse_requires_committed_exact_bytes() {
         let mut cache = UploadCache::default();
-        let camera = CameraUniform::exact(Mat4::IDENTITY, glam::Vec3::ZERO);
+        let camera = CameraUniform::exact(Mat4::IDENTITY, glam::Vec3::ZERO, 0.0);
         assert!(cache.camera_needs_write(&camera));
         // Merely inspecting or preparing a skipped frame does not commit it.
         assert!(cache.camera_needs_write(&camera));

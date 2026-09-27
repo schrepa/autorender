@@ -16,9 +16,12 @@ const config = {
 };
 // Without interpolation, moving nodes compose on the GPU from their current
 // locals instead of CPU authority rows; they must match the CPU reference too.
+// A still workload settles first: GPU frames then shadow it from the kept map
+// (decision 020), CPU references from the map redrawn every frame.
 const workloads = [
   { label: "interpolated", config, fractional: true },
   { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },
+  { label: "still", config: { ...config, moving_percent: 0 }, fractional: false, settle: true },
 ];
 const workloadUrl = workload => {
   const url = new URL("stress.html", base);
@@ -118,6 +121,11 @@ async function verify(workload) {
     if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
     assert.equal(reply.ok, true, JSON.stringify(reply).slice(0, 4000));
     break;
+  }
+  if (workload.settle) {
+    await command("resume");
+    await delay(1500);
+    await command("pause");
   }
   await mkdir(output, { recursive: true });
   await command("render");

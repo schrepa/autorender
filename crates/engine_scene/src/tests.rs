@@ -363,6 +363,148 @@ fn legacy_scenes_stay_readable_and_new_texture_semantics_require_version_two() {
 }
 
 #[test]
+fn material_surfaces_require_version_five_and_reach_textured_materials() {
+    let mut document = textured_document();
+    document.materials[0].surface = Some(crate::SceneSurface {
+        roughness: 0.1,
+        emission: 3.0,
+        ..crate::SceneSurface::default()
+    });
+    document.version = 4;
+    let error = document.validate().unwrap_err();
+    assert_eq!(error.code, "version_required");
+    assert_eq!(error.path, "$.materials[0].surface");
+    document.version = crate::SCENE_VERSION;
+    let source = document.to_json().unwrap();
+    assert!(source.contains("\"emission\": 3.0"));
+    let document = SceneDocument::from_json(&source).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let mesh = world
+        .get::<Mesh3d>(instance.entity("player").unwrap())
+        .unwrap();
+    let material = *world
+        .resource::<AssetLibrary>()
+        .material(mesh.material)
+        .unwrap();
+    assert!(material.texture().is_some());
+    assert_eq!(
+        material.surface(),
+        engine_core::Surface {
+            roughness: 0.1,
+            emission: 3.0,
+            ..engine_core::Surface::MATTE
+        }
+    );
+    let mut invalid = document.clone();
+    invalid.materials[0].surface.as_mut().unwrap().metalness = 2.0;
+    let error = invalid.validate().unwrap_err();
+    assert_eq!(error.code, "invalid_material");
+    assert_eq!(error.path, "$.materials[0].surface");
+    // Omitted fields keep the matte defaults.
+    let partial: crate::SceneSurface = serde_json::from_str(r#"{"ripples": 1}"#).unwrap();
+    assert_eq!(partial.roughness, engine_core::Surface::MATTE.roughness);
+    assert_eq!(partial.ripples, 1.0);
+}
+
+#[test]
+fn version_five_environments_own_the_look_and_validate_every_field() {
+    use engine_core::{AmbientOcclusion, Atmosphere, Bloom, Shadows};
+    let source = r#"{
+        "atmosphere": {"preset": "night", "exposure": 1.1},
+        "shadows": {"enabled": false, "bounds": {"min": [-5, 0, -5], "max": [5, 9, 5]}},
+        "bloom": {"intensity": 0}
+    }"#;
+    let environment: crate::SceneEnvironment = serde_json::from_str(source).unwrap();
+    let mut document = document();
+    document.environment = Some(environment);
+    document.version = 4;
+    let error = document.validate().unwrap_err();
+    assert_eq!(error.code, "version_required");
+    assert_eq!(error.path, "$.environment");
+    document.version = crate::SCENE_VERSION;
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    world.insert_resource(AmbientOcclusion {
+        intensity: 0.1,
+        radius: 9.0,
+    });
+    let instance = document.instantiate(&mut world).unwrap();
+    let atmosphere = *world.resource::<Atmosphere>();
+    assert_eq!(atmosphere.exposure, 1.1);
+    assert_eq!(atmosphere.zenith, Atmosphere::night().zenith);
+    let shadows = *world.resource::<Shadows>();
+    assert!(!shadows.enabled);
+    assert_eq!(shadows.bounds.unwrap().1.y, 9.0);
+    assert!(!world.resource::<Bloom>().enabled());
+    // Omitted sections take the defaults: the document owns the whole look.
+    assert_eq!(
+        *world.resource::<AmbientOcclusion>(),
+        AmbientOcclusion::default()
+    );
+    // The current resources, as a section each, reproduce themselves.
+    let current = crate::SceneEnvironment::current(&world);
+    let resolved = current.resolve("$").unwrap();
+    assert_eq!(resolved.atmosphere, Some(atmosphere));
+    assert_eq!(resolved.shadows, Some(shadows));
+    instance.despawn(&mut world);
+    // Disposal keeps the environment for the next scene to replace.
+    assert_eq!(*world.resource::<Atmosphere>(), atmosphere);
+
+    for (json, path) in [
+        (
+            r#"{"shadows":{"resolution":3000}}"#,
+            "$.environment.shadows.resolution",
+        ),
+        (
+            r#"{"shadows":{"near_distance":900}}"#,
+            "$.environment.shadows.near_distance",
+        ),
+        (
+            r#"{"shadows":{"bounds":{"min":[1,0,0],"max":[0,1,1]}}}"#,
+            "$.environment.shadows.bounds",
+        ),
+        (
+            r#"{"atmosphere":{"fog_max":1.5}}"#,
+            "$.environment.atmosphere.fog_max",
+        ),
+        (
+            r#"{"atmosphere":{"sun_direction":[0,0,0]}}"#,
+            "$.environment.atmosphere.sun_direction",
+        ),
+        (
+            r#"{"atmosphere":{"horizon":[1,-1,1]}}"#,
+            "$.environment.atmosphere.horizon",
+        ),
+        (
+            r#"{"ambient_occlusion":{"radius":0}}"#,
+            "$.environment.ambient_occlusion.radius",
+        ),
+        (
+            r#"{"bloom":{"intensity":5}}"#,
+            "$.environment.bloom.intensity",
+        ),
+    ] {
+        let mut invalid = self::document();
+        invalid.version = crate::SCENE_VERSION;
+        invalid.environment = Some(serde_json::from_str(json).unwrap());
+        let error = invalid.validate().unwrap_err();
+        assert_eq!(error.code, "invalid_environment", "{json}");
+        assert_eq!(error.path, path, "{json}");
+    }
+    assert!(serde_json::from_str::<crate::SceneEnvironment>(r#"{"fog":1}"#).is_err());
+
+    // Without an environment the game's own settings stay.
+    let mut plain = self::document();
+    plain.version = crate::SCENE_VERSION;
+    let mut world = self::world(AssetBudget::default());
+    world.insert_resource(Atmosphere::dusk());
+    let instance = plain.instantiate(&mut world).unwrap();
+    assert_eq!(*world.resource::<Atmosphere>(), Atmosphere::dusk());
+    instance.despawn(&mut world);
+}
+
+#[test]
 fn serialization_stops_at_source_budget_for_large_valid_rust_documents() {
     let mut document = document();
     let entity = document.entities.pop().unwrap();

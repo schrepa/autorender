@@ -54,6 +54,16 @@ the scene's own (night over the tower field, golden hour over the city),
 golden hour, dusk, night or day. `look=golden|dusk|night|day` in the URL sets
 it at startup; it survives workload changes, and recordings and profiles
 report `look`.
+Materials use surfaces ([decision 019](adr-019-surface-materials-and-reflections.md)):
+the city's glass towers, metal, vehicles and water reflect the sky, the river
+ripples, and lit windows, neon, beacons and lamp heads glow through their
+textures' emission masks; the tower field varies roughness and metalness and
+lights every fourth tower's stripes. Each scene bounds its shadows
+([decision 020](adr-020-sun-shadows.md)) at 4096 texels. The Effects control
+turns shadows, ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
+off together or one at a time; `effects=none|no-shadows|no-occlusion|no-bloom`
+sets it at startup, it survives workload changes, and recordings and profiles
+report `effects`. The measurements below predate these effects.
 The city averages about 60 vertices and 29 triangles per object, against 24
 and 12 for the tower field, so the opaque pass does most of the added work.
 In Firefox 156 on the Intel iGPU (canvas 2262×987, 10% moving, no collision,

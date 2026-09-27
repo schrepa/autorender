@@ -147,9 +147,7 @@ impl RetainedUploads {
             colors.reserve_exact(instances.len());
             self.stamps.reserve_exact(colors.capacity());
             for (index, source) in instances.iter().enumerate() {
-                colors.push(ColorData {
-                    color: source.color,
-                });
+                colors.push(ColorData::from(source));
                 self.stamps
                     .push((pose_changes[index], color_changes[index]));
             }
@@ -174,7 +172,7 @@ impl RetainedUploads {
                         prepared.poses_repacked += 1;
                     }
                     if color_changed {
-                        colors[index].color = instances[index].color;
+                        colors[index] = ColorData::from(&instances[index]);
                         stamps.1 = color_changes[index];
                         self.colors.changed(index, size_of::<ColorData>());
                         prepared.colors_repacked += 1;
@@ -183,9 +181,7 @@ impl RetainedUploads {
                 }
             }
             for (index, source) in instances.iter().enumerate().skip(self.stamps.len()) {
-                colors.push(ColorData {
-                    color: source.color,
-                });
+                colors.push(ColorData::from(source));
                 self.stamps
                     .push((pose_changes[index], color_changes[index]));
                 self.poses.changed(index, size_of::<PoseData>());
@@ -244,7 +240,8 @@ mod tests {
                 mesh,
                 texture: None,
                 model: Mat4::IDENTITY,
-                color: [1.0; 4]
+                color: [1.0; 4],
+                surface: engine_core::Surface::MATTE,
             };
             count
         ]
@@ -303,7 +300,10 @@ mod tests {
                 bytemuck::bytes_of(&gpu_poses[index]),
                 bytemuck::bytes_of(&PoseData::from(instance))
             );
-            assert_eq!(gpu_colors[index].color, instance.color);
+            assert_eq!(
+                bytemuck::bytes_of(&gpu_colors[index]),
+                bytemuck::bytes_of(&ColorData::from(instance))
+            );
         }
         let unchanged =
             cache.prepare_records(&source, key, &pose_stamps, &color_stamps, &mut colors);

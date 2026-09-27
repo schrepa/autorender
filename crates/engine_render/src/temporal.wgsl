@@ -1,10 +1,13 @@
-// Temporal antialiasing resolve (decision 017). One full-screen triangle per
-// display frame blends this frame's jittered color with the previous output,
-// reprojected by per-pixel motion. The history is clamped to the box of the
-// current pixel and its four edge neighbors in YCoCg, which bounds ghosting
-// from disocclusion, changed shading and approximate motion. Pixels whose
-// reprojection leaves the viewport, and every pixel after a reset, show this
-// frame's color alone. Writes the canvas and the next history together.
+// Temporal antialiasing resolve (decision 017), prepended with effects.wgsl.
+// One full-screen triangle per display frame blends this frame's jittered
+// color with the previous output, reprojected by per-pixel motion. The
+// history is clamped to the box of the current pixel and its four edge
+// neighbors in YCoCg, which bounds ghosting from disocclusion, changed
+// shading and approximate motion. Pixels whose reprojection leaves the
+// viewport, and every pixel after a reset, show this frame's color alone.
+// Ambient occlusion darkens this frame's color before blending, so the
+// history averages its noise; bloom (decision 021) reaches the canvas only.
+// Writes the canvas and the next history together.
 
 struct Resolve {
     // Size of one target pixel in texture coordinates.
@@ -23,6 +26,9 @@ struct Resolve {
 @group(0) @binding(2) var motion: texture_2d<f32>;
 @group(0) @binding(3) var history: texture_2d<f32>;
 @group(0) @binding(4) var history_sampler: sampler;
+@group(0) @binding(5) var occlusion: texture_2d<f32>;
+@group(0) @binding(6) var bloom: texture_2d<f32>;
+@group(0) @binding(7) var<uniform> post: Post;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -34,14 +40,6 @@ const STILL_PIXELS: f32 = 0x1p-6f;
 struct Outputs {
     @location(0) canvas: vec4<f32>,
     @location(1) history: vec4<f32>,
-}
-
-// One triangle covering the viewport: (-1, -1), (3, -1) and (-1, 3).
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
-    let x = f32((index << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(index & 2u) * 2.0 - 1.0;
-    return vec4<f32>(x, y, 0.0, 1.0);
 }
 
 fn ycocg(color: vec3<f32>) -> vec3<f32> {
@@ -85,16 +83,14 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     return color / sum;
 }
 
-fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
-    let low = color * 12.92;
-    let high = 1.055 * pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(high, low, color <= vec3<f32>(0.0031308));
-}
-
 @fragment
 fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let pixel = vec2<i32>(position.xy);
-    let current = textureLoad(scene, pixel, 0).rgb;
+    let texel = textureLoad(scene, pixel, 0);
+    let screen = position.xy * resolve.texel;
+    // The neighborhood darkens with this pixel: its box scales alike.
+    let shade = occlusion_factor(texel.a, occlusion, history_sampler, screen, post);
+    let current = texel.rgb * shade;
     var color = current;
     let offset = textureLoad(motion, pixel, 0).xy;
     let uv = position.xy * resolve.texel + offset;
@@ -102,10 +98,10 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     if resolve.history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let last = vec2<i32>(textureDimensions(scene)) - 1;
         let center = ycocg(current);
-        let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb);
-        let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb);
-        let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb);
-        let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb);
+        let left = ycocg(textureLoad(scene, max(pixel - vec2<i32>(1, 0), vec2<i32>(0)), 0).rgb * shade);
+        let right = ycocg(textureLoad(scene, min(pixel + vec2<i32>(1, 0), last), 0).rgb * shade);
+        let up = ycocg(textureLoad(scene, max(pixel - vec2<i32>(0, 1), vec2<i32>(0)), 0).rgb * shade);
+        let down = ycocg(textureLoad(scene, min(pixel + vec2<i32>(0, 1), last), 0).rgb * shade);
         let low = min(center, min(min(left, right), min(up, down)));
         let high = max(center, max(max(left, right), max(up, down)));
         var past: vec3<f32>;
@@ -119,10 +115,11 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
     output.history = vec4<f32>(color, 1.0);
+    let shown = glowing(color, bloom, history_sampler, screen, post);
     if SURFACE_IS_SRGB {
-        output.canvas = vec4<f32>(color, 1.0);
+        output.canvas = vec4<f32>(shown, 1.0);
     } else {
-        output.canvas = vec4<f32>(linear_to_srgb(color), 1.0);
+        output.canvas = vec4<f32>(encode_srgb(shown), 1.0);
     }
     return output;
 }

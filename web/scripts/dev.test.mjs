@@ -74,6 +74,9 @@ function setup(t, options = {}) {
         dropped_instances: 0, missing_assets: 0, culling_enabled: true,
         upload_bytes: 2144, fixed_steps: 1, dropped_seconds: 0,
         mesh_upload_bytes: 0, simulation_ms: 0, extraction_ms: 0.1, render_ms: 0.2,
+        shadows_enabled: true, shadow_draws: 2, shadow_kept_redraw: 0,
+        shadow_near_casters: undefined, shadow_moving_casters: 5, shadow_kept_casters: 0,
+        ambient_occlusion: true, bloom: false,
         free() { statsFreed++; },
       };
     },
@@ -116,7 +119,7 @@ function setup(t, options = {}) {
 
 test("running sessions reject mutation and capture commands before forwarding them", async t => {
   const session = setup(t, { paused: false });
-  for (const op of ["input", "step", "render", "present", "capture", "reload", "camera", "culling", "benchmark"]) {
+  for (const op of ["input", "step", "render", "present", "capture", "reload", "camera", "culling", "environment", "benchmark"]) {
     const reply = await session.api.request({ op });
     assert.equal(reply.ok, false);
     assert.equal(reply.error.code, "pause_required");
@@ -126,7 +129,7 @@ test("running sessions reject mutation and capture commands before forwarding th
   assert.deepEqual(session.counters, {
     frame: 7, tick: 12, revision: "4", accessesAfterFree: 0, statsFreed: 0, polls: 0,
   });
-  assert.deepEqual(session.busy, Array.from({ length: 9 }, () => [true, false]).flat());
+  assert.deepEqual(session.busy, Array.from({ length: 10 }, () => [true, false]).flat());
 });
 
 test("awaited source reload excludes competing commands and renders the accepted revision", async t => {
@@ -203,6 +206,13 @@ test("capture renders current state then waits for two animation frames without 
   assert.equal(reply.result.rendering.resident_textures, 1);
   assert.equal(reply.result.rendering.resident_texture_bytes, 16);
   assert.equal(reply.result.rendering.texture_upload_bytes, 0);
+  assert.equal(reply.result.rendering.shadows_enabled, true);
+  assert.equal(reply.result.rendering.shadow_draws, 2);
+  // Caster counts before their first read-back are explicit nulls.
+  assert.equal(reply.result.rendering.shadow_near_casters, null);
+  assert.equal(reply.result.rendering.shadow_moving_casters, 5);
+  assert.equal(reply.result.rendering.ambient_occlusion, true);
+  assert.equal(reply.result.rendering.bloom, false);
   assert.equal(session.counters.statsFreed, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);

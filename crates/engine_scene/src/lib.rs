@@ -7,6 +7,7 @@
 
 mod collider;
 mod document;
+mod environment;
 mod error;
 mod hierarchy;
 mod instance;
@@ -16,7 +17,11 @@ mod validation;
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMaterial, SceneMesh, SceneObject,
-    ScenePrefab, SceneTransform, SceneVertex,
+    ScenePrefab, SceneSurface, SceneTransform, SceneVertex,
+};
+pub use environment::{
+    AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
+    SceneBounds, SceneEnvironment, SceneShadows,
 };
 pub use error::SceneError;
 pub use instance::{SceneEntity, SceneInstance};

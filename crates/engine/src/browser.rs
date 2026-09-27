@@ -33,6 +33,11 @@ pub struct FrameStats {
     pub resident_textures: u32,
     pub texture_upload_bytes: u64,
     pub resident_texture_bytes: u64,
+    /// Sun shadow work (decision 020); `None` when shadows are off.
+    pub shadows: Option<engine_render::ShadowStats>,
+    /// Screen effects applied (decision 021).
+    pub ambient_occlusion: bool,
+    pub bloom: bool,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -60,6 +65,20 @@ pub struct BrowserStats {
     pub resident_textures: u32,
     pub texture_upload_bytes: f64,
     pub resident_texture_bytes: f64,
+    /// Whether the sun cast shadows (decision 020).
+    pub shadows_enabled: bool,
+    /// Indexed shadow-map draws, in addition to the camera pass's `draw_calls`.
+    pub shadow_draws: u32,
+    /// Kept-map redraw: 0 none, 1 one strip, 2 the whole map.
+    pub shadow_kept_redraw: u32,
+    /// Casters the near, moving and kept shadow maps drew, read back a few
+    /// frames late; undefined before the first read-back.
+    pub shadow_near_casters: Option<u32>,
+    pub shadow_moving_casters: Option<u32>,
+    pub shadow_kept_casters: Option<u32>,
+    /// Whether ambient occlusion and bloom ran (decision 021).
+    pub ambient_occlusion: bool,
+    pub bloom: bool,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -86,6 +105,25 @@ impl From<FrameStats> for BrowserStats {
             resident_textures: stats.resident_textures,
             texture_upload_bytes: stats.texture_upload_bytes as f64,
             resident_texture_bytes: stats.resident_texture_bytes as f64,
+            shadows_enabled: stats.shadows.is_some(),
+            shadow_draws: stats.shadows.map_or(0, |shadows| shadows.draws),
+            shadow_kept_redraw: stats
+                .shadows
+                .map_or(0, |shadows| u32::from(shadows.kept_redraw)),
+            shadow_near_casters: stats
+                .shadows
+                .and_then(|shadows| shadows.casters)
+                .map(|c| c[0]),
+            shadow_moving_casters: stats
+                .shadows
+                .and_then(|shadows| shadows.casters)
+                .map(|c| c[1]),
+            shadow_kept_casters: stats
+                .shadows
+                .and_then(|shadows| shadows.casters)
+                .map(|c| c[2]),
+            ambient_occlusion: stats.ambient_occlusion,
+            bloom: stats.bloom,
         }
     }
 }
@@ -419,6 +457,9 @@ impl BrowserApp {
             resident_textures: rendered.resident_textures,
             texture_upload_bytes: rendered.texture_upload_bytes,
             resident_texture_bytes: rendered.resident_texture_bytes,
+            shadows: rendered.shadows,
+            ambient_occlusion: rendered.ambient_occlusion,
+            bloom: rendered.bloom,
         };
         Ok(())
     }

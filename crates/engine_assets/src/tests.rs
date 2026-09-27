@@ -155,6 +155,70 @@ fn material_accepts_only_finite_opaque_linear_color() {
 }
 
 #[test]
+fn material_surfaces_default_to_matte_and_reject_values_outside_their_ranges() {
+    let material = Material::new([1.0; 4]).unwrap();
+    assert_eq!(material.surface(), Surface::MATTE);
+    assert_eq!(Surface::default(), Surface::MATTE);
+    let glass = Surface {
+        roughness: 0.0,
+        metalness: 1.0,
+        emission: Surface::MAX_EMISSION,
+        ripples: 1.0,
+    };
+    assert_eq!(
+        material.with_surface(glass).unwrap().surface(),
+        glass,
+        "range ends are accepted"
+    );
+    for (field, surface) in [
+        (
+            "roughness",
+            Surface {
+                roughness: -0.1,
+                ..glass
+            },
+        ),
+        (
+            "metalness",
+            Surface {
+                metalness: 1.5,
+                ..glass
+            },
+        ),
+        (
+            "emission",
+            Surface {
+                emission: 16.5,
+                ..glass
+            },
+        ),
+        (
+            "emission",
+            Surface {
+                emission: f32::INFINITY,
+                ..glass
+            },
+        ),
+        (
+            "ripples",
+            Surface {
+                ripples: f32::NAN,
+                ..glass
+            },
+        ),
+    ] {
+        assert_eq!(
+            material.with_surface(surface).unwrap_err(),
+            AssetError::InvalidSurface { field }
+        );
+    }
+    assert_eq!(
+        AssetError::InvalidSurface { field: "ripples" }.code(),
+        "asset.invalid_surface"
+    );
+}
+
+#[test]
 fn handles_reject_removed_reused_and_foreign_slots() {
     let mut first = AssetLibrary::default();
     let mut second = AssetLibrary::default();
@@ -309,6 +373,31 @@ fn texture_rejects_invalid_dimensions_payload_and_alpha() {
     assert_eq!(texture.width(), MAX_TEXTURE_DIMENSION);
     assert_eq!(texture.height(), 1);
     assert_eq!(texture.byte_len(), 2048 * 4);
+    // Emission masks accept any alpha, with the same payload checks.
+    let masked = Texture::with_emission_mask(2, 1, vec![0, 0, 0, 0, 255, 255, 255, 128]).unwrap();
+    assert_eq!(masked.pixels()[7], 128);
+    assert!(masked.has_emission_mask());
+    assert!(!texture.has_emission_mask());
+    assert!(
+        !Texture::with_emission_mask(1, 1, vec![9, 9, 9, 255])
+            .unwrap()
+            .has_emission_mask()
+    );
+    assert_eq!(
+        Texture::with_emission_mask(0, 1, vec![]).unwrap_err(),
+        AssetError::InvalidTextureDimensions {
+            width: 0,
+            height: 1,
+            limit: MAX_TEXTURE_DIMENSION,
+        }
+    );
+    assert_eq!(
+        Texture::with_emission_mask(1, 1, vec![0; 3]).unwrap_err(),
+        AssetError::InvalidTextureLength {
+            expected: 4,
+            actual: 3
+        }
+    );
 }
 
 #[test]

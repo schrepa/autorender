@@ -54,10 +54,13 @@ Submit these objects through `agent request`, or use `agent <op> --json ...`:
 | `{"op":"inspect","component":"PresentationState"}` | Read extraction mode, fraction, source tick and history storage |
 | `{"op":"inspect","parent":"west-lantern","component":"Hierarchy","limit":20}` | Page direct children and their prefab identities |
 | `{"op":"inspect","component":"Camera"}` | Read the shared camera resource |
+| `{"op":"inspect","component":"Environment"}` | Read the whole look as a scene version 5 `environment` |
+| `{"op":"inspect","component":"Shadows"}` | Read one look section; also `Atmosphere`, `AmbientOcclusion`, `Bloom` |
 | `{"op":"inspect","component":"GameProgress"}` | Read the sample's score/jump resource |
 | `{"op":"assets"}` | CPU residency; GPU residency accompanies results |
 | `{"op":"culling","enabled":false}` | Temporarily toggle frustum culling and render while paused |
 | `{"op":"camera","position":[0,31,64],"target":[0,0,0],"vertical_fov_radians":0.96,"near":0.1,"far":1000}` | Set and render a validated temporary camera |
+| `{"op":"environment","atmosphere":{"preset":"night"},"bloom":{"intensity":0}}` | Replace the named look sections and render while paused |
 | `{"op":"benchmark","warmup":30,"samples":120,"mode":"step"}` | Sample paced frames, CPU timings, counters and asset memory |
 | `{"op":"describe","name":"ProfileCapture"}` | Discover optional detailed profiling availability and bounds |
 | `{"op":"profile","duration_ms":5000,"max_events":65536,"cpu_samples":true}` | From a paused profiling session, capture ordinary frames, save trace/CPU-profile artifacts, then pause |
@@ -71,7 +74,7 @@ Submit these objects through `agent request`, or use `agent <op> --json ...`:
 | `{"op":"diagnostics"}` | Read bounded browser warnings/errors |
 | `{"op":"close"}` | Close the owned browser and bridge |
 
-Input, step, render, capture, and reload require a paused session. Input defaults to zero; each command replaces the previous batch. Axes/held bits persist across steps. Press/release edges and look deltas are consumed by the next step only. Resume, suspension, focus loss, and successful reload clear controls. Repeating pause while paused preserves them.
+Input, step, render, capture, reload, and the camera, culling and environment controls require a paused session. Input defaults to zero; each command replaces the previous batch. Axes/held bits persist across steps. Press/release edges and look deltas are consumed by the next step only. Resume, suspension, focus loss, and successful reload clear controls. Repeating pause while paused preserves them.
 
 Step accepts 1–120 ticks, bypasses catch-up limits, runs one presentation phase, and increments the frame once. Presentation time is capped at 250 ms. Use repeated one-tick requests for behavior depending on presentation every tick. Exact tick count does not guarantee cross-platform floating-point determinism.
 
@@ -97,6 +100,33 @@ Reload the saved revision:
 The browser checks its active revision and the fetched scene ID/revision before replacement. Validation/admission failure preserves the game. Successful reload resets gameplay and renders the accepted revision. It reports `saved_by_reload:false` because it reads source. Source saves do not trigger Vite page reloads. Rebuilt/replaced runtimes require a fresh agent session.
 
 For isolated workflows, development URLs accept `?scene=/scenes/<name>.scene.json`. Production disables this selector. The browser smoke uses its own fixture and leaves the sample source untouched.
+
+## Change the look
+
+The look is four engine resources: `Atmosphere` (sun, sky, fog, grade),
+`Shadows`, `AmbientOcclusion` and `Bloom`
+([decision 022](adr-022-scene-environments-and-agent-controls.md)). Inspect
+`Environment` for all of them in the shape of a scene version 5
+`environment`; `describe` gives each section's schema and defaults. An
+atmosphere is a preset (`day`, `golden_hour`, `dusk`, `night`) plus the fields
+that differ from it.
+
+Try a look with the `environment` control. It takes the same sections,
+validates them like a scene (`invalid_environment` with the field's path,
+changing nothing), replaces only the sections it names, renders, and lists
+them in `environment_changed`. It never changes source. To keep a look, put
+the sections in the scene's `environment` (version 5), save and reload: the
+scene then sets all four, omitted sections taking the defaults, and replaces
+any temporary look. Scenes without an environment leave the look to the
+game's code. Compare looks in captures at identical canvas sizes.
+
+Every reply's `rendering` reports the effects the last frame ran and its
+shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_calls`),
+`shadow_kept_redraw` (0 none, 1 one strip, 2 every still caster),
+`shadow_near_casters`, `shadow_moving_casters` and `shadow_kept_casters`
+(read back a few frames late, null until then), `ambient_occlusion` and
+`bloom`. `Mesh3d` reports each material's `surface` and whether its texture
+masks emission (`texture_emission_mask`).
 
 ## Extend a game
 
@@ -173,7 +203,7 @@ cargo xtask docs
 node web/scripts/agent-smoke.mjs
 ```
 
-The last command requires the development server and Chrome. It verifies inspection, input/step/capture, guarded saves, and reloads. [Bridge details](../web/scripts/agent.README.md) specify bounds, deadlines, and recovery.
+The last command requires the development server and Chrome. It verifies inspection, input/step/capture, the environment control, guarded saves, and reloads, including a saved scene environment. [Bridge details](../web/scripts/agent.README.md) specify bounds, deadlines, and recovery.
 
 ## Collision observations
 

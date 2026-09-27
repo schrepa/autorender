@@ -151,12 +151,14 @@ pub(crate) struct GpuPresentationPass {
     batch_bases: wgpu::Buffer,
     draws: wgpu::Buffer,
     bind_groups: Option<BindGroups>,
+    // Advances when candidate, batch or scan storage is replaced.
+    buffers_generation: u64,
     // Identity of the pose storage bound for writing; rebuild groups on change.
     poses_generation: Option<u64>,
     // The pose buffer this frame's culling writes.
     poses_index: usize,
     uploaded: Option<(u64, u64)>,
-    groups_key: Option<(u64, u64, u64, u64)>,
+    groups_key: Option<(u64, u64, u64, u64, bool)>,
     candidate_count: u32,
     batch_count: u32,
     level_ranges: Vec<(u32, u32)>,
@@ -290,6 +292,7 @@ impl GpuPresentationPass {
                 wgpu::BufferUsages::INDIRECT,
             ),
             bind_groups: None,
+            buffers_generation: 0,
             poses_generation: None,
             poses_index: 0,
             uploaded: None,
@@ -415,6 +418,7 @@ impl GpuPresentationPass {
             );
             self.groups_key = None;
             self.bind_groups = None;
+            self.buffers_generation += 1;
         }
         if batches > self.batch_capacity {
             self.batch_capacity = batches.max(64).next_power_of_two();
@@ -439,6 +443,19 @@ impl GpuPresentationPass {
             );
             self.groups_key = None;
             self.bind_groups = None;
+            self.buffers_generation += 1;
+        }
+    }
+
+    /// This frame's candidates in slot order, draw groups and candidate
+    /// flags, for shadow caster selection (decision 020) after culling.
+    pub(crate) fn shadow_inputs(&self) -> crate::shadows::Presented<'_> {
+        crate::shadows::Presented {
+            candidates: &self.slot_candidates,
+            batches: &self.batches,
+            flags: &self.scan,
+            count: self.candidate_count,
+            generation: self.buffers_generation,
         }
     }
 
@@ -544,6 +561,9 @@ impl GpuPresentationPass {
     /// (0 or 1) of the pair `poses_generation` identifies, and tests them
     /// against `view_projection`, the projection the frame rasterizes.
     /// With `motion`, visible IDs of moving slots carry `MOVED_SLOT`.
+    /// `batch_meta` gives each plan batch's index count, mesh bounds and
+    /// shadow draw group; `shadow_groups` distinguishes plans whose batch
+    /// records carry shadow groups.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -554,7 +574,8 @@ impl GpuPresentationPass {
         frame: &RenderFrame<'_>,
         gpu: &GpuPresentation<'_>,
         plan: &BatchPlan,
-        batch_meta: impl Fn(&DrawBatch) -> (u32, Aabb),
+        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32),
+        shadow_groups: bool,
         poses: &wgpu::Buffer,
         poses_index: usize,
         poses_generation: u64,
@@ -786,6 +807,7 @@ impl GpuPresentationPass {
             frame.structure_revision(),
             frame.source_revision(),
             gpu.identity,
+            shadow_groups,
         );
         if self.groups_key != Some(key) {
             let slot_nodes = frame.slot_nodes();
@@ -794,13 +816,13 @@ impl GpuPresentationPass {
             self.batch_staging.clear();
             self.batch_staging.reserve_exact(plan.batches.len());
             for (index, batch) in plan.batches.iter().enumerate() {
-                let (index_count, bounds) = batch_meta(batch);
+                let (index_count, bounds, group) = batch_meta(index, batch);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
                 self.batch_staging.push(BatchData {
                     start: batch.instances.start,
                     count: batch.instances.end - batch.instances.start,
                     index_count,
-                    pad: 0,
+                    pad: group,
                     bounds_min: bounds.min().extend(0.0).to_array(),
                     bounds_max: bounds.max().extend(0.0).to_array(),
                 });

@@ -41,8 +41,13 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     engine.app.insert_resource(look(config.scene, "scene")?);
     engine.app.init_resource::<FrameMetrics>();
     let world = engine.app.world_mut();
-    let moving_nodes = match config.scene {
-        StressScene::Field => field(world, &config)?,
+    let (moving_nodes, bounds) = match config.scene {
+        StressScene::Field => {
+            // The grid, the height objects bob to, and a margin.
+            let half = (config.renderables as f32).sqrt().ceil() * SPACING * 0.5 + 4.0;
+            let bounds = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 12.0, half));
+            (field(world, &config)?, bounds)
+        }
         StressScene::City => {
             let city = city::populate(world, &config)?;
             world.insert_resource(Workload {
@@ -52,9 +57,18 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
                 probes: city.probes,
                 overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
             });
-            city.moving_nodes
+            (city.moving_nodes, city.bounds)
         }
     };
+    // Shadows (decision 020) keep the whole scene in one map, seen from
+    // every view.
+    world.insert_resource(Shadows {
+        bounds: Some(bounds),
+        distance: 1600.0,
+        near_distance: 90.0,
+        resolution: 4096,
+        ..Shadows::default()
+    });
     if collision_enabled {
         refresh_collision_world(world).map_err(|error| error.to_string())?;
     }
@@ -236,6 +250,15 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                 )
                 .map_err(|error| error.to_string())?;
             let color = colors[index as usize % colors.len()];
+            // Surfaces (decision 019) from glossy metal to matte; every
+            // fourth tower's bright stripes light up.
+            let lit = config.textured && index % 4 == 1;
+            let surface = Surface {
+                roughness: [0.25, 0.5, 0.8, 0.35][index as usize % 4],
+                metalness: if index % 3 == 0 { 0.7 } else { 0.0 },
+                emission: if lit { 1.2 } else { 0.0 },
+                ripples: 0.0,
+            };
             let material = if config.textured {
                 let mut pixels = Vec::with_capacity(64 * 64 * 4);
                 for y in 0..64 {
@@ -248,18 +271,26 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                         } else {
                             195
                         };
-                        pixels.extend_from_slice(&[value, value, value, 255]);
+                        let emits = lit && value == 255;
+                        pixels.extend_from_slice(&[
+                            value,
+                            value,
+                            value,
+                            if emits { 255 } else { 0 },
+                        ]);
                     }
                 }
                 let texture = assets
                     .insert_texture(
-                        Texture::new(64, 64, pixels).map_err(|error| error.to_string())?,
+                        Texture::with_emission_mask(64, 64, pixels)
+                            .map_err(|error| error.to_string())?,
                     )
                     .map_err(|error| error.to_string())?;
                 Material::textured(color, texture)
             } else {
                 Material::new(color)
             }
+            .and_then(|material| material.with_surface(surface))
             .map_err(|error| error.to_string())?;
             let material = assets
                 .insert_material(material)

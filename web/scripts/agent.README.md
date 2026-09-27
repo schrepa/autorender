@@ -37,8 +37,10 @@ The equivalent HTTP call is `POST /request` with `Content-Type: application/json
 
 Temporary `input` applies to paused stepping; it does not edit source. Persistent changes belong in scene source files. Validate and save source through the scene CLI, then request reload with both the currently observed revision and the saved revision.
 
-Paused `camera` and `culling` commands update temporary render state and render
-without advancing gameplay. `benchmark` holds the same busy boundary across RAF
+Paused `camera`, `culling` and `environment` commands update temporary render
+state and render without advancing gameplay. `environment` takes the sections of
+a scene version 5 `environment` (for example `--json '{"atmosphere":{"preset":"night"}}'`),
+replaces only those, and never edits source; inspect `Environment` first. `benchmark` holds the same busy boundary across RAF
 sampling (maximum ten seconds), clearing input and optionally stepping gameplay.
 It returns bounded CPU/frame distributions and residency/counter ranges. Use the
 [benchmark runner](../../docs/benchmarking.md) for repeated fresh-session A/B
@@ -65,7 +67,7 @@ Run transport checks with `node --test web/scripts/agent.test.mjs`. These tests 
 
 Run `node web/scripts/agent-lifecycle-smoke.mjs` for browser-backed checks that runtime replacement and navigation invalidate a session, and that unavailable sessions still close cleanly. This starts isolated local HTML fixtures and requires installed Chrome, but no engine server or GPU rendering.
 
-Run the complete agent loop against a running development server with `node web/scripts/agent-smoke.mjs` (activate the workspace Rust toolchain first). It creates an isolated authored fixture, discovers a session, inspects and steps gameplay, captures a screenshot, validates and saves a source revision through `cargo xtask scene`, reloads that revision, and checks diagnostics. It removes its own scene fixture when finished. The default authored game source is untouched. `DEMO_URL` overrides the default development server address. Screenshots and candidate files remain under ignored `artifacts/agent/` for review.
+Run the complete agent loop against a running development server with `node web/scripts/agent-smoke.mjs` (activate the workspace Rust toolchain first). It creates an isolated authored fixture, discovers a session, inspects and steps gameplay, captures a screenshot, inspects and temporarily changes the environment, validates and saves a source revision with a version 5 environment through `cargo xtask scene`, reloads that revision, and checks diagnostics. It removes its own scene fixture when finished. The default authored game source is untouched. `DEMO_URL` overrides the default development server address. Screenshots and candidate files remain under ignored `artifacts/agent/` for review.
 
 `raycast`, `overlap`, `shape_cast` and `collision_events` are read-only runtime
 verbs and need no pause. Pass their typed fields using `--json` or `--file`.

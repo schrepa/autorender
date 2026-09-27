@@ -633,6 +633,7 @@ mod tests {
                 .map(|(index, &mesh)| RenderInstance {
                     model: Mat4::from_translation(glam::Vec3::X * index as f32),
                     color: [index as f32 / handles.len() as f32, 0.2, 0.8, 1.0],
+                    surface: engine_core::Surface::MATTE,
                     mesh,
                     texture: None,
                 })
@@ -641,6 +642,10 @@ mod tests {
             textures: Vec::new(),
             camera_position: glam::Vec3::ZERO,
             atmosphere: Default::default(),
+            elapsed_seconds: 0.0,
+            shadows: Default::default(),
+            ambient_occlusion: Default::default(),
+            bloom: Default::default(),
             dropped_instances: 0,
             missing_assets: 0,
             invalid_transforms: 0,
@@ -1142,6 +1147,7 @@ mod tests {
             .map(|_| RenderInstance {
                 model: Mat4::IDENTITY,
                 color: [1.0; 4],
+                surface: engine_core::Surface::MATTE,
                 mesh: handle,
                 texture: None,
             })
@@ -1233,6 +1239,7 @@ mod tests {
         snapshot.instances.push(RenderInstance {
             model: Mat4::IDENTITY,
             color: [1.0; 4],
+            surface: engine_core::Surface::MATTE,
             mesh: mesh_handle,
             texture: Some(texture_handle),
         });

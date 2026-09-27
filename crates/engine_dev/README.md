@@ -55,8 +55,9 @@ return `total` and `next_offset`. Inspecting a removed entity directly reports
 `entity_removed`; a removed component reports `missing_component`. Components
 are serialized only when explicitly selected. A resource uses `component`
 without an entity selector. Camera is a resource; Transform and Mesh3d are
-components. Mesh3d reports asset readiness and geometry size, never persisted
-runtime handles. `parent` filters direct current children, is mutually exclusive
+components. Mesh3d reports asset readiness, geometry size, the material
+`surface` and whether its texture masks emission, never persisted runtime
+handles. `parent` filters direct current children, is mutually exclusive
 with `entity`, and cannot select resources. `Hierarchy` distinguishes the current
 parent from its source parent and identifies prefab definition, instance and local
 ID. `GlobalTransform` reports a column-major matrix and translation; invalid
@@ -86,12 +87,18 @@ and default where supported. Transform, GlobalTransform, InterpolateTransform,
 PresentedTransform, PresentationState, Hierarchy, Camera, Mesh3d, Collider,
 CollisionWorld, and protocol schemas are
 generated from their actual serialized DTO definitions during compilation.
+`Atmosphere`, `Shadows`, `AmbientOcclusion`, `Bloom` and the combined
+`Environment` use the scene version 5 `environment` section types from
+`engine_scene` ([decision 022](../../docs/adr-022-scene-environments-and-agent-controls.md)),
+so an inspected value can be sent to the `environment` control or saved in a
+scene unchanged. `Environment` reads missing effect resources as off; the
+individual projections report them as missing.
 Defaults come from gameplay types. `SceneDocument` uses the checked-in generated
 scene schema; `cargo xtask schema` remains its source of truth. Referential and
 semantic constraints also run in Rust validation.
 
 `BrowserControl` describes the host's actual typed input, step, pause, resume,
-render, present, capture, reload, camera, culling and benchmark requests. Movement axes default to zero in [-1, 1],
+render, present, capture, reload, camera, culling, environment and benchmark requests. Movement axes default to zero in [-1, 1],
 look deltas default to zero in [-1000, 1000], and held/pressed/released actions
 are u32 bitmasks. Step accepts 1–120 ticks. Reload requires decimal u64 strings
 `expected_revision` (running scene) and `revision` (saved source). Input, step,
@@ -111,9 +118,11 @@ the exact CPU path; the reply's visible count is read back from an earlier GPU
 frame, so repeat an identical preview to observe its own count. These controls
 never change authored source.
 
-Camera/culling controls also require pause and render without advancing clocks.
-Camera validation precedes mutation; its full pose/lens must produce a finite
-projection. The host owns RAF-paced `benchmark` sampling with generated request
+Camera/culling/environment controls also require pause and render without
+advancing clocks. Camera validation precedes mutation; its full pose/lens must
+produce a finite projection. The environment control validates every named
+section like a scene (`invalid_environment` at the field's path) before
+replacing only those resources, and reports them in `environment_changed`. The host owns RAF-paced `benchmark` sampling with generated request
 metadata, bounded warm-up/sample counts and a ten-second deadline. It excludes
 concurrent controls and cancels on lifecycle/size changes. Step mode clears input
 and advances gameplay; render mode does not. Present mode samples existing history

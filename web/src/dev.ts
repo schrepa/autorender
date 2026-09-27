@@ -90,13 +90,14 @@ export function connectDevelopment(host: Host): () => void {
           case "input":
           case "camera":
           case "culling":
+          case "environment":
           case "present":
           case "benchmark":
           case "step":
           case "render":
           case "capture":
           case "reload": {
-            if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
+            if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling/environment edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
             if (command.op === "benchmark") {
               const options = benchmarkOptions(command);
               const benchmark = await sampleBenchmark({

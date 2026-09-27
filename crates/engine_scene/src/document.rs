@@ -1,10 +1,10 @@
-use engine_core::{Camera, Material, Mesh, MeshVertex, Transform, glam};
+use engine_core::{Camera, Material, Mesh, MeshVertex, Surface, Transform, glam};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneCollider, SceneError, SceneTexture};
+use crate::{SceneCollider, SceneEnvironment, SceneError, SceneTexture};
 
 /// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 4;
+pub const SCENE_VERSION: u32 = 5;
 pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
@@ -17,7 +17,7 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 4)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 5)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -27,6 +27,12 @@ pub struct SceneDocument {
     pub revision: u64,
     #[serde(default)]
     pub camera: SceneCamera,
+    /// The scene's atmosphere and rendering effects (decision 022). Requires
+    /// version 5. With it the scene owns the whole look: instantiation sets
+    /// every section, omitted ones to the engine defaults. Without it the
+    /// game's own settings stay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<SceneEnvironment>,
     /// Decoded opaque sRGB pixels, encoded as base64 only for transport.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[cfg_attr(feature = "schema", schemars(length(max = 64)))]
@@ -180,12 +186,75 @@ pub struct SceneMaterial {
     /// Optional authored texture ID; no runtime handle is persisted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<String>,
+    /// How the surface responds to light beyond its color (decision 019).
+    /// Requires version 5; without it the material is matte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<SceneSurface>,
 }
 
 impl SceneMaterial {
+    /// The material at authored path `path` (`$.materials[i]`).
     pub(crate) fn material(&self, path: &str) -> Result<Material, SceneError> {
-        Material::new(self.color)
-            .map_err(|error| SceneError::new("invalid_material", path, error.to_string()))
+        let material = Material::new(self.color).map_err(|error| {
+            SceneError::new(
+                "invalid_material",
+                format!("{path}.color"),
+                error.to_string(),
+            )
+        })?;
+        match self.surface {
+            Some(surface) => material.with_surface(surface.surface()).map_err(|error| {
+                SceneError::new(
+                    "invalid_material",
+                    format!("{path}.surface"),
+                    error.to_string(),
+                )
+            }),
+            None => Ok(material),
+        }
+    }
+}
+
+/// A material's response to light (decision 019). Omitted fields keep the
+/// matte defaults: roughness 0.8 and no metalness, emission or ripples.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneSurface {
+    /// 0 is a mirror, 1 spreads highlights and sky reflections widest.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub roughness: f32,
+    /// Metals reflect in their own color and diffuse no light.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub metalness: f32,
+    /// Emitted light as a multiple of the material color.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 16.0)))]
+    pub emission: f32,
+    /// Animated ripples of liquid surfaces.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub ripples: f32,
+}
+
+impl Default for SceneSurface {
+    fn default() -> Self {
+        let matte = Surface::MATTE;
+        Self {
+            roughness: matte.roughness,
+            metalness: matte.metalness,
+            emission: matte.emission,
+            ripples: matte.ripples,
+        }
+    }
+}
+
+impl SceneSurface {
+    pub(crate) fn surface(self) -> Surface {
+        Surface {
+            roughness: self.roughness,
+            metalness: self.metalness,
+            emission: self.emission,
+            ripples: self.ripples,
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 
@@ -10,23 +10,26 @@ use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
-    CameraUniform, ColorData, InstanceData, LightingUniform, PoseData, SHADER, Vertex,
-    clamped_extent, mip_chain_bytes, mip_levels,
+    CameraUniform, ColorData, InstanceData, LightingUniform, PoseData, SHADER, ShadowUniform,
+    Vertex, clamped_extent, mip_chain_bytes, mip_levels,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
 use crate::mipmaps::{MipGenerator, TEXTURE_FORMAT};
+use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
 use crate::retained_uploads::RetainedUploads;
+use crate::shadows::{Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::uploads::UploadCache;
-use crate::{MAX_INSTANCES, RenderStats};
+use crate::{MAX_INSTANCES, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 7 => Float32x2];
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4];
+// Columns, color and packed surface of public instance records.
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x3, 8 => Uint32];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 
 fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
@@ -88,17 +91,30 @@ pub struct Renderer {
     suspended: bool,
     reconfigure_next_frame: bool,
     depth: DepthTarget,
+    // Advances when the depth buffer is replaced (ambient occlusion reads it).
+    depth_generation: u64,
     pipeline: wgpu::RenderPipeline,
     affine_pipeline: wgpu::RenderPipeline,
+    pipeline_layout: wgpu::PipelineLayout,
+    affine_pipeline_layout: wgpu::PipelineLayout,
+    // The same draws into the screen effects' scene and glow targets, and the
+    // effects themselves, created with the first frame that has an effect.
+    post_pipelines: Option<PostPipelines>,
+    post: Option<PostPass>,
     mesh_shader: wgpu::ShaderModule,
     camera_layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
+    // Camera, lighting and shadow lookups, for the shadow maps of
+    // `shadow_generation`.
     camera_bind_group: wgpu::BindGroup,
+    shadow_generation: u64,
     // The scene's atmosphere (decision 018), written when it changes.
     lighting_buffer: wgpu::Buffer,
     lighting: Option<LightingUniform>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
+    // Sun shadows (decision 020).
+    shadows: ShadowPass,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     texture_layout: wgpu::BindGroupLayout,
@@ -243,6 +259,16 @@ impl Renderer {
             },
             count: None,
         };
+        let shadow_map_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/camera-layout"),
             entries: &[
@@ -257,22 +283,31 @@ impl Renderer {
                     wgpu::ShaderStages::FRAGMENT,
                     size_of::<LightingUniform>(),
                 ),
-            ],
-        });
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/camera-bind-group"),
-            layout: &camera_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: lighting_buffer.as_entire_binding(),
+                // Shadow lookups (decision 020): near, kept and moving maps.
+                uniform_entry(2, wgpu::ShaderStages::FRAGMENT, size_of::<ShadowUniform>()),
+                shadow_map_entry(3),
+                shadow_map_entry(4),
+                shadow_map_entry(5),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
                 },
             ],
         });
+        let shadows = ShadowPass::new(
+            &device,
+            size_of::<Vertex>() as u64,
+            size_of::<InstanceData>() as u64,
+        );
+        let camera_bind_group = camera_bind_group(
+            &device,
+            &camera_layout,
+            &camera_buffer,
+            &lighting_buffer,
+            &shadows,
+        );
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/base-color-layout"),
             entries: &[
@@ -294,7 +329,9 @@ impl Renderer {
                 },
             ],
         });
-        // Trilinear: minified textures read small, cached levels.
+        // Trilinear: minified textures read small, cached levels. Anisotropic
+        // filtering keeps surfaces seen at grazing angles sharp along their
+        // steep axis instead of choosing the level of the blurriest one.
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/base-color-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -302,6 +339,7 @@ impl Renderer {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
         let mips = MipGenerator::new(&device);
@@ -349,72 +387,27 @@ impl Renderer {
             label: Some("engine/meshes.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
-        let full_layouts = [
-            vertex_layout(),
-            Some(wgpu::VertexBufferLayout {
-                array_stride: size_of::<InstanceData>() as u64,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &INSTANCE_ATTRIBUTES,
-            }),
-        ];
-        let affine_layouts = affine_layouts();
-        let make_pipeline = |affine| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("engine/instanced-meshes"),
-                layout: Some(if affine {
-                    &affine_pipeline_layout
-                } else {
-                    &pipeline_layout
-                }),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(if affine { "vs_affine" } else { "vs_main" }),
-                    compilation_options: Default::default(),
-                    buffers: if affine {
-                        &affine_layouts
-                    } else {
-                        &full_layouts
-                    },
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: Some(wgpu::Face::Back),
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[(
-                            "SURFACE_IS_SRGB",
-                            if configuration.format.is_srgb() {
-                                1.0
-                            } else {
-                                0.0
-                            },
-                        )],
-                        ..Default::default()
-                    },
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: configuration.format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+        let canvas_target = [Some(wgpu::ColorTargetState {
+            format: configuration.format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let canvas_constants = [(
+            "SURFACE_IS_SRGB",
+            if configuration.format.is_srgb() {
+                1.0
+            } else {
+                0.0
+            },
+        )];
+        let direct = MeshTargets {
+            fragment: "fs_main",
+            targets: &canvas_target,
+            constants: &canvas_constants,
         };
-        let pipeline = make_pipeline(false);
-        let affine_pipeline = make_pipeline(true);
+        let pipeline = mesh_pipeline(&device, &shader, &pipeline_layout, false, &direct);
+        let affine_pipeline =
+            mesh_pipeline(&device, &shader, &affine_pipeline_layout, true, &direct);
         let sky_pipeline = sky_pipeline(
             &device,
             &shader,
@@ -446,15 +439,22 @@ impl Renderer {
             suspended: extent.is_none(),
             reconfigure_next_frame: false,
             depth,
+            depth_generation: 0,
             pipeline,
             affine_pipeline,
+            pipeline_layout,
+            affine_pipeline_layout,
+            post_pipelines: None,
+            post: None,
             mesh_shader: shader,
             camera_layout,
             camera_buffer,
+            shadow_generation: shadows.generation(),
             camera_bind_group,
             lighting_buffer,
             lighting: None,
             sky_pipeline,
+            shadows,
             meshes: BTreeMap::new(),
             textures: BTreeMap::new(),
             texture_layout,
@@ -629,10 +629,21 @@ impl Renderer {
                 )));
             }
         }
+        // Shadow draw groups (decision 020): CPU-prepared frames also draw
+        // culled casters, whose meshes stay resident and upload with the
+        // batches' meshes.
+        self.shadows
+            .plan_groups(snapshot, &self.plan, retained, gpu_mode);
+        let shadow_meshes: BTreeSet<MeshHandle> = self
+            .shadows
+            .groups()
+            .iter()
+            .map(|group| group.mesh)
+            .collect();
         // Supplied sources keep residency across culling; uploads below follow
-        // only emitted draw batches and their referenced textures.
+        // only emitted draw batches, shadow casters and referenced textures.
         self.meshes
-            .retain(|handle, _| self.plan.contains_mesh(*handle));
+            .retain(|handle, _| self.plan.contains_mesh(*handle) || shadow_meshes.contains(handle));
         self.textures
             .retain(|handle, _| self.plan.contains_texture(*handle));
         drop(profile_residency);
@@ -648,6 +659,7 @@ impl Renderer {
                 self.configuration.width,
                 self.configuration.height,
             );
+            self.depth_generation += 1;
             self.reconfigure_next_frame = false;
         }
         let frame = match self.surface.get_current_texture() {
@@ -681,10 +693,20 @@ impl Renderer {
 
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mut mesh_upload_bytes = 0_u64;
-        for batch in &self.plan.batches {
-            if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(batch.mesh)
-            {
-                let source = &snapshot.meshes[batch.source_index].mesh;
+        let sources = self
+            .plan
+            .batches
+            .iter()
+            .map(|batch| (batch.mesh, batch.source_index))
+            .chain(
+                self.shadows
+                    .groups()
+                    .iter()
+                    .map(|group| (group.mesh, group.source_index)),
+            );
+        for (handle, source_index) in sources {
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
+                let source = &snapshot.meshes[source_index].mesh;
                 self.vertex_staging.clear();
                 self.vertex_staging.reserve_exact(source.vertices().len());
                 self.vertex_staging
@@ -879,7 +901,13 @@ impl Renderer {
         drop(profile_packing);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let camera = temporal_frame.as_ref().map_or_else(
-            || CameraUniform::exact(snapshot.view_projection, snapshot.camera_position),
+            || {
+                CameraUniform::exact(
+                    snapshot.view_projection,
+                    snapshot.camera_position,
+                    snapshot.elapsed_seconds,
+                )
+            },
             |frame| frame.camera,
         );
         let mut camera_upload_bytes = 0_u64;
@@ -889,7 +917,7 @@ impl Renderer {
             self.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
-        let lighting = LightingUniform::from(&snapshot.atmosphere);
+        let lighting = LightingUniform::new(&snapshot.atmosphere, &snapshot.bloom);
         if self.lighting != Some(lighting) {
             self.queue
                 .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
@@ -991,6 +1019,7 @@ impl Renderer {
         let query_slot = self.profiler.reserve(&self.device);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
+            let shadows = &self.shadows;
             // Temporal frames alternate pose buffers; the other keeps the
             // previous frame's poses.
             let (poses, poses_index) = match &temporal_frame {
@@ -1012,12 +1041,14 @@ impl Renderer {
                     frame,
                     gpu,
                     &self.plan,
-                    |batch| {
+                    |index, batch| {
                         (
                             meshes[&batch.mesh].index_count,
                             snapshot.meshes[batch.source_index].mesh.bounds(),
+                            shadows.batch_group(index),
                         )
                     },
+                    !shadows.groups().is_empty(),
                     poses,
                     poses_index,
                     self.pose_generation,
@@ -1036,6 +1067,72 @@ impl Renderer {
         #[cfg(feature = "profiling")]
         if let Some(prepared) = &gpu_prepared {
             self.profiler.timed_stages(query_slot, prepared.timed);
+        }
+        // Shadow maps (decision 020) select from this frame's poses.
+        let shadow_frame = {
+            let poses = affine.then(|| Poses {
+                buffers: [Some(&self.instance_buffer), self.alternate_poses.as_ref()],
+                index: temporal_frame.as_ref().map_or(0, |frame| frame.parity),
+                generation: self.pose_generation,
+            });
+            let meshes = &self.meshes;
+            self.shadows.prepare(
+                &self.device,
+                &self.queue,
+                snapshot,
+                gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
+                poses,
+                self.instance_capacity,
+                |mesh| meshes.get(&mesh).map_or(0, |mesh| mesh.index_count),
+            )
+        };
+        if self.shadows.generation() != self.shadow_generation {
+            self.shadow_generation = self.shadows.generation();
+            self.camera_bind_group = camera_bind_group(
+                &self.device,
+                &self.camera_layout,
+                &self.camera_buffer,
+                &self.lighting_buffer,
+                &self.shadows,
+            );
+        }
+        // Screen effects (decision 021); temporal frames apply them in their
+        // resolve, whose history averages the occlusion noise.
+        let effects = snapshot.ambient_occlusion.sanitized().enabled()
+            || snapshot.bloom.sanitized().enabled();
+        let post_frame = if temporal_frame.is_some() || effects {
+            if self.post_pipelines.is_none() {
+                self.post_pipelines = Some(PostPipelines::new(
+                    &self.device,
+                    &self.mesh_shader,
+                    &self.camera_layout,
+                    [&self.pipeline_layout, &self.affine_pipeline_layout],
+                ));
+            }
+            let format = self.configuration.format;
+            let device = &self.device;
+            let post = self
+                .post
+                .get_or_insert_with(|| PostPass::new(device, format));
+            Some(post.begin(
+                &self.device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                &self.depth.view,
+                self.depth_generation,
+            ))
+        } else {
+            // Frames without effects release their targets.
+            if let Some(post) = self.post.as_mut() {
+                post.release_targets();
+            }
+            None
+        };
+        if let (Some(_), Some(pass), Some(post)) =
+            (&temporal_frame, self.temporal.as_mut(), self.post.as_ref())
+        {
+            pass.prepare_resolve(&self.device, post);
         }
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -1058,6 +1155,30 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             self.profiler.timed_stages(query_slot, _timed);
         }
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+        let mut _effects_timed = 0_u8;
+        let mut shadow_draws = 0;
+        if let Some(shadow_frame) = &shadow_frame {
+            let meshes = &self.meshes;
+            let encoded = self.shadows.encode(
+                &self.device,
+                &mut encoder,
+                shadow_frame,
+                &self.plan,
+                &self.instance_buffer,
+                |mesh| {
+                    meshes
+                        .get(&mesh)
+                        .map(|mesh| (&mesh.vertices, &mesh.indices, mesh.index_count))
+                },
+                effect_queries,
+            );
+            _effects_timed |= encoded.timed;
+            shadow_draws = encoded.draws;
+        }
         if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
             pass.prepare_pose_groups(
                 &self.device,
@@ -1070,26 +1191,62 @@ impl Renderer {
             );
         }
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
+        let post = self.post.as_ref().filter(|_| post_frame.is_some());
+        let post_pipelines = self
+            .post_pipelines
+            .as_ref()
+            .filter(|_| post_frame.is_some());
         {
-            let canvas = [Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color(self.configuration.format.is_srgb())),
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-            // Temporal frames draw into their sRGB scene and motion targets.
-            let targets = temporal_pass.map(|(_, pass)| pass.attachments(clear_color(true)));
+            let attachment = |view, clear| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            };
+            // Frames with screen effects draw into their sRGB scene and glow
+            // targets, temporal frames into their motion target as well.
+            let mut targets = [None, None, None];
+            let count = match (temporal_pass, post) {
+                (Some((_, pass)), Some(post)) => {
+                    let (scene, glow) = post.targets();
+                    targets = [
+                        attachment(scene, clear_color(true)),
+                        attachment(pass.motion(), wgpu::Color::TRANSPARENT),
+                        attachment(glow, wgpu::Color::TRANSPARENT),
+                    ];
+                    3
+                }
+                (_, Some(post)) => {
+                    let (scene, glow) = post.targets();
+                    targets[0] = attachment(scene, clear_color(true));
+                    targets[1] = attachment(glow, wgpu::Color::TRANSPARENT);
+                    2
+                }
+                (_, None) => {
+                    targets[0] =
+                        attachment(&view, clear_color(self.configuration.format.is_srgb()));
+                    1
+                }
+            };
+            // Ambient occlusion reads the depth buffer afterwards.
+            let keep_depth = post_frame.is_some_and(|frame| frame.occlusion);
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
-                color_attachments: targets.as_ref().map_or(&canvas[..], |targets| &targets[..]),
+                color_attachments: &targets[..count],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: if keep_depth {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -1103,8 +1260,12 @@ impl Renderer {
             if instance_count > 0 {
                 pass.set_pipeline(match temporal_pass {
                     Some((_, temporal)) => temporal.mesh_pipeline(),
-                    None if affine => &self.affine_pipeline,
-                    None => &self.pipeline,
+                    None => match post_pipelines {
+                        Some(pipelines) if affine => &pipelines.affine,
+                        Some(pipelines) => &pipelines.full,
+                        None if affine => &self.affine_pipeline,
+                        None => &self.pipeline,
+                    },
                 });
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 if affine {
@@ -1152,11 +1313,26 @@ impl Renderer {
                 }
             }
             // Last, so depth testing leaves the sky only uncovered pixels.
-            pass.set_pipeline(
-                temporal_pass.map_or(&self.sky_pipeline, |(_, temporal)| temporal.sky_pipeline()),
-            );
+            pass.set_pipeline(match temporal_pass {
+                Some((_, temporal)) => temporal.sky_pipeline(),
+                None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
+            });
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let (Some(post_frame), Some(post)) = (post_frame, post) {
+            let queries = effect_queries.map(|(set, first)| (set, first + 4));
+            post.encode_effects(&mut encoder, post_frame, queries);
+            _effects_timed |= u8::from(post_frame.occlusion) << 2 | u8::from(post_frame.bloom) << 3;
+            if temporal_pass.is_none() {
+                let queries = effect_queries.map(|(set, first)| (set, first + 8));
+                post.encode_composite(&mut encoder, &view, queries);
+                _effects_timed |= 1 << 4;
+            }
+        }
+        #[cfg(feature = "profiling")]
+        if effect_queries.is_some() {
+            self.profiler.timed_effects(query_slot, _effects_timed);
         }
         if let Some((frame, pass)) = temporal_pass {
             #[cfg(not(feature = "profiling"))]
@@ -1184,6 +1360,7 @@ impl Renderer {
         if gpu_mode {
             self.gpu_presentation.after_submit();
         }
+        self.shadows.after_submit();
         if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
             pass.submitted(frame);
         }
@@ -1217,6 +1394,13 @@ impl Renderer {
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
+            shadows: shadow_frame.as_ref().map(|frame| ShadowStats {
+                draws: shadow_draws,
+                kept_redraw: frame.refresh_kind(),
+                casters: self.shadows.caster_counts(),
+            }),
+            ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
+            bloom: post_frame.is_some_and(|frame| frame.bloom),
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -1234,6 +1418,35 @@ impl Renderer {
             engine_profile::counter("render.retained_frame", f64::from(u8::from(affine)));
             engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
             engine_profile::counter("render.taa", f64::from(u8::from(temporal_frame.is_some())));
+            engine_profile::counter(
+                "render.shadow_refresh",
+                shadow_frame
+                    .as_ref()
+                    .map_or(0.0, |frame| f64::from(frame.refresh_kind())),
+            );
+            engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
+            engine_profile::counter("render.shadow_draws", f64::from(shadow_draws));
+            if let Some([near, moving, kept]) = self.shadows.caster_counts() {
+                engine_profile::counter("render.shadow_near_casters", f64::from(near));
+                engine_profile::counter("render.shadow_moving_casters", f64::from(moving));
+                engine_profile::counter("render.shadow_kept_casters", f64::from(kept));
+            }
+            engine_profile::counter(
+                "render.ambient_occlusion",
+                f64::from(u8::from(post_frame.is_some_and(|frame| frame.occlusion))),
+            );
+            engine_profile::counter(
+                "render.bloom",
+                f64::from(u8::from(post_frame.is_some_and(|frame| frame.bloom))),
+            );
+            engine_profile::counter(
+                "memory.gpu_shadow_bytes",
+                self.shadows.capacity_bytes() as f64,
+            );
+            engine_profile::counter(
+                "memory.gpu_post_bytes",
+                self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
+            );
             if let Some(frame) = &temporal_frame {
                 engine_profile::counter(
                     "render.taa_history",
@@ -1562,6 +1775,132 @@ pub(crate) fn sky_pipeline(
     })
 }
 
+/// Fragment stage of a mesh pipeline: entry point, color targets and
+/// pipeline constants.
+struct MeshTargets<'a> {
+    fragment: &'a str,
+    targets: &'a [Option<wgpu::ColorTargetState>],
+    constants: &'a [(&'a str, f64)],
+}
+
+/// An opaque mesh pipeline over `layout`: affine slot-stream inputs or public
+/// instance records.
+fn mesh_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    affine: bool,
+    fragment: &MeshTargets<'_>,
+) -> wgpu::RenderPipeline {
+    let full_layouts = [
+        vertex_layout(),
+        Some(wgpu::VertexBufferLayout {
+            array_stride: size_of::<InstanceData>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &INSTANCE_ATTRIBUTES,
+        }),
+    ];
+    let affine_layouts = affine_layouts();
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("engine/instanced-meshes"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some(if affine { "vs_affine" } else { "vs_main" }),
+            compilation_options: Default::default(),
+            buffers: if affine {
+                &affine_layouts
+            } else {
+                &full_layouts
+            },
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment.fragment),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: fragment.constants,
+                ..Default::default()
+            },
+            targets: fragment.targets,
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// Mesh and sky pipelines drawing into the screen effects' scene and glow
+/// targets (decision 021).
+struct PostPipelines {
+    full: wgpu::RenderPipeline,
+    affine: wgpu::RenderPipeline,
+    sky: wgpu::RenderPipeline,
+}
+
+impl PostPipelines {
+    /// `layouts` are the public-instance and affine mesh pipeline layouts.
+    fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        camera_layout: &wgpu::BindGroupLayout,
+        layouts: [&wgpu::PipelineLayout; 2],
+    ) -> Self {
+        let targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+        let post = MeshTargets {
+            fragment: "fs_post",
+            targets: &targets,
+            constants: &[],
+        };
+        Self {
+            full: mesh_pipeline(device, shader, layouts[0], false, &post),
+            affine: mesh_pipeline(device, shader, layouts[1], true, &post),
+            sky: sky_pipeline(device, shader, camera_layout, "fs_sky_post", &targets, None),
+        }
+    }
+}
+
+/// The main passes' first group: camera, lighting and shadow lookups.
+fn camera_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    camera: &wgpu::Buffer,
+    lighting: &wgpu::Buffer,
+    shadows: &ShadowPass,
+) -> wgpu::BindGroup {
+    let [shadow, near, kept, moving, sampler] = shadows.entries();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("engine/camera-bind-group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: lighting.as_entire_binding(),
+            },
+            shadow,
+            near,
+            kept,
+            moving,
+            sampler,
+        ],
+    })
+}
+
 fn create_depth(device: &wgpu::Device, width: u32, height: u32) -> DepthTarget {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine/depth"),
@@ -1574,7 +1913,8 @@ fn create_depth(device: &wgpu::Device, width: u32, height: u32) -> DepthTarget {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        // Ambient occlusion (decision 021) samples it after the opaque pass.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

@@ -1,3 +1,4 @@
+use engine_scene::{SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneShadows};
 use serde::{Deserialize, Serialize};
 
 /// Versioned, read-only requests processed synchronously between frames.
@@ -187,6 +188,21 @@ pub enum BrowserControl {
         version: u32,
         enabled: bool,
     },
+    /// Temporarily replace environment sections (decision 022) and render
+    /// while paused. Sections are a v5 scene `environment`'s, validated alike;
+    /// omitted sections stay. A v5 scene with an environment restores its own
+    /// on reload; persist a look by saving it there.
+    Environment {
+        version: u32,
+        #[serde(default)]
+        atmosphere: Option<SceneAtmosphere>,
+        #[serde(default)]
+        shadows: Option<SceneShadows>,
+        #[serde(default)]
+        ambient_occlusion: Option<SceneAmbientOcclusion>,
+        #[serde(default)]
+        bloom: Option<SceneBloom>,
+    },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
         version: u32,
@@ -292,6 +308,7 @@ impl BrowserControl {
         match self {
             Self::Present { version, .. }
             | Self::Culling { version, .. }
+            | Self::Environment { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }

@@ -10,6 +10,9 @@ export interface RuntimeStats {
   fixed_steps: number; dropped_seconds: number;
   resident_meshes: number; mesh_upload_bytes: number; resident_mesh_bytes: number;
   resident_textures: number; texture_upload_bytes: number; resident_texture_bytes: number;
+  shadows_enabled: boolean; shadow_draws: number; shadow_kept_redraw: number;
+  shadow_near_casters: number | undefined; shadow_moving_casters: number | undefined; shadow_kept_casters: number | undefined;
+  ambient_occlusion: boolean; bloom: boolean;
   free(): void;
 }
 export interface Runtime {
@@ -191,6 +194,10 @@ function frame(timestamp: number) {
         canvas.dataset.residentTextures = String(stats.resident_textures);
         canvas.dataset.textureUploadBytes = String(stats.texture_upload_bytes);
         canvas.dataset.residentTextureBytes = String(stats.resident_texture_bytes);
+        canvas.dataset.shadowsEnabled = String(stats.shadows_enabled);
+        canvas.dataset.shadowDraws = String(stats.shadow_draws);
+        canvas.dataset.ambientOcclusion = String(stats.ambient_occlusion);
+        canvas.dataset.bloom = String(stats.bloom);
         options.poll?.(game);
       } finally { stats.free(); }
       lastStats = timestamp;

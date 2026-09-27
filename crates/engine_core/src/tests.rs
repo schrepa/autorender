@@ -1016,3 +1016,145 @@ fn frames_carry_the_atmosphere_and_the_eye() {
     assert_eq!(snapshot.atmosphere, Atmosphere::default());
     assert_eq!(snapshot.camera_position, Camera::default().position);
 }
+
+#[test]
+fn frames_carry_sanitized_effects_and_presentation_time() {
+    let mut engine = Engine::default();
+    let shadows = Shadows {
+        bounds: Some((Vec3::splat(-10.0), Vec3::splat(10.0))),
+        resolution: 2048,
+        ..Shadows::default()
+    };
+    let world = engine.app.world_mut();
+    *world.resource_mut::<Shadows>() = shadows;
+    world.resource_mut::<AmbientOcclusion>().intensity = 3.0;
+    world.resource_mut::<Bloom>().intensity = 0.0;
+    engine.advance(0.5);
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.shadows, shadows);
+    assert_eq!(snapshot.ambient_occlusion.intensity, 1.0);
+    assert!(!snapshot.bloom.enabled());
+    assert_eq!(
+        snapshot.elapsed_seconds, 0.25,
+        "presentation time is capped per frame"
+    );
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(frame.snapshot().shadows, shadows);
+    assert_eq!(frame.snapshot().elapsed_seconds, 0.25);
+    // Removing an effect's resource removes the effect.
+    let world = engine.app.world_mut();
+    world.remove_resource::<Shadows>();
+    world.remove_resource::<AmbientOcclusion>();
+    world.remove_resource::<Bloom>();
+    world.remove_resource::<Atmosphere>();
+    engine.extract(1.5, &mut snapshot);
+    assert!(!snapshot.shadows.enabled);
+    assert!(!snapshot.ambient_occlusion.enabled());
+    assert!(!snapshot.bloom.enabled());
+    assert_eq!(snapshot.atmosphere, Atmosphere::default());
+}
+
+#[test]
+fn surfaces_reach_instances_and_their_changes_advance_color_stamps() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let mesh = assets.insert_mesh(Mesh::cube()).unwrap();
+    let glass = Surface {
+        roughness: 0.1,
+        ..Surface::MATTE
+    };
+    let material = assets
+        .insert_material(
+            Material::new([1.0; 4])
+                .unwrap()
+                .with_surface(glass)
+                .unwrap(),
+        )
+        .unwrap();
+    let lamp = assets
+        .insert_material(
+            Material::new([1.0; 4])
+                .unwrap()
+                .with_surface(Surface {
+                    emission: 4.0,
+                    ..Surface::MATTE
+                })
+                .unwrap(),
+        )
+        .unwrap();
+    let entity = world
+        .spawn((Transform::default(), Mesh3d { mesh, material }))
+        .id();
+    world.spawn((Transform::default(), Cube { color: [1.0; 4] }));
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    let surfaces: Vec<Surface> = snapshot.instances.iter().map(|i| i.surface).collect();
+    assert!(surfaces.contains(&glass) && surfaces.contains(&Surface::MATTE));
+    let (revision, stamp) = {
+        let frame = engine
+            .extract_frame(1.5, PresentationMode::Current)
+            .unwrap();
+        let slot = frame
+            .visible_indices()
+            .iter()
+            .copied()
+            .find(|&slot| frame.snapshot().instances[slot].surface == glass)
+            .unwrap();
+        (frame.color_revision(), frame.color_changes()[slot])
+    };
+    // Same color, new surface: the color channel re-uploads.
+    engine.app.world_mut().entity_mut(entity).insert(Mesh3d {
+        mesh,
+        material: lamp,
+    });
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    assert!(frame.color_revision() > revision);
+    let slot = frame
+        .visible_indices()
+        .iter()
+        .copied()
+        .find(|&slot| frame.snapshot().instances[slot].surface.emission == 4.0)
+        .unwrap();
+    assert!(frame.color_changes()[slot] > stamp);
+}
+
+#[test]
+fn cpu_frames_list_culled_slots_as_shadow_casters() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    for x in [0.0, 10_000.0] {
+        world.spawn((
+            Transform {
+                translation: Vec3::new(x, 0.0, 0.0),
+                ..Transform::default()
+            },
+            Cube { color: [1.0; 4] },
+        ));
+    }
+    let (visible, casters, revision) = {
+        let frame = engine
+            .extract_frame(1.5, PresentationMode::Current)
+            .unwrap();
+        (
+            frame.visible_indices().len(),
+            frame.casters().to_vec(),
+            frame.caster_revision(),
+        )
+    };
+    assert_eq!(visible, 1, "the far cube is outside the frustum");
+    assert_eq!(casters.len(), 2, "culled slots still cast shadows");
+    assert!(casters.is_sorted());
+    // Camera motion alone changes visibility, not casters.
+    engine.app.world_mut().resource_mut::<Camera>().position.x += 1.0;
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(frame.casters(), casters);
+    assert_eq!(frame.caster_revision(), revision);
+}

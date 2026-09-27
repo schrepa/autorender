@@ -88,8 +88,9 @@ struct Level {
 @group(0) @binding(6) var<storage, read> candidates: array<Candidate>;
 @group(0) @binding(7) var<storage, read> batches: array<Batch>;
 @group(0) @binding(8) var<storage, read_write> poses: array<Rows>;
-// [0, candidates): visibility flags (bit 0; bit 1 marks a moving visible slot
-// on temporal frames); then one workgroup sum per group, replaced by its
+// [0, candidates): candidate flags (VISIBLE; MOVING marks a moving visible
+// slot on temporal frames; VALID a pose this pass wrote, which shadow caster
+// selection reads); then one workgroup sum per group, replaced by its
 // exclusive prefix; then the total visible count.
 @group(0) @binding(9) var<storage, read_write> scan: array<u32>;
 @group(0) @binding(10) var<storage, read_write> batch_bases: array<u32>;
@@ -109,6 +110,9 @@ const NODE_ACTIVE: u32 = 4u;
 const NODE_PARENT_ACTIVE: u32 = 8u;
 // Visible IDs of slots whose displayed pose can change between frames.
 const MOVED_SLOT: u32 = 0x80000000u;
+const VISIBLE: u32 = 1u;
+const MOVING: u32 = 2u;
+const VALID: u32 = 4u;
 const LINEAR_ROTATION_DOT: f32 = 0.9995;
 const GROUP: u32 = 256u;
 // Exact hex literals: browsers reject decimal spellings above f32::MAX.
@@ -350,6 +354,7 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     var visible = 0u;
     let flags = info[candidate.node].y;
     if (flags & NODE_VALID) != 0u {
+        visible = VALID;
         var model: mat4x4<f32>;
         if (flags & NODE_ACTIVE) != 0u {
             model = rows_matrix(compose(candidate.node).display);
@@ -359,12 +364,12 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
-            visible = 1u;
+            visible |= VISIBLE;
             // Inactive nodes display unchanged authority rows. A node that
             // stopped this interval moves by the rest of its last one: its
             // motion is left to the camera and the history clamp.
             if frame.motion != 0u && (flags & NODE_ACTIVE) != 0u {
-                visible = 3u;
+                visible |= MOVING;
             }
         }
     }
@@ -380,7 +385,7 @@ fn sum_groups(
 ) {
     var visible = 0u;
     if id.x < frame.candidates {
-        visible = scan[id.x] & 1u;
+        visible = scan[id.x] & VISIBLE;
     }
     shared_values[lane] = visible;
     workgroupBarrier();
@@ -446,7 +451,7 @@ fn visible_before(position: u32) -> u32 {
     let group = position / GROUP;
     var value = scan[frame.candidates + group];
     for (var index = group * GROUP; index < position; index++) {
-        value += scan[index] & 1u;
+        value += scan[index] & VISIBLE;
     }
     return value;
 }
@@ -480,7 +485,7 @@ fn scatter(
     if id.x < frame.candidates {
         stored = scan[id.x];
     }
-    let flag = stored & 1u;
+    let flag = stored & VISIBLE;
     shared_values[lane] = flag;
     workgroupBarrier();
     for (var offset = 1u; offset < GROUP; offset = offset << 1u) {
@@ -498,7 +503,7 @@ fn scatter(
             let candidate = candidates[id.x];
             let batch = candidate.batch;
             visible_ids[batches[batch].start + (global - batch_bases[batch])] =
-                candidate.slot | select(0u, MOVED_SLOT, stored > 1u);
+                candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u);
         }
     }
 }

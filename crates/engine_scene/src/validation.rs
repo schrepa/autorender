@@ -7,6 +7,7 @@ use crate::{
 };
 
 pub(crate) struct PreparedScene {
+    pub environment: Option<crate::EnvironmentSettings>,
     pub colliders: Vec<Option<engine_collision::Collider>>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
@@ -33,6 +34,25 @@ impl SceneDocument {
                     "expected version 1 through {SCENE_VERSION}; found {}",
                     self.version
                 ),
+            ));
+        }
+        if self.version < 5 && self.environment.is_some() {
+            return Err(SceneError::new(
+                "version_required",
+                "$.environment",
+                "scene environments require scene version 5; set version to 5 and increment revision",
+            ));
+        }
+        if self.version < 5
+            && let Some(index) = self
+                .materials
+                .iter()
+                .position(|material| material.surface.is_some())
+        {
+            return Err(SceneError::new(
+                "version_required",
+                format!("$.materials[{index}].surface"),
+                "material surfaces require scene version 5; set version to 5 and increment revision",
             ));
         }
         if self.version < 4
@@ -147,9 +167,14 @@ impl SceneDocument {
             .materials
             .iter()
             .enumerate()
-            .map(|(index, material)| material.material(&format!("$.materials[{index}].color")))
+            .map(|(index, material)| material.material(&format!("$.materials[{index}]")))
             .collect::<Result<Vec<_>, _>>()?;
+        let environment = self
+            .environment
+            .map(|environment| environment.resolve("$.environment"))
+            .transpose()?;
         Ok(PreparedScene {
+            environment,
             colliders,
             meshes,
             materials,

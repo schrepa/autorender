@@ -1,9 +1,10 @@
 //! Temporal antialiasing (decision 017) of GPU-presented display frames.
 //!
-//! Each frame rasterizes with a sub-pixel jitter into a scene color target
-//! and a motion target, then one full-screen pass blends the scene with the
-//! reprojected previous output and writes both the canvas and the next
-//! history. Culling alternates between two pose buffers, so the previous
+//! Each frame rasterizes with a sub-pixel jitter into the screen effects'
+//! scene and glow targets (decision 021) and a motion target, then one
+//! full-screen pass blends the scene with the reprojected previous output,
+//! applies ambient occlusion and bloom, and writes both the canvas and the
+//! next history. Culling alternates between two pose buffers, so the previous
 //! frame's displayed poses stay readable for motion vectors without copies.
 
 use engine_core::{RenderFrame, glam::Mat4};
@@ -11,9 +12,8 @@ use engine_core::{RenderFrame, glam::Mat4};
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
+use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
 
-/// This frame's linear color; the sRGB encoding keeps 8 bits perceptual.
-const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Weight of each frame's color against the history: an exponential average
@@ -22,13 +22,13 @@ const CURRENT_WEIGHT: f32 = 0.1;
 
 struct Targets {
     size: (u32, u32),
-    // Scene, motion and both histories, destroyed with the targets.
-    textures: [wgpu::Texture; 4],
-    scene: wgpu::TextureView,
+    // Motion and both histories, destroyed with the targets.
+    textures: [wgpu::Texture; 3],
     motion: wgpu::TextureView,
     history: [wgpu::TextureView; 2],
-    // Frames writing history `p` read history `1 - p` through group `p`.
-    groups: [wgpu::BindGroup; 2],
+    // Frames writing history `p` read history `1 - p` through group `p`,
+    // over the screen-effect targets of that generation.
+    groups: Option<(u64, [wgpu::BindGroup; 2])>,
 }
 
 impl Drop for Targets {
@@ -151,7 +151,11 @@ impl TemporalPass {
                 module: mesh_shader,
                 entry_point: Some("fs_temporal"),
                 compilation_options: Default::default(),
-                targets: &[Some(SCENE_FORMAT.into()), Some(MOTION_FORMAT.into())],
+                targets: &[
+                    Some(SCENE_FORMAT.into()),
+                    Some(MOTION_FORMAT.into()),
+                    Some(GLOW_FORMAT.into()),
+                ],
             }),
             multiview_mask: None,
             cache: None,
@@ -161,7 +165,11 @@ impl TemporalPass {
             mesh_shader,
             camera_layout,
             "fs_sky_temporal",
-            &[Some(SCENE_FORMAT.into()), Some(MOTION_FORMAT.into())],
+            &[
+                Some(SCENE_FORMAT.into()),
+                Some(MOTION_FORMAT.into()),
+                Some(GLOW_FORMAT.into()),
+            ],
             None,
         );
         let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
@@ -194,6 +202,20 @@ impl TemporalPass {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                texture_entry(5, true),
+                texture_entry(6, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<
+                            crate::gpu_data::PostUniform,
+                        >() as u64),
+                    },
                     count: None,
                 },
             ],
@@ -265,11 +287,11 @@ impl TemporalPass {
         }
     }
 
-    /// Target bytes: scene, motion and two history textures of 4 bytes per
-    /// pixel each.
+    /// Target bytes: motion and two history textures of 4 bytes per pixel
+    /// each (the scene target belongs to the screen effects).
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.as_ref().map_or(0, |targets| {
-            u64::from(targets.size.0) * u64::from(targets.size.1) * 16
+            u64::from(targets.size.0) * u64::from(targets.size.1) * 12
         })
     }
 
@@ -323,6 +345,7 @@ impl TemporalPass {
             camera: CameraUniform::temporal(
                 view_projection,
                 frame.snapshot().camera_position,
+                frame.snapshot().elapsed_seconds,
                 previous,
                 jitter,
                 size.0,
@@ -398,27 +421,56 @@ impl TemporalPass {
         &self.sky_pipeline
     }
 
-    /// The scene color and motion attachments of the opaque pass.
-    pub(crate) fn attachments(
-        &self,
-        clear: wgpu::Color,
-    ) -> [Option<wgpu::RenderPassColorAttachment<'_>>; 2] {
-        let targets = self.targets.as_ref().expect("sized in begin");
-        let attachment = |view, clear| {
-            Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
-                    store: wgpu::StoreOp::Store,
-                },
+    /// The motion target of the opaque pass.
+    pub(crate) fn motion(&self) -> &wgpu::TextureView {
+        &self.targets.as_ref().expect("sized in begin").motion
+    }
+
+    /// Binds the resolve to the screen effects' current targets.
+    pub(crate) fn prepare_resolve(&mut self, device: &wgpu::Device, post: &PostPass) {
+        let generation = post.generation();
+        let Some(targets) = self.targets.as_mut() else {
+            return;
+        };
+        if targets
+            .groups
+            .as_ref()
+            .is_some_and(|(built, _)| *built == generation)
+        {
+            return;
+        }
+        let (scene, occlusion, bloom, settings) = post.resolve_inputs();
+        let group = |previous: &wgpu::TextureView| {
+            let view = |binding, view| wgpu::BindGroupEntry {
+                binding,
+                resource: wgpu::BindingResource::TextureView(view),
+            };
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/taa-resolve-group"),
+                layout: &self.resolve_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    view(1, scene),
+                    view(2, &targets.motion),
+                    view(3, previous),
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    view(5, occlusion),
+                    view(6, bloom),
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: settings.as_entire_binding(),
+                    },
+                ],
             })
         };
-        [
-            attachment(&targets.scene, clear),
-            attachment(&targets.motion, wgpu::Color::TRANSPARENT),
-        ]
+        let groups = [group(&targets.history[1]), group(&targets.history[0])];
+        targets.groups = Some((generation, groups));
     }
 
     /// Records the resolve of `frame` into `canvas` and its history texture.
@@ -430,6 +482,7 @@ impl TemporalPass {
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
+        let (_, groups) = targets.groups.as_ref().expect("bound in prepare_resolve");
         // The triangle covers every pixel: clears only spare loading them.
         let attachment = |view| {
             Some(wgpu::RenderPassColorAttachment {
@@ -454,7 +507,7 @@ impl TemporalPass {
             multiview_mask: None,
         });
         pass.set_pipeline(&self.resolve_pipeline);
-        pass.set_bind_group(0, &targets.groups[frame.parity], &[]);
+        pass.set_bind_group(0, &groups[frame.parity], &[]);
         pass.draw(0..3, 0..1);
     }
 
@@ -488,51 +541,19 @@ impl TemporalPass {
             })
         };
         let textures = [
-            texture("engine/taa-scene", SCENE_FORMAT),
             texture("engine/taa-motion", MOTION_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
         ];
-        let [scene, motion, first, second] = textures
+        let [motion, first, second] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
-        let history = [first, second];
-        let group = |previous: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/taa-resolve-group"),
-                layout: &self.resolve_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&scene),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&motion),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::TextureView(previous),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            })
-        };
-        let groups = [group(&history[1]), group(&history[0])];
         Targets {
             size: (width, height),
             textures,
-            scene,
             motion,
-            history,
-            groups,
+            history: [first, second],
+            groups: None,
         }
     }
 }

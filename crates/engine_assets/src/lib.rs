@@ -11,7 +11,7 @@ mod texture;
 
 pub use error::AssetError;
 pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, TextureHandle};
-pub use mesh::{Aabb, Material, Mesh, MeshVertex};
+pub use mesh::{Aabb, Material, Mesh, MeshVertex, Surface};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture};
 
 #[cfg(test)]

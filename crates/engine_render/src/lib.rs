@@ -22,7 +22,8 @@ pub const MAX_RESIDENT_TEXTURE_BYTES: usize = 32 * 1024 * 1024;
 /// Skipped frames return zero work counters and current residency counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderStats {
-    /// Number of indexed draw commands submitted.
+    /// Indexed draw commands of the camera pass; `shadows` counts the
+    /// shadow maps' separately.
     pub draw_calls: u32,
     /// Actual bytes uploaded or initialized: changed camera/instances and new assets.
     /// An unchanged rendered frame can submit draws with zero upload bytes.
@@ -50,6 +51,25 @@ pub struct RenderStats {
     /// Whether the frame was submitted. A suspended, occluded or recovering
     /// surface skips drawing and uploads, which later frames then catch up.
     pub submitted: bool,
+    /// This frame's sun shadow work (decision 020); `None` without shadows.
+    pub shadows: Option<ShadowStats>,
+    /// Whether this frame applied ambient occlusion and bloom (decision 021).
+    pub ambient_occlusion: bool,
+    pub bloom: bool,
+}
+
+/// Sun shadow work of one frame (decision 020).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShadowStats {
+    /// Indexed draws into the shadow maps, in addition to `draw_calls`.
+    pub draws: u32,
+    /// Kept-map redraw: 0 none, 1 one strip, 2 the whole map (every still
+    /// caster).
+    pub kept_redraw: u8,
+    /// Casters the near, moving and kept maps drew, read back a few frames
+    /// late; `None` before the first read-back. In a settled scene the moving
+    /// count is the moving renderables; the kept count covers redraws only.
+    pub casters: Option<[u32; 3]>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -62,6 +82,8 @@ mod gpu_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
 mod retained_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
+mod shadow_fit;
+#[cfg(any(target_arch = "wasm32", test))]
 mod uploads;
 
 #[cfg(target_arch = "wasm32")]
@@ -70,8 +92,12 @@ mod browser;
 mod gpu_presentation;
 #[cfg(target_arch = "wasm32")]
 mod mipmaps;
+#[cfg(target_arch = "wasm32")]
+mod post;
 #[cfg(all(target_arch = "wasm32", feature = "profiling"))]
 mod profiling;
+#[cfg(target_arch = "wasm32")]
+mod shadows;
 #[cfg(target_arch = "wasm32")]
 mod staging;
 #[cfg(target_arch = "wasm32")]

@@ -18,10 +18,20 @@ pub(crate) const STAGES: [&str; STAGE_COUNT] = [
     "presentation_scan",
     "presentation_scatter",
 ];
+/// Passes of shadows (decision 020) and screen effects (decision 021), each
+/// timed from its begin to its end query.
+pub(crate) const EFFECTS: [&str; 5] = [
+    "shadow_select",
+    "shadow_maps",
+    "ambient_occlusion",
+    "bloom",
+    "post_composite",
+];
 // Render pass begin/end, begin/end of each presentation stage, then of the
-// temporal antialiasing resolve (decision 017).
+// temporal antialiasing resolve (decision 017), then of each effect.
 const RESOLVE_QUERY: u32 = 2 + 2 * STAGE_COUNT as u32;
-const QUERIES: u32 = RESOLVE_QUERY + 2;
+const EFFECT_QUERY: u32 = RESOLVE_QUERY + 2;
+const QUERIES: u32 = EFFECT_QUERY + 2 * EFFECTS.len() as u32;
 const QUERY_BYTES: u64 = QUERIES as u64 * 8;
 
 #[derive(Clone, Copy)]
@@ -48,6 +58,8 @@ struct Slot {
     stages: u8,
     // Whether this submission timed a temporal antialiasing resolve.
     resolved: bool,
+    // Effects this submission timed, one bit per `EFFECTS` entry.
+    effects: u8,
 }
 
 impl Slot {
@@ -74,6 +86,7 @@ impl Slot {
             origin: None,
             stages: 0,
             resolved: false,
+            effects: 0,
         }
     }
 }
@@ -85,6 +98,7 @@ struct Sample {
     compute_ms: Option<f64>,
     stages: [Option<f64>; STAGES.len()],
     resolve_ms: Option<f64>,
+    effects: [Option<f64>; EFFECTS.len()],
 }
 
 /// Retains one capture and a small reusable ring. A new capture clears samples,
@@ -165,6 +179,7 @@ impl GpuProfiler {
         slot.mapped.set(MapState::Pending);
         slot.stages = 0;
         slot.resolved = false;
+        slot.effects = 0;
         self.submitted += 1;
         Some(index)
     }
@@ -205,6 +220,20 @@ impl GpuProfiler {
         }
     }
 
+    /// The query set and first query of the effect passes: effect `e`
+    /// writes queries `first + 2e` and `first + 2e + 1`. Report the effects
+    /// that ran with [`Self::timed_effects`].
+    pub(crate) fn effect_queries(&self, index: Option<usize>) -> Option<(&wgpu::QuerySet, u32)> {
+        Some((&self.slots[index?].queries, EFFECT_QUERY))
+    }
+
+    /// Records the effects (bits of `EFFECTS`) whose passes wrote timestamps.
+    pub(crate) fn timed_effects(&mut self, index: Option<usize>, effects: u8) {
+        if let Some(index) = index {
+            self.slots[index].effects |= effects;
+        }
+    }
+
     /// Records the stages (bits of `STAGES`) whose passes wrote timestamps.
     pub(crate) fn timed_stages(&mut self, index: Option<usize>, stages: u8) {
         if let Some(index) = index {
@@ -216,8 +245,10 @@ impl GpuProfiler {
         if let Some(index) = index {
             let slot = &self.slots[index];
             // Queries of passes that did not run are never read.
-            let queries = if slot.resolved {
+            let queries = if slot.effects != 0 {
                 QUERIES
+            } else if slot.resolved {
+                EFFECT_QUERY
             } else if slot.stages != 0 {
                 RESOLVE_QUERY
             } else {
@@ -279,6 +310,7 @@ impl GpuProfiler {
             };
             let mut stages = [None; STAGES.len()];
             let mut resolve_ms = None;
+            let mut effects = [None; EFFECTS.len()];
             let (duration, compute_ms) =
                 slot.readback
                     .get_mapped_range(..)
@@ -292,6 +324,12 @@ impl GpuProfiler {
                         for (stage, value) in stages.iter_mut().enumerate() {
                             if timed(stage) {
                                 *value = elapsed(&bytes, 16 + 16 * stage)
+                                    .filter(|value| value.is_finite());
+                            }
+                        }
+                        for (effect, value) in effects.iter_mut().enumerate() {
+                            if slot.effects & (1 << effect) != 0 {
+                                *value = elapsed(&bytes, (EFFECT_QUERY as usize + 2 * effect) * 8)
                                     .filter(|value| value.is_finite());
                             }
                         }
@@ -322,6 +360,7 @@ impl GpuProfiler {
                     compute_ms,
                     stages,
                     resolve_ms,
+                    effects,
                 });
             } else {
                 self.errors = self.errors.saturating_add(1);
@@ -344,7 +383,7 @@ impl GpuProfiler {
             "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
             "capture_id": self.capture.map(|id| id.to_string()),
             "active": active,
-            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), and taa_resolve for temporally antialiased frames (decision 017); excludes uploads, queue latency, presentation and timestamp readback",
+            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), and ambient_occlusion, bloom and post_composite (decision 021); excludes uploads, queue latency, presentation and timestamp readback",
             "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
             "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
             "precision": "browser may quantize timestamp values; zero durations remain valid samples",
@@ -389,10 +428,15 @@ impl GpuProfiler {
                     let resolve = sample
                         .resolve_ms
                         .map(|resolve| entry(sample, "taa_resolve", resolve));
+                    let effects = EFFECTS
+                        .iter()
+                        .zip(sample.effects)
+                        .filter_map(|(name, value)| Some(entry(sample, name, value?)));
                     std::iter::once(entry(sample, "opaque_meshes", sample.duration_ms))
                         .chain(compute)
                         .chain(stages)
                         .chain(resolve)
+                        .chain(effects)
                         .collect::<Vec<_>>()
                 })
                 .collect(),

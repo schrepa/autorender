@@ -22,7 +22,7 @@ type Snapshot = {
   queries: { calls: number; hits: number; errors: number; total_errors: string; last_error: string | null };
   camera: { position: number[]; target: number[]; vertical_fov_radians: number; near: number; far: number };
 };
-type Stats = Omit<RuntimeStats, "free">;
+type Stats = Pick<RuntimeStats, typeof fields[number] | "culling_enabled">;
 const fields = ["simulation_ms", "extraction_ms", "render_ms", "instances", "draw_calls", "upload_bytes", "invalid_transforms",
   "render_candidates", "visible_instances", "culled_instances", "dropped_instances", "missing_assets", "fixed_steps", "dropped_seconds",
   "resident_meshes", "mesh_upload_bytes", "resident_mesh_bytes", "resident_textures", "texture_upload_bytes", "resident_texture_bytes"] as const;
@@ -74,7 +74,7 @@ function notice(text: string, error = false) {
 function lock() {
   const value = recorder.active || !!profiler?.busy;
   el<HTMLFieldSetElement>("workload-fields").disabled = value;
-  for (const id of ["preset", "view", "resolution", "look", "culling", "reset", "share"]) {
+  for (const id of ["preset", "view", "resolution", "look", "effects", "culling", "reset", "share"]) {
     (el(id) as HTMLButtonElement | HTMLSelectElement | HTMLInputElement).disabled = value;
   }
   controls?.setInputEnabled(!value);
@@ -193,6 +193,8 @@ const pipeline = params.get("pipeline") === "off" ? "off" : "on";
 const taa = params.get("taa") === "on" ? "on" : "off";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
+// ?effects=none|no-shadows|no-occlusion|no-bloom turns rendering effects off.
+const initialEffects = ["none", "no-shadows", "no-occlusion", "no-bloom"].includes(params.get("effects") ?? "") ? params.get("effects")! : "all";
 if (params.has("config")) {
   try {
     const source = params.get("config")!;
@@ -242,6 +244,8 @@ boot({
     runtime.set_temporal_antialiasing(taa === "on");
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
+    runtime.set_effects(initialEffects);
+    choice("effects").value = initialEffects;
     lock();
     el("active-preset").textContent = activeTitle;
     if (import.meta.env.MODE === "profiling") {
@@ -258,7 +262,7 @@ boot({
           metadata() {
             const data = snapshot(runtime);
             return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, look: choice("look").value,
+              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, look: choice("look").value, effects: choice("effects").value,
               build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
               start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
               viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
@@ -322,6 +326,7 @@ el("reset").addEventListener("click", () => { recorder.abort("camera_changed"); 
 el("culling").addEventListener("change", () => mutate(runtime => { runtime.set_culling(checked("culling")); activeConfig.culling = checked("culling"); }), listenerOptions);
 el("resolution").addEventListener("change", () => mutate(() => controls!.setResolutionScale(number("resolution"))), listenerOptions);
 el("look").addEventListener("change", () => mutate(runtime => runtime.set_look(choice("look").value)), listenerOptions);
+el("effects").addEventListener("change", () => mutate(runtime => runtime.set_effects(choice("effects").value)), listenerOptions);
 el("record").addEventListener("click", () => {
   if (recorder.active) { recorder.abort("stopped_by_user"); return; }
   if (profiler?.busy) { notice("Finish the detailed profile before recording a baseline.", true); return; }
@@ -329,7 +334,7 @@ el("record").addEventListener("click", () => {
   try {
     const data = snapshot(game);
     recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, look: choice("look").value,
+      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, look: choice("look").value, effects: choice("effects").value,
       build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
       start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
       scroll: [window.scrollX, window.scrollY],

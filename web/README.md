@@ -82,7 +82,9 @@ alpha 0.5 without advancing ticks. See [interpolation](../docs/adr-008-render-in
 
 `node web/scripts/gpu-presentation-smoke.mjs` loads Stress Lab with 6,000 moving
 hierarchical objects, once interpolated and once without interpolation (moving
-nodes then compose on the GPU from their current locals), and compares `capture {alpha, gpu:true}` with the exact CPU
+nodes then compose on the GPU from their current locals), then with none moving
+after a second of frames, so GPU frames shadow them from the kept map
+([decision 020](../docs/adr-020-sun-shadows.md)), and compares `capture {alpha, gpu:true}` with the exact CPU
 capture of the same fractions from two camera views. It requires at most 0.1% of
 pixels to differ beyond a small tolerance, visible counts within 0.1%, counters
 that partition candidates, unchanged ticks, inspection materializing the pending

@@ -102,6 +102,33 @@ try {
   const png = await readFile(join(workspace, capture.result.artifact.path));
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.ok(png.length > 1000);
+  const effects = rendering => [rendering.shadows_enabled, rendering.ambient_occlusion, rendering.bloom];
+  assert.deepEqual(effects(capture.result.rendering), [true, true, true]);
+
+  // The look: discovered, inspected in scene-section shape, changed temporarily.
+  const listing = await cli("describe");
+  for (const name of ["Atmosphere", "Shadows", "AmbientOcclusion", "Bloom", "Environment"]) {
+    assert.ok(listing.result.types.some(type => type.name === name), name);
+  }
+  const look = await cli("inspect", { component: "Environment" });
+  assert.deepEqual(Object.keys(look.result.value).sort(), ["ambient_occlusion", "atmosphere", "bloom", "shadows"]);
+  const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
+  assert.equal(typeof mesh.result.entity.components.Mesh3d.surface.roughness, "number");
+  const invalidLook = await cli("environment", { shadows: { resolution: 3000 } }, false);
+  assert.equal(invalidLook.error.code, "invalid_environment");
+  assert.equal(invalidLook.error.path, "$.shadows.resolution");
+  assert.equal(invalidLook.observation.tick, after.observation.tick);
+  assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 } });
+  assert.equal(night.result.temporary, true);
+  assert.deepEqual(night.result.environment_changed, ["atmosphere", "bloom"]);
+  assert.deepEqual(effects(night.result.rendering), [true, true, false]);
+  assert.equal(night.observation.tick, after.observation.tick);
+  const nightLook = await cli("inspect", { component: "Environment" });
+  assert.notDeepEqual(nightLook.result.value.atmosphere, look.result.value.atmosphere);
+  assert.deepEqual(nightLook.result.value.shadows, look.result.value.shadows);
+  const nightCapture = await cli("capture");
+  assert.notDeepEqual(await readFile(join(workspace, nightCapture.result.artifact.path)), png);
 
   const rejectedReload = await cli("reload", { expected_revision: "0", revision: String(source.revision + 1) }, false);
   assert.equal(rejectedReload.observation.scene.revision, String(source.revision));
@@ -113,9 +140,18 @@ try {
   await sceneCommand(["validate", "--file", invalidPath], false);
   await sceneCommand(["save", "--file", sourcePath, "--candidate", invalidPath, "--expected-revision", String(source.revision)], false);
   assert.deepEqual(await readFile(sourcePath), sourceBytes);
+  const legacyLook = structuredClone(source);
+  legacyLook.revision++;
+  legacyLook.environment = { bloom: { intensity: 1 } };
+  const legacyPath = join(output, "legacy-environment.scene.json");
+  await writeFile(legacyPath, JSON.stringify(legacyLook));
+  const legacyError = await sceneCommand(["validate", "--file", legacyPath], false);
+  assert.deepEqual([legacyError.error.code, legacyError.error.path], ["version_required", "$.environment"]);
 
   const candidate = structuredClone(source);
   candidate.revision++;
+  candidate.version = 5;
+  candidate.environment = { atmosphere: { preset: "dusk" }, ambient_occlusion: { intensity: 0 } };
   candidate.entities.find(entity => entity.id === playerId).name = "Agent verified player";
   const candidatePath = join(output, "candidate.scene.json");
   await writeFile(candidatePath, JSON.stringify(candidate, null, 2));
@@ -125,6 +161,15 @@ try {
   const reloaded = await cli("reload", { expected_revision: String(source.revision), revision: String(candidate.revision) });
   assert.equal(reloaded.observation.scene.revision, String(candidate.revision));
   assert.equal((await inspectPlayer()).result.entity.name, "Agent verified player");
+  // A saved environment owns the whole look: omitted sections take defaults,
+  // replacing the temporary night control.
+  const savedLook = (await cli("inspect", { component: "Environment" })).result.value;
+  assert.equal(savedLook.ambient_occlusion.intensity, 0);
+  assert.deepEqual(savedLook.bloom, look.result.value.bloom);
+  assert.deepEqual(savedLook.shadows, look.result.value.shadows);
+  assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
+  assert.notDeepEqual(savedLook.atmosphere, look.result.value.atmosphere);
+  assert.deepEqual(effects(reloaded.result.rendering), [true, false, true]);
   const assets = await cli("request", { op: "assets" });
   assert.ok(assets.result.meshes >= 4);
   const resumed = await cli("resume");
@@ -133,7 +178,7 @@ try {
   await cli("pause");
   const diagnostics = await cli("diagnostics");
   assert.deepEqual(diagnostics.result.entries.filter(entry => entry.kind === "pageerror" || entry.kind === "error"), []);
-  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "precise_step", "input", "capture", "failed_reload", "source_validation", "guarded_save", "reload_revision", "resume_pause", "diagnostics"] }));
+  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "resume_pause", "diagnostics"] }));
 } finally {
   lines.close();
   try {

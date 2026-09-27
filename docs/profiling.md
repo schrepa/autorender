@@ -221,6 +221,22 @@ add a `taa_resolve` GPU sample for the full-screen resolve; their
 (targets and the second pose buffer). The resolve scales with canvas pixels, so
 compare it at identical sizes.
 
+Shadows ([decision 020](adr-020-sun-shadows.md)) add `shadow_select`, the
+caster selection pass, and `shadow_maps`, from the first to the last depth
+pass. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
+add `ambient_occlusion`, `bloom` (every level down and up) and, on frames
+without temporal antialiasing, `post_composite`. Counters report
+`render.shadow_refresh` (0 no kept-map redraw, 1 a strip, 2 the whole map),
+`render.shadow_groups`, `render.shadow_draws` (indexed shadow draws, beside
+the camera pass's `render.draw_calls`), `render.shadow_near_casters`,
+`render.shadow_moving_casters` and `render.shadow_kept_casters` (casters each
+map drew, read back a few frames late; the kept count only on redraws),
+`render.ambient_occlusion`, `render.bloom`, `memory.gpu_shadow_bytes` and
+`memory.gpu_post_bytes`. In a settled scene the moving count equals the
+moving renderables and `render.shadow_refresh` stays 0; separate frames whose
+kept map redrew whole, which draw every still caster. The Stress Lab's
+`?effects=` compares effects within one build.
+
 Textures report `render.texture_mip_levels`, the mip levels the frame rendered
 for textures that became resident (their base levels still count in
 `render.texture_upload_bytes`), and `memory.gpu_texture_mip_bytes`, the GPU

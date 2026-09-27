@@ -69,7 +69,7 @@ impl DevBrowser {
         }
         if !matches!(
             request.get("op").and_then(Value::as_str),
-            Some("input" | "step" | "render" | "culling" | "camera" | "present")
+            Some("input" | "step" | "render" | "culling" | "camera" | "present" | "environment")
         ) {
             let response = self.tools.execute(&mut app.engine, scene, source);
             if request.get("op").and_then(Value::as_str) != Some("assets") {
@@ -177,6 +177,52 @@ impl DevBrowser {
                         "render_failed",
                         "$",
                         &format!("camera changed before render failed: {error:?}"),
+                    ),
+                }
+            }
+            BrowserControl::Environment {
+                atmosphere,
+                shadows,
+                ambient_occlusion,
+                bloom,
+                ..
+            } => {
+                // The sections of a scene environment, validated alike; the
+                // named ones replace their resources, the others stay.
+                let environment = engine_scene::SceneEnvironment {
+                    atmosphere,
+                    shadows,
+                    ambient_occlusion,
+                    bloom,
+                };
+                let settings = match environment.resolve("$") {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        return self.error(app, scene, error.code, &error.path, &error.message);
+                    }
+                };
+                settings.apply_sections(app.engine.app.world_mut());
+                let changed: Vec<&str> = [
+                    ("atmosphere", settings.atmosphere.is_some()),
+                    ("shadows", settings.shadows.is_some()),
+                    ("ambient_occlusion", settings.ambient_occlusion.is_some()),
+                    ("bloom", settings.bloom.is_some()),
+                ]
+                .into_iter()
+                .filter_map(|(name, set)| set.then_some(name))
+                .collect();
+                match app.dev_render(width, height) {
+                    Ok(()) => self.result(
+                        app,
+                        scene,
+                        json!({"temporary":true,"environment_changed":changed}),
+                    ),
+                    Err(error) => self.error(
+                        app,
+                        scene,
+                        "render_failed",
+                        "$",
+                        &format!("environment changed before render failed: {error:?}"),
                     ),
                 }
             }

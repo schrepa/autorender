@@ -2,7 +2,10 @@
 
 Status: adopted for every renderer path. The mesh shader's fixed lighting
 constants become scene data; captures, previews and CPU presentation shade
-exactly like ordinary frames.
+exactly like ordinary frames. Decision 019 replaces the sun highlight with
+material surfaces and makes `specular` a physically based scale. Decision
+022 lets scenes author the atmosphere as a preset with overrides and lets
+agents inspect and temporarily replace it.
 
 ## Context
 

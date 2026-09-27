@@ -2,11 +2,15 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
-    AssetLibrary, Camera, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform,
-    Mesh3d, Parent, PresentationMode, PresentationState, PresentedTransforms, Transform,
+    AmbientOcclusion, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime, FrameTime,
+    GlobalTransforms, InterpolateTransform, Mesh3d, Parent, PresentationMode, PresentationState,
+    PresentedTransforms, Shadows, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
-use engine_scene::{SceneEntity, SceneInstance};
+use engine_scene::{
+    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneEntity, SceneEnvironment,
+    SceneInstance, SceneShadows,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -16,7 +20,7 @@ use crate::{
     views::{
         CameraView, GlobalTransformView, HierarchyView, InterpolateTransformView, Mesh3dView,
         MeshBoundsView, PresentationModeView, PresentationStateView, PresentedTransformView,
-        TransformView,
+        SurfaceView, TransformView,
     },
 };
 
@@ -186,10 +190,43 @@ impl Default for DevTools {
                     indices: mesh.map(|mesh| mesh.indices().len()),
                     local_bounds: mesh.map(|mesh| MeshBoundsView { min: mesh.bounds().min().to_array(), max: mesh.bounds().max().to_array() }),
                     color: material.map(|material| material.color()),
+                    surface: material.map(|material| {
+                        let surface = material.surface();
+                        SurfaceView { roughness: surface.roughness, metalness: surface.metalness, emission: surface.emission, ripples: surface.ripples }
+                    }),
                     texture_alive: texture_handle.map(|_| texture.is_some()),
                     texture_dimensions: texture.map(|texture| [texture.width(), texture.height()]),
+                    texture_emission_mask: texture.map(|texture| texture.has_emission_mask()),
                 }))
             }),
+        }).expect("built-in descriptor is bounded");
+        // The environment (decision 022): each resource in the shape of its
+        // scene section, so values copy into controls and v5 scenes as is.
+        tools.register_resource::<Atmosphere>(
+            InspectorDescriptor::new("Atmosphere", "Sun, sky colors, fog and grade of every frame (decision 018), every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.", schemas["Atmosphere"].clone())
+                .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
+            |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Shadows>(
+            InspectorDescriptor::new("Shadows", "Sun shadows (decision 020): kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws.", schemas["Shadows"].clone())
+                .with_default(json!(SceneShadows::default())),
+            |shadows| json!(SceneShadows::from(shadows)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<AmbientOcclusion>(
+            InspectorDescriptor::new("AmbientOcclusion", "Screen-space ambient occlusion (decision 021); intensity 0 or a missing resource turns it off.", schemas["AmbientOcclusion"].clone())
+                .with_default(json!(SceneAmbientOcclusion::default())),
+            |occlusion| json!(SceneAmbientOcclusion::from(occlusion)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Bloom>(
+            InspectorDescriptor::new("Bloom", "Glow beyond bright pixels (decision 021); intensity 0 or a missing resource turns it off.", schemas["Bloom"].clone())
+                .with_default(json!(SceneBloom::default())),
+            |bloom| json!(SceneBloom::from(bloom)),
+        ).expect("built-in descriptor is bounded");
+        tools.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a v5 scene environment (decision 022): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off.", schemas["Environment"].clone()),
+            kind: InspectorKind::Resource,
+            has: Box::new(|_, _| true),
+            read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
         }).expect("built-in descriptor is bounded");
         tools
     }
@@ -416,14 +453,14 @@ impl DevTools {
     fn describe(&self, name: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
             let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description})).collect();
-            types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": "docs/schema/scene-v4.schema.json"}));
+            types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": "docs/schema/scene-v5.schema.json"}));
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
             return Ok(json!({"types": types}));
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v4.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission and asset budgets. Colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 3 remain accepted without colliders. Prefabs cannot nest."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v5.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 4 remain accepted without the newer fields. Prefabs cannot nest. A v5 environment sets every section on instantiation, defaulting omitted ones."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

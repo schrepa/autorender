@@ -1,0 +1,1410 @@
+//! Sun shadows (decision 020): three depth maps seen from the atmosphere's sun.
+//!
+//! The near map covers the first stretch of the view and is redrawn every
+//! frame. Two far maps share one projection over the shadow region: the kept
+//! map holds casters whose pose stayed the same for a few frames and is
+//! redrawn only where that changes, one horizontal strip per frame, or whole
+//! after its projection or the sun moved; the moving map holds every other
+//! caster and is redrawn every frame. One compute pass selects each map's
+//! casters from every candidate, visible or culled, into indirect draws per
+//! mesh; on GPU-presented frames it also keeps each slot's stillness and
+//! marks dirty strips, read back a few frames later. CPU-prepared frames draw
+//! every caster into the moving map and leave the kept map unread; public
+//! snapshots draw their instances without selection.
+
+use std::{cell::Cell, collections::HashMap, rc::Rc};
+
+use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+
+use crate::batches::BatchPlan;
+use crate::gpu_data::{
+    BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_SHADOW_GROUPS, SHADOW_SHADER, ShadowCullUniform,
+    ShadowUniform,
+};
+use crate::shadow_fit::{LightBasis, MapRegion, view_sphere};
+
+pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+/// Horizontal strips of the kept map; a dirty one is redrawn per frame.
+const STRIPS: u32 = 16;
+const ALL_STRIPS: u32 = u32::MAX >> (32 - STRIPS);
+const NEAR_MAP: usize = 0;
+const MOVING_MAP: usize = 1;
+const KEPT_MAP: usize = 2;
+const MAPS: usize = 3;
+// Uniform offset alignment between the near and far view matrices.
+const VIEW_STRIDE: u64 = 256;
+const GROUP: u32 = 256;
+const READBACKS: usize = 3;
+// Mode bits of the selection pass.
+const STILLNESS: u32 = 1;
+const REFRESH: u32 = 2;
+const NEAR: u32 = 4;
+// Lookups move this many texels along the surface normal.
+const NORMAL_OFFSET_TEXELS: f32 = 1.5;
+// Shadows fade over the last part of their distance.
+const FADE_START: f32 = 0.85;
+// Texels of margin around the far region.
+const MARGIN_TEXELS: f32 = 2.0;
+// Bindings need at least one element; exceeds every record stride.
+const MIN_STORAGE_BYTES: u64 = 256;
+
+/// One mesh drawn into shadow maps, with its casters' ID region per map.
+#[derive(Clone, Copy)]
+pub(crate) struct ShadowGroup {
+    pub mesh: MeshHandle,
+    /// Index of its source in the snapshot's meshes.
+    pub source_index: usize,
+    start: u32,
+}
+
+/// Where this frame's casters come from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Source {
+    /// GPU presentation's candidates, batches and flags.
+    Presented,
+    /// Every caster of a CPU-prepared retained frame.
+    Listed,
+    /// The instances of a public snapshot, drawn from the instance buffer.
+    Snapshot,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Refresh {
+    Whole,
+    Strip(u32),
+}
+
+/// Inputs of GPU-presented frames' selection, from GPU presentation.
+pub(crate) struct Presented<'a> {
+    pub candidates: &'a wgpu::Buffer,
+    pub batches: &'a wgpu::Buffer,
+    pub flags: &'a wgpu::Buffer,
+    pub count: u32,
+    /// Advances when any of these buffers is replaced.
+    pub generation: u64,
+}
+
+/// Pose storage of retained frames: the buffer pair of `generation` and the
+/// one this frame's poses are in.
+pub(crate) struct Poses<'a> {
+    pub buffers: [Option<&'a wgpu::Buffer>; 2],
+    pub index: usize,
+    pub generation: u64,
+}
+
+/// What [`ShadowPass::encode`] recorded.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ShadowEncoded {
+    /// Passes timed (bit 0 selection, bit 1 depth maps).
+    pub timed: u8,
+    /// Indexed draws, one per mesh group and map drawn.
+    pub draws: u32,
+}
+
+/// One frame's shadow work, from [`ShadowPass::prepare`].
+pub(crate) struct ShadowFrame {
+    source: Source,
+    candidates: u32,
+    near: bool,
+    refresh: Option<Refresh>,
+    pose_index: usize,
+    read_dirty: bool,
+}
+
+impl ShadowFrame {
+    /// Kept-map redraw of this frame, for profiling counters: 0 none, 1 a
+    /// strip, 2 the whole map.
+    pub(crate) fn refresh_kind(&self) -> u8 {
+        match self.refresh {
+            None => 0,
+            Some(Refresh::Strip(_)) => 1,
+            Some(Refresh::Whole) => 2,
+        }
+    }
+}
+
+struct Maps {
+    resolution: u32,
+    textures: [wgpu::Texture; MAPS],
+    views: [wgpu::TextureView; MAPS],
+}
+
+impl Drop for Maps {
+    fn drop(&mut self) {
+        // Browsers otherwise keep the memory until garbage collection;
+        // submitted work that still reads them completes first.
+        for texture in &self.textures {
+            texture.destroy();
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReadbackState {
+    Idle,
+    Recorded,
+    Pending,
+}
+
+struct DirtyReadback {
+    buffer: wgpu::Buffer,
+    state: Rc<Cell<ReadbackState>>,
+}
+
+// Dirty strips and the three caster totals, read back together.
+const READBACK_BYTES: u64 = 16;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SelectKey {
+    source: Source,
+    buffers: u64,
+    presented: u64,
+    poses: u64,
+    pose_index: usize,
+}
+
+fn storage(
+    device: &wgpu::Device,
+    label: &str,
+    bytes: u64,
+    extra: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes.max(MIN_STORAGE_BYTES).next_multiple_of(4),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
+        mapped_at_creation: false,
+    })
+}
+
+fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
+    wgpu::BindGroupEntry {
+        binding,
+        resource: buffer.as_entire_binding(),
+    }
+}
+
+/// Adds `count` casters of `mesh` to its group, creating it at the end.
+fn add_to_group(
+    groups: &mut Vec<ShadowGroup>,
+    counts: &mut Vec<u32>,
+    indices: &mut HashMap<MeshHandle, u32>,
+    mesh: MeshHandle,
+    source_index: usize,
+    count: u32,
+) -> Option<u32> {
+    let index = match indices.get(&mesh) {
+        Some(&index) => index,
+        None if groups.len() < MAX_SHADOW_GROUPS => {
+            groups.push(ShadowGroup {
+                mesh,
+                source_index,
+                start: 0,
+            });
+            counts.push(0);
+            let index = groups.len() as u32 - 1;
+            indices.insert(mesh, index);
+            index
+        }
+        None => return None,
+    };
+    counts[index as usize] += count;
+    Some(index)
+}
+
+/// Shadow pipelines and their fixed bindings, created with the first frame
+/// that has shadows: games without them never compile them.
+struct ShadowPipelines {
+    select: wgpu::ComputePipeline,
+    count: wgpu::ComputePipeline,
+    select_layout: wgpu::BindGroupLayout,
+    affine: wgpu::RenderPipeline,
+    full: wgpu::RenderPipeline,
+    clear: wgpu::RenderPipeline,
+    view_buffer: wgpu::Buffer,
+    view_group: wgpu::BindGroup,
+    pose_layout: wgpu::BindGroupLayout,
+    cull: wgpu::Buffer,
+}
+
+impl ShadowPipelines {
+    /// `vertex_stride` and `instance_stride` are the renderer's mesh vertex
+    /// and public instance record sizes.
+    fn new(device: &wgpu::Device, vertex_stride: u64, instance_stride: u64) -> Self {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/shadows.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
+        });
+        // Selection and counting share one explicit layout, and so one group.
+        let storage_entry = |binding, read_only| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let select_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/shadow-select-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(
+                            size_of::<ShadowCullUniform>() as u64
+                        ),
+                    },
+                    count: None,
+                },
+                storage_entry(1, true),
+                storage_entry(2, true),
+                storage_entry(3, true),
+                storage_entry(4, true),
+                storage_entry(5, false),
+                storage_entry(6, false),
+                storage_entry(7, false),
+                storage_entry(8, false),
+            ],
+        });
+        let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("engine/shadow-select-pipeline-layout"),
+            bind_group_layouts: &[Some(&select_layout)],
+            immediate_size: 0,
+        });
+        let compute = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&compute_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        let select = compute("select_casters");
+        let count = compute("count_casters");
+        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/shadow-view-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 9,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(64),
+                },
+                count: None,
+            }],
+        });
+        let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/shadow-pose-layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(48),
+                },
+                count: None,
+            }],
+        });
+        let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
+        let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
+        let model_attributes = wgpu::vertex_attr_array![
+            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
+        ];
+        let mesh_layout = wgpu::VertexBufferLayout {
+            array_stride: vertex_stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &vertex_attributes,
+        };
+        let pipeline = |label: &str,
+                        layouts: &[Option<&wgpu::BindGroupLayout>],
+                        entry_point: &str,
+                        buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+                        clear: bool| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some(entry_point),
+                    compilation_options: Default::default(),
+                    buffers,
+                },
+                // Both faces cast: open and single-sided meshes shadow too.
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(if clear {
+                        wgpu::CompareFunction::Always
+                    } else {
+                        wgpu::CompareFunction::Less
+                    }),
+                    stencil: Default::default(),
+                    // Constant and slope-scaled bias keep lit surfaces off
+                    // their own depth.
+                    bias: if clear {
+                        Default::default()
+                    } else {
+                        wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 1.5,
+                            clamp: 0.0,
+                        }
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let affine = pipeline(
+            "engine/shadow-affine",
+            &[Some(&view_layout), Some(&pose_layout)],
+            "vs_affine",
+            &[
+                Some(mesh_layout.clone()),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: 4,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &slot_attributes,
+                }),
+            ],
+            false,
+        );
+        let full = pipeline(
+            "engine/shadow-full",
+            &[Some(&view_layout)],
+            "vs_full",
+            &[
+                Some(mesh_layout.clone()),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: instance_stride,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &model_attributes,
+                }),
+            ],
+            false,
+        );
+        let clear = pipeline("engine/shadow-clear", &[], "vs_clear", &[], true);
+        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/shadow-views"),
+            size: 2 * VIEW_STRIDE,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let view_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/shadow-view-group"),
+            layout: &view_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 9,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &view_buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(64),
+                }),
+            }],
+        });
+        let cull = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/shadow-select-uniform"),
+            size: size_of::<ShadowCullUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            select,
+            count,
+            select_layout,
+            affine,
+            full,
+            clear,
+            view_buffer,
+            view_group,
+            pose_layout,
+            cull,
+        }
+    }
+}
+
+pub(crate) struct ShadowPass {
+    pipelines: Option<ShadowPipelines>,
+    // Mesh vertex and public instance record strides of the pipelines.
+    strides: (u64, u64),
+    // Pose bindings of both pose buffers, for the generation they belong to.
+    pose_groups: Option<(u64, [Option<wgpu::BindGroup>; 2])>,
+    uniform: wgpu::Buffer,
+    written: Option<ShadowUniform>,
+    sampler: wgpu::Sampler,
+    _placeholder: wgpu::Texture,
+    placeholder_view: wgpu::TextureView,
+    maps: Option<Maps>,
+    // Advances when map views change: bindings of the main passes follow.
+    generation: u64,
+    // Per slot: pose key, stillness count and kept strips.
+    stillness: wgpu::Buffer,
+    stillness_capacity: usize,
+    ids: wgpu::Buffer,
+    id_capacity: usize,
+    args: wgpu::Buffer,
+    args_template: wgpu::Buffer,
+    arg_capacity: usize,
+    dirty: wgpu::Buffer,
+    // Stands in for presentation flags where frames have none.
+    no_flags: wgpu::Buffer,
+    readbacks: Vec<DirtyReadback>,
+    // Dirty strips read back and not yet taken.
+    read_back: Rc<Cell<u32>>,
+    // The latest caster totals read back: near, moving and kept maps.
+    casters: Rc<Cell<Option<[u32; 3]>>>,
+    // Casters of CPU-prepared frames and one group record per mesh.
+    listed: wgpu::Buffer,
+    listed_groups: wgpu::Buffer,
+    listed_capacity: usize,
+    listed_staging: Vec<CandidateData>,
+    listed_group_staging: Vec<BatchData>,
+    // Selection bindings and the inputs they were built for.
+    select_group: Option<(SelectKey, wgpu::BindGroup)>,
+    // Advances when this pass replaces a selection buffer.
+    buffers_generation: u64,
+    groups: Vec<ShadowGroup>,
+    // Casters per map: every group's capacity.
+    group_total: u32,
+    // Group of each plan batch (GPU-presented frames and public snapshots).
+    batch_groups: Vec<u32>,
+    groups_key: Option<(u8, u64, u64)>,
+    groups_changed: bool,
+    source: Source,
+    listed_count: u32,
+    // The kept map's basis and region, whether it holds the current casters
+    // there, and its dirty strips.
+    kept_basis: Option<LightBasis>,
+    kept_region: Option<MapRegion>,
+    anchor: Option<Vec3>,
+    kept_valid: bool,
+    dirty_strips: u32,
+}
+
+impl ShadowPass {
+    /// The bindings the main passes read; pipelines follow with the first
+    /// frame that has shadows. `vertex_stride` and `instance_stride` are the
+    /// renderer's mesh vertex and public instance record sizes.
+    pub(crate) fn new(device: &wgpu::Device, vertex_stride: u64, instance_stride: u64) -> Self {
+        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/shadow-uniform"),
+            size: size_of::<ShadowUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // Comparisons filter four texels.
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("engine/shadow-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        let placeholder = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/shadow-placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let placeholder_view = placeholder.create_view(&Default::default());
+        let empty = |label: &str, extra| storage(device, label, 0, extra);
+        Self {
+            pipelines: None,
+            strides: (vertex_stride, instance_stride),
+            pose_groups: None,
+            uniform,
+            written: None,
+            sampler,
+            _placeholder: placeholder,
+            placeholder_view,
+            maps: None,
+            generation: 0,
+            stillness: empty("engine/shadow-stillness", wgpu::BufferUsages::empty()),
+            stillness_capacity: 0,
+            ids: empty("engine/shadow-ids", wgpu::BufferUsages::VERTEX),
+            id_capacity: 0,
+            args: empty("engine/shadow-args", wgpu::BufferUsages::INDIRECT),
+            args_template: empty("engine/shadow-args-template", wgpu::BufferUsages::COPY_SRC),
+            arg_capacity: 0,
+            dirty: storage(
+                device,
+                "engine/shadow-dirty",
+                READBACK_BYTES,
+                wgpu::BufferUsages::COPY_SRC,
+            ),
+            no_flags: empty("engine/shadow-no-flags", wgpu::BufferUsages::empty()),
+            readbacks: Vec::new(),
+            read_back: Rc::new(Cell::new(0)),
+            casters: Rc::new(Cell::new(None)),
+            listed: empty("engine/shadow-casters", wgpu::BufferUsages::empty()),
+            listed_groups: empty("engine/shadow-caster-groups", wgpu::BufferUsages::empty()),
+            listed_capacity: 0,
+            listed_staging: Vec::new(),
+            listed_group_staging: Vec::new(),
+            select_group: None,
+            buffers_generation: 0,
+            groups: Vec::new(),
+            group_total: 0,
+            batch_groups: Vec::new(),
+            groups_key: None,
+            groups_changed: false,
+            source: Source::Snapshot,
+            listed_count: 0,
+            kept_basis: None,
+            kept_region: None,
+            anchor: None,
+            kept_valid: false,
+            dirty_strips: 0,
+        }
+    }
+
+    /// Advances when the map views bound by [`Self::entries`] change.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Bindings 2 to 6 of the main passes' first group: the lookup uniform,
+    /// the near, kept and moving maps and the comparison sampler.
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
+        let view = |map: usize| {
+            wgpu::BindingResource::TextureView(
+                self.maps
+                    .as_ref()
+                    .map_or(&self.placeholder_view, |maps| &maps.views[map]),
+            )
+        };
+        [
+            entry(2, &self.uniform),
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: view(NEAR_MAP),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: view(KEPT_MAP),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: view(MOVING_MAP),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: wgpu::BindingResource::Sampler(&self.sampler),
+            },
+        ]
+    }
+
+    /// Meshes this frame's shadows draw; CPU-prepared frames may draw culled
+    /// meshes the plan's batches lack.
+    pub(crate) fn groups(&self) -> &[ShadowGroup] {
+        &self.groups
+    }
+
+    /// Group of plan batch `index`, for presentation's batch records.
+    pub(crate) fn batch_group(&self, index: usize) -> u32 {
+        self.batch_groups.get(index).copied().unwrap_or(0)
+    }
+
+    /// The latest caster totals of the near, moving and kept maps read back
+    /// from GPU-selected frames, a few frames old; the kept total counts only
+    /// frames that redrew part of it.
+    pub(crate) fn caster_counts(&self) -> Option<[u32; 3]> {
+        self.casters.get()
+    }
+
+    /// Bytes of shadow maps and selection buffers.
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        let maps = self.maps.as_ref().map_or(0, |maps| {
+            let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
+            2 * far + far / 4
+        });
+        maps + [
+            &self.stillness,
+            &self.ids,
+            &self.args,
+            &self.args_template,
+            &self.listed,
+            &self.listed_groups,
+        ]
+        .iter()
+        .map(|buffer| buffer.size())
+        .sum::<u64>()
+    }
+
+    /// Plans this frame's draw groups, one per mesh: of the plan's batches
+    /// (GPU-presented frames and public snapshots) or of `frame`'s casters
+    /// (CPU-prepared frames). Call before mesh uploads, which must include
+    /// every group's mesh.
+    pub(crate) fn plan_groups(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        plan: &BatchPlan,
+        frame: Option<&RenderFrame<'_>>,
+        gpu: bool,
+    ) {
+        if !snapshot.shadows.enabled {
+            self.groups.clear();
+            self.batch_groups.clear();
+            self.groups_key = None;
+            return;
+        }
+        let (source, key) = match frame {
+            Some(frame) if gpu => (
+                Source::Presented,
+                (0, frame.identity(), frame.source_revision()),
+            ),
+            Some(frame) => (
+                Source::Listed,
+                (1, frame.identity(), frame.caster_revision()),
+            ),
+            None => (Source::Snapshot, (2, 0, 0)),
+        };
+        self.source = source;
+        // Public snapshots may change their sources between any two frames.
+        if self.groups_key == Some(key) && source != Source::Snapshot {
+            return;
+        }
+        self.groups_key = Some(key);
+        self.groups_changed = true;
+        self.groups.clear();
+        self.batch_groups.clear();
+        let mut indices = HashMap::new();
+        let mut counts = Vec::new();
+        if let Some(frame) = frame.filter(|_| !gpu) {
+            let sources: HashMap<MeshHandle, usize> = snapshot
+                .meshes
+                .iter()
+                .enumerate()
+                .map(|(index, source)| (source.handle, index))
+                .collect();
+            let instances = &frame.snapshot().instances;
+            self.listed_staging.clear();
+            for &slot in frame.casters() {
+                let mesh = instances[slot].mesh;
+                let Some(&source_index) = sources.get(&mesh) else {
+                    continue;
+                };
+                if let Some(group) = add_to_group(
+                    &mut self.groups,
+                    &mut counts,
+                    &mut indices,
+                    mesh,
+                    source_index,
+                    1,
+                ) {
+                    self.listed_staging.push(CandidateData {
+                        slot: slot as u32,
+                        node: 0,
+                        batch: group,
+                        position: 0,
+                    });
+                }
+            }
+            self.listed_count = self.listed_staging.len() as u32;
+        } else {
+            for batch in &plan.batches {
+                let count = batch.instances.end - batch.instances.start;
+                let group = add_to_group(
+                    &mut self.groups,
+                    &mut counts,
+                    &mut indices,
+                    batch.mesh,
+                    batch.source_index,
+                    count,
+                );
+                // Beyond the group limit a batch casts no shadow; its
+                // candidates select into group 0's region, which holds them.
+                self.batch_groups.push(group.unwrap_or(u32::MAX));
+            }
+        }
+        let mut start = 0;
+        self.listed_group_staging.clear();
+        for (group, count) in self.groups.iter_mut().zip(&counts) {
+            group.start = start;
+            start += count;
+            let mesh = &snapshot.meshes[group.source_index].mesh;
+            let bounds = mesh.bounds();
+            self.listed_group_staging.push(BatchData {
+                start: group.start,
+                count: *count,
+                index_count: mesh.indices().len() as u32,
+                pad: self.listed_group_staging.len() as u32,
+                bounds_min: bounds.min().extend(0.0).to_array(),
+                bounds_max: bounds.max().extend(0.0).to_array(),
+            });
+        }
+        self.group_total = start;
+        if source == Source::Presented {
+            // Removed casters leave their kept shadows: redraw every strip.
+            self.dirty_strips = ALL_STRIPS;
+        }
+    }
+
+    /// Prepares this frame's shadow maps and lookups, or disables lookups
+    /// when shadows are off. `presented` carries GPU presentation's buffers
+    /// on GPU-presented frames; `poses`, the pose storage of retained frames.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn prepare(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        snapshot: &RenderSnapshot,
+        presented: Option<Presented<'_>>,
+        poses: Option<Poses<'_>>,
+        slot_capacity: usize,
+        index_count: impl Fn(MeshHandle) -> u32,
+    ) -> Option<ShadowFrame> {
+        self.dirty_strips |= self.read_back.replace(0) & ALL_STRIPS;
+        let settings = snapshot.shadows.sanitized();
+        if !settings.enabled || self.groups.is_empty() {
+            if !settings.enabled && self.maps.take().is_some() {
+                self.generation += 1;
+            }
+            self.kept_valid &= settings.enabled;
+            self.write_uniform(
+                queue,
+                ShadowUniform {
+                    near: [[0.0; 4]; 4],
+                    far: [[0.0; 4]; 4],
+                    state: [0.0; 4],
+                    offsets: [0.0; 4],
+                },
+            );
+            return None;
+        }
+        if self.pipelines.is_none() {
+            self.pipelines = Some(ShadowPipelines::new(device, self.strides.0, self.strides.1));
+        }
+        let resolution = settings.resolution;
+        if self
+            .maps
+            .as_ref()
+            .is_none_or(|maps| maps.resolution != resolution)
+        {
+            self.maps = Some(create_maps(device, resolution));
+            self.generation += 1;
+            self.kept_valid = false;
+        }
+        let near_resolution = resolution / 2;
+        let basis = LightBasis::new(snapshot.atmosphere.sanitized().sun_direction);
+        if self.kept_basis != Some(basis) {
+            self.kept_basis = Some(basis);
+            self.kept_valid = false;
+        }
+        // The far region: the settings' bounds, or a cube around an anchor
+        // that follows the camera a quarter of the distance at a time.
+        let eye = snapshot.camera_position;
+        let (min, max) = match settings.bounds {
+            Some(bounds) => {
+                self.anchor = None;
+                bounds
+            }
+            None => {
+                let distance = settings.distance;
+                let anchor = match self.anchor {
+                    Some(anchor) if anchor.distance(eye) <= distance * 0.25 => anchor,
+                    _ => {
+                        let grid = distance * 0.125;
+                        (eye / grid).round() * grid
+                    }
+                };
+                self.anchor = Some(anchor);
+                (
+                    anchor - Vec3::splat(distance),
+                    anchor + Vec3::splat(distance),
+                )
+            }
+        };
+        let far = MapRegion::of_box(&basis, min, max, resolution, MARGIN_TEXELS);
+        if self.kept_region != Some(far) {
+            self.kept_region = Some(far);
+            self.kept_valid = false;
+        }
+        let near = view_sphere(snapshot.view_projection, eye, settings.near_distance)
+            .map(|(center, radius)| MapRegion::of_sphere(&basis, center, radius, near_resolution));
+        let classify = self.source == Source::Presented;
+        if classify && self.stillness_capacity < slot_capacity {
+            self.stillness_capacity = slot_capacity.next_power_of_two();
+            self.stillness = storage(
+                device,
+                "engine/shadow-stillness",
+                self.stillness_capacity as u64 * 8,
+                wgpu::BufferUsages::empty(),
+            );
+            self.buffers_generation += 1;
+            // Stillness starts over: the kept map must be redrawn whole.
+            self.kept_valid = false;
+        }
+        let refresh = if !classify {
+            None
+        } else if !self.kept_valid {
+            self.kept_valid = true;
+            self.dirty_strips = 0;
+            Some(Refresh::Whole)
+        } else if self.dirty_strips != 0 {
+            let strip = self.dirty_strips.trailing_zeros();
+            self.dirty_strips &= !(1 << strip);
+            Some(Refresh::Strip(strip))
+        } else {
+            None
+        };
+        // Selection outputs: IDs and indirect arguments of every map.
+        let groups = self.groups.len();
+        let ids = (self.group_total as usize).max(1);
+        if ids > self.id_capacity {
+            self.id_capacity = ids.next_power_of_two();
+            self.ids = storage(
+                device,
+                "engine/shadow-ids",
+                (MAPS * self.id_capacity * 4) as u64,
+                wgpu::BufferUsages::VERTEX,
+            );
+            self.buffers_generation += 1;
+        }
+        if groups > self.arg_capacity {
+            self.arg_capacity = groups.next_power_of_two();
+            let bytes = (MAPS * self.arg_capacity) as u64 * DRAW_ARGS_BYTES;
+            self.args = storage(
+                device,
+                "engine/shadow-args",
+                bytes,
+                wgpu::BufferUsages::INDIRECT,
+            );
+            self.args_template = storage(
+                device,
+                "engine/shadow-args-template",
+                bytes,
+                wgpu::BufferUsages::COPY_SRC,
+            );
+            self.buffers_generation += 1;
+            self.groups_changed = true;
+        }
+        if self.groups_changed {
+            self.groups_changed = false;
+            let mut template: Vec<u32> = Vec::with_capacity(MAPS * groups * 5);
+            for _ in 0..MAPS {
+                for group in &self.groups {
+                    template.extend([index_count(group.mesh), 0, 0, 0, 0]);
+                }
+            }
+            if !template.is_empty() {
+                queue.write_buffer(&self.args_template, 0, bytemuck::cast_slice(&template));
+            }
+            if self.source == Source::Listed {
+                let casters = self.listed_staging.len().max(1);
+                if casters > self.listed_capacity || groups > self.listed_group_staging.capacity() {
+                    self.listed_capacity = casters.next_power_of_two();
+                    self.listed = storage(
+                        device,
+                        "engine/shadow-casters",
+                        (self.listed_capacity * size_of::<CandidateData>()) as u64,
+                        wgpu::BufferUsages::empty(),
+                    );
+                    self.listed_groups = storage(
+                        device,
+                        "engine/shadow-caster-groups",
+                        (MAX_SHADOW_GROUPS * size_of::<BatchData>()) as u64,
+                        wgpu::BufferUsages::empty(),
+                    );
+                    self.buffers_generation += 1;
+                }
+                if !self.listed_staging.is_empty() {
+                    queue.write_buffer(&self.listed, 0, bytemuck::cast_slice(&self.listed_staging));
+                }
+                queue.write_buffer(
+                    &self.listed_groups,
+                    0,
+                    bytemuck::cast_slice(&self.listed_group_staging),
+                );
+            }
+        }
+        // View matrices: the near map at offset 0, both far maps after it.
+        let far_clip = far.clip(&basis);
+        let near_clip = near.map_or(far_clip, |near| near.clip(&basis));
+        queue.write_buffer(
+            &self.pipelines.as_ref().expect("created above").view_buffer,
+            0,
+            bytemuck::cast_slice(&near_clip.to_cols_array()),
+        );
+        queue.write_buffer(
+            &self.pipelines.as_ref().expect("created above").view_buffer,
+            VIEW_STRIDE,
+            bytemuck::cast_slice(&far_clip.to_cols_array()),
+        );
+        let candidates = match (&presented, self.source) {
+            (Some(presented), Source::Presented) => presented.count,
+            (_, Source::Listed) => self.listed_count,
+            _ => 0,
+        };
+        if self.source != Source::Snapshot {
+            let strip_height = (far.rect[3] - far.rect[1]) / STRIPS as f32;
+            let refresh_rect = match refresh {
+                Some(Refresh::Whole) => far.rect,
+                Some(Refresh::Strip(strip)) => {
+                    // A texel of margin keeps casters at the strip's edges.
+                    let texel = far.texel(resolution);
+                    let low = far.rect[1] + strip as f32 * strip_height;
+                    [
+                        far.rect[0],
+                        low - texel,
+                        far.rect[2],
+                        low + strip_height + texel,
+                    ]
+                }
+                None => [0.0; 4],
+            };
+            let mut starts = [0; MAX_SHADOW_GROUPS];
+            for (start, group) in starts.iter_mut().zip(&self.groups) {
+                *start = group.start;
+            }
+            let row = |axis: Vec3| axis.extend(0.0).to_array();
+            let near_region = near.unwrap_or(far);
+            let cull = ShadowCullUniform {
+                light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],
+                near: near_region.rect,
+                far: far.rect,
+                refresh: refresh_rect,
+                depths: [near_region.depth[1], far.depth[1], far.depth[1], 0.0],
+                candidates,
+                groups: groups as u32,
+                capacity: self.id_capacity as u32,
+                mode: [
+                    (classify, STILLNESS),
+                    (refresh.is_some(), REFRESH),
+                    (near.is_some(), NEAR),
+                ]
+                .iter()
+                .filter(|(set, _)| *set)
+                .fold(0, |mode, (_, bit)| mode | bit),
+                strips: [far.rect[1], strip_height, STRIPS as f32, 0.0],
+                starts,
+            };
+            queue.write_buffer(
+                &self.pipelines.as_ref().expect("created above").cull,
+                0,
+                bytemuck::bytes_of(&cull),
+            );
+        }
+        let near_texel = near.map_or(0.0, |near| near.texel(near_resolution));
+        let far_texel = far.texel(resolution);
+        self.write_uniform(
+            queue,
+            ShadowUniform {
+                near: near_clip.to_cols_array_2d(),
+                far: far_clip.to_cols_array_2d(),
+                state: [
+                    1.0,
+                    if classify { 1.0 } else { 0.0 },
+                    if near.is_some() {
+                        settings.near_distance
+                    } else {
+                        0.0
+                    },
+                    settings.distance * FADE_START,
+                ],
+                offsets: [
+                    settings.distance,
+                    near_texel * NORMAL_OFFSET_TEXELS,
+                    far_texel * NORMAL_OFFSET_TEXELS,
+                    0.0,
+                ],
+            },
+        );
+        // Bindings: poses of this frame, and the selection inputs.
+        let pose_index = poses.as_ref().map_or(0, |poses| poses.index);
+        if let Some(poses) = &poses {
+            if self
+                .pose_groups
+                .as_ref()
+                .is_none_or(|(generation, groups)| {
+                    *generation != poses.generation || groups[poses.index].is_none()
+                })
+            {
+                let group = |buffer: Option<&wgpu::Buffer>| {
+                    buffer.map(|buffer| {
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("engine/shadow-pose-group"),
+                            layout: &self.pipelines.as_ref().expect("created above").pose_layout,
+                            entries: &[entry(0, buffer)],
+                        })
+                    })
+                };
+                self.pose_groups = Some((
+                    poses.generation,
+                    [group(poses.buffers[0]), group(poses.buffers[1])],
+                ));
+            }
+            if self.source != Source::Snapshot {
+                let key = SelectKey {
+                    source: self.source,
+                    buffers: self.buffers_generation,
+                    presented: presented
+                        .as_ref()
+                        .map_or(0, |presented| presented.generation),
+                    poses: poses.generation,
+                    pose_index,
+                };
+                if self
+                    .select_group
+                    .as_ref()
+                    .is_none_or(|(built, _)| *built != key)
+                {
+                    let pose_buffer = poses.buffers[pose_index].expect("the frame's pose buffer");
+                    let (candidate_buffer, batch_buffer, flag_buffer) = match &presented {
+                        Some(presented) if self.source == Source::Presented => {
+                            (presented.candidates, presented.batches, presented.flags)
+                        }
+                        _ => (&self.listed, &self.listed_groups, &self.no_flags),
+                    };
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("engine/shadow-select-group"),
+                        layout: &self
+                            .pipelines
+                            .as_ref()
+                            .expect("created above")
+                            .select_layout,
+                        entries: &[
+                            entry(0, &self.pipelines.as_ref().expect("created above").cull),
+                            entry(1, candidate_buffer),
+                            entry(2, batch_buffer),
+                            entry(3, pose_buffer),
+                            entry(4, flag_buffer),
+                            entry(5, &self.stillness),
+                            entry(6, &self.ids),
+                            entry(7, &self.args),
+                            entry(8, &self.dirty),
+                        ],
+                    });
+                    self.select_group = Some((key, group));
+                }
+            }
+        }
+        Some(ShadowFrame {
+            source: self.source,
+            candidates,
+            near: near.is_some(),
+            refresh,
+            pose_index,
+            read_dirty: self.source != Source::Snapshot,
+        })
+    }
+
+    fn write_uniform(&mut self, queue: &wgpu::Queue, uniform: ShadowUniform) {
+        if self.written != Some(uniform) {
+            queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+            self.written = Some(uniform);
+        }
+    }
+
+    /// Records caster selection and the depth passes of `frame`. `meshes`
+    /// finds each group's uploaded vertex and index buffers and index count;
+    /// public snapshots draw `plan`'s batches from `instances`. With
+    /// `timestamps` (a query set and its first index), the selection pass
+    /// writes queries `first` and `first + 1` and the depth passes `first + 2`
+    /// and `first + 3`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode<'m>(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &ShadowFrame,
+        plan: &BatchPlan,
+        instances: &'m wgpu::Buffer,
+        meshes: impl Fn(MeshHandle) -> Option<(&'m wgpu::Buffer, &'m wgpu::Buffer, u32)>,
+        timestamps: Option<(&wgpu::QuerySet, u32)>,
+    ) -> ShadowEncoded {
+        if self.maps.is_none() || self.pipelines.is_none() {
+            return ShadowEncoded::default();
+        }
+        let mut timed = u8::from(timestamps.is_some()) << 1;
+        let draws = Cell::new(0_u32);
+        let groups = self.groups.len() as u64;
+        if frame.source != Source::Snapshot {
+            // Instance counts start at zero every frame.
+            encoder.copy_buffer_to_buffer(
+                &self.args_template,
+                0,
+                &self.args,
+                0,
+                MAPS as u64 * groups * DRAW_ARGS_BYTES,
+            );
+            if let Some((_, group)) = &self.select_group
+                && frame.candidates != 0
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("engine/shadow-select"),
+                    timestamp_writes: timestamps.map(|(query_set, first)| {
+                        wgpu::ComputePassTimestampWrites {
+                            query_set,
+                            beginning_of_pass_write_index: Some(first),
+                            end_of_pass_write_index: Some(first + 1),
+                        }
+                    }),
+                });
+                let pipelines = self.pipelines.as_ref().expect("checked above");
+                pass.set_pipeline(&pipelines.select);
+                pass.set_bind_group(0, group, &[]);
+                pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
+                pass.set_pipeline(&pipelines.count);
+                pass.dispatch_workgroups(1, 1, 1);
+                timed |= u8::from(timestamps.is_some());
+            }
+        }
+        if frame.read_dirty {
+            let dirty = self.dirty.clone();
+            if let Some(readback) = self.idle_readback(device) {
+                encoder.copy_buffer_to_buffer(&dirty, 0, &readback.buffer, 0, READBACK_BYTES);
+                readback.state.set(ReadbackState::Recorded);
+                // Unread strips stay until a readback copies them.
+                encoder.clear_buffer(&dirty, 0, Some(4));
+            }
+        }
+        let maps = self.maps.as_ref().expect("checked above");
+        let pipelines = self.pipelines.as_ref().expect("checked above");
+        let pose_group = self
+            .pose_groups
+            .as_ref()
+            .and_then(|(_, groups)| groups[frame.pose_index].as_ref());
+        let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
+            let Some(pose_group) = pose_group else {
+                return;
+            };
+            pass.set_pipeline(&pipelines.affine);
+            pass.set_bind_group(1, pose_group, &[]);
+            for (index, group) in self.groups.iter().enumerate() {
+                let Some((vertices, indices, _)) = meshes(group.mesh) else {
+                    continue;
+                };
+                let start = (map * self.id_capacity + group.start as usize) as u64 * 4;
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_vertex_buffer(1, self.ids.slice(start..));
+                pass.draw_indexed_indirect(
+                    &self.args,
+                    (map as u64 * groups + index as u64) * DRAW_ARGS_BYTES,
+                );
+                draws.set(draws.get() + 1);
+            }
+        };
+        let draw_snapshot = |pass: &mut wgpu::RenderPass<'_>| {
+            pass.set_pipeline(&pipelines.full);
+            pass.set_vertex_buffer(1, instances.slice(..));
+            for batch in &plan.batches {
+                let Some((vertices, indices, index_count)) = meshes(batch.mesh) else {
+                    continue;
+                };
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..index_count, 0, batch.instances.clone());
+                draws.set(draws.get() + 1);
+            }
+        };
+        // The first depth pass writes the begin timestamp, the last the end.
+        let last = if frame.refresh.is_some() {
+            KEPT_MAP
+        } else {
+            MOVING_MAP
+        };
+        let writes = |map: usize| {
+            timestamps.and_then(|(query_set, first)| {
+                let begin = (map == NEAR_MAP).then_some(first + 2);
+                let end = (map == last).then_some(first + 3);
+                (begin.is_some() || end.is_some()).then_some(wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: begin,
+                    end_of_pass_write_index: end,
+                })
+            })
+        };
+        for (map, offset, runs) in [
+            (NEAR_MAP, 0, frame.near),
+            (MOVING_MAP, VIEW_STRIDE as u32, true),
+        ] {
+            let mut pass = map_pass(
+                encoder,
+                &maps.views[map],
+                wgpu::LoadOp::Clear(1.0),
+                writes(map),
+            );
+            if !runs {
+                continue;
+            }
+            pass.set_bind_group(0, &pipelines.view_group, &[offset]);
+            if frame.source == Source::Snapshot {
+                draw_snapshot(&mut pass);
+            } else {
+                draw_selected(&mut pass, map);
+            }
+        }
+        if let Some(refresh) = frame.refresh {
+            let whole = refresh == Refresh::Whole;
+            let mut pass = map_pass(
+                encoder,
+                &maps.views[KEPT_MAP],
+                if whole {
+                    wgpu::LoadOp::Clear(1.0)
+                } else {
+                    wgpu::LoadOp::Load
+                },
+                writes(KEPT_MAP),
+            );
+            if let Refresh::Strip(strip) = refresh {
+                // Strips count up from the map's light-space bottom, which
+                // is its last texel row.
+                let rows = maps.resolution / STRIPS;
+                pass.set_scissor_rect(
+                    0,
+                    maps.resolution - (strip + 1) * rows,
+                    maps.resolution,
+                    rows,
+                );
+                pass.set_pipeline(&pipelines.clear);
+                pass.draw(0..3, 0..1);
+            }
+            pass.set_bind_group(0, &pipelines.view_group, &[VIEW_STRIDE as u32]);
+            draw_selected(&mut pass, KEPT_MAP);
+        }
+        ShadowEncoded {
+            timed,
+            draws: draws.get(),
+        }
+    }
+
+    fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&DirtyReadback> {
+        if let Some(index) = self
+            .readbacks
+            .iter()
+            .position(|readback| readback.state.get() == ReadbackState::Idle)
+        {
+            return Some(&self.readbacks[index]);
+        }
+        if self.readbacks.len() == READBACKS {
+            return None;
+        }
+        self.readbacks.push(DirtyReadback {
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/shadow-dirty-readback"),
+                size: READBACK_BYTES,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            state: Rc::new(Cell::new(ReadbackState::Idle)),
+        });
+        self.readbacks.last()
+    }
+
+    /// Requests maps of dirty strips recorded in the frame just submitted.
+    pub(crate) fn after_submit(&mut self) {
+        for readback in &self.readbacks {
+            if readback.state.get() != ReadbackState::Recorded {
+                continue;
+            }
+            readback.state.set(ReadbackState::Pending);
+            let state = Rc::clone(&readback.state);
+            let read_back = Rc::clone(&self.read_back);
+            let casters = Rc::clone(&self.casters);
+            let buffer = readback.buffer.clone();
+            readback
+                .buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    if result.is_ok() {
+                        if let Ok(view) = buffer.slice(..).get_mapped_range() {
+                            let word = |index: usize| {
+                                let bytes = view.get(index * 4..index * 4 + 4);
+                                bytes.map_or(0, |bytes| {
+                                    u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
+                                })
+                            };
+                            read_back.set(read_back.get() | word(0));
+                            casters.set(Some([word(1), word(2), word(3)]));
+                        }
+                        buffer.unmap();
+                    }
+                    state.set(ReadbackState::Idle);
+                });
+        }
+    }
+}
+
+fn map_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    load: wgpu::LoadOp<f32>,
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("engine/shadow-map"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations {
+                load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        }),
+        timestamp_writes,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
+fn create_maps(device: &wgpu::Device, resolution: u32) -> Maps {
+    let texture = |label, size| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHADOW_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    };
+    let textures = [
+        texture("engine/shadow-near", resolution / 2),
+        texture("engine/shadow-moving", resolution),
+        texture("engine/shadow-kept", resolution),
+    ];
+    let views = textures
+        .each_ref()
+        .map(|texture| texture.create_view(&Default::default()));
+    Maps {
+        resolution,
+        textures,
+        views,
+    }
+}

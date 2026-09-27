@@ -22,7 +22,7 @@ use crate::hierarchy::HierarchyScratch;
 use crate::{
     Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
     Mesh3d, MeshHandle, PresentedTransforms, RenderInstance, RenderMesh, RenderQuery,
-    RenderSnapshot, RenderTexture, TextureHandle, Transform, TransformIndex,
+    RenderSnapshot, RenderTexture, Surface, TextureHandle, Transform, TransformIndex,
     culling::{Classification, Frustum},
     hierarchy::ChangeWindow,
 };
@@ -110,11 +110,31 @@ impl<'a> RenderFrame<'a> {
     pub fn pose_revision(self) -> u64 {
         self.owner.pose_revision
     }
+    /// Advances when any slot's color or surface changes.
     pub fn color_revision(self) -> u64 {
         self.owner.color_revision
     }
     pub fn visible_indices(self) -> &'a [usize] {
         &self.owner.visible
+    }
+    /// Every slot that may cast a shadow: active, with a valid pose and a
+    /// resolved mesh, whether culled or visible, in slot order. GPU-presented
+    /// frames list their candidates, as `visible_indices` does; the GPU
+    /// hides invalid ones.
+    pub fn casters(self) -> &'a [usize] {
+        if self.owner.gpu {
+            &self.owner.visible
+        } else {
+            &self.owner.casters
+        }
+    }
+    /// Advances when [`Self::casters`] changes.
+    pub fn caster_revision(self) -> u64 {
+        if self.owner.gpu {
+            self.owner.structure_revision
+        } else {
+            self.owner.caster_revision
+        }
     }
     /// Per-slot stamps; compare within this stream, never across stream identities.
     pub fn pose_changes(self) -> &'a [u64] {
@@ -150,6 +170,7 @@ impl<'a> RenderFrame<'a> {
     pub fn instance_budget(self) -> usize {
         self.owner.budget
     }
+    /// Per-slot stamps of color or surface changes.
     pub fn color_changes(self) -> &'a [u64] {
         &self.owner.color_changes
     }
@@ -161,6 +182,7 @@ struct ResolvedSource {
     mesh: MeshHandle,
     texture: Option<TextureHandle>,
     color: [f32; 4],
+    surface: Surface,
 }
 
 const NO_SOURCE: u32 = u32::MAX;
@@ -247,11 +269,16 @@ impl Sources {
         cube: Option<&Cube>,
         mesh3d: Option<&Mesh3d>,
     ) -> Option<ResolvedSource> {
-        let (handle, color, texture_handle) = if let Some(mesh3d) = mesh3d {
+        let (handle, color, texture_handle, surface) = if let Some(mesh3d) = mesh3d {
             let material = assets.material(mesh3d.material)?;
-            (mesh3d.mesh, material.color(), material.texture())
+            (
+                mesh3d.mesh,
+                material.color(),
+                material.texture(),
+                material.surface(),
+            )
         } else {
-            (cube_mesh, cube?.color, None)
+            (cube_mesh, cube?.color, None, Surface::MATTE)
         };
         let mesh = assets.mesh(handle)?;
         // Resolve all weak handles before retaining any source for this record.
@@ -286,6 +313,7 @@ impl Sources {
             mesh: handle,
             texture: texture_handle,
             color,
+            surface,
         })
     }
 
@@ -325,6 +353,7 @@ pub(crate) struct RetainedRender {
     source_revision: u64,
     pose_revision: u64,
     color_revision: u64,
+    caster_revision: u64,
     snapshot: RenderSnapshot,
     // Owner of each slot; None for free slots. Parallel to `frames`.
     owners: Vec<Option<Entity>>,
@@ -337,6 +366,8 @@ pub(crate) struct RetainedRender {
     // so a matching Entity alone proves the cached slot is still its own.
     query_slots: Vec<Option<(Entity, usize)>>,
     visible: Vec<usize>,
+    // CPU-prepared frames: every active slot with a valid pose and a mesh.
+    casters: Vec<usize>,
     // Presented-store index of each slot's pose, validated for its entity
     // whenever the slot is active. u32 covers the bounded transform store.
     pose_indices: Vec<u32>,
@@ -369,6 +400,7 @@ impl Default for RetainedRender {
             source_revision: 0,
             pose_revision: 0,
             color_revision: 0,
+            caster_revision: 0,
             snapshot: RenderSnapshot::default(),
             owners: Vec::new(),
             frames: Vec::new(),
@@ -377,6 +409,7 @@ impl Default for RetainedRender {
             free: Vec::new(),
             query_slots: Vec::new(),
             visible: Vec::new(),
+            casters: Vec::new(),
             pose_indices: Vec::new(),
             pose_changes: Vec::new(),
             pose_rows: Vec::new(),
@@ -481,6 +514,7 @@ impl RetainedRender {
                     texture: None,
                     model: Mat4::IDENTITY,
                     color: [1.0; 4],
+                    surface: Surface::MATTE,
                 });
                 self.pose_indices.push(u32::MAX);
                 self.pose_changes.push(0);
@@ -593,8 +627,7 @@ impl RetainedRender {
         self.sources.mesh_used.fill(false);
         self.sources.texture_used.fill(false);
         let view = world.resource::<Camera>().view_projection(aspect);
-        self.snapshot.camera_position = world.resource::<Camera>().eye();
-        self.snapshot.atmosphere = crate::atmosphere::current(world);
+        crate::effects::extract_lighting(world, &mut self.snapshot);
         let total = query.iter(world).len();
         if gpu
             && self.gpu
@@ -641,6 +674,8 @@ impl RetainedRender {
         let mut structure_changed = assets_changed;
         let mut sources_changed = assets_changed;
         let mut submitted = 0;
+        let mut casters = 0;
+        let mut casters_changed = false;
         let mut seen = 0;
         let mut resolved_count = 0;
         let mut pose_count = 0;
@@ -691,6 +726,7 @@ impl RetainedRender {
                     mesh,
                     texture,
                     color,
+                    surface,
                     ..
                 }) = resolved
                 {
@@ -699,10 +735,21 @@ impl RetainedRender {
                     sources_changed |= keys_changed;
                     record.mesh = mesh;
                     record.texture = texture;
+                    let surface_bits = |surface: Surface| {
+                        [
+                            surface.roughness,
+                            surface.metalness,
+                            surface.emission,
+                            surface.ripples,
+                        ]
+                        .map(f32::to_bits)
+                    };
                     if self.color_changes[index] == 0
                         || record.color.map(f32::to_bits) != color.map(f32::to_bits)
+                        || surface_bits(record.surface) != surface_bits(surface)
                     {
                         record.color = color;
+                        record.surface = surface;
                         self.color_changes[index] = sequence;
                         color_count += 1;
                     }
@@ -781,6 +828,15 @@ impl RetainedRender {
                 self.snapshot.missing_assets += 1;
                 continue;
             }
+            // Culled or visible, the slot casts shadows.
+            if let Some(previous) = self.casters.get_mut(casters) {
+                casters_changed |= *previous != index;
+                *previous = index;
+            } else {
+                self.casters.push(index);
+                casters_changed = true;
+            }
+            casters += 1;
             if view_changed || pose_changed || source_changed {
                 let bounds = self.sources.bounds[frame.mesh as usize];
                 frame.outside = self.frustum.as_ref().is_some_and(|frustum| {
@@ -817,6 +873,13 @@ impl RetainedRender {
         if submitted != self.visible.len() {
             self.visible.truncate(submitted);
             structure_changed = true;
+        }
+        if !gpu && casters != self.casters.len() {
+            self.casters.truncate(casters);
+            casters_changed = true;
+        }
+        if casters_changed {
+            self.caster_revision = sequence;
         }
         // Each entity owns one slot and visits it at most once, so equal counts
         // prove every owned slot was visited.
@@ -872,7 +935,8 @@ impl RetainedRender {
                 + self.frames.capacity() * size_of::<SlotFrame>()
                 + self.visited.capacity() * size_of::<u64>()
                 + self.query_slots.capacity() * size_of::<Option<(Entity, usize)>>()
-                + (self.visible.capacity() + self.free.capacity()) * size_of::<usize>()
+                + (self.visible.capacity() + self.casters.capacity() + self.free.capacity())
+                    * size_of::<usize>()
                 + self.pose_indices.capacity() * size_of::<u32>()
                 + (self.pose_changes.capacity() + self.color_changes.capacity()) * size_of::<u64>()
                 + self.pose_rows.capacity() * size_of::<PoseRows>()) as f64,

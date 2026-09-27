@@ -69,6 +69,22 @@ scene data: the `Atmosphere` resource (sun, sky colors, fog, grade) travels in
 every snapshot, and the renderer adds sky-colored ambient and height fog,
 filmic tone mapping and a sky pass behind geometry.
 
+[Decision 019](adr-019-surface-materials-and-reflections.md) gives materials a
+`Surface` (roughness, metalness, emission masked by texture alpha, ripples):
+GGX sun highlights, reflections of the analytic sky, glow and liquid waves,
+packed into the existing per-slot color record.
+[Decision 020](adr-020-sun-shadows.md) adds sun shadows (`Shadows`): a compute
+pass selects casters from every candidate into a near map redrawn per frame, a
+far map of still casters redrawn only where dirty, and a far map of moving
+ones. [Decision 021](adr-021-ambient-occlusion-and-bloom.md) adds ambient
+occlusion and bloom (`AmbientOcclusion`, `Bloom`) through scene and glow
+targets, applied in the temporal resolve or a composite pass. Captures,
+previews and CPU-presented frames render all three alike.
+[Decision 022](adr-022-scene-environments-and-agent-controls.md) gives the
+look one JSON shape: a scene version 5 `environment`, its inspection
+projections and a temporary agent control. Each effect resource is optional,
+and the renderer creates an effect's GPU resources only while it runs.
+
 ## Ownership and compatibility
 
 `engine` composes `engine_core` and `engine_render`. The renderer consumes core snapshots. Core imports neither rendering nor browser APIs. Platform glue is a module inside the façade until it needs a separate reusable interface. The demo imports the façade only. Host tools never become Wasm runtime dependencies.

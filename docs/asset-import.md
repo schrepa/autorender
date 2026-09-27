@@ -18,7 +18,7 @@ To place a model in an existing game, import into its scene using the current sa
 cargo xtask asset import --file assets/source/garden-prop.glb --id scenery --into web/public/scenes/playground.scene.json --expected-revision N
 ```
 
-This validates the entire candidate before the shared revision-checked writer commits it. It increments the revision and upgrades the document to scene version 4. Existing camera and gameplay records remain. Change the new entities' `transform` fields through the normal scene authoring workflow to place them. Asset names are stable within the import namespace and source node/primitive indices. No runtime handles are persisted.
+This validates the entire candidate before the shared revision-checked writer commits it. It increments the revision and upgrades the document to scene version 5. Existing camera and gameplay records remain. Change the new entities' `transform` fields through the normal scene authoring workflow to place them. Asset names are stable within the import namespace and source node/primitive indices. No runtime handles are persisted.
 
 Importing the same namespace again fails on duplicate IDs unless `--replace` is supplied:
 

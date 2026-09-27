@@ -1,16 +1,10 @@
 //! Scene lighting and atmosphere (decision 018): a directional sun, a sky
-//! gradient that also colors ambient light and fog, and the exposure and
-//! saturation of the final image. Every extracted frame carries a copy.
+//! gradient that also colors ambient light, reflections and fog, and the
+//! exposure and saturation of the final image. Every extracted frame carries
+//! a copy.
 
-use bevy_ecs::prelude::{Resource, World};
+use bevy_ecs::prelude::Resource;
 use glam::Vec3;
-
-/// The world's atmosphere, sanitized, or the default without one.
-pub(crate) fn current(world: &World) -> Atmosphere {
-    world
-        .get_resource::<Atmosphere>()
-        .map_or_else(Atmosphere::default, |atmosphere| atmosphere.sanitized())
-}
 
 /// Lighting of the rendered scene, read when frames are extracted.
 ///
@@ -41,8 +35,11 @@ pub struct Atmosphere {
     pub fog_max: f32,
     /// Silhouette light in the horizon color, facing away from the camera.
     pub rim: f32,
-    /// Strength of sun highlights.
+    /// Scale of sun highlights and sky reflections; 1 is physically based.
     pub specular: f32,
+    /// Scale of material emission: how strongly lamps, lit windows and other
+    /// artificial lights show in this light (decision 019).
+    pub emission: f32,
     /// Exposure before tone mapping.
     pub exposure: f32,
     /// Saturation after tone mapping; 1 keeps it.
@@ -70,7 +67,8 @@ impl Atmosphere {
             fog_falloff: 0.02,
             fog_max: 0.75,
             rim: 0.15,
-            specular: 0.2,
+            specular: 1.0,
+            emission: 0.1,
             exposure: 0.9,
             saturation: 1.1,
         }
@@ -79,18 +77,19 @@ impl Atmosphere {
     /// A low warm sun, a peach horizon and long blue shadows: the default.
     pub fn golden_hour() -> Self {
         Self {
-            sun_direction: Vec3::new(0.82, 0.3, 0.1),
+            sun_direction: Vec3::new(0.82, 0.45, 0.1),
             sun_color: Vec3::new(2.6, 1.6, 0.85),
             zenith: Vec3::new(0.12, 0.22, 0.6),
             horizon: Vec3::new(1.05, 0.62, 0.45),
             ground: Vec3::new(0.2, 0.13, 0.12),
-            ambient: 0.5,
+            ambient: 0.62,
             fog_start: 40.0,
             fog_density: 0.0022,
             fog_falloff: 0.022,
             fog_max: 0.75,
             rim: 0.45,
-            specular: 0.3,
+            specular: 1.0,
+            emission: 0.5,
             exposure: 0.85,
             saturation: 1.15,
         }
@@ -110,7 +109,8 @@ impl Atmosphere {
             fog_falloff: 0.02,
             fog_max: 0.78,
             rim: 0.6,
-            specular: 0.3,
+            specular: 1.0,
+            emission: 1.0,
             exposure: 0.95,
             saturation: 1.25,
         }
@@ -130,7 +130,8 @@ impl Atmosphere {
             fog_falloff: 0.02,
             fog_max: 0.85,
             rim: 0.8,
-            specular: 0.4,
+            specular: 1.0,
+            emission: 1.0,
             exposure: 1.35,
             saturation: 1.15,
         }
@@ -148,6 +149,7 @@ impl Atmosphere {
             self.fog_falloff,
             self.rim,
             self.specular,
+            self.emission,
             self.exposure,
             self.saturation,
         ];

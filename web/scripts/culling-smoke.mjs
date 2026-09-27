@@ -12,9 +12,12 @@ const url = new URL("playground.html", base);
 url.searchParams.set("engine_dev", "1");
 const output = fileURLToPath(new URL(`../../artifacts/culling-smoke-${randomUUID()}/`, import.meta.url));
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
+// Shadows start off, so residency first follows visibility alone: shadow maps
+// draw off-screen casters too (decision 020).
 const fixture = {
-  version: 4, id: "culling-fixture", revision: 1,
+  version: 5, id: "culling-fixture", revision: 1,
   camera: { position: camera.position, target: camera.target, fov_degrees: 60, near: 1, far: 50 },
+  environment: { shadows: { enabled: false } },
   textures: [{ id: "pixel", width: 1, height: 1, rgba8: Buffer.from([255, 90, 25, 255]).toString("base64") }],
   materials: [{ id: "plain", color: [0.2, 0.8, 0.7, 1] }, { id: "textured", color: [1, 1, 1, 1], texture: "pixel" }],
   meshes: [{ id: "box", source: { kind: "cube" } }, { id: "gem", source: { kind: "octahedron" } }],
@@ -132,12 +135,23 @@ try {
   assert.equal(initial.resident_meshes, 1);
   assert.equal(initial.resident_textures, 0, "First offscreen appearance must not upload texture pixels.");
   assert.equal((await command("assets")).result.texture_assets[0].gpu_resident, false);
+  assert.equal(initial.shadows_enabled, false);
+
+  // An off-screen caster needs its mesh for the shadow maps, never its texture.
+  const lit = await command("environment", { shadows: { enabled: true } });
+  assert.deepEqual(lit.result.environment_changed, ["shadows"]);
+  const shadowed = stats(lit);
+  assert.equal(shadowed.shadows_enabled, true);
+  assert.ok(shadowed.shadow_draws > 0);
+  assert.equal(shadowed.instances, 1);
+  assert.equal(shadowed.resident_meshes, 2, "An off-screen shadow caster uploads its mesh.");
+  assert.equal(shadowed.resident_textures, 0, "Shadow maps must not upload caster textures.");
 
   const revealed = stats(await command("camera", { ...camera, position: [100, 0.6, 8], target: [100, 0.6, 0] }));
   assert.equal(revealed.instances, 1);
   assert.equal(revealed.resident_meshes, 2, "The first mesh remains resident while culled.");
   assert.equal(revealed.resident_textures, 1);
-  assert.ok(revealed.mesh_upload_bytes > 0);
+  assert.equal(revealed.mesh_upload_bytes, 0, "The caster's mesh was already resident.");
   assert.equal(revealed.texture_upload_bytes, 4);
   const away = stats(await command("camera", { ...camera, target: [0, 0.6, 16] }));
   assert.equal(away.instances, 0);
@@ -165,7 +179,11 @@ try {
     { id: "behind-camera", mesh: "box", material: "plain", transform: { translation: [0, 0.6, 12] } },
     { id: "beyond-far", mesh: "box", material: "plain", transform: { translation: [0, 0.6, -80] } },
   );
-  await reload(complex);
+  // Without an environment a reload keeps the current look: shadows stay on,
+  // and culled casters must still shadow the view.
+  delete complex.environment;
+  const reloaded = await reload(complex);
+  assert.equal(reloaded.result.rendering.shadows_enabled, true);
   cases.push(await equivalent("hierarchy-shear-borders", camera));
   cases.push(await equivalent("angled-camera", { ...camera, position: [8, 6, 12], target: [0, 0.6, 0] }));
 
@@ -180,7 +198,7 @@ try {
   assert.equal(texture.state, "cpu_ready");
   assert.equal(texture.gpu_resident, false);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ ok: true, url: url.href, artifact: output, cases, checks: ["offscreen_first_use_no_upload", "out_of_view_retains_gpu", "return_reuses_gpu", "source_removal_retires_gpu", "culling_pixel_equivalence", "paused_camera_controls", "clean_browser_diagnostics"] }));
+  console.log(JSON.stringify({ ok: true, url: url.href, artifact: output, cases, checks: ["offscreen_first_use_no_upload", "offscreen_caster_mesh_only", "out_of_view_retains_gpu", "return_reuses_gpu", "source_removal_retires_gpu", "culling_pixel_equivalence", "shadowed_culling_pixel_equivalence", "environmentless_reload_keeps_look", "paused_camera_controls", "clean_browser_diagnostics"] }));
 } finally {
   await browser.close();
 }

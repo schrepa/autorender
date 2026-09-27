@@ -106,6 +106,7 @@ pub(crate) fn import(
             id: format!("{id}.material{index}"),
             color: pbr.base_color_factor(),
             texture,
+            surface: None,
         });
     }
     Ok(())

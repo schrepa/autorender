@@ -1,7 +1,7 @@
 //! Explicit schemas for the adjacent shader, separate from gameplay components.
 
 use bytemuck::{Pod, Zeroable};
-use engine_core::{Atmosphere, MeshVertex, RenderInstance, glam::Mat4};
+use engine_core::{Atmosphere, Bloom, MeshVertex, RenderInstance, Surface, glam::Mat4};
 
 /// WGSL `Camera` uniform: three column-major mat4x4<f32> and two vec4<f32>,
 /// alignment 16, size 224. `view_projection` is the rasterized projection.
@@ -10,9 +10,10 @@ use engine_core::{Atmosphere, MeshVertex, RenderInstance, glam::Mat4};
 /// `previous_view_projection` and `jitter.zw`, two over the viewport size in
 /// pixels. Other frames repeat the view-projection and keep the jitter zero.
 /// The unjittered `inverse_view_projection` turns pixels into sky rays and
-/// `position` (xyz) is the eye, for view-dependent lighting (decision 018).
-/// The GPU buffer starts at offset zero; only these 224 initialized bytes are
-/// copied into it.
+/// `position` (xyz) is the eye, for view-dependent lighting (decision 018);
+/// its w is presentation time in seconds, for animated surfaces (decision
+/// 019). The GPU buffer starts at offset zero; only these 224 initialized
+/// bytes are copied into it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CameraUniform {
@@ -24,14 +25,15 @@ pub(crate) struct CameraUniform {
 }
 
 impl CameraUniform {
-    /// An unjittered camera at `position` without temporal history.
-    pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3) -> Self {
+    /// An unjittered camera at `position` without temporal history, at
+    /// presentation time `seconds`.
+    pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
             view_projection: columns,
             previous_view_projection: columns,
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
-            position: position.extend(1.0).to_array(),
+            position: position.extend(seconds).to_array(),
             jitter: [0.0; 4],
         }
     }
@@ -42,6 +44,7 @@ impl CameraUniform {
     pub(crate) fn temporal(
         view_projection: Mat4,
         position: glam::Vec3,
+        seconds: f32,
         previous: Mat4,
         jitter: [f32; 2],
         width: u32,
@@ -56,13 +59,13 @@ impl CameraUniform {
                 2.0 / width.max(1) as f32,
                 2.0 / height.max(1) as f32,
             ],
-            ..Self::exact(view_projection, position)
+            ..Self::exact(view_projection, position, seconds)
         }
     }
 }
 
-/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018): six
-/// vec4<f32>, 96 bytes. Scalars ride in the fourth components.
+/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018): seven
+/// vec4<f32>, 112 bytes. Scalars ride in the fourth components.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct LightingUniform {
@@ -78,10 +81,13 @@ pub(crate) struct LightingUniform {
     pub ground: [f32; 4],
     /// Start, density, height falloff and maximum.
     pub fog: [f32; 4],
+    /// Emission scale, and the exposed brightness above which light glows
+    /// (decision 021); zw unused.
+    pub effects: [f32; 4],
 }
 
-impl From<&Atmosphere> for LightingUniform {
-    fn from(atmosphere: &Atmosphere) -> Self {
+impl LightingUniform {
+    pub(crate) fn new(atmosphere: &Atmosphere, bloom: &Bloom) -> Self {
         let atmosphere = atmosphere.sanitized();
         Self {
             sun: atmosphere
@@ -99,8 +105,25 @@ impl From<&Atmosphere> for LightingUniform {
                 atmosphere.fog_falloff,
                 atmosphere.fog_max,
             ],
+            effects: [atmosphere.emission, bloom.sanitized().threshold, 0.0, 0.0],
         }
     }
+}
+
+/// A surface (decision 019) as four unsigned 8-bit fractions: roughness,
+/// metalness, emission over [`Surface::MAX_EMISSION`], and ripples. Public
+/// snapshots may carry any values: out-of-range ones clamp and NaN reads as
+/// matte.
+pub(crate) fn pack_surface(surface: Surface) -> u32 {
+    let unit = |value: f32, fallback: f32, max: f32| {
+        let value = if value.is_nan() { fallback } else { value };
+        (engine_core::math::clamp(value / max, 0.0, 1.0) * 255.0).round() as u32
+    };
+    let matte = Surface::MATTE;
+    unit(surface.roughness, matte.roughness, 1.0)
+        | unit(surface.metalness, matte.metalness, 1.0) << 8
+        | unit(surface.emission, matte.emission, Surface::MAX_EMISSION) << 16
+        | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
 /// `view_projection` followed by a clip-space translation of `jitter` units
@@ -115,19 +138,23 @@ pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
 }
 
 /// Vertex attributes, NOT a uniform/storage struct: columns at offsets
-/// 0/16/32/48 and color at 64, with explicit 80-byte instance stride.
+/// 0/16/32/48, color at 64 and the packed surface at 76, with explicit
+/// 80-byte instance stride.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct InstanceData {
     pub model: [[f32; 4]; 4],
-    pub color: [f32; 4],
+    pub color: [f32; 3],
+    pub surface: u32,
 }
 
 impl From<&RenderInstance> for InstanceData {
     fn from(instance: &RenderInstance) -> Self {
+        let [r, g, b, _] = instance.color;
         Self {
             model: instance.model.to_cols_array_2d(),
-            color: instance.color,
+            color: [r, g, b],
+            surface: pack_surface(instance.surface),
         }
     }
 }
@@ -161,11 +188,23 @@ impl From<&RenderInstance> for PoseData {
     }
 }
 
-/// Separate per-instance color attribute; unchanged colors need no pose upload.
+/// Separate per-instance color and packed surface; unchanged colors need no
+/// pose upload. WGSL `SlotColor`: vec3<f32> and u32, 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct ColorData {
-    pub color: [f32; 4],
+    pub color: [f32; 3],
+    pub surface: u32,
+}
+
+impl From<&RenderInstance> for ColorData {
+    fn from(instance: &RenderInstance) -> Self {
+        let [r, g, b, _] = instance.color;
+        Self {
+            color: [r, g, b],
+            surface: pack_surface(instance.surface),
+        }
+    }
 }
 
 /// Vertex attributes at offsets 0/12/24 with an explicit 32-byte vertex stride.
@@ -191,10 +230,79 @@ impl From<&MeshVertex> for Vertex {
 pub(crate) const SHADER: &str = include_str!("meshes.wgsl");
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
-/// Temporal antialiasing resolve (decision 017).
-pub(crate) const TEMPORAL_SHADER: &str = include_str!("temporal.wgsl");
+/// Temporal antialiasing resolve (decision 017), after the shared effects.
+pub(crate) const TEMPORAL_SHADER: &str =
+    concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
 /// Mip generation of base color textures.
 pub(crate) const MIPMAP_SHADER: &str = include_str!("mipmaps.wgsl");
+/// Shadow caster selection and depth drawing (decision 020).
+pub(crate) const SHADOW_SHADER: &str = include_str!("shadows.wgsl");
+/// Ambient occlusion, bloom and their composite (decision 021).
+pub(crate) const POST_SHADER: &str =
+    concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
+
+/// WGSL `Shadow` uniform of `meshes.wgsl` (decision 020): world to the near
+/// and far shadow maps and their settings, 160 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct ShadowUniform {
+    /// World to the near map: x and y in [-1, 1] across it, z in [0, 1].
+    pub near: [[f32; 4]; 4],
+    /// World to both far maps.
+    pub far: [[f32; 4]; 4],
+    /// Shadows on, the kept far map holds casters, the view distance the
+    /// near map covers, and the distance where shadows begin to fade.
+    pub state: [f32; 4],
+    /// Distance where shadows are gone, then the normal offsets (world
+    /// units) of lookups in the near and far maps; w unused.
+    pub offsets: [f32; 4],
+}
+
+/// Most draw groups (distinct meshes) shadow maps draw: the resident meshes.
+pub(crate) const MAX_SHADOW_GROUPS: usize = crate::MAX_RESIDENT_MESHES;
+
+/// WGSL `Cull` uniform of `shadows.wgsl`: 656 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct ShadowCullUniform {
+    /// World to light space: the sun's right, up and away-from-sun axes.
+    pub light: [[f32; 4]; 3],
+    /// Light-space rectangles (minimum x and y, maximum x and y) of the near
+    /// map, the far maps and the region of the kept map redrawn this frame.
+    pub near: [f32; 4],
+    pub far: [f32; 4],
+    pub refresh: [f32; 4],
+    /// Light-space depth beyond which casters cannot darken receivers of
+    /// the near map, the far maps and the refreshed region.
+    pub depths: [f32; 4],
+    pub candidates: u32,
+    pub groups: u32,
+    /// Instance IDs per map.
+    pub capacity: u32,
+    /// `STILLNESS | REFRESH | NEAR` of the shader.
+    pub mode: u32,
+    /// Light-space y of the first kept-map strip, the strip height and the
+    /// strip count; w unused.
+    pub strips: [f32; 4],
+    /// Start of each group's ID region within a map.
+    pub starts: [u32; MAX_SHADOW_GROUPS],
+}
+
+/// WGSL `Post` uniform of `effects.wgsl` (decision 021): 128 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct PostUniform {
+    /// Unjittered clip to world space.
+    pub inverse_view_projection: [[f32; 4]; 4],
+    /// The eye; w: depth-buffer pixels per world unit at distance 1.
+    pub eye: [f32; 4],
+    /// Scene target size in pixels, and its inverse.
+    pub size: [f32; 4],
+    /// Radius, strength, unused and 1 when ambient occlusion runs.
+    pub occlusion: [f32; 4],
+    /// Strength and 1 when bloom runs; half-resolution texel size.
+    pub bloom: [f32; 4],
+}
 
 /// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
 pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
@@ -290,7 +398,8 @@ pub(crate) struct CandidateData {
 }
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
-/// mesh index count and local bounds (48 bytes).
+/// mesh index count, shadow draw group (decision 020) and local bounds (48
+/// bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct BatchData {
@@ -371,9 +480,11 @@ mod tests {
         );
         assert_eq!(std::mem::offset_of!(CameraUniform, position), 192);
         assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 208);
-        assert_eq!(size_of::<LightingUniform>(), 96);
+        assert_eq!(size_of::<LightingUniform>(), 112);
         assert_eq!(size_of::<InstanceData>(), 80);
         assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
+        assert_eq!(std::mem::offset_of!(InstanceData, surface), 76);
+        assert_eq!(std::mem::offset_of!(ColorData, surface), 12);
         assert_eq!(size_of::<PoseData>(), 48);
         assert_eq!(size_of::<ColorData>(), 16);
         assert_eq!(size_of::<Vertex>(), 32);
@@ -383,12 +494,20 @@ mod tests {
         let instance = RenderInstance {
             model: Mat4::from_translation(Vec3::new(2.0, 3.0, 4.0)),
             color: [0.1, 0.2, 0.3, 1.0],
+            surface: engine_core::Surface {
+                roughness: 0.2,
+                metalness: 1.0,
+                emission: 4.0,
+                ripples: 0.0,
+            },
             mesh: assets.insert_mesh(Mesh::cube()).unwrap(),
             texture: None,
         };
         let upload = InstanceData::from(&instance);
         assert_eq!(upload.model[3], [2.0, 3.0, 4.0, 1.0]);
-        assert_eq!(upload.color, instance.color);
+        assert_eq!(upload.color, [0.1, 0.2, 0.3]);
+        assert_eq!(upload.surface, 51 | 255 << 8 | 64 << 16);
+        assert_eq!(ColorData::from(&instance).surface, upload.surface);
         let affine = Mat4::from_scale_rotation_translation(
             Vec3::new(-2.0, 0.5, 3.0),
             Quat::from_rotation_y(0.7),
@@ -529,8 +648,94 @@ mod tests {
     }
 
     #[test]
+    fn lighting_carries_the_sanitized_atmosphere_and_bloom_threshold() {
+        let night = engine_core::Atmosphere::night();
+        let bloom = engine_core::Bloom {
+            intensity: 1.0,
+            threshold: 3.0,
+        };
+        let lighting = LightingUniform::new(&night, &bloom);
+        assert_eq!(lighting.sun_color[3], night.specular);
+        assert_eq!(lighting.horizon[3], night.exposure);
+        assert_eq!(lighting.effects, [night.emission, 3.0, 0.0, 0.0]);
+        let sun = glam::Vec3::from_slice(&lighting.sun[..3]);
+        assert!((sun.length() - 1.0).abs() < 1.0e-6);
+        let broken = engine_core::Atmosphere {
+            exposure: f32::NAN,
+            ..night
+        };
+        assert_eq!(
+            LightingUniform::new(&broken, &bloom),
+            LightingUniform::new(&engine_core::Atmosphere::default(), &bloom)
+        );
+    }
+
+    #[test]
+    fn surfaces_pack_as_clamped_fractions_and_nan_reads_matte() {
+        use engine_core::Surface;
+        assert_eq!(pack_surface(Surface::MATTE), 204);
+        let wild = Surface {
+            roughness: f32::NAN,
+            metalness: -3.0,
+            emission: 1000.0,
+            ripples: 0.5,
+        };
+        // NaN roughness reads as matte (0.8), metalness clamps to 0,
+        // emission to its maximum, and ripples round to the nearest step.
+        assert_eq!(pack_surface(wild), 204 | 255 << 16 | 128 << 24);
+    }
+
+    #[test]
+    fn effect_uniforms_match_wgsl() {
+        let size = |source: &str, name: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, ty) = module
+                .types
+                .iter()
+                .find(|(_, ty)| ty.name.as_deref() == Some(name))
+                .unwrap();
+            ty.inner.size(module.to_ctx()) as usize
+        };
+        assert_eq!(size(SHADER, "Shadow"), size_of::<ShadowUniform>());
+        assert_eq!(size_of::<ShadowUniform>(), 160);
+        assert_eq!(size(SHADOW_SHADER, "Cull"), size_of::<ShadowCullUniform>());
+        assert_eq!(size_of::<ShadowCullUniform>(), 656);
+        assert_eq!(size(SHADOW_SHADER, "Batch"), size_of::<BatchData>());
+        assert_eq!(size(SHADOW_SHADER, "Candidate"), size_of::<CandidateData>());
+        assert_eq!(size(SHADOW_SHADER, "DrawArgs") as u64, DRAW_ARGS_BYTES);
+        assert_eq!(size(POST_SHADER, "Post"), size_of::<PostUniform>());
+        assert_eq!(size(TEMPORAL_SHADER, "Post"), size_of::<PostUniform>());
+        assert_eq!(size_of::<PostUniform>(), 128);
+        assert_eq!(size(SHADER, "SlotColor"), size_of::<ColorData>());
+        // Selection reads the presentation flag culling writes for valid poses.
+        let bits = |source: &str, name: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, constant) = module
+                .constants
+                .iter()
+                .find(|(_, constant)| constant.name.as_deref() == Some(name))
+                .unwrap();
+            match module.global_expressions[constant.init] {
+                naga::Expression::Literal(naga::Literal::U32(value)) => value,
+                ref other => panic!("{name} is {other:?}"),
+            }
+        };
+        assert_eq!(
+            bits(SHADOW_SHADER, "VALID"),
+            bits(PRESENTATION_SHADER, "VALID")
+        );
+    }
+
+    #[test]
     fn shader_is_valid_wgsl_with_no_optional_capabilities() {
-        for source in [SHADER, PRESENTATION_SHADER, TEMPORAL_SHADER, MIPMAP_SHADER] {
+        for source in [
+            SHADER,
+            PRESENTATION_SHADER,
+            TEMPORAL_SHADER,
+            MIPMAP_SHADER,
+            SHADOW_SHADER,
+            POST_SHADER,
+        ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
@@ -544,7 +749,14 @@ mod tests {
     #[test]
     fn shader_float_literals_are_finite_f32_values() {
         // Browsers reject decimal literals beyond f32::MAX that naga rounds.
-        for source in [SHADER, PRESENTATION_SHADER, TEMPORAL_SHADER, MIPMAP_SHADER] {
+        for source in [
+            SHADER,
+            PRESENTATION_SHADER,
+            TEMPORAL_SHADER,
+            MIPMAP_SHADER,
+            SHADOW_SHADER,
+            POST_SHADER,
+        ] {
             let bytes = source.as_bytes();
             let mut index = 0;
             while index < bytes.len() {
@@ -663,6 +875,7 @@ mod tests {
         };
         assert_eq!(size(SHADER, "Camera"), size_of::<CameraUniform>());
         assert_eq!(size(SHADER, "Lighting"), size_of::<LightingUniform>());
+        assert_eq!(size(SHADOW_SHADER, "Rows"), size_of::<PoseData>());
         assert_eq!(
             size(TEMPORAL_SHADER, "Resolve"),
             size_of::<ResolveUniform>()
@@ -684,10 +897,12 @@ mod tests {
         };
         assert_eq!(bits(PRESENTATION_SHADER, "MOVED_SLOT"), MOVED_SLOT);
         assert_eq!(bits(SHADER, "MOVED_SLOT"), MOVED_SLOT);
-        let exact = CameraUniform::exact(Mat4::from_scale(glam::Vec3::splat(2.0)), glam::Vec3::X);
+        let exact =
+            CameraUniform::exact(Mat4::from_scale(glam::Vec3::splat(2.0)), glam::Vec3::X, 7.5);
         assert_eq!(exact.previous_view_projection, exact.view_projection);
         assert_eq!(exact.jitter, [0.0; 4]);
-        assert_eq!(exact.position, [1.0, 0.0, 0.0, 1.0]);
+        // Presentation time rides with the eye.
+        assert_eq!(exact.position, [1.0, 0.0, 0.0, 7.5]);
         assert_eq!(
             Mat4::from_cols_array_2d(&exact.inverse_view_projection),
             Mat4::from_scale(glam::Vec3::splat(0.5))
@@ -700,8 +915,15 @@ mod tests {
         let view_projection = camera.view_projection(1.5);
         let previous = view_projection * Mat4::from_translation(Vec3::X);
         let jitter = jitter_clip([0.25, -0.5], 200, 100);
-        let temporal =
-            CameraUniform::temporal(view_projection, camera.position, previous, jitter, 200, 100);
+        let temporal = CameraUniform::temporal(
+            view_projection,
+            camera.position,
+            0.0,
+            previous,
+            jitter,
+            200,
+            100,
+        );
         let rasterized = Mat4::from_cols_array_2d(&temporal.view_projection);
         for point in [Vec3::ZERO, Vec3::new(1.0, -2.0, -8.0)] {
             let clip = view_projection * point.extend(1.0);

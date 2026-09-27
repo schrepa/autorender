@@ -1,0 +1,246 @@
+//! Placement of the sun's shadow maps (decision 020), independent of GPU
+//! objects: the light-space basis, the regions each map covers and their
+//! orthographic projections.
+
+use engine_core::{
+    glam::{Mat4, Vec3, Vec4},
+    math,
+};
+
+/// World to light space: x and y across the sun's view, z away from the sun.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LightBasis {
+    pub rows: [Vec3; 3],
+}
+
+impl LightBasis {
+    /// The basis of a sun in (nonzero, finite) direction `toward_sun`.
+    pub(crate) fn new(toward_sun: Vec3) -> Self {
+        let away = -toward_sun.normalize();
+        let reference = if away.y.abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        let right = away.cross(reference).normalize();
+        let up = right.cross(away);
+        Self {
+            rows: [right, up, away],
+        }
+    }
+
+    pub(crate) fn apply(&self, point: Vec3) -> Vec3 {
+        Vec3::new(
+            self.rows[0].dot(point),
+            self.rows[1].dot(point),
+            self.rows[2].dot(point),
+        )
+    }
+
+    /// Light-space bounds of the box `min`..`max`.
+    pub(crate) fn bounds(&self, min: Vec3, max: Vec3) -> (Vec3, Vec3) {
+        let center = self.apply((min + max) * 0.5);
+        let half = (max - min) * 0.5;
+        let extent = Vec3::new(
+            self.rows[0].abs().dot(half),
+            self.rows[1].abs().dot(half),
+            self.rows[2].abs().dot(half),
+        );
+        (center - extent, center + extent)
+    }
+}
+
+/// A light-space region a shadow map covers: a rectangle across the sun's
+/// view and the depths of its receivers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MapRegion {
+    /// Minimum x and y, maximum x and y.
+    pub rect: [f32; 4],
+    /// Nearest and farthest receiver depth from the sun.
+    pub depth: [f32; 2],
+}
+
+impl MapRegion {
+    /// World to this map's clip space: x and y span [-1, 1] across the
+    /// rectangle and z spans [0, 1] over the receiver depths.
+    pub(crate) fn clip(&self, basis: &LightBasis) -> Mat4 {
+        let [x0, y0, x1, y1] = self.rect;
+        let [z0, z1] = self.depth;
+        let sx = 2.0 / (x1 - x0);
+        let sy = 2.0 / (y1 - y0);
+        let sz = 1.0 / (z1 - z0);
+        let row = |axis: Vec3, scale: f32, offset: f32| (axis * scale).extend(-offset * scale);
+        Mat4::from_cols(
+            row(basis.rows[0], sx, (x0 + x1) * 0.5),
+            row(basis.rows[1], sy, (y0 + y1) * 0.5),
+            row(basis.rows[2], sz, z0),
+            Vec4::W,
+        )
+        .transpose()
+    }
+
+    /// World size of one of `texels` texels across the larger side.
+    pub(crate) fn texel(&self, texels: u32) -> f32 {
+        let [x0, y0, x1, y1] = self.rect;
+        math::max(x1 - x0, y1 - y0) / texels as f32
+    }
+
+    /// The region of the box `min`..`max`, widened by `margin` texels of a
+    /// `texels`-wide map so filtering never reads past its casters.
+    pub(crate) fn of_box(
+        basis: &LightBasis,
+        min: Vec3,
+        max: Vec3,
+        texels: u32,
+        margin: f32,
+    ) -> Self {
+        let (low, high) = basis.bounds(min, max);
+        let pad = math::max(high.x - low.x, high.y - low.y) / texels as f32 * margin;
+        Self {
+            rect: [low.x - pad, low.y - pad, high.x + pad, high.y + pad],
+            depth: [low.z - pad, high.z + pad],
+        }
+    }
+
+    /// The region of the sphere at `center` with `radius`, its rectangle
+    /// moved in whole texels of a `texels`-wide map so the map's texels keep
+    /// their world positions as the sphere moves.
+    pub(crate) fn of_sphere(basis: &LightBasis, center: Vec3, radius: f32, texels: u32) -> Self {
+        let center = basis.apply(center);
+        let texel = 2.0 * radius / texels as f32;
+        let x = (center.x / texel).round() * texel;
+        let y = (center.y / texel).round() * texel;
+        Self {
+            rect: [x - radius, y - radius, x + radius, y + radius],
+            depth: [center.z - radius, center.z + radius],
+        }
+    }
+}
+
+/// The smallest sphere around the part of the view frustum of
+/// `view_projection` (looking from `eye`) within view depth `reach`: the
+/// region the near shadow map covers. `None` for an unusable projection.
+pub(crate) fn view_sphere(view_projection: Mat4, eye: Vec3, reach: f32) -> Option<(Vec3, f32)> {
+    let inverse = view_projection.inverse();
+    let unproject = |x: f32, y: f32, z: f32| {
+        let point = inverse * Vec4::new(x, y, z, 1.0);
+        point.truncate() / point.w
+    };
+    let near_center = unproject(0.0, 0.0, 0.0);
+    let far_center = unproject(0.0, 0.0, 1.0);
+    let direction = (far_center - near_center).try_normalize()?;
+    let far_depth = (far_center - eye).dot(direction);
+    let near_depth = math::max((near_center - eye).dot(direction), 0.0);
+    // Tangent of the half-diagonal angle of the view.
+    let slope = (unproject(1.0, 1.0, 1.0) - far_center).length() / far_depth;
+    let far = math::min(reach, far_depth);
+    if !(slope.is_finite() && far > near_depth) {
+        return None;
+    }
+    // Equidistant from the slice's near and far corners, or at its far
+    // plane when wider views put that center beyond it.
+    let offset = math::min((far + near_depth) * (1.0 + slope * slope) * 0.5, far);
+    let radius = ((far - offset) * (far - offset) + far * far * slope * slope).sqrt();
+    let center = eye + direction * offset;
+    (center.is_finite() && radius.is_finite()).then_some((center, radius))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine_core::Camera;
+
+    #[test]
+    fn light_space_is_orthonormal_and_looks_away_from_the_sun() {
+        for sun in [
+            Vec3::new(0.82, 0.3, 0.1),
+            Vec3::Y,
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(-0.35, 0.6, -0.45),
+        ] {
+            let basis = LightBasis::new(sun);
+            let [x, y, z] = basis.rows;
+            for (a, b) in [(x, y), (y, z), (z, x)] {
+                assert!(a.dot(b).abs() < 1.0e-6);
+            }
+            for axis in basis.rows {
+                assert!((axis.length() - 1.0).abs() < 1.0e-6);
+            }
+            assert!(z.dot(sun.normalize()) < -0.999);
+        }
+    }
+
+    #[test]
+    fn map_clip_spans_the_region_and_receiver_depths() {
+        let basis = LightBasis::new(Vec3::new(0.5, 0.8, 0.2));
+        let region = MapRegion::of_box(&basis, Vec3::splat(-20.0), Vec3::splat(20.0), 1024, 0.0);
+        let clip = region.clip(&basis);
+        let [x0, y0, x1, y1] = region.rect;
+        let world =
+            |x: f32, y: f32, z: f32| basis.rows[0] * x + basis.rows[1] * y + basis.rows[2] * z;
+        let low = clip * world(x0, y0, region.depth[0]).extend(1.0);
+        let high = clip * world(x1, y1, region.depth[1]).extend(1.0);
+        assert!(
+            low.abs_diff_eq(Vec4::new(-1.0, -1.0, 0.0, 1.0), 1.0e-4),
+            "{low}"
+        );
+        assert!(
+            high.abs_diff_eq(Vec4::new(1.0, 1.0, 1.0, 1.0), 1.0e-4),
+            "{high}"
+        );
+        // Every corner of the box lands inside the map.
+        for corner in 0..8 {
+            let point = Vec3::new(
+                if corner & 1 == 0 { -20.0 } else { 20.0 },
+                if corner & 2 == 0 { -20.0 } else { 20.0 },
+                if corner & 4 == 0 { -20.0 } else { 20.0 },
+            );
+            let p = clip * point.extend(1.0);
+            assert!(p.x.abs() <= 1.0001 && p.y.abs() <= 1.0001, "{p}");
+            assert!((-1.0e-4..=1.0001).contains(&p.z), "{p}");
+        }
+    }
+
+    #[test]
+    fn sphere_regions_keep_texels_in_place_as_they_move() {
+        let basis = LightBasis::new(Vec3::new(0.3, 0.9, 0.1));
+        let a = MapRegion::of_sphere(&basis, Vec3::new(1.0, 2.0, 3.0), 50.0, 1000);
+        let b = MapRegion::of_sphere(&basis, Vec3::new(1.37, 2.0, 3.21), 50.0, 1000);
+        let texel = 0.1;
+        for (a, b) in a.rect.iter().zip(b.rect) {
+            let shift = (b - a) / texel;
+            assert!((shift - shift.round()).abs() < 1.0e-2, "{shift}");
+        }
+    }
+
+    #[test]
+    fn view_sphere_holds_the_near_view_slice() {
+        let camera = Camera {
+            position: Vec3::new(4.0, 30.0, 9.0),
+            target: Vec3::new(40.0, 0.0, -60.0),
+            ..Camera::default()
+        };
+        let aspect = 2262.0 / 987.0;
+        let view_projection = camera.view_projection(aspect);
+        let (center, radius) = view_sphere(view_projection, camera.position, 100.0).unwrap();
+        let inverse = view_projection.inverse();
+        let direction = (camera.target - camera.position).normalize();
+        for corner in 0..4 {
+            let x = if corner & 1 == 0 { -1.0 } else { 1.0 };
+            let y = if corner & 2 == 0 { -1.0 } else { 1.0 };
+            let far = inverse * Vec4::new(x, y, 1.0, 1.0);
+            let ray = (far.truncate() / far.w - camera.position).normalize();
+            for depth in [camera.near, 100.0] {
+                let point = camera.position + ray * (depth / ray.dot(direction));
+                assert!(point.distance(center) <= radius * 1.0001);
+            }
+        }
+        // A wide view's slice spans its far corners: 1.3 times the reach.
+        assert!(radius < 100.0 * 1.35 && radius > 50.0, "{radius}");
+        assert!(view_sphere(Mat4::ZERO, Vec3::ZERO, 10.0).is_none());
+        // A texel of a 1024-wide map of this sphere.
+        let basis = LightBasis::new(Vec3::Y);
+        let region = MapRegion::of_sphere(&basis, center, radius, 1024);
+        assert!((region.texel(1024) - 2.0 * radius / 1024.0).abs() < 1.0e-4);
+    }
+}

@@ -1,6 +1,6 @@
 # Generated authoring schemas
 
-`scene-v4.schema.json` is generated from the versioned Rust types in
+`scene-v5.schema.json` is generated from the versioned Rust types in
 `engine_scene`, using its host-only `schema` feature. Regenerate deliberately:
 
 ```sh
@@ -16,6 +16,17 @@ collection limits. Runtime validation additionally checks unique IDs, references
 geometry, numeric invariants and authoring bounds. Use `cargo xtask assets` for
 the same validation used by the browser scene loader. Schemas do not encode or
 persist runtime entity IDs or asset handles.
+
+Version 5 adds an optional material `surface`: roughness, metalness,
+emission and ripples, matte when omitted
+([decision 019](../adr-019-surface-materials-and-reflections.md)). Authored
+textures stay opaque, so a textured material emits over its whole surface.
+It also adds an optional `environment`: an `atmosphere` preset with
+overrides, `shadows`, `ambient_occlusion` and `bloom`
+([decision 022](../adr-022-scene-environments-and-agent-controls.md)). A
+document with an environment sets all four on instantiation, omitted
+sections taking the defaults; one without leaves the look to the game.
+Versions 1–4 keep their meaning and schema artifacts.
 
 Version 4 adds optional authored cuboid/sphere colliders, sensor flags and
 unsigned membership/filter masks independent of rendering. Local shape bounds

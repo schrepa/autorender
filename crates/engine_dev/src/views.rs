@@ -108,9 +108,23 @@ pub struct Mesh3dView {
     pub indices: Option<usize>,
     pub local_bounds: Option<MeshBoundsView>,
     pub color: Option<[f32; 4]>,
+    /// The material's response to light (decision 019).
+    pub surface: Option<SurfaceView>,
     /// None denotes an untextured material; false denotes a missing dependency.
     pub texture_alive: Option<bool>,
     pub texture_dimensions: Option<[u32; 2]>,
+    /// Whether the texture's alpha limits emission to some texels.
+    pub texture_emission_mask: Option<bool>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct SurfaceView {
+    pub roughness: f32,
+    pub metalness: f32,
+    /// Emitted light as a multiple of the surface color, masked by texture alpha.
+    pub emission: f32,
+    pub ripples: f32,
 }
 
 #[derive(Serialize)]

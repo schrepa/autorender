@@ -35,8 +35,9 @@ pub struct SceneEntity {
 /// Dropping this value does not mutate the world. Call [`Self::despawn`] at an
 /// explicit scene disposal boundary. Handles copied into outside entities are
 /// weak and become invalid after disposal; old extracted snapshots may retain
-/// immutable CPU geometry until they are released. The global camera is not
-/// restored during disposal, allowing a new scene to be staged first.
+/// immutable CPU geometry until they are released. The global camera and
+/// environment are not restored during disposal, allowing a new scene to be
+/// staged first.
 #[derive(Debug)]
 #[must_use = "retain the instance and explicitly despawn it when the scene is disposed"]
 pub struct SceneInstance {
@@ -114,8 +115,10 @@ impl SceneDocument {
     ///
     /// The caller must install an [`AssetLibrary`]. CPU assets are validated
     /// before insertion; a budget failure rolls back all inserted assets and
-    /// leaves existing entities and the camera unchanged. Success sets the
-    /// world's camera to this document's camera. There are no GPU uploads here.
+    /// leaves existing entities, the camera and the environment unchanged.
+    /// Success sets the world's camera to this document's camera and, when the
+    /// document has an environment, its atmosphere and effect resources.
+    /// There are no GPU uploads here.
     ///
     /// For transactional reload, instantiate a replacement before disposing of
     /// the previous instance. Budgets must allow both instances to coexist.
@@ -167,6 +170,7 @@ impl SceneDocument {
             for (index, material) in prepared.materials.into_iter().enumerate() {
                 let material = match &self.materials[index].texture {
                     Some(id) => Material::textured(material.color(), texture_lookup[id.as_str()])
+                        .and_then(|textured| textured.with_surface(material.surface()))
                         .expect("prepared opaque material remains valid with a texture"),
                     None => material,
                 };
@@ -254,6 +258,9 @@ impl SceneDocument {
         }
         propagate_transforms(world);
         world.insert_resource(self.camera.camera());
+        if let Some(environment) = prepared.environment {
+            environment.apply_all(world);
+        }
         Ok(SceneInstance {
             id: self.id.clone(),
             revision: self.revision,

@@ -8,8 +8,9 @@ use crate::{FrameMetrics, StressConfig, create_workload, look, set_view, stress_
 pub struct StressGame {
     app: BrowserApp,
     generation: u32,
-    // The lighting preset, kept across workload changes.
+    // The lighting preset and effect selection, kept across workload changes.
     look: String,
+    effects: String,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -27,6 +28,7 @@ impl StressGame {
             app: BrowserApp::new(canvas, engine).await?,
             generation: 1,
             look: "scene".into(),
+            effects: "all".into(),
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -40,7 +42,39 @@ impl StressGame {
         self.app.engine = engine;
         self.generation = self.generation.saturating_add(1);
         self.set_look(&self.look.clone())?;
+        self.set_effects(&self.effects.clone())?;
         self.suspend();
+        Ok(())
+    }
+
+    /// Rendering effects: `all`, `none`, or all but one with `no-shadows`,
+    /// `no-occlusion` or `no-bloom` (decisions 020 and 021).
+    pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
+        let (shadows, occlusion, bloom) = match name {
+            "all" => (true, true, true),
+            "none" => (false, false, false),
+            "no-shadows" => (false, true, true),
+            "no-occlusion" => (true, false, true),
+            "no-bloom" => (true, true, false),
+            _ => {
+                return Err(js_error(
+                    "effects must be all, none, no-shadows, no-occlusion or no-bloom".into(),
+                ));
+            }
+        };
+        let world = self.app.engine.app.world_mut();
+        world.resource_mut::<Shadows>().enabled = shadows;
+        world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
+            AmbientOcclusion::default().intensity
+        } else {
+            0.0
+        };
+        world.resource_mut::<Bloom>().intensity = if bloom {
+            Bloom::default().intensity
+        } else {
+            0.0
+        };
+        self.effects = name.into();
         Ok(())
     }
 

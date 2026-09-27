@@ -7,6 +7,7 @@
 mod atmosphere;
 mod clock;
 mod culling;
+mod effects;
 mod hierarchy;
 mod input;
 mod interpolation;
@@ -21,9 +22,10 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
+pub use effects::{AmbientOcclusion, Bloom, Shadows};
 pub use engine_assets::{
     Aabb, AssetBudget, AssetError, AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle,
-    MeshVertex, Texture, TextureHandle,
+    MeshVertex, Surface, Texture, TextureHandle,
 };
 pub use glam;
 pub use hierarchy::{
@@ -197,6 +199,9 @@ impl Engine {
             .init_resource::<FrameTime>()
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
+            .init_resource::<Shadows>()
+            .init_resource::<AmbientOcclusion>()
+            .init_resource::<Bloom>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -560,8 +565,7 @@ impl Engine {
         interpolation::prepare(self.app.world_mut(), mode);
         let world = self.app.world();
         snapshot.view_projection = world.resource::<Camera>().view_projection(aspect);
-        snapshot.camera_position = world.resource::<Camera>().eye();
-        snapshot.atmosphere = atmosphere::current(world);
+        effects::extract_lighting(world, snapshot);
         snapshot.instances.clear();
         snapshot.meshes.clear();
         snapshot.textures.clear();
@@ -599,14 +603,19 @@ impl Engine {
                 snapshot.invalid_transforms += 1;
                 continue;
             };
-            let (handle, color, texture_handle) = if let Some(mesh3d) = mesh3d {
+            let (handle, color, texture_handle, surface) = if let Some(mesh3d) = mesh3d {
                 let Some(material) = assets.material(mesh3d.material) else {
                     snapshot.missing_assets += 1;
                     continue;
                 };
-                (mesh3d.mesh, material.color(), material.texture())
+                (
+                    mesh3d.mesh,
+                    material.color(),
+                    material.texture(),
+                    material.surface(),
+                )
             } else if let Some(cube) = cube {
-                (self.cube_mesh, cube.color, None)
+                (self.cube_mesh, cube.color, None, Surface::MATTE)
             } else {
                 continue;
             };
@@ -653,6 +662,7 @@ impl Engine {
                     texture: texture_handle,
                     model,
                     color,
+                    surface,
                 });
             }
         }
@@ -787,15 +797,16 @@ pub mod prelude {
     pub use crate::DevStepError;
     pub use crate::math;
     pub use crate::{
-        Aabb, App, AssetBudget, AssetError, AssetLibrary, Atmosphere, Camera, Cube, Engine,
-        EngineConfig, FixedSimulation, FixedTime, FrameReport, FrameTime, GlobalTransform,
-        GlobalTransforms, HierarchyError, HierarchyReport, InputState, InterpolateTransform,
-        InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Material, MaterialHandle,
-        Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin, Presentation, PresentationMode,
-        PresentationState, PresentedTransform, PresentedTransforms, RenderFrame, RenderInstance,
-        RenderMesh, RenderSnapshot, RenderTexture, Texture, TextureHandle, Transform,
-        TransformIndex, TransformPropagation, propagate_transforms, reset_all_interpolation,
-        reset_interpolation, set_parent, set_parents, valid_global_matrix,
+        Aabb, AmbientOcclusion, App, AssetBudget, AssetError, AssetLibrary, Atmosphere, Bloom,
+        Camera, Cube, Engine, EngineConfig, FixedSimulation, FixedTime, FrameReport, FrameTime,
+        GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, InputState,
+        InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES,
+        Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin,
+        Presentation, PresentationMode, PresentationState, PresentedTransform, PresentedTransforms,
+        RenderFrame, RenderInstance, RenderMesh, RenderSnapshot, RenderTexture, Shadows, Surface,
+        Texture, TextureHandle, Transform, TransformIndex, TransformPropagation,
+        propagate_transforms, reset_all_interpolation, reset_interpolation, set_parent,
+        set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};

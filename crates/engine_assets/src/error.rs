@@ -25,6 +25,9 @@ pub enum AssetError {
         channel: usize,
     },
     UnsupportedAlpha,
+    InvalidSurface {
+        field: &'static str,
+    },
     InvalidTextureDimensions {
         width: u32,
         height: u32,
@@ -65,6 +68,7 @@ impl AssetError {
             Self::IndexOutOfBounds { .. } => "asset.index_out_of_bounds",
             Self::InvalidColor { .. } => "asset.invalid_color",
             Self::UnsupportedAlpha => "asset.unsupported_alpha",
+            Self::InvalidSurface { .. } => "asset.invalid_surface",
             Self::InvalidTextureDimensions { .. } => "asset.invalid_texture_dimensions",
             Self::InvalidTextureLength { .. } => "asset.invalid_texture_length",
             Self::UnsupportedTextureAlpha { .. } => "asset.unsupported_texture_alpha",
@@ -107,6 +111,10 @@ impl fmt::Display for AssetError {
                 "material color channel {channel} must be finite and in [0, 1]"
             ),
             Self::UnsupportedAlpha => write!(f, "opaque material alpha must equal 1"),
+            Self::InvalidSurface { field } => write!(
+                f,
+                "material surface {field} must be finite and within its documented range"
+            ),
             Self::InvalidTextureDimensions {
                 width,
                 height,

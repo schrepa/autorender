@@ -825,6 +825,146 @@ fn control_schema_matches_typed_defaults_and_rejects_unknown_fields() {
 }
 
 #[test]
+fn environment_projections_share_scene_sections_and_surfaces_are_inspectable() {
+    use engine_core::{AmbientOcclusion, Atmosphere, Bloom, Shadows};
+    let tools = DevTools::default();
+    let mut engine = Engine::default();
+    // Discovery lists every environment resource and the combined look.
+    let listing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe"}),
+    );
+    let names: Vec<&str> = listing["result"]["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    for name in [
+        "Atmosphere",
+        "Shadows",
+        "AmbientOcclusion",
+        "Bloom",
+        "Environment",
+    ] {
+        assert!(names.contains(&name), "{name}");
+    }
+    let scene_entry = listing["result"]["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "SceneDocument")
+        .unwrap();
+    assert_eq!(scene_entry["source"], "docs/schema/scene-v5.schema.json");
+    let described = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe","name":"Shadows"}),
+    );
+    assert_eq!(
+        described["result"]["descriptor"]["schema"]["properties"]["resolution"]["maximum"],
+        4096
+    );
+
+    // Resources read in scene-section shape; the combined view resolves back.
+    engine.app.world_mut().insert_resource(Atmosphere::night());
+    let atmosphere = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Atmosphere"}),
+    );
+    let section: engine_scene::SceneAtmosphere =
+        serde_json::from_value(atmosphere["result"]["value"].clone()).unwrap();
+    assert_eq!(section.resolve("$").unwrap(), Atmosphere::night());
+    engine.app.world_mut().remove_resource::<Bloom>();
+    let environment = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Environment"}),
+    );
+    let look: engine_scene::SceneEnvironment =
+        serde_json::from_value(environment["result"]["value"].clone()).unwrap();
+    let resolved = look.resolve("$.environment").unwrap();
+    assert_eq!(resolved.atmosphere, Some(Atmosphere::night()));
+    assert_eq!(resolved.shadows, Some(Shadows::default()));
+    assert_eq!(
+        resolved.ambient_occlusion,
+        Some(AmbientOcclusion::default())
+    );
+    assert!(
+        !resolved.bloom.unwrap().enabled(),
+        "a missing effect reads as off"
+    );
+    // A missing resource is reported, not invented.
+    let missing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Bloom"}),
+    );
+    assert_eq!(missing["ok"], false);
+
+    // The environment control accepts the same sections and rejects typos.
+    let control: crate::BrowserControl = serde_json::from_value(json!({
+        "version":1,"op":"environment",
+        "atmosphere":{"preset":"dusk"},"shadows":{"enabled":false}
+    }))
+    .unwrap();
+    assert!(matches!(
+        control,
+        crate::BrowserControl::Environment {
+            shadows: Some(engine_scene::SceneShadows { enabled: false, .. }),
+            bloom: None,
+            ..
+        }
+    ));
+    assert!(
+        serde_json::from_value::<crate::BrowserControl>(
+            json!({"version":1,"op":"environment","shadow":{"enabled":false}})
+        )
+        .is_err()
+    );
+    let description = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe","name":"BrowserControl"}),
+    );
+    assert!(
+        description["result"]["schema"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["properties"]["op"]["const"] == "environment")
+    );
+
+    // Mesh3d reports the material surface and whether its texture masks emission.
+    let mut source: Value = serde_json::from_str(SOURCE).unwrap();
+    source["version"] = json!(5);
+    source["materials"][0]["surface"] = json!({"roughness": 0.2, "emission": 3.0});
+    let scene = SceneDocument::from_json(&source.to_string())
+        .unwrap()
+        .instantiate(engine.app.world_mut())
+        .unwrap();
+    let mesh = execute(
+        &tools,
+        &mut engine,
+        Some(&scene),
+        json!({"version":1,"op":"inspect","entity":"player","component":"Mesh3d"}),
+    );
+    let view = &mesh["result"]["entity"]["components"]["Mesh3d"];
+    assert!((view["surface"]["roughness"].as_f64().unwrap() - 0.2).abs() < 1.0e-6);
+    assert_eq!(view["surface"]["emission"], 3.0);
+    assert_eq!(view["texture_emission_mask"], Value::Null);
+    scene.despawn(engine.app.world_mut());
+}
+
+#[test]
 fn rejects_scene_from_another_world_and_observes_missing_asset_readiness() {
     let mut first = Engine::default();
     let scene = SceneDocument::from_json(SOURCE)

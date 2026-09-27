@@ -46,18 +46,25 @@ use one reusable staging vector, with one contiguous
 draw range per mesh/texture pair. Material colors are per-instance data, so color variations share a
 draw. Instances are opaque, with depth testing and back-face culling, lit by
 the snapshot's `Atmosphere` ([decision 018](../../docs/adr-018-atmosphere-and-stylized-lighting.md)):
-sky-colored ambient light, a wrapped sun with a highlight, a rim light on walls,
-height fog in the color of the sky haze, filmic tone mapping and saturation,
-and a sky pass over uncovered pixels. The atmosphere uploads as a 96-byte
-uniform only when it changes. Inputs use right-handed world coordinates,
+sky-colored ambient light, a wrapped sun, a rim light on walls, height fog in
+the color of the sky haze, filmic tone mapping and saturation, and a sky pass
+over uncovered pixels. The atmosphere uploads as a 112-byte uniform only when
+it changes. Each slot's color record packs its `Surface`
+([decision 019](../../docs/adr-019-surface-materials-and-reflections.md)): GGX
+sun highlights, sky reflections by roughness and metalness, emission masked by
+texture alpha, and rippling normals; base colors sample 16x anisotropically.
+Sun shadows ([decision 020](../../docs/adr-020-sun-shadows.md)) come from three
+16-bit maps whose casters a compute pass selects from every candidate, and
+ambient occlusion and bloom ([decision 021](../../docs/adr-021-ambient-occlusion-and-bloom.md))
+run on the scene and glow targets, applied by the temporal resolve or a
+composite pass. Inputs use right-handed world coordinates,
 a WebGPU 0..1 depth projection, linear RGB colors, and finite, nonsingular model
 transforms with positive determinant. Shader cofactors preserve normals under
 nonuniform positive scale. These transform requirements are client obligations;
 the renderer validates source references, budgets, and camera finiteness rather
 than adding another per-instance transform-validation pass. Core performs
-conservative frustum culling before extraction. Transparency,
-shadows and render extension hooks remain
-future work.
+conservative frustum culling before extraction. Transparency, shadows of
+other lights and render extension hooks remain future work.
 
 Engine frames guarantee affine transforms and use three four-float rows in a
 48-byte storage pose buffer plus a separate 16-byte storage color buffer. Both

@@ -193,11 +193,65 @@ impl Mesh {
     }
 }
 
-/// An opaque linear RGBA factor with an optional weak sRGB texture reference.
+/// How a surface responds to light beyond its color (decision 019).
+///
+/// [`Material::with_surface`] validates the ranges. Renderers quantize each
+/// value to 8 bits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Surface {
+    /// Microsurface roughness in `[0, 1]`: 0 is a mirror, 1 spreads highlights
+    /// and sky reflections widest.
+    pub roughness: f32,
+    /// In `[0, 1]`: metals reflect in their own color and diffuse no light.
+    pub metalness: f32,
+    /// Emitted light as a multiple of the surface color, in
+    /// `[0, Surface::MAX_EMISSION]`. Texture alpha masks it per texel.
+    pub emission: f32,
+    /// Animated ripples of liquid surfaces in `[0, 1]`: wave normals that move
+    /// with presentation time. 0 keeps the mesh normals.
+    pub ripples: f32,
+}
+
+impl Surface {
+    /// Broad, dim highlights and no emission: the default.
+    pub const MATTE: Self = Self {
+        roughness: 0.8,
+        metalness: 0.0,
+        emission: 0.0,
+        ripples: 0.0,
+    };
+
+    /// The largest accepted emission multiple.
+    pub const MAX_EMISSION: f32 = 16.0;
+
+    fn validate(&self) -> Result<(), AssetError> {
+        for (field, value, max) in [
+            ("roughness", self.roughness, 1.0),
+            ("metalness", self.metalness, 1.0),
+            ("emission", self.emission, Self::MAX_EMISSION),
+            ("ripples", self.ripples, 1.0),
+        ] {
+            if !value.is_finite() || !(0.0..=max).contains(&value) {
+                return Err(AssetError::InvalidSurface { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for Surface {
+    fn default() -> Self {
+        Self::MATTE
+    }
+}
+
+/// An opaque linear RGBA factor with an optional weak sRGB texture reference
+/// and a [`Surface`] response.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     color: [f32; 4],
     texture: Option<TextureHandle>,
+    surface: Surface,
 }
 
 impl Material {
@@ -213,7 +267,15 @@ impl Material {
         Ok(Self {
             color,
             texture: None,
+            surface: Surface::MATTE,
         })
+    }
+
+    /// This material with `surface`, whose values must lie in their ranges.
+    pub fn with_surface(mut self, surface: Surface) -> Result<Self, AssetError> {
+        surface.validate()?;
+        self.surface = surface;
+        Ok(self)
     }
 
     /// Multiplies an opaque texture's decoded linear color by this color factor.
@@ -230,5 +292,9 @@ impl Material {
 
     pub fn texture(&self) -> Option<TextureHandle> {
         self.texture
+    }
+
+    pub fn surface(&self) -> Surface {
+        self.surface
     }
 }

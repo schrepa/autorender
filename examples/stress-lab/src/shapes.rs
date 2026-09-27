@@ -1209,7 +1209,8 @@ impl Shape {
     }
 }
 
-/// Procedural textures; building façades are 64x256 with a roof band.
+/// Procedural textures; building façades are 64x256 with a roof band. Alpha
+/// masks emission (decision 019): lit windows, neon and lamp heads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tex {
     Office,
@@ -1226,10 +1227,11 @@ pub(crate) enum Tex {
     Foliage,
     Tiles,
     Neon,
+    Lamp,
 }
 
 impl Tex {
-    const ALL: [Tex; 14] = [
+    const ALL: [Tex; 15] = [
         Tex::Office,
         Tex::Glass,
         Tex::Residential,
@@ -1244,7 +1246,35 @@ impl Tex {
         Tex::Foliage,
         Tex::Tiles,
         Tex::Neon,
+        Tex::Lamp,
     ];
+
+    /// How the surface responds to light (decision 019): glass and metal
+    /// reflect the sky, water ripples, and lit windows, neon and lamp heads
+    /// emit where the texture's alpha lets them.
+    pub(crate) fn surface(self) -> Surface {
+        let surface = |roughness, metalness, emission, ripples| Surface {
+            roughness,
+            metalness,
+            emission,
+            ripples,
+        };
+        match self {
+            Tex::Office => surface(0.6, 0.0, 2.5, 0.0),
+            Tex::Glass => surface(0.12, 0.6, 2.0, 0.0),
+            Tex::Residential => surface(0.8, 0.0, 2.0, 0.0),
+            Tex::Industrial => surface(0.7, 0.2, 1.5, 0.0),
+            Tex::Road | Tex::Crossing => surface(0.85, 0.0, 0.0, 0.0),
+            Tex::Paving => surface(0.8, 0.0, 0.0, 0.0),
+            Tex::Tiles => surface(0.6, 0.0, 0.0, 0.0),
+            Tex::Grass | Tex::Foliage => surface(0.95, 0.0, 0.0, 0.0),
+            Tex::Water => surface(0.05, 0.0, 0.0, 1.0),
+            Tex::Metal => surface(0.45, 0.5, 0.0, 0.0),
+            Tex::Vehicle => surface(0.3, 0.5, 0.0, 0.0),
+            Tex::Neon => surface(0.4, 0.0, 3.0, 0.0),
+            Tex::Lamp => surface(0.5, 0.6, 6.0, 0.0),
+        }
+    }
 
     fn build(self) -> Result<Texture, String> {
         let facade = matches!(
@@ -1257,51 +1287,92 @@ impl Tex {
         for y in 0..height {
             for x in 0..width {
                 let noise = (hash(seed ^ (y as u32 * 64 + x as u32)) % 24) as i32 - 12;
-                let rgb = self.texel(x, y, noise, seed);
-                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+                let (rgb, emits) = self.texel(x, y, noise, seed);
+                pixels.extend_from_slice(&[rgb[0], rgb[1], rgb[2], if emits { 255 } else { 0 }]);
             }
         }
-        Texture::new(width as u32, height as u32, pixels).map_err(|error| error.to_string())
+        Texture::with_emission_mask(width as u32, height as u32, pixels)
+            .map_err(|error| error.to_string())
     }
 
-    fn texel(self, x: usize, y: usize, noise: i32, seed: u32) -> [u8; 3] {
+    /// A texel's color and whether it emits.
+    fn texel(self, x: usize, y: usize, noise: i32, seed: u32) -> ([u8; 3], bool) {
+        let shade = |value: i32| (value + noise).clamp(0, 255) as u8;
+        let gray = |value: i32| [shade(value); 3];
+        let color = match self {
+            Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial => {
+                return self.facade(x, y, noise, seed);
+            }
+            Tex::Neon => {
+                let band = (x / 8 + y / 8) % 3;
+                return (
+                    gray(match band {
+                        0 => 255,
+                        1 => 190,
+                        _ => 120,
+                    }),
+                    true,
+                );
+            }
+            // The lamp head's texture rows (the shapes' window band) glow
+            // warm white; the rest is dark painted metal.
+            Tex::Lamp => {
+                return if (6..32).contains(&y) {
+                    ([shade(255), shade(232), shade(176)], true)
+                } else {
+                    (gray(70), false)
+                };
+            }
+            _ => self.plain(x, y, noise, seed),
+        };
+        (color, false)
+    }
+
+    /// Façade texels: windows, some lit, between walls, under a roof band.
+    fn facade(self, x: usize, y: usize, noise: i32, seed: u32) -> ([u8; 3], bool) {
         let shade = |value: i32| (value + noise).clamp(0, 255) as u8;
         let gray = |value: i32| [shade(value); 3];
         let lit = |cell: u32| hash(seed ^ cell.wrapping_mul(0x2c1b_3c6d)) % 100;
+        if y >= 240 {
+            return (gray(128), false);
+        }
+        let (cx, cy) = (x % 8, y % 8);
+        let cell = (y / 8 * 8 + x / 8) as u32;
+        let window = match self {
+            Tex::Office => (1..7).contains(&cx) && (1..6).contains(&cy),
+            Tex::Glass => cx != 0 && cy != 0,
+            Tex::Residential => (2..6).contains(&cx) && (2..6).contains(&cy),
+            _ => (1..7).contains(&cx) && cy == 3,
+        };
+        if !window {
+            return (
+                gray(match self {
+                    Tex::Glass => 110,
+                    Tex::Residential => 205,
+                    Tex::Industrial => 160,
+                    _ => 175,
+                }),
+                false,
+            );
+        }
+        let lit_share = match self {
+            Tex::Glass => 18,
+            Tex::Residential => 30,
+            _ => 35,
+        };
+        if lit(cell) < lit_share {
+            ([shade(255), shade(236), shade(190)], true)
+        } else if self == Tex::Glass {
+            (gray(62 + (y % 8) as i32 * 4), false)
+        } else {
+            (gray(48), false)
+        }
+    }
+
+    fn plain(self, x: usize, y: usize, noise: i32, seed: u32) -> [u8; 3] {
+        let shade = |value: i32| (value + noise).clamp(0, 255) as u8;
+        let gray = |value: i32| [shade(value); 3];
         match self {
-            Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial => {
-                if y >= 240 {
-                    return gray(128);
-                }
-                let (cx, cy) = (x % 8, y % 8);
-                let cell = (y / 8 * 8 + x / 8) as u32;
-                let window = match self {
-                    Tex::Office => (1..7).contains(&cx) && (1..6).contains(&cy),
-                    Tex::Glass => cx != 0 && cy != 0,
-                    Tex::Residential => (2..6).contains(&cx) && (2..6).contains(&cy),
-                    _ => (1..7).contains(&cx) && cy == 3,
-                };
-                if !window {
-                    return gray(match self {
-                        Tex::Glass => 110,
-                        Tex::Residential => 205,
-                        Tex::Industrial => 160,
-                        _ => 175,
-                    });
-                }
-                let lit_share = match self {
-                    Tex::Glass => 18,
-                    Tex::Residential => 30,
-                    _ => 35,
-                };
-                if lit(cell) < lit_share {
-                    [shade(255), shade(236), shade(190)]
-                } else if self == Tex::Glass {
-                    gray(62 + (y % 8) as i32 * 4)
-                } else {
-                    gray(48)
-                }
-            }
             Tex::Road => {
                 let center = (30..34).contains(&y) && x % 16 < 9;
                 let edge = y == 3 || y == 60;
@@ -1366,14 +1437,13 @@ impl Tex {
                     170
                 },
             ),
-            Tex::Neon => {
-                let band = (x / 8 + y / 8) % 3;
-                gray(match band {
-                    0 => 255,
-                    1 => 190,
-                    _ => 120,
-                })
-            }
+            // Built by `texel` and `facade`.
+            Tex::Office
+            | Tex::Glass
+            | Tex::Residential
+            | Tex::Industrial
+            | Tex::Neon
+            | Tex::Lamp => gray(0),
         }
     }
 }
@@ -1395,7 +1465,7 @@ pub(crate) struct Library {
 
 impl Library {
     /// Inserts the meshes `variety` keeps (1, 8, 32 or all) and, when
-    /// `textured`, the textures.
+    /// `textured`, the textures, whose alpha masks emission.
     pub(crate) fn new(
         assets: &mut AssetLibrary,
         variety: u32,
@@ -1431,6 +1501,20 @@ impl Library {
         })
     }
 
+    /// `tex`'s surface; without textures only neon emits, as no mask
+    /// limits the others' emission to their lit texels.
+    fn surface(&self, tex: Tex) -> Surface {
+        let surface = tex.surface();
+        if self.textures.is_empty() && tex != Tex::Neon {
+            Surface {
+                emission: 0.0,
+                ..surface
+            }
+        } else {
+            surface
+        }
+    }
+
     /// The mesh and material drawing `shape` with `paint`.
     pub(crate) fn get(
         &mut self,
@@ -1448,6 +1532,7 @@ impl Library {
                     Some(&texture) => Material::textured(color, texture),
                     None => Material::new(color),
                 }
+                .and_then(|material| material.with_surface(self.surface(paint.tex)))
                 .map_err(|error| error.to_string())?;
                 let handle = assets
                     .insert_material(material)
@@ -1540,5 +1625,41 @@ mod tests {
             assert_eq!(texture.width(), 64);
             assert!(texture.height() == 64 || texture.height() == 256);
         }
+    }
+
+    #[test]
+    fn only_lit_windows_neon_and_lamp_heads_emit() {
+        for tex in Tex::ALL {
+            let surface = tex.surface();
+            assert!(
+                Material::new([1.0; 4])
+                    .unwrap()
+                    .with_surface(surface)
+                    .is_ok()
+            );
+            let texture = tex.build().unwrap();
+            let emitting = texture
+                .pixels()
+                .chunks(4)
+                .filter(|texel| texel[3] == 255)
+                .count();
+            let total = texture.pixels().len() / 4;
+            match tex {
+                Tex::Neon => assert_eq!(emitting, total),
+                Tex::Office | Tex::Glass | Tex::Residential | Tex::Industrial | Tex::Lamp => {
+                    assert!(surface.emission > 0.0);
+                    assert!(emitting > 0 && emitting < total / 2, "{tex:?} {emitting}");
+                }
+                _ => assert_eq!(emitting, 0, "{tex:?}"),
+            }
+            // Masked or not, texels are either off or fully on.
+            assert!(
+                texture
+                    .pixels()
+                    .chunks(4)
+                    .all(|texel| matches!(texel[3], 0 | 255))
+            );
+        }
+        assert_eq!(Tex::Water.surface().ripples, 1.0);
     }
 }
