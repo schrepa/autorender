@@ -29,7 +29,9 @@ be `EMB2` ([decision 034](../adr-034-vertex-colors-and-second-coordinates.md)).
 Documents take `animations` (inline channels or `EAN1` files) and entities an
 `animation` player ([decision 035](../adr-035-animation-clips-and-players.md));
 documents take `skins`, entities with a mesh a `skin`, and inline vertices
-`joints` and `weights` ([decision 036](../adr-036-skinning.md)).
+`joints` and `weights` ([decision 036](../adr-036-skinning.md)). Texture files
+may be KTX2 images, which hosts transcode to compressed textures
+([decision 037](../adr-037-compressed-textures.md)).
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

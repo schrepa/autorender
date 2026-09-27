@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { isKtx2 } from "../src/ktx2.ts";
 import { loadSceneSource } from "../src/source.ts";
 
 const LIMIT = 64 * 1024 * 1024;
@@ -108,4 +109,13 @@ test("network failures propagate without replacing the original cause", async t 
 test("successful responses without a body fail clearly", async t => {
   fetchResponse(t, new Response(null, { status: 204 }));
   await assert.rejects(loadSceneSource("/scene.json", new AbortController().signal), /no body/);
+});
+
+test("KTX2 images are recognized by their identifier alone", () => {
+  const identifier = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
+  assert.equal(isKtx2(new Uint8Array([...identifier, 1, 2, 3])), true);
+  assert.equal(isKtx2(new Uint8Array(identifier.slice(0, 11))), false);
+  // KTX 1.1 and PNG files are not KTX2.
+  assert.equal(isKtx2(new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x31, 0x31, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a])), false);
+  assert.equal(isKtx2(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])), false);
 });

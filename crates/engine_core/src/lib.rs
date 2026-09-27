@@ -31,7 +31,7 @@ pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Sha
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
     Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface,
-    Texture, TextureHandle, TextureRef, UvTransform, Wrap,
+    Texture, TextureFormat, TextureHandle, TextureRef, UvTransform, Wrap,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,

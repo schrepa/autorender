@@ -1,3 +1,5 @@
+import { isKtx2, transcodeKtx2 } from "./ktx2.ts";
+
 /** Read a UTF-8 authoring source with a hard transport budget, including chunked replies. */
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-store", signal });
@@ -37,6 +39,7 @@ export interface SceneFileBindings {
   scene_file_list(source: string): string;
   SceneFileSet: new () => {
     add_image(uri: string, width: number, height: number, pixels: Uint8Array): void;
+    add_compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
     add_buffer(uri: string, bytes: Uint8Array): void;
     free(): void;
   };
@@ -44,8 +47,9 @@ export interface SceneFileBindings {
 
 /**
  * Fetch the image and buffer files a scene references, relative to its URL,
- * and decode images with the browser's own decoder into RGBA8 pixels. Runs at
- * load boundaries only, never per frame.
+ * decode images with the browser's own decoder into RGBA8 pixels, and
+ * transcode KTX2 images to a block-compressed format the GPU samples
+ * (decision 037). Runs at load boundaries only, never per frame.
  */
 export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
   const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" }[];
@@ -61,6 +65,13 @@ export async function loadSceneFiles(sceneUrl: string, source: string, bindings:
       const blob = await response.blob();
       if (kind === "buffer") {
         files.add_buffer(uri, new Uint8Array(await blob.arrayBuffer()));
+        return;
+      }
+      const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+      if (isKtx2(head)) {
+        const image = await transcodeKtx2(uri, new Uint8Array(await blob.arrayBuffer()));
+        if (image.format === "rgba8") files.add_image(uri, image.width, image.height, image.pixels);
+        else files.add_compressed_image(uri, image.format, image.width, image.height, image.data, image.levels);
         return;
       }
       const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });

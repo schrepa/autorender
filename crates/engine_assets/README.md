@@ -25,8 +25,11 @@ pixels, with rows from top to bottom. Width and height must each be in
 must be 255 (`Texture::with_emission_mask` takes any alpha). Pixels stay
 encoded on the CPU; the renderer decodes color maps as sRGB and data maps
 (metallic-roughness, normal, occlusion) as linear when sampled. The texture
-holds one level; the renderer generates its mip chain on the GPU. This crate
-does not decode image containers.
+holds one level; the renderer generates its mip chain on the GPU.
+`Texture::compressed` instead holds block-compressed levels (`TextureFormat`
+`Bc7`, `Etc2Rgba8` or `Astc4x4`, [decision 037](../../docs/adr-037-compressed-textures.md))
+that renderers upload as they are. This crate does not decode or transcode
+image containers.
 
 `Material` is a glTF 2.0 metallic-roughness material
 ([decision 031](../../docs/adr-031-gltf-materials.md)): a linear color factor,

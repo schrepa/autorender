@@ -22,7 +22,7 @@ pub use material::{
     AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
-pub use texture::{MAX_TEXTURE_DIMENSION, Texture};
+pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};
 
 #[cfg(test)]
 mod tests;

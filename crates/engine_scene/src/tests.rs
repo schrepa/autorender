@@ -1209,3 +1209,49 @@ fn version_eight_vertex_colors_and_second_coordinates_load_inline_and_from_buffe
     let error = earlier.validate_with(&files).unwrap_err();
     assert_eq!(error.code, "version_required");
 }
+
+#[test]
+fn compressed_image_files_load_as_block_compressed_textures_from_version_eight() {
+    use crate::{SceneFiles, SceneTexture};
+    use engine_core::TextureFormat;
+    let mut document = textured_document();
+    document.version = 8;
+    document.textures = vec![SceneTexture::file("tiles", "images/checker.ktx2")];
+    let mut files = SceneFiles::new();
+    files.add_compressed_image(
+        "images/checker.ktx2",
+        TextureFormat::Bc7,
+        8,
+        8,
+        vec![vec![7; 64], vec![8; 16], vec![9; 16], vec![10; 16]],
+    );
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate_with(&mut world, &files).unwrap();
+    let (_, handle) = instance.textures().next().unwrap();
+    let texture = world
+        .resource::<AssetLibrary>()
+        .texture(handle)
+        .unwrap()
+        .clone();
+    assert_eq!(texture.format(), TextureFormat::Bc7);
+    assert_eq!(texture.levels().len(), 4);
+    // Before version 8 compressed images are refused; so are broken ones.
+    document.version = 7;
+    let error = document.validate_with(&files).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("version_required", "$.textures[0].uri")
+    );
+    document.version = 8;
+    files.add_compressed_image(
+        "images/checker.ktx2",
+        TextureFormat::Bc7,
+        8,
+        8,
+        vec![vec![7; 63]],
+    );
+    assert_eq!(
+        document.validate_with(&files).unwrap_err().code,
+        "invalid_texture"
+    );
+}

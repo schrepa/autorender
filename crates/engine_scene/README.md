@@ -87,7 +87,9 @@ does not override template fields: edit the definition to change all placements.
 in row-major top-to-bottom order, or (version 7) a `uri` to an image file beside
 the scene that the host decodes and supplies as `SceneFiles`
 ([decision 030](../../docs/adr-030-scene-files.md)); meshes may likewise read
-`EMB1` buffer files. Alpha must be 255 before version 8; from version 8
+`EMB1` buffer files. From version 8 an image file may be a KTX2 image the host
+transcodes to block-compressed levels (`SceneFiles::add_compressed_image`,
+[decision 037](../../docs/adr-037-compressed-textures.md)). Alpha must be 255 before version 8; from version 8
 it is coverage for masked and blended materials. Dimensions are 1..8192. A
 material's texture fields reference textures by authored ID. Procedural meshes
 provide UVs; inline vertices default to zero UV for legacy sources. Sampling is

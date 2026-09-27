@@ -248,10 +248,17 @@ impl Renderer {
             max_storage_buffers_per_shader_stage: 8,
             ..wgpu::Limits::downlevel_defaults()
         };
+        // Block-compressed textures (decision 037) in every format the
+        // adapter samples; hosts transcode to one of them.
+        let compression = adapter.features()
+            & (wgpu::Features::TEXTURE_COMPRESSION_BC
+                | wgpu::Features::TEXTURE_COMPRESSION_ETC2
+                | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
         #[cfg(not(feature = "profiling"))]
-        let required_features = wgpu::Features::empty();
+        let required_features = compression;
         #[cfg(feature = "profiling")]
-        let required_features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+        let required_features =
+            compression | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("engine/device"),

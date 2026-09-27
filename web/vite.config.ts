@@ -13,15 +13,15 @@ export default defineConfig(({ command, mode }) => ({
   plugins: [{
     name: "explicit-scene-reload",
     // Vite caches public file names. Read scenes and the image and buffer
-    // files they reference (decision 030) directly so newly authored files
-    // work while source changes remain excluded from automatic reload.
+    // files they reference (decisions 030 and 037) directly so newly authored
+    // files work while source changes remain excluded from automatic reload.
     configureServer(server) {
       const types = new Map([["json", "application/json; charset=utf-8"], ["png", "image/png"], ["jpg", "image/jpeg"],
-        ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["bin", "application/octet-stream"]]);
+        ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["ktx2", "image/ktx2"], ["bin", "application/octet-stream"]]);
       server.middlewares.use(async (request, response, next) => {
         const path = request.url?.split("?")[0];
         const scene = !!path && /^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(path);
-        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|bin)$/.test(path)
+        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|ktx2|bin)$/.test(path)
           && !path.split("/").some(part => part === "." || part === "..");
         if (!path || (!scene && !asset)) return next();
         if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }

@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use engine_core::{
     Filter, Material, MaterialHandle, RenderMaterial, RenderSnapshot, Sampler, Texture,
-    TextureHandle, Wrap,
+    TextureFormat, TextureHandle, Wrap,
 };
 
 use crate::batches::BatchPlan;
@@ -399,8 +399,136 @@ fn bind_group(
     })
 }
 
+/// The GPU format of a compressed `format` read as sRGB or linear, and the
+/// device feature sampling it (decision 037); `None` for RGBA8.
+fn compressed_format(
+    format: TextureFormat,
+    srgb: bool,
+) -> Option<(wgpu::TextureFormat, wgpu::Features)> {
+    use wgpu::TextureFormat as Gpu;
+    Some(match format {
+        TextureFormat::Rgba8 => return None,
+        TextureFormat::Bc7 => (
+            if srgb {
+                Gpu::Bc7RgbaUnormSrgb
+            } else {
+                Gpu::Bc7RgbaUnorm
+            },
+            wgpu::Features::TEXTURE_COMPRESSION_BC,
+        ),
+        TextureFormat::Etc2Rgba8 => (
+            if srgb {
+                Gpu::Etc2Rgba8UnormSrgb
+            } else {
+                Gpu::Etc2Rgba8Unorm
+            },
+            wgpu::Features::TEXTURE_COMPRESSION_ETC2,
+        ),
+        TextureFormat::Astc4x4 => (
+            Gpu::Astc {
+                block: wgpu::AstcBlock::B4x4,
+                channel: if srgb {
+                    wgpu::AstcChannel::UnormSrgb
+                } else {
+                    wgpu::AstcChannel::Unorm
+                },
+            },
+            wgpu::Features::TEXTURE_COMPRESSION_ASTC,
+        ),
+    })
+}
+
+/// Uploads a compressed texture's levels as they are (decision 037); a
+/// device without its format samples a white texel instead.
+fn create_compressed(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    source: &Texture,
+    (format, feature): (wgpu::TextureFormat, wgpu::Features),
+) -> GpuTexture {
+    let supported = device.features().contains(feature);
+    let levels: &[Box<[u8]>] = if supported { source.levels() } else { &[] };
+    let (width, height) = if supported {
+        (source.width(), source.height())
+    } else {
+        (1, 1)
+    };
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("engine/compressed-texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: levels.len().max(1) as u32,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: if supported {
+            format
+        } else {
+            wgpu::TextureFormat::Rgba8Unorm
+        },
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    if !supported {
+        queue.write_texture(
+            texture.as_image_copy(),
+            &[255; 4],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    for (level, bytes) in levels.iter().enumerate() {
+        // Whole blocks, including those past the edge of small levels.
+        let blocks = [
+            (width >> level).max(1).div_ceil(4),
+            (height >> level).max(1).div_ceil(4),
+        ];
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: level as u32,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(blocks[0] * 16),
+                rows_per_image: Some(blocks[1]),
+            },
+            wgpu::Extent3d {
+                width: blocks[0] * 4,
+                height: blocks[1] * 4,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    GpuTexture {
+        _texture: texture,
+        view,
+        byte_len: if supported {
+            source.byte_len() as u64
+        } else {
+            4
+        },
+        mip_bytes: 0,
+    }
+}
+
 /// Uploads `source` as the base level of an sRGB or linear texture with a
-/// full mip chain, whose remaining levels are recorded into `encoder`.
+/// full mip chain, whose remaining levels are recorded into `encoder`;
+/// compressed textures upload their own levels.
 fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -410,6 +538,9 @@ fn create_texture(
     encoder: &mut Option<wgpu::CommandEncoder>,
     generated: &mut u32,
 ) -> GpuTexture {
+    if let Some(format) = compressed_format(source.format(), srgb) {
+        return create_compressed(device, queue, source, format);
+    }
     let extent = wgpu::Extent3d {
         width: source.width(),
         height: source.height(),

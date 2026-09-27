@@ -645,3 +645,59 @@ fn skins_need_both_joint_streams_and_morph_weights_stay_unsupported() {
         "unsupported_feature"
     );
 }
+
+/// The fixture with its first texture reading a KTX2 image through
+/// `KHR_texture_basisu` alone; `ktx2` supplies the image bytes.
+fn basisu(ktx2: &[u8]) -> Vec<u8> {
+    let json_length = u32::from_le_bytes(FIXTURE[12..16].try_into().unwrap()) as usize;
+    let mut json: Value = serde_json::from_slice(&FIXTURE[20..20 + json_length]).unwrap();
+    let mut binary = FIXTURE[28 + json_length..].to_vec();
+    let offset = binary.len();
+    binary.extend_from_slice(ktx2);
+    let views = json["bufferViews"].as_array_mut().unwrap();
+    views.push(json!({"buffer": 0, "byteOffset": offset, "byteLength": ktx2.len()}));
+    let view = views.len() - 1;
+    let images = json["images"].as_array_mut().unwrap();
+    images.push(json!({"bufferView": view, "mimeType": "image/ktx2"}));
+    let image = images.len() - 1;
+    let texture = json["textures"][0].as_object_mut().unwrap();
+    texture.remove("source");
+    texture.insert(
+        "extensions".into(),
+        json!({"KHR_texture_basisu": {"source": image}}),
+    );
+    json["extensionsUsed"] = json!(["KHR_texture_basisu"]);
+    json["extensionsRequired"] = json!(["KHR_texture_basisu"]);
+    let length = binary.len();
+    json["buffers"][0]["byteLength"] = json!(length);
+    glb(&json, binary)
+}
+
+#[test]
+fn basisu_textures_import_their_ktx2_images_unchanged() {
+    let mut ktx2 = vec![
+        0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
+    ];
+    ktx2.extend_from_slice(&[7; 20]);
+    let imported = import_glb(&basisu(&ktx2), "garden").unwrap();
+    let document = &imported.document;
+    let image = document.textures.len() - 1;
+    let uri = document.textures[image].uri.clone().unwrap();
+    assert!(uri.starts_with(&format!("garden/image{image}.")) && uri.ends_with(".ktx2"));
+    assert_eq!(
+        imported
+            .files
+            .iter()
+            .find(|file| file.uri == uri)
+            .unwrap()
+            .bytes,
+        ktx2
+    );
+    let materials = serde_json::to_string(&document.materials).unwrap();
+    assert!(materials.contains(&format!("\"garden.image{image}\"")));
+    // Bytes without the identifier are no KTX2 image.
+    assert_eq!(
+        import_glb(&basisu(&[0; 32]), "garden").unwrap_err().code,
+        "invalid_image"
+    );
+}

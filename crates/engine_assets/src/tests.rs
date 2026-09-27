@@ -824,3 +824,51 @@ fn animation_channels_sample_step_linear_and_cubic_splines_like_gltf() {
     );
     assert!(AnimationClip::new(Vec::new()).is_err());
 }
+
+#[test]
+fn compressed_textures_keep_whole_block_levels_and_reject_partial_ones() {
+    use crate::TextureFormat;
+    // An 8 × 4 texture: two blocks, then one per level down to 1 × 1.
+    let levels = vec![vec![1; 32], vec![2; 16], vec![3; 16], vec![4; 16]];
+    let texture = Texture::compressed(TextureFormat::Bc7, 8, 4, levels.clone()).unwrap();
+    assert_eq!(texture.format(), TextureFormat::Bc7);
+    assert_eq!(texture.levels().len(), 4);
+    assert_eq!(texture.pixels(), &[1; 32]);
+    assert_eq!(texture.byte_len(), 80);
+    assert!(texture.has_emission_mask());
+    // One level is enough; a fifth is beyond the chain.
+    assert!(Texture::compressed(TextureFormat::Astc4x4, 8, 4, vec![vec![0; 32]]).is_ok());
+    let mut long = levels.clone();
+    long.push(vec![0; 16]);
+    let code = |result: Result<Texture, AssetError>| result.unwrap_err().code();
+    assert_eq!(
+        code(Texture::compressed(TextureFormat::Etc2Rgba8, 8, 4, long)),
+        "asset.invalid_compressed_texture"
+    );
+    let mut short = levels.clone();
+    short[1].pop();
+    assert_eq!(
+        code(Texture::compressed(TextureFormat::Bc7, 8, 4, short)),
+        "asset.invalid_texture_length"
+    );
+    // Partial blocks, RGBA8 and empty level lists are refused.
+    assert_eq!(
+        code(Texture::compressed(
+            TextureFormat::Bc7,
+            6,
+            4,
+            vec![vec![0; 32]]
+        )),
+        "asset.invalid_compressed_texture"
+    );
+    assert_eq!(
+        code(Texture::compressed(TextureFormat::Rgba8, 8, 4, levels)),
+        "asset.invalid_compressed_texture"
+    );
+    assert_eq!(
+        code(Texture::compressed(TextureFormat::Bc7, 8, 4, Vec::new())),
+        "asset.invalid_compressed_texture"
+    );
+    assert_eq!(TextureFormat::Rgba8.level_bytes(3, 2), 24);
+    assert_eq!(TextureFormat::Astc4x4.level_bytes(5, 1), 32);
+}

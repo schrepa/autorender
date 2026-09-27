@@ -11,6 +11,11 @@ use serde_json::Value;
 
 use crate::{ImportError, ImportedFile, unsupported};
 
+/// The first twelve bytes of every KTX 2.0 file.
+const KTX2_IDENTIFIER: [u8; 12] = [
+    0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
+];
+
 pub(crate) fn import(
     document: &gltf::Document,
     json: &Value,
@@ -27,19 +32,35 @@ pub(crate) fn import(
                 "only images embedded in the GLB are supported; external and data URIs are rejected",
             ));
         };
+        // KTX2 images (KHR_texture_basisu) stay supercompressed; hosts
+        // transcode them at load (decision 037).
         let extension = match mime_type {
             "image/png" => "png",
             "image/jpeg" => "jpg",
-            _ => return Err(unsupported(path, "images must be image/png or image/jpeg")),
+            "image/ktx2" => "ktx2",
+            _ => {
+                return Err(unsupported(
+                    path,
+                    "images must be image/png, image/jpeg or image/ktx2",
+                ));
+            }
         };
         if view.stride().is_some() {
             return Err(unsupported(path, "image buffer views must be contiguous"));
+        }
+        let bytes = &binary[view.offset()..view.offset() + view.length()];
+        if extension == "ktx2" && !bytes.starts_with(&KTX2_IDENTIFIER) {
+            return Err(ImportError::new(
+                "invalid_image",
+                path,
+                "image/ktx2 images start with the KTX 2.0 identifier",
+            ));
         }
         let file = ImportedFile::named(
             id,
             &format!("image{}", image.index()),
             extension,
-            binary[view.offset()..view.offset() + view.length()].to_vec(),
+            bytes.to_vec(),
         );
         scene.textures.push(SceneTexture::file(
             format!("{id}.image{}", image.index()),
@@ -68,7 +89,7 @@ pub(crate) fn import(
         };
         let map = |field: &str, info: &Value, texture: Option<gltf::Texture<'_>>| {
             texture
-                .map(|texture| texture_map(info, &texture, id, &format!("{path}.{field}")))
+                .map(|texture| texture_map(json, info, &texture, id, &format!("{path}.{field}")))
                 .transpose()
         };
         let pbr_source = &source["pbrMetallicRoughness"];
@@ -135,13 +156,37 @@ pub(crate) fn import(
 
 /// A texture reference of a material: glTF sampler state and
 /// `KHR_texture_transform` placement from its texture info `info`, as a
-/// plain ID when both are glTF's defaults.
+/// plain ID when both are glTF's defaults. A `KHR_texture_basisu` image
+/// replaces the texture's own source (decision 037).
 fn texture_map(
+    root: &Value,
     info: &Value,
     texture: &gltf::Texture<'_>,
     id: &str,
     path: &str,
 ) -> Result<SceneMap, ImportError> {
+    let basisu = &root["textures"][texture.index()]["extensions"]["KHR_texture_basisu"]["source"];
+    let images = root["images"].as_array().map_or(0, Vec::len);
+    let image = match (basisu.as_u64(), texture.source()) {
+        (Some(image), _) if (image as usize) < images => image as usize,
+        (Some(_), _) => {
+            return Err(ImportError::new(
+                "invalid_texture",
+                format!(
+                    "$.textures[{}].extensions.KHR_texture_basisu.source",
+                    texture.index()
+                ),
+                "the image is outside the image array",
+            ));
+        }
+        (None, Some(image)) => image.index(),
+        (None, None) => {
+            return Err(unsupported(
+                format!("$.textures[{}]", texture.index()),
+                "textures need an image or a KHR_texture_basisu image",
+            ));
+        }
+    };
     let transform = &info["extensions"]["KHR_texture_transform"];
     let tex_coord = transform["texCoord"]
         .as_u64()
@@ -171,7 +216,7 @@ fn texture_map(
     let number = |value: &Value| value.as_f64().map(|value| value as f32);
     let pair = |value: &Value| Some([number(&value[0])?, number(&value[1])?]);
     let map = SceneTextureMap {
-        id: format!("{id}.image{}", texture.source().index()),
+        id: format!("{id}.image{image}"),
         wrap_u: wrap(sampler.wrap_s()),
         wrap_v: wrap(sampler.wrap_t()),
         mag_filter: matches!(sampler.mag_filter(), Some(MagFilter::Nearest))

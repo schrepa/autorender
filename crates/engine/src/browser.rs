@@ -28,6 +28,46 @@ impl SceneFileSet {
         self.files.add_image(uri, width, height, pixels);
     }
 
+    /// Adds image `uri` transcoded to block-compressed `format` (`bc7`,
+    /// `etc2` or `astc`, decision 037): `width` × `height`, its levels
+    /// concatenated in `data` from the base down with their byte lengths in
+    /// `levels`.
+    pub fn add_compressed_image(
+        &mut self,
+        uri: &str,
+        format: &str,
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+        levels: Vec<u32>,
+    ) -> Result<(), JsValue> {
+        let format = match format {
+            "bc7" => engine_core::TextureFormat::Bc7,
+            "etc2" => engine_core::TextureFormat::Etc2Rgba8,
+            "astc" => engine_core::TextureFormat::Astc4x4,
+            _ => {
+                return Err(JsValue::from_str(
+                    "compressed formats are bc7, etc2 and astc",
+                ));
+            }
+        };
+        let mut rest = &data[..];
+        let mut split = Vec::with_capacity(levels.len());
+        for length in levels {
+            let Some((level, tail)) = rest.split_at_checked(length as usize) else {
+                return Err(JsValue::from_str("level lengths exceed the data"));
+            };
+            split.push(level.to_vec());
+            rest = tail;
+        }
+        if !rest.is_empty() {
+            return Err(JsValue::from_str("data exceeds the level lengths"));
+        }
+        self.files
+            .add_compressed_image(uri, format, width, height, split);
+        Ok(())
+    }
+
     /// Adds buffer `uri`'s bytes.
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.files.add_buffer(uri, bytes);

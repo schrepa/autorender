@@ -50,10 +50,13 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-/// Extensions the importer reads (decision 031); other optional extensions
-/// are ignored and reported.
-pub(crate) const SUPPORTED_EXTENSIONS: [&str; 2] =
-    ["KHR_texture_transform", "KHR_materials_emissive_strength"];
+/// Extensions the importer reads (decisions 031 and 037); other optional
+/// extensions are ignored and reported.
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 3] = [
+    "KHR_texture_transform",
+    "KHR_materials_emissive_strength",
+    "KHR_texture_basisu",
+];
 
 /// Checks the static import profile; returns the used extensions it ignores.
 pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {

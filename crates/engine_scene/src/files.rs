@@ -1,11 +1,13 @@
 //! Files a scene references by relative path (decision 030): images and
 //! binary mesh buffers beside the scene. The host reads them and decodes
 //! images with the platform's own decoder before a scene loads, so the
-//! runtime carries no image decoder and scene sources stay small.
+//! runtime carries no image decoder and scene sources stay small. KTX2
+//! images the host transcodes to a block-compressed format its GPU samples
+//! (decision 037).
 
 use std::collections::HashMap;
 
-use engine_core::{MeshVertex, Texture};
+use engine_core::{MeshVertex, Texture, TextureFormat};
 
 use crate::SceneError;
 
@@ -25,11 +27,15 @@ pub struct SceneFile {
     pub kind: SceneFileKind,
 }
 
+/// Format, width, height and levels of a transcoded image (decision 037).
+type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
+
 /// Contents of a scene's referenced files, supplied by the host.
 #[derive(Clone, Debug, Default)]
 pub struct SceneFiles {
     // Width, height and RGBA8 pixels of each decoded image.
     images: HashMap<String, (u32, u32, Vec<u8>)>,
+    compressed: HashMap<String, CompressedImage>,
     buffers: HashMap<String, Vec<u8>>,
 }
 
@@ -42,6 +48,21 @@ impl SceneFiles {
     /// top to bottom. Validated when a scene uses it.
     pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
         self.images.insert(uri.to_owned(), (width, height, pixels));
+    }
+
+    /// Adds image `uri` transcoded to block-compressed `format` (decision
+    /// 037): `width` × `height`, its levels from the base down. Validated
+    /// when a scene uses it; version 8 scenes use it.
+    pub fn add_compressed_image(
+        &mut self,
+        uri: &str,
+        format: TextureFormat,
+        width: u32,
+        height: u32,
+        levels: Vec<Vec<u8>>,
+    ) {
+        self.compressed
+            .insert(uri.to_owned(), (format, width, height, levels));
     }
 
     /// Adds buffer `uri`'s bytes.
@@ -58,6 +79,17 @@ impl SceneFiles {
         path: &str,
         alpha: bool,
     ) -> Result<Texture, SceneError> {
+        if let Some((format, width, height, levels)) = self.compressed.get(uri) {
+            if !alpha {
+                return Err(SceneError::new(
+                    "version_required",
+                    path,
+                    "compressed textures require scene version 8; set version to 8 and increment revision",
+                ));
+            }
+            return Texture::compressed(*format, *width, *height, levels.clone())
+                .map_err(|error| SceneError::new("invalid_texture", path, error.to_string()));
+        }
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
         let texture = if alpha {
             Texture::with_alpha(*width, *height, pixels.clone())

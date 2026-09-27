@@ -23,7 +23,7 @@ engine_scene = { path = "crates/engine_scene" }
 engine_dev = { path = "crates/engine_dev" }
 engine_assetc = { path = "tools/assetc" }
 base64 = "=0.22.1"
-gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
+gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"
 sha2 = "=0.10.9"
 serde = { version = "=1.0.229", features = ["derive"] }
