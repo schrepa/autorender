@@ -252,7 +252,9 @@ impl SceneEmitter {
         if !(self.lifetime.is_finite() && self.lifetime > 0.0 && self.lifetime <= 60.0) {
             return Err(invalid("lifetime", "must be positive and at most 60"));
         }
-        if f64::from(self.rate) * f64::from(self.lifetime) > f64::from(engine_core::MAX_PARTICLES) {
+        if f64::from(self.rate) * f64::from(self.lifetime)
+            > f64::from(engine_core::MAX_EMITTER_PARTICLES)
+        {
             return Err(invalid(
                 "rate",
                 "rate times lifetime must be at most the particle limit",

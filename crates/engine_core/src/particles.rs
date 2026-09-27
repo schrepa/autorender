@@ -15,10 +15,10 @@ use glam::{Mat4, Vec3};
 
 use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
 
-/// Most particles one frame draws.
-pub const MAX_PARTICLES: u32 = 262_144;
-/// Most emitters one frame draws.
-pub const MAX_EMITTERS: usize = 1024;
+/// Most particles one emitter keeps alive (its rate times its lifetime): a
+/// validity bound far above real effects. Frames draw every emitter unless
+/// [`Particles::max_particles`] sets a budget.
+pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
 
 /// How particles combine with what is behind them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -97,7 +97,7 @@ impl ParticleEmitter {
     pub fn capacity(&self) -> u32 {
         let alive = f64::from(self.rate) * f64::from(self.lifetime);
         if alive.is_finite() && alive > 0.0 {
-            alive.ceil().min(f64::from(MAX_PARTICLES)) as u32
+            alive.ceil().min(f64::from(MAX_EMITTER_PARTICLES)) as u32
         } else {
             0
         }
@@ -140,26 +140,28 @@ impl ParticleEmitter {
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Particles {
     pub enabled: bool,
-    /// Most particles a frame draws, in `1..=MAX_PARTICLES`: beyond it (or
-    /// beyond [`MAX_EMITTERS`]) the emitters nearest the camera win and the
-    /// others are skipped whole.
-    pub max_particles: u32,
+    /// An optional budget of particles per frame: beyond it the emitters
+    /// nearest the camera win and the others are skipped whole, counted as
+    /// the frame's dropped particles. `None`, the default, draws every
+    /// emitter; only the GPU's buffer limits bound it then.
+    pub max_particles: Option<u32>,
 }
 
 impl Default for Particles {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_particles: 65_536,
+            max_particles: None,
         }
     }
 }
 
 impl Particles {
+    /// A budget of at least one particle.
     pub fn sanitized(self) -> Self {
         Self {
             enabled: self.enabled,
-            max_particles: self.max_particles.clamp(1, MAX_PARTICLES),
+            max_particles: self.max_particles.map(|budget| budget.max(1)),
         }
     }
 }
@@ -201,8 +203,8 @@ impl ParticleExtraction {
     }
 
     /// Fills the snapshot's emitters from poses prepared for this frame, or
-    /// authoritative poses on `gpu` frames. Beyond the particle or emitter
-    /// budget, the emitters nearest the camera win.
+    /// authoritative poses on `gpu` frames. Beyond a particle budget, the
+    /// emitters nearest the camera win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         let settings = world.get_resource::<Particles>().map_or(
             Particles {
@@ -239,22 +241,21 @@ impl ParticleExtraction {
             let distance = model.transform_point3(emitter.offset).distance_squared(eye);
             self.candidates.push((distance, entity, model, *emitter));
         }
-        if self.candidates.len() > MAX_EMITTERS || wanted > u64::from(settings.max_particles) {
+        let budget = settings.max_particles.map(u64::from);
+        if budget.is_some_and(|budget| wanted > budget) {
             self.candidates.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
         }
         let time = snapshot.elapsed_seconds;
-        let mut total = 0_u32;
+        let mut total = 0_u64;
         self.extraction += 1;
         let extraction = self.extraction;
         for &(_, entity, model, emitter) in &self.candidates {
             let count = emitter.capacity();
-            if snapshot.emitters.len() == MAX_EMITTERS
-                || total.saturating_add(count) > settings.max_particles
-            {
+            if budget.is_some_and(|budget| total + u64::from(count) > budget) {
                 snapshot.dropped_particles += count as usize;
                 continue;
             }
-            total += count;
+            total += u64::from(count);
             let origin = model.transform_point3(emitter.offset);
             // Velocity from the origin's travel since the previous frame;
             // paused frames keep the last one.

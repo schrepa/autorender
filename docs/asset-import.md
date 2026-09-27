@@ -70,7 +70,7 @@ Rendering observations include `resident_textures`, `resident_texture_bytes`, an
 
 The native input is bounded to 16 MiB. Output remains the engine's self-contained 1 MiB scene format: indexed vertices plus base64 RGBA8 pixels. The importer decodes PNG offline; the browser decodes base64 only at load/validation boundaries. This intentionally supports small static game assets. There is no binary streaming package or compressed GPU texture format yet (mips are generated on the GPU at upload); the source limit is often reached before the dimension limit.
 
-Textures are at most 2048×2048. CPU texture data shares the library's 32 MiB payload budget, with at most 64 textures by default. The renderer independently limits textures to 64 / 32 MiB. Reload admission needs room for both old and new CPU assets until replacement commits. GPU objects remain renderer-owned; old snapshots can temporarily retain CPU pixels. Neither import libraries nor image decoders are browser runtime dependencies.
+Textures are at most 8192×8192. The asset library and renderer set no texture count or byte budget by default (decision 029); a game may set an asset budget. Reload admission needs room for both old and new CPU assets until replacement commits. GPU objects remain renderer-owned; old snapshots can temporarily retain CPU pixels. Neither import libraries nor image decoders are browser runtime dependencies.
 
 ## Verification
 

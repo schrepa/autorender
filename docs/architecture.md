@@ -111,7 +111,7 @@ Dependency versions and Rust are pinned, with Cargo/npm lockfiles. glam is patch
 1. The host accumulates bounded held-key state and pointer deltas, and sends one owned input value per animation frame. There is no per-entity JavaScript traffic. Pointer motion is summed and clamped, not queued indefinitely. Discrete press/release event APIs are not implemented.
 2. Rust computes elapsed time and runs `FixedSimulation` at 60 Hz, at most five ticks per frame. Commands apply at each schedule boundary. Extra whole ticks are discarded while the fractional remainder is kept. Counters report discarded time. Negative/nonfinite elapsed values are sanitized.
 3. `Presentation` runs once after simulation. `FrameTime` caps its delta at 250 ms. Systems with dependencies must use explicit ordering. The demo camera uses this phase; cube motion uses fixed simulation.
-4. Extraction copies transforms/colors into a reusable, owned snapshot, up to 262,144 instances. Overflow is counted. Rendering cannot borrow the gameplay world. The available interpolation fraction is not yet used by this demo.
+4. Extraction copies transforms/colors into a reusable, owned snapshot, every visible instance unless `EngineConfig::max_render_instances` sets a budget (decision 029). Overflow is counted. Rendering cannot borrow the gameplay world. The available interpolation fraction is not yet used by this demo.
 5. Rendering converts records into reusable staging storage, writes a camera uniform and one instance buffer, encodes a depth-tested instanced draw, and submits without GPU readback. WGSL and GPU record definitions live together. Buffer capacity grows geometrically within a hard limit.
 
 Pause, focus loss, and hidden-page transitions release held inputs and reset the timing baseline. Visibility resumption does not simulate time spent suspended. A zero-sized renderer skips submission. Surface resizing recreates depth storage; surface loss/outdated status is reconfigured and device loss enters an explicit failed state.
@@ -122,7 +122,7 @@ Pause, focus loss, and hidden-page transitions release held inputs and reset the
 - Extraction and staging retain capacity. Changing the workload may allocate and change ECS archetypes; it is an explicit control operation outside ordinary frame work.
 - Runtime references use Bevy generational entities. They are not persistent scene identifiers.
 - The host caps the pixel ratio at 1.5 and the drawing buffer at 2560 × 1440 while preserving aspect ratio. This controls fill cost independently of cube count.
-- The demo caps its workload at 50,000 cubes; core/renderer extraction capacity is 262,144. There is no texture residency or asset cache yet.
+- The demo caps its workload at 50,000 cubes; the engine sets no capacity of its own (decision 029): GPU buffer limits and memory bound content.
 - Native checks validate contracts and WGSL. Native timing is not used to claim browser performance.
 
 The HUD reports frame cadence, sampled CPU simulation/presentation and extraction time, draw calls, upload bytes, and sampled CPU render preparation/submission. It polls stats at 4 Hz and frees each generated binding object. The canvas diagnostics attributes report instance count, frame count, fixed steps, and cumulative discarded time. No GPU timestamps are claimed.

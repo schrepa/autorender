@@ -6,9 +6,8 @@
 //! reports the current resources in the same shape.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, LocalLights, MAX_LOCAL_LIGHTS, MAX_PARTICLES,
-    MAX_SHADOW_CASCADES, Particles, Reflections, Shadows, SunShafts, bevy_ecs::prelude::World,
-    glam::Vec3,
+    AmbientOcclusion, Atmosphere, Bloom, LocalLights, MAX_SHADOW_CASCADES, Particles, Reflections,
+    Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -425,9 +424,14 @@ impl SceneBloom {
 #[serde(default, deny_unknown_fields)]
 pub struct SceneLocalLights {
     pub enabled: bool,
-    /// Most lights a frame shades; beyond it the nearest to the camera win.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 4096)))]
-    pub max_lights: u32,
+    /// An optional budget of lights a frame shades; beyond it the nearest to
+    /// the camera win. Omitted, every light shades.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_lights: Option<u32>,
+    /// Lights one view cluster lists (32 by default); more costs memory.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub lights_per_cluster: u32,
     /// Scales every light's intensity, e.g. to dim lamps by day.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
     pub intensity: f32,
@@ -448,6 +452,7 @@ impl From<&LocalLights> for SceneLocalLights {
         Self {
             enabled: lights.enabled,
             max_lights: lights.max_lights,
+            lights_per_cluster: lights.lights_per_cluster,
             intensity: lights.intensity,
             distance: lights.distance,
         }
@@ -456,8 +461,15 @@ impl From<&LocalLights> for SceneLocalLights {
 
 impl SceneLocalLights {
     pub fn resolve(&self, path: &str) -> Result<LocalLights, SceneError> {
-        if !(1..=MAX_LOCAL_LIGHTS).contains(&self.max_lights) {
-            return Err(section_error(path, "max_lights", "must be in [1, 4096]"));
+        if self.max_lights == Some(0) {
+            return Err(section_error(path, "max_lights", "must be at least 1"));
+        }
+        if self.lights_per_cluster == 0 {
+            return Err(section_error(
+                path,
+                "lights_per_cluster",
+                "must be at least 1",
+            ));
         }
         if !(self.intensity.is_finite() && (0.0..=100.0).contains(&self.intensity)) {
             return Err(section_error(path, "intensity", "must be in [0, 100]"));
@@ -468,6 +480,7 @@ impl SceneLocalLights {
         Ok(LocalLights {
             enabled: self.enabled,
             max_lights: self.max_lights,
+            lights_per_cluster: self.lights_per_cluster,
             intensity: self.intensity,
             distance: self.distance,
         })
@@ -480,9 +493,11 @@ impl SceneLocalLights {
 #[serde(default, deny_unknown_fields)]
 pub struct SceneParticles {
     pub enabled: bool,
-    /// Most particles a frame draws; emitters beyond it are skipped.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 262144)))]
-    pub max_particles: u32,
+    /// An optional budget of particles a frame draws; beyond it the emitters
+    /// nearest the camera win. Omitted, every emitter draws.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_particles: Option<u32>,
 }
 
 impl Default for SceneParticles {
@@ -502,12 +517,8 @@ impl From<&Particles> for SceneParticles {
 
 impl SceneParticles {
     pub fn resolve(&self, path: &str) -> Result<Particles, SceneError> {
-        if !(1..=MAX_PARTICLES).contains(&self.max_particles) {
-            return Err(section_error(
-                path,
-                "max_particles",
-                "must be in [1, 262144]",
-            ));
+        if self.max_particles == Some(0) {
+            return Err(section_error(path, "max_particles", "must be at least 1"));
         }
         Ok(Particles {
             enabled: self.enabled,

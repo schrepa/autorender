@@ -1551,8 +1551,13 @@ fn equal_value_modify_component_starts_a_new_transform_lifetime() {
 
 #[test]
 fn history_and_display_storage_are_bounded_reused_and_pruned_after_despawn() {
+    const LIMIT: usize = 64;
     let mut engine = engine();
-    let entities: Vec<_> = (0..=MAX_TRANSFORM_NODES)
+    engine
+        .app
+        .world_mut()
+        .insert_resource(TransformNodeLimit(LIMIT));
+    let entities: Vec<_> = (0..=LIMIT)
         .map(|_| {
             engine
                 .app
@@ -1563,12 +1568,12 @@ fn history_and_display_storage_are_bounded_reused_and_pruned_after_despawn() {
         .collect();
     engine.advance(0.125);
     present(&mut engine, 0.5);
-    assert_eq!(engine.presentation().history_nodes(), MAX_TRANSFORM_NODES);
-    assert_eq!(engine.presentation().presented_nodes(), MAX_TRANSFORM_NODES);
+    assert_eq!(engine.presentation().history_nodes(), LIMIT);
+    assert_eq!(engine.presentation().presented_nodes(), LIMIT);
     let history_capacity = engine.presentation().history_capacity();
     let history_bytes = engine.presentation().history_bytes();
     let scratch_bytes = engine.presentation().presentation_scratch_bytes();
-    assert!(history_capacity <= 2 * MAX_TRANSFORM_NODES);
+    assert!(history_capacity <= 2 * LIMIT);
     assert_eq!(
         history_bytes,
         history_capacity
@@ -1579,19 +1584,12 @@ fn history_and_display_storage_are_bounded_reused_and_pruned_after_despawn() {
     );
     assert!(
         scratch_bytes
-            <= MAX_TRANSFORM_NODES
-                * (size_of::<Display>() + size_of::<Transform>() + 4 * size_of::<usize>())
+            <= LIMIT * (size_of::<Display>() + size_of::<Transform>() + 4 * size_of::<usize>())
     );
     assert_eq!(engine.presentation().presented_component_bytes(), 0);
     let world = engine.app.world_mut();
-    assert_eq!(
-        world.resource::<GlobalTransforms>().len(),
-        MAX_TRANSFORM_NODES
-    );
-    assert_eq!(
-        world.resource::<PresentedTransforms>().len(),
-        MAX_TRANSFORM_NODES
-    );
+    assert_eq!(world.resource::<GlobalTransforms>().len(), LIMIT);
+    assert_eq!(world.resource::<PresentedTransforms>().len(), LIMIT);
     assert_eq!(
         entities
             .iter()

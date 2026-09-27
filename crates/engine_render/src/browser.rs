@@ -25,7 +25,7 @@ use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
-use crate::{LightStats, MAX_INSTANCES, RenderStats, ShadowStats};
+use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
@@ -141,6 +141,8 @@ pub struct Renderer {
     mips: MipGenerator,
     white_texture: GpuTexture,
     plan: BatchPlan,
+    // Most instances this GPU's instance, pose and shadow buffers hold.
+    instance_limit: usize,
     vertex_staging: Vec<Vertex>,
     instance_buffer: wgpu::Buffer,
     color_buffer: Option<wgpu::Buffer>,
@@ -199,7 +201,11 @@ impl Renderer {
             .await
             .map_err(|error| js_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
         let adapter_limits = adapter.limits();
+        // Buffers as large as the adapter allows: content, not constants,
+        // sizes them.
         let limits = wgpu::Limits {
+            max_buffer_size: adapter_limits.max_buffer_size,
+            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
             // GPU presentation's cull pass binds eight; the WebGPU default.
             max_storage_buffers_per_shader_stage: 8,
@@ -238,6 +244,18 @@ impl Renderer {
         }));
 
         let max_dimension = device.limits().max_texture_dimension_2d;
+        // Instances: what the largest per-instance storage (poses, colors,
+        // six shadow ID lists) holds within one binding, below the moving
+        // flag of visible IDs.
+        let binding = device
+            .limits()
+            .max_storage_buffer_binding_size
+            .min(device.limits().max_buffer_size);
+        let record = size_of::<InstanceData>()
+            .max(size_of::<PoseData>())
+            .max(6 * size_of::<u32>()) as u64;
+        let instance_limit =
+            (binding / record).min(u64::from(crate::gpu_data::MOVED_SLOT)) as usize;
         let requested_width = canvas.width();
         let requested_height = canvas.height();
         let extent = clamped_extent(requested_width, requested_height, max_dimension);
@@ -506,7 +524,8 @@ impl Renderer {
             texture_sampler,
             mips,
             white_texture,
-            plan: BatchPlan::default(),
+            plan: BatchPlan::with_instance_limit(instance_limit),
+            instance_limit,
             vertex_staging: Vec::new(),
             instance_buffer,
             color_buffer: None,
@@ -826,7 +845,7 @@ impl Renderer {
             self.slot_revision = None;
         }
         if grew {
-            self.instance_capacity = payload_count.next_power_of_two().min(MAX_INSTANCES);
+            self.instance_capacity = payload_count.next_power_of_two().min(self.instance_limit);
             engine_profile::counter("render.instance_buffer_growth", 1.0);
         }
         if grew || layout_changed {
@@ -892,7 +911,7 @@ impl Renderer {
                 self.slot_capacity = instance_count
                     .max(INITIAL_CAPACITY)
                     .next_power_of_two()
-                    .min(MAX_INSTANCES);
+                    .min(self.instance_limit);
                 self.slot_buffer = Some(create_instance_buffer(
                     &self.device,
                     self.slot_capacity,
@@ -1771,6 +1790,9 @@ impl Renderer {
                 0
             },
             particles: particle_frame.as_ref().map_or(0, |frame| frame.total),
+            dropped_particles: (snapshot.dropped_particles as u64
+                + particle_frame.as_ref().map_or(0, |frame| frame.dropped))
+            .min(u64::from(u32::MAX)) as u32,
             sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
             reflections: post_frame.is_some_and(|frame| frame.reflections),
             ..self.residency_stats()

@@ -28,7 +28,8 @@ pub struct MaterialHandle(Id);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
-/// Library admission limits. Zero is supported for every limit.
+/// Library admission limits. Zero is supported for every limit; the default
+/// admits everything, so only memory bounds a library until a game sets one.
 #[derive(Debug, Clone, Copy)]
 pub struct AssetBudget {
     pub max_meshes: usize,
@@ -42,10 +43,10 @@ pub struct AssetBudget {
 impl Default for AssetBudget {
     fn default() -> Self {
         Self {
-            max_meshes: 128,
-            max_materials: 256,
-            max_textures: 64,
-            max_cpu_bytes: 32 * 1024 * 1024,
+            max_meshes: usize::MAX,
+            max_materials: usize::MAX,
+            max_textures: usize::MAX,
+            max_cpu_bytes: usize::MAX,
         }
     }
 }
@@ -148,6 +149,16 @@ impl Default for AssetLibrary {
 }
 
 impl AssetLibrary {
+    /// Limits later admissions to `budget`; assets already admitted stay.
+    pub fn set_budget(&mut self, budget: AssetBudget) {
+        self.budget = budget;
+    }
+
+    /// The admission limits.
+    pub fn budget(&self) -> AssetBudget {
+        self.budget
+    }
+
     /// Creates an empty library without preallocating the configured budgets.
     /// Panics only if this process exhausts all possible library identities.
     pub fn new(budget: AssetBudget) -> Self {
@@ -281,7 +292,10 @@ impl AssetLibrary {
     }
 
     fn reserve_bytes(&mut self, requested: usize) -> Result<(), AssetError> {
-        let available = self.budget.max_cpu_bytes - self.resident_bytes;
+        let available = self
+            .budget
+            .max_cpu_bytes
+            .saturating_sub(self.resident_bytes);
         if requested > available {
             return Err(AssetError::CpuBudget {
                 requested,

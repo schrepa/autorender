@@ -289,8 +289,11 @@ fn deleting_a_parent_and_disposing_scene_never_cascades_outside_ownership() {
 
 #[test]
 fn hierarchy_capacity_failure_rolls_back_new_entities_assets_and_camera() {
+    // A world at its configured transform-node limit.
+    const LIMIT: usize = 64;
     let mut world = world();
-    world.spawn_batch((0..engine_core::MAX_TRANSFORM_NODES).map(|_| (Transform::default(),)));
+    world.insert_resource(engine_core::TransformNodeLimit(LIMIT));
+    world.spawn_batch((0..LIMIT).map(|_| (Transform::default(),)));
     let camera = world.resource::<Camera>().position;
     let count = world.entities().len();
     let mut document = document();

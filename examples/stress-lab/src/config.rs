@@ -63,8 +63,9 @@ impl StressConfig {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        if !(1..=250_000).contains(&self.renderables) {
-            return Err("renderables must be in 1..=250000".into());
+        // A sanity bound for URLs and the page: the engine sets none.
+        if !(1..=4_000_000).contains(&self.renderables) {
+            return Err("renderables must be in 1..=4000000".into());
         }
         if self.moving_percent > 100 || self.sensor_percent > 100 {
             return Err("moving_percent and sensor_percent must be in 0..=100".into());

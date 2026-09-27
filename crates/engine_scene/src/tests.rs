@@ -673,10 +673,10 @@ fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
     );
     // The environment owns the look: named sections set, opt-in effects
     // omitted from it removed, the others at their defaults.
-    assert_eq!(world.resource::<LocalLights>().max_lights, 64);
+    assert_eq!(world.resource::<LocalLights>().max_lights, Some(64));
     assert_eq!(world.resource::<LocalLights>().distance, 90.0);
     assert_eq!(world.resource::<SunShafts>().intensity, 2.0);
-    assert_eq!(world.resource::<Particles>().max_particles, 500);
+    assert_eq!(world.resource::<Particles>().max_particles, Some(500));
     assert!(world.get_resource::<Reflections>().is_none());
     // Inspection round trips: the current look resolves to itself, with
     // missing reflections read as off.

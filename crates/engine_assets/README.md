@@ -39,8 +39,9 @@ library. Removing a texture leaves any material's weak reference unresolved;
 extraction must skip that material's instances. No fallback silently replaces a
 missing texture.
 
-The default `AssetBudget` admits 128 meshes, 256 materials, 64 textures and 32 MiB
-of resident CPU payload. `AssetLibrary::new` accepts custom limits, including zero. Insertion
+The default `AssetBudget` admits everything, so only memory bounds a library
+([decision 029](../../docs/adr-029-budgets-and-device-limits.md)).
+`AssetLibrary::new` and `AssetLibrary::set_budget` accept custom limits, including zero. Insertion
 fails without admission on capacity or byte overflow. Counters cover live assets
 and vertex/index/material-record/pixel payload, excluding bounds/allocator/slot metadata
 and asset data retained outside the library. `AssetError` provides stable `code()` values

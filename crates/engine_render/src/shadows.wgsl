@@ -34,8 +34,6 @@ struct Cull {
     strips: vec4<f32>,
     // x: near cascades drawn this frame.
     cascades: vec4<u32>,
-    // Start of each draw group's ID region within a map, four per vector.
-    starts: array<vec4<u32>, 32>,
 }
 
 struct Candidate {
@@ -81,9 +79,15 @@ struct DrawArgs {
 @group(0) @binding(5) var<storage, read_write> stillness: array<vec2<u32>>;
 @group(0) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(0) @binding(7) var<storage, read_write> args: array<DrawArgs>;
-// [0]: kept-map strips to redraw, one bit each; [1..4]: this frame's casters
-// of the near, moving and kept maps.
-@group(0) @binding(8) var<storage, read_write> dirty: array<atomic<u32>, 4>;
+// Counters read back ([0]: kept-map strips to redraw, one bit each; [1..4]:
+// this frame's casters of the near cascades, moving and kept maps), then the
+// start of each draw group's ID region within a map. Sharing one binding
+// keeps the selection within eight storage buffers.
+struct Counters {
+    dirty: array<atomic<u32>, 4>,
+    starts: array<u32>,
+}
+@group(0) @binding(8) var<storage, read_write> counters: Counters;
 
 const STILLNESS: u32 = 1u;
 const REFRESH: u32 = 2u;
@@ -125,7 +129,7 @@ fn overlaps(rectangle: vec4<f32>, low: vec3<f32>, high: vec3<f32>, depth: f32) -
 }
 
 fn group_start(group: u32) -> u32 {
-    return cull.starts[group / 4u][group % 4u];
+    return counters.starts[group];
 }
 
 fn append(map: u32, group: u32, slot: u32) {
@@ -153,7 +157,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let pose = poses[candidate.slot];
     let batch = batches[candidate.batch];
-    // Meshes beyond the draw group limit cast no shadow.
+    // Batches without a group (transparent ones) cast no shadow.
     if batch.group >= cull.groups {
         return;
     }
@@ -184,14 +188,14 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             // A kept slot that moved leaves its shadow in the strips it was
             // drawn into: redraw them.
             if count >= KEEP_AFTER && strips != 0u {
-                atomicOr(&dirty[0], strips);
+                atomicOr(&counters.dirty[0], strips);
             }
             count = 0u;
             strips = 0u;
         }
         if count == KEEP_AFTER && overlaps(cull.far, low, high, cull.depths.y) {
             // Newly still: its strips must be drawn with it.
-            atomicOr(&dirty[0], strip_bits(low.y, high.y));
+            atomicOr(&counters.dirty[0], strip_bits(low.y, high.y));
         }
         still = count;
         kept = count >= KEEP_AFTER;
@@ -230,7 +234,7 @@ fn count_casters() {
         totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)] += total;
     }
     for (var index = 0u; index < 3u; index++) {
-        atomicStore(&dirty[1u + index], totals[index]);
+        atomicStore(&counters.dirty[1u + index], totals[index]);
     }
 }
 

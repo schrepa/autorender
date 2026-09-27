@@ -37,8 +37,9 @@ spray and sparks were impossible.
   or streak along their motion; they fade into opaque surfaces (soft
   particles). Alpha particles are lit by the sun and sky; additive ones
   are unlit and glow.
-- **Settings.** `Particles { enabled, max_particles }`: beyond the budget
-  (at most 262,144 particles or 1,024 emitters) the emitters nearest the
+- **Settings.** `Particles { enabled, max_particles }` (decision 029 makes
+  the budget optional, none by default, and removes the emitter cap): beyond
+  the budget the emitters nearest the
   camera win, whole.
 - **Authoring and agents.** Scene version 6 materials author `opacity`,
   entities author `particles`, and the environment's `particles` section

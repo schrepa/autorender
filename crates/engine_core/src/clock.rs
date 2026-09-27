@@ -1,5 +1,7 @@
 use bevy_ecs::prelude::Resource;
 
+use crate::AssetBudget;
+
 /// Bounds gameplay work and render extraction independently.
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
@@ -8,9 +10,17 @@ pub struct EngineConfig {
     pub fixed_hz: f64,
     /// Maximum fixed ticks per frame, clamped to 1–1000.
     pub max_fixed_steps: u32,
-    /// Maximum visible instances copied per snapshot. Zero emits no instances;
-    /// counters and retention of culled sources still run.
+    /// Maximum visible instances copied per snapshot; beyond it the rest are
+    /// dropped and counted. `usize::MAX`, the default, sets no budget (the
+    /// GPU's buffers bound it). Zero emits no instances; counters and
+    /// retention of culled sources still run.
     pub max_render_instances: usize,
+    /// Admission limits of the engine's asset library; the default admits
+    /// everything.
+    pub asset_budget: AssetBudget,
+    /// Transformed entities propagation admits ([`crate::TransformNodeLimit`]);
+    /// the default sets no budget.
+    pub max_transform_nodes: usize,
     /// Conservatively omit boxes outside the camera frustum during extraction.
     /// Disable for repeatable comparisons against unculled extraction.
     pub frustum_culling: bool,
@@ -21,7 +31,9 @@ impl Default for EngineConfig {
         Self {
             fixed_hz: 60.0,
             max_fixed_steps: 5,
-            max_render_instances: 262_144,
+            max_render_instances: usize::MAX,
+            asset_budget: AssetBudget::default(),
+            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
             frustum_culling: true,
         }
     }

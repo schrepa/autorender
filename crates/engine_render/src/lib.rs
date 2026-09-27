@@ -3,21 +3,6 @@
 //! The browser renderer owns one canvas and all its GPU resources. CPU upload
 //! records and WGSL live together; ordinary gameplay never handles GPU objects.
 
-/// Maximum instances accepted in a snapshot; bounds CPU staging and GPU memory.
-pub const MAX_INSTANCES: usize = 262_144;
-
-/// Maximum distinct meshes referenced by a snapshot and retained on the GPU.
-pub const MAX_RESIDENT_MESHES: usize = 128;
-
-/// Maximum source vertex/index bytes resident on the GPU (32 MiB).
-pub const MAX_RESIDENT_MESH_BYTES: usize = 32 * 1024 * 1024;
-
-/// Maximum distinct asset textures referenced by a snapshot and retained on the GPU.
-pub const MAX_RESIDENT_TEXTURES: usize = 64;
-
-/// Maximum RGBA8 asset texels resident on the GPU (32 MiB), excluding renderer white.
-pub const MAX_RESIDENT_TEXTURE_BYTES: usize = 32 * 1024 * 1024;
-
 /// Work submitted by one frame, plus GPU asset residency after retirement.
 /// Skipped frames return zero work counters and current residency counters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -63,9 +48,11 @@ pub struct RenderStats {
     pub sun_shafts: bool,
     pub reflections: bool,
     /// Transparent draws (decision 026), also counted in `draw_calls`, and
-    /// the particles this frame drew.
+    /// the particles this frame drew; dropped particles are those a budget
+    /// or the GPU's bindings left out.
     pub transparent_draws: u32,
     pub particles: u32,
+    pub dropped_particles: u32,
 }
 
 /// Local lights of one frame (decision 023).

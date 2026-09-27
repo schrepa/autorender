@@ -43,9 +43,11 @@ pub struct FrameStats {
     /// Sun shafts (decision 024) and reflections (decision 025) applied.
     pub sun_shafts: bool,
     pub reflections: bool,
-    /// Transparent draws and particles drawn (decision 026).
+    /// Transparent draws, particles drawn and particles a budget or the
+    /// GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
     pub particles: u32,
+    pub dropped_particles: u32,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -97,10 +99,11 @@ pub struct BrowserStats {
     /// Whether sun shafts (decision 024) and reflections (decision 025) ran.
     pub sun_shafts: bool,
     pub reflections: bool,
-    /// Transparent draws, included in `draw_calls`, and particles drawn
-    /// (decision 026).
+    /// Transparent draws, included in `draw_calls`, particles drawn and
+    /// particles a budget or the GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
     pub particles: u32,
+    pub dropped_particles: u32,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -154,6 +157,7 @@ impl From<FrameStats> for BrowserStats {
             reflections: stats.reflections,
             transparent_draws: stats.transparent_draws,
             particles: stats.particles,
+            dropped_particles: stats.dropped_particles,
         }
     }
 }
@@ -495,6 +499,7 @@ impl BrowserApp {
             reflections: rendered.reflections,
             transparent_draws: rendered.transparent_draws,
             particles: rendered.particles,
+            dropped_particles: rendered.dropped_particles,
         };
         Ok(())
     }

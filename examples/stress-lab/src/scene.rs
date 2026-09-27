@@ -75,7 +75,6 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     world.insert_resource(stress_shafts());
     world.insert_resource(Reflections::default());
     world.insert_resource(LocalLights {
-        max_lights: MAX_LOCAL_LIGHTS,
         distance: 220.0,
         intensity: lamp_intensity(config.scene, "scene")?,
         ..LocalLights::default()

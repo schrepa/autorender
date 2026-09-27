@@ -1,18 +1,40 @@
 //! CPU-only draw planning. Storage is reused for opaque mesh/texture batches.
 
-use std::{fmt, ops::Range};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{BuildHasherDefault, Hasher},
+    ops::Range,
+};
 
 use engine_core::{MeshHandle, RenderFrame, RenderInstance, RenderSnapshot, TextureHandle};
 
-use crate::{
-    MAX_INSTANCES, MAX_RESIDENT_MESH_BYTES, MAX_RESIDENT_MESHES, MAX_RESIDENT_TEXTURE_BYTES,
-    MAX_RESIDENT_TEXTURES,
-};
+const UNMAPPED_BUCKET: u32 = u32::MAX;
 
-const UNMAPPED_BUCKET: u16 = u16::MAX;
+/// Hashes draw-group keys, which are already distinct integers, with one
+/// multiply (the bucket index takes high bits).
+#[derive(Default)]
+struct KeyHasher(u64);
 
-// Mesh, texture (or none) and opacity class of every bucket fit in a u16.
-const _: () = assert!(2 * MAX_RESIDENT_MESHES * (MAX_RESIDENT_TEXTURES + 1) <= u16::MAX as usize);
+impl Hasher for KeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(self.0 ^ u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        let mixed = (value ^ (value >> 31)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        self.0 = mixed ^ (mixed >> 29);
+    }
+}
+
+/// Draw group keys to their compact IDs.
+type GroupIds = HashMap<u64, u32, BuildHasherDefault<KeyHasher>>;
 
 #[derive(Debug)]
 pub(crate) struct DrawBatch {
@@ -32,32 +54,32 @@ pub(crate) fn is_transparent(instance: &RenderInstance) -> bool {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SnapshotError {
-    InstanceBudget { actual: usize },
-    MeshBudget { actual: usize },
-    MeshByteBudget,
-    DuplicateMesh { handle: MeshHandle },
-    MissingMesh { handle: MeshHandle },
-    TextureBudget { actual: usize },
-    TextureByteBudget,
-    DuplicateTexture { handle: TextureHandle },
-    MissingTexture { handle: TextureHandle },
+    /// More instances than this GPU's instance buffers hold.
+    InstanceBudget {
+        actual: usize,
+        limit: usize,
+    },
+    DuplicateMesh {
+        handle: MeshHandle,
+    },
+    MissingMesh {
+        handle: MeshHandle,
+    },
+    DuplicateTexture {
+        handle: TextureHandle,
+    },
+    MissingTexture {
+        handle: TextureHandle,
+    },
     InvalidCamera,
 }
 
 impl fmt::Display for SnapshotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InstanceBudget { actual } => write!(
+            Self::InstanceBudget { actual, limit } => write!(
                 f,
-                "Render snapshot has {actual} instances; maximum is {MAX_INSTANCES}. Reduce the scene workload."
-            ),
-            Self::MeshBudget { actual } => write!(
-                f,
-                "Render snapshot has {actual} meshes; maximum is {MAX_RESIDENT_MESHES}. Reduce the scene's distinct mesh count."
-            ),
-            Self::MeshByteBudget => write!(
-                f,
-                "Render snapshot exceeds the {MAX_RESIDENT_MESH_BYTES}-byte mesh budget. Reduce mesh vertices/indices or active mesh count."
+                "Render snapshot has {actual} instances; this GPU's instance buffers hold {limit}. Lower EngineConfig::max_render_instances or the scene workload."
             ),
             Self::DuplicateMesh { handle } => write!(
                 f,
@@ -67,14 +89,7 @@ impl fmt::Display for SnapshotError {
                 f,
                 "Render snapshot instance references missing mesh {handle:?}. Include its owned source in snapshot.meshes."
             ),
-            Self::TextureBudget { actual } => write!(
-                f,
-                "Render snapshot has {actual} textures; maximum is {MAX_RESIDENT_TEXTURES}. Reduce active texture count."
-            ),
-            Self::TextureByteBudget => write!(
-                f,
-                "Render snapshot exceeds the {MAX_RESIDENT_TEXTURE_BYTES}-byte texture budget. Reduce texture dimensions or active texture count."
-            ),
+
             Self::DuplicateTexture { handle } => write!(
                 f,
                 "Render snapshot contains duplicate source texture {handle:?}. Include each immutable texture handle once."
@@ -96,10 +111,10 @@ impl fmt::Display for SnapshotError {
 /// edits; source validation still runs on every snapshot. Changed keys take
 /// O(N * (log M + log T) + M * T + M log M + T log T);
 /// unchanged keys take O(N + M log M + T log T + B log(M + T)) for B batches.
-/// Certified frames additionally retain one bounded u16 bucket per stable slot;
+/// Certified frames additionally retain one draw-group ID per stable slot;
 /// visibility-only changes scatter compact IDs without per-instance key lookup.
-/// Storage retains at most 100,000 instance indices/keys/slot buckets, 128 mesh
-/// sources, 64 texture sources, and 128 * 65 draw ranges.
+/// Draw groups get compact IDs for the mesh, texture and opacity combinations
+/// in use, so no mesh or texture count bounds them.
 #[derive(Default)]
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
@@ -112,10 +127,19 @@ pub(crate) struct BatchPlan {
     mesh_handles: Vec<MeshHandle>,
     texture_handles: Vec<TextureHandle>,
     instance_keys: Vec<(MeshHandle, Option<TextureHandle>, bool)>,
-    // Rebuild-only bounded scratch: one u16 bucket per admitted instance,
-    // plus one cursor per possible mesh/(untextured or texture) pair.
-    instance_buckets: Vec<u16>,
+    // Rebuild scratch: one draw group per admitted instance and one cursor
+    // per group in use.
+    instance_buckets: Vec<u32>,
     bucket_cursors: Vec<usize>,
+    // Compact IDs of draw-group keys (opacity class, mesh rank, texture slot)
+    // and each ID's key; they last as long as the slot mapping.
+    group_ids: GroupIds,
+    group_keys: Vec<u64>,
+    group_order: Vec<u32>,
+    // Texture sources referenced by this plan's draws.
+    used_texture_sources: Vec<bool>,
+    /// Most instances the GPU's buffers hold; `None` bounds nothing.
+    pub instance_limit: Option<usize>,
     valid: bool,
     /// Last successful decision, also exposed through profiling counters.
     order_reused: bool,
@@ -123,12 +147,21 @@ pub(crate) struct BatchPlan {
     retained_sources: Option<(u64, u64)>,
     // Stable-slot mapping belongs only to a certified core frame/source epoch.
     // Never-visible slots resolve lazily; public snapshots cannot populate it.
-    slot_buckets: Vec<u16>,
+    slot_buckets: Vec<u32>,
     slot_mapping_reused: bool,
     key_resolutions: usize,
 }
 
 impl BatchPlan {
+    /// A plan that rejects snapshots of more than `limit` instances.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    pub(crate) fn with_instance_limit(limit: usize) -> Self {
+        Self {
+            instance_limit: Some(limit),
+            ..Self::default()
+        }
+    }
+
     /// Validate before any GPU cache changes, then produce contiguous draw ranges.
     pub fn prepare(&mut self, snapshot: &RenderSnapshot) -> Result<(), SnapshotError> {
         if self.retained_structure.take().is_some() {
@@ -198,8 +231,10 @@ impl BatchPlan {
             );
             engine_profile::counter("render.batch_key_resolutions", self.key_resolutions as f64);
             let group_scratch_bytes = (self.instance_buckets.capacity()
-                + self.slot_buckets.capacity())
-                * size_of::<u16>()
+                + self.slot_buckets.capacity()
+                + self.group_order.capacity())
+                * size_of::<u32>()
+                + self.group_keys.capacity() * size_of::<u64>()
                 + self.bucket_cursors.capacity() * size_of::<usize>();
             let capacity_bytes = (self.ordered_instances.capacity()
                 + self.source_indices.capacity()
@@ -228,6 +263,8 @@ impl BatchPlan {
         self.slot_mapping_reused = false;
         self.key_resolutions = 0;
         self.slot_buckets.clear();
+        self.group_ids.clear();
+        self.group_keys.clear();
         self.instance_keys.clear();
         self.instance_buckets.clear();
         self.bucket_cursors.clear();
@@ -253,32 +290,15 @@ impl BatchPlan {
         self.texture_sources.clear();
         self.mesh_handles.clear();
         self.texture_handles.clear();
-        if snapshot.instances.len() > MAX_INSTANCES || instance_count > MAX_INSTANCES {
+        // Only the GPU's buffers bound instances; meshes and textures are
+        // bounded by GPU memory alone.
+        if let Some(limit) = self.instance_limit
+            && (snapshot.instances.len() > limit || instance_count > limit)
+        {
             return Err(SnapshotError::InstanceBudget {
                 actual: snapshot.instances.len().max(instance_count),
+                limit,
             });
-        }
-        if snapshot.meshes.len() > MAX_RESIDENT_MESHES {
-            return Err(SnapshotError::MeshBudget {
-                actual: snapshot.meshes.len(),
-            });
-        }
-        let mesh_bytes = snapshot.meshes.iter().try_fold(0_usize, |total, source| {
-            total.checked_add(source.mesh.byte_len())
-        });
-        if mesh_bytes.is_none_or(|total| total > MAX_RESIDENT_MESH_BYTES) {
-            return Err(SnapshotError::MeshByteBudget);
-        }
-        if snapshot.textures.len() > MAX_RESIDENT_TEXTURES {
-            return Err(SnapshotError::TextureBudget {
-                actual: snapshot.textures.len(),
-            });
-        }
-        let texture_bytes = snapshot.textures.iter().try_fold(0_usize, |total, source| {
-            total.checked_add(source.texture.byte_len())
-        });
-        if texture_bytes.is_none_or(|total| total > MAX_RESIDENT_TEXTURE_BYTES) {
-            return Err(SnapshotError::TextureByteBudget);
         }
         if !snapshot.view_projection.is_finite() {
             return Err(SnapshotError::InvalidCamera);
@@ -316,6 +336,9 @@ impl BatchPlan {
         drop(profile_sources);
         if selected.is_some() && !reuse_slot_mapping {
             // Budget/source validation precedes any per-slot cache growth.
+            // Group IDs start over with the slots that refer to them.
+            self.group_ids.clear();
+            self.group_keys.clear();
             self.slot_buckets.clear();
             self.slot_buckets.reserve_exact(snapshot.instances.len());
             self.slot_buckets
@@ -333,9 +356,11 @@ impl BatchPlan {
                         key == (instance.mesh, instance.texture, is_transparent(instance))
                     })
         };
-        let mut used_texture_sources = [false; MAX_RESIDENT_TEXTURES];
+        self.used_texture_sources.clear();
+        self.used_texture_sources
+            .resize(snapshot.textures.len(), false);
         if !reused {
-            self.group_instances(snapshot, selected, &mut used_texture_sources)?;
+            self.group_instances(snapshot, selected)?;
         } else {
             let _profile_references = engine_profile::span("render", "batch_source_references");
             for batch in &mut self.batches {
@@ -350,13 +375,13 @@ impl BatchPlan {
                 )?;
                 batch.source_index = source_index;
                 if let Some(index) = texture_index {
-                    used_texture_sources[index] = true;
+                    self.used_texture_sources[index] = true;
                 }
             }
         }
         for &index in &self.texture_source_indices {
             self.texture_handles.push(snapshot.textures[index].handle);
-            if used_texture_sources[index] {
+            if self.used_texture_sources[index] {
                 self.texture_sources.push(index);
             }
         }
@@ -379,15 +404,13 @@ impl BatchPlan {
         &mut self,
         snapshot: &RenderSnapshot,
         selected: Option<&[usize]>,
-        used_texture_sources: &mut [bool; MAX_RESIDENT_TEXTURES],
     ) -> Result<(), SnapshotError> {
         let _profile = engine_profile::span("render", "batch_instance_group");
-        let texture_slots = self.texture_source_indices.len() + 1;
-        // Opaque buckets first, then transparent ones.
-        let opaque_buckets = self.source_indices.len() * texture_slots;
-        self.bucket_cursors.clear();
-        self.bucket_cursors.reserve_exact(2 * opaque_buckets);
-        self.bucket_cursors.resize(2 * opaque_buckets, 0);
+        if selected.is_none() {
+            // Public snapshots keep no slot mapping, so no IDs either.
+            self.group_ids.clear();
+            self.group_keys.clear();
+        }
         self.instance_buckets.clear();
         let instance_count = selected.map_or(snapshot.instances.len(), <[usize]>::len);
         self.instance_buckets.reserve_exact(instance_count);
@@ -397,8 +420,8 @@ impl BatchPlan {
             } else {
                 UNMAPPED_BUCKET
             };
-            let bucket = if cached != UNMAPPED_BUCKET {
-                usize::from(cached)
+            let group = if cached != UNMAPPED_BUCKET {
+                cached
             } else {
                 let (mesh_rank, texture_rank) = Self::source_ranks(
                     snapshot,
@@ -408,55 +431,60 @@ impl BatchPlan {
                     instance.texture,
                 )?;
                 self.key_resolutions += 1;
-                let bucket = mesh_rank * texture_slots
-                    + texture_rank.map_or(0, |rank| rank + 1)
-                    + if is_transparent(instance) {
-                        opaque_buckets
-                    } else {
-                        0
-                    };
-                if selected.is_some() {
-                    self.slot_buckets[slot] = bucket as u16;
+                // Opaque groups sort first, then by mesh and texture.
+                let key = (u64::from(is_transparent(instance)) << 62)
+                    | ((mesh_rank as u64) << 31)
+                    | texture_rank.map_or(0, |rank| rank as u64 + 1);
+                let next = self.group_keys.len() as u32;
+                let group = *self.group_ids.entry(key).or_insert(next);
+                if group == next {
+                    self.group_keys.push(key);
                 }
-                bucket
+                if selected.is_some() {
+                    self.slot_buckets[slot] = group;
+                }
+                group
             };
-            // Source admission bounds this to 2 * 128 * 65 distinct buckets.
-            self.instance_buckets.push(bucket as u16);
-            self.bucket_cursors[bucket] += 1;
+            self.instance_buckets.push(group);
         }
-        self.batches.clear();
-        self.batches.reserve_exact(
-            self.bucket_cursors
-                .iter()
-                .filter(|&&count| count != 0)
-                .count(),
+        self.bucket_cursors.clear();
+        self.bucket_cursors.resize(self.group_keys.len(), 0);
+        for &group in &self.instance_buckets {
+            self.bucket_cursors[group as usize] += 1;
+        }
+        self.group_order.clear();
+        self.group_order.extend(
+            (0..self.group_keys.len() as u32)
+                .filter(|&group| self.bucket_cursors[group as usize] != 0),
         );
+        self.group_order
+            .sort_unstable_by_key(|&group| self.group_keys[group as usize]);
+        self.batches.clear();
+        self.batches.reserve_exact(self.group_order.len());
         let mut start = 0;
         {
             let _profile_ranges = engine_profile::span("render", "batch_draw_ranges");
-            for (bucket, count) in self.bucket_cursors.iter_mut().enumerate() {
+            for &group in &self.group_order {
+                let count = &mut self.bucket_cursors[group as usize];
                 let end = start + *count;
                 *count = start;
-                if end != start {
-                    let transparent = bucket >= opaque_buckets;
-                    let key = bucket % opaque_buckets;
-                    let source_index = self.source_indices[key / texture_slots];
-                    let texture_slot = key % texture_slots;
-                    let texture = if texture_slot == 0 {
-                        None
-                    } else {
-                        let index = self.texture_source_indices[texture_slot - 1];
-                        used_texture_sources[index] = true;
-                        Some(snapshot.textures[index].handle)
-                    };
-                    self.batches.push(DrawBatch {
-                        mesh: snapshot.meshes[source_index].handle,
-                        source_index,
-                        texture,
-                        transparent,
-                        instances: start as u32..end as u32,
-                    });
-                }
+                let key = self.group_keys[group as usize];
+                let source_index = self.source_indices[((key >> 31) & 0x7fff_ffff) as usize];
+                let texture_slot = (key & 0x7fff_ffff) as usize;
+                let texture = if texture_slot == 0 {
+                    None
+                } else {
+                    let index = self.texture_source_indices[texture_slot - 1];
+                    self.used_texture_sources[index] = true;
+                    Some(snapshot.textures[index].handle)
+                };
+                self.batches.push(DrawBatch {
+                    mesh: snapshot.meshes[source_index].handle,
+                    source_index,
+                    texture,
+                    transparent: key >> 62 != 0,
+                    instances: start as u32..end as u32,
+                });
                 start = end;
             }
         }
@@ -464,7 +492,7 @@ impl BatchPlan {
         self.ordered_instances.reserve_exact(instance_count);
         self.ordered_instances.resize(instance_count, 0);
         for (index, &bucket) in self.instance_buckets.iter().enumerate() {
-            let cursor = &mut self.bucket_cursors[usize::from(bucket)];
+            let cursor = &mut self.bucket_cursors[bucket as usize];
             self.ordered_instances[*cursor] = selected.map_or(index, |indices| indices[index]);
             *cursor += 1;
         }
@@ -534,9 +562,7 @@ fn selected_instances<'a>(
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use engine_core::{
-        AssetLibrary, Mesh, MeshVertex, RenderInstance, RenderMesh, RenderTexture, Texture,
-    };
+    use engine_core::{AssetLibrary, Mesh, RenderInstance, RenderMesh, RenderTexture, Texture};
     use glam::Mat4;
 
     use super::*;
@@ -932,9 +958,10 @@ mod tests {
                     }
                 }
                 _ => {
-                    scene.textures = (0..=MAX_RESIDENT_TEXTURES).map(|_| texture()).collect();
-                    SnapshotError::TextureBudget {
-                        actual: MAX_RESIDENT_TEXTURES + 1,
+                    plan.instance_limit = Some(1);
+                    SnapshotError::InstanceBudget {
+                        actual: 2,
+                        limit: 1,
                     }
                 }
             };
@@ -953,6 +980,7 @@ mod tests {
             scene.meshes = vec![source.clone()];
             scene.textures = vec![source_texture.clone()];
             scene.instances[1].mesh = handle;
+            plan.instance_limit = None;
             plan.prepare(&scene).unwrap();
             assert!(!plan.order_reused);
             assert_complete_plan(&plan, &scene);
@@ -1067,30 +1095,31 @@ mod tests {
     }
 
     #[test]
-    fn texture_count_and_byte_budgets_bound_gpu_admission_independently() {
-        let mut snapshot = snapshot(Vec::new(), &[]);
-        snapshot.textures = (0..=MAX_RESIDENT_TEXTURES).map(|_| texture()).collect();
+    fn many_meshes_and_textures_plan_and_the_instance_limit_rejects_first() {
+        let meshes: Vec<_> = (0..300).map(|_| mesh()).collect();
+        let textures: Vec<_> = (0..200).map(|_| texture()).collect();
+        let handles: Vec<_> = meshes.iter().map(|source| source.handle).collect();
+        let mut scene = snapshot(meshes, &handles);
+        for (index, instance) in scene.instances.iter_mut().enumerate() {
+            instance.texture = Some(textures[index % textures.len()].handle);
+        }
+        scene.textures = textures;
         let mut plan = BatchPlan::default();
+        plan.prepare(&scene).unwrap();
+        assert_eq!(plan.batches.len(), 300);
+        assert_complete_plan(&plan, &scene);
+        let mut fresh = BatchPlan {
+            instance_limit: Some(299),
+            ..BatchPlan::default()
+        };
         assert_eq!(
-            plan.prepare(&snapshot),
-            Err(SnapshotError::TextureBudget {
-                actual: MAX_RESIDENT_TEXTURES + 1
+            fresh.prepare(&scene),
+            Err(SnapshotError::InstanceBudget {
+                actual: 300,
+                limit: 299
             })
         );
-        assert_eq!(plan.ordered_instances.capacity(), 0);
-        // Distinct handles model independent GPU allocations while sharing the
-        // test's 1 MiB immutable CPU backing.
-        let large = Arc::new(Texture::new(512, 512, vec![255; 512 * 512 * 4]).unwrap());
-        snapshot.textures = (0..33)
-            .map(|_| RenderTexture {
-                handle: texture().handle,
-                texture: Arc::clone(&large),
-            })
-            .collect();
-        assert_eq!(
-            plan.prepare(&snapshot),
-            Err(SnapshotError::TextureByteBudget)
-        );
+        assert_eq!(fresh.ordered_instances.capacity(), 0);
     }
 
     #[test]
@@ -1181,64 +1210,6 @@ mod tests {
         assert_eq!(
             plan.prepare(&snapshot(vec![source, duplicate], &[handle])),
             Err(SnapshotError::DuplicateMesh { handle })
-        );
-    }
-
-    #[test]
-    fn budgets_reject_input_before_growing_instance_staging() {
-        let source = mesh();
-        let handle = source.handle;
-        let mut plan = BatchPlan::default();
-        let mut oversized = snapshot(vec![source], &[]);
-        oversized.instances = (0..=MAX_INSTANCES)
-            .map(|_| RenderInstance {
-                model: Mat4::IDENTITY,
-                color: [1.0; 4],
-                surface: engine_core::Surface::MATTE,
-                mesh: handle,
-                texture: None,
-            })
-            .collect();
-        assert_eq!(
-            plan.prepare(&oversized),
-            Err(SnapshotError::InstanceBudget {
-                actual: MAX_INSTANCES + 1
-            })
-        );
-        assert_eq!(plan.ordered_instances.capacity(), 0);
-        let meshes = (0..=MAX_RESIDENT_MESHES).map(|_| mesh()).collect();
-        assert_eq!(
-            plan.prepare(&snapshot(meshes, &[])),
-            Err(SnapshotError::MeshBudget {
-                actual: MAX_RESIDENT_MESHES + 1
-            })
-        );
-    }
-
-    #[test]
-    fn mesh_byte_budget_counts_every_distinct_gpu_allocation() {
-        // Share the test's CPU backing while representing distinct GPU handles.
-        let mut vertices = vec![
-            MeshVertex {
-                position: [0.0; 3],
-                normal: [0.0, 0.0, 1.0],
-                uv: [0.0; 2],
-            };
-            12_000
-        ];
-        vertices[1].position = [1.0, 0.0, 0.0];
-        vertices[2].position = [0.0, 1.0, 0.0];
-        let large_mesh = Arc::new(Mesh::new(vertices, vec![0, 1, 2]).unwrap());
-        let meshes = (0..MAX_RESIDENT_MESHES)
-            .map(|_| RenderMesh {
-                handle: mesh().handle,
-                mesh: Arc::clone(&large_mesh),
-            })
-            .collect();
-        let mut plan = BatchPlan::default();
-        assert_eq!(
-            plan.prepare(&snapshot(meshes, &[])),
-            Err(SnapshotError::MeshByteBudget)
         );
     }
 

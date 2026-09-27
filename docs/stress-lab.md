@@ -2,8 +2,8 @@
 
 Open `/stress.html` on the running server. The page starts with 90,000 textured
 towers and 32 mesh batches. Select a preset to replace the workload, or adjust
-individual controls and Apply (up to 250,000 objects; the engine admits 262,144
-transform nodes and render instances). Failed configuration preserves the active
+individual controls and Apply (up to 4,000,000 objects, a sanity bound of the
+page; the engine sets no budget, decision 029). Failed configuration preserves the active
 world.
 
 | Preset | What it exercises |
@@ -40,7 +40,7 @@ apply with city meanings:
   block node, and moving assemblies (crane jib and load, wheel and cabins,
   drone and cargo, helicopter and rotor) children of moving pivots. Without
   them every part is a root whose motion reproduces the same poses; tests
-  compare both layouts. Block and pivot nodes stay within the 262,144
+  compare both layouts. Block and pivot nodes stay within the
   transform-node limit, falling back to roots.
 - **Mesh batches** keep 64 (all 52 shapes), 32, 8 or 1 shape; other shapes
   fall back to a simpler one. Draw groups are the mesh and texture pairs in

@@ -346,10 +346,8 @@ pub(crate) struct ShadowUniform {
     pub offsets: [f32; 4],
 }
 
-/// Most draw groups (distinct meshes) shadow maps draw: the resident meshes.
-pub(crate) const MAX_SHADOW_GROUPS: usize = crate::MAX_RESIDENT_MESHES;
-
-/// WGSL `Cull` uniform of `shadows.wgsl`: 736 bytes.
+/// WGSL `Cull` uniform of `shadows.wgsl`: 224 bytes. Each draw group's ID
+/// region start is in a storage buffer beside it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct ShadowCullUniform {
@@ -377,8 +375,6 @@ pub(crate) struct ShadowCullUniform {
     pub strips: [f32; 4],
     /// Near cascades drawn this frame; yzw unused.
     pub cascades: [u32; 4],
-    /// Start of each group's ID region within a map.
-    pub starts: [u32; MAX_SHADOW_GROUPS],
 }
 
 /// WGSL `Post` uniform of `effects.wgsl` (decisions 021, 024 and 025): 240
@@ -486,7 +482,6 @@ pub(crate) struct PresentationFrame {
 /// Bit of a visible slot ID marking a slot whose displayed pose can differ
 /// from the previous frame's (decision 017); slot indices stay below it.
 pub(crate) const MOVED_SLOT: u32 = 1 << 31;
-const _: () = assert!(crate::MAX_INSTANCES as u32 <= MOVED_SLOT);
 
 /// One candidate slot, its hierarchy node, its draw group and its index in
 /// draw-group order (16 bytes).
@@ -866,7 +861,7 @@ mod tests {
         assert_eq!(size(SHADER, "Shadow"), size_of::<ShadowUniform>());
         assert_eq!(size_of::<ShadowUniform>(), 400);
         assert_eq!(size(SHADOW_SHADER, "Cull"), size_of::<ShadowCullUniform>());
-        assert_eq!(size_of::<ShadowCullUniform>(), 736);
+        assert_eq!(size_of::<ShadowCullUniform>(), 224);
         // Members sit where Rust puts them (decision 028's arrays).
         let offset = |source: &str, name: &str, member: &str| {
             let module = naga::front::wgsl::parse_str(source).unwrap();
@@ -892,10 +887,7 @@ mod tests {
             offset(SHADOW_SHADER, "Cull", "cascades"),
             std::mem::offset_of!(ShadowCullUniform, cascades)
         );
-        assert_eq!(
-            offset(SHADOW_SHADER, "Cull", "starts"),
-            std::mem::offset_of!(ShadowCullUniform, starts)
-        );
+
         assert_eq!(size(SHADOW_SHADER, "Batch"), size_of::<BatchData>());
         assert_eq!(size(SHADOW_SHADER, "Candidate"), size_of::<CandidateData>());
         assert_eq!(size(SHADOW_SHADER, "DrawArgs") as u64, DRAW_ARGS_BYTES);

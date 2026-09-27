@@ -170,10 +170,10 @@ retire when their source disappears from the snapshot. Wgpu retains resources
 needed by previously submitted GPU work. Dropping a scene therefore removes its
 unused GPU assets on the next render boundary; a subsequently reused asset is
 uploaded again. Invalid snapshots return an actionable error before GPU cache
-changes. Snapshots cannot exceed 262,144 instances, 128 source meshes, or 32 MiB
-of total vertex/index data, independently of 64 source textures and 32 MiB of
-RGBA8 texture data. Texture dimensions cannot exceed the device limit (the CPU
-asset contract further caps each dimension at 2048). Missing or duplicate source handles also fail.
+changes. Only the GPU's buffers bound instances (the renderer requests the
+adapter's buffer sizes); meshes and textures are bounded by GPU memory alone
+([decision 029](../../docs/adr-029-budgets-and-device-limits.md)). Texture
+dimensions cannot exceed the device limit (8,192 in the CPU asset contract). Missing or duplicate source handles also fail.
 Source CPU ownership remains with the library/snapshot; renderer cache entries
 own GPU resources only. The renderer's permanent four-byte white texel is outside
 asset budgets and residency/upload counters.
@@ -206,7 +206,7 @@ uniform bytes, and `meshes.wgsl` are co-located; byte-cast eligibility is not us
 as evidence of WGSL layout. Each vertex is 32 bytes and each index is 4 bytes.
 
 Instance staging and the GPU instance buffer grow geometrically within the
-262,144 instance limit (21 MB each for public snapshots). The retained path uses
+device's instance limit. The retained path uses
 at most 1.6 MB of color staging (pose rows are core-owned) and 6.4 MB of GPU
 instance storage, plus 0.4 MB each of CPU/GPU slot IDs, 1.6 MB of per-slot
 revision stamps and at most three mapped pose staging buffers, each the largest
@@ -218,13 +218,11 @@ density threshold. Clean-gap limits follow each stream's stride: 342 pose or
 1024 color records. Dense motion can therefore upload every pose without
 uploading unchanged colors. Fixed range scratch is 512 bytes for public
 snapshots plus 1024 bytes for retained frames on Wasm; these are included in
-upload-cache memory counters. Planning retains at most
-262,144 native-size indices and exact mesh/texture key pairs, plus 128 mesh
-source indices and retained handles, 64 texture source
-indices and retained handles, and at most
-128 * 65 draw ranges. Stable grouping additionally retains at most 262,144 u16
-visible bucket IDs, 262,144 u16 cached slot buckets, and 8,320 native-size cursors
-(433,280 bytes on Wasm). A reusable vertex conversion
+upload-cache memory counters. Planning retains one
+native-size index and exact mesh/texture key pair per instance, the source
+indices and retained handles, and one draw range per mesh, texture and opacity
+combination in use. Stable grouping additionally retains one 32-bit group ID per
+visible instance and per cached slot, and one cursor per group in use. A reusable vertex conversion
 vector retains capacity for the largest source encountered, bounded by the mesh
 byte budget. The at-most-128-entry GPU cache allocates on new mesh residency,
 not on every draw. The texture cache is at most 64 entries. GPU command objects and presentation textures are created

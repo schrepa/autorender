@@ -92,21 +92,29 @@ impl ParticleUniform {
 }
 
 /// Emitter records in draw order: alpha emitters first, then additive ones,
-/// with the instances of each; returns the alpha particle count.
+/// with the instances of each, up to `room` particles (what the GPU's
+/// bindings hold); returns the alpha particle count and the particles of
+/// emitters that did not fit.
 pub(crate) fn pack_emitters(
     emitters: &[RenderEmitter],
     records: &mut Vec<EmitterData>,
     owners: &mut Vec<u32>,
-) -> u32 {
+    room: u64,
+) -> (u32, u64) {
     records.clear();
     owners.clear();
-    let mut first = 0;
+    let mut first = 0_u32;
     let mut alpha = 0;
+    let mut dropped = 0;
     for blend in [ParticleBlend::Alpha, ParticleBlend::Additive] {
         for emitter in emitters
             .iter()
             .filter(|emitter| emitter.emitter.blend == blend)
         {
+            if u64::from(first) + u64::from(emitter.count) > room {
+                dropped += u64::from(emitter.count);
+                continue;
+            }
             let index = records.len() as u32;
             records.push(EmitterData::new(emitter, first));
             owners.extend(std::iter::repeat_n(index, emitter.count as usize));
@@ -116,7 +124,7 @@ pub(crate) fn pack_emitters(
             alpha = first;
         }
     }
-    alpha
+    (alpha, dropped)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -126,10 +134,12 @@ mod gpu {
     use super::*;
     use crate::gpu_data::PARTICLE_SHADER;
 
-    /// A frame's particles: alpha instances first, then additive ones.
+    /// A frame's particles: alpha instances first, then additive ones, and
+    /// the particles of emitters beyond the GPU's bindings.
     pub(crate) struct ParticleFrame {
         pub alpha: u32,
         pub total: u32,
+        pub dropped: u64,
     }
 
     pub(crate) struct ParticlePass {
@@ -264,10 +274,17 @@ mod gpu {
             if !snapshot.particles.enabled || snapshot.emitters.is_empty() {
                 return None;
             }
-            let alpha = pack_emitters(
+            // One owner entry per particle and one record per emitter, within
+            // what a storage binding holds.
+            let limits = device.limits();
+            let binding = limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size);
+            let (alpha, dropped) = pack_emitters(
                 &snapshot.emitters,
                 &mut self.records,
                 &mut self.owner_staging,
+                binding / 4,
             );
             let total = self.owner_staging.len() as u32;
             if total == 0 {
@@ -323,7 +340,11 @@ mod gpu {
                 });
                 self.group = Some((key, group));
             }
-            Some(ParticleFrame { alpha, total })
+            Some(ParticleFrame {
+                alpha,
+                total,
+                dropped,
+            })
         }
 
         /// Creates the additive pipeline into the canvas or, with `post`, the
@@ -502,8 +523,8 @@ mod tests {
             emitter(ParticleBlend::Alpha, 4),
         ];
         let (mut records, mut owners) = (Vec::new(), Vec::new());
-        let alpha = pack_emitters(&emitters, &mut records, &mut owners);
-        assert_eq!(alpha, 6);
+        let (alpha, dropped) = pack_emitters(&emitters, &mut records, &mut owners, u64::MAX);
+        assert_eq!((alpha, dropped), (6, 0));
         assert_eq!(owners, [0, 0, 1, 1, 1, 1, 2, 2, 2]);
         assert_eq!(
             records
@@ -512,6 +533,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [(0, 2), (2, 4), (6, 3)]
         );
+        let (alpha, dropped) = pack_emitters(&emitters, &mut records, &mut owners, 7);
+        assert_eq!((alpha, dropped, owners.len()), (6, 3, 6));
         assert_eq!(size_of::<EmitterData>(), 128);
         assert_eq!(size_of::<ParticleUniform>(), 48);
         // A straight cone has cosine 1; a full sphere, -1.

@@ -75,8 +75,10 @@ the engine-owned transform propagation boundary still runs.
 Development stepping adds no protocol traffic or serialization to ordinary frames.
 
 Configuration normalizes frequency into 1–1000 Hz (invalid values use 60 Hz),
-and max ticks into 1–1000. Render extraction defaults to 262,144 instances; zero
-emits no instances while counters and retention of culled sources still run.
+and max ticks into 1–1000. Render extraction sets no instance budget by
+default ([decision 029](../../docs/adr-029-budgets-and-device-limits.md));
+`max_render_instances` sets one, and zero emits no instances while counters and
+retention of culled sources still run.
 Visible overflow is counted in `RenderSnapshot::dropped_instances`.
 Extraction queries cache ECS metadata, copy only up to the instance budget, and
 reuse snapshot vectors and private asset-deduplication sets. Ordering follows ECS iteration and is
@@ -199,7 +201,7 @@ CPU reference on demand, and returns false without changes once a tick, refresh
 or reset has changed its inputs.
 
 History uses two reusable record buffers and a generational entity index, each
-bounded by 262,144 records. Each record is split into a cold identity part and a
+bounded by the transform-node limit. Each record is split into a cold identity part and a
 hot 64-byte interval (previous endpoint, epoch and validity) that ordinary motion
 and presentation touch alone. Hierarchy validation forwards changed source poses,
 component lifetimes and validity through cached history slots. A record freezes
@@ -299,14 +301,14 @@ A world-space interior test first accepts boxes proven strictly inside all six
 planes; only intersecting or unproven boxes need the transformed-plane test.
 Decisions are identical to the transformed-plane test alone.
 
-Extraction retains visibility results for at most 262,144 valid input rows.
+Extraction retains visibility results for its valid input rows.
 Exact model bits and immutable mesh handles reuse a result only while the camera
 matrix and culling mode match. Query reordering or entity replacement is safe:
 reuse depends on equal geometric inputs, not entity identity. Asset lookups still
 run before reuse, so removed dependencies cannot remain visible from the cache.
 Output snapshots are rebuilt as owned data, including when a caller changes or
 replaces its previous snapshot. The cache holds weak handles and matrix bits,
-adds at most 262,144 entry records, and retains capacity after removals. Profiling
+adds one entry record per input row, and retains capacity after removals. Profiling
 reports its capacity and the number of culling tests performed/reused.
 
 The support test uses a conservative margin of 32 f32 epsilons times a bound on
@@ -388,7 +390,9 @@ for same-phase edits. `Engine::refresh_transforms()` runs only this boundary;
 `propagate_transforms(&mut World)` supports immediate refresh during transactional
 scene installation and returns counts. Neither advances clocks or gameplay.
 
-Propagation admits 262,144 transformed entities. Ordinary boundaries apply an
+Propagation admits `TransformNodeLimit` transformed entities (by default every
+one a 32-bit index can address; `EngineConfig::max_transform_nodes` sets a
+budget). Ordinary boundaries apply an
 engine-owned change window to each table's contiguous `Transform` change stamps:
 a table whose stamps are all unchanged is skipped in one pass, and others classify
 blocks of stamps before fetching any payload. Unchanged rows load no payload.

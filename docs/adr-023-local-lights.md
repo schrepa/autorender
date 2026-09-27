@@ -32,8 +32,9 @@ values skip the light.
   lights per cluster. Lit pipelines are separate entry points
   (`fs_*_lit`), created with the first lit frame, so frames without lights
   run the unchanged shaders.
-- **Settings.** `LocalLights { enabled, max_lights, intensity, distance }`:
-  beyond `max_lights` (at most 4096) the lights nearest the camera win,
+- **Settings.** `LocalLights { enabled, max_lights, intensity, distance }`
+  (decision 029 makes `max_lights` an optional budget, none by default, and
+  adds `lights_per_cluster`): beyond `max_lights` the lights nearest the camera win,
   chosen every frame; `intensity` scales every light (dim lamps by day);
   light fades out over the last tenth of `distance`, past which lights are
   not binned. Missing or disabled settings shade no local lights.

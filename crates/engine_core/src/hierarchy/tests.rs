@@ -1526,8 +1526,10 @@ fn normal_conditioning_rejects_extreme_anisotropy_but_admits_extreme_uniform_com
 
 #[test]
 fn transform_budget_invalidates_overflow_and_recovers_after_removal() {
+    const LIMIT: usize = 64;
     let mut world = World::new();
-    for _ in 0..MAX_TRANSFORM_NODES + 1 {
+    world.insert_resource(TransformNodeLimit(LIMIT));
+    for _ in 0..LIMIT + 1 {
         world.spawn(Transform::default());
     }
     assert_eq!(
@@ -1535,7 +1537,7 @@ fn transform_budget_invalidates_overflow_and_recovers_after_removal() {
         Err(HierarchyError::CapacityExceeded)
     );
     let report = propagate(&mut world);
-    assert_eq!(report.transforms, MAX_TRANSFORM_NODES + 1);
+    assert_eq!(report.transforms, LIMIT + 1);
     assert_eq!(report.invalid_transforms, 1);
     assert_eq!(report.overflow_transforms, 1);
     let removed = world
@@ -1546,11 +1548,8 @@ fn transform_budget_invalidates_overflow_and_recovers_after_removal() {
     world.despawn(removed);
     let report = propagate(&mut world);
     assert_eq!(report.invalid_transforms, 0);
-    assert_eq!(report.transforms, MAX_TRANSFORM_NODES);
-    assert_eq!(
-        world.resource::<HierarchyScratch>().links.len(),
-        MAX_TRANSFORM_NODES
-    );
+    assert_eq!(report.transforms, LIMIT);
+    assert_eq!(world.resource::<HierarchyScratch>().links.len(), LIMIT);
 }
 
 #[test]

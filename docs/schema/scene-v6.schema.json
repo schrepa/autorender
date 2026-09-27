@@ -923,12 +923,20 @@
           "maximum": 100.0,
           "minimum": 0.0
         },
-        "max_lights": {
-          "description": "Most lights a frame shades; beyond it the nearest to the camera win.",
+        "lights_per_cluster": {
+          "description": "Lights one view cluster lists (32 by default); more costs memory.",
           "type": "integer",
           "format": "uint32",
-          "default": 1024,
-          "maximum": 4096,
+          "default": 32,
+          "minimum": 1
+        },
+        "max_lights": {
+          "description": "An optional budget of lights a frame shades; beyond it the nearest to\nthe camera win. Omitted, every light shades.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
           "minimum": 1
         }
       },
@@ -1154,11 +1162,12 @@
           "default": true
         },
         "max_particles": {
-          "description": "Most particles a frame draws; emitters beyond it are skipped.",
-          "type": "integer",
+          "description": "An optional budget of particles a frame draws; beyond it the emitters\nnearest the camera win. Omitted, every emitter draws.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint32",
-          "default": 65536,
-          "maximum": 262144,
           "minimum": 1
         }
       },

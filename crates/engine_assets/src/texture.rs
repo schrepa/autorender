@@ -1,7 +1,8 @@
 use crate::AssetError;
 
-/// Maximum admitted width or height for the portable texture profile.
-pub const MAX_TEXTURE_DIMENSION: u32 = 2048;
+/// Maximum admitted width or height: the largest 2D texture every WebGPU
+/// device holds.
+pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
 
 /// Immutable sRGB color pixels in tightly packed row-major RGBA8 order.
 ///

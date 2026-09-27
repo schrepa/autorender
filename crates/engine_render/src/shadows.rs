@@ -19,8 +19,8 @@ use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
-    BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, MAX_SHADOW_GROUPS, SHADOW_SHADER,
-    ShadowCullUniform, ShadowUniform,
+    BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
+    ShadowUniform,
 };
 use crate::shadow_fit::{LightBasis, MapRegion, view_sphere};
 
@@ -207,10 +207,10 @@ fn add_to_group(
     mesh: MeshHandle,
     source_index: usize,
     count: u32,
-) -> Option<u32> {
+) -> u32 {
     let index = match indices.get(&mesh) {
         Some(&index) => index,
-        None if groups.len() < MAX_SHADOW_GROUPS => {
+        None => {
             groups.push(ShadowGroup {
                 mesh,
                 source_index,
@@ -221,10 +221,9 @@ fn add_to_group(
             indices.insert(mesh, index);
             index
         }
-        None => return None,
     };
     counts[index as usize] += count;
-    Some(index)
+    index
 }
 
 /// Shadow pipelines and their fixed bindings, created with the first frame
@@ -492,6 +491,8 @@ pub(crate) struct ShadowPass {
     // Casters of CPU-prepared frames and one group record per mesh.
     listed: wgpu::Buffer,
     listed_groups: wgpu::Buffer,
+    // Draw groups whose ID region starts fit after the counters of `dirty`.
+    starts_capacity: usize,
     listed_capacity: usize,
     listed_staging: Vec<CandidateData>,
     listed_group_staging: Vec<BatchData>,
@@ -591,6 +592,7 @@ impl ShadowPass {
                 wgpu::BufferUsages::COPY_SRC,
             ),
             no_flags: empty("engine/shadow-no-flags", wgpu::BufferUsages::empty()),
+            starts_capacity: 0,
             readbacks: Vec::new(),
             read_back: Rc::new(Cell::new(0)),
             casters: Rc::new(Cell::new(None)),
@@ -758,21 +760,20 @@ impl ShadowPass {
                 let Some(&source_index) = sources.get(&mesh) else {
                     continue;
                 };
-                if let Some(group) = add_to_group(
+                let group = add_to_group(
                     &mut self.groups,
                     &mut counts,
                     &mut indices,
                     mesh,
                     source_index,
                     1,
-                ) {
-                    self.listed_staging.push(CandidateData {
-                        slot: slot as u32,
-                        node: 0,
-                        batch: group,
-                        position: 0,
-                    });
-                }
+                );
+                self.listed_staging.push(CandidateData {
+                    slot: slot as u32,
+                    node: 0,
+                    batch: group,
+                    position: 0,
+                });
             }
             self.listed_count = self.listed_staging.len() as u32;
         } else {
@@ -791,9 +792,7 @@ impl ShadowPass {
                     batch.source_index,
                     count,
                 );
-                // Beyond the group limit a batch casts no shadow; its
-                // candidates select into group 0's region, which holds them.
-                self.batch_groups.push(group.unwrap_or(u32::MAX));
+                self.batch_groups.push(group);
             }
         }
         let mut start = 0;
@@ -965,6 +964,23 @@ impl ShadowPass {
         }
         if self.groups_changed {
             self.groups_changed = false;
+            if groups > self.starts_capacity {
+                // Counters first, then every group's region start; a new
+                // buffer drops unread counters, which only delays strips.
+                self.starts_capacity = groups.next_power_of_two();
+                self.dirty = storage(
+                    device,
+                    "engine/shadow-dirty",
+                    READBACK_BYTES + (self.starts_capacity * 4) as u64,
+                    wgpu::BufferUsages::COPY_SRC,
+                );
+                self.dirty_strips = ALL_STRIPS;
+                self.buffers_generation += 1;
+            }
+            let starts: Vec<u32> = self.groups.iter().map(|group| group.start).collect();
+            if !starts.is_empty() {
+                queue.write_buffer(&self.dirty, READBACK_BYTES, bytemuck::cast_slice(&starts));
+            }
             let mut template: Vec<u32> = Vec::with_capacity(MAPS * groups * 5);
             for _ in 0..MAPS {
                 for group in &self.groups {
@@ -976,7 +992,8 @@ impl ShadowPass {
             }
             if self.source == Source::Listed {
                 let casters = self.listed_staging.len().max(1);
-                if casters > self.listed_capacity || groups > self.listed_group_staging.capacity() {
+                let group_bytes = (groups.max(1) * size_of::<BatchData>()) as u64;
+                if casters > self.listed_capacity || group_bytes > self.listed_groups.size() {
                     self.listed_capacity = casters.next_power_of_two();
                     self.listed = storage(
                         device,
@@ -987,7 +1004,7 @@ impl ShadowPass {
                     self.listed_groups = storage(
                         device,
                         "engine/shadow-caster-groups",
-                        (MAX_SHADOW_GROUPS * size_of::<BatchData>()) as u64,
+                        group_bytes.next_power_of_two(),
                         wgpu::BufferUsages::empty(),
                     );
                     self.buffers_generation += 1;
@@ -1040,10 +1057,6 @@ impl ShadowPass {
                 }
                 None => [0.0; 4],
             };
-            let mut starts = [0; MAX_SHADOW_GROUPS];
-            for (start, group) in starts.iter_mut().zip(&self.groups) {
-                *start = group.start;
-            }
             let row = |axis: Vec3| axis.extend(0.0).to_array();
             let mut near_rects = [[0.0; 4]; MAX_CASCADES];
             let mut near_depths = [0.0; 4];
@@ -1067,7 +1080,6 @@ impl ShadowPass {
                     .fold(0, |mode, (_, bit)| mode | bit),
                 strips: [far.rect[1], strip_height, STRIPS as f32, 0.0],
                 cascades: [near.len() as u32, 0, 0, 0],
-                starts,
             };
             queue.write_buffer(
                 &self.pipelines.as_ref().expect("created above").cull,

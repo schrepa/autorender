@@ -15,8 +15,30 @@ use validation::Certificate;
 
 /// Maximum parent edges from a root to a transformed entity.
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
-/// Maximum transformed entities admitted by one propagation pass.
-pub const MAX_TRANSFORM_NODES: usize = 262_144;
+/// Most transformed entities one propagation pass can index (node indices
+/// are 32-bit). [`TransformNodeLimit`] sets a lower budget.
+pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;
+
+/// Transformed entities propagation admits; beyond it the rest have no
+/// world pose and count as overflow in the [`HierarchyReport`]. The default,
+/// [`MAX_TRANSFORM_NODES`], sets no budget: memory bounds it.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransformNodeLimit(pub usize);
+
+impl Default for TransformNodeLimit {
+    fn default() -> Self {
+        Self(MAX_TRANSFORM_NODES)
+    }
+}
+
+/// The world's transform-node limit, at most [`MAX_TRANSFORM_NODES`].
+fn node_limit(world: &World) -> usize {
+    world
+        .get_resource::<TransformNodeLimit>()
+        .map_or(MAX_TRANSFORM_NODES, |limit| {
+            limit.0.min(MAX_TRANSFORM_NODES)
+        })
+}
 /// Conservative bound for GPU normal transformation conditioning.
 ///
 /// After normalizing the cofactor matrix's largest absolute coefficient to one,
@@ -76,10 +98,9 @@ impl fmt::Display for HierarchyError {
                 formatter,
                 "parent relationship exceeds {MAX_HIERARCHY_DEPTH} edges from a root"
             ),
-            Self::CapacityExceeded => write!(
-                formatter,
-                "world exceeds the {MAX_TRANSFORM_NODES} transform-node budget"
-            ),
+            Self::CapacityExceeded => {
+                formatter.write_str("world exceeds its transform-node limit (TransformNodeLimit)")
+            }
         }
     }
 }
@@ -130,12 +151,13 @@ pub fn set_parents(
     world: &mut World,
     changes: &[(Entity, Option<Entity>)],
 ) -> Result<(), HierarchyError> {
-    if changes.len() > MAX_TRANSFORM_NODES {
+    let limit = node_limit(world);
+    if changes.len() > limit {
         return Err(HierarchyError::CapacityExceeded);
     }
     let mut query = world.query::<(Entity, &Transform, Option<&Parent>)>();
     let count = query.iter(world).len();
-    if count > MAX_TRANSFORM_NODES {
+    if count > limit {
         return Err(HierarchyError::CapacityExceeded);
     }
     if changes.is_empty() {
@@ -509,6 +531,8 @@ pub struct GlobalTransforms {
     pub(crate) changes: ChangeLog,
     last_scan: Option<Tick>,
     incomplete: bool,
+    // Transformed entities admitted ([`TransformNodeLimit`]).
+    pub(crate) limit: usize,
     report: HierarchyReport,
     pub(crate) topology_revision: u64,
     // Advances whenever a boundary observed a changed source, rebuilt topology
@@ -539,6 +563,7 @@ impl FromWorld for GlobalTransforms {
             changes: ChangeLog::default(),
             last_scan: None,
             incomplete: true,
+            limit: node_limit(world),
             report: HierarchyReport::default(),
             topology_revision: 0,
             revision: 0,
@@ -1229,7 +1254,7 @@ impl GlobalTransforms {
         let mut observed = 0;
         for (entity, transform, parent, marker) in self.query.iter(world) {
             metadata += 1;
-            if count < MAX_TRANSFORM_NODES {
+            if count < self.limit {
                 let Some(source) = self.sources.get_mut(count) else {
                     return Scan {
                         topology_changed: true,
@@ -1281,7 +1306,7 @@ impl GlobalTransforms {
         engine_profile::counter("hierarchy.scanned_nodes", count as f64);
         Scan {
             topology_changed: count != self.report.transforms
-                || self.sources.len() != count.min(MAX_TRANSFORM_NODES),
+                || self.sources.len() != count.min(self.limit),
             observed,
         }
     }
@@ -1311,7 +1336,7 @@ impl GlobalTransforms {
         self.order.clear();
         self.path.clear();
         self.dirty.clear();
-        let admitted = self.query.iter(world).len().min(MAX_TRANSFORM_NODES);
+        let admitted = self.query.iter(world).len().min(self.limit);
         self.entities.reserve_exact(admitted);
         self.sources.reserve_exact(admitted);
         self.locals.reserve_exact(admitted);
@@ -1330,7 +1355,7 @@ impl GlobalTransforms {
         let mut report = HierarchyReport::default();
         for (entity, transform, parent, marker) in self.query.iter(world) {
             report.transforms += 1;
-            if self.links.len() == MAX_TRANSFORM_NODES {
+            if self.links.len() == self.limit {
                 report.overflow_transforms += 1;
                 continue;
             }
@@ -1512,6 +1537,12 @@ impl GlobalTransforms {
         world: &mut World,
         mut interpolation: Option<&mut InterpolationState>,
     ) -> HierarchyReport {
+        // A changed limit rescans every source.
+        let limit = node_limit(world);
+        if limit != self.limit {
+            self.limit = limit;
+            self.incomplete = true;
+        }
         let interrupted = std::mem::replace(&mut self.incomplete, true);
         let scan_tick = world.read_change_tick();
         let aged = self
@@ -1519,8 +1550,7 @@ impl GlobalTransforms {
             .is_none_or(|last| scan_tick.get().wrapping_sub(last.get()) >= MAX_CHANGE_AGE);
         let structural =
             std::mem::take(&mut world.resource_mut::<tracking::Invalidation>().full_scan);
-        let force =
-            interrupted || aged || structural || self.report.transforms >= MAX_TRANSFORM_NODES;
+        let force = interrupted || aged || structural || self.report.transforms >= self.limit;
         let mut work = PropagationWork::default();
         let mut scan = if force {
             self.scan_full(world, &mut interpolation)
@@ -1608,7 +1638,7 @@ pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
 /// Orphans, cycles, excessive depth, invalid matrices, and overflow become
 /// `GlobalTransform::matrix() == None`; healthy unrelated branches still update.
 /// Removing `Transform` removes its published pose at the next refresh. Storage is bounded by
-/// [`MAX_TRANSFORM_NODES`]; traversal is iterative, with ancestor walks bounded
+/// [`TransformNodeLimit`]; traversal is iterative, with ancestor walks bounded
 /// by [`MAX_HIERARCHY_DEPTH`].
 pub fn propagate_transforms(world: &mut World) -> HierarchyReport {
     let _profile = engine_profile::span("hierarchy", "propagate");

@@ -13,8 +13,6 @@ use engine_core::{RenderLight, glam::Mat4};
 pub(crate) const TILES_X: u32 = 16;
 pub(crate) const TILES_Y: u32 = 9;
 pub(crate) const SLICES: u32 = 24;
-/// Lights one cluster lists; more are dropped and counted.
-pub(crate) const LIGHTS_PER_CLUSTER: u32 = 32;
 #[cfg(target_arch = "wasm32")]
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
 const NO_SLOT: u32 = u32::MAX;
@@ -58,6 +56,7 @@ impl ClusterUniform {
         distance: f32,
         lights: u32,
         poses: bool,
+        per_cluster: u32,
     ) -> Self {
         let depth = view_projection.row(3);
         let scale_x = view_projection.row(0).truncate().length();
@@ -86,7 +85,7 @@ impl ClusterUniform {
                 slice_scale,
                 -start.log2() * slice_scale,
             ],
-            counts: [TILES_X, TILES_Y, SLICES, LIGHTS_PER_CLUSTER],
+            counts: [TILES_X, TILES_Y, SLICES, per_cluster],
             lights: [lights, u32::from(poses), 0, 0],
         }
     }
@@ -168,6 +167,8 @@ mod gpu {
         capacity: usize,
         counts: wgpu::Buffer,
         indices: wgpu::Buffer,
+        // Entries per cluster list `indices` holds.
+        per_cluster: u32,
         totals: wgpu::Buffer,
         no_poses: wgpu::Buffer,
         staged: Vec<LightInput>,
@@ -283,12 +284,8 @@ mod gpu {
                 lights: storage(device, "engine/lights", LIGHT_BYTES, none),
                 capacity: 1,
                 counts: storage(device, "engine/light-cluster-counts", CLUSTERS * 4, none),
-                indices: storage(
-                    device,
-                    "engine/light-cluster-indices",
-                    CLUSTERS * u64::from(LIGHTS_PER_CLUSTER) * 4,
-                    none,
-                ),
+                indices: storage(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
+                per_cluster: 1,
                 totals: storage(
                     device,
                     "engine/light-totals",
@@ -364,6 +361,21 @@ mod gpu {
                 queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
                 self.uploaded.clone_from(&self.staged);
             }
+            // Cluster lists as long as the settings ask, within what one
+            // storage binding holds.
+            let binding = device.limits().max_storage_buffer_binding_size;
+            let per_cluster = u64::from(snapshot.local_lights.lights_per_cluster)
+                .clamp(1, binding / (CLUSTERS * 4)) as u32;
+            if per_cluster != self.per_cluster {
+                self.per_cluster = per_cluster;
+                self.indices = storage(
+                    device,
+                    "engine/light-cluster-indices",
+                    CLUSTERS * u64::from(per_cluster) * 4,
+                    wgpu::BufferUsages::empty(),
+                );
+                self.buffers_generation += 1;
+            }
             let uniform = ClusterUniform::new(
                 snapshot.view_projection,
                 size.0,
@@ -371,6 +383,7 @@ mod gpu {
                 snapshot.local_lights.distance,
                 count as u32,
                 poses.is_some(),
+                per_cluster,
             );
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -539,7 +552,7 @@ mod tests {
             far: 800.0,
         };
         let view_projection = camera.view_projection(1.6);
-        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true);
+        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, 32);
         let forward = (target - eye).normalize();
         let point = Vec3::new(10.0, -3.0, -40.0);
         let depth = Vec3::from_slice(&uniform.depth[..3]).dot(point) + uniform.depth[3];
@@ -554,16 +567,13 @@ mod tests {
         assert!(slice(1.0).abs() < 1.0e-3);
         assert!((slice(800.0) - SLICES as f32).abs() < 1.0e-2);
         assert_eq!(uniform.grid[..2], [100.0, 100.0]);
-        assert_eq!(
-            uniform.counts,
-            [TILES_X, TILES_Y, SLICES, LIGHTS_PER_CLUSTER]
-        );
+        assert_eq!(uniform.counts, [TILES_X, TILES_Y, SLICES, 32]);
         assert_eq!(uniform.lights, [7, 1, 0, 0]);
         // Without usable planes the clusters span [0.1, 1000].
-        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, false);
+        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, false, 32);
         assert_eq!(flat.projection[3], 1000.0);
         // Light fades out by its distance, before the far plane.
-        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, true);
+        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, true, 32);
         assert_eq!(near.projection[3], 120.0);
     }
 
@@ -682,7 +692,8 @@ mod binning_tests {
             near: 0.1,
             far: 2000.0,
         };
-        let uniform = ClusterUniform::new(camera.view_projection(1.6), 1600, 1000, 220.0, 1, true);
+        let uniform =
+            ClusterUniform::new(camera.view_projection(1.6), 1600, 1000, 220.0, 1, true, 32);
         // A lamp's 10-unit reach, 60 units away, touches a few dozen of the
         // 3456 clusters; the loose screen box around it holds far more.
         let clusters = covered(&uniform, Vec3::new(300.0, 4.0, 290.0), 10.0);

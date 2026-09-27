@@ -16,9 +16,6 @@ use glam::{Mat4, Vec3};
 
 use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
 
-/// Most lights one frame shades.
-pub const MAX_LOCAL_LIGHTS: u32 = 4096;
-
 /// The cone of a spot light.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spot {
@@ -118,9 +115,13 @@ impl LocalLight {
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct LocalLights {
     pub enabled: bool,
-    /// Most lights a frame shades, in `1..=MAX_LOCAL_LIGHTS`; beyond it the
-    /// lights nearest the camera win, chosen every frame.
-    pub max_lights: u32,
+    /// An optional budget of lights per frame: beyond it the lights nearest
+    /// the camera win, chosen every frame, and the rest count as dropped.
+    /// `None`, the default, shades every light.
+    pub max_lights: Option<u32>,
+    /// Lights one view cluster lists; entries beyond it are lost and counted
+    /// as cluster overflow. More costs memory, not shading.
+    pub lights_per_cluster: u32,
     /// Scales every light's intensity, e.g. to dim street lamps by day.
     pub intensity: f32,
     /// View distance beyond which local light fades out over its last
@@ -132,7 +133,8 @@ impl Default for LocalLights {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_lights: 1024,
+            max_lights: None,
+            lights_per_cluster: 32,
             intensity: 1.0,
             distance: 250.0,
         }
@@ -140,12 +142,13 @@ impl Default for LocalLights {
 }
 
 impl LocalLights {
-    /// The budget clamped into its range; an unusable intensity scale reads
-    /// as 1 and an unusable distance as the default.
+    /// Budgets and cluster lists of at least one light; an unusable
+    /// intensity scale reads as 1 and an unusable distance as the default.
     pub fn sanitized(self) -> Self {
         Self {
             enabled: self.enabled,
-            max_lights: self.max_lights.clamp(1, MAX_LOCAL_LIGHTS),
+            max_lights: self.max_lights.map(|budget| budget.max(1)),
+            lights_per_cluster: self.lights_per_cluster.max(1),
             intensity: if self.intensity.is_finite() && self.intensity >= 0.0 {
                 self.intensity
             } else {
@@ -329,7 +332,10 @@ impl LightExtraction {
             self.source_revision = source_revision;
             self.settings = Some(settings);
             self.last_scan = Some(this_run);
-        } else if self.world_lights.is_empty() && self.lights.len() <= settings.max_lights as usize
+        } else if self.world_lights.is_empty()
+            && settings
+                .max_lights
+                .is_none_or(|budget| self.lights.len() <= budget as usize)
         {
             // Unchanged lights that all follow slots: the records stand.
             return;
@@ -343,7 +349,9 @@ impl LightExtraction {
                 presented.get(entity).and_then(|pose| pose.matrix())
             }
         };
-        let budget = settings.max_lights as usize;
+        let budget = settings
+            .max_lights
+            .map_or(usize::MAX, |budget| budget as usize);
         snapshot.lights.clear();
         if self.lights.len() > budget {
             // Nearest to the camera first, by authoritative position.

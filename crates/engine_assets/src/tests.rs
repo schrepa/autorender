@@ -364,7 +364,8 @@ fn one_pixel() -> Texture {
 
 #[test]
 fn texture_rejects_invalid_dimensions_payload_and_alpha() {
-    for (width, height) in [(0, 1), (1, 0), (2049, 1), (1, 2049), (u32::MAX, u32::MAX)] {
+    let over = MAX_TEXTURE_DIMENSION + 1;
+    for (width, height) in [(0, 1), (1, 0), (over, 1), (1, over), (u32::MAX, u32::MAX)] {
         assert_eq!(
             Texture::new(width, height, vec![]).unwrap_err(),
             AssetError::InvalidTextureDimensions {
@@ -387,10 +388,11 @@ fn texture_rejects_invalid_dimensions_payload_and_alpha() {
         Texture::new(2, 1, vec![0, 0, 0, 255, 255, 255, 255, 254]).unwrap_err(),
         AssetError::UnsupportedTextureAlpha { pixel: 1 }
     );
-    let texture = Texture::new(MAX_TEXTURE_DIMENSION, 1, vec![255; 2048 * 4]).unwrap();
+    let widest = MAX_TEXTURE_DIMENSION as usize * 4;
+    let texture = Texture::new(MAX_TEXTURE_DIMENSION, 1, vec![255; widest]).unwrap();
     assert_eq!(texture.width(), MAX_TEXTURE_DIMENSION);
     assert_eq!(texture.height(), 1);
-    assert_eq!(texture.byte_len(), 2048 * 4);
+    assert_eq!(texture.byte_len(), widest);
     // Emission masks accept any alpha, with the same payload checks.
     let masked = Texture::with_emission_mask(2, 1, vec![0, 0, 0, 0, 255, 255, 255, 128]).unwrap();
     assert_eq!(masked.pixels()[7], 128);

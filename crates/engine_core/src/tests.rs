@@ -1270,7 +1270,7 @@ fn light_budget_keeps_the_nearest_lights() {
             false,
         );
     }
-    world.resource_mut::<LocalLights>().max_lights = 2;
+    world.resource_mut::<LocalLights>().max_lights = Some(2);
     let mut snapshot = RenderSnapshot::default();
     engine.extract(1.5, &mut snapshot);
     assert_eq!(snapshot.dropped_lights, 2);
@@ -1325,7 +1325,7 @@ fn emitters_extract_in_world_space_and_the_nearest_win_the_budget() {
         .app
         .world_mut()
         .resource_mut::<Particles>()
-        .max_particles = 25;
+        .max_particles = Some(25);
     engine.extract(1.5, &mut snapshot);
     assert_eq!(snapshot.emitters.len(), 1);
     assert!(snapshot.emitters[0].origin.z > -10.0);

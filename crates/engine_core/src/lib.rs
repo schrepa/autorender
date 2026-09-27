@@ -32,8 +32,8 @@ pub use engine_assets::{
 pub use glam;
 pub use hierarchy::{
     GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, MAX_HIERARCHY_DEPTH,
-    MAX_NORMAL_INVERSE_NORM, MAX_TRANSFORM_NODES, Parent, TransformIndex, propagate_transforms,
-    set_parent, set_parents, valid_global_matrix,
+    MAX_NORMAL_INVERSE_NORM, MAX_TRANSFORM_NODES, Parent, TransformIndex, TransformNodeLimit,
+    propagate_transforms, set_parent, set_parents, valid_global_matrix,
 };
 pub use input::{ActionId, ActionInput};
 pub use interpolation::{
@@ -42,9 +42,9 @@ pub use interpolation::{
     PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
     reset_interpolation,
 };
-pub use lights::{LocalLight, LocalLights, MAX_LOCAL_LIGHTS, RenderLight, Spot};
+pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use particles::{
-    MAX_EMITTERS, MAX_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
+    MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
@@ -173,10 +173,12 @@ impl Engine {
     /// Creates gameplay and transform schedules and default camera/input resources.
     pub fn new(config: EngineConfig) -> Self {
         let clock = FixedClock::new(config);
+        // The engine's cube is admitted before the configured budget applies.
         let mut assets = AssetLibrary::default();
         let cube_mesh = assets
             .insert_mesh(Mesh::cube())
-            .expect("default asset budget holds a cube");
+            .expect("an unlimited library holds a cube");
+        assets.set_budget(config.asset_budget);
         let mut app = App::empty();
         app.init_schedule(FixedSimulation)
             .init_schedule(FixedPreSimulation)
@@ -218,6 +220,7 @@ impl Engine {
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
             .init_resource::<InterpolationState>()
+            .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
         let render_query = app.world_mut().query_filtered::<(
@@ -835,15 +838,15 @@ pub mod prelude {
         Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin,
         Presentation, PresentationMode, PresentationState, PresentedTransform, PresentedTransforms,
         RenderFrame, RenderInstance, RenderMesh, RenderSnapshot, RenderTexture, Shadows, Surface,
-        Texture, TextureHandle, Transform, TransformIndex, TransformPropagation,
-        propagate_transforms, reset_all_interpolation, reset_interpolation, set_parent,
-        set_parents, valid_global_matrix,
+        Texture, TextureHandle, Transform, TransformIndex, TransformNodeLimit,
+        TransformPropagation, propagate_transforms, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
-        LocalLight, LocalLights, MAX_LOCAL_LIGHTS, MAX_SHADOW_CASCADES, ParticleBlend,
-        ParticleEmitter, Particles, Reflections, RenderEmitter, RenderLight, Spot, SunShafts,
+        LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
+        Reflections, RenderEmitter, RenderLight, Spot, SunShafts,
     };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine

@@ -528,11 +528,7 @@ impl PresentedTransforms {
     /// clears node hints for the rebuild to re-establish.
     pub(crate) fn reconcile(&mut self, world: &World, hierarchy: &HierarchyScratch) {
         self.revision += 1;
-        let count = self
-            .history_query
-            .iter(world)
-            .len()
-            .min(MAX_TRANSFORM_NODES);
+        let count = self.history_query.iter(world).len().min(hierarchy.limit);
         if count == 0 {
             self.history.clear();
             self.intervals.clear();
@@ -552,7 +548,7 @@ impl PresentedTransforms {
         for (position, input) in self
             .history_query
             .iter(world)
-            .take(MAX_TRANSFORM_NODES)
+            .take(hierarchy.limit)
             .enumerate()
         {
             if !rebuilding

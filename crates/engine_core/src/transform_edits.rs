@@ -1,6 +1,6 @@
 //! Bounded component replacements for tracked transform mutation.
 
-use crate::{MAX_TRANSFORM_NODES, Transform, hierarchy::same_local_bits};
+use crate::{Transform, hierarchy::same_local_bits};
 use bevy_ecs::{
     prelude::*,
     system::{Deferred, SystemBuffer, SystemMeta, SystemParam},
@@ -9,7 +9,7 @@ use bevy_ecs::{
 use std::fmt;
 
 /// Maximum queued replacements per system between deferred-application points.
-pub const MAX_TRANSFORM_EDITS: usize = MAX_TRANSFORM_NODES;
+pub const MAX_TRANSFORM_EDITS: usize = 262_144;
 
 /// A rejected edit. Already accepted deferred edits remain queued.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
