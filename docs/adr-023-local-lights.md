@@ -28,14 +28,19 @@ values skip the light.
   change.
 - **Clusters.** A compute pass bins each light's bounding sphere (a spot's
   tighter cone sphere) into 16×9 screen tiles by 24 exponential depth
-  slices, testing each candidate cluster's view-space box, with at most 32
-  lights per cluster. Lit pipelines are separate entry points
-  (`fs_*_lit`), created with the first lit frame, so frames without lights
-  run the unchanged shaders.
-- **Settings.** `LocalLights { enabled, max_lights, intensity, distance }`
-  (decision 029 makes `max_lights` an optional budget, none by default, and
-  adds `lights_per_cluster`): beyond `max_lights` the lights nearest the camera win,
-  chosen every frame; `intensity` scales every light (dim lamps by day);
+  slices, testing each candidate cluster's view-space box. Binning counts
+  each cluster's lights, one workgroup scans the counts into list ranges,
+  and a second pass fills the lists, so every list is exactly as long as
+  the lights reaching its cluster. List storage grows to the entries a
+  frame read back needed (a first guess of 32 per light before that). Lit
+  pipelines are separate entry points (`fs_*_lit`), created with the first
+  lit frame, so frames without lights run the unchanged shaders.
+- **Settings.** `LocalLights { enabled, max_lights, lights_per_cluster,
+  intensity, distance }` (decision 029 makes `max_lights` and
+  `lights_per_cluster` optional budgets, none by default): beyond
+  `max_lights` the lights nearest the camera win, chosen every frame; a
+  cluster lists at most `lights_per_cluster` lights, the first binned;
+  `intensity` scales every light (dim lamps by day);
   light fades out over the last tenth of `distance`, past which lights are
   not binned. Missing or disabled settings shade no local lights.
 - **Authoring and agents.** Scene version 6 entities author `light`
@@ -44,7 +49,8 @@ values skip the light.
   those shapes, and the `environment` control changes the settings.
   `rendering` reports `local_lights`, `dropped_lights`, and, read back a few
   frames late, `lights_visible` (lights that reached a cluster) and
-  `light_cluster_overflow` (entries lost to full clusters).
+  `light_cluster_overflow` (entries lost to the per-cluster budget, or to
+  list storage in the frames before it grows).
 
 ## Observable behavior
 
@@ -55,13 +61,15 @@ values skip the light.
 
 ## Measurements
 
-None yet. In the 90,000-object city at golden hour, 4,096 lamps are
-extracted (5,480 beyond the budget) and a few hundred reach clusters with no
-overflow. Per-pixel cost grows with the lights per cluster; keep ranges
-short and `distance` modest.
+No timings yet. The 90,000-object city at night extracts 9,576 lamps; at
+street level 169 reach clusters. Seen from above with `distance` 2,000,
+2,581 reach clusters and every entry lists (overflow 0), where a budget of
+32, the former fixed list length, loses 1,633.
 
 ## Consequences
 
-Lights cast no shadows. Clusters list at most 32 lights, and binning order
-decides which survive an overflow; the overflow counter says when a scene
-needs shorter ranges. Transparent surfaces are lit; particles are not.
+Lights cast no shadows. Binning visits each light's clusters twice (count
+and fill) plus a one-workgroup scan of the 3,456 clusters. Per-pixel cost
+grows with the lights per cluster: keep ranges short and `distance` modest,
+or set `lights_per_cluster`. Transparent surfaces are lit; particles are
+not.

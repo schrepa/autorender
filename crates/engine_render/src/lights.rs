@@ -3,8 +3,11 @@
 //!
 //! Lights upload only when their records change. Lights that follow a slot
 //! read that slot's pose from the frame's pose buffer while binning, so they
-//! move with interpolated, GPU-presented meshes at no CPU cost. Everything
-//! here is created with the first frame that has lights.
+//! move with interpolated, GPU-presented meshes at no CPU cost. Binning
+//! counts each cluster's lights, turns the counts into list ranges and fills
+//! the lists, so lists are exactly as long as their lights; the list storage
+//! grows to what a frame read back needed. Everything here is created with
+//! the first frame that has lights.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::{RenderLight, glam::Mat4};
@@ -22,8 +25,11 @@ const WORKGROUP: u32 = 64;
 pub(crate) const LIGHT_BYTES: u64 = 48;
 #[cfg(target_arch = "wasm32")]
 const READBACKS: usize = 3;
+// Three counters, padded.
 #[cfg(target_arch = "wasm32")]
-const TOTALS_BYTES: u64 = 8;
+const TOTALS_BYTES: u64 = 16;
+/// The per-cluster budget of clusters without one.
+pub(crate) const NO_BUDGET: u32 = u32::MAX;
 
 /// WGSL `Clusters` of `lights.wgsl` and `meshes.wgsl`: 144 bytes.
 #[repr(C)]
@@ -36,19 +42,23 @@ pub(crate) struct ClusterUniform {
     pub projection: [f32; 4],
     /// Tile width and height in pixels; slice = log2(depth) * z + w.
     pub grid: [f32; 4],
-    /// Tiles across and down, depth slices, lights per cluster.
+    /// Tiles across and down, depth slices, and the per-cluster budget
+    /// ([`NO_BUDGET`] without one).
     pub counts: [u32; 4],
-    /// Lights, and 1 when slot poses are bound.
+    /// Lights, 1 when slot poses are bound, and the entries the cluster
+    /// lists' storage holds.
     pub lights: [u32; 4],
 }
 
 impl ClusterUniform {
     /// Clusters of a `width` x `height` frame seen through the unjittered
     /// perspective `view_projection` (WebGPU depth), up to view depth
-    /// `distance` where local light fades out. Its fourth row gives view
-    /// depth, its first two rows' lengths the projection scales, and the
-    /// third row the near and far planes; a matrix without usable planes
+    /// `distance` where local light fades out, with an optional per-cluster
+    /// `budget` and list storage of `capacity` entries. Its fourth row gives
+    /// view depth, its first two rows' lengths the projection scales, and
+    /// the third row the near and far planes; a matrix without usable planes
     /// clusters over [0.1, 1000].
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         view_projection: Mat4,
         width: u32,
@@ -56,7 +66,8 @@ impl ClusterUniform {
         distance: f32,
         lights: u32,
         poses: bool,
-        per_cluster: u32,
+        budget: Option<u32>,
+        capacity: u32,
     ) -> Self {
         let depth = view_projection.row(3);
         let scale_x = view_projection.row(0).truncate().length();
@@ -85,8 +96,8 @@ impl ClusterUniform {
                 slice_scale,
                 -start.log2() * slice_scale,
             ],
-            counts: [TILES_X, TILES_Y, SLICES, per_cluster],
-            lights: [lights, u32::from(poses), 0, 0],
+            counts: [TILES_X, TILES_Y, SLICES, budget.unwrap_or(NO_BUDGET)],
+            lights: [lights, u32::from(poses), capacity, 0],
         }
     }
 }
@@ -157,7 +168,10 @@ mod gpu {
     }
 
     pub(crate) struct LightPass {
-        pipeline: wgpu::ComputePipeline,
+        // Counting, scanning and filling the cluster lists.
+        count: wgpu::ComputePipeline,
+        scan: wgpu::ComputePipeline,
+        fill: wgpu::ComputePipeline,
         compute_layout: wgpu::BindGroupLayout,
         fragment_layout: wgpu::BindGroupLayout,
         uniform: wgpu::Buffer,
@@ -166,9 +180,10 @@ mod gpu {
         lights: wgpu::Buffer,
         capacity: usize,
         counts: wgpu::Buffer,
+        ranges: wgpu::Buffer,
         indices: wgpu::Buffer,
-        // Entries per cluster list `indices` holds.
-        per_cluster: u32,
+        // Entries `indices` holds.
+        index_capacity: u64,
         totals: wgpu::Buffer,
         no_poses: wgpu::Buffer,
         staged: Vec<LightInput>,
@@ -179,9 +194,10 @@ mod gpu {
         fragment_group: Option<(u64, wgpu::BindGroup)>,
         buffers_generation: u64,
         readbacks: Vec<Readback>,
-        // Lights that reached a cluster and cluster entries lost to full
-        // lists, read back a few frames late.
-        totals_read: Rc<Cell<Option<[u32; 2]>>>,
+        // Lights that reached a cluster, cluster entries lost to the budget
+        // or the storage, and the entries the lists needed, read back a few
+        // frames late.
+        totals_read: Rc<Cell<Option<[u32; 3]>>>,
     }
 
     fn storage(
@@ -238,6 +254,7 @@ mod gpu {
                         layout_entry(4, compute, write),
                         layout_entry(5, compute, write),
                         layout_entry(6, compute, write),
+                        layout_entry(7, compute, write),
                     ],
                 });
             let fragment = wgpu::ShaderStages::FRAGMENT;
@@ -260,17 +277,21 @@ mod gpu {
                 bind_group_layouts: &[Some(&compute_layout)],
                 immediate_size: 0,
             });
-            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some("engine/light-binning"),
-                layout: Some(&layout),
-                module: &module,
-                entry_point: Some("bin_lights"),
-                compilation_options: Default::default(),
-                cache: None,
-            });
+            let pipeline = |entry: &str| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&layout),
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
             let none = wgpu::BufferUsages::empty();
             Self {
-                pipeline,
+                count: pipeline("count_lights"),
+                scan: pipeline("scan_clusters"),
+                fill: pipeline("bin_lights"),
                 compute_layout,
                 fragment_layout,
                 uniform: device.create_buffer(&wgpu::BufferDescriptor {
@@ -284,8 +305,9 @@ mod gpu {
                 lights: storage(device, "engine/lights", LIGHT_BYTES, none),
                 capacity: 1,
                 counts: storage(device, "engine/light-cluster-counts", CLUSTERS * 4, none),
+                ranges: storage(device, "engine/light-cluster-ranges", CLUSTERS * 8, none),
                 indices: storage(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
-                per_cluster: 1,
+                index_capacity: CLUSTERS,
                 totals: storage(
                     device,
                     "engine/light-totals",
@@ -308,17 +330,26 @@ mod gpu {
             &self.fragment_layout
         }
 
-        /// Lights that reached a cluster and cluster entries lost to full lists,
-        /// read back a few frames late.
+        /// Lights that reached a cluster and cluster entries lost to the
+        /// per-cluster budget or to list storage still growing, read back a
+        /// few frames late.
         pub(crate) fn totals(&self) -> Option<[u32; 2]> {
-            self.totals_read.get()
+            self.totals_read
+                .get()
+                .map(|[reached, lost, _]| [reached, lost])
         }
 
         pub(crate) fn capacity_bytes(&self) -> u64 {
-            [&self.inputs, &self.lights, &self.counts, &self.indices]
-                .iter()
-                .map(|buffer| buffer.size())
-                .sum()
+            [
+                &self.inputs,
+                &self.lights,
+                &self.counts,
+                &self.ranges,
+                &self.indices,
+            ]
+            .iter()
+            .map(|buffer| buffer.size())
+            .sum()
         }
 
         /// Uploads `snapshot`'s lights when they changed and writes this frame's
@@ -361,17 +392,22 @@ mod gpu {
                 queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
                 self.uploaded.clone_from(&self.staged);
             }
-            // Cluster lists as long as the settings ask, within what one
-            // storage binding holds.
-            let binding = device.limits().max_storage_buffer_binding_size;
-            let per_cluster = u64::from(snapshot.local_lights.lights_per_cluster)
-                .clamp(1, binding / (CLUSTERS * 4)) as u32;
-            if per_cluster != self.per_cluster {
-                self.per_cluster = per_cluster;
+            // List storage grows to what the lists needed when last read
+            // back, and to a first guess of a few dozen clusters per light,
+            // within what one storage binding holds; until then, entries
+            // beyond it are lost and counted.
+            let binding = device.limits().max_storage_buffer_binding_size / 4;
+            let needed = self
+                .totals_read
+                .get()
+                .map_or(0, |[_, _, needed]| u64::from(needed))
+                .max(count as u64 * 32);
+            if needed > self.index_capacity && self.index_capacity < binding {
+                self.index_capacity = needed.next_power_of_two().min(binding);
                 self.indices = storage(
                     device,
                     "engine/light-cluster-indices",
-                    CLUSTERS * u64::from(per_cluster) * 4,
+                    self.index_capacity * 4,
                     wgpu::BufferUsages::empty(),
                 );
                 self.buffers_generation += 1;
@@ -383,7 +419,8 @@ mod gpu {
                 snapshot.local_lights.distance,
                 count as u32,
                 poses.is_some(),
-                per_cluster,
+                snapshot.local_lights.lights_per_cluster,
+                self.index_capacity.min(u64::from(u32::MAX)) as u32,
             );
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -417,6 +454,7 @@ mod gpu {
                             entry(4, &self.counts),
                             entry(5, &self.indices),
                             entry(6, &self.totals),
+                            entry(7, &self.ranges),
                         ],
                     });
                     self.compute_groups.push((key, group));
@@ -434,7 +472,7 @@ mod gpu {
                     entries: &[
                         entry(0, &self.uniform),
                         entry(1, &self.lights),
-                        entry(2, &self.counts),
+                        entry(2, &self.ranges),
                         entry(3, &self.indices),
                     ],
                 });
@@ -451,8 +489,9 @@ mod gpu {
             &self.fragment_group.as_ref().expect("prepared this frame").1
         }
 
-        /// Records this frame's binning: clears the clusters, bins every light
-        /// and copies the totals for read-back.
+        /// Records this frame's binning: clears the clusters, counts every
+        /// light's clusters, gives the clusters their list ranges, fills the
+        /// lists and copies the totals for read-back.
         pub(crate) fn encode(
             &mut self,
             device: &wgpu::Device,
@@ -466,9 +505,14 @@ mod gpu {
                     label: Some("engine/light-binning"),
                     timestamp_writes: None,
                 });
-                pass.set_pipeline(&self.pipeline);
+                let workgroups = frame.count.div_ceil(WORKGROUP);
                 pass.set_bind_group(0, &self.compute_groups[frame.group].1, &[]);
-                pass.dispatch_workgroups(frame.count.div_ceil(WORKGROUP), 1, 1);
+                pass.set_pipeline(&self.count);
+                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.set_pipeline(&self.scan);
+                pass.dispatch_workgroups(1, 1, 1);
+                pass.set_pipeline(&self.fill);
+                pass.dispatch_workgroups(workgroups, 1, 1);
             }
             if let Some(index) = self.idle_readback(device) {
                 let readback = &self.readbacks[index];
@@ -521,7 +565,7 @@ mod gpu {
                                         u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
                                     })
                                 };
-                                totals.set(Some([word(0), word(1)]));
+                                totals.set(Some([word(0), word(1), word(2)]));
                             }
                             buffer.unmap();
                         }
@@ -552,7 +596,7 @@ mod tests {
             far: 800.0,
         };
         let view_projection = camera.view_projection(1.6);
-        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, 32);
+        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, None, 4096);
         let forward = (target - eye).normalize();
         let point = Vec3::new(10.0, -3.0, -40.0);
         let depth = Vec3::from_slice(&uniform.depth[..3]).dot(point) + uniform.depth[3];
@@ -567,13 +611,16 @@ mod tests {
         assert!(slice(1.0).abs() < 1.0e-3);
         assert!((slice(800.0) - SLICES as f32).abs() < 1.0e-2);
         assert_eq!(uniform.grid[..2], [100.0, 100.0]);
-        assert_eq!(uniform.counts, [TILES_X, TILES_Y, SLICES, 32]);
-        assert_eq!(uniform.lights, [7, 1, 0, 0]);
+        assert_eq!(uniform.counts, [TILES_X, TILES_Y, SLICES, NO_BUDGET]);
+        assert_eq!(uniform.lights, [7, 1, 4096, 0]);
+        let budgeted =
+            ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, Some(32), 4096);
+        assert_eq!(budgeted.counts[3], 32);
         // Without usable planes the clusters span [0.1, 1000].
-        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, false, 32);
+        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, false, None, 1);
         assert_eq!(flat.projection[3], 1000.0);
         // Light fades out by its distance, before the far plane.
-        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, true, 32);
+        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, true, None, 1);
         assert_eq!(near.projection[3], 120.0);
     }
 
@@ -692,8 +739,16 @@ mod binning_tests {
             near: 0.1,
             far: 2000.0,
         };
-        let uniform =
-            ClusterUniform::new(camera.view_projection(1.6), 1600, 1000, 220.0, 1, true, 32);
+        let uniform = ClusterUniform::new(
+            camera.view_projection(1.6),
+            1600,
+            1000,
+            220.0,
+            1,
+            true,
+            None,
+            1,
+        );
         // A lamp's 10-unit reach, 60 units away, touches a few dozen of the
         // 3456 clusters; the loose screen box around it holds far more.
         let clusters = covered(&uniform, Vec3::new(300.0, 4.0, 290.0), 10.0);

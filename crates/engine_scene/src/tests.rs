@@ -784,6 +784,14 @@ fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
     // omitted from it removed, the others at their defaults.
     assert_eq!(world.resource::<LocalLights>().max_lights, Some(64));
     assert_eq!(world.resource::<LocalLights>().distance, 90.0);
+    // Cluster lists have no budget unless a scene sets one.
+    assert_eq!(world.resource::<LocalLights>().lights_per_cluster, None);
+    let budgeted: crate::SceneLocalLights =
+        serde_json::from_str(r#"{"lights_per_cluster": 32}"#).unwrap();
+    assert_eq!(budgeted.resolve("$").unwrap().lights_per_cluster, Some(32));
+    let empty: crate::SceneLocalLights =
+        serde_json::from_str(r#"{"lights_per_cluster": 0}"#).unwrap();
+    assert_eq!(empty.resolve("$").unwrap_err().path, "$.lights_per_cluster");
     assert_eq!(world.resource::<SunShafts>().intensity, 2.0);
     assert_eq!(world.resource::<Particles>().max_particles, Some(500));
     assert!(world.get_resource::<Reflections>().is_none());

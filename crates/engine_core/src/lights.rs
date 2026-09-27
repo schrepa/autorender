@@ -119,9 +119,10 @@ pub struct LocalLights {
     /// the camera win, chosen every frame, and the rest count as dropped.
     /// `None`, the default, shades every light.
     pub max_lights: Option<u32>,
-    /// Lights one view cluster lists; entries beyond it are lost and counted
-    /// as cluster overflow. More costs memory, not shading.
-    pub lights_per_cluster: u32,
+    /// An optional budget of lights one view cluster lists: beyond it the
+    /// cluster's later-binned lights are lost and counted as cluster
+    /// overflow. `None`, the default, lists every light reaching a cluster.
+    pub lights_per_cluster: Option<u32>,
     /// Scales every light's intensity, e.g. to dim street lamps by day.
     pub intensity: f32,
     /// View distance beyond which local light fades out over its last
@@ -134,7 +135,7 @@ impl Default for LocalLights {
         Self {
             enabled: true,
             max_lights: None,
-            lights_per_cluster: 32,
+            lights_per_cluster: None,
             intensity: 1.0,
             distance: 250.0,
         }
@@ -148,7 +149,7 @@ impl LocalLights {
         Self {
             enabled: self.enabled,
             max_lights: self.max_lights.map(|budget| budget.max(1)),
-            lights_per_cluster: self.lights_per_cluster.max(1),
+            lights_per_cluster: self.lights_per_cluster.map(|budget| budget.max(1)),
             intensity: if self.intensity.is_finite() && self.intensity >= 0.0 {
                 self.intensity
             } else {

@@ -1,7 +1,10 @@
 // Local light binning (decision 023). One thread per light places it in
 // world space, from the displayed pose of its slot when it follows one, and
-// adds it to every view cluster its sphere's screen and depth bounds cover:
-// a tile of the screen by an exponential depth slice. Fragments shade their
+// visits every view cluster its sphere's screen and depth bounds cover: a
+// tile of the screen by an exponential depth slice. A first pass counts each
+// cluster's lights, one workgroup turns the counts into list ranges, and a
+// second pass fills the lists, so every list is exactly as long as its
+// lights (an optional budget shortens them). Fragments shade their
 // cluster's list. Bounds are conservative, so a cluster may list a light that
 // cannot reach it; fragments test the range again.
 
@@ -13,9 +16,10 @@ struct Clusters {
     projection: vec4<f32>,
     // Tile width and height in pixels; slice = log2(depth) * z + w.
     grid: vec4<f32>,
-    // Tiles across and down, depth slices, lights per cluster.
+    // Tiles across and down, depth slices, and the per-cluster budget
+    // (0xffffffff without one).
     counts: vec4<u32>,
-    // Lights, and 1 when slot poses are bound.
+    // Lights, 1 when slot poses are bound, and the entries `indices` holds.
     lights: vec4<u32>,
 }
 
@@ -55,10 +59,14 @@ const NO_SLOT: u32 = 0xffffffffu;
 @group(0) @binding(1) var<storage, read> inputs: array<Input>;
 @group(0) @binding(2) var<storage, read> poses: array<Rows>;
 @group(0) @binding(3) var<storage, read_write> lights: array<Light>;
+// Per cluster: its lights while counting, then its write cursor.
 @group(0) @binding(4) var<storage, read_write> counts: array<atomic<u32>>;
 @group(0) @binding(5) var<storage, read_write> indices: array<u32>;
-// Lights that reached a cluster, and cluster entries lost to full lists.
-@group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 2>;
+// Lights that reached a cluster, cluster entries lost to the budget or to
+// the capacity of `indices`, and the entries the lists need.
+@group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 3>;
+// Per cluster: the first entry of its list in `indices` and its length.
+@group(0) @binding(7) var<storage, read_write> ranges: array<vec2<u32>>;
 
 fn transformed(rows: Rows, point: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(rows.r0, point), dot(rows.r1, point), dot(rows.r2, point));
@@ -79,12 +87,9 @@ fn ndc_range(center: f32, radius: f32, near: f32, far: f32) -> vec2<f32> {
     return vec2<f32>(low_ndc, high_ndc);
 }
 
-@compute @workgroup_size(64)
-fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
-    let index = id.x;
-    if index >= clusters.lights.x {
-        return;
-    }
+// Places light `index` and visits its clusters: counting them, or with
+// `fill` writing it into their lists.
+fn visit(index: u32, fill: bool) {
     let input = inputs[index];
     var position = input.position;
     var direction = input.direction;
@@ -96,14 +101,16 @@ fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
         direction = select(vec3<f32>(0.0), turned * inverseSqrt(length_squared),
             length_squared > 0.0);
     }
-    var light: Light;
-    light.position = position;
-    light.range = input.range;
-    light.color = input.color;
-    light.cos_outer = input.cos_outer;
-    light.direction = direction;
-    light.cos_inner = input.cos_inner;
-    lights[index] = light;
+    if !fill {
+        var light: Light;
+        light.position = position;
+        light.range = input.range;
+        light.color = input.color;
+        light.cos_outer = input.cos_outer;
+        light.direction = direction;
+        light.cos_inner = input.cos_inner;
+        lights[index] = light;
+    }
     if !all(abs(position) < vec3<f32>(1.0e30)) {
         return;
     }
@@ -151,13 +158,11 @@ fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let first_slice = slice_of(max(near, 1.0e-6));
     let last_slice = slice_of(depth + radius);
-    let per_cluster = clusters.counts.w;
     // The sphere in view space: x and y scaled like clip coordinates.
     let view_center = vec3<f32>(clip.x / clusters.projection.x, clip.y / clusters.projection.y, depth);
     let tile_size = 2.0 / vec2<f32>(tiles);
     let radius2 = radius * radius;
     var reached = false;
-    var lost = 0u;
     for (var z = first_slice; z <= last_slice; z++) {
         // Depth range of the slice, the first spanning everything nearer.
         let slice_near = select(exp2((f32(z) - clusters.grid.w) / clusters.grid.z), 0.0, z == 0u);
@@ -187,18 +192,82 @@ fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
                 let cluster = (z * tiles.y + y) * tiles.x + x;
                 let slot = atomicAdd(&counts[cluster], 1u);
                 reached = true;
-                if slot < per_cluster {
-                    indices[cluster * per_cluster + slot] = index;
-                } else {
-                    lost += 1u;
+                if fill {
+                    // The range already excludes entries the budget or
+                    // the capacity cannot hold.
+                    let range = ranges[cluster];
+                    if slot < range.y {
+                        indices[range.x + slot] = index;
+                    }
                 }
             }
         }
     }
-    if reached {
+    if reached && !fill {
         atomicAdd(&totals[0], 1u);
+    }
+}
+
+@compute @workgroup_size(64)
+fn count_lights(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x < clusters.lights.x {
+        visit(id.x, false);
+    }
+}
+
+@compute @workgroup_size(64)
+fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x < clusters.lights.x {
+        visit(id.x, true);
+    }
+}
+
+const SCAN_THREADS: u32 = 256u;
+var<workgroup> partial: array<u32, 256>;
+
+// One workgroup: each thread sums a run of clusters' budgeted counts, the
+// workgroup scans the sums, and each thread gives its clusters consecutive
+// list ranges, cut at the capacity of `indices`, and zeroes their counts
+// for use as write cursors.
+@compute @workgroup_size(256)
+fn scan_clusters(@builtin(local_invocation_index) thread: u32) {
+    let total = clusters.counts.x * clusters.counts.y * clusters.counts.z;
+    let budget = clusters.counts.w;
+    let capacity = clusters.lights.z;
+    let run = (total + SCAN_THREADS - 1u) / SCAN_THREADS;
+    let start = min(thread * run, total);
+    let end = min(start + run, total);
+    var sum = 0u;
+    for (var cluster = start; cluster < end; cluster++) {
+        sum += min(atomicLoad(&counts[cluster]), budget);
+    }
+    partial[thread] = sum;
+    workgroupBarrier();
+    for (var stride = 1u; stride < SCAN_THREADS; stride *= 2u) {
+        var earlier = 0u;
+        if thread >= stride {
+            earlier = partial[thread - stride];
+        }
+        workgroupBarrier();
+        partial[thread] += earlier;
+        workgroupBarrier();
+    }
+    var offset = partial[thread] - sum;
+    var lost = 0u;
+    for (var cluster = start; cluster < end; cluster++) {
+        let wanted = atomicLoad(&counts[cluster]);
+        let listed = min(wanted, budget);
+        let room = select(0u, capacity - offset, offset < capacity);
+        let kept = min(listed, room);
+        ranges[cluster] = vec2<u32>(offset, kept);
+        lost += wanted - kept;
+        offset += listed;
+        atomicStore(&counts[cluster], 0u);
     }
     if lost != 0u {
         atomicAdd(&totals[1], lost);
+    }
+    if thread == SCAN_THREADS - 1u {
+        atomicStore(&totals[2], partial[thread]);
     }
 }

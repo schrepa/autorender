@@ -26,8 +26,8 @@ Constants are sorted into three kinds:
   `EngineConfig::max_transform_nodes` (`TransformNodeLimit`). Over a budget
   the nearest emitters and lights win, extraction drops instances and
   propagation leaves extra nodes without poses, each counted (`dropped_*`,
-  `overflow_transforms`). Local light clusters list
-  `LocalLights::lights_per_cluster` entries (32 by default).
+  `overflow_transforms`). Local light clusters list every light reaching
+  them unless `LocalLights::lights_per_cluster` sets a budget.
 - **Device limits** bound what remains. The renderer requests the adapter's
   buffer and storage-binding sizes, grows buffers to the content, derives
   its instance limit from them, and drops particles that do not fit a

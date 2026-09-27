@@ -429,9 +429,11 @@ pub struct SceneLocalLights {
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_lights: Option<u32>,
-    /// Lights one view cluster lists (32 by default); more costs memory.
+    /// An optional budget of lights one view cluster lists. Omitted, every
+    /// light reaching a cluster shades there.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub lights_per_cluster: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lights_per_cluster: Option<u32>,
     /// Scales every light's intensity, e.g. to dim lamps by day.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
     pub intensity: f32,
@@ -464,7 +466,7 @@ impl SceneLocalLights {
         if self.max_lights == Some(0) {
             return Err(section_error(path, "max_lights", "must be at least 1"));
         }
-        if self.lights_per_cluster == 0 {
+        if self.lights_per_cluster == Some(0) {
             return Err(section_error(
                 path,
                 "lights_per_cluster",

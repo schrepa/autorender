@@ -71,9 +71,9 @@ struct Clusters {
     projection: vec4<f32>,
     // Tile width and height in pixels; slice = log2(depth) * z + w.
     grid: vec4<f32>,
-    // Tiles across and down, depth slices, lights per cluster.
+    // Tiles across and down, depth slices, and the per-cluster budget.
     counts: vec4<u32>,
-    // Lights, and 1 when slot poses are bound.
+    // Lights, 1 when slot poses are bound, and the listed entries' capacity.
     lights: vec4<u32>,
 }
 struct Light {
@@ -86,7 +86,9 @@ struct Light {
 }
 @group(3) @binding(0) var<uniform> clusters: Clusters;
 @group(3) @binding(1) var<storage, read> lights: array<Light>;
-@group(3) @binding(2) var<storage, read> cluster_counts: array<u32>;
+// Per cluster: the first entry of its list in `cluster_lights` and its
+// length.
+@group(3) @binding(2) var<storage, read> cluster_ranges: array<vec2<u32>>;
 @group(3) @binding(3) var<storage, read> cluster_lights: array<u32>;
 
 // Mesh vertices carry octahedral normals (`octahedral_normal`) in 24 bytes.
@@ -646,11 +648,11 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     let slice = u32(clamp(floor(log2(max(depth, 1.0e-6)) * clusters.grid.z + clusters.grid.w),
         0.0, f32(counts.z - 1u)));
     let cluster = (slice * counts.y + tile.y) * counts.x + tile.x;
-    let count = min(cluster_counts[cluster], counts.w);
+    let range = cluster_ranges[cluster];
     let specular = lighting.sun_color.w;
     var sum = vec3<f32>(0.0);
-    for (var n = 0u; n < count; n++) {
-        let light = lights[cluster_lights[cluster * counts.w + n]];
+    for (var n = 0u; n < range.y; n++) {
+        let light = lights[cluster_lights[range.x + n]];
         let to_light = light.position - point.world;
         let d2 = dot(to_light, to_light);
         let r2 = light.range * light.range;

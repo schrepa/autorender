@@ -1060,10 +1060,12 @@
           "minimum": 0.0
         },
         "lights_per_cluster": {
-          "description": "Lights one view cluster lists (32 by default); more costs memory.",
-          "type": "integer",
+          "description": "An optional budget of lights one view cluster lists. Omitted, every\nlight reaching a cluster shades there.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint32",
-          "default": 32,
           "minimum": 1
         },
         "max_lights": {
