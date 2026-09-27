@@ -102,6 +102,7 @@ pub(crate) fn import(
                     collider: None,
                     light: None,
                     particles: None,
+                    tint: None,
                     transform: SceneTransform::default(),
                     tags: vec!["imported".into()],
                 });

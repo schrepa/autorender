@@ -195,6 +195,40 @@ pub struct InputState {
     pub look_pitch: f32,
 }
 
+/// Multiplies one object's color channel by channel (decision 033): its
+/// material's base color and opacity, or its cube's color. Factors are in
+/// `[0, 1]`; others read as the nearest bound, and non-finite ones as 1.
+/// Objects keep their material's draw groups, and changing a tint uploads
+/// only that object's color: use it for per-object and per-frame colors
+/// instead of a material per color.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Tint(pub [f32; 4]);
+
+impl Tint {
+    /// No change.
+    pub const WHITE: Self = Self([1.0; 4]);
+
+    /// `color` multiplied by this tint's sanitized factors.
+    pub fn apply(&self, color: [f32; 4]) -> [f32; 4] {
+        let mut tinted = color;
+        for (channel, factor) in tinted.iter_mut().zip(self.0) {
+            let factor = if factor.is_finite() {
+                crate::math::clamp(factor, 0.0, 1.0)
+            } else {
+                1.0
+            };
+            *channel *= factor;
+        }
+        tinted
+    }
+}
+
+impl Default for Tint {
+    fn default() -> Self {
+        Self::WHITE
+    }
+}
+
 /// CPU data for one instance; this is deliberately not a GPU buffer layout.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderInstance {

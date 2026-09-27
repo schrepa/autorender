@@ -46,6 +46,7 @@ pub enum AssetError {
         pixel: usize,
     },
     InvalidTextureHandle,
+    InvalidMaterialHandle,
     MeshCapacity {
         limit: usize,
     },
@@ -80,6 +81,7 @@ impl AssetError {
             Self::InvalidTextureLength { .. } => "asset.invalid_texture_length",
             Self::UnsupportedTextureAlpha { .. } => "asset.unsupported_texture_alpha",
             Self::InvalidTextureHandle => "asset.invalid_texture_handle",
+            Self::InvalidMaterialHandle => "asset.invalid_material_handle",
             Self::MeshCapacity { .. } => "asset.mesh_capacity",
             Self::MaterialCapacity { .. } => "asset.material_capacity",
             Self::TextureCapacity { .. } => "asset.texture_capacity",
@@ -147,6 +149,9 @@ impl fmt::Display for AssetError {
             }
             Self::InvalidTextureHandle => {
                 write!(f, "material texture must be live in the same asset library")
+            }
+            Self::InvalidMaterialHandle => {
+                write!(f, "material must be live in the same asset library")
             }
             Self::MeshCapacity { limit } => write!(f, "mesh capacity of {limit} reached"),
             Self::MaterialCapacity { limit } => write!(f, "material capacity of {limit} reached"),

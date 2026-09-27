@@ -30,6 +30,7 @@ fn main() {
         "Particles": schemars::schema_for!(engine_scene::SceneParticles),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
+        "Tint": schemars::schema_for!([f32; 4]),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
     });

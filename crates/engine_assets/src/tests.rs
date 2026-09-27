@@ -617,3 +617,38 @@ fn alpha_modes_decide_transparency_and_which_materials_have_maps() {
     assert!(plain.with_double_sided(true).has_maps());
     assert!(plain.with_emissive([0.0, 0.1, 0.0]).unwrap().has_maps());
 }
+
+#[test]
+fn materials_replace_in_place_keeping_their_handles() {
+    let mut library = AssetLibrary::default();
+    let mut other = AssetLibrary::default();
+    let handle = library
+        .insert_material(Material::new([1.0, 0.0, 0.0, 1.0]).unwrap())
+        .unwrap();
+    let before = library.revision();
+    let bytes = library.resident_bytes();
+    library
+        .replace_material(handle, Material::new([0.0, 1.0, 0.0, 1.0]).unwrap())
+        .unwrap();
+    assert_eq!(
+        library.material(handle).unwrap().color(),
+        [0.0, 1.0, 0.0, 1.0]
+    );
+    assert_ne!(library.revision(), before);
+    assert_eq!(library.resident_bytes(), bytes);
+    // Its textures must be live here, and the handle live too.
+    let foreign = other.insert_texture(one_pixel()).unwrap();
+    assert_eq!(
+        library
+            .replace_material(handle, Material::textured([1.0; 4], foreign).unwrap())
+            .unwrap_err(),
+        AssetError::InvalidTextureHandle
+    );
+    assert!(library.remove_material(handle));
+    assert_eq!(
+        library
+            .replace_material(handle, Material::new([1.0; 4]).unwrap())
+            .unwrap_err(),
+        AssetError::InvalidMaterialHandle
+    );
+}

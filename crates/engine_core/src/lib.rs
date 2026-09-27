@@ -50,7 +50,7 @@ pub use particles::{
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
     Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
-    RenderTexture, Transform,
+    RenderTexture, Tint, Transform,
 };
 pub use transform_edits::{
     MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform,
@@ -75,6 +75,7 @@ type RenderQuery = QueryState<
         Has<Transform>,
         Option<Ref<'static, Cube>>,
         Option<Ref<'static, Mesh3d>>,
+        Option<Ref<'static, Tint>>,
     ),
     Or<(With<Cube>, With<Mesh3d>)>,
 >;
@@ -234,6 +235,7 @@ impl Engine {
             Has<Transform>,
             Option<Ref<Cube>>,
             Option<Ref<Mesh3d>>,
+            Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
         let lights = lights::LightExtraction::new(app.world_mut());
         let particles = particles::ParticleExtraction::new(app.world_mut());
@@ -619,7 +621,7 @@ impl Engine {
         let extraction_loop = engine_profile::span("cpu", "extraction_scan_assets_culling_copy");
         let globals = world.resource::<GlobalTransforms>();
         let presented = world.resource::<PresentedTransforms>();
-        for (entity, has_transform, cube, mesh3d) in instances {
+        for (entity, has_transform, cube, mesh3d, tint) in instances {
             let model = if has_transform
                 && globals
                     .get(entity)
@@ -650,6 +652,7 @@ impl Engine {
             } else {
                 continue;
             };
+            let color = tint.map_or(color, |tint| tint.apply(color));
             let Some(mesh) = assets.mesh(handle) else {
                 snapshot.missing_assets += 1;
                 continue;
@@ -853,15 +856,16 @@ pub mod prelude {
     pub use crate::DevStepError;
     pub use crate::math;
     pub use crate::{
-        Aabb, AmbientOcclusion, App, AssetBudget, AssetError, AssetLibrary, Atmosphere, Bloom,
-        Camera, Cube, Engine, EngineConfig, FixedSimulation, FixedTime, FrameReport, FrameTime,
-        GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, InputState,
+        Aabb, AlphaMode, AmbientOcclusion, App, AssetBudget, AssetError, AssetLibrary, Atmosphere,
+        Bloom, Camera, Cube, Engine, EngineConfig, Filter, FixedSimulation, FixedTime, FrameReport,
+        FrameTime, GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, InputState,
         InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES,
-        Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin,
-        Presentation, PresentationMode, PresentationState, PresentedTransform, PresentedTransforms,
-        RenderFrame, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot, RenderTexture,
-        Shadows, Surface, Texture, TextureHandle, Transform, TransformIndex, TransformNodeLimit,
-        TransformPropagation, propagate_transforms, reset_all_interpolation, reset_interpolation,
+        Material, MaterialBinding, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent,
+        Plugin, Presentation, PresentationMode, PresentationState, PresentedTransform,
+        PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial, RenderMesh,
+        RenderSnapshot, RenderTexture, Sampler, Shadows, Surface, Texture, TextureHandle,
+        TextureRef, Tint, Transform, TransformIndex, TransformNodeLimit, TransformPropagation,
+        UvTransform, Wrap, propagate_transforms, reset_all_interpolation, reset_interpolation,
         set_parent, set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};

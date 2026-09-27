@@ -1398,3 +1398,50 @@ fn materials_differing_only_in_color_share_one_binding_on_both_extraction_paths(
             .collect(),
     );
 }
+
+#[test]
+fn replaced_materials_draw_from_the_next_extraction_on_both_paths() {
+    let mut engine = Engine::default();
+    let (mesh, material, texture) = {
+        let mut assets = engine.app.world_mut().resource_mut::<AssetLibrary>();
+        let mesh = assets.insert_mesh(Mesh::plane()).unwrap();
+        let texture = assets
+            .insert_texture(Texture::new(1, 1, vec![200, 100, 50, 255]).unwrap())
+            .unwrap();
+        let material = assets
+            .insert_material(Material::new([1.0, 0.0, 0.0, 1.0]).unwrap())
+            .unwrap();
+        (mesh, material, texture)
+    };
+    engine
+        .app
+        .world_mut()
+        .spawn((Transform::default(), Mesh3d { mesh, material }));
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.0, &mut snapshot);
+    assert_eq!(snapshot.instances[0].material, None);
+    engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    // Same handle, new color and a texture: it binds maps now.
+    engine
+        .app
+        .world_mut()
+        .resource_mut::<AssetLibrary>()
+        .replace_material(
+            material,
+            Material::textured([0.0, 1.0, 0.0, 1.0], texture).unwrap(),
+        )
+        .unwrap();
+    engine.extract(1.0, &mut snapshot);
+    assert_eq!(snapshot.instances[0].color, [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(snapshot.instances[0].material, Some(material));
+    assert_eq!(snapshot.textures[0].handle, texture);
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    let instance = &frame.snapshot().instances[frame.visible_indices()[0]];
+    assert_eq!(instance.color, [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(instance.material, Some(material));
+    assert_eq!(frame.snapshot().materials.len(), 1);
+}

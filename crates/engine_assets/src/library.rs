@@ -114,6 +114,17 @@ impl<T> Storage<T> {
         slot.value.as_ref()
     }
 
+    fn get_mut(&mut self, library: u64, id: Id) -> Option<&mut T> {
+        if id.library != library {
+            return None;
+        }
+        let slot = self.slots.get_mut(id.slot)?;
+        if slot.generation != id.generation {
+            return None;
+        }
+        slot.value.as_mut()
+    }
+
     fn remove(&mut self, library: u64, id: Id) -> Option<T> {
         self.get(library, id)?;
         let slot = &mut self.slots[id.slot];
@@ -203,6 +214,31 @@ impl AssetLibrary {
         }
         self.reserve_bytes(size_of::<Material>())?;
         Ok(MaterialHandle(self.materials.insert(self.id, material)))
+    }
+
+    /// Replaces live material `handle` in place, keeping the handle
+    /// (decision 033): objects using it draw with `material` from their next
+    /// extraction. Its textures must be live in this library. Renderers
+    /// re-resolve every object when a library changes, so prefer per-object
+    /// tints (`engine_core::Tint`) for frequent color changes.
+    pub fn replace_material(
+        &mut self,
+        handle: MaterialHandle,
+        material: Material,
+    ) -> Result<(), AssetError> {
+        if material
+            .textures()
+            .any(|texture| self.texture(texture).is_none())
+        {
+            return Err(AssetError::InvalidTextureHandle);
+        }
+        let slot = self
+            .materials
+            .get_mut(self.id, handle.0)
+            .ok_or(AssetError::InvalidMaterialHandle)?;
+        *slot = material;
+        self.revision = self.revision.saturating_add(1);
+        Ok(())
     }
 
     pub fn insert_texture(&mut self, texture: Texture) -> Result<TextureHandle, AssetError> {

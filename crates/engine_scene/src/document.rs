@@ -408,6 +408,10 @@ pub struct SceneObject {
     /// A particle emitter (decision 026). Requires version 6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneEmitter>,
+    /// Multiplies this object's color and opacity channel by channel
+    /// (decision 033), each factor finite and in `[0, 1]`. Requires version 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<[f32; 4]>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

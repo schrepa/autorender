@@ -205,13 +205,14 @@ impl SceneDocument {
             .map(|(source, handle)| (source.id.as_str(), *handle))
             .collect();
         let mut entities = BTreeMap::new();
-        for ((((expanded, transform), collider), light), emitter) in prepared
+        for (((((expanded, transform), collider), light), emitter), tint) in prepared
             .entities
             .iter()
             .zip(prepared.transforms)
             .zip(prepared.colliders)
             .zip(prepared.lights)
             .zip(prepared.emitters)
+            .zip(prepared.tints)
         {
             let source = &expanded.source;
             let mut entity = world.spawn((
@@ -241,6 +242,9 @@ impl SceneDocument {
             }
             if let Some(emitter) = emitter {
                 entity.insert(emitter);
+            }
+            if let Some(tint) = tint {
+                entity.insert(tint);
             }
             entities.insert(source.id.clone(), entity.id());
         }

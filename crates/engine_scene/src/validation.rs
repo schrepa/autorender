@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use engine_core::{LocalLight, Mesh, ParticleEmitter, Texture, Transform};
+use engine_core::{LocalLight, Mesh, ParticleEmitter, Texture, Tint, Transform};
 
 use crate::{
     MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
@@ -12,6 +12,7 @@ pub(crate) struct PreparedScene {
     pub colliders: Vec<Option<engine_collision::Collider>>,
     pub lights: Vec<Option<LocalLight>>,
     pub emitters: Vec<Option<ParticleEmitter>>,
+    pub tints: Vec<Option<Tint>>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
@@ -86,6 +87,30 @@ impl SceneDocument {
                 format!("$.materials[{index}].{field}"),
                 "glTF material maps, texture settings, emissive colors, alpha modes and double-sided materials require scene version 8; set version to 8 and increment revision",
             ));
+        }
+        if self.version < 8 {
+            let tinted = |entity: &crate::SceneObject| entity.tint.is_some();
+            let path = if let Some(index) = self.entities.iter().position(tinted) {
+                Some(format!("$.entities[{index}].tint"))
+            } else {
+                self.prefabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(prefab, definition)| {
+                        definition
+                            .entities
+                            .iter()
+                            .position(tinted)
+                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}].tint"))
+                    })
+            };
+            if let Some(path) = path {
+                return Err(SceneError::new(
+                    "version_required",
+                    path,
+                    "object tints require scene version 8; set version to 8 and increment revision",
+                ));
+            }
         }
         if self.version < 7 {
             let version_seven = |path: String| {
@@ -268,6 +293,28 @@ impl SceneDocument {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let tints = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .tint
+                    .map(|tint| {
+                        if tint.iter().all(|factor| (0.0..=1.0).contains(factor)) {
+                            Ok(Tint(tint))
+                        } else {
+                            Err(SceneError::new(
+                                "invalid_tint",
+                                format!("{}.tint", entity.path),
+                                "tint factors must be finite and in [0, 1]",
+                            ))
+                        }
+                    })
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Build every CPU asset before acquiring a mutable world resource.
         // Invalid late assets cannot leave earlier ones resident.
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
@@ -317,6 +364,7 @@ impl SceneDocument {
             colliders,
             lights,
             emitters,
+            tints,
             meshes,
             materials,
             textures,

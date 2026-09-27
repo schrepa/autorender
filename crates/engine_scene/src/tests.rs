@@ -1077,3 +1077,34 @@ fn texture_ids_clamp_before_version_eight_and_upgrading_keeps_that_meaning() {
     document.version = 8;
     assert_eq!(sampler(&document), engine_core::Sampler::REPEAT);
 }
+
+#[test]
+fn version_eight_tints_attach_to_their_objects_and_validate() {
+    let mut document = textured_document();
+    document.entities[0].tint = Some([1.0, 0.5, 0.25, 1.0]);
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    assert_eq!(
+        world.get::<engine_core::Tint>(instance.entity("player").unwrap()),
+        Some(&engine_core::Tint([1.0, 0.5, 0.25, 1.0]))
+    );
+    let reject = |edit: &dyn Fn(&mut SceneDocument)| {
+        let mut document = document.clone();
+        edit(&mut document);
+        let error = document.validate().unwrap_err();
+        (error.code, error.path)
+    };
+    assert_eq!(
+        reject(&|document| document.version = 7),
+        ("version_required", "$.entities[0].tint".into())
+    );
+    assert_eq!(
+        reject(&|document| document.entities[0].tint = Some([1.5, 1.0, 1.0, 1.0])),
+        ("invalid_tint", "$.entities[0].tint".into())
+    );
+    assert_eq!(
+        reject(&|document| document.entities[0].tint = Some([f32::NAN, 1.0, 1.0, 1.0])),
+        ("invalid_tint", "$.entities[0].tint".into())
+    );
+}

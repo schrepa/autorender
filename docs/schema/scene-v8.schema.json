@@ -1266,6 +1266,19 @@
           },
           "maxItems": 16
         },
+        "tint": {
+          "description": "Multiplies this object's color and opacity channel by channel\n(decision 033), each factor finite and in `[0, 1]`. Requires version 8.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
         "transform": {
           "$ref": "#/$defs/SceneTransform",
           "default": {

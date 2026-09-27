@@ -441,6 +441,7 @@ mod tests {
             collider: None,
             light: None,
             particles: None,
+            tint: None,
             transform: engine_scene::SceneTransform::default(),
             tags: Vec::new(),
         }

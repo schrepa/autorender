@@ -5,7 +5,7 @@ use engine_core::{
     AmbientOcclusion, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime, FrameTime,
     GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
     ParticleEmitter, Particles, PresentationMode, PresentationState, PresentedTransforms,
-    Reflections, Shadows, SunShafts, Transform,
+    Reflections, Shadows, SunShafts, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -249,6 +249,11 @@ impl Default for DevTools {
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_component::<Tint>(
+            InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
+                .with_default(json!(Tint::WHITE.0)),
+            |tint| json!(tint.0),
         ).expect("built-in descriptor is bounded");
         tools.register_component::<ParticleEmitter>(
             InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())

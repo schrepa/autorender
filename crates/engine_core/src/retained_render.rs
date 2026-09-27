@@ -23,7 +23,7 @@ use crate::{
     Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
     MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance,
     RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface, TextureHandle,
-    Transform, TransformIndex,
+    Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
     hierarchy::ChangeWindow,
 };
@@ -33,6 +33,7 @@ use crate::{
 type SourceStamps = SystemState<(
     Query<'static, 'static, Ref<'static, Mesh3d>>,
     Query<'static, 'static, Ref<'static, Cube>>,
+    Query<'static, 'static, Ref<'static, Tint>>,
 )>;
 
 static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
@@ -188,8 +189,9 @@ struct ResolvedSource {
 
 const NO_SOURCE: u32 = u32::MAX;
 
-/// Change ticks of a slot's Cube and Mesh3d sources. Absent components are
-/// distinguished by `present`; `UNKNOWN` never equals an observed key.
+/// Change ticks of the source a slot renders (its Mesh3d, else its Cube)
+/// and of its Tint. Absent components are distinguished by `present`;
+/// `UNKNOWN` never equals an observed key.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SourceKey {
     ticks: [u32; 2],
@@ -203,10 +205,15 @@ impl SourceKey {
     };
 
     #[inline]
-    fn new(cube: Option<Tick>, mesh: Option<Tick>) -> Self {
+    fn new(cube: Option<Tick>, mesh: Option<Tick>, tint: Option<Tick>) -> Self {
+        // A Mesh3d renders in place of a Cube, whose changes then matter not.
+        let source = mesh.or(cube);
         Self {
-            ticks: [cube.map_or(0, Tick::get), mesh.map_or(0, Tick::get)],
-            present: 0b100 | u8::from(cube.is_some()) | (u8::from(mesh.is_some()) << 1),
+            ticks: [source.map_or(0, Tick::get), tint.map_or(0, Tick::get)],
+            present: 0b1000
+                | u8::from(cube.is_some())
+                | (u8::from(mesh.is_some()) << 1)
+                | (u8::from(tint.is_some()) << 2),
         }
     }
 }
@@ -280,6 +287,7 @@ impl Sources {
         cube_mesh: MeshHandle,
         cube: Option<&Cube>,
         mesh3d: Option<&Mesh3d>,
+        tint: Option<&Tint>,
     ) -> Option<ResolvedSource> {
         let (handle, color, mapped, surface) = if let Some(mesh3d) = mesh3d {
             let material = assets.material(mesh3d.material)?;
@@ -294,6 +302,7 @@ impl Sources {
             // Cubes are always opaque.
             (cube_mesh, [r, g, b, 1.0], None, Surface::MATTE)
         };
+        let color = tint.map_or(color, |tint| tint.apply(color));
         let mesh = assets.mesh(handle)?;
         // Resolve all weak handles before retaining any source for this record.
         if let Some((_, material)) = mapped {
@@ -429,6 +438,8 @@ pub(crate) struct RetainedRender {
     gpu: bool,
     gpu_topology: Option<u64>,
     source_stamps: Option<SourceStamps>,
+    // Tints at the last source scan (removals change no tick).
+    tint_count: Option<usize>,
 }
 
 impl Default for RetainedRender {
@@ -467,6 +478,7 @@ impl Default for RetainedRender {
             gpu: false,
             gpu_topology: None,
             source_stamps: None,
+            tint_count: None,
         }
     }
 }
@@ -612,17 +624,30 @@ impl RetainedRender {
         }
     }
 
-    /// Whether any Mesh3d or Cube changed since the previous call, consuming
-    /// that window. The caller advances the world change tick afterwards.
+    /// Whether any Mesh3d, Cube or Tint changed, or a Tint was removed,
+    /// since the previous call, consuming that window. The caller advances
+    /// the world change tick afterwards.
     fn sources_changed(&mut self, world: &World) -> bool {
         let Some(stamps) = self.source_stamps.as_mut() else {
             return true;
         };
-        let Ok((meshes, cubes)) = stamps.get(world) else {
+        let Ok((meshes, cubes, tints)) = stamps.get(world) else {
             // Conservatively run the full pass.
             return true;
         };
-        let mut changed = false;
+        // A removed tint changes no tick: the count reveals it, and an
+        // insertion elsewhere in the same window changes a tick.
+        let tint_count = tints.iter().len();
+        let mut changed = self.tint_count != Some(tint_count);
+        self.tint_count = Some(tint_count);
+        for tints in tints
+            .contiguous_iter()
+            .expect("Tint uses dense table storage")
+        {
+            let (_, ticks) = ContiguousRef::split(tints);
+            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
+            changed |= window.any(ticks.changed());
+        }
         for meshes in meshes
             .contiguous_iter()
             .expect("Mesh3d uses dense table storage")
@@ -761,7 +786,7 @@ impl RetainedRender {
             .div_ceil(64);
         self.visited.clear();
         self.visited.resize(visited_words, 0);
-        for (row, (entity, has_transform, cube, mesh3d)) in query.iter(world).enumerate() {
+        for (row, (entity, has_transform, cube, mesh3d, tint)) in query.iter(world).enumerate() {
             if !has_transform {
                 self.snapshot.invalid_transforms += 1;
                 continue;
@@ -776,6 +801,7 @@ impl RetainedRender {
             let source = SourceKey::new(
                 cube.as_ref().map(|value| value.last_changed()),
                 mesh3d.as_ref().map(|value| value.last_changed()),
+                tint.as_ref().map(|value| value.last_changed()),
             );
             // Every live slot is (re)resolved when assets change or the window
             // ages; new owners start from an unknown source key.
@@ -784,9 +810,13 @@ impl RetainedRender {
                 let record = &mut self.snapshot.instances[index];
                 resolved_count += 1;
                 frame.source = source;
-                let resolved =
-                    self.sources
-                        .resolve(assets, cube_mesh, cube.as_deref(), mesh3d.as_deref());
+                let resolved = self.sources.resolve(
+                    assets,
+                    cube_mesh,
+                    cube.as_deref(),
+                    mesh3d.as_deref(),
+                    tint.as_deref(),
+                );
                 frame.mesh = resolved
                     .as_ref()
                     .map_or(NO_SOURCE, |value| value.mesh_index as u32);

@@ -491,3 +491,76 @@ fn cpu_frames_after_gpu_frames_recompute_culling_and_pose_rows() {
         assert_eq!(rows, reference_rows);
     }
 }
+
+#[test]
+fn tints_multiply_colors_and_their_insertion_change_and_removal_reach_every_frame() {
+    let mut engine = Engine::new(EngineConfig::default());
+    let world = engine.app.world_mut();
+    let plain = world
+        .spawn((
+            Transform::default(),
+            Cube {
+                color: [0.5, 0.5, 0.5, 1.0],
+            },
+        ))
+        .id();
+    let tinted = world
+        .spawn((
+            Transform::default(),
+            Cube {
+                color: [0.5, 0.5, 0.5, 1.0],
+            },
+            // Factors beyond [0, 1] read as the nearest bound, NaN as 1.
+            Tint([0.5, 2.0, f32::NAN, 1.0]),
+        ))
+        .id();
+    let color = |engine: &mut Engine, entity| {
+        let (candidates, ..) = gpu_candidates(engine);
+        candidates
+            .into_iter()
+            .find(|(candidate, _)| *candidate == entity)
+            .unwrap()
+            .1
+    };
+    assert_eq!(color(&mut engine, plain), [0.5, 0.5, 0.5, 1.0]);
+    assert_eq!(color(&mut engine, tinted), [0.25, 0.5, 0.5, 1.0]);
+    // Changing, inserting and removing tints all reach GPU frames, whose
+    // unchanged structure skips the per-renderable pass.
+    engine.app.world_mut().get_mut::<Tint>(tinted).unwrap().0 = [1.0, 0.0, 1.0, 1.0];
+    assert_eq!(color(&mut engine, tinted), [0.5, 0.0, 0.5, 1.0]);
+    engine
+        .app
+        .world_mut()
+        .entity_mut(plain)
+        .insert(Tint([0.0, 1.0, 1.0, 0.5]));
+    assert_eq!(color(&mut engine, plain), [0.0, 0.5, 0.5, 0.5]);
+    engine.app.world_mut().entity_mut(tinted).remove::<Tint>();
+    assert_eq!(color(&mut engine, tinted), [0.5, 0.5, 0.5, 1.0]);
+    // CPU frames too.
+    engine.app.world_mut().entity_mut(plain).remove::<Tint>();
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    assert!(
+        frame
+            .snapshot()
+            .instances
+            .iter()
+            .all(|instance| instance.color == [0.5, 0.5, 0.5, 1.0])
+    );
+    // And public snapshots.
+    engine
+        .app
+        .world_mut()
+        .entity_mut(plain)
+        .insert(Tint([0.5, 1.0, 1.0, 1.0]));
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.0, &mut snapshot);
+    let mut colors: Vec<_> = snapshot
+        .instances
+        .iter()
+        .map(|instance| instance.color)
+        .collect();
+    colors.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert_eq!(colors, [[0.25, 0.5, 0.5, 1.0], [0.5, 0.5, 0.5, 1.0]]);
+}
