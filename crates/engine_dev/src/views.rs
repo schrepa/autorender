@@ -1,5 +1,33 @@
 use serde::Serialize;
 
+/// An animation player (decision 035) in the shape of a scene version 8
+/// `animation` field, with its clip's duration and its targets.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct AnimationPlayerView {
+    /// The clip's authored animation ID; None when no scene instance owns it.
+    pub clip: Option<String>,
+    /// Whether the clip is still resident.
+    pub clip_alive: bool,
+    /// Seconds from the clip's start to its last key.
+    pub duration: Option<f32>,
+    pub time: f32,
+    pub speed: f32,
+    #[serde(rename = "loop")]
+    pub looping: bool,
+    /// Each clip target's authored entity ID; None when unbound or not
+    /// authored.
+    pub targets: Vec<Option<String>>,
+}
+
+/// A skin (decision 036): its joints' authored entity IDs.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct SkinView {
+    /// Each joint's authored entity ID; None when not authored.
+    pub joints: Vec<Option<String>>,
+}
+
 /// Serializable development view, separate from the gameplay component.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

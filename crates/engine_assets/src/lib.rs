@@ -4,14 +4,20 @@
 //! be persisted or used in another library. Meshes are shared with owned render
 //! snapshots using `Arc`; removing a handle never invalidates an existing snapshot.
 
+mod animation;
 mod error;
 mod library;
 mod material;
 mod mesh;
 mod texture;
 
+pub use animation::{
+    AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, KeyInterpolation, Keyframes,
+};
 pub use error::AssetError;
-pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, TextureHandle};
+pub use library::{
+    AssetBudget, AssetLibrary, ClipHandle, MaterialHandle, MeshHandle, TextureHandle,
+};
 pub use material::{
     AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, UvTransform, Wrap,
 };

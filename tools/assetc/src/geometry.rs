@@ -1,8 +1,8 @@
 use engine_scene::{
-    MeshSource, SceneDocument, SceneMesh, SceneObject, SceneTransform, SceneVertex,
-    encode_mesh_buffer_with,
+    MeshSource, MeshStreams, SceneDocument, SceneMesh, SceneObject, ScenePlayer, SceneTransform,
+    SceneVertex, encode_mesh_buffer_with,
 };
-use glam::{Mat3, Mat4, Vec3};
+use glam::{EulerRot, Mat3, Mat4, Quat, Vec3};
 use gltf::{
     accessor::{DataType, Dimensions},
     mesh::Semantic,
@@ -10,6 +10,8 @@ use gltf::{
 
 use crate::{ImportError, ImportedFile, unsupported};
 
+/// Static models bake node transforms into their vertices; models with
+/// animations or skins keep their nodes (decisions 035 and 036).
 pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],
@@ -17,6 +19,9 @@ pub(crate) fn import(
     output: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
 ) -> Result<(), ImportError> {
+    if document.animations().next().is_some() || document.skins().next().is_some() {
+        return hierarchy(document, binary, id, output, files);
+    }
     let source = document.scenes().next().expect("validated single scene");
     let mut stack: Vec<_> = source.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
     stack.reverse();
@@ -43,74 +48,19 @@ pub(crate) fn import(
         let normal_matrix = linear.inverse().transpose();
         if let Some(mesh) = node.mesh() {
             for primitive in mesh.primitives() {
-                let primitive_path = format!(
-                    "$.meshes[{}].primitives[{}]",
-                    mesh.index(),
-                    primitive.index()
-                );
-                let material_index = primitive.material().index().ok_or_else(|| {
-                    unsupported(
-                        format!("{primitive_path}.material"),
-                        "an explicit material is required",
-                    )
-                })?;
-                let material = &output.materials[material_index];
-                let textured = material.texture.is_some()
-                    || material.metallic_roughness_texture.is_some()
-                    || material.normal_texture.is_some()
-                    || material.occlusion_texture.is_some()
-                    || material.emissive_texture.is_some();
-                let (vertices, mut indices) = primitive_data(
-                    &primitive,
+                let (object, mesh, file) = import_primitive(
+                    output,
                     binary,
+                    id,
+                    &node,
+                    &primitive,
                     matrix,
                     normal_matrix,
-                    textured,
-                    &primitive_path,
+                    false,
                 )?;
-                if determinant < 0.0 {
-                    for triangle in indices.as_chunks_mut::<3>().0 {
-                        triangle.swap(1, 2);
-                    }
-                }
-                let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
-                let mesh_id = format!("{object_id}.mesh");
-                // Vertex colors and second coordinates (decision 034) ride in
-                // an EMB2 buffer's optional streams.
-                let colors: Option<Vec<[f32; 4]>> =
-                    vertices.iter().map(|vertex| vertex.color).collect();
-                let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
-                let file = ImportedFile::named(
-                    id,
-                    &format!("node{}.p{}", node.index(), primitive.index()),
-                    "bin",
-                    encode_mesh_buffer_with(&vertices, &indices, colors.as_deref(), uv1.as_deref()),
-                );
-                output.meshes.push(SceneMesh {
-                    id: mesh_id.clone(),
-                    source: MeshSource::Buffer {
-                        uri: file.uri.clone(),
-                    },
-                });
+                output.meshes.push(mesh);
                 files.push(file);
-                output.entities.push(SceneObject {
-                    id: object_id,
-                    name: node
-                        .name()
-                        .filter(|name| name.len() <= 128 && !name.chars().any(char::is_control))
-                        .unwrap_or("Imported mesh")
-                        .to_owned(),
-                    mesh: Some(mesh_id),
-                    material: Some(format!("{id}.material{material_index}")),
-                    parent: None,
-                    prefab: None,
-                    collider: None,
-                    light: None,
-                    particles: None,
-                    tint: None,
-                    transform: SceneTransform::default(),
-                    tags: vec!["imported".into()],
-                });
+                output.entities.push(object);
             }
         }
         let start = stack.len();
@@ -127,12 +77,258 @@ pub(crate) fn import(
     Ok(())
 }
 
+/// A primitive's entity, mesh and mesh buffer file, its vertices transformed
+/// by `matrix`; with `skinned`, carrying the primitive's joints and weights.
+#[allow(clippy::too_many_arguments)]
+fn import_primitive(
+    output: &SceneDocument,
+    binary: &[u8],
+    id: &str,
+    node: &gltf::Node<'_>,
+    primitive: &gltf::Primitive<'_>,
+    matrix: Mat4,
+    normal_matrix: Mat3,
+    skinned: bool,
+) -> Result<(SceneObject, SceneMesh, ImportedFile), ImportError> {
+    let mesh = node.mesh().expect("mesh nodes");
+    let primitive_path = format!(
+        "$.meshes[{}].primitives[{}]",
+        mesh.index(),
+        primitive.index()
+    );
+    let material_index = primitive.material().index().ok_or_else(|| {
+        unsupported(
+            format!("{primitive_path}.material"),
+            "an explicit material is required",
+        )
+    })?;
+    let material = &output.materials[material_index];
+    let textured = material.texture.is_some()
+        || material.metallic_roughness_texture.is_some()
+        || material.normal_texture.is_some()
+        || material.occlusion_texture.is_some()
+        || material.emissive_texture.is_some();
+    let (vertices, mut indices) = primitive_data(
+        primitive,
+        binary,
+        matrix,
+        normal_matrix,
+        textured,
+        skinned,
+        &primitive_path,
+    )?;
+    if Mat3::from_mat4(matrix).determinant() < 0.0 {
+        for triangle in indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+    }
+    let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
+    let mesh_id = format!("{object_id}.mesh");
+    // Vertex colors, second coordinates (decision 034), joints and weights
+    // (decision 036) ride in an EMB2 buffer's optional streams.
+    let colors: Option<Vec<[f32; 4]>> = vertices.iter().map(|vertex| vertex.color).collect();
+    let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
+    let joints: Option<Vec<[u16; 4]>> = vertices.iter().map(|vertex| vertex.joints).collect();
+    let weights: Option<Vec<[f32; 4]>> = vertices.iter().map(|vertex| vertex.weights).collect();
+    let file = ImportedFile::named(
+        id,
+        &format!("node{}.p{}", node.index(), primitive.index()),
+        "bin",
+        encode_mesh_buffer_with(
+            &vertices,
+            &indices,
+            MeshStreams {
+                colors: colors.as_deref(),
+                uv1: uv1.as_deref(),
+                joints: joints.as_deref(),
+                weights: weights.as_deref(),
+            },
+        ),
+    );
+    let skin = node
+        .skin()
+        .filter(|_| joints.is_some())
+        .map(|skin| format!("{id}.skin{}", skin.index()));
+    let object = SceneObject {
+        id: object_id,
+        name: node_name(node, "Imported mesh"),
+        mesh: Some(mesh_id.clone()),
+        material: Some(format!("{id}.material{material_index}")),
+        parent: None,
+        prefab: None,
+        collider: None,
+        light: None,
+        particles: None,
+        tint: None,
+        animation: None,
+        skin,
+        transform: SceneTransform::default(),
+        tags: vec!["imported".into()],
+    };
+    let mesh = SceneMesh {
+        id: mesh_id,
+        source: MeshSource::Buffer {
+            uri: file.uri.clone(),
+        },
+    };
+    Ok((object, mesh, file))
+}
+
+fn node_name(node: &gltf::Node<'_>, fallback: &str) -> String {
+    node.name()
+        .filter(|name| name.len() <= 128 && !name.chars().any(char::is_control))
+        .unwrap_or(fallback)
+        .to_owned()
+}
+
+/// Animated and skinned models: one entity per node (`ID.nodeN`) with its
+/// local transform, below one root (`ID.root`) that plays the first
+/// animation; primitives are children (`ID.nodeN.pM`) in their node's space.
+fn hierarchy(
+    document: &gltf::Document,
+    binary: &[u8],
+    id: &str,
+    output: &mut SceneDocument,
+    files: &mut Vec<ImportedFile>,
+) -> Result<(), ImportError> {
+    let root = format!("{id}.root");
+    output.entities.push(SceneObject {
+        id: root.clone(),
+        name: "Imported model".into(),
+        mesh: None,
+        material: None,
+        parent: None,
+        prefab: None,
+        collider: None,
+        light: None,
+        particles: None,
+        tint: None,
+        animation: None,
+        skin: None,
+        transform: SceneTransform::default(),
+        tags: vec!["imported".into()],
+    });
+    let source = document.scenes().next().expect("validated single scene");
+    let mut stack: Vec<_> = source.nodes().map(|node| (node, root.clone())).collect();
+    stack.reverse();
+    let mut primitives = 0;
+    while let Some((node, parent)) = stack.pop() {
+        let path = format!("$.nodes[{}]", node.index());
+        let node_id = format!("{id}.node{}", node.index());
+        output.entities.push(SceneObject {
+            id: node_id.clone(),
+            name: node_name(&node, "Imported node"),
+            mesh: None,
+            material: None,
+            parent: Some(parent),
+            prefab: None,
+            collider: None,
+            light: None,
+            particles: None,
+            tint: None,
+            animation: None,
+            skin: None,
+            transform: local_transform(&node, &path)?,
+            tags: vec!["imported".into()],
+        });
+        if let Some(mesh) = node.mesh() {
+            for primitive in mesh.primitives() {
+                // Skinned vertices stay in bind space: joints place them.
+                let (mut object, mesh, file) = import_primitive(
+                    output,
+                    binary,
+                    id,
+                    &node,
+                    &primitive,
+                    Mat4::IDENTITY,
+                    Mat3::IDENTITY,
+                    node.skin().is_some(),
+                )?;
+                object.parent = Some(node_id.clone());
+                output.meshes.push(mesh);
+                files.push(file);
+                output.entities.push(object);
+                primitives += 1;
+            }
+        }
+        let start = stack.len();
+        stack.extend(node.children().map(|child| (child, node_id.clone())));
+        stack[start..].reverse();
+    }
+    if primitives == 0 {
+        return Err(ImportError::new(
+            "empty_model",
+            "$.nodes",
+            "the scene contains no mesh primitives",
+        ));
+    }
+    crate::animation::import(document, binary, id, output, files)?;
+    if let Some(first) = output.animations.first() {
+        output.entities[0].animation = Some(ScenePlayer {
+            clip: first.id.clone(),
+            speed: 1.0,
+            looping: true,
+            time: 0.0,
+        });
+    }
+    Ok(())
+}
+
+/// A node's local transform as scene TRS: rotations as XYZ Euler degrees,
+/// scales positive (mirrored nodes are unsupported in hierarchies).
+fn local_transform(node: &gltf::Node<'_>, path: &str) -> Result<SceneTransform, ImportError> {
+    let (translation, rotation, scale) = node.transform().decomposed();
+    let rotation = Quat::from_array(rotation);
+    let invalid = |message: &str| ImportError::new("invalid_transform", path, message.to_owned());
+    if !rotation.is_finite() || rotation.length_squared() == 0.0 {
+        return Err(invalid("node rotations must be finite and nonzero"));
+    }
+    let rotation = rotation.normalize();
+    let (translation, scale) = (Vec3::from_array(translation), Vec3::from_array(scale));
+    if !translation.is_finite() || translation.abs().max_element() > 1_000_000.0 {
+        return Err(invalid(
+            "node translations must be finite and within ±1000000",
+        ));
+    }
+    if !scale.is_finite() || scale.min_element() < 0.0001 || scale.max_element() > 10_000.0 {
+        return Err(invalid(
+            "animated and skinned models need node scales between 0.0001 and 10000; mirrored nodes are unsupported",
+        ));
+    }
+    // A matrix must be exactly a rotation, scale and translation.
+    let original = Mat4::from_cols_array_2d(&node.transform().matrix());
+    let rebuilt = Mat4::from_scale_rotation_translation(scale, rotation, translation);
+    let tolerance = 0.0001
+        * (1.0
+            + original
+                .abs()
+                .to_cols_array()
+                .iter()
+                .fold(0.0, |a: f32, b| if *b > a { *b } else { a }));
+    if (original - rebuilt)
+        .to_cols_array()
+        .iter()
+        .any(|difference| difference.abs() > tolerance)
+    {
+        return Err(invalid(
+            "node matrices of animated and skinned models must be rotations, scales and translations without shear",
+        ));
+    }
+    let (x, y, z) = rotation.to_euler(EulerRot::XYZ);
+    Ok(SceneTransform {
+        translation: translation.to_array(),
+        rotation_degrees: [x.to_degrees(), y.to_degrees(), z.to_degrees()],
+        scale: scale.to_array(),
+    })
+}
+
 fn primitive_data(
     primitive: &gltf::Primitive<'_>,
     binary: &[u8],
     matrix: Mat4,
     normal_matrix: Mat3,
     textured: bool,
+    skinned: bool,
     path: &str,
 ) -> Result<(Vec<SceneVertex>, Vec<u32>), ImportError> {
     if primitive.mode() != gltf::mesh::Mode::Triangles || primitive.morph_targets().next().is_some()
@@ -148,12 +344,17 @@ fn primitive_data(
             Semantic::TexCoords(0) => Dimensions::Vec2,
             // Normal maps derive their tangent frames (decision 031); maps
             // read TEXCOORD_0 or TEXCOORD_1, and base colors COLOR_0
-            // (decision 034), whose formats the reader converts.
-            Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_) => continue,
-            _ => {
+            // (decision 034), skins JOINTS_0 and WEIGHTS_0 (decision 036),
+            // whose formats the reader converts.
+            Semantic::Tangents
+            | Semantic::TexCoords(_)
+            | Semantic::Colors(_)
+            | Semantic::Joints(0)
+            | Semantic::Weights(0) => continue,
+            Semantic::Joints(_) | Semantic::Weights(_) => {
                 return Err(unsupported(
                     format!("{path}.attributes"),
-                    "only POSITION, NORMAL, TANGENT and TEXCOORD attributes are supported",
+                    "at most four joints per vertex (JOINTS_0 and WEIGHTS_0) are supported",
                 ));
             }
         };
@@ -195,22 +396,28 @@ fn primitive_data(
             "textured primitives require TEXCOORD_0",
         ));
     }
-    let accessor = primitive
-        .indices()
-        .ok_or_else(|| unsupported(format!("{path}.indices"), "indexed primitives are required"))?;
-    if accessor.dimensions() != Dimensions::Scalar
-        || !matches!(
-            accessor.data_type(),
-            DataType::U8 | DataType::U16 | DataType::U32
-        )
-        || accessor.normalized()
-        || accessor.count() % 3 != 0
-        || accessor.view().is_some_and(|view| view.stride().is_some())
-    {
+    // Unindexed primitives draw their vertices in order.
+    if let Some(accessor) = primitive.indices() {
+        if accessor.dimensions() != Dimensions::Scalar
+            || !matches!(
+                accessor.data_type(),
+                DataType::U8 | DataType::U16 | DataType::U32
+            )
+            || accessor.normalized()
+            || accessor.count() % 3 != 0
+            || accessor.view().is_some_and(|view| view.stride().is_some())
+        {
+            return Err(ImportError::new(
+                "invalid_indices",
+                format!("{path}.indices"),
+                "indices must be tightly packed unsigned scalars in complete triangles",
+            ));
+        }
+    } else if positions.count() % 3 != 0 {
         return Err(ImportError::new(
             "invalid_indices",
-            format!("{path}.indices"),
-            "indices must be tightly packed unsigned scalars in complete triangles",
+            format!("{path}.attributes.POSITION"),
+            "unindexed primitives draw complete triangles",
         ));
     }
     let reader = primitive.reader(|buffer| {
@@ -242,12 +449,41 @@ fn primitive_data(
     let color_data: Option<Vec<[f32; 4]>> = reader
         .read_colors(0)
         .map(|colors| colors.into_rgba_f32().collect());
+    // A skin's primitives carry both; without a skin glTF draws them rigid.
+    let skin_data = if skinned {
+        match (reader.read_joints(0), reader.read_weights(0)) {
+            (Some(joints), Some(weights)) => Some((
+                joints.into_u16().collect::<Vec<[u16; 4]>>(),
+                weights.into_f32().collect::<Vec<[f32; 4]>>(),
+            )),
+            (None, None) => None,
+            _ => {
+                return Err(ImportError::new(
+                    "attribute_count",
+                    path,
+                    "skinned primitives need both JOINTS_0 and WEIGHTS_0",
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let (joint_data, weight_data) = match skin_data {
+        Some((joints, weights)) => (Some(joints), Some(weights)),
+        None => (None, None),
+    };
     if uv1_data
         .as_ref()
         .is_some_and(|uv1| uv1.len() != position_data.len())
         || color_data
             .as_ref()
             .is_some_and(|colors| colors.len() != position_data.len())
+        || joint_data
+            .as_ref()
+            .is_some_and(|joints| joints.len() != position_data.len())
+        || weight_data
+            .as_ref()
+            .is_some_and(|weights| weights.len() != position_data.len())
     {
         return Err(ImportError::new(
             "attribute_count",
@@ -255,11 +491,14 @@ fn primitive_data(
             "vertex attribute counts must match",
         ));
     }
-    let mut indices: Vec<u32> = reader
-        .read_indices()
-        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
-        .into_u32()
-        .collect();
+    let mut indices: Vec<u32> = match primitive.indices() {
+        Some(_) => reader
+            .read_indices()
+            .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
+            .into_u32()
+            .collect(),
+        None => (0..position_data.len() as u32).collect(),
+    };
     if indices
         .iter()
         .any(|index| *index as usize >= position_data.len())
@@ -323,12 +562,28 @@ fn primitive_data(
                 "vertex colors must be finite in [0, 1] and second UVs finite",
             ));
         }
+        let joints = joint_data.as_ref().map(|joints| joints[source as usize]);
+        let weights = weight_data.as_ref().map(|weights| weights[source as usize]);
+        if weights.is_some_and(|weights| {
+            !weights
+                .iter()
+                .all(|weight| weight.is_finite() && *weight >= 0.0)
+                || weights.iter().sum::<f32>() <= 0.0
+        }) {
+            return Err(ImportError::new(
+                "invalid_vertex",
+                path,
+                "joint weights must be finite, not negative and not all zero",
+            ));
+        }
         vertices.push(SceneVertex {
             position: position.to_array(),
             normal: normal.normalize().to_array(),
             uv,
             color,
             uv1,
+            joints,
+            weights,
         });
     }
     Ok((vertices, indices))

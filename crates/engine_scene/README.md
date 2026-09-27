@@ -98,8 +98,15 @@ materials are glTF 2.0 metallic-roughness materials
 sampler and transform settings, metallic-roughness, normal, occlusion and
 emissive textures, emissive colors, alpha modes and double-sided surfaces.
 `SceneDocument::upgrade` moves a document to the current version without
-changing its meaning. GLB decoding belongs to native `tools/assetc`; base64
-decoding belongs only to validation/loading here.
+changing its meaning. Version 8 documents also take `animations`, clips with
+inline channels or `EAN1` animation buffer files, which entity `animation`
+players play on their targets
+([decision 035](../../docs/adr-035-animation-clips-and-players.md)), and
+`skins`, which entities with a mesh bind with `skin`
+([decision 036](../../docs/adr-036-skinning.md)); a placement's players and
+skins resolve entity IDs against its local IDs first. `SceneInstance::clip`
+returns an animation's clip handle. GLB decoding belongs to native
+`tools/assetc`; base64 decoding belongs only to validation/loading here.
 
 Errors expose stable `code`, JSON `path` and a human-readable `message`.
 Parsing, validation and canonical serialization do not mutate a world or save a

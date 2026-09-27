@@ -74,17 +74,6 @@ pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
     {
         return Err(unsupported("$.buffers", "a GLB has at most one buffer"));
     }
-    for field in ["animations", "skins"] {
-        if json[field]
-            .as_array()
-            .is_some_and(|items| !items.is_empty())
-        {
-            return Err(unsupported(
-                format!("$.{field}"),
-                "animations and skins are outside the static import profile",
-            ));
-        }
-    }
     let names = |field: &str| -> Vec<&str> {
         json[field]
             .as_array()
@@ -201,14 +190,12 @@ fn visit(
             ));
         }
     }
-    // Cameras are not imported; skins and morph weights are not static.
-    for field in ["skin", "weights"] {
-        if node.get(field).is_some() {
-            return Err(unsupported(
-                format!("$.nodes[{index}].{field}"),
-                "only static mesh nodes and transform groups are supported",
-            ));
-        }
+    // Cameras are not imported; morph weights are unsupported.
+    if node.get("weights").is_some() {
+        return Err(unsupported(
+            format!("$.nodes[{index}].weights"),
+            "morph weights are unsupported",
+        ));
     }
     for child in node["children"].as_array().into_iter().flatten() {
         visit(child, nodes, visited, depth + 1)?;
@@ -255,15 +242,13 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
     }
     for accessor in document.accessors() {
         let path = format!("$.accessors[{}]", accessor.index());
+        // Skins read MAT4 inverse bind matrices.
         if accessor.sparse().is_some()
-            || matches!(
-                accessor.dimensions(),
-                Dimensions::Mat2 | Dimensions::Mat3 | Dimensions::Mat4
-            )
+            || matches!(accessor.dimensions(), Dimensions::Mat2 | Dimensions::Mat3)
         {
             return Err(unsupported(
                 path,
-                "sparse and matrix accessors are unsupported",
+                "sparse, MAT2 and MAT3 accessors are unsupported",
             ));
         }
         let view = accessor

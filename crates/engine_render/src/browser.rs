@@ -11,7 +11,7 @@ use wgpu::util::DeviceExt;
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, InstanceData, LightingUniform, PoseData, SHADER,
-    ShadowUniform, Variant, Vertex, clamped_extent,
+    ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
@@ -38,6 +38,19 @@ const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 =
 // Vertex color and second texture coordinates (decision 034).
 const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![9 => Unorm16x4, 10 => Float32x2];
+
+// Joints and weights of meshes with joints (decision 036).
+const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![11 => Uint16x4, 12 => Unorm16x4];
+
+/// The skin stream of skinned draws, after the second stream.
+pub(crate) fn skin_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+    Some(wgpu::VertexBufferLayout {
+        array_stride: size_of::<SkinVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &SKIN_ATTRIBUTES,
+    })
+}
 
 /// The second vertex stream of extended meshes.
 pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
@@ -76,8 +89,11 @@ struct DepthTarget {
 
 struct GpuMesh {
     vertices: wgpu::Buffer,
-    // Vertex colors and second texture coordinates, when the mesh has them.
+    // Vertex colors and second texture coordinates, when the mesh has them
+    // or joints.
     extras: Option<wgpu::Buffer>,
+    // Joints and weights, when the mesh has them (decision 036).
+    skin: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     index_count: u32,
     byte_len: u64,
@@ -182,6 +198,11 @@ pub struct Renderer {
     temporal: Option<TemporalPass>,
     // Temporal frames cull into this buffer and `instance_buffer` in turn.
     alternate_poses: Option<wgpu::Buffer>,
+    // Joint palettes of skinned slots (decision 036), one per pose buffer,
+    // with room for `palette_capacity` joints.
+    palettes: [wgpu::Buffer; 2],
+    palette_capacity: usize,
+    palette_staging: Vec<engine_core::PoseRows>,
     // Advances when retained pose storage is replaced (compute bindings follow).
     pose_generation: u64,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.
@@ -395,6 +416,8 @@ impl Renderer {
             entries: &[
                 storage_entry(0, size_of::<PoseData>() as u64),
                 storage_entry(1, size_of::<ColorData>() as u64),
+                // Joint palettes of skinned slots (decision 036).
+                storage_entry(3, size_of::<PoseData>() as u64),
             ],
         });
         let affine_pipeline_layout =
@@ -456,6 +479,7 @@ impl Renderer {
         );
         let instance_buffer =
             create_instance_buffer(&device, INITIAL_CAPACITY, size_of::<InstanceData>());
+        let palettes = [0, 1].map(|_| create_storage_buffer(&device, 1, size_of::<PoseData>()));
         let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/empty-layout"),
             entries: &[],
@@ -510,6 +534,9 @@ impl Renderer {
             transparent_pipelines: Default::default(),
             particles: None,
             alternate_pose_group: None,
+            palettes,
+            palette_capacity: 1,
+            palette_staging: Vec::new(),
             meshes: BTreeMap::new(),
             materials,
             variant_pipelines: HashMap::new(),
@@ -787,10 +814,19 @@ impl Renderer {
                             usage: wgpu::BufferUsages::VERTEX,
                         })
                 });
+                let skin = SkinVertex::stream(source).map(|stream| {
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("engine/mesh-skin"),
+                            contents: bytemuck::cast_slice(&stream),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        })
+                });
                 let byte_len = source.byte_len() as u64;
                 entry.insert(GpuMesh {
                     vertices,
                     extras,
+                    skin,
                     indices,
                     index_count: source.indices().len() as u32,
                     byte_len,
@@ -842,6 +878,15 @@ impl Renderer {
             self.instance_capacity = payload_count.next_power_of_two().min(self.instance_limit);
             engine_profile::counter("render.instance_buffer_growth", 1.0);
         }
+        // Joint palettes (decision 036) grow with the frame's joints.
+        let joints = if affine { snapshot.joints.len() } else { 0 };
+        let palettes_grew = joints > self.palette_capacity;
+        if palettes_grew {
+            self.palette_capacity = joints.next_power_of_two();
+            self.palettes = [0, 1].map(|_| {
+                create_storage_buffer(&self.device, self.palette_capacity, size_of::<PoseData>())
+            });
+        }
         if grew || layout_changed {
             let stride = if affine {
                 size_of::<PoseData>()
@@ -856,25 +901,20 @@ impl Renderer {
             self.color_buffer = affine.then(|| {
                 create_storage_buffer(&self.device, self.instance_capacity, size_of::<ColorData>())
             });
-            self.pose_bind_group = self.color_buffer.as_ref().map(|color| {
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/retained-pose-bind-group"),
-                    layout: &self.pose_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.instance_buffer.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: color.as_entire_binding(),
-                        },
-                    ],
-                })
-            });
             self.uploads.invalidate_instances();
             self.retained_uploads.invalidate();
             self.alternate_poses = None;
+        }
+        if grew || layout_changed || palettes_grew {
+            self.pose_bind_group = self.color_buffer.as_ref().map(|color| {
+                pose_group(
+                    &self.device,
+                    &self.pose_layout,
+                    &self.instance_buffer,
+                    color,
+                    &self.palettes[0],
+                )
+            });
             self.pose_generation += 1;
         }
         if temporal && self.alternate_poses.is_none() {
@@ -1049,6 +1089,19 @@ impl Renderer {
                 );
                 color_upload_bytes += std::mem::size_of_val(records) as u64;
             }
+            // CPU-prepared frames upload skinned slots' palettes (decision
+            // 036); GPU-presented ones compute them.
+            if !gpu_mode && !snapshot.joints.is_empty() {
+                self.palette_staging.clear();
+                self.palette_staging
+                    .extend(snapshot.joints.iter().map(|joint| joint.matrix));
+                self.queue.write_buffer(
+                    &self.palettes[0],
+                    0,
+                    bytemuck::cast_slice(&self.palette_staging),
+                );
+                pose_upload_bytes += std::mem::size_of_val(&self.palette_staging[..]) as u64;
+            }
             if write_slots {
                 self.queue.write_buffer(
                     self.slot_buffer.as_ref().expect("retained slot buffer"),
@@ -1101,14 +1154,17 @@ impl Renderer {
                     gpu,
                     &self.plan,
                     |index, batch| {
+                        let mesh = &snapshot.meshes[batch.source_index].mesh;
                         (
                             meshes[&batch.mesh].index_count,
-                            snapshot.meshes[batch.source_index].mesh.bounds(),
+                            mesh.bounds(),
                             shadows.batch_group(index),
+                            mesh.joint_count() != 0,
                         )
                     },
                     !shadows.groups().is_empty(),
                     poses,
+                    &self.palettes[poses_index],
                     poses_index,
                     self.pose_generation,
                     temporal_frame
@@ -1132,6 +1188,7 @@ impl Renderer {
             let poses = affine.then(|| Poses {
                 buffers: [Some(&self.instance_buffer), self.alternate_poses.as_ref()],
                 colors: self.color_buffer.as_ref().expect("affine color buffer"),
+                palettes: [&self.palettes[0], &self.palettes[1]],
                 index: temporal_frame.as_ref().map_or(0, |frame| frame.parity),
                 generation: self.pose_generation,
             });
@@ -1330,28 +1387,13 @@ impl Renderer {
                         .as_ref()
                         .is_none_or(|(built, _)| *built != self.pose_generation)
                 {
-                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("engine/alternate-pose-group"),
-                        layout: &self.pose_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: self
-                                    .alternate_poses
-                                    .as_ref()
-                                    .expect("created above")
-                                    .as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: self
-                                    .color_buffer
-                                    .as_ref()
-                                    .expect("affine color buffer")
-                                    .as_entire_binding(),
-                            },
-                        ],
-                    });
+                    let group = pose_group(
+                        device,
+                        &self.pose_layout,
+                        self.alternate_poses.as_ref().expect("created above"),
+                        self.color_buffer.as_ref().expect("affine color buffer"),
+                        &self.palettes[1],
+                    );
                     self.alternate_pose_group = Some((self.pose_generation, group));
                 }
             }
@@ -1410,9 +1452,14 @@ impl Renderer {
                 &self.plan,
                 &self.instance_buffer,
                 |mesh| {
-                    meshes
-                        .get(&mesh)
-                        .map(|mesh| (&mesh.vertices, &mesh.indices, mesh.index_count))
+                    meshes.get(&mesh).map(|mesh| {
+                        (
+                            &mesh.vertices,
+                            &mesh.indices,
+                            mesh.index_count,
+                            mesh.skin.as_ref(),
+                        )
+                    })
                 },
                 |material| self.materials.group(material),
                 effect_queries,
@@ -1432,6 +1479,7 @@ impl Renderer {
                     self.alternate_poses.as_ref().expect("created above"),
                 ],
                 self.color_buffer.as_ref().expect("affine color buffer"),
+                [&self.palettes[0], &self.palettes[1]],
             );
         }
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
@@ -1566,7 +1614,10 @@ impl Renderer {
                     // Every planned source was validated and uploaded above.
                     let mesh = &self.meshes[&batch.mesh];
                     let (group, variant) = self.materials.binding(batch.material);
-                    let variant = variant.with_extended(mesh.extras.is_some());
+                    let skin = mesh.skin.as_ref().filter(|_| affine);
+                    let variant = variant
+                        .with_extended(mesh.extras.is_some())
+                        .with_skinned(skin.is_some());
                     if variant != bound {
                         pass.set_pipeline(if variant == Variant::BASIC {
                             opaque_base
@@ -1579,6 +1630,9 @@ impl Renderer {
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     if let Some(extras) = &mesh.extras {
                         pass.set_vertex_buffer(2, extras.slice(..));
+                    }
+                    if let Some(skin) = skin {
+                        pass.set_vertex_buffer(3, skin.slice(..));
                     }
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     if gpu_mode {
@@ -1661,7 +1715,10 @@ impl Renderer {
                         }
                         let mesh = &self.meshes[&batch.mesh];
                         let (group, variant) = self.materials.binding(batch.material);
-                        let variant = variant.with_extended(mesh.extras.is_some());
+                        let skin = mesh.skin.as_ref().filter(|_| affine);
+                        let variant = variant
+                            .with_extended(mesh.extras.is_some())
+                            .with_skinned(skin.is_some());
                         if variant != bound {
                             pass.set_pipeline(if variant == Variant::BASIC {
                                 transparent_base
@@ -1674,6 +1731,9 @@ impl Renderer {
                         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                         if let Some(extras) = &mesh.extras {
                             pass.set_vertex_buffer(2, extras.slice(..));
+                        }
+                        if let Some(skin) = skin {
+                            pass.set_vertex_buffer(3, skin.slice(..));
                         }
                         pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                         if gpu_mode {
@@ -2057,16 +2117,20 @@ impl Renderer {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let (_, variant) = self.materials.binding(batch.material);
-            let extended = self
-                .meshes
-                .get(&batch.mesh)
-                .is_some_and(|mesh| mesh.extras.is_some());
-            let variant = variant.with_extended(extended);
             let kind = if batch.transparent {
                 transparent
             } else {
                 opaque
             };
+            // Only retained slots skin (decision 036).
+            let affine = match kind {
+                PassKind::Opaque { affine, .. } | PassKind::Transparent { affine, .. } => affine,
+                PassKind::Temporal { .. } => true,
+            };
+            let mesh = self.meshes.get(&batch.mesh);
+            let variant = variant
+                .with_extended(mesh.is_some_and(|mesh| mesh.extras.is_some()))
+                .with_skinned(affine && mesh.is_some_and(|mesh| mesh.skin.is_some()));
             if variant != Variant::BASIC
                 && !self.variant_pipelines.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
@@ -2198,6 +2262,35 @@ fn create_instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize)
     })
 }
 
+/// Group 2 of retained mesh pipelines: slot poses, colors and the joint
+/// palettes of skinned slots (decision 036).
+fn pose_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    poses: &wgpu::Buffer,
+    colors: &wgpu::Buffer,
+    palette: &wgpu::Buffer,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("engine/retained-pose-bind-group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: poses.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: colors.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: palette.as_entire_binding(),
+            },
+        ],
+    })
+}
+
 fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("engine/retained-instance-storage"),
@@ -2283,10 +2376,15 @@ fn mesh_pipeline(
         .chain(variant.constants())
         .collect();
     // Extended meshes (decision 034) read a third vertex buffer through
-    // their own entry points.
+    // their own entry points; skinned slots' meshes (decision 036) a fourth.
     let extended = variant.extended();
+    let skinned = affine && variant.skinned();
     let suffix = if extended { "_extended" } else { "" };
-    let vertex_entry = format!("{}{suffix}", if affine { "vs_affine" } else { "vs_main" });
+    let vertex_entry = if skinned {
+        "vs_affine_skinned".to_owned()
+    } else {
+        format!("{}{suffix}", if affine { "vs_affine" } else { "vs_main" })
+    };
     let fragment_entry = format!("{}{suffix}", fragment.fragment);
     let full_layouts = [
         vertex_layout(),
@@ -2298,8 +2396,14 @@ fn mesh_pipeline(
         extra_layout(),
     ];
     let [mesh, slots] = affine_layouts();
-    let affine_layouts = [mesh, slots, extra_layout()];
-    let streams = if extended { 3 } else { 2 };
+    let affine_layouts = [mesh, slots, extra_layout(), skin_layout()];
+    let streams = if skinned {
+        4
+    } else if extended {
+        3
+    } else {
+        2
+    };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("engine/instanced-meshes"),
         layout: Some(layout),

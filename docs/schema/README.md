@@ -26,6 +26,10 @@ with sampler and transform settings, beside `metallic_roughness_texture`,
 Entities take a `tint` ([decision 033](../adr-033-tints-and-material-replacement.md)); inline
 vertices take `color` and `uv1`, texture maps `tex_coord`, and mesh buffers may
 be `EMB2` ([decision 034](../adr-034-vertex-colors-and-second-coordinates.md)).
+Documents take `animations` (inline channels or `EAN1` files) and entities an
+`animation` player ([decision 035](../adr-035-animation-clips-and-players.md));
+documents take `skins`, entities with a mesh a `skin`, and inline vertices
+`joints` and `weights` ([decision 036](../adr-036-skinning.md)).
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

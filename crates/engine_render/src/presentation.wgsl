@@ -22,7 +22,8 @@ struct Frame {
     // Nonzero on temporally antialiased frames (decision 017): moving slots'
     // visible IDs carry MOVED_SLOT, so only they read previous poses.
     motion: u32,
-    pad0: u32,
+    // Joints of skinned slots' palettes (decision 036).
+    joints: u32,
     pad1: u32,
     pad2: u32,
 }
@@ -101,6 +102,11 @@ struct Level {
 // The candidates again, in slot order (close to node order): culling streams
 // pose, node and authority records instead of striding across draw groups.
 @group(0) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
+// Skinned slots' palettes (decision 036): each joint's node (NO_PARENT
+// without a valid pose) and inverse bind matrix, and the palette written.
+@group(0) @binding(15) var<storage, read> joint_nodes: array<u32>;
+@group(0) @binding(16) var<storage, read> inverse_binds: array<Rows>;
+@group(0) @binding(17) var<storage, read_write> palette: array<Rows>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -363,17 +369,48 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
-        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
+        // Joints place meshes with joints (decision 036): never culled,
+        // always moving.
+        let skinned = batch.bounds_min.w != 0.0;
+        if skinned || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
             visible |= VISIBLE;
             // Inactive nodes display unchanged authority rows. A node that
             // stopped this interval moves by the rest of its last one: its
             // motion is left to the camera and the history clamp.
-            if frame.motion != 0u && (flags & NODE_ACTIVE) != 0u {
+            if frame.motion != 0u && ((flags & NODE_ACTIVE) != 0u || skinned) {
                 visible |= MOVING;
             }
         }
     }
     scan[candidate.position] = visible;
+}
+
+// Skinned slots' palettes (decision 036): each joint's displayed pose,
+// composed as culling composes slots', times its inverse bind matrix. A
+// joint without a valid pose counts as the identity.
+@compute @workgroup_size(64)
+fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.joints {
+        return;
+    }
+    let node = joint_nodes[id.x];
+    var model = mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    );
+    if node < arrayLength(&info) {
+        let flags = info[node].y;
+        if (flags & NODE_VALID) != 0u {
+            if (flags & NODE_ACTIVE) != 0u {
+                model = rows_matrix(compose(node).display);
+            } else {
+                model = rows_matrix(authority[node]);
+            }
+        }
+    }
+    palette[id.x] = matrix_rows(model * rows_matrix(inverse_binds[id.x]));
 }
 
 // Visible count of every group of 256 candidates in draw-group order.

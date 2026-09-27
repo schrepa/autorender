@@ -102,8 +102,11 @@ pub(crate) struct Presented<'a> {
 /// one this frame's poses are in.
 pub(crate) struct Poses<'a> {
     pub buffers: [Option<&'a wgpu::Buffer>; 2],
-    /// Slot colors, whose alpha masked casters test.
+    /// Slot colors, whose alpha masked casters test and whose flags locate
+    /// skinned slots' palettes (decision 036).
     pub colors: &'a wgpu::Buffer,
+    /// Joint palettes, one per pose buffer.
+    pub palettes: [&'a wgpu::Buffer; 2],
     pub index: usize,
     pub generation: u64,
 }
@@ -251,6 +254,10 @@ struct ShadowPipelines {
     // Alpha-masked casters (decision 031), with a material group.
     affine_masked: wgpu::RenderPipeline,
     full_masked: wgpu::RenderPipeline,
+    // Retained casters of meshes with joints (decision 036), plain and
+    // masked, which read a skin stream and the joint palettes.
+    affine_skinned: wgpu::RenderPipeline,
+    affine_masked_skinned: wgpu::RenderPipeline,
     clear: wgpu::RenderPipeline,
     view_buffer: wgpu::Buffer,
     view_group: wgpu::BindGroup,
@@ -351,7 +358,7 @@ impl ShadowPipelines {
         };
         let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-pose-layout"),
-            entries: &[storage(0, 48), storage(1, 16)],
+            entries: &[storage(0, 48), storage(1, 16), storage(2, 48)],
         });
         let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
         let masked_vertex_attributes = [
@@ -367,6 +374,7 @@ impl ShadowPipelines {
             },
         ];
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
+        let skin_layout = crate::browser::skin_layout();
         let model_attributes = wgpu::vertex_attr_array![
             2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
         ];
@@ -494,13 +502,42 @@ impl ShadowPipelines {
             &[Some(&view_layout), None, Some(material_layout)],
             "vs_full_masked",
             &[
-                Some(masked_mesh_layout),
+                Some(masked_mesh_layout.clone()),
                 Some(wgpu::VertexBufferLayout {
                     array_stride: instance_stride,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &masked_model_attributes,
                 }),
             ],
+            false,
+            true,
+        );
+        let slot_layout = wgpu::VertexBufferLayout {
+            array_stride: 4,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &slot_attributes,
+        };
+        let affine_skinned = pipeline(
+            "engine/shadow-affine-skinned",
+            &[Some(&view_layout), Some(&pose_layout)],
+            "vs_affine_skinned",
+            &[
+                Some(mesh_layout.clone()),
+                Some(slot_layout.clone()),
+                skin_layout.clone(),
+            ],
+            false,
+            false,
+        );
+        let affine_masked_skinned = pipeline(
+            "engine/shadow-affine-masked-skinned",
+            &[
+                Some(&view_layout),
+                Some(&pose_layout),
+                Some(material_layout),
+            ],
+            "vs_affine_masked_skinned",
+            &[Some(masked_mesh_layout), Some(slot_layout), skin_layout],
             false,
             true,
         );
@@ -537,6 +574,8 @@ impl ShadowPipelines {
             full,
             affine_masked,
             full_masked,
+            affine_skinned,
+            affine_masked_skinned,
             clear,
             view_buffer,
             view_group,
@@ -913,12 +952,14 @@ impl ShadowPass {
             start += count;
             let mesh = &snapshot.meshes[group.source_index].mesh;
             let bounds = mesh.bounds();
+            // Meshes with joints (decision 036) cast wherever joints move them.
+            let skinned = if mesh.joint_count() != 0 { 1.0 } else { 0.0 };
             self.listed_group_staging.push(BatchData {
                 start: group.start,
                 count: *count,
                 index_count: mesh.indices().len() as u32,
                 pad: self.listed_group_staging.len() as u32,
-                bounds_min: bounds.min().extend(0.0).to_array(),
+                bounds_min: bounds.min().extend(skinned).to_array(),
                 bounds_max: bounds.max().extend(0.0).to_array(),
             });
         }
@@ -1244,18 +1285,21 @@ impl ShadowPass {
                     *generation != poses.generation || groups[poses.index].is_none()
                 })
             {
-                let group = |buffer: Option<&wgpu::Buffer>| {
+                let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {
                     buffer.map(|buffer| {
                         device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("engine/shadow-pose-group"),
                             layout: &self.pipelines.as_ref().expect("created above").pose_layout,
-                            entries: &[entry(0, buffer), entry(1, poses.colors)],
+                            entries: &[entry(0, buffer), entry(1, poses.colors), entry(2, palette)],
                         })
                     })
                 };
                 self.pose_groups = Some((
                     poses.generation,
-                    [group(poses.buffers[0]), group(poses.buffers[1])],
+                    [
+                        group(poses.buffers[0], poses.palettes[0]),
+                        group(poses.buffers[1], poses.palettes[1]),
+                    ],
                 ));
             }
             if self.source != Source::Snapshot {
@@ -1334,7 +1378,14 @@ impl ShadowPass {
         frame: &ShadowFrame,
         plan: &BatchPlan,
         instances: &'m wgpu::Buffer,
-        meshes: impl Fn(MeshHandle) -> Option<(&'m wgpu::Buffer, &'m wgpu::Buffer, u32)>,
+        meshes: impl Fn(
+            MeshHandle,
+        ) -> Option<(
+            &'m wgpu::Buffer,
+            &'m wgpu::Buffer,
+            u32,
+            Option<&'m wgpu::Buffer>,
+        )>,
         materials: impl Fn(MaterialHandle) -> Option<&'m wgpu::BindGroup>,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
     ) -> ShadowEncoded {
@@ -1406,24 +1457,39 @@ impl ShadowPass {
             // A masked material without a binding draws nothing.
             group.is_none_or(|group| group.is_some())
         };
+        // Plain, masked, skinned and masked skinned retained casters.
+        let selected = [
+            &pipelines.affine,
+            &pipelines.affine_masked,
+            &pipelines.affine_skinned,
+            &pipelines.affine_masked_skinned,
+        ];
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             let Some(pose_group) = pose_group else {
                 return;
             };
             pass.set_pipeline(&pipelines.affine);
             pass.set_bind_group(1, pose_group, &[]);
-            let mut masked = false;
+            let mut bound = 0;
             for (index, group) in self.groups.iter().enumerate() {
-                let Some((vertices, indices, _)) = meshes(group.mesh) else {
+                let Some((vertices, indices, _, skin)) = meshes(group.mesh) else {
                     continue;
                 };
-                if !bind_material(
-                    pass,
-                    &mut masked,
-                    group.material,
-                    [&pipelines.affine, &pipelines.affine_masked],
-                ) {
+                let material = group.material.map(&materials);
+                // A masked material without a binding draws nothing.
+                if matches!(material, Some(None)) {
                     continue;
+                }
+                let choice = usize::from(material.is_some()) + 2 * usize::from(skin.is_some());
+                if choice != bound {
+                    pass.set_pipeline(selected[choice]);
+                    bound = choice;
+                }
+                if let Some(Some(group)) = material {
+                    pass.set_bind_group(2, group, &[]);
+                }
+                if let Some(skin) = skin {
+                    pass.set_vertex_buffer(2, skin.slice(..));
                 }
                 let start = (map * self.id_capacity + group.start as usize) as u64 * 4;
                 pass.set_vertex_buffer(0, vertices.slice(..));
@@ -1449,7 +1515,7 @@ impl ShadowPass {
                 else {
                     continue;
                 };
-                let Some((vertices, indices, index_count)) = meshes(batch.mesh) else {
+                let Some((vertices, indices, index_count, _)) = meshes(batch.mesh) else {
                     continue;
                 };
                 if !bind_material(

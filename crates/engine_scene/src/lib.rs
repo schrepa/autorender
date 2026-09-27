@@ -5,6 +5,7 @@
 //! Serialization and authored identifier lookup are never part of extraction.
 //! Runtime entities and asset handles are deliberately absent from the format.
 
+mod animation;
 mod collider;
 mod document;
 mod environment;
@@ -17,6 +18,9 @@ mod material;
 mod texture;
 mod validation;
 
+pub use animation::{
+    SceneAnimation, SceneChannel, SceneInterpolation, ScenePlayer, SceneProperty, SceneSkin,
+};
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
@@ -29,8 +33,9 @@ pub use environment::{
 };
 pub use error::SceneError;
 pub use files::{
-    MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, SceneFile, SceneFileKind, SceneFiles,
-    encode_mesh_buffer, encode_mesh_buffer_with,
+    ANIMATION_BUFFER_MAGIC, MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile,
+    SceneFileKind, SceneFiles, encode_animation_buffer, encode_mesh_buffer,
+    encode_mesh_buffer_with,
 };
 pub use instance::{SceneEntity, SceneInstance};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
@@ -40,6 +45,8 @@ pub use material::{
 };
 pub use texture::SceneTexture;
 
+#[cfg(test)]
+mod animation_tests;
 #[cfg(test)]
 mod collider_tests;
 #[cfg(test)]

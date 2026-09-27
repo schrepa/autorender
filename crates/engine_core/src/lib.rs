@@ -4,6 +4,7 @@
 //! systems in [`FixedSimulation`] or [`Presentation`], then drive [`Engine`]
 //! from the platform event loop. Bevy's default `Main` schedules are not run.
 
+mod animation;
 mod atmosphere;
 mod clock;
 mod culling;
@@ -17,9 +18,11 @@ mod packed;
 mod particles;
 mod retained_render;
 mod scene;
+mod skin;
 mod transform_edits;
 mod visibility_cache;
 
+pub use animation::{AnimationPlayer, AnimationSystems};
 pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
@@ -29,6 +32,10 @@ pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
     Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface,
     Texture, TextureHandle, TextureRef, UvTransform, Wrap,
+};
+pub use engine_assets::{
+    AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
+    KeyInterpolation, Keyframes,
 };
 pub use glam;
 pub use hierarchy::{
@@ -52,6 +59,7 @@ pub use scene::{
     Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
     RenderTexture, Tint, Transform,
 };
+pub use skin::{RenderJoint, Skin};
 pub use transform_edits::{
     MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform,
 };
@@ -164,6 +172,7 @@ pub struct Engine {
     // each extraction.
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
+    skins: skin::SkinExtraction,
     plugins_finalized: bool,
     // A fixed tick whose first stage ran ahead of its due frame (see
     // `Self::run_ahead`), and completed ticks the clock has not yet counted.
@@ -195,6 +204,10 @@ impl Engine {
             .add_systems(TransformPropagation, |world: &mut World| {
                 propagate_transforms(world);
             })
+            .add_systems(
+                FixedSimulation,
+                animation::animate.in_set(AnimationSystems::Animate),
+            )
             .edit_schedule(FixedSimulation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
             })
@@ -239,6 +252,7 @@ impl Engine {
         ), Or<(With<Cube>, With<Mesh3d>)>>();
         let lights = lights::LightExtraction::new(app.world_mut());
         let particles = particles::ParticleExtraction::new(app.world_mut());
+        let skins = skin::SkinExtraction::new(app.world_mut());
         Self {
             app,
             clock,
@@ -253,6 +267,7 @@ impl Engine {
             retained: retained_render::RetainedRender::default(),
             lights,
             particles,
+            skins,
             plugins_finalized: false,
             tick_in_flight: false,
             ticks_ahead: 0,
@@ -597,6 +612,7 @@ impl Engine {
         self.lights.extract_owned(world, snapshot);
         self.particles.extract(world, snapshot, false);
         snapshot.instances.clear();
+        snapshot.joints.clear();
         snapshot.meshes.clear();
         snapshot.materials.clear();
         snapshot.textures.clear();
@@ -710,6 +726,7 @@ impl Engine {
                     model,
                     color,
                     surface,
+                    skin: None,
                 });
             }
         }
@@ -755,6 +772,8 @@ impl Engine {
             &mut self.particles,
             false,
         );
+        self.retained
+            .extract_skins(self.app.world(), &mut self.skins, false);
         Ok(self.retained.frame(
             self.app.world().resource::<PresentedTransforms>(),
             self.app.world().resource::<GlobalTransforms>(),
@@ -804,6 +823,8 @@ impl Engine {
             &mut self.particles,
             true,
         );
+        self.retained
+            .extract_skins(self.app.world(), &mut self.skins, true);
         // Later source edits must be newer than the stamp window just consumed.
         self.app.world_mut().increment_change_tick();
         Ok(self.retained.frame(
@@ -863,12 +884,16 @@ pub mod prelude {
         Material, MaterialBinding, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent,
         Plugin, Presentation, PresentationMode, PresentationState, PresentedTransform,
         PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial, RenderMesh,
-        RenderSnapshot, RenderTexture, Sampler, Shadows, Surface, Texture, TextureHandle,
+        RenderSnapshot, RenderTexture, Sampler, Shadows, Skin, Surface, Texture, TextureHandle,
         TextureRef, Tint, Transform, TransformIndex, TransformNodeLimit, TransformPropagation,
         UvTransform, Wrap, propagate_transforms, reset_all_interpolation, reset_interpolation,
         set_parent, set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};
+    pub use crate::{
+        AnimatedProperty, AnimationChannel, AnimationClip, AnimationPlayer, AnimationSystems,
+        ClipHandle, KeyInterpolation, Keyframes,
+    };
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,

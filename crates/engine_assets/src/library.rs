@@ -5,7 +5,7 @@ use std::sync::{
 
 use bevy_ecs::prelude::Resource;
 
-use crate::{AssetError, Material, Mesh, Texture};
+use crate::{AnimationClip, AssetError, Material, Mesh, Texture};
 
 static NEXT_LIBRARY: AtomicU64 = AtomicU64::new(1);
 
@@ -27,6 +27,11 @@ pub struct MaterialHandle(Id);
 /// Weak runtime texture reference, valid only in the originating library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
+
+/// Weak runtime animation clip reference, valid only in the originating
+/// library (decision 035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ClipHandle(Id);
 
 /// Library admission limits. Zero is supported for every limit; the default
 /// admits everything, so only memory bounds a library until a game sets one.
@@ -149,6 +154,7 @@ pub struct AssetLibrary {
     meshes: Storage<Arc<Mesh>>,
     materials: Storage<Material>,
     textures: Storage<Arc<Texture>>,
+    clips: Storage<Arc<AnimationClip>>,
     resident_bytes: usize,
     texture_bytes: usize,
 }
@@ -185,6 +191,7 @@ impl AssetLibrary {
             meshes: Storage::default(),
             materials: Storage::default(),
             textures: Storage::default(),
+            clips: Storage::default(),
             resident_bytes: 0,
             texture_bytes: 0,
         }
@@ -252,6 +259,30 @@ impl AssetLibrary {
         Ok(TextureHandle(
             self.textures.insert(self.id, Arc::new(texture)),
         ))
+    }
+
+    /// Admits an animation clip; its keys count against the byte budget.
+    pub fn insert_clip(&mut self, clip: AnimationClip) -> Result<ClipHandle, AssetError> {
+        self.reserve_bytes(clip.byte_len())?;
+        Ok(ClipHandle(self.clips.insert(self.id, Arc::new(clip))))
+    }
+
+    pub fn clip(&self, handle: ClipHandle) -> Option<&Arc<AnimationClip>> {
+        self.clips.get(self.id, handle.0)
+    }
+
+    pub fn remove_clip(&mut self, handle: ClipHandle) -> bool {
+        if let Some(clip) = self.clips.remove(self.id, handle.0) {
+            self.resident_bytes -= clip.byte_len();
+            self.revision = self.revision.saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clip_count(&self) -> usize {
+        self.clips.count
     }
 
     pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {

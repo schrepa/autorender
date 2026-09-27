@@ -72,6 +72,16 @@ impl SceneFiles {
         let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
         mesh_buffer(bytes, path)
     }
+
+    /// Buffer `uri` decoded as an animation buffer's channels.
+    pub(crate) fn animation(
+        &self,
+        uri: &str,
+        path: &str,
+    ) -> Result<Vec<engine_core::AnimationChannel>, SceneError> {
+        let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
+        animation_buffer(bytes, path)
+    }
 }
 
 fn missing(uri: &str, path: &str) -> SceneError {
@@ -114,24 +124,49 @@ pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 /// then the u32 indices. Takes runtime or authored ([`crate::SceneVertex`])
 /// vertices.
 pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &[u32]) -> Vec<u8> {
-    encode_mesh_buffer_with(vertices, indices, None, None)
+    encode_mesh_buffer_with(vertices, indices, MeshStreams::default())
 }
 
-/// [`encode_mesh_buffer`] with optional vertex colors (linear RGBA) and
-/// second texture coordinates, one per vertex. With either, the buffer is
+/// Optional per-vertex streams of a mesh buffer, one entry per vertex each:
+/// vertex colors and second texture coordinates (decision 034), skinning
+/// joints and weights (decision 036, both or neither).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MeshStreams<'a> {
+    pub colors: Option<&'a [[f32; 4]]>,
+    pub uv1: Option<&'a [[f32; 2]]>,
+    pub joints: Option<&'a [[u16; 4]]>,
+    pub weights: Option<&'a [[f32; 4]]>,
+}
+
+/// [`encode_mesh_buffer`] with optional streams. With any, the buffer is
 /// `EMB2`: after the counts a u32 of flags (1 colors, 2 second
-/// coordinates), then the vertices, the colors (four f32 each), the second
-/// coordinates (two f32 each) and the indices. Scenes read `EMB2` from
-/// version 8.
+/// coordinates, 4 joints and weights), then the vertices, the colors (four
+/// f32 each), the second coordinates (two f32 each), the joints (four u16
+/// each), the weights (four f32 each) and the indices. Scenes read `EMB2`
+/// from version 8.
+///
+/// # Panics
+/// Panics when only one of joints and weights is given.
 pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     vertices: &[V],
     indices: &[u32],
-    colors: Option<&[[f32; 4]]>,
-    uv1: Option<&[[f32; 2]]>,
+    streams: MeshStreams<'_>,
 ) -> Vec<u8> {
-    let extras = colors.is_some() || uv1.is_some();
+    let MeshStreams {
+        colors,
+        uv1,
+        joints,
+        weights,
+    } = streams;
+    assert_eq!(
+        joints.is_some(),
+        weights.is_some(),
+        "joints and weights come together"
+    );
+    let skin = joints.zip(weights);
+    let extras = colors.is_some() || uv1.is_some() || skin.is_some();
     let mut bytes = Vec::with_capacity(
-        16 + vertices.len() * (32 + if extras { 24 } else { 0 }) + indices.len() * 4,
+        16 + vertices.len() * (32 + if extras { 48 } else { 0 }) + indices.len() * 4,
     );
     bytes.extend_from_slice(if extras {
         &MESH_BUFFER_EXTRAS_MAGIC
@@ -141,7 +176,9 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes.extend_from_slice(&(vertices.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(indices.len() as u32).to_le_bytes());
     if extras {
-        let flags = u32::from(colors.is_some()) | u32::from(uv1.is_some()) << 1;
+        let flags = u32::from(colors.is_some())
+            | u32::from(uv1.is_some()) << 1
+            | u32::from(skin.is_some()) << 2;
         bytes.extend_from_slice(&flags.to_le_bytes());
     }
     for &vertex in vertices {
@@ -163,11 +200,22 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
+    if let Some((joints, weights)) = skin {
+        for joint in joints.iter().flatten() {
+            bytes.extend_from_slice(&joint.to_le_bytes());
+        }
+        for weight in weights.iter().flatten() {
+            bytes.extend_from_slice(&weight.to_le_bytes());
+        }
+    }
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
     bytes
 }
+
+/// Joints and weights of skinned vertices (decision 036).
+pub(crate) type SkinStreams = (Vec<[u16; 4]>, Vec<[f32; 4]>);
 
 /// A decoded mesh buffer.
 pub(crate) struct MeshBuffer {
@@ -175,6 +223,7 @@ pub(crate) struct MeshBuffer {
     pub indices: Vec<u32>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub uv1: Option<Vec<[f32; 2]>>,
+    pub skin: Option<SkinStreams>,
 }
 
 fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
@@ -194,10 +243,10 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     };
     let flags = if extras {
         match word(12) {
-            Some(flags) if flags != 0 && flags & !3 == 0 => flags,
+            Some(flags) if flags != 0 && flags & !7 == 0 => flags,
             _ => {
                 return Err(invalid(
-                    "EMB2 flags name colors (1) and/or second coordinates (2)",
+                    "EMB2 flags name colors (1), second coordinates (2) and joints and weights (4)",
                 ));
             }
         }
@@ -206,9 +255,12 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     };
     let header = if extras { 16 } else { 12 };
     let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
-    // Floats per vertex: eight, four more with colors, two more with
-    // second coordinates.
-    let floats = 8 + if flags & 1 != 0 { 4 } else { 0 } + if flags & 2 != 0 { 2 } else { 0 };
+    // Words per vertex: eight, four more with colors, two more with second
+    // coordinates, six more with joints (two) and weights (four).
+    let floats = 8
+        + if flags & 1 != 0 { 4 } else { 0 }
+        + if flags & 2 != 0 { 2 } else { 0 }
+        + if flags & 4 != 0 { 6 } else { 0 };
     let expected = vertex_count
         .checked_mul(floats * 4)
         .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
@@ -254,6 +306,22 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         offset += vertex_count * 8;
         uv1
     });
+    let skin = (flags & 4 != 0).then(|| {
+        let joints: Vec<[u16; 4]> = (0..vertex_count)
+            .map(|vertex| {
+                std::array::from_fn(|lane| {
+                    let at = offset + (vertex * 4 + lane) * 2;
+                    u16::from_le_bytes([bytes[at], bytes[at + 1]])
+                })
+            })
+            .collect();
+        offset += vertex_count * 8;
+        let weights: Vec<[f32; 4]> = (0..vertex_count)
+            .map(|vertex| std::array::from_fn(|lane| float(offset + (vertex * 4 + lane) * 4)))
+            .collect();
+        offset += vertex_count * 16;
+        (joints, weights)
+    });
     let indices = (0..index_count)
         .map(|index| {
             u32::from_le_bytes(
@@ -268,5 +336,145 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         indices,
         colors,
         uv1,
+        skin,
     })
+}
+
+/// Magic of an engine animation buffer (decision 035).
+pub const ANIMATION_BUFFER_MAGIC: [u8; 4] = *b"EAN1";
+
+/// An engine animation buffer: `EAN1` and the channel count (little-endian
+/// u32), then per channel its target (u32), property (u8: 0 translation, 1
+/// rotation, 2 scale), interpolation (u8: 0 step, 1 linear, 2 cubic spline),
+/// two zero bytes, the key count and value count (u32), the key times (f32)
+/// and the values (three f32 each, four for rotations).
+pub fn encode_animation_buffer(channels: &[engine_core::AnimationChannel]) -> Vec<u8> {
+    use engine_core::{AnimatedProperty, KeyInterpolation, Keyframes};
+    let mut bytes = ANIMATION_BUFFER_MAGIC.to_vec();
+    bytes.extend_from_slice(&(channels.len() as u32).to_le_bytes());
+    for channel in channels {
+        bytes.extend_from_slice(&channel.target().to_le_bytes());
+        bytes.push(match channel.property() {
+            AnimatedProperty::Translation => 0,
+            AnimatedProperty::Rotation => 1,
+            AnimatedProperty::Scale => 2,
+        });
+        bytes.push(match channel.interpolation() {
+            KeyInterpolation::Step => 0,
+            KeyInterpolation::Linear => 1,
+            KeyInterpolation::CubicSpline => 2,
+        });
+        bytes.extend_from_slice(&[0, 0]);
+        let values: Vec<f32> = match channel.keyframes() {
+            Keyframes::Vectors(values) => {
+                values.iter().flat_map(|value| value.to_array()).collect()
+            }
+            Keyframes::Rotations(values) => {
+                values.iter().flat_map(|value| value.to_array()).collect()
+            }
+        };
+        let width = if channel.property() == AnimatedProperty::Rotation {
+            4
+        } else {
+            3
+        };
+        bytes.extend_from_slice(&(channel.times().len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&((values.len() / width) as u32).to_le_bytes());
+        for value in channel.times().iter().chain(&values) {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+/// The channels of an `EAN1` buffer, validated as clips require.
+pub(crate) fn animation_buffer(
+    bytes: &[u8],
+    path: &str,
+) -> Result<Vec<engine_core::AnimationChannel>, SceneError> {
+    use engine_core::{AnimatedProperty, AnimationChannel, KeyInterpolation, Keyframes, glam};
+    let invalid = |rule: String| SceneError::new("invalid_animation", path, rule);
+    let word = |offset: usize| {
+        bytes
+            .get(offset..offset + 4)
+            .map(|word| u32::from_le_bytes(word.try_into().expect("four bytes")))
+    };
+    if bytes.get(..4) != Some(&ANIMATION_BUFFER_MAGIC[..]) {
+        return Err(invalid("an animation buffer starts with EAN1".into()));
+    }
+    let count = word(4).ok_or_else(|| invalid("an animation buffer has a channel count".into()))?;
+    let mut offset = 8;
+    let mut channels = Vec::new();
+    for _ in 0..count {
+        let header = bytes
+            .get(offset..offset + 16)
+            .ok_or_else(|| invalid("a channel header is cut short".into()))?;
+        let target = u32::from_le_bytes(header[..4].try_into().expect("four bytes"));
+        let property = match header[4] {
+            0 => AnimatedProperty::Translation,
+            1 => AnimatedProperty::Rotation,
+            2 => AnimatedProperty::Scale,
+            _ => return Err(invalid("a channel property is 0, 1 or 2".into())),
+        };
+        let interpolation = match header[5] {
+            0 => KeyInterpolation::Step,
+            1 => KeyInterpolation::Linear,
+            2 => KeyInterpolation::CubicSpline,
+            _ => return Err(invalid("a channel interpolation is 0, 1 or 2".into())),
+        };
+        let keys = u32::from_le_bytes(header[8..12].try_into().expect("four bytes")) as usize;
+        let values = u32::from_le_bytes(header[12..16].try_into().expect("four bytes")) as usize;
+        let width = if property == AnimatedProperty::Rotation {
+            4
+        } else {
+            3
+        };
+        let floats = values
+            .checked_mul(width)
+            .and_then(|floats| floats.checked_add(keys))
+            .ok_or_else(|| invalid("channel counts overflow".into()))?;
+        offset += 16;
+        let end = floats
+            .checked_mul(4)
+            .and_then(|length| length.checked_add(offset))
+            .filter(|end| *end <= bytes.len())
+            .ok_or_else(|| invalid("channel keys run past the buffer".into()))?;
+        let floats: Vec<f32> = bytes[offset..end]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| f32::from_le_bytes(*word))
+            .collect();
+        offset = end;
+        let (times, values) = floats.split_at(keys);
+        let keyframes = if property == AnimatedProperty::Rotation {
+            Keyframes::Rotations(
+                values
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|value| glam::Quat::from_array(*value))
+                    .collect(),
+            )
+        } else {
+            Keyframes::Vectors(
+                values
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|value| glam::Vec3::from_array(*value))
+                    .collect(),
+            )
+        };
+        channels.push(
+            AnimationChannel::new(target, property, interpolation, times.to_vec(), keyframes)
+                .map_err(|error| invalid(error.to_string()))?,
+        );
+    }
+    if offset != bytes.len() {
+        return Err(invalid(
+            "an animation buffer ends after its last channel".into(),
+        ));
+    }
+    Ok(channels)
 }

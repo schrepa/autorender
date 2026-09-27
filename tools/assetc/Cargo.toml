@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_core.workspace = true
 engine_scene.workspace = true
 glam.workspace = true
 gltf.workspace = true

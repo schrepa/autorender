@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, TextureHandle,
+    AnimationPlayer, AssetLibrary, ClipHandle, InterpolateTransform, MaterialHandle, Mesh3d,
+    MeshHandle, Skin, TextureHandle,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
@@ -49,6 +50,8 @@ pub struct SceneInstance {
     materials: Vec<MaterialHandle>,
     textures: Vec<TextureHandle>,
     texture_ids: Vec<String>,
+    clips: Vec<ClipHandle>,
+    clip_ids: Vec<String>,
 }
 
 impl SceneInstance {
@@ -82,6 +85,23 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
+    /// The clip of animation `id` (decision 035), for switching what an
+    /// [`AnimationPlayer`] plays. Handles are weak, like texture handles.
+    pub fn clip(&self, id: &str) -> Option<ClipHandle> {
+        self.clip_ids
+            .iter()
+            .position(|clip| clip == id)
+            .map(|index| self.clips[index])
+    }
+
+    /// Authored animation IDs and their clips, in source order.
+    pub fn clips(&self) -> impl ExactSizeIterator<Item = (&str, ClipHandle)> {
+        self.clip_ids
+            .iter()
+            .zip(&self.clips)
+            .map(|(id, handle)| (id.as_str(), *handle))
+    }
+
     /// Authored IDs in stable lexical order, including entities removed by gameplay.
     /// Check the world's entity accessor before inspecting an entry.
     pub fn entities(&self) -> impl ExactSizeIterator<Item = (&str, Entity)> {
@@ -106,6 +126,9 @@ impl SceneInstance {
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
             remove_assets(&mut assets, &self.meshes, &self.materials, &self.textures);
+            for &clip in &self.clips {
+                assets.remove_clip(clip);
+            }
         }
     }
 }
@@ -137,6 +160,7 @@ impl SceneDocument {
         let mut meshes = Vec::with_capacity(prepared.meshes.len());
         let mut materials = Vec::with_capacity(prepared.materials.len());
         let mut textures = Vec::with_capacity(prepared.textures.len());
+        let mut clips = Vec::with_capacity(prepared.clips.len());
         {
             let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
                 SceneError::new(
@@ -191,6 +215,22 @@ impl SceneDocument {
                     }
                 }
             }
+            for (index, clip) in prepared.clips.into_iter().enumerate() {
+                match assets.insert_clip(clip) {
+                    Ok(handle) => clips.push(handle),
+                    Err(error) => {
+                        remove_assets(&mut assets, &meshes, &materials, &textures);
+                        for &clip in &clips {
+                            assets.remove_clip(clip);
+                        }
+                        return Err(SceneError::new(
+                            "asset_budget_exceeded",
+                            format!("$.animations[{index}]"),
+                            error.to_string(),
+                        ));
+                    }
+                }
+            }
         }
         let mesh_lookup: BTreeMap<_, _> = self
             .meshes
@@ -205,6 +245,7 @@ impl SceneDocument {
             .map(|(source, handle)| (source.id.as_str(), *handle))
             .collect();
         let mut entities = BTreeMap::new();
+        let mut spawned = Vec::with_capacity(prepared.entities.len());
         for (((((expanded, transform), collider), light), emitter), tint) in prepared
             .entities
             .iter()
@@ -246,7 +287,40 @@ impl SceneDocument {
             if let Some(tint) = tint {
                 entity.insert(tint);
             }
+            spawned.push(entity.id());
             entities.insert(source.id.clone(), entity.id());
+        }
+        // Players and skins name entities spawned above; animated targets
+        // present smoothly between fixed ticks.
+        for (player, &entity) in prepared.players.iter().zip(&spawned) {
+            let Some(player) = player else {
+                continue;
+            };
+            for &target in &player.targets {
+                world
+                    .entity_mut(spawned[target])
+                    .insert(InterpolateTransform);
+            }
+            world.entity_mut(entity).insert(AnimationPlayer {
+                clip: clips[player.clip],
+                targets: player
+                    .targets
+                    .iter()
+                    .map(|&target| Some(spawned[target]))
+                    .collect(),
+                time: player.time,
+                speed: player.speed,
+                looping: player.looping,
+            });
+        }
+        for (skin, &entity) in prepared.skins.iter().zip(&spawned) {
+            let Some(skin) = skin else {
+                continue;
+            };
+            world.entity_mut(entity).insert(Skin::new(
+                skin.joints.iter().map(|&joint| spawned[joint]).collect(),
+                prepared.skin_binds[skin.skin].clone(),
+            ));
         }
         let parents: Vec<_> = prepared
             .entities
@@ -267,6 +341,9 @@ impl SceneDocument {
             }
             let mut assets = world.resource_mut::<AssetLibrary>();
             remove_assets(&mut assets, &meshes, &materials, &textures);
+            for &clip in &clips {
+                assets.remove_clip(clip);
+            }
             return Err(SceneError::new(
                 "hierarchy_install_failed",
                 "$.entities",
@@ -290,6 +367,12 @@ impl SceneDocument {
                 .textures
                 .iter()
                 .map(|texture| texture.id.clone())
+                .collect(),
+            clips,
+            clip_ids: self
+                .animations
+                .iter()
+                .map(|animation| animation.id.clone())
                 .collect(),
         })
     }

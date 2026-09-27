@@ -43,7 +43,8 @@ struct Candidate {
     position: u32,
 }
 
-// A draw group (the presentation record, whose padding holds the group).
+// A draw group (the presentation record, whose padding holds the group;
+// `bounds_min.w` is 1 for meshes with joints, decision 036).
 struct Batch {
     start: u32,
     count: u32,
@@ -161,6 +162,15 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if batch.group >= cull.groups {
         return;
     }
+    // Joints place meshes with joints (decision 036), wherever their slot
+    // is: they cast into every map drawn each frame, never the kept one.
+    if batch.bounds_min.w != 0.0 {
+        for (var cascade = 0u; cascade < cull.cascades.x; cascade++) {
+            append(cascade, batch.group, candidate.slot);
+        }
+        append(MOVING_MAP, batch.group, candidate.slot);
+        return;
+    }
     // World bounds of the posed mesh bounds, then their light-space box.
     let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
     let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
@@ -248,6 +258,8 @@ struct View {
 // Its own binding: the selection pass above owns binding 0.
 @group(0) @binding(9) var<uniform> view: View;
 @group(1) @binding(0) var<storage, read> slot_poses: array<Rows>;
+// Joint palettes of skinned slots (decision 036), as meshes.wgsl reads them.
+@group(1) @binding(2) var<storage, read> slot_palette: array<Rows>;
 
 fn project(world: vec3<f32>) -> vec4<f32> {
     var clip = view.clip * vec4<f32>(world, 1.0);
@@ -340,6 +352,44 @@ fn vs_full_masked(
     let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
     let world = model * vec4<f32>(position, 1.0);
     return masked_output(project(world.xyz / world.w), uv, color);
+}
+
+// A slot's world position of a vertex with joints and weights (decision
+// 036): its palette blend when skinned (flags one more than the palette
+// offset), else its pose.
+fn skinned_world(slot: u32, position: vec3<f32>, joints: vec4<u32>,
+        weights: vec4<f32>) -> vec3<f32> {
+    let point = vec4<f32>(position, 1.0);
+    let flags = slot_colors[slot].flags;
+    if flags == 0u {
+        let pose = slot_poses[slot];
+        return vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point));
+    }
+    let base = flags - 1u;
+    let w = weights / max(dot(weights, vec4<f32>(1.0)), 1.0e-6);
+    let a = slot_palette[base + joints.x];
+    let b = slot_palette[base + joints.y];
+    let c = slot_palette[base + joints.z];
+    let d = slot_palette[base + joints.w];
+    let r0 = a.r0 * w.x + b.r0 * w.y + c.r0 * w.z + d.r0 * w.w;
+    let r1 = a.r1 * w.x + b.r1 * w.y + c.r1 * w.z + d.r1 * w.w;
+    let r2 = a.r2 * w.x + b.r2 * w.y + c.r2 * w.z + d.r2 * w.w;
+    return vec3<f32>(dot(r0, point), dot(r1, point), dot(r2, point));
+}
+
+@vertex
+fn vs_affine_skinned(@location(0) position: vec3<f32>, @location(2) slot: u32,
+        @location(11) joints: vec4<u32>, @location(12) weights: vec4<f32>)
+        -> @builtin(position) vec4<f32> {
+    return project(skinned_world(slot, position, joints, weights));
+}
+
+@vertex
+fn vs_affine_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
+        @location(2) slot: u32, @location(11) joints: vec4<u32>,
+        @location(12) weights: vec4<f32>) -> MaskedOutput {
+    return masked_output(project(skinned_world(slot, position, joints, weights)), uv,
+        slot_colors[slot].color);
 }
 
 // Material bindings are fragment-visible: the base color map's transform

@@ -58,6 +58,10 @@ pub enum AssetError {
     },
     InvalidTextureHandle,
     InvalidMaterialHandle,
+    /// An animation clip or channel breaking a rule (decision 035).
+    InvalidAnimation {
+        reason: &'static str,
+    },
     MeshCapacity {
         limit: usize,
     },
@@ -95,6 +99,7 @@ impl AssetError {
             Self::UnsupportedTextureAlpha { .. } => "asset.unsupported_texture_alpha",
             Self::InvalidTextureHandle => "asset.invalid_texture_handle",
             Self::InvalidMaterialHandle => "asset.invalid_material_handle",
+            Self::InvalidAnimation { .. } => "asset.invalid_animation",
             Self::MeshCapacity { .. } => "asset.mesh_capacity",
             Self::MaterialCapacity { .. } => "asset.material_capacity",
             Self::TextureCapacity { .. } => "asset.texture_capacity",
@@ -178,6 +183,7 @@ impl fmt::Display for AssetError {
             Self::InvalidMaterialHandle => {
                 write!(f, "material must be live in the same asset library")
             }
+            Self::InvalidAnimation { reason } => write!(f, "animation: {reason}"),
             Self::MeshCapacity { limit } => write!(f, "mesh capacity of {limit} reached"),
             Self::MaterialCapacity { limit } => write!(f, "material capacity of {limit} reached"),
             Self::TextureCapacity { limit } => write!(f, "texture capacity of {limit} reached"),

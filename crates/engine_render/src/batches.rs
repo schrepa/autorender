@@ -790,6 +790,7 @@ mod tests {
                     surface: engine_core::Surface::MATTE,
                     mesh,
                     material: None,
+                    skin: None,
                 })
                 .collect(),
             meshes,
@@ -1501,6 +1502,7 @@ mod tests {
             surface: engine_core::Surface::MATTE,
             mesh: mesh_handle,
             material: Some(material_handle),
+            skin: None,
         });
         plan.prepare(&snapshot).unwrap();
         assert_eq!(plan.batches.len(), 1);

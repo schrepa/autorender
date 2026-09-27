@@ -39,12 +39,22 @@ masked or blended alpha, and `with_double_sided` draws back faces.
 texture; `Material::new` remains the color-only API. `has_maps` tells
 renderers which materials need their own maps bound.
 
+Meshes take optional per-vertex streams: `with_colors` and `with_uv1`
+([decision 034](../../docs/adr-034-vertex-colors-and-second-coordinates.md))
+and `with_skin`, four joints and weights for skins
+([decision 036](../../docs/adr-036-skinning.md)). An `AnimationClip`
+([decision 035](../../docs/adr-035-animation-clips-and-players.md)) holds
+keyframed translation, rotation and scale channels of target indices, sampled
+with glTF's step, linear or cubic spline interpolation; `insert_clip` returns
+a `ClipHandle`.
+
 `AssetLibrary` is the sole library owner. Insert assets to obtain typed weak
 `MeshHandle`, `TextureHandle`, and `MaterialHandle` values; lookups borrow CPU data.
 Runtime handles contain private library identities, slot indices and generations. Stale,
 removed, and foreign-library handles fail lookup. Handles are never authored
 identifiers or persistent save data. Removing an asset invalidates the handle;
-inserting new data requires a new handle. There is no in-place mutation API.
+inserting new data requires a new handle. Only materials change in place
+(`replace_material`, [decision 033](../../docs/adr-033-tints-and-material-replacement.md)).
 Material insertion rejects texture references that are stale or belong to another
 library. Removing a texture leaves any material's weak reference unresolved;
 extraction must skip that material's instances. No fallback silently replaces a

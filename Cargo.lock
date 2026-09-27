@@ -565,6 +565,7 @@ name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "engine_core",
  "engine_scene",
  "glam 0.30.9",
  "gltf",

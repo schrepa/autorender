@@ -62,11 +62,11 @@ Rendering observations include `resident_textures`, `resident_texture_bytes`, an
 
 ## Supported subset
 
-- One GLB 2 scene with one embedded BIN buffer; indexed triangle primitives with FLOAT positions, optional normals, optional `TEXCOORD_0` and `TEXCOORD_1`, and optional `COLOR_0` in any glTF format (decision 034; primitives with the last two write `EMB2` buffers). Primitives without normals get flat normals, as glTF requires; `TANGENT` and further coordinate or color sets are ignored (normal maps derive their tangent frames). Textured primitives require UVs.
-- Static node transforms are baked into geometry, including normal transforms and mirrored triangle winding. Prefab mode groups those baked parts; it does not reconstruct the GLB node hierarchy or add animation. Cameras are not imported.
+- One GLB 2 scene with one embedded BIN buffer; indexed or unindexed triangle primitives with FLOAT positions, optional normals, optional `TEXCOORD_0` and `TEXCOORD_1`, optional `COLOR_0` in any glTF format (decision 034) and, on skinned nodes, `JOINTS_0` and `WEIGHTS_0` (decision 036); primitives with any of these write `EMB2` buffers. Primitives without normals get flat normals, as glTF requires; `TANGENT` and further coordinate or color sets are ignored (normal maps derive their tangent frames). Textured primitives require UVs.
+- Static models bake node transforms into geometry, including normal transforms and mirrored triangle winding. Models with animations or skins keep their nodes instead (decisions 035 and 036): entities `ID.nodeN` with local transforms and parents below a root `ID.root` that plays the first animation, primitives as children `ID.nodeN.pM`, clips `ID.animN` in `EAN1` files and skins `ID.skinN`; their rest poses must not be mirrored, zero-scaled or sheared. Prefab mode keeps the same entities as a definition whose animation targets and skin joints name local IDs. Cameras are not imported.
 - glTF metallic-roughness materials map one to one: base color, metallic and roughness factors; base color, metallic-roughness, normal (with scale), occlusion (with strength) and emissive textures; the emissive factor times `KHR_materials_emissive_strength`; `OPAQUE`, `MASK` (with its cutoff) and `BLEND` alpha modes; double-sided materials; every sampler wrap mode and filter; and `KHR_texture_transform` offsets, rotations and scales. Maps read `TEXCOORD_0` or `TEXCOORD_1`.
 - Embedded PNG and JPEG images are written unchanged; the browser decodes them at load. Meshes are written as `EMB1` buffers.
-- External/data URIs, skins, animation, morphs, sparse accessors and required extensions other than `KHR_texture_transform` and `KHR_materials_emissive_strength` are rejected with source paths. Other optional extensions are ignored and listed in the result's `ignored_extensions`.
+- External/data URIs, morph targets and weights, sparse accessors, more than four joints per vertex and required extensions other than `KHR_texture_transform` and `KHR_materials_emissive_strength` are rejected with source paths. Other optional extensions are ignored and listed in the result's `ignored_extensions`.
 
 The input is bounded only by the GLB format's 4 GiB length field; there is no count, vertex or decoded-size budget (decision 029). There is no compressed GPU texture format yet (mips are generated on the GPU at upload).
 
@@ -81,4 +81,4 @@ and prefab-template IDs. Removing a generated collider-bearing node is rejected
 with `collider_reimport_conflict`; explicitly migrate or remove its collider in
 source first. Placement-root colliders remain with their placements. Importing
 never infers collider geometry from render meshes. This behavior is recorded by
-importer provenance version `gltf-pbr-4`.
+importer provenance version `gltf-pbr-5`.

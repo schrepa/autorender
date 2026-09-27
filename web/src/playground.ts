@@ -2,7 +2,10 @@ import { playgroundBindings } from "./bindings";
 import { boot } from "./host";
 import { loadSceneFiles, loadSceneSource } from "./source";
 
-const selected = import.meta.env.DEV ? new URLSearchParams(location.search).get("scene") : null;
+const params = new URLSearchParams(location.search);
+const selected = import.meta.env.DEV ? params.get("scene") : null;
+// ?taa=on antialiases ordinary frames temporally (decision 017).
+const taa = params.get("taa") === "on";
 if (selected && !/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(selected)) throw new Error("Development scene must be a /scenes/<name>.scene.json path.");
 const sourceUrl = selected ?? "/scenes/playground.scene.json";
 const loadScene = (signal: AbortSignal) => loadSceneSource(sourceUrl, signal);
@@ -16,7 +19,9 @@ boot({
     const source = await loadScene(signal);
     const files = await loadFiles(source, signal);
     signal.throwIfAborted();
-    return PlaygroundGame.create(canvas, source, files);
+    const game = await PlaygroundGame.create(canvas, source, files);
+    game.set_temporal_antialiasing(taa);
+    return game;
   },
   async reload(game, signal) {
     const source = await loadScene(signal);

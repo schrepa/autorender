@@ -72,6 +72,12 @@ impl PlaygroundGame {
     pub fn tick_pipelining(&self) -> bool {
         self.app.tick_pipelining()
     }
+
+    /// Temporal antialiasing of ordinary GPU-presented frames (decision 017);
+    /// see `BrowserApp::set_temporal_antialiasing`.
+    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+        self.app.set_temporal_antialiasing(enabled);
+    }
     pub fn stats(&self) -> BrowserStats {
         self.app.stats().into()
     }

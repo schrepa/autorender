@@ -119,6 +119,10 @@ impl TemporalPass {
                 storage_entry(0, size_of::<crate::gpu_data::PoseData>()),
                 storage_entry(1, size_of::<crate::gpu_data::ColorData>()),
                 storage_entry(2, size_of::<crate::gpu_data::PoseData>()),
+                // Joint palettes (decision 036): this frame's and the
+                // previous frame's.
+                storage_entry(3, size_of::<crate::gpu_data::PoseData>()),
+                storage_entry(4, size_of::<crate::gpu_data::PoseData>()),
             ],
         });
         let mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -345,13 +349,15 @@ impl TemporalPass {
     }
 
     /// Builds the pose bindings over `poses`, the pair of pose storage
-    /// `generation`, and `colors`, unless built for that generation.
+    /// `generation`, `colors` and the joint palettes alternating with the
+    /// poses, unless built for that generation.
     pub(crate) fn prepare_pose_groups(
         &mut self,
         device: &wgpu::Device,
         generation: u64,
         poses: [&wgpu::Buffer; 2],
         colors: &wgpu::Buffer,
+        palettes: [&wgpu::Buffer; 2],
     ) {
         if self
             .pose_groups
@@ -374,6 +380,14 @@ impl TemporalPass {
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: poses[previous].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: palettes[current].as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: palettes[previous].as_entire_binding(),
                         },
                     ],
                 })
@@ -633,13 +647,20 @@ fn mesh_pipeline(
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
     // Extended meshes (decision 034) read a third vertex buffer through
-    // their own entry points.
+    // their own entry points; skinned ones (decision 036) a fourth.
     let suffix = if variant.extended() { "_extended" } else { "" };
-    let vertex_entry = format!("vs_affine_temporal{suffix}");
+    let vertex_entry = if variant.skinned() {
+        "vs_affine_temporal_skinned".to_owned()
+    } else {
+        format!("vs_affine_temporal{suffix}")
+    };
     let fragment_entry = format!("{fragment}{suffix}");
     let mut buffers = vertex_layouts.to_vec();
     if variant.extended() {
         buffers.push(crate::browser::extra_layout());
+    }
+    if variant.skinned() {
+        buffers.push(crate::browser::skin_layout());
     }
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("engine/temporal-meshes"),

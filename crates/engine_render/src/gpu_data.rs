@@ -265,7 +265,9 @@ impl From<&RenderInstance> for ColorData {
         Self {
             color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
-            flags: 0,
+            // One more than the offset of a skinned slot's joint palette
+            // (decision 036); 0 draws rigidly.
+            flags: instance.skin.map_or(0, |offset| offset + 1),
         }
     }
 }
@@ -303,10 +305,11 @@ pub(crate) struct ExtraVertex {
 }
 
 impl ExtraVertex {
-    /// The extra stream of `mesh`, or `None` without colors or second
-    /// coordinates.
+    /// The extra stream of `mesh`, or `None` without colors, second
+    /// coordinates or joints: skinned meshes' entry points (decision 036)
+    /// read it too.
     pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
-        if mesh.colors().is_none() && mesh.uv1().is_none() {
+        if mesh.colors().is_none() && mesh.uv1().is_none() && mesh.joints().is_none() {
             return None;
         }
         Some(
@@ -320,6 +323,35 @@ impl ExtraVertex {
                         })
                     }),
                     uv1: mesh.uv1().map_or(vertex.uv, |uv1| uv1[index]),
+                })
+                .collect(),
+        )
+    }
+}
+
+/// The skin stream of meshes with joints (decision 036), 16 bytes: four
+/// joint indices and their weights as 16-bit fractions, which the shaders
+/// renormalize.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct SkinVertex {
+    pub joints: [u16; 4],
+    pub weights: [u16; 4],
+}
+
+impl SkinVertex {
+    /// The skin stream of `mesh`, or `None` without joints.
+    pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
+        let (joints, weights) = (mesh.joints()?, mesh.weights()?);
+        Some(
+            joints
+                .iter()
+                .zip(weights)
+                .map(|(joints, weights)| Self {
+                    joints: *joints,
+                    weights: weights.map(|weight| {
+                        (engine_core::math::clamp(weight, 0.0, 1.0) * 65535.0).round() as u16
+                    }),
                 })
                 .collect(),
         )
@@ -466,6 +498,9 @@ impl Variant {
     // Meshes with a second vertex stream (decision 034): extended entry
     // points rather than a constant.
     const EXTENDED: u8 = 16;
+    // Skinned slots' meshes (decision 036): skinned entry points, which
+    // read the second stream and a skin stream.
+    const SKINNED: u8 = 32;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -520,6 +555,20 @@ impl Variant {
 
     pub(crate) fn extended(self) -> bool {
         self.0 & Self::EXTENDED != 0
+    }
+
+    /// This variant drawing a mesh with joints through retained slots, or
+    /// not; skinned variants are extended.
+    pub(crate) fn with_skinned(self, skinned: bool) -> Self {
+        Self(if skinned {
+            self.0 | Self::SKINNED | Self::EXTENDED
+        } else {
+            self.0 & !Self::SKINNED
+        })
+    }
+
+    pub(crate) fn skinned(self) -> bool {
+        self.0 & Self::SKINNED != 0
     }
 }
 
@@ -682,7 +731,9 @@ pub(crate) struct PresentationFrame {
     /// Nonzero on temporally antialiased frames with valid previous poses:
     /// visible IDs of moving slots then carry [`MOVED_SLOT`].
     pub motion: u32,
-    pub pad: [u32; 3],
+    /// Joints of skinned slots' palettes (decision 036).
+    pub joints: u32,
+    pub pad: [u32; 2],
 }
 
 /// Bit of a visible slot ID marking a slot whose displayed pose can differ
@@ -702,7 +753,8 @@ pub(crate) struct CandidateData {
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
 /// mesh index count, shadow draw group (decision 020) and local bounds (48
-/// bytes).
+/// bytes). `bounds_min[3]` is 1 for meshes with joints (decision 036), which
+/// neither cull nor cast kept shadows: their joints place them.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct BatchData {
@@ -805,6 +857,7 @@ mod tests {
             },
             mesh: assets.insert_mesh(Mesh::cube()).unwrap(),
             material: None,
+            skin: None,
         };
         let upload = InstanceData::from(&instance);
         assert_eq!(upload.model[3], [2.0, 3.0, 4.0, 1.0]);
@@ -1156,6 +1209,58 @@ mod tests {
         assert!(variant.extended() && variant != Variant::BASIC);
         assert_eq!(variant.constants(), Variant::BASIC.constants());
         assert_eq!(variant.with_extended(false), Variant::BASIC);
+    }
+
+    #[test]
+    fn skinned_meshes_stream_joints_and_weights_and_slots_carry_palette_offsets() {
+        let vertices: Vec<MeshVertex> = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+            .map(|uv| MeshVertex {
+                position: [uv[0], uv[1], 0.0],
+                normal: [0.0, 0.0, 1.0],
+                uv,
+            })
+            .to_vec();
+        let rigid = Mesh::new(vertices.clone(), vec![0, 1, 2]).unwrap();
+        assert!(SkinVertex::stream(&rigid).is_none());
+        let skinned = Mesh::new(vertices, vec![0, 1, 2])
+            .unwrap()
+            .with_skin(
+                vec![[0, 1, 0, 0], [2, 0, 0, 0], [1, 2, 3, 0]],
+                vec![[3.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.5; 4]],
+            )
+            .unwrap();
+        // Weights arrive normalized; zero-weight joints read as joint 0.
+        let stream = SkinVertex::stream(&skinned).unwrap();
+        assert_eq!(stream[0].joints, [0, 1, 0, 0]);
+        assert_eq!(stream[0].weights, [49151, 16384, 0, 0]);
+        assert_eq!(stream[1].joints, [2, 0, 0, 0]);
+        assert_eq!(stream[2].weights, [16384; 4]);
+        assert_eq!(size_of::<SkinVertex>(), 16);
+        // Skinned meshes' entry points read the second stream too.
+        assert!(ExtraVertex::stream(&skinned).is_some());
+        let variant = Variant::BASIC.with_skinned(true);
+        assert!(variant.skinned() && variant.extended());
+        assert_eq!(variant.constants(), Variant::BASIC.constants());
+        assert_eq!(
+            variant.with_skinned(false),
+            Variant::BASIC.with_extended(true)
+        );
+        // Slot flags are one more than the palette offset; 0 is rigid.
+        let mut library = AssetLibrary::default();
+        let instance = RenderInstance {
+            mesh: library.insert_mesh(skinned).unwrap(),
+            material: None,
+            model: Mat4::IDENTITY,
+            color: [1.0; 4],
+            surface: engine_core::Surface::MATTE,
+            skin: Some(4),
+        };
+        assert_eq!(ColorData::from(&instance).flags, 5);
+        let rigid = RenderInstance {
+            skin: None,
+            ..instance
+        };
+        assert_eq!(ColorData::from(&rigid).flags, 0);
     }
 
     #[test]

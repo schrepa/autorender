@@ -1445,3 +1445,230 @@ fn replaced_materials_draw_from_the_next_extraction_on_both_paths() {
     assert_eq!(instance.material, Some(material));
     assert_eq!(frame.snapshot().materials.len(), 1);
 }
+
+fn keyed(
+    target: u32,
+    property: AnimatedProperty,
+    times: Vec<f32>,
+    values: Keyframes,
+) -> AnimationChannel {
+    AnimationChannel::new(target, property, KeyInterpolation::Linear, times, values).unwrap()
+}
+
+#[test]
+fn animation_players_advance_wrap_hold_and_pose_their_targets() {
+    // Ten ticks a second: each tick advances players 0.1 s.
+    let mut engine = engine_at(10.0, 64);
+    let clip = AnimationClip::new(vec![
+        keyed(
+            0,
+            AnimatedProperty::Translation,
+            vec![0.0, 1.0],
+            Keyframes::Vectors(vec![Vec3::ZERO, Vec3::new(10.0, 0.0, 0.0)].into()),
+        ),
+        keyed(
+            1,
+            AnimatedProperty::Scale,
+            vec![0.0, 1.0],
+            Keyframes::Vectors(vec![Vec3::ONE, Vec3::splat(3.0)].into()),
+        ),
+    ])
+    .unwrap();
+    let world = engine.app.world_mut();
+    let clip = world
+        .resource_mut::<AssetLibrary>()
+        .insert_clip(clip)
+        .unwrap();
+    let mover = world.spawn(Transform::default()).id();
+    let grower = world.spawn(Transform::default()).id();
+    let player = world
+        .spawn(AnimationPlayer::new(clip, vec![Some(mover), Some(grower)]))
+        .id();
+    let translation = |engine: &Engine| {
+        engine
+            .app
+            .world()
+            .get::<Transform>(mover)
+            .unwrap()
+            .translation
+            .x
+    };
+    engine.advance(0.35);
+    assert!((translation(&engine) - 3.0).abs() < 1.0e-4);
+    let scale = engine.app.world().get::<Transform>(grower).unwrap().scale;
+    assert!((scale - Vec3::splat(1.6)).abs().max_element() < 1.0e-4);
+    // Looping players wrap past the end of the clip.
+    engine.advance(0.8);
+    let time = engine
+        .app
+        .world()
+        .get::<AnimationPlayer>(player)
+        .unwrap()
+        .time;
+    assert!((time - 0.1).abs() < 1.0e-4, "{time}");
+    // Others hold the last pose, and held poses change nothing.
+    let mut state = engine
+        .app
+        .world_mut()
+        .get_mut::<AnimationPlayer>(player)
+        .unwrap();
+    state.looping = false;
+    state.speed = 4.0;
+    engine.advance(0.5);
+    assert_eq!(translation(&engine), 10.0);
+    let changed = engine
+        .app
+        .world()
+        .entity(mover)
+        .get_ref::<Transform>()
+        .unwrap()
+        .last_changed();
+    engine.advance(0.3);
+    let held = engine
+        .app
+        .world()
+        .entity(mover)
+        .get_ref::<Transform>()
+        .unwrap()
+        .last_changed();
+    assert_eq!(changed, held);
+    // Missing targets are skipped.
+    engine.app.world_mut().despawn(grower);
+    engine
+        .app
+        .world_mut()
+        .get_mut::<AnimationPlayer>(player)
+        .unwrap()
+        .time = 0.0;
+    engine.advance(0.1);
+    assert!((translation(&engine) - 4.0).abs() < 1.0e-4);
+}
+
+fn skinned_world(joint_count: usize) -> (Engine, [Entity; 3]) {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let vertices = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+        .map(|uv| MeshVertex {
+            position: [uv[0], uv[1], 0.0],
+            normal: [0.0, 0.0, 1.0],
+            uv,
+        })
+        .to_vec();
+    let mesh = Mesh::new(vertices, vec![0, 1, 2])
+        .unwrap()
+        .with_skin(vec![[0, 1, 0, 0]; 3], vec![[0.5, 0.5, 0.0, 0.0]; 3])
+        .unwrap();
+    let mesh = assets.insert_mesh(mesh).unwrap();
+    let material = assets
+        .insert_material(Material::new([1.0; 4]).unwrap())
+        .unwrap();
+    let first = world
+        .spawn(Transform {
+            translation: Vec3::new(1.0, 0.0, 0.0),
+            ..Default::default()
+        })
+        .id();
+    let second = world
+        .spawn(Transform {
+            translation: Vec3::new(0.0, 2.0, 0.0),
+            ..Default::default()
+        })
+        .id();
+    let joints = [first, second][..joint_count].to_vec();
+    let binds = vec![
+        Mat4::IDENTITY,
+        Mat4::from_translation(Vec3::new(-1.0, 0.0, 0.0)),
+    ];
+    let skinned = world
+        .spawn((
+            Transform {
+                translation: Vec3::new(50.0, 0.0, 0.0),
+                ..Default::default()
+            },
+            Mesh3d { mesh, material },
+            Skin::new(joints, binds),
+        ))
+        .id();
+    (engine, [first, second, skinned])
+}
+
+#[test]
+fn skinned_slots_get_joint_palettes_on_cpu_and_gpu_frames() {
+    let (mut engine, [_, second, skinned]) = skinned_world(2);
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    let slot = frame.visible_indices()[0];
+    assert_eq!(frame.snapshot().instances[slot].skin, Some(0));
+    let joints = &frame.snapshot().joints;
+    assert_eq!(joints.len(), 2);
+    // Displayed joint world matrices times inverse binds, in upload rows.
+    let expected = |matrix: Mat4| {
+        let rows = matrix.transpose();
+        [
+            rows.x_axis.to_array(),
+            rows.y_axis.to_array(),
+            rows.z_axis.to_array(),
+        ]
+    };
+    assert_eq!(joints[0].matrix, expected(Mat4::from_translation(Vec3::X)));
+    assert_eq!(
+        joints[1].matrix,
+        expected(Mat4::from_translation(Vec3::new(-1.0, 2.0, 0.0)))
+    );
+    assert_eq!(
+        joints[1].inverse_bind,
+        expected(Mat4::from_translation(-Vec3::X))
+    );
+    // GPU-presented frames name the joints' nodes instead.
+    let frame = engine.extract_gpu_frame(1.0, 1.0).unwrap();
+    let nodes: Vec<u32> = frame
+        .snapshot()
+        .joints
+        .iter()
+        .map(|joint| joint.node)
+        .collect();
+    assert!(
+        nodes
+            .iter()
+            .all(|&node| (node as usize) < frame.gpu().unwrap().info.len())
+    );
+    assert_ne!(nodes[0], nodes[1]);
+    // Without the skin the slot draws rigidly again: a color change.
+    let revision = frame.color_revision();
+    engine.app.world_mut().entity_mut(skinned).remove::<Skin>();
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(frame.snapshot().instances[slot].skin, None);
+    assert!(frame.snapshot().joints.is_empty());
+    assert!(frame.color_revision() > revision);
+    let _ = second;
+}
+
+#[test]
+fn skins_with_too_few_joints_draw_rigidly_and_skinned_meshes_never_cull() {
+    let (mut engine, [_, _, skinned]) = skinned_world(1);
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(
+        frame.snapshot().instances[frame.visible_indices()[0]].skin,
+        None
+    );
+    assert!(frame.snapshot().joints.is_empty());
+    // The skinned entity's own pose is far outside the view; joints place
+    // its vertices, so it stays visible.
+    engine
+        .app
+        .world_mut()
+        .get_mut::<Transform>(skinned)
+        .unwrap()
+        .translation = Vec3::new(0.0, 0.0, 5_000.0);
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(frame.snapshot().culled_instances, 0);
+    assert_eq!(frame.visible_indices().len(), 1);
+}

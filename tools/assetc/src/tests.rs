@@ -467,3 +467,181 @@ fn unsupported_versions_and_ambiguous_or_nonunit_transforms_are_rejected() {
         );
     }
 }
+
+/// A GLB of `json` and `binary`, padded as the container requires.
+fn glb(json: &Value, mut binary: Vec<u8>) -> Vec<u8> {
+    let mut json = serde_json::to_vec(json).unwrap();
+    while !json.len().is_multiple_of(4) {
+        json.push(b' ');
+    }
+    while !binary.len().is_multiple_of(4) {
+        binary.push(0);
+    }
+    let mut bytes = b"glTF".to_vec();
+    bytes.extend_from_slice(&2u32.to_le_bytes());
+    bytes.extend_from_slice(&((28 + json.len() + binary.len()) as u32).to_le_bytes());
+    bytes.extend_from_slice(&(json.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(b"JSON");
+    bytes.extend_from_slice(&json);
+    bytes.extend_from_slice(&(binary.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(b"BIN\0");
+    bytes.extend_from_slice(&binary);
+    bytes
+}
+
+/// An unindexed triangle skinned to two bones, the second bending.
+fn rigged() -> Vec<u8> {
+    let mut binary = Vec::new();
+    let mut views = Vec::new();
+    let mut push = |bytes: Vec<u8>| {
+        views.push(json!({"buffer": 0, "byteOffset": binary.len(), "byteLength": bytes.len()}));
+        binary.extend_from_slice(&bytes);
+    };
+    let floats = |values: &[f32]| {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect()
+    };
+    push(floats(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 2.0, 0.0]));
+    push(vec![0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0]);
+    push(floats(&[
+        1.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0,
+    ]));
+    let identity = [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ];
+    let mut shifted = identity;
+    shifted[13] = -1.0;
+    push(floats(&[identity, shifted].concat()));
+    push(floats(&[0.0, 1.0]));
+    push(floats(&[
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        std::f32::consts::FRAC_1_SQRT_2,
+        std::f32::consts::FRAC_1_SQRT_2,
+    ]));
+    let buffer_length = binary.len();
+    let json = json!({
+        "asset": {"version": "2.0"},
+        "scene": 0,
+        "scenes": [{"nodes": [0]}],
+        "nodes": [
+            {"name": "Rig", "children": [1, 2]},
+            {"name": "Body", "mesh": 0, "skin": 0},
+            {"name": "Hip", "translation": [0.0, 0.0, 0.0], "children": [3]},
+            {"name": "Knee", "translation": [0.0, 1.0, 0.0], "rotation": [0.0, 0.0, 0.0, 1.0]}
+        ],
+        "meshes": [{"primitives": [{
+            "attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2},
+            "material": 0
+        }]}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.8, 0.6, 0.4, 1.0]}}],
+        "skins": [{"joints": [2, 3], "inverseBindMatrices": 3}],
+        "animations": [{"name": "Bend", "channels": [{"sampler": 0, "target": {"node": 3, "path": "rotation"}}],
+            "samplers": [{"input": 4, "output": 5}]}],
+        "buffers": [{"byteLength": buffer_length}],
+        "bufferViews": views,
+        "accessors": [
+            {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0.0, 0.0, 0.0], "max": [1.0, 2.0, 0.0]},
+            {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+            {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+            {"bufferView": 3, "componentType": 5126, "count": 2, "type": "MAT4"},
+            {"bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0]},
+            {"bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC4"}
+        ]
+    });
+    glb(&json, binary)
+}
+
+#[test]
+fn animated_and_skinned_models_keep_their_nodes_clips_and_skins() {
+    let imported = import_glb(&rigged(), "rig").unwrap();
+    let document = &imported.document;
+    let entity = |id: &str| {
+        document
+            .entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .unwrap_or_else(|| panic!("{id}"))
+    };
+    // A root plays the first clip; nodes keep local transforms and parents.
+    assert_eq!(
+        entity("rig.root").animation.as_ref().unwrap().clip,
+        "rig.anim0"
+    );
+    assert_eq!(entity("rig.node0").parent.as_deref(), Some("rig.root"));
+    assert_eq!(entity("rig.node3").parent.as_deref(), Some("rig.node2"));
+    assert_eq!(entity("rig.node3").transform.translation, [0.0, 1.0, 0.0]);
+    let body = entity("rig.node1.p0");
+    assert_eq!(body.parent.as_deref(), Some("rig.node1"));
+    assert_eq!(body.skin.as_deref(), Some("rig.skin0"));
+    assert_eq!(document.skins[0].joints, ["rig.node2", "rig.node3"]);
+    assert_eq!(document.skins[0].inverse_binds[1][13], -1.0);
+    let clip = &document.animations[0];
+    assert_eq!(
+        (clip.name.as_str(), clip.targets.as_slice()),
+        ("Bend", &["rig.node3".to_owned()][..])
+    );
+    // Clips and skinned meshes are files: EAN1, and EMB2 with joints.
+    let file = |uri: &str| {
+        &imported
+            .files
+            .iter()
+            .find(|file| file.uri == uri)
+            .unwrap()
+            .bytes
+    };
+    assert_eq!(&file(clip.uri.as_deref().unwrap())[..4], b"EAN1");
+    let MeshSource::Buffer { uri } = &document.meshes[0].source else {
+        panic!("expected a mesh buffer");
+    };
+    let mesh = file(uri);
+    assert_eq!((&mesh[..4], mesh[12]), (&b"EMB2"[..], 4));
+    // The runtime loads it all.
+    let mut files = engine_scene::SceneFiles::new();
+    for file in &imported.files {
+        files.add_buffer(&file.uri, file.bytes.clone());
+    }
+    document.validate_with(&files).unwrap();
+    // Prefab definitions name their nodes locally.
+    let prefab = import_glb_prefab(&rigged(), "rig").unwrap().document;
+    assert_eq!(prefab.skins[0].joints, ["node2", "node3"]);
+    assert_eq!(prefab.animations[0].targets, ["node3"]);
+    assert_eq!(
+        prefab.prefabs[0].entities[1].parent.as_deref(),
+        Some("root")
+    );
+}
+
+#[test]
+fn skins_need_both_joint_streams_and_morph_weights_stay_unsupported() {
+    let json_of = |bytes: &[u8]| -> (Value, Vec<u8>) {
+        let length = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        (
+            serde_json::from_slice(&bytes[20..20 + length]).unwrap(),
+            bytes[28 + length..].to_vec(),
+        )
+    };
+    let (mut json, binary) = json_of(&rigged());
+    json["meshes"][0]["primitives"][0]["attributes"]
+        .as_object_mut()
+        .unwrap()
+        .remove("WEIGHTS_0");
+    assert_eq!(
+        import_glb(&glb(&json, binary.clone()), "rig")
+            .unwrap_err()
+            .code,
+        "attribute_count"
+    );
+    let (mut json, _) = json_of(&rigged());
+    json["animations"][0]["channels"][0]["target"]["path"] = json!("weights");
+    assert_eq!(
+        import_glb(&glb(&json, binary), "rig").unwrap_err().code,
+        "unsupported_feature"
+    );
+}

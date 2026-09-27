@@ -171,6 +171,7 @@ mod tests {
                 model: Mat4::from_translation(position),
                 color: [1.0; 4],
                 surface: engine_core::Surface::MATTE,
+                skin: None,
             })
             .to_vec()
     }

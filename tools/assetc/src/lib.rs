@@ -1,7 +1,9 @@
-//! Native conversion of static GLB models with glTF 2.0 metallic-roughness
-//! materials into scenes and the files beside them (decisions 030, 031). No
-//! filesystem access, runtime imports, or external resource resolution.
+//! Native conversion of GLB models with glTF 2.0 metallic-roughness
+//! materials, animations and skins into scenes and the files beside them
+//! (decisions 030, 031, 035, 036). No filesystem access, runtime imports, or
+//! external resource resolution.
 
+mod animation;
 mod geometry;
 mod materials;
 mod validation;
@@ -15,7 +17,7 @@ use sha2::{Digest, Sha256};
 /// Largest source container: the GLB length field's range.
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 /// Changes whenever import behavior or supported settings change.
-pub const IMPORTER_VERSION: &str = "gltf-pbr-4";
+pub const IMPORTER_VERSION: &str = "gltf-pbr-5";
 
 /// A file the imported scene references, at `uri` relative to the scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,10 +89,13 @@ pub fn source_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// Imports one static GLB scene, baking node transforms and preserving
-/// primitive material mapping. IDs derive from source indices and the
-/// caller's namespace; files are named `ID/image<N>.<HASH>.png|jpg` and
-/// `ID/node<N>.p<M>.<HASH>.bin`. The resulting document is validated with the
+/// Imports one GLB scene, preserving primitive material mapping. Static
+/// models bake node transforms into their vertices; models with animations
+/// or skins keep their nodes as entities (`ID.node<N>`) below a root
+/// (`ID.root`) that plays the first animation (`ID.anim<N>`), with skins
+/// `ID.skin<N>`. IDs derive from source indices and the caller's namespace;
+/// files are named `ID/image<N>.<HASH>.png|jpg`, `ID/node<N>.p<M>.<HASH>.bin`
+/// and `ID/anim<N>.<HASH>.bin`. The resulting document is validated with the
 /// runtime's scene validation before being returned. Nothing is written.
 pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     if id.is_empty()
@@ -124,6 +129,8 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
         materials: Vec::new(),
         meshes: Vec::new(),
         prefabs: Vec::new(),
+        animations: Vec::new(),
+        skins: Vec::new(),
         entities: Vec::new(),
     };
     let mut files = Vec::new();
@@ -139,20 +146,34 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
 }
 
 /// Imports a reusable prefab definition and its shared global assets, without
-/// placing an instance in the scene. Static source transforms remain baked just
-/// as in [`import_glb`]. Template IDs omit the namespace, so placement roots can
-/// qualify them independently without duplicating mesh or texture data.
+/// placing an instance in the scene. Source transforms are baked or kept just
+/// as in [`import_glb`]. Template IDs, and the animation targets and skin
+/// joints naming them, omit the namespace, so placement roots can qualify
+/// them independently without duplicating mesh, texture or clip data.
 pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     let mut imported = import_glb(bytes, id)?;
     let scene = &mut imported.document;
     let prefix = format!("{id}.");
-    let mut entities = std::mem::take(&mut scene.entities);
-    for entity in &mut entities {
-        entity.id = entity
-            .id
+    let local = |value: &mut String| {
+        *value = value
             .strip_prefix(&prefix)
             .expect("imported entity IDs use the requested namespace")
             .to_owned();
+    };
+    let mut entities = std::mem::take(&mut scene.entities);
+    for entity in &mut entities {
+        local(&mut entity.id);
+        if let Some(parent) = &mut entity.parent {
+            local(parent);
+        }
+    }
+    for target in scene
+        .animations
+        .iter_mut()
+        .flat_map(|animation| &mut animation.targets)
+        .chain(scene.skins.iter_mut().flat_map(|skin| &mut skin.joints))
+    {
+        local(target);
     }
     scene.prefabs.push(ScenePrefab {
         id: id.to_owned(),

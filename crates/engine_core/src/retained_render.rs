@@ -22,10 +22,11 @@ use crate::hierarchy::HierarchyScratch;
 use crate::{
     Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
     MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance,
-    RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface, TextureHandle,
-    Tint, Transform, TransformIndex,
+    RenderJoint, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface,
+    TextureHandle, Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
     hierarchy::ChangeWindow,
+    skin::SkinExtraction,
 };
 
 // Change stamps of render sources, read in contiguous table slices. GPU-presented
@@ -248,6 +249,9 @@ struct Sources {
     meshes: Vec<RenderMesh>,
     // Local bounds of each mesh source, read by culling through slot indices.
     bounds: Vec<Aabb>,
+    // Meshes with joints (decision 036): their joints place them, so their
+    // bounds never cull.
+    skinned: Vec<bool>,
     // Materials with maps (decision 031) and the textures they read.
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
@@ -269,6 +273,7 @@ impl Sources {
     fn clear(&mut self) {
         self.meshes.clear();
         self.bounds.clear();
+        self.skinned.clear();
         self.materials.clear();
         self.textures.clear();
         self.mesh_indices.clear();
@@ -317,6 +322,7 @@ impl Sources {
                 mesh: Arc::clone(mesh),
             });
             self.bounds.push(mesh.bounds());
+            self.skinned.push(mesh.joint_count() != 0);
             self.mesh_used.push(false);
             index
         });
@@ -440,6 +446,10 @@ pub(crate) struct RetainedRender {
     source_stamps: Option<SourceStamps>,
     // Tints at the last source scan (removals change no tick).
     tint_count: Option<usize>,
+    // Slots given a joint palette by the last skin extraction, and scratch
+    // for the next one's (slot, offset) pairs.
+    skinned: Vec<usize>,
+    skin_scratch: Vec<(usize, u32)>,
 }
 
 impl Default for RetainedRender {
@@ -479,6 +489,8 @@ impl Default for RetainedRender {
             gpu_topology: None,
             source_stamps: None,
             tint_count: None,
+            skinned: Vec::new(),
+            skin_scratch: Vec::new(),
         }
     }
 }
@@ -570,6 +582,7 @@ impl RetainedRender {
                     model: Mat4::IDENTITY,
                     color: [1.0; 4],
                     surface: Surface::MATTE,
+                    skin: None,
                 });
                 self.pose_indices.push(u32::MAX);
                 self.pose_changes.push(0);
@@ -615,6 +628,94 @@ impl RetainedRender {
             gpu,
         );
         particles.extract(world, &mut self.snapshot, gpu);
+    }
+
+    /// Gives skinned slots (decision 036) their joint palettes in
+    /// `snapshot.joints`, rebuilt every frame: on `gpu` frames each joint's
+    /// node, otherwise its displayed world matrix times its inverse bind
+    /// matrix. A slot whose palette offset changes counts as a color change,
+    /// since renderers upload the offset with the slot's color.
+    pub(crate) fn extract_skins(&mut self, world: &World, skins: &mut SkinExtraction, gpu: bool) {
+        let assets = world.resource::<AssetLibrary>();
+        let globals = world.resource::<GlobalTransforms>();
+        let presented = world.resource::<PresentedTransforms>();
+        let joints = &mut self.snapshot.joints;
+        joints.clear();
+        let mut next = std::mem::take(&mut self.skin_scratch);
+        next.clear();
+        for (entity, skin) in skins.query.iter(world) {
+            let Some(&slot) = self.entities.get(&entity) else {
+                continue;
+            };
+            if self.frames[slot].mesh == NO_SOURCE {
+                continue;
+            }
+            let Some(mesh) = assets.mesh(self.snapshot.instances[slot].mesh) else {
+                continue;
+            };
+            // Too few joints for the mesh's indices: drawn rigidly.
+            let needed = mesh.joint_count() as usize;
+            if needed == 0 || needed > skin.joints.len() {
+                continue;
+            }
+            let base = joints.len();
+            if skins.hints.len() < base + skin.joints.len() {
+                skins
+                    .hints
+                    .resize(base + skin.joints.len(), TransformIndex::default());
+            }
+            for (index, &joint) in skin.joints.iter().enumerate() {
+                let inverse_bind = skin.inverse_bind(index);
+                let hint = &mut skins.hints[base + index];
+                let (node, matrix) = if gpu {
+                    let node = globals
+                        .get_indexed_with_revision(joint, hint)
+                        .filter(|(global, _)| global.matrix().is_some())
+                        .map_or(u32::MAX, |_| hint.0 as u32);
+                    (node, IDENTITY_ROWS)
+                } else {
+                    let world = presented
+                        .get_indexed(joint, hint)
+                        .and_then(|pose| pose.matrix())
+                        .unwrap_or(Mat4::IDENTITY);
+                    (u32::MAX, pose_rows(world * inverse_bind))
+                };
+                joints.push(RenderJoint {
+                    node,
+                    inverse_bind: pose_rows(inverse_bind),
+                    matrix,
+                });
+            }
+            next.push((slot, base as u32));
+        }
+        next.sort_unstable_by_key(|&(slot, _)| slot);
+        let sequence = self.sequence;
+        let mut changed = false;
+        for &slot in &self.skinned {
+            if next.binary_search_by_key(&slot, |&(slot, _)| slot).is_err()
+                && let Some(record) = self.snapshot.instances.get_mut(slot)
+                && record.skin.take().is_some()
+            {
+                self.color_changes[slot] = sequence;
+                changed = true;
+            }
+        }
+        self.skinned.clear();
+        for &(slot, base) in &next {
+            let record = &mut self.snapshot.instances[slot];
+            if record.skin != Some(base) {
+                record.skin = Some(base);
+                self.color_changes[slot] = sequence;
+                changed = true;
+            }
+            self.skinned.push(slot);
+        }
+        if changed {
+            self.color_revision = sequence;
+        }
+        self.skin_scratch = next;
+        engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
+        engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
     }
 
     /// Creates the source stamp window used by GPU-presented frames.
@@ -947,12 +1048,14 @@ impl RetainedRender {
             casters += 1;
             if view_changed || pose_changed || source_changed {
                 let bounds = self.sources.bounds[frame.mesh as usize];
-                frame.outside = self.frustum.as_ref().is_some_and(|frustum| {
-                    culling_tests += 1;
-                    let classification = frustum.classify(model, bounds);
-                    culling_interior += usize::from(classification == Classification::Interior);
-                    classification.outside()
-                });
+                let skinned = self.sources.skinned[frame.mesh as usize];
+                frame.outside = !skinned
+                    && self.frustum.as_ref().is_some_and(|frustum| {
+                        culling_tests += 1;
+                        let classification = frustum.classify(model, bounds);
+                        culling_interior += usize::from(classification == Classification::Interior);
+                        classification.outside()
+                    });
             } else if self.frustum.is_some() {
                 culling_reused += 1;
             }

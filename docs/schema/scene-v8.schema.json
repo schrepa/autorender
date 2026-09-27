@@ -4,6 +4,13 @@
   "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget (decision 029); bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
   "type": "object",
   "properties": {
+    "animations": {
+      "description": "Keyframed clips that entity `animation` players play (decision 035).\nVersion 8.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneAnimation"
+      }
+    },
     "camera": {
       "$ref": "#/$defs/SceneCamera",
       "default": {
@@ -68,6 +75,13 @@
       "type": "integer",
       "format": "uint64",
       "minimum": 0
+    },
+    "skins": {
+      "description": "Joint lists that deform skinned meshes (decision 036). Version 8.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneSkin"
+      }
     },
     "textures": {
       "description": "Opaque sRGB pixels: inline base64, or image files (version 7).",
@@ -228,6 +242,49 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneAnimation": {
+      "description": "A named animation clip: keyframed channels of the entities `targets`\nnames. Its channels are inline or in an `EAN1` buffer file (`uri`).",
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SceneChannel"
+          }
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "name": {
+          "description": "Optional display label.",
+          "type": "string"
+        },
+        "targets": {
+          "description": "Entity IDs a channel's `target` index names. A player inside a prefab\nplacement resolves them against the placement's local IDs first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "targets"
+      ]
     },
     "SceneAtmosphere": {
       "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
@@ -532,6 +589,48 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneChannel": {
+      "description": "One keyframed property of one target.",
+      "type": "object",
+      "properties": {
+        "interpolation": {
+          "$ref": "#/$defs/SceneInterpolation",
+          "default": "linear"
+        },
+        "property": {
+          "$ref": "#/$defs/SceneProperty"
+        },
+        "target": {
+          "description": "Index into the clip's `targets`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "times": {
+          "description": "Key times in seconds, strictly increasing.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "values": {
+          "description": "Values, three numbers each (four for rotations, as quaternions x, y,\nz, w); cubic splines give in-tangent, value and out-tangent per key.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "property",
+        "times",
+        "values"
+      ]
     },
     "SceneCollider": {
       "description": "A collider or sensor on any authored node, including prefab instance roots.\nZero layer masks are valid and intentionally disable matching pairs.",
@@ -866,6 +965,14 @@
         "linear"
       ]
     },
+    "SceneInterpolation": {
+      "type": "string",
+      "enum": [
+        "step",
+        "linear",
+        "cubic_spline"
+      ]
+    },
     "SceneLight": {
       "description": "A point or spot light on this entity (decision 023). Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
       "type": "object",
@@ -1174,6 +1281,17 @@
       "description": "One local transform, optional renderable, or prefab instance root.\nTags are game-defined startup hook names.",
       "type": "object",
       "properties": {
+        "animation": {
+          "description": "Plays an animation on its targets (decision 035). Requires version 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePlayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "collider": {
           "description": "Local collision shape, independent of rendering. Requires version 4.",
           "anyOf": [
@@ -1249,6 +1367,16 @@
         },
         "prefab": {
           "description": "Named prefab to expand below this transform-only instance root.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "skin": {
+          "description": "The skin deforming this object's mesh (decision 036). Requires\nversion 8 and a mesh with joints and weights.",
           "type": [
             "string",
             "null"
@@ -1340,6 +1468,33 @@
       },
       "additionalProperties": false
     },
+    "ScenePlayer": {
+      "description": "Plays a clip on its targets from this entity (decision 035).",
+      "type": "object",
+      "properties": {
+        "clip": {
+          "description": "The animation's ID.",
+          "type": "string"
+        },
+        "loop": {
+          "type": "boolean"
+        },
+        "speed": {
+          "description": "Playback rate: 1 is real time, 0 paused, negative backward.",
+          "type": "number",
+          "format": "float"
+        },
+        "time": {
+          "description": "Starting time in seconds.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "clip"
+      ]
+    },
     "ScenePrefab": {
       "description": "A reusable entity tree whose parents reference IDs within the definition.\n\nInstance roots use [`SceneObject::prefab`]. Template roots become children of\nthat instance root. Nested prefab references are deliberately unsupported.",
       "type": "object",
@@ -1362,6 +1517,14 @@
       "required": [
         "id",
         "entities"
+      ]
+    },
+    "SceneProperty": {
+      "type": "string",
+      "enum": [
+        "translation",
+        "rotation",
+        "scale"
       ]
     },
     "SceneReflections": {
@@ -1447,6 +1610,43 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneSkin": {
+      "description": "A named skin (decision 036): the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "inverse_binds": {
+          "description": "One matrix per joint; identity when omitted.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 16,
+            "minItems": 16
+          }
+        },
+        "joints": {
+          "description": "Joint entity IDs, resolved like animation targets.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "joints"
+      ]
     },
     "SceneSpot": {
       "description": "The cone of a spot light.",
@@ -1781,6 +1981,21 @@
           "maxItems": 4,
           "minItems": 4
         },
+        "joints": {
+          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex (decision 036). Every vertex of\na mesh has joints and weights or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
         "normal": {
           "type": "array",
           "items": {
@@ -1821,6 +2036,19 @@
           },
           "maxItems": 2,
           "minItems": 2
+        },
+        "weights": {
+          "description": "Version 8: the joints' weights, not negative and not all zero; they\nare normalized.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
         }
       },
       "additionalProperties": false,

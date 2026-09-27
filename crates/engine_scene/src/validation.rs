@@ -1,10 +1,16 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
-use engine_core::{LocalLight, Mesh, ParticleEmitter, Texture, Tint, Transform};
+use engine_core::{
+    AnimationClip, LocalLight, Mesh, ParticleEmitter, Texture, Tint, Transform, glam::Mat4,
+};
 
 use crate::{
     MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
-    SceneTransform, hierarchy::ExpandedObject, material::PreparedMaterial,
+    SceneObject, SceneTransform,
+    animation::{PreparedPlayer, PreparedSkin},
+    hierarchy::ExpandedObject,
+    material::PreparedMaterial,
 };
 
 pub(crate) struct PreparedScene {
@@ -18,6 +24,10 @@ pub(crate) struct PreparedScene {
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
+    pub clips: Vec<AnimationClip>,
+    pub players: Vec<Option<PreparedPlayer>>,
+    pub skin_binds: Vec<Arc<[Mat4]>>,
+    pub skins: Vec<Option<PreparedSkin>>,
 }
 
 impl SceneDocument {
@@ -54,6 +64,11 @@ impl SceneDocument {
         }
         for mesh in &self.meshes {
             if let MeshSource::Buffer { uri } = &mesh.source {
+                add(uri, SceneFileKind::Buffer);
+            }
+        }
+        for animation in &self.animations {
+            if let Some(uri) = &animation.uri {
                 add(uri, SceneFileKind::Buffer);
             }
         }
@@ -119,7 +134,34 @@ impl SceneDocument {
                 return Err(SceneError::new(
                     "version_required",
                     format!("$.meshes[{index}].source.vertices"),
-                    "vertex colors and second texture coordinates require scene version 8; set version to 8 and increment revision",
+                    "vertex colors, second texture coordinates, joints and weights require scene version 8; set version to 8 and increment revision",
+                ));
+            }
+            let animated =
+                |entity: &SceneObject| entity.animation.is_some() || entity.skin.is_some();
+            let path = if !self.animations.is_empty() {
+                Some("$.animations".to_owned())
+            } else if !self.skins.is_empty() {
+                Some("$.skins".to_owned())
+            } else if let Some(index) = self.entities.iter().position(animated) {
+                Some(format!("$.entities[{index}]"))
+            } else {
+                self.prefabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(prefab, definition)| {
+                        definition
+                            .entities
+                            .iter()
+                            .position(animated)
+                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}]"))
+                    })
+            };
+            if let Some(path) = path {
+                return Err(SceneError::new(
+                    "version_required",
+                    path,
+                    "animations and skins require scene version 8; set version to 8 and increment revision",
                 ));
             }
         }
@@ -270,6 +312,160 @@ impl SceneDocument {
             }
         }
         let expanded = self.expand(&mesh_ids, &material_ids)?;
+        let animation_ids = unique_ids(
+            self.animations
+                .iter()
+                .map(|animation| animation.id.as_str()),
+            "$.animations",
+        )?;
+        let skin_ids = unique_ids(self.skins.iter().map(|skin| skin.id.as_str()), "$.skins")?;
+        for (index, animation) in self.animations.iter().enumerate() {
+            if animation.name.len() > 128 || animation.name.chars().any(char::is_control) {
+                return Err(SceneError::new(
+                    "invalid_name",
+                    format!("$.animations[{index}].name"),
+                    "names must be at most 128 UTF-8 bytes without control characters",
+                ));
+            }
+            for (target, id) in animation.targets.iter().enumerate() {
+                identifier(id, &format!("$.animations[{index}].targets[{target}]"))?;
+            }
+        }
+        let skin_binds = self
+            .skins
+            .iter()
+            .enumerate()
+            .map(|(index, skin)| {
+                for (joint, id) in skin.joints.iter().enumerate() {
+                    identifier(id, &format!("$.skins[{index}].joints[{joint}]"))?;
+                }
+                skin.inverse_binds(&format!("$.skins[{index}]"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Prefab definitions reference clips and skins even when unplaced.
+        for (prefab, definition) in self.prefabs.iter().enumerate() {
+            for (index, entity) in definition.entities.iter().enumerate() {
+                let path = format!("$.prefabs[{prefab}].entities[{index}]");
+                if let Some(player) = &entity.animation {
+                    reference(
+                        &player.clip,
+                        &animation_ids,
+                        &format!("{path}.animation.clip"),
+                    )?;
+                }
+                if let Some(skin) = &entity.skin {
+                    reference(skin, &skin_ids, &format!("{path}.skin"))?;
+                }
+            }
+        }
+        let entity_indices: HashMap<&str, usize> = expanded
+            .entities
+            .iter()
+            .enumerate()
+            .map(|(index, entity)| (entity.source.id.as_str(), index))
+            .collect();
+        // Targets and joints name local IDs of the entity's placement first,
+        // then scene IDs.
+        let resolve = |entity: &ExpandedObject, id: &str| {
+            entity
+                .prefab_instance
+                .as_ref()
+                .and_then(|instance| entity_indices.get(format!("{instance}.{id}").as_str()))
+                .or_else(|| entity_indices.get(id))
+                .copied()
+        };
+        let players = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                let Some(player) = &entity.source.animation else {
+                    return Ok(None);
+                };
+                let path = format!("{}.animation", entity.path);
+                reference(&player.clip, &animation_ids, &format!("{path}.clip"))?;
+                if !player.speed.is_finite() || player.speed.abs() > 1000.0 {
+                    return Err(SceneError::new(
+                        "invalid_animation",
+                        format!("{path}.speed"),
+                        "speed must be finite and within ±1000",
+                    ));
+                }
+                if !player.time.is_finite() || player.time < 0.0 {
+                    return Err(SceneError::new(
+                        "invalid_animation",
+                        format!("{path}.time"),
+                        "time must be finite and not negative",
+                    ));
+                }
+                let clip = self
+                    .animations
+                    .iter()
+                    .position(|animation| animation.id == player.clip)
+                    .expect("referenced clip exists");
+                let targets = self.animations[clip]
+                    .targets
+                    .iter()
+                    .map(|target| {
+                        resolve(entity, target).ok_or_else(|| {
+                            SceneError::new(
+                                "unknown_reference",
+                                format!("{path}.clip"),
+                                format!(
+                                    "target '{target}' of animation '{}' matches no entity of this placement or scene",
+                                    player.clip
+                                ),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Some(PreparedPlayer {
+                    clip,
+                    targets,
+                    speed: player.speed,
+                    looping: player.looping,
+                    time: player.time,
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let skins = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                let Some(id) = &entity.source.skin else {
+                    return Ok(None);
+                };
+                let path = format!("{}.skin", entity.path);
+                reference(id, &skin_ids, &path)?;
+                if entity.source.mesh.is_none() {
+                    return Err(SceneError::new(
+                        "invalid_skin",
+                        path,
+                        "a skin deforms its entity's mesh; give the entity a mesh and material",
+                    ));
+                }
+                let skin = self
+                    .skins
+                    .iter()
+                    .position(|skin| skin.id == *id)
+                    .expect("referenced skin exists");
+                let joints = self.skins[skin]
+                    .joints
+                    .iter()
+                    .map(|joint| {
+                        resolve(entity, joint).ok_or_else(|| {
+                            SceneError::new(
+                                "unknown_reference",
+                                path.clone(),
+                                format!(
+                                    "joint '{joint}' of skin '{id}' matches no entity of this placement or scene"
+                                ),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Some(PreparedSkin { skin, joints }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let colliders = expanded
             .entities
             .iter()
@@ -366,6 +562,34 @@ impl SceneDocument {
                 material.prepare(&format!("$.materials[{index}]"), self.version)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        for (entity, skin) in expanded.entities.iter().zip(&skins) {
+            let (Some(skin), Some(mesh)) = (skin, &entity.source.mesh) else {
+                continue;
+            };
+            let mesh = &meshes[self
+                .meshes
+                .iter()
+                .position(|source| source.id == *mesh)
+                .expect("referenced mesh exists")];
+            if mesh.joint_count() as usize > skin.joints.len() {
+                return Err(SceneError::new(
+                    "invalid_skin",
+                    format!("{}.skin", entity.path),
+                    format!(
+                        "the mesh's vertices name {} joints but skin '{}' has {}",
+                        mesh.joint_count(),
+                        self.skins[skin.skin].id,
+                        skin.joints.len()
+                    ),
+                ));
+            }
+        }
+        let clips = self
+            .animations
+            .iter()
+            .enumerate()
+            .map(|(index, animation)| animation.clip(&format!("$.animations[{index}]"), files))
+            .collect::<Result<Vec<_>, _>>()?;
         let environment = self
             .environment
             .map(|environment| environment.resolve("$.environment"))
@@ -381,6 +605,10 @@ impl SceneDocument {
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
+            clips,
+            players,
+            skin_binds,
+            skins,
         })
     }
 

@@ -43,7 +43,8 @@ struct AffinePose {
 }
 // A slot's linear color and opacity as four 16-bit fractions (red and green,
 // then blue and opacity; decision 026), its packed surface (decision 019)
-// and unused flags.
+// and flags: one more than the offset of a skinned slot's joint palette
+// (decision 036), 0 for rigid slots.
 struct SlotColor {
     color: vec2<u32>,
     surface: u32,
@@ -53,6 +54,11 @@ struct SlotColor {
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
 // Temporally antialiased frames: each slot's pose in the previous frame.
 @group(2) @binding(2) var<storage, read> previous_poses: array<AffinePose>;
+// Joint palettes (decision 036): each joint's displayed world matrix times
+// its inverse bind matrix; temporally antialiased frames also bind the
+// previous frame's.
+@group(2) @binding(3) var<storage, read> palette: array<AffinePose>;
+@group(2) @binding(4) var<storage, read> previous_palette: array<AffinePose>;
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
 
@@ -248,6 +254,84 @@ fn vs_affine_temporal_extended(input: AffineVertexInput, @location(9) color: vec
     output.world_v = vertex.world_v;
     output.material = vertex.material;
     output.previous = vertex.previous;
+    output.color = color;
+    output.uv1 = uv1;
+    return output;
+}
+
+// Linear blend skinning (decision 036): the joints' palette matrices
+// weighted by the vertex's renormalized 16-bit weights.
+fn blend_poses(a: AffinePose, b: AffinePose, c: AffinePose, d: AffinePose,
+        weights: vec4<f32>) -> mat4x4<f32> {
+    let w = weights / max(dot(weights, vec4<f32>(1.0)), 1.0e-6);
+    return pose_matrix(AffinePose(
+        a.row_0 * w.x + b.row_0 * w.y + c.row_0 * w.z + d.row_0 * w.w,
+        a.row_1 * w.x + b.row_1 * w.y + c.row_1 * w.z + d.row_1 * w.w,
+        a.row_2 * w.x + b.row_2 * w.y + c.row_2 * w.z + d.row_2 * w.w,
+    ));
+}
+
+// A skinned slot's matrix for a vertex: `flags` is one more than the slot's
+// palette offset.
+fn skin_matrix(flags: u32, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
+    let base = flags - 1u;
+    return blend_poses(palette[base + joints.x], palette[base + joints.y],
+        palette[base + joints.z], palette[base + joints.w], weights);
+}
+
+fn previous_skin_matrix(flags: u32, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
+    let base = flags - 1u;
+    return blend_poses(previous_palette[base + joints.x], previous_palette[base + joints.y],
+        previous_palette[base + joints.z], previous_palette[base + joints.w], weights);
+}
+
+// Meshes with joints drawn through retained slots: skinned slots move each
+// vertex by their palette, rigid slots drawing the same mesh by their pose.
+fn vertex_affine_skinned(input: AffineVertexInput, joints: vec4<u32>,
+        weights: vec4<f32>) -> VertexOutput {
+    let index = input.slot & ~MOVED_SLOT;
+    let slot = colors[index];
+    var model = pose_matrix(poses[index]);
+    if slot.flags != 0u {
+        model = skin_matrix(slot.flags, joints, weights);
+    }
+    return transform_vertex(input.position, input.normal, slot.color, slot.surface,
+        input.uv, model);
+}
+
+@vertex
+fn vs_affine_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
+        @location(12) weights: vec4<f32>) -> ExtendedOutput {
+    return extended_output(vertex_affine_skinned(input, joints, weights), color, uv1);
+}
+
+// Skinned slots' previous positions come from the previous palette, which
+// is this frame's when motion is invalid.
+@vertex
+fn vs_affine_temporal_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
+        @location(12) weights: vec4<f32>) -> ExtendedTemporalOutput {
+    let slot = input.slot & ~MOVED_SLOT;
+    let material = colors[slot];
+    var model = pose_matrix(poses[slot]);
+    var previous_model = model;
+    if material.flags != 0u {
+        model = skin_matrix(material.flags, joints, weights);
+        previous_model = previous_skin_matrix(material.flags, joints, weights);
+    } else if (input.slot & MOVED_SLOT) != 0u {
+        previous_model = pose_matrix(previous_poses[slot]);
+    }
+    let vertex = transform_vertex(input.position, input.normal, material.color,
+        material.surface, input.uv, model);
+    let previous = camera.previous_view_projection
+        * (previous_model * vec4<f32>(input.position, 1.0));
+    var output: ExtendedTemporalOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.previous = previous.xyw;
     output.color = color;
     output.uv1 = uv1;
     return output;

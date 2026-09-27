@@ -2,10 +2,10 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
-    AmbientOcclusion, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime, FrameTime,
-    GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
+    AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime,
+    FrameTime, GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
     ParticleEmitter, Particles, PresentationMode, PresentationState, PresentedTransforms,
-    Reflections, Shadows, SunShafts, Tint, Transform,
+    Reflections, Shadows, Skin, SunShafts, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -20,9 +20,9 @@ use crate::{
     DevError, DevRequest, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        CameraView, GlobalTransformView, HierarchyView, InterpolateTransformView, Mesh3dView,
-        MeshBoundsView, PresentationModeView, PresentationStateView, PresentedTransformView,
-        SurfaceView, TransformView,
+        AnimationPlayerView, CameraView, GlobalTransformView, HierarchyView,
+        InterpolateTransformView, Mesh3dView, MeshBoundsView, PresentationModeView,
+        PresentationStateView, PresentedTransformView, SkinView, SurfaceView, TransformView,
     },
 };
 
@@ -255,6 +255,42 @@ impl Default for DevTools {
                 .with_default(json!(Tint::WHITE.0)),
             |tint| json!(tint.0),
         ).expect("built-in descriptor is bounded");
+        // Animation (decisions 035 and 036): players and skins name clips
+        // and entities by their authored IDs.
+        let authored = |world: &World, entity: Option<Entity>| {
+            entity
+                .and_then(|entity| world.get::<SceneEntity>(entity))
+                .map(|source| source.authored_id.clone())
+        };
+        tools.insert(Inspector {
+            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player (decision 035) as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())),
+            read: Box::new(move |world, entity, scene| {
+                let player = world.get::<AnimationPlayer>(entity?)?;
+                let clip = world.get_resource::<AssetLibrary>().and_then(|assets| assets.clip(player.clip));
+                Some(json!(AnimationPlayerView {
+                    clip: scene.and_then(|scene| scene.clips().find(|(_, handle)| *handle == player.clip).map(|(id, _)| id.to_owned())),
+                    clip_alive: clip.is_some(),
+                    duration: clip.map(|clip| clip.duration()),
+                    time: player.time,
+                    speed: player.speed,
+                    looping: player.looping,
+                    targets: player.targets.iter().map(|&target| authored(world, target)).collect(),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        tools.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh (decision 036), as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())),
+            read: Box::new(move |world, entity, _scene| {
+                let skin = world.get::<Skin>(entity?)?;
+                Some(json!(SkinView {
+                    joints: skin.joints.iter().map(|&joint| authored(world, Some(joint))).collect(),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
         tools.register_component::<ParticleEmitter>(
             InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
                 .with_default(json!(SceneEmitter::default())),

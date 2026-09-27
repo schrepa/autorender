@@ -31,8 +31,8 @@ impl Aabb {
 }
 
 /// Validated, immutable indexed triangles. Winding is counterclockwise.
-/// Optional vertex colors and second texture coordinates (decision 034)
-/// follow the vertices one to one.
+/// Optional vertex colors and second texture coordinates (decision 034) and
+/// skinning joints and weights (decision 036) follow the vertices one to one.
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
@@ -40,6 +40,16 @@ pub struct Mesh {
     bounds: Aabb,
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
+    skin: Option<MeshSkin>,
+}
+
+/// Up to four joints per vertex and their weights (glTF `JOINTS_0` and
+/// `WEIGHTS_0`): indices into the joints of the skin an entity binds.
+#[derive(Debug)]
+struct MeshSkin {
+    joints: Box<[[u16; 4]]>,
+    weights: Box<[[f32; 4]]>,
+    joint_count: u32,
 }
 
 impl Mesh {
@@ -90,7 +100,48 @@ impl Mesh {
             bounds: Aabb { min, max },
             colors: None,
             uv1: None,
+            skin: None,
         })
+    }
+
+    /// This mesh deformed by joints: per vertex up to four joint indices
+    /// into the skin an entity binds (decision 036) and their weights, which
+    /// must be finite, not negative and not all zero; they are normalized to
+    /// sum to one. Joints of zero weight are ignored and read as joint 0.
+    pub fn with_skin(
+        mut self,
+        mut joints: Vec<[u16; 4]>,
+        mut weights: Vec<[f32; 4]>,
+    ) -> Result<Self, AssetError> {
+        self.check_count("joints", joints.len())?;
+        self.check_count("weights", weights.len())?;
+        let mut joint_count = 0;
+        for (vertex, (joints, weights)) in joints.iter_mut().zip(&mut weights).enumerate() {
+            let sum: f32 = weights.iter().sum();
+            if !weights
+                .iter()
+                .all(|weight| weight.is_finite() && *weight >= 0.0)
+                || !(sum > 0.0 && sum.is_finite())
+            {
+                return Err(AssetError::InvalidAttribute {
+                    attribute: "weights",
+                    vertex,
+                });
+            }
+            for (joint, weight) in joints.iter_mut().zip(weights.iter_mut()) {
+                *weight /= sum;
+                if *weight == 0.0 {
+                    *joint = 0;
+                }
+                joint_count = joint_count.max(u32::from(*joint) + 1);
+            }
+        }
+        self.skin = Some(MeshSkin {
+            joints: joints.into_boxed_slice(),
+            weights: weights.into_boxed_slice(),
+            joint_count,
+        });
+        Ok(self)
     }
 
     /// This mesh with linear RGBA vertex colors in `[0, 1]`, one per vertex,
@@ -154,6 +205,22 @@ impl Mesh {
         self.uv1.as_deref()
     }
 
+    /// Joint indices of skinned meshes, four per vertex.
+    pub fn joints(&self) -> Option<&[[u16; 4]]> {
+        self.skin.as_ref().map(|skin| &skin.joints[..])
+    }
+
+    /// Joint weights of skinned meshes, four per vertex summing to one.
+    pub fn weights(&self) -> Option<&[[f32; 4]]> {
+        self.skin.as_ref().map(|skin| &skin.weights[..])
+    }
+
+    /// The joints a skin must provide: one more than the largest weighted
+    /// joint index, and 0 for meshes without joints.
+    pub fn joint_count(&self) -> u32 {
+        self.skin.as_ref().map_or(0, |skin| skin.joint_count)
+    }
+
     pub fn indices(&self) -> &[u32] {
         &self.indices
     }
@@ -169,6 +236,8 @@ impl Mesh {
             + std::mem::size_of_val(self.indices())
             + self.colors().map_or(0, std::mem::size_of_val)
             + self.uv1().map_or(0, std::mem::size_of_val)
+            + self.joints().map_or(0, std::mem::size_of_val)
+            + self.weights().map_or(0, std::mem::size_of_val)
     }
 
     /// Unit cube centered at the origin, with flat face normals.

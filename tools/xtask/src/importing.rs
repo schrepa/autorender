@@ -42,7 +42,13 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     };
     let imported = result.document;
     let file_bytes: usize = result.files.iter().map(|file| file.bytes.len()).sum();
-    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"files":result.files.len(),"file_bytes":file_bytes});
+    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
+    // Animated and skinned models keep their nodes (decisions 035, 036).
+    let node_transforms = if imported.animations.is_empty() && imported.skins.is_empty() {
+        "baked"
+    } else {
+        "hierarchy"
+    };
     let (report, document) = if let Some(output) = &options.output {
         let source = imported.to_json()?;
         // Files first: a scene is never written without them.
@@ -79,7 +85,7 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     Ok(json!({
         "save":report,"scene":document.id,"imported":counts,
         "ignored_extensions":result.ignored_extensions,
-        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2-static","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":"baked","materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb1-files"}}
+        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":node_transforms,"materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb-files","animations":"ean1-files"}}
     }))
 }
 
@@ -194,7 +200,15 @@ fn merge(
         || current
             .textures
             .iter()
-            .any(|texture| generated(&texture.id, id, Kind::Texture));
+            .any(|texture| generated(&texture.id, id, Kind::Texture))
+        || current
+            .animations
+            .iter()
+            .any(|animation| generated(&animation.id, id, Kind::Animation))
+        || current
+            .skins
+            .iter()
+            .any(|skin| generated(&skin.id, id, Kind::Skin));
     if (as_prefab && existing_flat)
         || (!as_prefab && existing_prefab)
         || (existing_assets && !existing_flat && !existing_prefab)
@@ -254,13 +268,33 @@ fn merge(
         current
             .textures
             .retain(|texture| !generated(&texture.id, id, Kind::Texture));
+        current
+            .animations
+            .retain(|animation| !generated(&animation.id, id, Kind::Animation));
+        current
+            .skins
+            .retain(|skin| !generated(&skin.id, id, Kind::Skin));
         for mut entity in imported.entities {
             if let Some(old) = previous.get(&entity.id) {
-                entity.transform = old.transform;
+                // Hierarchy nodes' transforms and parents are source data;
+                // other entities keep their placement.
+                if !node_entity(&entity.id, id) {
+                    entity.transform = old.transform;
+                    entity.parent.clone_from(&old.parent);
+                }
                 entity.name.clone_from(&old.name);
                 entity.tags.clone_from(&old.tags);
-                entity.parent.clone_from(&old.parent);
                 entity.collider = old.collider;
+                entity.tint = old.tint;
+                // A chosen clip stays while the import still has it.
+                if let Some(player) = &old.animation
+                    && imported
+                        .animations
+                        .iter()
+                        .any(|animation| animation.id == player.clip)
+                {
+                    entity.animation = Some(player.clone());
+                }
             }
             current.entities.push(entity);
         }
@@ -270,6 +304,8 @@ fn merge(
     current.meshes.extend(imported.meshes);
     current.materials.extend(imported.materials);
     current.textures.extend(imported.textures);
+    current.animations.extend(imported.animations);
+    current.skins.extend(imported.skins);
     current.prefabs.extend(imported.prefabs);
     current.revision = current.revision.checked_add(1).ok_or_else(|| {
         ImportError::new(
@@ -315,6 +351,20 @@ enum Kind {
     Mesh,
     Material,
     Texture,
+    Animation,
+    Skin,
+}
+
+fn decimal(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// A hierarchy import's node entity, `NAMESPACE.nodeN`.
+fn node_entity(value: &str, namespace: &str) -> bool {
+    value
+        .strip_prefix(namespace)
+        .and_then(|suffix| suffix.strip_prefix(".node"))
+        .is_some_and(decimal)
 }
 
 fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
@@ -324,11 +374,13 @@ fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
     else {
         return false;
     };
-    let decimal =
-        |value: &str| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit());
     match kind {
         Kind::Texture => suffix.strip_prefix("image").is_some_and(decimal),
         Kind::Material => suffix.strip_prefix("material").is_some_and(decimal),
+        Kind::Animation => suffix.strip_prefix("anim").is_some_and(decimal),
+        Kind::Skin => suffix.strip_prefix("skin").is_some_and(decimal),
+        // Hierarchy imports' root and node entities.
+        Kind::Entity if suffix == "root" || node_entity(value, namespace) => true,
         Kind::Entity | Kind::Mesh => {
             let suffix = if matches!(kind, Kind::Mesh) {
                 let Some(suffix) = suffix.strip_suffix(".mesh") else {
@@ -442,6 +494,8 @@ mod tests {
             light: None,
             particles: None,
             tint: None,
+            animation: None,
+            skin: None,
             transform: engine_scene::SceneTransform::default(),
             tags: Vec::new(),
         }

@@ -155,6 +155,8 @@ fn rejects_invalid_inline_mesh_before_world_mutation() {
                 uv: [0.0; 2],
                 color: None,
                 uv1: None,
+                joints: None,
+                weights: None,
             }],
             indices: vec![0, 1, 2],
         },
@@ -1114,13 +1116,15 @@ fn version_eight_tints_attach_to_their_objects_and_validate() {
 
 #[test]
 fn version_eight_vertex_colors_and_second_coordinates_load_inline_and_from_buffers() {
-    use crate::{SceneFiles, encode_mesh_buffer_with};
+    use crate::{MeshStreams, SceneFiles, encode_mesh_buffer_with};
     let vertex = |position: [f32; 3]| crate::SceneVertex {
         position,
         normal: [0.0, 0.0, 1.0],
         uv: [position[0], position[1]],
         color: Some([1.0, 0.5, 0.25, 1.0]),
         uv1: Some([0.5, 0.5]),
+        joints: None,
+        weights: None,
     };
     let vertices = vec![
         vertex([0.0; 3]),
@@ -1153,7 +1157,15 @@ fn version_eight_vertex_colors_and_second_coordinates_load_inline_and_from_buffe
         .map(|vertex| vertex.color.unwrap())
         .collect();
     let uv1: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv1.unwrap()).collect();
-    let bytes = encode_mesh_buffer_with(&vertices, &[0, 1, 2], Some(&colors), Some(&uv1));
+    let bytes = encode_mesh_buffer_with(
+        &vertices,
+        &[0, 1, 2],
+        MeshStreams {
+            colors: Some(&colors),
+            uv1: Some(&uv1),
+            ..MeshStreams::default()
+        },
+    );
     assert_eq!(&bytes[..4], b"EMB2");
     let mut files = SceneFiles::new();
     files.add_buffer("meshes/colors.bin", bytes);

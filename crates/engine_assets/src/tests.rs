@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::*;
 
@@ -717,4 +717,110 @@ fn optional_vertex_colors_and_second_coordinates_validate() {
             .binding(),
         plain.with_base_color_texture(second).unwrap().binding()
     );
+}
+
+#[test]
+fn animation_channels_sample_step_linear_and_cubic_splines_like_gltf() {
+    let vectors =
+        |values: &[f32]| Keyframes::Vectors(values.iter().map(|x| Vec3::splat(*x)).collect());
+    let at = |channel: &AnimationChannel, time| match channel.sample(time) {
+        AnimationSample::Translation(value) | AnimationSample::Scale(value) => value.x,
+        AnimationSample::Rotation(_) => panic!("vector channel"),
+    };
+    let step = AnimationChannel::new(
+        0,
+        AnimatedProperty::Translation,
+        KeyInterpolation::Step,
+        vec![1.0, 2.0],
+        vectors(&[3.0, 5.0]),
+    )
+    .unwrap();
+    // Before the first key, between keys and after the last.
+    assert_eq!(
+        [at(&step, 0.0), at(&step, 1.5), at(&step, 9.0)],
+        [3.0, 3.0, 5.0]
+    );
+    let linear = AnimationChannel::new(
+        0,
+        AnimatedProperty::Scale,
+        KeyInterpolation::Linear,
+        vec![0.0, 2.0],
+        vectors(&[1.0, 3.0]),
+    )
+    .unwrap();
+    assert_eq!([at(&linear, 0.5), at(&linear, 2.0)], [1.5, 3.0]);
+    // Cubic splines: in-tangent, value, out-tangent per key; tangents are
+    // per second and scale by the key span.
+    let cubic = AnimationChannel::new(
+        0,
+        AnimatedProperty::Translation,
+        KeyInterpolation::CubicSpline,
+        vec![0.0, 1.0],
+        vectors(&[0.0, 0.0, 2.0, 0.0, 1.0, 0.0]),
+    )
+    .unwrap();
+    assert!((at(&cubic, 0.5) - 0.75).abs() < 1.0e-6);
+    assert_eq!(at(&cubic, 1.0), 1.0);
+    // Rotations take the shortest arc and stay unit length.
+    let quarter = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let rotation = AnimationChannel::new(
+        0,
+        AnimatedProperty::Rotation,
+        KeyInterpolation::Linear,
+        vec![0.0, 1.0],
+        Keyframes::Rotations(vec![Quat::IDENTITY, quarter * 2.0].into_boxed_slice()),
+    )
+    .unwrap();
+    let AnimationSample::Rotation(half) = rotation.sample(0.5) else {
+        panic!("rotation channel");
+    };
+    assert!(half.abs_diff_eq(Quat::from_rotation_y(std::f32::consts::FRAC_PI_4), 1.0e-5));
+    // Clips span their latest key and bind as many targets as they name.
+    let clip = AnimationClip::new(vec![
+        step,
+        AnimationChannel::new(
+            3,
+            AnimatedProperty::Rotation,
+            KeyInterpolation::Step,
+            vec![0.0, 4.5],
+            Keyframes::Rotations(vec![Quat::IDENTITY; 2].into_boxed_slice()),
+        )
+        .unwrap(),
+    ])
+    .unwrap();
+    assert_eq!((clip.duration(), clip.target_count()), (4.5, 4));
+    let mut library = AssetLibrary::default();
+    let handle = library.insert_clip(clip).unwrap();
+    assert_eq!(library.clip(handle).unwrap().channels().len(), 2);
+    assert!(library.resident_bytes() > 0);
+    assert!(library.remove_clip(handle));
+    assert_eq!(library.resident_bytes(), 0);
+    // Invalid keys.
+    let reject = |times: Vec<f32>, values| {
+        AnimationChannel::new(
+            0,
+            AnimatedProperty::Scale,
+            KeyInterpolation::Linear,
+            times,
+            values,
+        )
+        .unwrap_err()
+        .code()
+    };
+    assert_eq!(
+        reject(vec![1.0, 1.0], vectors(&[1.0, 2.0])),
+        "asset.invalid_animation"
+    );
+    assert_eq!(
+        reject(vec![0.0, 1.0], vectors(&[1.0])),
+        "asset.invalid_animation"
+    );
+    assert_eq!(
+        reject(
+            vec![0.0],
+            Keyframes::Rotations(vec![Quat::IDENTITY].into_boxed_slice())
+        ),
+        "asset.invalid_animation"
+    );
+    assert!(AnimationClip::new(Vec::new()).is_err());
 }

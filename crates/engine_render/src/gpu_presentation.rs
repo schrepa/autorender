@@ -11,6 +11,7 @@ use std::{cell::Cell, rc::Rc};
 
 use engine_core::{
     Aabb, GpuPresentation, MAX_HIERARCHY_DEPTH, NodeInfo, NodePose, PoseRows, RenderFrame,
+    RenderJoint,
 };
 
 use crate::batches::{BatchPlan, DrawBatch};
@@ -58,6 +59,7 @@ impl<'a> StageStamps<'a> {
 
 const GROUP: u32 = 256;
 const PARENT_GROUP: u32 = 64;
+const JOINT_GROUP: u32 = 64;
 const ARGS_GROUP: u32 = 64;
 const LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const READBACKS: usize = 3;
@@ -72,6 +74,7 @@ struct Pipelines {
     shift_previous: wgpu::ComputePipeline,
     compose_parents: wgpu::ComputePipeline,
     cull: wgpu::ComputePipeline,
+    skin_palette: wgpu::ComputePipeline,
     sum_groups: wgpu::ComputePipeline,
     scan_groups: wgpu::ComputePipeline,
     batch_args: wgpu::ComputePipeline,
@@ -83,6 +86,8 @@ struct BindGroups {
     compose_parents: wgpu::BindGroup,
     // One per pose buffer: temporally antialiased frames alternate two.
     cull: [Option<wgpu::BindGroup>; 2],
+    // One per palette buffer, which alternate with the pose buffers.
+    skin: [Option<wgpu::BindGroup>; 2],
     sum_groups: wgpu::BindGroup,
     scan_groups: wgpu::BindGroup,
     batch_args: wgpu::BindGroup,
@@ -171,6 +176,14 @@ pub(crate) struct GpuPresentationPass {
     // Per slot: its candidate's draw-group position (`u32::MAX`: none).
     slot_positions: Vec<u32>,
     batch_staging: Vec<BatchData>,
+    // Skinned slots' joints (decision 036): nodes and inverse bind matrices
+    // as last uploaded, and how many this frame's palette pass writes.
+    joint_capacity: usize,
+    joint_nodes: wgpu::Buffer,
+    inverse_binds: wgpu::Buffer,
+    uploaded_nodes: Vec<u32>,
+    uploaded_binds: Vec<PoseRows>,
+    joint_count: u32,
     readbacks: Vec<VisibleReadback>,
     // Current poses staged between frames for the next gather, with the
     // `GpuPresentation::current_version` they were copied at.
@@ -223,6 +236,7 @@ impl GpuPresentationPass {
             shift_previous: pipeline("shift_previous"),
             compose_parents: pipeline("compose_parents"),
             cull: pipeline("cull"),
+            skin_palette: pipeline("skin_palette"),
             sum_groups: pipeline("sum_groups"),
             scan_groups: pipeline("scan_groups"),
             batch_args: pipeline("batch_args"),
@@ -306,6 +320,12 @@ impl GpuPresentationPass {
             slot_staging: Vec::new(),
             slot_positions: Vec::new(),
             batch_staging: Vec::new(),
+            joint_capacity: 0,
+            joint_nodes: empty("engine/presentation-joint-nodes"),
+            inverse_binds: empty("engine/presentation-inverse-binds"),
+            uploaded_nodes: Vec::new(),
+            uploaded_binds: Vec::new(),
+            joint_count: 0,
             readbacks: Vec::new(),
             prestaged: None,
             last_visible: Rc::new(Cell::new(None)),
@@ -326,6 +346,8 @@ impl GpuPresentationPass {
             &self.batches,
             &self.batch_bases,
             &self.draws,
+            &self.joint_nodes,
+            &self.inverse_binds,
         ]
         .iter()
         .map(|buffer| buffer.size())
@@ -459,11 +481,21 @@ impl GpuPresentationPass {
         }
     }
 
-    fn bind_groups(&mut self, device: &wgpu::Device, poses: &wgpu::Buffer, index: usize) {
+    fn bind_groups(
+        &mut self,
+        device: &wgpu::Device,
+        poses: &wgpu::Buffer,
+        palette: &wgpu::Buffer,
+        index: usize,
+    ) {
         if let Some(groups) = &self.bind_groups {
             if groups.cull[index].is_none() {
                 let cull = self.cull_group(device, poses);
                 self.bind_groups.as_mut().expect("checked above").cull[index] = Some(cull);
+            }
+            if self.bind_groups.as_ref().expect("checked above").skin[index].is_none() {
+                let skin = self.skin_group(device, palette);
+                self.bind_groups.as_mut().expect("checked above").skin[index] = Some(skin);
             }
             return;
         }
@@ -477,6 +509,8 @@ impl GpuPresentationPass {
         let pipelines = &self.pipelines;
         let mut cull = [None, None];
         cull[index] = Some(self.cull_group(device, poses));
+        let mut skin = [None, None];
+        skin[index] = Some(self.skin_group(device, palette));
         self.bind_groups = Some(BindGroups {
             shift_previous: group(
                 &pipelines.shift_previous,
@@ -496,6 +530,7 @@ impl GpuPresentationPass {
                 ],
             ),
             cull,
+            skin,
             sum_groups: group(
                 &pipelines.sum_groups,
                 "engine/presentation-sum-group",
@@ -550,6 +585,77 @@ impl GpuPresentationPass {
         })
     }
 
+    fn skin_group(&self, device: &wgpu::Device, palette: &wgpu::Buffer) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/presentation-skin-group"),
+            layout: &self.pipelines.skin_palette.get_bind_group_layout(0),
+            entries: &[
+                entry(0, &self.frame),
+                entry(1, &self.locals),
+                entry(2, &self.info),
+                entry(3, &self.authority),
+                entry(4, &self.composed),
+                entry(15, &self.joint_nodes),
+                entry(16, &self.inverse_binds),
+                entry(17, palette),
+            ],
+        })
+    }
+
+    /// Uploads skinned slots' joints (decision 036) when they changed.
+    fn prepare_joints(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        joints: &[RenderJoint],
+    ) {
+        self.joint_count = joints.len() as u32;
+        if joints.len() > self.joint_capacity {
+            self.joint_capacity = grow(joints.len());
+            let capacity = self.joint_capacity as u64;
+            self.joint_nodes = storage(
+                device,
+                "engine/presentation-joint-nodes",
+                capacity * 4,
+                wgpu::BufferUsages::empty(),
+            );
+            self.inverse_binds = storage(
+                device,
+                "engine/presentation-inverse-binds",
+                capacity * size_of::<PoseRows>() as u64,
+                wgpu::BufferUsages::empty(),
+            );
+            self.uploaded_nodes.clear();
+            self.uploaded_binds.clear();
+            self.bind_groups = None;
+        }
+        let unchanged = self.uploaded_nodes.len() == joints.len()
+            && joints
+                .iter()
+                .zip(&self.uploaded_nodes)
+                .zip(&self.uploaded_binds)
+                .all(|((joint, node), bind)| joint.node == *node && joint.inverse_bind == *bind);
+        if unchanged || joints.is_empty() {
+            return;
+        }
+        self.uploaded_nodes.clear();
+        self.uploaded_nodes
+            .extend(joints.iter().map(|joint| joint.node));
+        self.uploaded_binds.clear();
+        self.uploaded_binds
+            .extend(joints.iter().map(|joint| joint.inverse_bind));
+        queue.write_buffer(
+            &self.joint_nodes,
+            0,
+            bytemuck::cast_slice(&self.uploaded_nodes),
+        );
+        queue.write_buffer(
+            &self.inverse_binds,
+            0,
+            bytemuck::cast_slice(&self.uploaded_binds),
+        );
+    }
+
     /// Holds current poses staged between frames for the next gather to copy.
     pub(crate) fn prestage(&mut self, prestaged: Prestaged, version: (u64, u64)) {
         self.prestaged = Some((prestaged, version));
@@ -561,9 +667,11 @@ impl GpuPresentationPass {
     /// (0 or 1) of the pair `poses_generation` identifies, and tests them
     /// against `view_projection`, the projection the frame rasterizes.
     /// With `motion`, visible IDs of moving slots carry `MOVED_SLOT`.
-    /// `batch_meta` gives each plan batch's index count, mesh bounds and
-    /// shadow draw group; `shadow_groups` distinguishes plans whose batch
-    /// records carry shadow groups.
+    /// `batch_meta` gives each plan batch's index count, mesh bounds, shadow
+    /// draw group and whether its mesh has joints; `shadow_groups`
+    /// distinguishes plans whose batch records carry shadow groups. Skinned
+    /// slots' palettes (decision 036) are written into `palette`, of the
+    /// pose storage generation, from the frame's joints.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -574,9 +682,10 @@ impl GpuPresentationPass {
         frame: &RenderFrame<'_>,
         gpu: &GpuPresentation<'_>,
         plan: &BatchPlan,
-        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32),
+        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, bool),
         shadow_groups: bool,
         poses: &wgpu::Buffer,
+        palette: &wgpu::Buffer,
         poses_index: usize,
         poses_generation: u64,
         view_projection: glam::Mat4,
@@ -595,11 +704,12 @@ impl GpuPresentationPass {
         self.ensure_nodes(device, nodes, if held { 0 } else { gpu.parents.len() });
         let candidates = plan.ordered_instances.len();
         self.ensure_groups(device, candidates, plan.batches.len());
+        self.prepare_joints(device, queue, &frame.snapshot().joints);
         if self.poses_generation != Some(poses_generation) {
             self.poses_generation = Some(poses_generation);
             self.bind_groups = None;
         }
-        self.bind_groups(device, poses, poses_index);
+        self.bind_groups(device, poses, palette, poses_index);
         self.poses_index = poses_index;
 
         // Node inputs: records newer than the last uploaded gather.
@@ -816,14 +926,17 @@ impl GpuPresentationPass {
             self.batch_staging.clear();
             self.batch_staging.reserve_exact(plan.batches.len());
             for (index, batch) in plan.batches.iter().enumerate() {
-                let (index_count, bounds, group) = batch_meta(index, batch);
+                let (index_count, bounds, group, skinned) = batch_meta(index, batch);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
                 self.batch_staging.push(BatchData {
                     start: batch.instances.start,
                     count: batch.instances.end - batch.instances.start,
                     index_count,
                     pad: group,
-                    bounds_min: bounds.min().extend(0.0).to_array(),
+                    bounds_min: bounds
+                        .min()
+                        .extend(if skinned { 1.0 } else { 0.0 })
+                        .to_array(),
                     bounds_max: bounds.max().extend(0.0).to_array(),
                 });
                 let base = self.candidate_staging.len() as u32;
@@ -904,7 +1017,8 @@ impl GpuPresentationPass {
             planes,
             absolute_view_projection: absolute,
             motion: u32::from(motion),
-            pad: [0; 3],
+            joints: self.joint_count,
+            pad: [0; 2],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         prepared
@@ -937,6 +1051,18 @@ impl GpuPresentationPass {
                 }
             }
             CULL => {
+                // Skinned slots' palettes, from the composed parents.
+                if self.joint_count != 0 {
+                    pass.set_pipeline(&self.pipelines.skin_palette);
+                    pass.set_bind_group(
+                        0,
+                        groups.skin[self.poses_index]
+                            .as_ref()
+                            .expect("bound in prepare"),
+                        &[],
+                    );
+                    pass.dispatch_workgroups(self.joint_count.div_ceil(JOINT_GROUP), 1, 1);
+                }
                 // Flags in slot order, then their sums in draw-group order.
                 let workgroups = self.candidate_count.div_ceil(GROUP);
                 pass.set_pipeline(&self.pipelines.cull);
@@ -968,7 +1094,7 @@ impl GpuPresentationPass {
         };
         let stages = [
             (COMPOSE, compose),
-            (CULL, candidates),
+            (CULL, candidates || self.joint_count != 0),
             (SCAN, candidates),
             (SCATTER, candidates),
         ];

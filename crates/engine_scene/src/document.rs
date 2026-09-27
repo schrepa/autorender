@@ -2,8 +2,8 @@ use engine_core::{Camera, Mesh, MeshVertex, Surface, Transform, glam};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneFiles, SceneLight,
-    SceneMaterial, SceneTexture, files::valid_uri,
+    SceneAnimation, SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneFiles,
+    SceneLight, SceneMaterial, ScenePlayer, SceneSkin, SceneTexture, files::valid_uri,
 };
 
 /// Accepted authoring format version. Changes require an explicit migration.
@@ -47,6 +47,13 @@ pub struct SceneDocument {
     /// Reusable local entity trees. Definitions share this document's assets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
+    /// Keyframed clips that entity `animation` players play (decision 035).
+    /// Version 8.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub animations: Vec<SceneAnimation>,
+    /// Joint lists that deform skinned meshes (decision 036). Version 8.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skins: Vec<SceneSkin>,
     pub entities: Vec<SceneObject>,
 }
 
@@ -303,17 +310,20 @@ impl MeshSource {
                     return Ok(Mesh::cube());
                 };
                 let buffer = files.mesh(uri, &uri_path)?;
-                if version < 8 && (buffer.colors.is_some() || buffer.uv1.is_some()) {
+                if version < 8
+                    && (buffer.colors.is_some() || buffer.uv1.is_some() || buffer.skin.is_some())
+                {
                     return Err(SceneError::new(
                         "version_required",
                         uri_path,
-                        "vertex colors and second texture coordinates require scene version 8; set version to 8 and increment revision",
+                        "vertex colors, second texture coordinates, joints and weights require scene version 8; set version to 8 and increment revision",
                     ));
                 }
                 with_extras(
                     Mesh::new(buffer.vertices, buffer.indices),
                     buffer.colors,
                     buffer.uv1,
+                    buffer.skin,
                     path,
                 )
             }
@@ -333,6 +343,23 @@ impl MeshSource {
                 };
                 let colored = extras(&|vertex| vertex.color.is_some(), "a color")?;
                 let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
+                let skinned = extras(
+                    &|vertex| vertex.joints.is_some() && vertex.weights.is_some(),
+                    "joints and weights",
+                )? || vertices
+                    .iter()
+                    .any(|vertex| vertex.joints.is_some() != vertex.weights.is_some());
+                if skinned
+                    && vertices
+                        .iter()
+                        .any(|vertex| vertex.joints.is_none() || vertex.weights.is_none())
+                {
+                    return Err(SceneError::new(
+                        "invalid_mesh",
+                        format!("{path}.vertices"),
+                        "either every vertex has joints and weights or none does",
+                    ));
+                }
                 with_extras(
                     Mesh::new(
                         vertices.iter().copied().map(MeshVertex::from).collect(),
@@ -350,6 +377,17 @@ impl MeshSource {
                             .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
                             .collect()
                     }),
+                    skinned.then(|| {
+                        vertices
+                            .iter()
+                            .map(|vertex| {
+                                (
+                                    vertex.joints.unwrap_or_default(),
+                                    vertex.weights.unwrap_or_default(),
+                                )
+                            })
+                            .unzip()
+                    }),
                     path,
                 )
             }
@@ -357,11 +395,13 @@ impl MeshSource {
     }
 }
 
-/// `mesh` with optional vertex colors and second texture coordinates.
+/// `mesh` with optional vertex colors, second texture coordinates, and
+/// joints and weights.
 fn with_extras(
     mesh: Result<Mesh, engine_core::AssetError>,
     colors: Option<Vec<[f32; 4]>>,
     uv1: Option<Vec<[f32; 2]>>,
+    skin: Option<crate::files::SkinStreams>,
     path: &str,
 ) -> Result<Mesh, SceneError> {
     let invalid =
@@ -373,13 +413,22 @@ fn with_extras(
     if let Some(uv1) = uv1 {
         mesh = mesh.with_uv1(uv1).map_err(invalid)?;
     }
+    if let Some((joints, weights)) = skin {
+        mesh = mesh.with_skin(joints, weights).map_err(invalid)?;
+    }
     Ok(mesh)
 }
 
 impl MeshSource {
-    /// Whether any inline vertex has a color or second coordinates.
+    /// Whether any inline vertex has a color, second coordinates, joints or
+    /// weights.
     pub(crate) fn has_vertex_extras(&self) -> bool {
-        matches!(self, Self::Inline { vertices, .. } if vertices.iter().any(|vertex| vertex.color.is_some() || vertex.uv1.is_some()))
+        matches!(self, Self::Inline { vertices, .. } if vertices.iter().any(|vertex| {
+            vertex.color.is_some()
+                || vertex.uv1.is_some()
+                || vertex.joints.is_some()
+                || vertex.weights.is_some()
+        }))
     }
 }
 
@@ -401,6 +450,15 @@ pub struct SceneVertex {
     /// Every vertex of a mesh has them or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv1: Option<[f32; 2]>,
+    /// Version 8: up to four joints (indices into the skin of the entities
+    /// drawing the mesh) moving this vertex (decision 036). Every vertex of
+    /// a mesh has joints and weights or none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub joints: Option<[u16; 4]>,
+    /// Version 8: the joints' weights, not negative and not all zero; they
+    /// are normalized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weights: Option<[f32; 4]>,
 }
 
 impl From<SceneVertex> for MeshVertex {
@@ -488,6 +546,17 @@ pub struct SceneObject {
     /// (decision 033), each factor finite and in `[0, 1]`. Requires version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<[f32; 4]>,
+    /// Plays an animation on its targets (decision 035). Requires version 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<ScenePlayer>,
+    /// The skin deforming this object's mesh (decision 036). Requires
+    /// version 8 and a mesh with joints and weights.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+    )]
+    pub skin: Option<String>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
