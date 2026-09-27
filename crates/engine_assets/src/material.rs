@@ -463,6 +463,57 @@ impl Material {
             || matches!(self.alpha_mode, AlphaMode::Mask { .. })
             || (self.alpha_mode == AlphaMode::Blend && self.color[3] == 1.0)
     }
+
+    /// What renderers bind for a material with maps: everything but its
+    /// color and surface, which they read per object. Materials with equal
+    /// bindings draw together whatever their colors.
+    pub fn binding(&self) -> Option<MaterialBinding> {
+        self.has_maps().then(|| MaterialBinding {
+            maps: self.maps().map(|map| {
+                map.map(|map| {
+                    let UvTransform {
+                        offset: [u, v],
+                        rotation,
+                        scale: [x, y],
+                    } = map.transform;
+                    (
+                        map.texture,
+                        map.sampler,
+                        [u, v, rotation, x, y].map(f32::to_bits),
+                    )
+                })
+            }),
+            parameters: [
+                self.normal_scale,
+                self.occlusion_strength,
+                self.emissive[0],
+                self.emissive[1],
+                self.emissive[2],
+                match self.alpha_mode {
+                    AlphaMode::Mask { cutoff } => cutoff,
+                    _ => 0.0,
+                },
+            ]
+            .map(f32::to_bits),
+            alpha: match self.alpha_mode {
+                AlphaMode::Opaque => 0,
+                AlphaMode::Mask { .. } => 1,
+                AlphaMode::Blend => 2,
+            },
+            double_sided: self.double_sided,
+        })
+    }
+}
+
+/// A material's maps and map parameters ([`Material::binding`]): its
+/// textures with their samplers and transforms, normal scale, occlusion
+/// strength, emissive color, alpha mode and sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MaterialBinding {
+    maps: [Option<(TextureHandle, Sampler, [u32; 5])>; 5],
+    parameters: [u32; 6],
+    alpha: u8,
+    double_sided: bool,
 }
 
 fn checked(texture: TextureRef) -> Result<TextureRef, AssetError> {

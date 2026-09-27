@@ -21,9 +21,9 @@ use crate::hierarchy::HierarchyScratch;
 
 use crate::{
     Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
-    MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance, RenderMaterial,
-    RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface, TextureHandle, Transform,
-    TransformIndex,
+    MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance,
+    RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface, TextureHandle,
+    Transform, TransformIndex,
     culling::{Classification, Frustum},
     hierarchy::ChangeWindow,
 };
@@ -245,7 +245,10 @@ struct Sources {
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
     mesh_indices: HashMap<MeshHandle, usize>,
+    // Materials with maps to their binding's index in `materials`, which
+    // holds the first material of each binding (decision 031).
     material_indices: HashMap<MaterialHandle, usize>,
+    binding_indices: HashMap<MaterialBinding, usize>,
     texture_indices: HashMap<TextureHandle, usize>,
     mesh_used: Vec<bool>,
     material_used: Vec<bool>,
@@ -263,6 +266,7 @@ impl Sources {
         self.textures.clear();
         self.mesh_indices.clear();
         self.material_indices.clear();
+        self.binding_indices.clear();
         self.texture_indices.clear();
         self.mesh_used.clear();
         self.material_used.clear();
@@ -307,35 +311,39 @@ impl Sources {
             self.mesh_used.push(false);
             index
         });
+        // Materials with equal bindings draw as the first one resolved.
         let material_index = mapped.map(|(material_handle, material)| {
             *self
                 .material_indices
                 .entry(material_handle)
                 .or_insert_with(|| {
-                    for texture in material.textures() {
-                        self.texture_indices.entry(texture).or_insert_with(|| {
-                            self.textures.push(RenderTexture {
-                                handle: texture,
-                                texture: Arc::clone(
-                                    assets.texture(texture).expect("resolved above"),
-                                ),
+                    let binding = material.binding().expect("materials with maps bind");
+                    *self.binding_indices.entry(binding).or_insert_with(|| {
+                        for texture in material.textures() {
+                            self.texture_indices.entry(texture).or_insert_with(|| {
+                                self.textures.push(RenderTexture {
+                                    handle: texture,
+                                    texture: Arc::clone(
+                                        assets.texture(texture).expect("resolved above"),
+                                    ),
+                                });
+                                self.textures.len() - 1
                             });
-                            self.textures.len() - 1
+                        }
+                        self.materials.push(RenderMaterial {
+                            handle: material_handle,
+                            material: *material,
                         });
-                    }
-                    self.materials.push(RenderMaterial {
-                        handle: material_handle,
-                        material: *material,
-                    });
-                    self.material_used.push(false);
-                    self.materials.len() - 1
+                        self.material_used.push(false);
+                        self.materials.len() - 1
+                    })
                 })
         });
         Some(ResolvedSource {
             mesh_index,
             material_index,
             mesh: handle,
-            material: mapped.map(|(material, _)| material),
+            material: material_index.map(|index| self.materials[index].handle),
             color,
             surface,
         })

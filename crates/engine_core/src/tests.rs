@@ -1337,3 +1337,64 @@ fn emitters_extract_in_world_space_and_the_nearest_win_the_budget() {
     engine.extract(1.5, &mut snapshot);
     assert!(snapshot.emitters.is_empty());
 }
+
+#[test]
+fn materials_differing_only_in_color_share_one_binding_on_both_extraction_paths() {
+    let mut engine = Engine::default();
+    let (materials, texture) = {
+        let mut assets = engine.app.world_mut().resource_mut::<AssetLibrary>();
+        let mesh = assets.insert_mesh(Mesh::plane()).unwrap();
+        let texture = assets
+            .insert_texture(Texture::new(1, 1, vec![200, 100, 50, 255]).unwrap())
+            .unwrap();
+        let other = assets
+            .insert_texture(Texture::new(1, 1, vec![20, 10, 5, 255]).unwrap())
+            .unwrap();
+        // Two colors of one texture bind alike; another texture does not.
+        let materials = [
+            Material::textured([1.0, 0.2, 0.2, 1.0], texture).unwrap(),
+            Material::textured([0.2, 1.0, 0.2, 1.0], texture).unwrap(),
+            Material::textured([0.2, 0.2, 1.0, 1.0], other).unwrap(),
+        ]
+        .map(|material| assets.insert_material(material).unwrap());
+        (materials.map(|material| (mesh, material)), texture)
+    };
+    for (mesh, material) in materials {
+        engine
+            .app
+            .world_mut()
+            .spawn((Transform::default(), Mesh3d { mesh, material }));
+    }
+    let check = |snapshot: &RenderSnapshot, instances: Vec<&RenderInstance>| {
+        assert_eq!(snapshot.materials.len(), 2);
+        assert_eq!(snapshot.textures.len(), 2);
+        let [first, second, third] = instances[..] else {
+            panic!("three instances");
+        };
+        assert_eq!(first.material, second.material);
+        assert_ne!(first.material, third.material);
+        // Colors stay each object's own.
+        assert_ne!(first.color, second.color);
+        let bound = snapshot
+            .materials
+            .iter()
+            .find(|source| Some(source.handle) == first.material)
+            .unwrap();
+        assert_eq!(bound.material.texture(), Some(texture));
+    };
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.0, &mut snapshot);
+    check(&snapshot, snapshot.instances.iter().collect());
+    let frame = engine
+        .extract_frame(1.0, PresentationMode::Current)
+        .unwrap();
+    let snapshot = frame.snapshot();
+    check(
+        snapshot,
+        frame
+            .visible_indices()
+            .iter()
+            .map(|&index| &snapshot.instances[index])
+            .collect(),
+    );
+}

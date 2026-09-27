@@ -27,8 +27,8 @@ pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
 pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Shadows, SunShafts};
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
-    Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface, Texture,
-    TextureHandle, TextureRef, UvTransform, Wrap,
+    Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface,
+    Texture, TextureHandle, TextureRef, UvTransform, Wrap,
 };
 pub use glam;
 pub use hierarchy::{
@@ -63,7 +63,10 @@ use bevy_ecs::{
 };
 use clock::FixedClock;
 use interpolation::InterpolationState;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use visibility_cache::VisibilityCache;
 
 type RenderQuery = QueryState<
@@ -151,7 +154,8 @@ pub struct Engine {
     render_query: RenderQuery,
     cube_mesh: MeshHandle,
     extracted_meshes: HashSet<MeshHandle>,
-    extracted_materials: HashSet<MaterialHandle>,
+    // The first material of each binding (decision 031) this extraction met.
+    extracted_bindings: HashMap<MaterialBinding, MaterialHandle>,
     extracted_textures: HashSet<TextureHandle>,
     visibility: VisibilityCache,
     retained: retained_render::RetainedRender,
@@ -241,7 +245,7 @@ impl Engine {
             render_query,
             cube_mesh,
             extracted_meshes: HashSet::new(),
-            extracted_materials: HashSet::new(),
+            extracted_bindings: HashMap::new(),
             extracted_textures: HashSet::new(),
             visibility: VisibilityCache::default(),
             retained: retained_render::RetainedRender::default(),
@@ -600,7 +604,7 @@ impl Engine {
         snapshot.visible_instances = 0;
         snapshot.culled_instances = 0;
         self.extracted_meshes.clear();
-        self.extracted_materials.clear();
+        self.extracted_bindings.clear();
         self.extracted_textures.clear();
         let assets = world.resource::<AssetLibrary>();
         let instances = self.render_query.iter(world);
@@ -675,26 +679,31 @@ impl Engine {
                     mesh: Arc::clone(mesh),
                 });
             }
-            if let Some((material_handle, material)) = mapped
-                && self.extracted_materials.insert(material_handle)
-            {
-                snapshot.materials.push(RenderMaterial {
-                    handle: material_handle,
-                    material: *material,
-                });
-                for texture in material.textures() {
-                    if self.extracted_textures.insert(texture) {
-                        snapshot.textures.push(RenderTexture {
-                            handle: texture,
-                            texture: Arc::clone(assets.texture(texture).expect("checked above")),
-                        });
+            // Materials with equal bindings draw as their first one.
+            let bound = mapped.map(|(material_handle, material)| {
+                let binding = material.binding().expect("materials with maps bind");
+                *self.extracted_bindings.entry(binding).or_insert_with(|| {
+                    snapshot.materials.push(RenderMaterial {
+                        handle: material_handle,
+                        material: *material,
+                    });
+                    for texture in material.textures() {
+                        if self.extracted_textures.insert(texture) {
+                            snapshot.textures.push(RenderTexture {
+                                handle: texture,
+                                texture: Arc::clone(
+                                    assets.texture(texture).expect("checked above"),
+                                ),
+                            });
+                        }
                     }
-                }
-            }
+                    material_handle
+                })
+            });
             if !culled {
                 snapshot.instances.push(RenderInstance {
                     mesh: handle,
-                    material: mapped.map(|(material, _)| material),
+                    material: bound,
                     model,
                     color,
                     surface,

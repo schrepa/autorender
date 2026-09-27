@@ -199,10 +199,11 @@ pub struct InputState {
 #[derive(Debug, Clone, Copy)]
 pub struct RenderInstance {
     pub mesh: MeshHandle,
-    /// The material whose maps the renderer binds, for materials with maps
-    /// ([`Material::has_maps`], decision 031); listed in
-    /// [`RenderSnapshot::materials`]. `None` draws from color and surface
-    /// alone.
+    /// For materials with maps ([`Material::has_maps`], decision 031), the
+    /// material whose maps the renderer binds: the first extracted material
+    /// with an equal [`Material::binding`], listed in
+    /// [`RenderSnapshot::materials`], so materials differing only in color
+    /// and surface draw together. `None` draws from color and surface alone.
     pub material: Option<MaterialHandle>,
     pub model: Mat4,
     /// Linear color; alpha is the opacity (decision 026), 1 for opaque.

@@ -44,11 +44,15 @@ matched the engine's.
   Meshes carry no tangents, imported `TANGENT` attributes are ignored, and
   mirrored texture coordinates work.
 - **Occlusion** darkens indirect light (sky, rim and sky reflections) only.
-- **Draws key on materials with maps.** Materials without maps
-  (`Material::has_maps`) draw from their color and surface as before, batched
-  across materials. A material with maps is its own draw group, carried in
-  `RenderInstance::material` and listed in `RenderSnapshot::materials` with
-  its textures; its maps, samplers and a 192-byte uniform are one bind group.
+- **Draws key on bindings.** Materials without maps (`Material::has_maps`)
+  draw from their color and surface as before, batched across materials. A
+  material with maps binds its maps, samplers and a 192-byte uniform as one
+  bind group, identified by its `MaterialBinding`: everything but its color
+  and surface, which objects carry. Materials with equal bindings share one
+  draw group, carried in `RenderInstance::material` as the first extracted
+  material of the binding and listed in `RenderSnapshot::materials` with its
+  textures. The Stress Lab city's 132 materials over 15 textures therefore
+  draw in 91 groups, as when draws keyed on textures, not 521.
 - **Shader variants, not an uber-shader.** Pipeline constants select what a
   material's shader does: `MATERIAL_MAPS` (the four extra maps, transforms
   and texture alpha coverage), `NORMAL_MAP`, `ALPHA_MASK` (the only variant

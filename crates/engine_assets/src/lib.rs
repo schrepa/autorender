@@ -12,7 +12,9 @@ mod texture;
 
 pub use error::AssetError;
 pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, TextureHandle};
-pub use material::{AlphaMode, Filter, Material, Sampler, Surface, TextureRef, UvTransform, Wrap};
+pub use material::{
+    AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, UvTransform, Wrap,
+};
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture};
 
