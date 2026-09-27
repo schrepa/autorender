@@ -2,14 +2,14 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
-    AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime,
-    FrameTime, GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
-    ParticleEmitter, Particles, PresentationMode, PresentationState, PresentedTransforms,
-    Reflections, Refraction, Shadows, Skin, SunShafts, Tint, Transform,
+    AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Decal, DecalBlend,
+    Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LocalLight,
+    LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode, PresentationState,
+    PresentedTransforms, Reflections, Refraction, Shadows, Skin, SunShafts, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneEmitter, SceneEntity,
+    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneEmitter, SceneEntity,
     SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
     SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
 };
@@ -20,7 +20,7 @@ use crate::{
     DevError, DevRequest, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
-        AnimationPlayerView, CameraView, GlobalTransformView, HierarchyView,
+        AnimationPlayerView, CameraView, DecalView, GlobalTransformView, HierarchyView,
         InterpolateTransformView, Mesh3dView, MeshBoundsView, PresentationModeView,
         PresentationStateView, PresentedTransformView, SkinView, SurfaceView, TransformView,
     },
@@ -250,6 +250,11 @@ impl Default for DevTools {
                 .with_default(json!(SceneParticles::default())),
             |particles| json!(SceneParticles::from(particles)),
         ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Decals>(
+            InspectorDescriptor::new("Decals", "Decal settings (decision 039): whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped.", schemas["Decals"].clone())
+                .with_default(json!(SceneDecals::default())),
+            |decals| json!(SceneDecals::from(decals)),
+        ).expect("built-in descriptor is bounded");
         tools.register_component::<LocalLight>(
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
                 .with_default(json!(SceneLight::default())),
@@ -293,6 +298,25 @@ impl Default for DevTools {
                 let skin = world.get::<Skin>(entity?)?;
                 Some(json!(SkinView {
                     joints: skin.joints.iter().map(|&joint| authored(world, Some(joint))).collect(),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        tools.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity (decision 039) as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())),
+            read: Box::new(|world, entity, scene| {
+                let decal = world.get::<Decal>(entity?)?;
+                let assets = world.get_resource::<AssetLibrary>();
+                Some(json!(DecalView {
+                    material: scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == decal.material).map(|(id, _)| id.to_owned())),
+                    material_alive: assets.is_some_and(|assets| assets.material(decal.material).is_some()),
+                    blend: match decal.blend {
+                        DecalBlend::Alpha => "alpha",
+                        DecalBlend::Multiply => "multiply",
+                    }.to_owned(),
+                    opacity: decal.opacity,
+                    fade_degrees: decal.fade_angle.to_degrees(),
                 }))
             }),
         }).expect("built-in descriptor is bounded");
@@ -539,7 +563,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off); material transmission, ior and thickness and the refraction section require version 8."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals on); material transmission, ior and thickness, entity decals and the refraction and decals sections require version 8."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

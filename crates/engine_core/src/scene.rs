@@ -322,12 +322,23 @@ pub struct RenderSnapshot {
     pub emitters: Vec<crate::RenderEmitter>,
     /// Particles of emitters skipped beyond the budget.
     pub dropped_particles: usize,
+    /// Decal settings (decision 039), sanitized; disabled when missing.
+    pub decal_settings: crate::Decals,
+    /// This frame's decals, within the settings' budget.
+    pub decals: Vec<crate::RenderDecal>,
+    /// Materials with maps that decals draw with, each once, and their
+    /// textures; they may repeat [`Self::materials`] and [`Self::textures`].
+    pub decal_materials: Vec<RenderMaterial>,
+    pub decal_textures: Vec<RenderTexture>,
+    /// Usable decals beyond the budget.
+    pub dropped_decals: usize,
     /// Every instance's `color[3]` is its opacity (decision 026); see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,
     /// Joint palettes of skinned instances (decision 036), each a skin's
-    /// joints in order from its instance's [`RenderInstance::skin`] offset.
-    /// Retained frames only; owned snapshots draw every mesh rigidly.
+    /// joints in order from its instance's [`RenderInstance::skin`] offset,
+    /// followed by decals' poses (decision 039). Retained frames only; owned
+    /// snapshots draw every mesh rigidly.
     pub joints: Vec<crate::RenderJoint>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;

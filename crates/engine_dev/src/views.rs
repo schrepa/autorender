@@ -20,6 +20,21 @@ pub struct AnimationPlayerView {
     pub targets: Vec<Option<String>>,
 }
 
+/// A decal (decision 039) in the shape of a scene version 8 `decal` field,
+/// with whether its material is resident.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DecalView {
+    /// The material's authored ID; None when no scene instance owns it.
+    pub material: Option<String>,
+    /// Whether the material is still resident.
+    pub material_alive: bool,
+    /// `alpha` or `multiply`.
+    pub blend: String,
+    pub opacity: f32,
+    pub fade_degrees: f32,
+}
+
 /// A skin (decision 036): its joints' authored entity IDs.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

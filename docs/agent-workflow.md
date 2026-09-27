@@ -126,9 +126,9 @@ changing nothing), replaces only the sections it names, renders, and lists
 them in `environment_changed`. It never changes source. To keep a look, put
 the sections in the scene's `environment` (version 5; version 6 for the
 local light, shaft, reflection and particle sections and the atmosphere's
-grade fields; version 8 for refraction), save and reload: the
+grade fields; version 8 for refraction and decals), save and reload: the
 scene then sets every section, omitted ones taking the engine's default state
-(sun shafts, reflections and refraction off), and replaces any temporary look. Scenes
+(sun shafts, reflections and refraction off; decals on), and replaces any temporary look. Scenes
 without an environment leave the look to the game's code. Compare looks in
 captures at identical canvas sizes.
 
@@ -138,7 +138,12 @@ angles in degrees) and `particles` (rate, lifetime, speed, `spread_degrees`,
 acceleration, size and color at birth and death, `blend` `alpha` or
 `additive`, ...); materials author `opacity`, and version 8 materials
 `transmission`, `ior` and `thickness` for glass that the environment's
-`refraction` bends and blurs. A light on an entity with a mesh
+`refraction` bends and blurs. Version 8 entities author a `decal`
+(`material` by ID, `blend` `alpha` or `multiply`, `opacity`, `fade_degrees`):
+the entity's unit box, scaled and turned by its transform, projects the
+material down its local y onto the opaque surfaces inside it; the
+environment's `decals` section sets whether they draw and an optional
+`max_decals` budget. A light on an entity with a mesh
 follows its displayed pose. Particles are a function of presentation time,
 so paused captures are exact and repeatable.
 
@@ -150,7 +155,7 @@ shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_c
 `bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and
 `light_cluster_overflow` read back late (overflow means shorter light ranges
 are needed); `sun_shafts`, `reflections` and `refraction`; `transparent_draws` and
-`particles`. `Mesh3d` reports each material's `surface`, `opacity` and
+`particles`; `decals` and `dropped_decals`. `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

@@ -55,6 +55,10 @@ pub struct RenderStats {
     pub transparent_draws: u32,
     pub particles: u32,
     pub dropped_particles: u32,
+    /// Decals this frame drew (decision 039); dropped decals are those a
+    /// budget or the GPU's binding left out.
+    pub decals: u32,
+    pub dropped_decals: u32,
 }
 
 /// Local lights of one frame (decision 023).
@@ -90,6 +94,8 @@ mod gpu_data;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod batches;
+#[cfg(any(target_arch = "wasm32", test))]
+mod decals;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;
 #[cfg(any(target_arch = "wasm32", test))]

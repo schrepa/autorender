@@ -7,6 +7,7 @@
 
 mod animation;
 mod collider;
+mod decal;
 mod document;
 mod environment;
 mod error;
@@ -22,13 +23,14 @@ pub use animation::{
     SceneAnimation, SceneChannel, SceneInterpolation, ScenePlayer, SceneProperty, SceneSkin,
 };
 pub use collider::{SceneCollider, SceneColliderShape};
+pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,
 };
 pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
-    SceneBounds, SceneEnvironment, SceneLocalLights, SceneParticles, SceneReflections,
+    SceneBounds, SceneDecals, SceneEnvironment, SceneLocalLights, SceneParticles, SceneReflections,
     SceneRefraction, SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;

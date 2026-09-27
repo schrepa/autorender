@@ -9,6 +9,7 @@ use crate::{
     MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
     SceneObject, SceneTransform,
     animation::{PreparedPlayer, PreparedSkin},
+    decal::PreparedDecal,
     hierarchy::ExpandedObject,
     material::PreparedMaterial,
 };
@@ -19,6 +20,7 @@ pub(crate) struct PreparedScene {
     pub lights: Vec<Option<LocalLight>>,
     pub emitters: Vec<Option<ParticleEmitter>>,
     pub tints: Vec<Option<Tint>>,
+    pub decals: Vec<Option<PreparedDecal>>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
@@ -104,6 +106,28 @@ impl SceneDocument {
             ));
         }
         if self.version < 8 {
+            let decal = |entity: &crate::SceneObject| entity.decal.is_some();
+            let path = if let Some(index) = self.entities.iter().position(decal) {
+                Some(format!("$.entities[{index}].decal"))
+            } else {
+                self.prefabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(prefab, definition)| {
+                        definition
+                            .entities
+                            .iter()
+                            .position(decal)
+                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}].decal"))
+                    })
+            };
+            if let Some(path) = path {
+                return Err(SceneError::new(
+                    "version_required",
+                    path,
+                    "decals require scene version 8; set version to 8 and increment revision",
+                ));
+            }
             let tinted = |entity: &crate::SceneObject| entity.tint.is_some();
             let path = if let Some(index) = self.entities.iter().position(tinted) {
                 Some(format!("$.entities[{index}].tint"))
@@ -145,7 +169,7 @@ impl SceneDocument {
                 return Err(SceneError::new(
                     "version_required",
                     format!("$.environment.{section}"),
-                    "refraction settings require scene version 8; set version to 8 and increment revision",
+                    "refraction and decal settings require scene version 8; set version to 8 and increment revision",
                 ));
             }
             let animated =
@@ -533,6 +557,19 @@ impl SceneDocument {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let decals = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .decal
+                    .as_ref()
+                    .map(|decal| decal.prepare(&format!("{}.decal", entity.path), &self.materials))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Build every CPU asset before acquiring a mutable world resource.
         // Invalid late assets cannot leave earlier ones resident.
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
@@ -611,6 +648,7 @@ impl SceneDocument {
             lights,
             emitters,
             tints,
+            decals,
             meshes,
             materials,
             textures,

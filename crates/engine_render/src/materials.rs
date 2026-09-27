@@ -176,16 +176,30 @@ impl MaterialStore {
         &self.layout
     }
 
-    /// Drops materials and textures `plan`'s snapshot no longer supplies.
-    pub(crate) fn retain(&mut self, plan: &BatchPlan) {
+    /// Drops materials and textures `plan`'s snapshot no longer supplies,
+    /// keeping its decals' (decision 039).
+    pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
+        let decal_material = |handle: &MaterialHandle| {
+            snapshot
+                .decal_materials
+                .iter()
+                .any(|source| source.handle == *handle)
+        };
+        let decal_texture = |handle: &TextureHandle| {
+            snapshot
+                .decal_textures
+                .iter()
+                .any(|source| source.handle == *handle)
+        };
         self.materials
-            .retain(|handle, _| plan.contains_material(*handle));
+            .retain(|handle, _| plan.contains_material(*handle) || decal_material(handle));
         self.textures
-            .retain(|(handle, _), _| plan.contains_texture(*handle));
+            .retain(|(handle, _), _| plan.contains_texture(*handle) || decal_texture(handle));
     }
 
     /// Uploads the textures and builds the bind groups of `plan`'s used
-    /// materials and of `extra` listed ones (masked shadow casters). New
+    /// materials and of `extra` listed ones (masked shadow casters) and the
+    /// snapshot's decal materials (decision 039). New
     /// textures' mip levels render from their base level in commands
     /// recorded into `encoder`, created when needed. Returns the uploaded
     /// bytes and generated levels.
@@ -208,6 +222,12 @@ impl MaterialStore {
                     .iter()
                     .find(|source| source.handle == handle)
             })
+            .chain(
+                snapshot
+                    .decal_materials
+                    .iter()
+                    .filter(|source| !self.materials.contains_key(&source.handle)),
+            )
             .collect();
         let sources = plan
             .material_sources
@@ -229,8 +249,11 @@ impl MaterialStore {
                     let texture = snapshot
                         .textures
                         .iter()
+                        .chain(&snapshot.decal_textures)
                         .find(|texture| texture.handle == map.texture)
-                        .expect("the plan validated every material's textures");
+                        .expect(
+                            "the plan and decal extraction validated every material's textures",
+                        );
                     let gpu = create_texture(
                         device,
                         queue,

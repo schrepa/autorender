@@ -25,6 +25,7 @@ use crate::{
     RenderJoint, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface,
     TextureHandle, Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
+    decals::{DecalExtraction, DecalPoses},
     hierarchy::ChangeWindow,
     skin::SkinExtraction,
 };
@@ -44,7 +45,7 @@ static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
 /// is the retained upload layout, so renderers copy it without repacking.
 pub type PoseRows = [[f32; 4]; 3];
 
-const IDENTITY_ROWS: PoseRows = [
+pub(crate) const IDENTITY_ROWS: PoseRows = [
     [1.0, 0.0, 0.0, 0.0],
     [0.0, 1.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
@@ -716,6 +717,17 @@ impl RetainedRender {
         self.skin_scratch = next;
         engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
         engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
+    }
+
+    /// Fills this frame's decals (decision 039), their materials and
+    /// textures, and their poses after the skins' joints.
+    pub(crate) fn extract_decals(
+        &mut self,
+        world: &World,
+        decals: &mut DecalExtraction,
+        gpu: bool,
+    ) {
+        decals.extract(world, &mut self.snapshot, DecalPoses::Retained { gpu });
     }
 
     /// Creates the source stamp window used by GPU-presented frames.
