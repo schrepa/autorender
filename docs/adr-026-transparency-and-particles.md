@@ -59,7 +59,8 @@ emitters.
 
 ## Consequences
 
-Glass that bends and blurs what is behind it is decision 038. Weighted
+Glass that bends and blurs what is behind it is decision 038; decals on
+opaque surfaces are decision 039. Weighted
 blending approximates order: overlapping transparent layers of very
 different opacity or distance blend less exactly than sorted ones, and
 transparent surfaces write no depth, so ambient occlusion, reflections and

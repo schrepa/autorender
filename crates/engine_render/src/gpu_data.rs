@@ -1447,6 +1447,12 @@ mod tests {
             crate::lights::LIGHT_BYTES
         );
         assert_eq!(size(SHADER, "Light") as u64, crate::lights::LIGHT_BYTES);
+        // Decals (decision 039).
+        assert_eq!(
+            size(SHADER, "DecalRecord"),
+            size_of::<crate::decals::DecalData>()
+        );
+        assert_eq!(size_of::<crate::decals::DecalData>(), 96);
         // Particles (decision 026).
         assert_eq!(
             size(PARTICLE_SHADER, "Emitter"),

@@ -557,6 +557,10 @@ pub struct SceneObject {
         schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
     )]
     pub skin: Option<String>,
+    /// Projects a material onto the opaque surfaces inside this entity's
+    /// box (decision 039). Requires version 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decal: Option<crate::SceneDecal>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

@@ -8,6 +8,7 @@ mod animation;
 mod atmosphere;
 mod clock;
 mod culling;
+mod decals;
 mod effects;
 mod hierarchy;
 mod input;
@@ -27,6 +28,7 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
+pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
 pub use effects::{
     AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
 };
@@ -175,6 +177,7 @@ pub struct Engine {
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
     skins: skin::SkinExtraction,
+    decals: decals::DecalExtraction,
     plugins_finalized: bool,
     // A fixed tick whose first stage ran ahead of its due frame (see
     // `Self::run_ahead`), and completed ticks the clock has not yet counted.
@@ -238,6 +241,7 @@ impl Engine {
             .init_resource::<Bloom>()
             .init_resource::<LocalLights>()
             .init_resource::<Particles>()
+            .init_resource::<Decals>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -255,6 +259,7 @@ impl Engine {
         let lights = lights::LightExtraction::new(app.world_mut());
         let particles = particles::ParticleExtraction::new(app.world_mut());
         let skins = skin::SkinExtraction::new(app.world_mut());
+        let decals = decals::DecalExtraction::new(app.world_mut());
         Self {
             app,
             clock,
@@ -270,6 +275,7 @@ impl Engine {
             lights,
             particles,
             skins,
+            decals,
             plugins_finalized: false,
             tick_in_flight: false,
             ticks_ahead: 0,
@@ -734,6 +740,9 @@ impl Engine {
         }
         drop(extraction_loop);
         self.visibility.finish();
+        // Decals (decision 039) draw their prepared matrices.
+        self.decals
+            .extract(world, snapshot, decals::DecalPoses::Owned);
         engine_profile::counter("extraction.candidates", total as f64);
         engine_profile::counter("extraction.instances", snapshot.instances.len() as f64);
         engine_profile::counter("extraction.culled", snapshot.culled_instances as f64);
@@ -776,6 +785,8 @@ impl Engine {
         );
         self.retained
             .extract_skins(self.app.world(), &mut self.skins, false);
+        self.retained
+            .extract_decals(self.app.world(), &mut self.decals, false);
         Ok(self.retained.frame(
             self.app.world().resource::<PresentedTransforms>(),
             self.app.world().resource::<GlobalTransforms>(),
@@ -827,6 +838,8 @@ impl Engine {
         );
         self.retained
             .extract_skins(self.app.world(), &mut self.skins, true);
+        self.retained
+            .extract_decals(self.app.world(), &mut self.decals, true);
         // Later source edits must be newer than the stamp window just consumed.
         self.app.world_mut().increment_change_tick();
         Ok(self.retained.frame(
@@ -896,6 +909,7 @@ pub mod prelude {
         AnimatedProperty, AnimationChannel, AnimationClip, AnimationPlayer, AnimationSystems,
         ClipHandle, KeyInterpolation, Keyframes,
     };
+    pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,

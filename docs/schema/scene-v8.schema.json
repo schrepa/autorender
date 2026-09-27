@@ -711,6 +711,78 @@
         }
       ]
     },
+    "SceneDecal": {
+      "description": "A decal on this entity (decision 039). Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/SceneDecalBlend",
+          "default": "alpha"
+        },
+        "fade_degrees": {
+          "description": "Degrees between a surface's normal and the box's +y beyond which the\ndecal fades out, gone at 90.",
+          "type": "number",
+          "format": "float",
+          "default": 60.0,
+          "maximum": 90.0,
+          "minimum": 0.0
+        },
+        "material": {
+          "description": "ID of the projected material in this document.",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "opacity": {
+          "description": "Multiplies the decal's alpha.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "material"
+      ]
+    },
+    "SceneDecalBlend": {
+      "description": "How a decal combines with the surface it lies on.",
+      "oneOf": [
+        {
+          "description": "Covering by alpha, lit like any surface: paint, posters, markings.",
+          "type": "string",
+          "const": "alpha"
+        },
+        {
+          "description": "Multiplying the surface's color, keeping its light: dirt, cracks,\nstains and scorch marks.",
+          "type": "string",
+          "const": "multiply"
+        }
+      ]
+    },
+    "SceneDecals": {
+      "description": "Decal settings (decision 039). Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_decals": {
+          "description": "An optional budget of decals a frame draws; beyond it the decals\nnearest the camera win. Omitted, every decal draws.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneEmitter": {
       "description": "A particle emitter on this entity (decision 026). Requires version 6.\nOmitted fields take the engine's defaults.",
       "type": "object",
@@ -904,6 +976,16 @@
             }
           ]
         },
+        "decals": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDecals"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "local_lights": {
           "description": "Version 6 sections (decisions 023 to 026).",
           "anyOf": [
@@ -936,7 +1018,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decision 038).",
+          "description": "Version 8 sections (decisions 038 and 039).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -1339,6 +1421,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decal": {
+          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox (decision 039). Requires version 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDecal"
             },
             {
               "type": "null"

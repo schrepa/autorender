@@ -48,6 +48,7 @@ pub struct SceneInstance {
     entities: BTreeMap<String, Entity>,
     meshes: Vec<MeshHandle>,
     materials: Vec<MaterialHandle>,
+    material_ids: Vec<String>,
     textures: Vec<TextureHandle>,
     texture_ids: Vec<String>,
     clips: Vec<ClipHandle>,
@@ -82,6 +83,14 @@ impl SceneInstance {
         self.texture_ids
             .iter()
             .zip(&self.textures)
+            .map(|(id, handle)| (id.as_str(), *handle))
+    }
+
+    /// Authored material IDs and their weak handles, in source order.
+    pub fn materials(&self) -> impl ExactSizeIterator<Item = (&str, MaterialHandle)> {
+        self.material_ids
+            .iter()
+            .zip(&self.materials)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -246,7 +255,7 @@ impl SceneDocument {
             .collect();
         let mut entities = BTreeMap::new();
         let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for (((((expanded, transform), collider), light), emitter), tint) in prepared
+        for ((((((expanded, transform), collider), light), emitter), tint), decal) in prepared
             .entities
             .iter()
             .zip(prepared.transforms)
@@ -254,6 +263,7 @@ impl SceneDocument {
             .zip(prepared.lights)
             .zip(prepared.emitters)
             .zip(prepared.tints)
+            .zip(prepared.decals)
         {
             let source = &expanded.source;
             let mut entity = world.spawn((
@@ -286,6 +296,9 @@ impl SceneDocument {
             }
             if let Some(tint) = tint {
                 entity.insert(tint);
+            }
+            if let Some(decal) = decal {
+                entity.insert(decal.runtime(materials[decal.material]));
             }
             spawned.push(entity.id());
             entities.insert(source.id.clone(), entity.id());
@@ -362,6 +375,11 @@ impl SceneDocument {
             entities,
             meshes,
             materials,
+            material_ids: self
+                .materials
+                .iter()
+                .map(|material| material.id.clone())
+                .collect(),
             textures,
             texture_ids: self
                 .textures

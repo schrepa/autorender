@@ -1672,3 +1672,90 @@ fn skins_with_too_few_joints_draw_rigidly_and_skinned_meshes_never_cull() {
     assert_eq!(frame.snapshot().culled_instances, 0);
     assert_eq!(frame.visible_indices().len(), 1);
 }
+
+#[test]
+fn decals_extract_their_materials_poses_and_the_nearest_win_the_budget() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    world.insert_resource(Camera {
+        position: Vec3::ZERO,
+        target: Vec3::NEG_Z,
+        ..Camera::default()
+    });
+    let (plain, mapped, texture) = {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        let texture = assets
+            .insert_texture(Texture::new(1, 1, vec![200, 100, 50, 255]).unwrap())
+            .unwrap();
+        let plain = assets
+            .insert_material(Material::new([0.5, 0.25, 1.0, 1.0]).unwrap())
+            .unwrap();
+        let mapped = assets
+            .insert_material(Material::textured([1.0; 4], texture).unwrap())
+            .unwrap();
+        (plain, mapped, texture)
+    };
+    let placed = |distance: f32| Transform {
+        translation: Vec3::new(0.0, 0.0, -distance),
+        scale: Vec3::splat(2.0),
+        ..Default::default()
+    };
+    world.spawn((
+        placed(40.0),
+        Decal::new(plain)
+            .with_blend(DecalBlend::Multiply)
+            .with_opacity(0.5),
+    ));
+    world.spawn((placed(5.0), Decal::new(mapped)));
+    world.spawn((placed(9.0), Decal::new(mapped)));
+    // Unusable decals are skipped.
+    world.spawn((placed(1.0), Decal::new(mapped).with_opacity(2.0)));
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.decals.len(), 3);
+    let far = snapshot
+        .decals
+        .iter()
+        .find(|decal| decal.material.is_none())
+        .unwrap();
+    assert_eq!(far.blend, DecalBlend::Multiply);
+    assert_eq!(far.color, [0.5, 0.25, 1.0, 0.5]);
+    assert_eq!(far.joint, None);
+    assert_eq!(far.model.w_axis.z, -40.0);
+    assert!((far.fade - 0.5).abs() < 1.0e-5);
+    // Mapped materials and their textures are listed once, apart from the
+    // instances'.
+    assert_eq!(snapshot.decal_materials.len(), 1);
+    assert_eq!(snapshot.decal_materials[0].handle, mapped);
+    assert_eq!(snapshot.decal_textures.len(), 1);
+    assert_eq!(snapshot.decal_textures[0].handle, texture);
+    assert!(snapshot.materials.is_empty());
+    // Over budget, the nearest decals stay.
+    engine.app.world_mut().resource_mut::<Decals>().max_decals = Some(2);
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.dropped_decals, 1);
+    let mut kept: Vec<f32> = snapshot
+        .decals
+        .iter()
+        .map(|decal| -decal.model.w_axis.z)
+        .collect();
+    kept.sort_by(f32::total_cmp);
+    assert_eq!(kept, [5.0, 9.0]);
+    // Retained frames list decal poses after the skins' joints.
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    let snapshot = frame.snapshot();
+    for decal in &snapshot.decals {
+        let joint = snapshot.joints[decal.joint.unwrap() as usize];
+        assert_eq!(joint.matrix[2][3], decal.model.w_axis.z);
+    }
+    // Disabled or removed settings draw none.
+    engine.app.world_mut().resource_mut::<Decals>().enabled = false;
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert!(snapshot.decals.is_empty() && snapshot.decal_materials.is_empty());
+    engine.app.world_mut().remove_resource::<Decals>();
+    engine.extract(1.5, &mut snapshot);
+    assert!(snapshot.decals.is_empty());
+}

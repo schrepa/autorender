@@ -144,6 +144,10 @@ pub struct FrameStats {
     pub transparent_draws: u32,
     pub particles: u32,
     pub dropped_particles: u32,
+    /// Decals drawn and decals a budget or the GPU's binding left out
+    /// (decision 039).
+    pub decals: u32,
+    pub dropped_decals: u32,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -202,6 +206,10 @@ pub struct BrowserStats {
     pub transparent_draws: u32,
     pub particles: u32,
     pub dropped_particles: u32,
+    /// Decals drawn and decals a budget or the GPU's binding left out
+    /// (decision 039).
+    pub decals: u32,
+    pub dropped_decals: u32,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -257,6 +265,8 @@ impl From<FrameStats> for BrowserStats {
             transparent_draws: stats.transparent_draws,
             particles: stats.particles,
             dropped_particles: stats.dropped_particles,
+            decals: stats.decals,
+            dropped_decals: stats.dropped_decals,
         }
     }
 }
@@ -600,6 +610,8 @@ impl BrowserApp {
             transparent_draws: rendered.transparent_draws,
             particles: rendered.particles,
             dropped_particles: rendered.dropped_particles,
+            decals: rendered.decals,
+            dropped_decals: rendered.dropped_decals,
         };
         Ok(())
     }

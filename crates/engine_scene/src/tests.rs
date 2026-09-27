@@ -1341,3 +1341,107 @@ fn compressed_image_files_load_as_block_compressed_textures_from_version_eight()
         "invalid_texture"
     );
 }
+
+#[test]
+fn version_eight_decals_instantiate_validate_and_earlier_versions_refuse_them() {
+    use engine_core::{Decal, DecalBlend, Decals};
+    let source = serde_json::json!({
+        "version": 8,
+        "id": "decal-scene",
+        "revision": 1,
+        "materials": [
+            {"id": "teal", "color": [0.1, 0.8, 0.6, 1.0]},
+            {"id": "grime", "color": [0.4, 0.3, 0.2, 1.0], "opacity": 0.8}
+        ],
+        "meshes": [{"id": "box", "source": {"kind": "cube"}}],
+        "entities": [
+            {"id": "floor", "mesh": "box", "material": "teal"},
+            {"id": "stain", "decal": {"material": "grime", "blend": "multiply", "opacity": 0.5,
+                "fade_degrees": 90.0},
+                "transform": {"scale": [2.0, 0.5, 2.0]}},
+            {"id": "mark", "decal": {"material": "teal"}}
+        ],
+        "environment": {"decals": {"enabled": true, "max_decals": 8}}
+    });
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let grime = instance
+        .materials()
+        .find(|(id, _)| *id == "grime")
+        .map(|(_, handle)| handle)
+        .unwrap();
+    let stain = *world
+        .get::<Decal>(instance.entity("stain").unwrap())
+        .unwrap();
+    assert_eq!(stain.material, grime);
+    assert_eq!(stain.blend, DecalBlend::Multiply);
+    assert_eq!(stain.opacity, 0.5);
+    assert_eq!(stain.fade_angle, std::f32::consts::FRAC_PI_2);
+    // Omitted fields take the defaults.
+    let mark = *world
+        .get::<Decal>(instance.entity("mark").unwrap())
+        .unwrap();
+    assert_eq!(mark.blend, DecalBlend::Alpha);
+    assert_eq!(mark.opacity, 1.0);
+    assert!((mark.fade_angle - 60.0_f32.to_radians()).abs() < 1.0e-6);
+    assert_eq!(
+        *world.resource::<Decals>(),
+        Decals {
+            enabled: true,
+            max_decals: Some(8)
+        }
+    );
+    // Decals round-trip as authored.
+    let saved = serde_json::to_value(&document).unwrap();
+    assert_eq!(
+        saved["entities"][1]["decal"],
+        source["entities"][1]["decal"]
+    );
+    // An environment without the section draws every decal.
+    let mut bare = source.clone();
+    bare["environment"] = serde_json::json!({});
+    let mut world = self::world(AssetBudget::default());
+    let _ = SceneDocument::from_json(&bare.to_string())
+        .unwrap()
+        .instantiate(&mut world)
+        .unwrap();
+    assert_eq!(*world.resource::<Decals>(), Decals::default());
+    let refused = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut source = source.clone();
+        edit(&mut source);
+        let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+        (error.code, error.path)
+    };
+    assert_eq!(
+        refused(&|source| source["entities"][1]["decal"]["material"] = "missing".into()),
+        ("unknown_reference", "$.entities[1].decal.material".into())
+    );
+    assert_eq!(
+        refused(&|source| source["entities"][1]["decal"]["opacity"] = 2.into()),
+        ("invalid_decal", "$.entities[1].decal.opacity".into())
+    );
+    assert_eq!(
+        refused(&|source| source["entities"][1]["decal"]["fade_degrees"] = 91.into()),
+        ("invalid_decal", "$.entities[1].decal.fade_degrees".into())
+    );
+    assert_eq!(
+        refused(&|source| source["environment"]["decals"]["max_decals"] = 0.into()),
+        (
+            "invalid_environment",
+            "$.environment.decals.max_decals".into()
+        )
+    );
+    // Earlier versions refuse decals and their settings.
+    assert_eq!(
+        refused(&|source| source["version"] = 7.into()),
+        ("version_required", "$.entities[1].decal".into())
+    );
+    assert_eq!(
+        refused(&|source| {
+            source["version"] = 7.into();
+            source["entities"].as_array_mut().unwrap().truncate(1);
+        }),
+        ("version_required", "$.environment.decals".into())
+    );
+}

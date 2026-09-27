@@ -21,7 +21,8 @@ Constants are sorted into three kinds:
 
 - **Capacity** becomes a setting whose default sets no budget:
   `Particles::max_particles` and `LocalLights::max_lights` (`Option`, as
-  scene version 6 fields), `EngineConfig::max_render_instances`,
+  scene version 6 fields), `Decals::max_decals` (decision 039),
+  `EngineConfig::max_render_instances`,
   `EngineConfig::asset_budget` (`AssetLibrary::set_budget` at run time) and
   `EngineConfig::max_transform_nodes` (`TransformNodeLimit`). Over a budget
   the nearest emitters and lights win, extraction drops instances and

@@ -9,6 +9,7 @@ use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
+use crate::decals::DecalPass;
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, InstanceData, LightingUniform, PoseData, SHADER,
     ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
@@ -171,6 +172,9 @@ pub struct Renderer {
     transparent: Option<TransparentPass>,
     transparent_pipelines: [[Option<wgpu::RenderPipeline>; 2]; 2],
     particles: Option<ParticlePass>,
+    // Decals (decision 039): records and pipelines, created with the first
+    // frame that draws them.
+    decals: Option<DecalPass>,
     // Poses of odd temporal frames with the colors, for transparent draws
     // of pose storage generation `.0`.
     alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
@@ -604,6 +608,7 @@ impl Renderer {
             transparent: None,
             transparent_pipelines: Default::default(),
             particles: None,
+            decals: None,
             alternate_pose_group: None,
             palettes,
             palette_capacity: 1,
@@ -774,7 +779,7 @@ impl Renderer {
             pass.reset();
         }
         let profile_residency = engine_profile::span("render", "validate_and_retire");
-        for source in &snapshot.textures {
+        for source in snapshot.textures.iter().chain(&snapshot.decal_textures) {
             if source.texture.width().max(source.texture.height()) > self.max_dimension {
                 return Err(JsValue::from_str(&format!(
                     "Texture {:?} exceeds the device's {}-pixel dimension limit.",
@@ -797,7 +802,7 @@ impl Renderer {
         // only emitted draw batches, shadow casters and referenced textures.
         self.meshes
             .retain(|handle, _| self.plan.contains_mesh(*handle) || shadow_meshes.contains(handle));
-        self.materials.retain(&self.plan);
+        self.materials.retain(&self.plan, snapshot);
         drop(profile_residency);
         if self.suspended {
             return Ok(self.residency_stats());
@@ -1482,6 +1487,43 @@ impl Renderer {
         } else if let Some(pass) = self.transparent.as_mut() {
             pass.release_targets();
         }
+        // Decals (decision 039) cover the opaque surfaces the depth buffer
+        // holds; retained frames read their displayed poses from the joint
+        // palette.
+        let decal_lights = light_frame
+            .as_ref()
+            .and(self.lights.as_ref())
+            .map(LightPass::fragment_layout);
+        let decal_frame = if snapshot.decal_settings.enabled && !snapshot.decals.is_empty() {
+            let (device, format) = (&self.device, self.configuration.format);
+            let decals = self
+                .decals
+                .get_or_insert_with(|| DecalPass::new(device, format));
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            let prepared = decals.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (
+                    &self.palettes[parity],
+                    affine.then_some((self.pose_generation, parity)),
+                ),
+                &self.depth.view,
+                self.depth_generation,
+            );
+            if prepared.is_some() {
+                decals.ensure_pipelines(
+                    device,
+                    &self.mesh_shader,
+                    [&self.camera_layout, self.materials.layout()],
+                    decal_lights,
+                    post_frame.is_some(),
+                );
+            }
+            prepared
+        } else {
+            None
+        };
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let view = frame
@@ -1631,11 +1673,12 @@ impl Renderer {
                     1
                 }
             };
-            // Ambient occlusion and the transparent passes read the depth
-            // buffer afterwards.
+            // Ambient occlusion, decals and the transparent passes read the
+            // depth buffer afterwards.
             let keep_depth = post_frame
                 .is_some_and(|frame| frame.occlusion || frame.reflections || frame.shafts)
-                || transparency;
+                || transparency
+                || decal_frame.is_some();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
                 color_attachments: &targets[..count],
@@ -1753,6 +1796,35 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let (Some(_), Some(decals)) = (&decal_frame, self.decals.as_ref()) {
+            let target = post.map_or(&view, |post| post.targets().0);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/decals"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            decals.draw(
+                &mut pass,
+                &self.camera_bind_group,
+                &self.materials,
+                light_frame
+                    .as_ref()
+                    .and(self.lights.as_ref())
+                    .map(LightPass::fragment_group),
+                post.is_some(),
+            );
         }
         if let Some(transparent) = self.transparent.as_ref().filter(|_| transparency) {
             // Read-only depth: surfaces behind the opaque ones stay hidden,
@@ -1998,6 +2070,12 @@ impl Renderer {
             sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
             reflections: post_frame.is_some_and(|frame| frame.reflections),
             refraction: refraction && post_frame.is_some(),
+            decals: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
+            dropped_decals: (snapshot.dropped_decals as u64
+                + decal_frame
+                    .as_ref()
+                    .map_or(0, |frame| u64::from(frame.dropped)))
+            .min(u64::from(u32::MAX)) as u32,
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -2061,6 +2139,7 @@ impl Renderer {
                 f64::from(stats.transparent_draws),
             );
             engine_profile::counter("render.particles", f64::from(stats.particles));
+            engine_profile::counter("render.decals", f64::from(stats.decals));
             engine_profile::counter(
                 "memory.gpu_transparent_bytes",
                 (self
@@ -2070,7 +2149,9 @@ impl Renderer {
                     + self
                         .particles
                         .as_ref()
-                        .map_or(0, ParticlePass::capacity_bytes)) as f64,
+                        .map_or(0, ParticlePass::capacity_bytes)
+                    + self.decals.as_ref().map_or(0, DecalPass::capacity_bytes))
+                    as f64,
             );
             if let Some(frame) = &temporal_frame {
                 engine_profile::counter(

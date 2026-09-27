@@ -1,13 +1,14 @@
 //! A scene's environment (decision 022): its atmosphere (decision 018) and
-//! rendering effects (decisions 020, 021, 023 to 026) as authored data.
+//! rendering effects (decisions 020, 021, 023 to 026, 038 and 039) as
+//! authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
 //! (local lights, particles, sun shafts and reflections need version 6);
 //! development controls apply the same sections temporarily, and inspection
 //! reports the current resources in the same shape.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, LocalLights, MAX_SHADOW_CASCADES, Particles, Reflections,
-    Refraction, Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
+    AmbientOcclusion, Atmosphere, Bloom, Decals, LocalLights, MAX_SHADOW_CASCADES, Particles,
+    Reflections, Refraction, Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -529,6 +530,46 @@ impl SceneParticles {
     }
 }
 
+/// Decal settings (decision 039). Requires version 8.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneDecals {
+    pub enabled: bool,
+    /// An optional budget of decals a frame draws; beyond it the decals
+    /// nearest the camera win. Omitted, every decal draws.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_decals: Option<u32>,
+}
+
+impl Default for SceneDecals {
+    fn default() -> Self {
+        Self::from(&Decals::default())
+    }
+}
+
+impl From<&Decals> for SceneDecals {
+    fn from(decals: &Decals) -> Self {
+        Self {
+            enabled: decals.enabled,
+            max_decals: decals.max_decals,
+        }
+    }
+}
+
+impl SceneDecals {
+    pub fn resolve(&self, path: &str) -> Result<Decals, SceneError> {
+        if self.max_decals == Some(0) {
+            return Err(section_error(path, "max_decals", "must be at least 1"));
+        }
+        Ok(Decals {
+            enabled: self.enabled,
+            max_decals: self.max_decals,
+        })
+    }
+}
+
 /// Sun shafts (decision 024): sunlight scattered by the fog between shadow
 /// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -715,9 +756,11 @@ pub struct SceneEnvironment {
     pub reflections: Option<SceneReflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneParticles>,
-    /// Version 8 sections (decision 038).
+    /// Version 8 sections (decisions 038 and 039).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refraction: Option<SceneRefraction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decals: Option<SceneDecals>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -732,6 +775,7 @@ pub struct EnvironmentSettings {
     pub reflections: Option<Reflections>,
     pub particles: Option<Particles>,
     pub refraction: Option<Refraction>,
+    pub decals: Option<Decals>,
 }
 
 impl SceneEnvironment {
@@ -793,6 +837,10 @@ impl SceneEnvironment {
                 strength: 0.0,
                 ..Refraction::default()
             });
+        let decals = world.get_resource::<Decals>().copied().unwrap_or(Decals {
+            enabled: false,
+            ..Decals::default()
+        });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
@@ -803,14 +851,18 @@ impl SceneEnvironment {
             reflections: Some(SceneReflections::from(&reflections)),
             particles: Some(SceneParticles::from(&particles)),
             refraction: Some(SceneRefraction::from(&refraction)),
+            decals: Some(SceneDecals::from(&decals)),
         }
     }
 
-    /// The first version 8 section present (decision 038).
+    /// The first version 8 section present (decisions 038 and 039).
     pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
-        [("refraction", self.refraction.is_some())]
-            .into_iter()
-            .find_map(|(name, present)| present.then_some(name))
+        [
+            ("refraction", self.refraction.is_some()),
+            ("decals", self.decals.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(name, present)| present.then_some(name))
     }
 
     /// The first version 6 field present, as its path below the environment:
@@ -879,6 +931,10 @@ impl SceneEnvironment {
                 .refraction
                 .map(|section| section.resolve(&format!("{path}.refraction")))
                 .transpose()?,
+            decals: self
+                .decals
+                .map(|section| section.resolve(&format!("{path}.decals")))
+                .transpose()?,
         })
     }
 }
@@ -913,6 +969,9 @@ impl EnvironmentSettings {
         if let Some(refraction) = self.refraction {
             world.insert_resource(refraction);
         }
+        if let Some(decals) = self.decals {
+            world.insert_resource(decals);
+        }
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
@@ -925,6 +984,7 @@ impl EnvironmentSettings {
         world.insert_resource(self.bloom.unwrap_or_default());
         world.insert_resource(self.local_lights.unwrap_or_default());
         world.insert_resource(self.particles.unwrap_or_default());
+        world.insert_resource(self.decals.unwrap_or_default());
         match self.sun_shafts {
             Some(shafts) => world.insert_resource(shafts),
             None => {

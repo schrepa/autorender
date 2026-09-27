@@ -181,6 +181,13 @@ fn validate_object(
     if let Some(prefab) = &entity.prefab {
         reference(prefab, prefab_ids, &format!("{path}.prefab"))?;
     }
+    if let Some(decal) = &entity.decal {
+        reference(
+            &decal.material,
+            material_ids,
+            &format!("{path}.decal.material"),
+        )?;
+    }
     if let Some(parent) = &entity.parent {
         identifier(parent, &format!("{path}.parent"))?;
     }
