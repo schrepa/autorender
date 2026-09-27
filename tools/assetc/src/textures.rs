@@ -107,6 +107,7 @@ pub(crate) fn import(
             color: pbr.base_color_factor(),
             texture,
             surface: None,
+            opacity: None,
         });
     }
     Ok(())

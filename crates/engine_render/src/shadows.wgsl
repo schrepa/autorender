@@ -2,9 +2,9 @@
 //
 // `select_casters` visits every candidate once. It transforms the candidate's
 // mesh bounds into light space and appends its slot to the instance IDs of
-// each shadow map it can darken: the near map that follows the camera, the
-// far map redrawn every frame, and the region of the kept far map redrawn
-// this frame. GPU-presented frames also track how many frames each slot's
+// each shadow map it can darken: the near cascades that follow the camera
+// (decision 028), the far map redrawn every frame, and the region of the
+// kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
 // only when a region of it is dirty, and leave the per-frame map a little
 // later, once the kept map surely holds them.
@@ -12,23 +12,28 @@
 struct Cull {
     // World to light space: the sun's right, up and away-from-sun axes.
     light: array<vec4<f32>, 3>,
-    // Light-space rectangles (minimum x and y, maximum x and y) of the near
-    // map, the far maps and the region of the kept map redrawn this frame.
-    near: vec4<f32>,
+    // Light-space rectangles (minimum x and y, maximum x and y) of each near
+    // cascade, the far maps and the region of the kept map redrawn this
+    // frame.
+    near: array<vec4<f32>, 4>,
     far: vec4<f32>,
     refresh: vec4<f32>,
     // Light-space depth beyond which casters cannot darken a receiver of
-    // the near map, the far maps and the refreshed region.
+    // each near cascade; then (y and z) of the far maps and the refreshed
+    // region.
+    near_depths: vec4<f32>,
     depths: vec4<f32>,
     candidates: u32,
     groups: u32,
     // Instance IDs per map.
     capacity: u32,
-    // STILLNESS | REFRESH | NEAR.
+    // STILLNESS | REFRESH.
     mode: u32,
     // Kept-map strips: light-space y of the first, the strip height and the
     // strip count.
     strips: vec4<f32>,
+    // x: near cascades drawn this frame.
+    cascades: vec4<u32>,
     // Start of each draw group's ID region within a map, four per vector.
     starts: array<vec4<u32>, 32>,
 }
@@ -82,7 +87,6 @@ struct DrawArgs {
 
 const STILLNESS: u32 = 1u;
 const REFRESH: u32 = 2u;
-const NEAR: u32 = 4u;
 // Presentation's candidate flag of a valid pose.
 const VALID: u32 = 4u;
 // Frames a pose must stay unchanged before its slot is kept, and until it
@@ -90,9 +94,10 @@ const VALID: u32 = 4u;
 // back and redrawn one per frame.
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
-const NEAR_MAP: u32 = 0u;
-const MOVING_MAP: u32 = 1u;
-const KEPT_MAP: u32 = 2u;
+// Near cascades are maps 0 to 3; the far maps follow.
+const MOVING_MAP: u32 = 4u;
+const KEPT_MAP: u32 = 5u;
+const MAPS: u32 = 6u;
 
 fn mix_key(key: u32, value: u32) -> u32 {
     var x = (key ^ value) * 0x9e3779b1u;
@@ -199,8 +204,10 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             stillness[candidate.slot] = vec2<u32>(key, packed);
         }
     }
-    if (cull.mode & NEAR) != 0u && overlaps(cull.near, low, high, cull.depths.x) {
-        append(NEAR_MAP, batch.group, candidate.slot);
+    for (var cascade = 0u; cascade < cull.cascades.x; cascade++) {
+        if overlaps(cull.near[cascade], low, high, cull.near_depths[cascade]) {
+            append(cascade, batch.group, candidate.slot);
+        }
     }
     if still < MOVING_UNTIL || !classify {
         if overlaps(cull.far, low, high, cull.depths.y) {
@@ -209,16 +216,21 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Totals of this frame's casters per map, read back with the dirty strips
-// for profiling counters.
+// Totals of this frame's casters of the near cascades together, the moving
+// map and the kept map, read back with the dirty strips for profiling
+// counters.
 @compute @workgroup_size(1)
 fn count_casters() {
-    for (var map = 0u; map < 3u; map++) {
+    var totals = vec3<u32>(0u);
+    for (var map = 0u; map < MAPS; map++) {
         var total = 0u;
         for (var group = 0u; group < cull.groups; group++) {
             total += atomicLoad(&args[map * cull.groups + group].instance_count);
         }
-        atomicStore(&dirty[1u + map], total);
+        totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)] += total;
+    }
+    for (var index = 0u; index < 3u; index++) {
+        atomicStore(&dirty[1u + index], totals[index]);
     }
 }
 

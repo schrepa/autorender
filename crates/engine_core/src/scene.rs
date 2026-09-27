@@ -89,7 +89,8 @@ impl Transform {
 /// A centered unit cube; its transform supplies position and dimensions.
 #[derive(Component, Debug, Clone, Copy)]
 pub struct Cube {
-    /// Linear RGBA color. The initial renderer draws opaque cubes.
+    /// Linear RGB color; cubes are always opaque and ignore alpha. Draw
+    /// transparent geometry with a [`Mesh3d`] whose material has an opacity.
     pub color: [f32; 4],
 }
 
@@ -201,6 +202,7 @@ pub struct RenderInstance {
     /// Optional opaque base color texture; absence samples renderer white.
     pub texture: Option<TextureHandle>,
     pub model: Mat4,
+    /// Linear color; alpha is the opacity (decision 026), 1 for opaque.
     pub color: [f32; 4],
     /// The material's surface response; cubes are [`Surface::MATTE`].
     pub surface: Surface,
@@ -236,6 +238,25 @@ pub struct RenderSnapshot {
     /// Ambient occlusion and bloom (decision 021), sanitized.
     pub ambient_occlusion: crate::AmbientOcclusion,
     pub bloom: crate::Bloom,
+    /// Sun shafts (decision 024) and screen-space reflections (decision
+    /// 025), sanitized; intensity 0 when their resources are missing.
+    pub sun_shafts: crate::SunShafts,
+    pub reflections: crate::Reflections,
+    /// Local lighting settings (decision 023), sanitized; disabled when the
+    /// resource is missing.
+    pub local_lights: crate::LocalLights,
+    /// This frame's local lights, within the settings' budget.
+    pub lights: Vec<crate::RenderLight>,
+    /// Usable lights beyond the budget, or without a valid pose.
+    pub dropped_lights: usize,
+    /// Particle settings (decision 026), sanitized; disabled when missing.
+    pub particles: crate::Particles,
+    /// This frame's particle emitters, within the particle budget.
+    pub emitters: Vec<crate::RenderEmitter>,
+    /// Particles of emitters skipped beyond the budget.
+    pub dropped_particles: usize,
+    /// Every instance's `color[3]` is its opacity: below 1 it draws in the
+    /// transparent pass (decision 026).
     pub instances: Vec<RenderInstance>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;

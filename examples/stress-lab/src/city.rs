@@ -1918,6 +1918,60 @@ fn ferris(city: &mut City, rng: &mut Rng, site: &Site) {
     }
 }
 
+/// A street lamp's warm light: a wide cone down from the lamp head, in the
+/// lamp's local space (its unit mesh is 5.2 units tall once placed).
+fn street_light() -> LocalLight {
+    LocalLight::spot(
+        Vec3::new(1.0, 0.72, 0.42),
+        60.0,
+        10.0,
+        Vec3::NEG_Y,
+        40.0_f32.to_radians(),
+        72.0_f32.to_radians(),
+    )
+    .with_offset(Vec3::new(0.4, 0.32, 0.0))
+}
+
+/// Smoke rising from a chimney top and drifting with the wind.
+fn chimney_smoke(seed: u32) -> ParticleEmitter {
+    ParticleEmitter {
+        rate: 5.0,
+        lifetime: 7.0,
+        speed: 1.4,
+        direction: Vec3::Y,
+        spread: 12.0_f32.to_radians(),
+        acceleration: Vec3::new(0.7, 0.25, 0.3),
+        size: [1.2, 6.5],
+        color: [[0.36, 0.36, 0.38, 0.7], [0.62, 0.62, 0.65, 0.0]],
+        emission: 1.0,
+        blend: ParticleBlend::Alpha,
+        stretch: 0.0,
+        offset: Vec3::new(0.0, 0.5, 0.0),
+        radius: 0.25,
+        seed,
+    }
+}
+
+/// Water thrown up from a fountain and falling back.
+fn fountain_spray(seed: u32) -> ParticleEmitter {
+    ParticleEmitter {
+        rate: 70.0,
+        lifetime: 1.3,
+        speed: 5.5,
+        direction: Vec3::Y,
+        spread: 9.0_f32.to_radians(),
+        acceleration: Vec3::new(0.0, -9.8, 0.0),
+        size: [0.14, 0.07],
+        color: [[0.78, 0.9, 1.0, 0.6], [0.85, 0.93, 1.0, 0.0]],
+        emission: 1.0,
+        blend: ParticleBlend::Alpha,
+        stretch: 0.05,
+        offset: Vec3::new(0.0, 0.5, 0.0),
+        radius: 0.05,
+        seed,
+    }
+}
+
 /// The spawned city, for the workload's observations.
 pub(crate) struct Spawned {
     pub transform_nodes: u32,
@@ -1973,6 +2027,20 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         }
         if let (Some(mesh), Some(look)) = (mesh, node.look) {
             entity.insert(mesh);
+            // Engine lights (decision 023) and particles (decision 026) on
+            // the parts that carry them; the renderables stay the same.
+            match look.shape {
+                Shape::Lamp => {
+                    entity.insert(street_light());
+                }
+                Shape::Chimney => {
+                    entity.insert(chimney_smoke(leaf));
+                }
+                Shape::Fountain => {
+                    entity.insert(fountain_spray(leaf));
+                }
+                _ => {}
+            }
             moving_nodes += u32::from(node.moving);
             // Colliders spread evenly over the renderables, or on the dense
             // crates that lead them.

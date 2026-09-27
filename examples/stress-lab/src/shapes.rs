@@ -1460,7 +1460,7 @@ pub(crate) struct Library {
     variety: u32,
     meshes: HashMap<Shape, MeshHandle>,
     textures: HashMap<Tex, TextureHandle>,
-    materials: HashMap<(Tex, [u32; 3]), MaterialHandle>,
+    materials: HashMap<(Tex, [u32; 3], u32), MaterialHandle>,
 }
 
 impl Library {
@@ -1523,7 +1523,13 @@ impl Library {
         paint: Paint,
     ) -> Result<Mesh3d, String> {
         let mesh = self.meshes[&shape.resolve(self.variety)];
-        let key = (paint.tex, paint.color.map(f32::to_bits));
+        // Glass domes are see-through (decision 026).
+        let opacity: f32 = if shape == Shape::Dome && paint.tex == Tex::Glass {
+            0.4
+        } else {
+            1.0
+        };
+        let key = (paint.tex, paint.color.map(f32::to_bits), opacity.to_bits());
         let material = match self.materials.get(&key) {
             Some(&material) => material,
             None => {
@@ -1533,6 +1539,7 @@ impl Library {
                     None => Material::new(color),
                 }
                 .and_then(|material| material.with_surface(self.surface(paint.tex)))
+                .and_then(|material| material.with_opacity(opacity))
                 .map_err(|error| error.to_string())?;
                 let handle = assets
                     .insert_material(material)

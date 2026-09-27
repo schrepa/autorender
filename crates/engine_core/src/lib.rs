@@ -11,8 +11,10 @@ mod effects;
 mod hierarchy;
 mod input;
 mod interpolation;
+mod lights;
 pub mod math;
 mod packed;
+mod particles;
 mod retained_render;
 mod scene;
 mod transform_edits;
@@ -22,7 +24,7 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
-pub use effects::{AmbientOcclusion, Bloom, Shadows};
+pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Shadows, SunShafts};
 pub use engine_assets::{
     Aabb, AssetBudget, AssetError, AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle,
     MeshVertex, Surface, Texture, TextureHandle,
@@ -39,6 +41,10 @@ pub use interpolation::{
     NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PresentationMode,
     PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
     reset_interpolation,
+};
+pub use lights::{LocalLight, LocalLights, MAX_LOCAL_LIGHTS, RenderLight, Spot};
+pub use particles::{
+    MAX_EMITTERS, MAX_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
@@ -147,6 +153,10 @@ pub struct Engine {
     extracted_textures: HashSet<TextureHandle>,
     visibility: VisibilityCache,
     retained: retained_render::RetainedRender,
+    // Local lights (decision 023) and particle emitters (decision 026) of
+    // each extraction.
+    lights: lights::LightExtraction,
+    particles: particles::ParticleExtraction,
     plugins_finalized: bool,
     // A fixed tick whose first stage ran ahead of its due frame (see
     // `Self::run_ahead`), and completed ticks the clock has not yet counted.
@@ -202,6 +212,8 @@ impl Engine {
             .init_resource::<Shadows>()
             .init_resource::<AmbientOcclusion>()
             .init_resource::<Bloom>()
+            .init_resource::<LocalLights>()
+            .init_resource::<Particles>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -214,6 +226,8 @@ impl Engine {
             Option<Ref<Cube>>,
             Option<Ref<Mesh3d>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
+        let lights = lights::LightExtraction::new(app.world_mut());
+        let particles = particles::ParticleExtraction::new(app.world_mut());
         Self {
             app,
             clock,
@@ -225,6 +239,8 @@ impl Engine {
             extracted_textures: HashSet::new(),
             visibility: VisibilityCache::default(),
             retained: retained_render::RetainedRender::default(),
+            lights,
+            particles,
             plugins_finalized: false,
             tick_in_flight: false,
             ticks_ahead: 0,
@@ -566,6 +582,8 @@ impl Engine {
         let world = self.app.world();
         snapshot.view_projection = world.resource::<Camera>().view_projection(aspect);
         effects::extract_lighting(world, snapshot);
+        self.lights.extract_owned(world, snapshot);
+        self.particles.extract(world, snapshot, false);
         snapshot.instances.clear();
         snapshot.meshes.clear();
         snapshot.textures.clear();
@@ -615,7 +633,8 @@ impl Engine {
                     material.surface(),
                 )
             } else if let Some(cube) = cube {
-                (self.cube_mesh, cube.color, None, Surface::MATTE)
+                let [r, g, b, _] = cube.color;
+                (self.cube_mesh, [r, g, b, 1.0], None, Surface::MATTE)
             } else {
                 continue;
             };
@@ -702,6 +721,12 @@ impl Engine {
             self.max_render_instances,
             false,
         );
+        self.retained.extract_lights_and_particles(
+            self.app.world(),
+            &mut self.lights,
+            &mut self.particles,
+            false,
+        );
         Ok(self.retained.frame(
             self.app.world().resource::<PresentedTransforms>(),
             self.app.world().resource::<GlobalTransforms>(),
@@ -743,6 +768,12 @@ impl Engine {
             aspect,
             self.frustum_culling,
             self.max_render_instances,
+            true,
+        );
+        self.retained.extract_lights_and_particles(
+            self.app.world(),
+            &mut self.lights,
+            &mut self.particles,
             true,
         );
         // Later source edits must be newer than the stamp window just consumed.
@@ -810,6 +841,10 @@ pub mod prelude {
     };
     pub use crate::{ActionId, ActionInput};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
+    pub use crate::{
+        LocalLight, LocalLights, MAX_LOCAL_LIGHTS, MAX_SHADOW_CASCADES, ParticleBlend,
+        ParticleEmitter, Particles, Reflections, RenderEmitter, RenderLight, Spot, SunShafts,
+    };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.

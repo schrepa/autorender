@@ -54,13 +54,14 @@ Submit these objects through `agent request`, or use `agent <op> --json ...`:
 | `{"op":"inspect","component":"PresentationState"}` | Read extraction mode, fraction, source tick and history storage |
 | `{"op":"inspect","parent":"west-lantern","component":"Hierarchy","limit":20}` | Page direct children and their prefab identities |
 | `{"op":"inspect","component":"Camera"}` | Read the shared camera resource |
-| `{"op":"inspect","component":"Environment"}` | Read the whole look as a scene version 5 `environment` |
-| `{"op":"inspect","component":"Shadows"}` | Read one look section; also `Atmosphere`, `AmbientOcclusion`, `Bloom` |
+| `{"op":"inspect","component":"Environment"}` | Read the whole look as a scene `environment` |
+| `{"op":"inspect","component":"Shadows"}` | Read one look section; also `Atmosphere`, `AmbientOcclusion`, `Bloom`, `LocalLights`, `SunShafts`, `Reflections`, `Particles` |
+| `{"op":"inspect","entity":"lamp","component":"LocalLight"}` | Read an entity's light or `ParticleEmitter` as its scene version 6 field |
 | `{"op":"inspect","component":"GameProgress"}` | Read the sample's score/jump resource |
 | `{"op":"assets"}` | CPU residency; GPU residency accompanies results |
 | `{"op":"culling","enabled":false}` | Temporarily toggle frustum culling and render while paused |
 | `{"op":"camera","position":[0,31,64],"target":[0,0,0],"vertical_fov_radians":0.96,"near":0.1,"far":1000}` | Set and render a validated temporary camera |
-| `{"op":"environment","atmosphere":{"preset":"night"},"bloom":{"intensity":0}}` | Replace the named look sections and render while paused |
+| `{"op":"environment","atmosphere":{"preset":"night"},"bloom":{"intensity":0},"sun_shafts":{}}` | Replace the named look sections and render while paused |
 | `{"op":"benchmark","warmup":30,"samples":120,"mode":"step"}` | Sample paced frames, CPU timings, counters and asset memory |
 | `{"op":"describe","name":"ProfileCapture"}` | Discover optional detailed profiling availability and bounds |
 | `{"op":"profile","duration_ms":5000,"max_events":65536,"cpu_samples":true}` | From a paused profiling session, capture ordinary frames, save trace/CPU-profile artifacts, then pause |
@@ -103,30 +104,52 @@ For isolated workflows, development URLs accept `?scene=/scenes/<name>.scene.jso
 
 ## Change the look
 
-The look is four engine resources: `Atmosphere` (sun, sky, fog, grade),
+The look is a set of engine resources: `Atmosphere` (sun, sky, fog, grade),
 `Shadows`, `AmbientOcclusion` and `Bloom`
-([decision 022](adr-022-scene-environments-and-agent-controls.md)). Inspect
-`Environment` for all of them in the shape of a scene version 5
+([decision 022](adr-022-scene-environments-and-agent-controls.md)), and
+`LocalLights`, `SunShafts`, `Reflections` and `Particles` (decisions
+[023](adr-023-local-lights.md) to [026](adr-026-transparency-and-particles.md)).
+Inspect `Environment` for all of them in the shape of a scene
 `environment`; `describe` gives each section's schema and defaults. An
 atmosphere is a preset (`day`, `golden_hour`, `dusk`, `night`) plus the fields
-that differ from it.
+that differ from it. Its grade sets the palette
+([decision 027](adr-027-stylized-grading.md)): `exposure`, `contrast`,
+`saturation`, `vibrance` (color for muted tones) and the split-toning gains
+`shadow_tint` and `highlight_tint`; fog (`fog_start`, `fog_density`,
+`fog_max`) is what most often grays a large scene. Sun shafts and reflections are opt-in: missing, they
+read as intensity 0, and an empty section (`"sun_shafts":{}`) turns them on
+with their defaults.
 
 Try a look with the `environment` control. It takes the same sections,
 validates them like a scene (`invalid_environment` with the field's path,
 changing nothing), replaces only the sections it names, renders, and lists
 them in `environment_changed`. It never changes source. To keep a look, put
-the sections in the scene's `environment` (version 5), save and reload: the
-scene then sets all four, omitted sections taking the defaults, and replaces
-any temporary look. Scenes without an environment leave the look to the
-game's code. Compare looks in captures at identical canvas sizes.
+the sections in the scene's `environment` (version 5; version 6 for the
+local light, shaft, reflection and particle sections and the atmosphere's
+grade fields), save and reload: the
+scene then sets every section, omitted ones taking the engine's default state
+(sun shafts and reflections off), and replaces any temporary look. Scenes
+without an environment leave the look to the game's code. Compare looks in
+captures at identical canvas sizes.
+
+Lights, particles and glass are scene data too. Version 6 entities author a
+`light` (color, intensity, range, local `offset`, optional `spot` with
+angles in degrees) and `particles` (rate, lifetime, speed, `spread_degrees`,
+acceleration, size and color at birth and death, `blend` `alpha` or
+`additive`, ...); materials author `opacity`. A light on an entity with a mesh
+follows its displayed pose. Particles are a function of presentation time,
+so paused captures are exact and repeatable.
 
 Every reply's `rendering` reports the effects the last frame ran and its
 shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_calls`),
 `shadow_kept_redraw` (0 none, 1 one strip, 2 every still caster),
 `shadow_near_casters`, `shadow_moving_casters` and `shadow_kept_casters`
 (read back a few frames late, null until then), `ambient_occlusion` and
-`bloom`. `Mesh3d` reports each material's `surface` and whether its texture
-masks emission (`texture_emission_mask`).
+`bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and
+`light_cluster_overflow` read back late (overflow means shorter light ranges
+are needed); `sun_shafts` and `reflections`; `transparent_draws` and
+`particles`. `Mesh3d` reports each material's `surface`, `opacity` and
+whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game
 

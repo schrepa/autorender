@@ -29,6 +29,10 @@ struct Resolve {
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> post: Post;
+// Reflections (decision 025) and sun shafts (decision 024) at half
+// resolution; like bloom, they reach the canvas only.
+@group(0) @binding(8) var reflections: texture_2d<f32>;
+@group(0) @binding(9) var shafts: texture_2d<f32>;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -115,7 +119,9 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     color = max(color, vec3<f32>(0.0));
     var output: Outputs;
     output.history = vec4<f32>(color, 1.0);
-    let shown = glowing(color, bloom, history_sampler, screen, post);
+    let mirrored = reflected(color, reflections, history_sampler, screen, post);
+    let lit = shafted(mirrored, shafts, history_sampler, screen, post);
+    let shown = glowing(lit, bloom, history_sampler, screen, post);
     if SURFACE_IS_SRGB {
         output.canvas = vec4<f32>(shown, 1.0);
     } else {

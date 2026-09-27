@@ -9,7 +9,7 @@ mod shapes;
 
 pub use config::{StressConfig, StressScene};
 pub use metrics::FrameMetrics;
-pub use scene::{create_workload, look, set_view};
+pub use scene::{create_workload, lamp_intensity, look, set_view, stress_shafts};
 
 use engine::prelude::*;
 

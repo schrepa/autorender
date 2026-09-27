@@ -93,6 +93,8 @@ pub(crate) fn import(
                     parent: None,
                     prefab: None,
                     collider: None,
+                    light: None,
+                    particles: None,
                     transform: SceneTransform::default(),
                     tags: vec!["imported".into()],
                 });

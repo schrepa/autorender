@@ -111,7 +111,8 @@ try {
     assert.ok(listing.result.types.some(type => type.name === name), name);
   }
   const look = await cli("inspect", { component: "Environment" });
-  assert.deepEqual(Object.keys(look.result.value).sort(), ["ambient_occlusion", "atmosphere", "bloom", "shadows"]);
+  assert.deepEqual(Object.keys(look.result.value).sort(),
+    ["ambient_occlusion", "atmosphere", "bloom", "local_lights", "particles", "reflections", "shadows", "sun_shafts"]);
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
   assert.equal(typeof mesh.result.entity.components.Mesh3d.surface.roughness, "number");
   const invalidLook = await cli("environment", { shadows: { resolution: 3000 } }, false);
@@ -119,10 +120,13 @@ try {
   assert.equal(invalidLook.error.path, "$.shadows.resolution");
   assert.equal(invalidLook.observation.tick, after.observation.tick);
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 } });
+  // Opt-in effects start off; an empty section turns one on with its defaults.
+  assert.deepEqual([capture.result.rendering.sun_shafts, capture.result.rendering.reflections], [false, false]);
+  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, sun_shafts: {}, reflections: {} });
   assert.equal(night.result.temporary, true);
-  assert.deepEqual(night.result.environment_changed, ["atmosphere", "bloom"]);
+  assert.deepEqual(night.result.environment_changed, ["atmosphere", "bloom", "sun_shafts", "reflections"]);
   assert.deepEqual(effects(night.result.rendering), [true, true, false]);
+  assert.deepEqual([night.result.rendering.sun_shafts, night.result.rendering.reflections], [true, true]);
   assert.equal(night.observation.tick, after.observation.tick);
   const nightLook = await cli("inspect", { component: "Environment" });
   assert.notDeepEqual(nightLook.result.value.atmosphere, look.result.value.atmosphere);
@@ -150,9 +154,16 @@ try {
 
   const candidate = structuredClone(source);
   candidate.revision++;
-  candidate.version = 5;
+  candidate.version = 6;
   candidate.environment = { atmosphere: { preset: "dusk" }, ambient_occlusion: { intensity: 0 } };
   candidate.entities.find(entity => entity.id === playerId).name = "Agent verified player";
+  // Version 6: a light and a particle emitter on a transform-only node, and a
+  // glass box where the camera looks.
+  candidate.materials.push({ id: "agent-glass", color: [0.6, 0.85, 1.0, 1.0], opacity: 0.4 });
+  candidate.entities.push(
+    { id: "agent-lamp", transform: { translation: [0, 3, 0] }, light: { intensity: 20, range: 8 }, particles: { rate: 20, lifetime: 1 } },
+    { id: "agent-glass-box", mesh: source.meshes[0].id, material: "agent-glass", transform: { translation: [0, 1, 0] } },
+  );
   const candidatePath = join(output, "candidate.scene.json");
   await writeFile(candidatePath, JSON.stringify(candidate, null, 2));
   await sceneCommand(["validate", "--file", candidatePath]);
@@ -168,6 +179,18 @@ try {
   assert.deepEqual(savedLook.bloom, look.result.value.bloom);
   assert.deepEqual(savedLook.shadows, look.result.value.shadows);
   assert.notDeepEqual(savedLook.atmosphere, nightLook.result.value.atmosphere);
+  // The saved environment omits the opt-in effects: they are off again.
+  assert.deepEqual([savedLook.sun_shafts.intensity, savedLook.reflections.intensity], [0, 0]);
+  assert.deepEqual([reloaded.result.rendering.sun_shafts, reloaded.result.rendering.reflections], [false, false]);
+  const lamp = await cli("inspect", { entity: "agent-lamp", component: "LocalLight" });
+  assert.equal(lamp.result.entity.components.LocalLight.intensity, 20);
+  const emitter = await cli("inspect", { entity: "agent-lamp", component: "ParticleEmitter" });
+  assert.equal(emitter.result.entity.components.ParticleEmitter.rate, 20);
+  const glass = await cli("inspect", { entity: "agent-glass-box", component: "Mesh3d" });
+  assert.ok(Math.abs(glass.result.entity.components.Mesh3d.opacity - 0.4) < 1e-6);
+  assert.ok(reloaded.result.rendering.local_lights >= 1);
+  assert.ok(reloaded.result.rendering.particles > 0);
+  assert.ok(reloaded.result.rendering.transparent_draws >= 1);
   assert.notDeepEqual(savedLook.atmosphere, look.result.value.atmosphere);
   assert.deepEqual(effects(reloaded.result.rendering), [true, false, true]);
   const assets = await cli("request", { op: "assets" });
@@ -178,7 +201,7 @@ try {
   await cli("pause");
   const diagnostics = await cli("diagnostics");
   assert.deepEqual(diagnostics.result.entries.filter(entry => entry.kind === "pageerror" || entry.kind === "error"), []);
-  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "resume_pause", "diagnostics"] }));
+  console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "version_six_lights_particles_glass", "resume_pause", "diagnostics"] }));
 } finally {
   lines.close();
   try {

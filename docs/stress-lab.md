@@ -49,7 +49,8 @@ apply with city meanings:
   crates at the tower field's cluster positions.
 
 The inside view looks across the river at the core from street level.
-The Lighting control picks an atmosphere ([decision 018](adr-018-atmosphere-and-stylized-lighting.md)):
+The Lighting control picks an atmosphere ([decision 018](adr-018-atmosphere-and-stylized-lighting.md),
+graded per [decision 027](adr-027-stylized-grading.md)):
 the scene's own (night over the tower field, golden hour over the city),
 golden hour, dusk, night or day. `look=golden|dusk|night|day` in the URL sets
 it at startup; it survives workload changes, and recordings and profiles
@@ -59,11 +60,18 @@ the city's glass towers, metal, vehicles and water reflect the sky, the river
 ripples, and lit windows, neon, beacons and lamp heads glow through their
 textures' emission masks; the tower field varies roughness and metalness and
 lights every fourth tower's stripes. Each scene bounds its shadows
-([decision 020](adr-020-sun-shadows.md)) at 4096 texels. The Effects control
-turns shadows, ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
-off together or one at a time; `effects=none|no-shadows|no-occlusion|no-bloom`
-sets it at startup, it survives workload changes, and recordings and profiles
-report `effects`. The measurements below predate these effects.
+([decision 020](adr-020-sun-shadows.md)) at 4096 texels. The city's street lamps
+carry spot lights ([decision 023](adr-023-local-lights.md)), brighter as the
+look darkens and off by day; chimneys smoke and fountains spray particles, and
+glass domes are transparent ([decision 026](adr-026-transparency-and-particles.md));
+both scenes opt into sun shafts ([decision 024](adr-024-sun-shafts.md)) and
+screen-space reflections ([decision 025](adr-025-screen-space-reflections.md)).
+The Effects control turns shadows, ambient occlusion and bloom
+([decision 021](adr-021-ambient-occlusion-and-bloom.md)), local lights, sun
+shafts, reflections or particles off, or all of them; `effects=none` or a
+comma-separated list such as `effects=no-shadows,no-shafts` sets it at
+startup, it survives workload changes, and recordings and profiles report
+`effects`. The measurements below predate these effects.
 The city averages about 60 vertices and 29 triangles per object, against 24
 and 12 for the tower field, so the opaque pass does most of the added work.
 In Firefox 156 on the Intel iGPU (canvas 2262×987, 10% moving, no collision,

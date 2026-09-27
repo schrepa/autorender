@@ -232,7 +232,11 @@ the camera pass's `render.draw_calls`), `render.shadow_near_casters`,
 `render.shadow_moving_casters` and `render.shadow_kept_casters` (casters each
 map drew, read back a few frames late; the kept count only on redraws),
 `render.ambient_occlusion`, `render.bloom`, `memory.gpu_shadow_bytes` and
-`memory.gpu_post_bytes`. In a settled scene the moving count equals the
+`memory.gpu_post_bytes`. Local lights, transparency and particles (decisions
+023 and 026) report `render.local_lights`, `render.lights_visible`,
+`render.light_cluster_overflow`, `render.transparent_draws`,
+`render.particles`, `memory.gpu_light_bytes` and
+`memory.gpu_transparent_bytes`. In a settled scene the moving count equals the
 moving renderables and `render.shadow_refresh` stays 0; separate frames whose
 kept map redrew whole, which draw every still caster. The Stress Lab's
 `?effects=` compares effects within one build.

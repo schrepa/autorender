@@ -11,14 +11,23 @@ use crate::{
 
 const UNMAPPED_BUCKET: u16 = u16::MAX;
 
-const _: () = assert!(MAX_RESIDENT_MESHES * (MAX_RESIDENT_TEXTURES + 1) <= u16::MAX as usize);
+// Mesh, texture (or none) and opacity class of every bucket fit in a u16.
+const _: () = assert!(2 * MAX_RESIDENT_MESHES * (MAX_RESIDENT_TEXTURES + 1) <= u16::MAX as usize);
 
 #[derive(Debug)]
 pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
     pub texture: Option<TextureHandle>,
+    /// Instances with an opacity below 1 draw in the transparent pass and
+    /// cast no shadow (decision 026).
+    pub transparent: bool,
     pub instances: Range<u32>,
+}
+
+/// Whether `instance` draws in the transparent pass (decision 026).
+pub(crate) fn is_transparent(instance: &RenderInstance) -> bool {
+    instance.color[3] < 1.0
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,7 +111,7 @@ pub(crate) struct BatchPlan {
     /// All supplied sources keep existing residency, including culled objects.
     mesh_handles: Vec<MeshHandle>,
     texture_handles: Vec<TextureHandle>,
-    instance_keys: Vec<(MeshHandle, Option<TextureHandle>)>,
+    instance_keys: Vec<(MeshHandle, Option<TextureHandle>, bool)>,
     // Rebuild-only bounded scratch: one u16 bucket per admitted instance,
     // plus one cursor per possible mesh/(untextured or texture) pair.
     instance_buckets: Vec<u16>,
@@ -200,7 +209,8 @@ impl BatchPlan {
                 + self.batches.capacity() * size_of::<DrawBatch>()
                 + self.mesh_handles.capacity() * size_of::<MeshHandle>()
                 + self.texture_handles.capacity() * size_of::<TextureHandle>()
-                + self.instance_keys.capacity() * size_of::<(MeshHandle, Option<TextureHandle>)>()
+                + self.instance_keys.capacity()
+                    * size_of::<(MeshHandle, Option<TextureHandle>, bool)>()
                 + group_scratch_bytes;
             engine_profile::counter("memory.batch_plan_capacity_bytes", capacity_bytes as f64);
             engine_profile::counter(
@@ -319,7 +329,9 @@ impl BatchPlan {
                     .instance_keys
                     .iter()
                     .zip(selected_instances(snapshot, selected))
-                    .all(|(&key, (_, instance))| key == (instance.mesh, instance.texture))
+                    .all(|(&key, (_, instance))| {
+                        key == (instance.mesh, instance.texture, is_transparent(instance))
+                    })
         };
         let mut used_texture_sources = [false; MAX_RESIDENT_TEXTURES];
         if !reused {
@@ -352,10 +364,10 @@ impl BatchPlan {
             self.instance_keys.clear();
             if selected.is_none() {
                 self.instance_keys.reserve_exact(instance_count);
-                self.instance_keys.extend(
-                    selected_instances(snapshot, selected)
-                        .map(|(_, instance)| (instance.mesh, instance.texture)),
-                );
+                self.instance_keys
+                    .extend(selected_instances(snapshot, selected).map(|(_, instance)| {
+                        (instance.mesh, instance.texture, is_transparent(instance))
+                    }));
             }
         }
         self.order_reused = reused;
@@ -371,11 +383,11 @@ impl BatchPlan {
     ) -> Result<(), SnapshotError> {
         let _profile = engine_profile::span("render", "batch_instance_group");
         let texture_slots = self.texture_source_indices.len() + 1;
+        // Opaque buckets first, then transparent ones.
+        let opaque_buckets = self.source_indices.len() * texture_slots;
         self.bucket_cursors.clear();
-        self.bucket_cursors
-            .reserve_exact(self.source_indices.len() * texture_slots);
-        self.bucket_cursors
-            .resize(self.source_indices.len() * texture_slots, 0);
+        self.bucket_cursors.reserve_exact(2 * opaque_buckets);
+        self.bucket_cursors.resize(2 * opaque_buckets, 0);
         self.instance_buckets.clear();
         let instance_count = selected.map_or(snapshot.instances.len(), <[usize]>::len);
         self.instance_buckets.reserve_exact(instance_count);
@@ -396,13 +408,19 @@ impl BatchPlan {
                     instance.texture,
                 )?;
                 self.key_resolutions += 1;
-                let bucket = mesh_rank * texture_slots + texture_rank.map_or(0, |rank| rank + 1);
+                let bucket = mesh_rank * texture_slots
+                    + texture_rank.map_or(0, |rank| rank + 1)
+                    + if is_transparent(instance) {
+                        opaque_buckets
+                    } else {
+                        0
+                    };
                 if selected.is_some() {
                     self.slot_buckets[slot] = bucket as u16;
                 }
                 bucket
             };
-            // Source admission bounds this to 128 * 65 distinct buckets.
+            // Source admission bounds this to 2 * 128 * 65 distinct buckets.
             self.instance_buckets.push(bucket as u16);
             self.bucket_cursors[bucket] += 1;
         }
@@ -420,8 +438,10 @@ impl BatchPlan {
                 let end = start + *count;
                 *count = start;
                 if end != start {
-                    let source_index = self.source_indices[bucket / texture_slots];
-                    let texture_slot = bucket % texture_slots;
+                    let transparent = bucket >= opaque_buckets;
+                    let key = bucket % opaque_buckets;
+                    let source_index = self.source_indices[key / texture_slots];
+                    let texture_slot = key % texture_slots;
                     let texture = if texture_slot == 0 {
                         None
                     } else {
@@ -433,6 +453,7 @@ impl BatchPlan {
                         mesh: snapshot.meshes[source_index].handle,
                         source_index,
                         texture,
+                        transparent,
                         instances: start as u32..end as u32,
                     });
                 }
@@ -652,6 +673,7 @@ mod tests {
             render_candidates: handles.len(),
             visible_instances: handles.len(),
             culled_instances: 0,
+            ..Default::default()
         }
     }
 
@@ -937,6 +959,31 @@ mod tests {
             plan.prepare(&scene).unwrap();
             assert!(plan.order_reused);
         }
+    }
+
+    #[test]
+    fn transparent_instances_draw_in_their_own_batches_after_opaque_ones() {
+        let shared = mesh();
+        let handles = [shared.handle; 4];
+        let mut snapshot = snapshot(vec![shared], &handles);
+        snapshot.instances[1].color[3] = 0.5;
+        snapshot.instances[3].color[3] = 0.25;
+        let mut plan = BatchPlan::default();
+        plan.prepare(&snapshot).unwrap();
+        assert_eq!(plan.batches.len(), 2);
+        assert!(!plan.batches[0].transparent, "opaque buckets come first");
+        assert!(plan.batches[1].transparent);
+        for batch in &plan.batches {
+            for offset in batch.instances.clone() {
+                let instance = &snapshot.instances[plan.ordered_instances[offset as usize]];
+                assert_eq!(is_transparent(instance), batch.transparent);
+            }
+        }
+        // An opacity change regroups even with the same mesh and texture.
+        snapshot.instances[1].color[3] = 1.0;
+        plan.prepare(&snapshot).unwrap();
+        assert_eq!(plan.batches[0].instances.len(), 3);
+        assert_eq!(plan.batches[1].instances.len(), 1);
     }
 
     #[test]

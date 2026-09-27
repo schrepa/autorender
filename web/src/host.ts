@@ -13,6 +13,9 @@ export interface RuntimeStats {
   shadows_enabled: boolean; shadow_draws: number; shadow_kept_redraw: number;
   shadow_near_casters: number | undefined; shadow_moving_casters: number | undefined; shadow_kept_casters: number | undefined;
   ambient_occlusion: boolean; bloom: boolean;
+  local_lights: number; dropped_lights: number;
+  lights_visible: number | undefined; light_cluster_overflow: number | undefined;
+  sun_shafts: boolean; reflections: boolean; transparent_draws: number; particles: number;
   free(): void;
 }
 export interface Runtime {

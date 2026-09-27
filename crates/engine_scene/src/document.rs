@@ -1,10 +1,10 @@
 use engine_core::{Camera, Material, Mesh, MeshVertex, Surface, Transform, glam};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneCollider, SceneEnvironment, SceneError, SceneTexture};
+use crate::{SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneLight, SceneTexture};
 
 /// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 5;
+pub const SCENE_VERSION: u32 = 6;
 pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
@@ -17,7 +17,7 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 5)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 6)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -172,7 +172,8 @@ impl SceneCamera {
     }
 }
 
-/// One named opaque material; color channels are linear values in `[0, 1]`.
+/// One named material; color channels are linear values in `[0, 1]` and
+/// alpha is 1. `opacity` below 1 (version 6) draws it transparent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -190,18 +191,33 @@ pub struct SceneMaterial {
     /// Requires version 5; without it the material is matte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneSurface>,
+    /// The fraction of light behind it the surface covers, in `(0, 1]`
+    /// (decision 026). Below 1 it draws transparent, blending in any order,
+    /// writing no depth and casting no shadow. Requires version 6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1.0)))]
+    pub opacity: Option<f32>,
 }
 
 impl SceneMaterial {
     /// The material at authored path `path` (`$.materials[i]`).
     pub(crate) fn material(&self, path: &str) -> Result<Material, SceneError> {
-        let material = Material::new(self.color).map_err(|error| {
+        let mut material = Material::new(self.color).map_err(|error| {
             SceneError::new(
                 "invalid_material",
                 format!("{path}.color"),
                 error.to_string(),
             )
         })?;
+        if let Some(opacity) = self.opacity {
+            material = material.with_opacity(opacity).map_err(|error| {
+                SceneError::new(
+                    "invalid_material",
+                    format!("{path}.opacity"),
+                    error.to_string(),
+                )
+            })?;
+        }
         match self.surface {
             Some(surface) => material.with_surface(surface.surface()).map_err(|error| {
                 SceneError::new(
@@ -387,6 +403,12 @@ pub struct SceneObject {
     /// Local collision shape, independent of rendering. Requires version 4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneCollider>,
+    /// A point or spot light (decision 023). Requires version 6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<SceneLight>,
+    /// A particle emitter (decision 026). Requires version 6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub particles: Option<SceneEmitter>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

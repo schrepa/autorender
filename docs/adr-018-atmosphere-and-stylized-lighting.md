@@ -5,7 +5,9 @@ constants become scene data; captures, previews and CPU presentation shade
 exactly like ordinary frames. Decision 019 replaces the sun highlight with
 material surfaces and makes `specular` a physically based scale. Decision
 022 lets scenes author the atmosphere as a preset with overrides and lets
-agents inspect and temporarily replace it.
+agents inspect and temporarily replace it. Decision 027 keeps bright hues
+through the tone curve, adds contrast, vibrance and split toning to the
+grade, and retunes the presets.
 
 ## Context
 

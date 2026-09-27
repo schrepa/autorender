@@ -56,6 +56,30 @@ pub struct RenderStats {
     /// Whether this frame applied ambient occlusion and bloom (decision 021).
     pub ambient_occlusion: bool,
     pub bloom: bool,
+    /// This frame's local lights (decision 023); `None` when it shaded none.
+    pub lights: Option<LightStats>,
+    /// Whether this frame applied sun shafts (decision 024) and screen-space
+    /// reflections (decision 025).
+    pub sun_shafts: bool,
+    pub reflections: bool,
+    /// Transparent draws (decision 026), also counted in `draw_calls`, and
+    /// the particles this frame drew.
+    pub transparent_draws: u32,
+    pub particles: u32,
+}
+
+/// Local lights of one frame (decision 023).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LightStats {
+    /// Lights the frame shaded, within the budget.
+    pub lights: u32,
+    /// Usable lights beyond the budget, or without a valid pose.
+    pub dropped: u32,
+    /// Lights that reached a view cluster, and cluster entries lost to full
+    /// cluster lists, read back a few frames late; `None` before the first
+    /// read-back.
+    pub visible: Option<u32>,
+    pub overflow: Option<u32>,
 }
 
 /// Sun shadow work of one frame (decision 020).
@@ -80,6 +104,10 @@ mod batches;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
+mod lights;
+#[cfg(any(target_arch = "wasm32", test))]
+mod particles;
+#[cfg(any(target_arch = "wasm32", test))]
 mod retained_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
 mod shadow_fit;
@@ -102,5 +130,7 @@ mod shadows;
 mod staging;
 #[cfg(target_arch = "wasm32")]
 mod temporal;
+#[cfg(target_arch = "wasm32")]
+mod transparent;
 #[cfg(target_arch = "wasm32")]
 pub use browser::Renderer;

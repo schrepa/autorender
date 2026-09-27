@@ -2,8 +2,9 @@
 import type { RuntimeStats } from "./host";
 
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
-const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom"] as const;
-const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters"] as const;
+const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom", "sun_shafts", "reflections"] as const;
+// Read back a few frames late: null until then.
+const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow"] as const;
 export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number]> & Record<typeof casterFields[number], number | null>;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };
@@ -11,7 +12,7 @@ const numericFields = [
   "render_candidates", "visible_instances", "culled_instances", "instances", "dropped_instances", "missing_assets", "invalid_transforms",
   "draw_calls", "upload_bytes", "fixed_steps", "dropped_seconds", "resident_meshes", "resident_mesh_bytes", "mesh_upload_bytes",
   "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms",
-  "shadow_draws", "shadow_kept_redraw",
+  "shadow_draws", "shadow_kept_redraw", "local_lights", "dropped_lights", "transparent_draws", "particles",
 ] as const;
 
 export class BenchmarkError extends Error {
@@ -39,7 +40,6 @@ export function readRendering(stats: RuntimeStats): RenderingStats {
     const result = {} as RenderingStats;
     for (const field of flagFields) result[field] = stats[field];
     for (const field of numericFields) result[field] = stats[field];
-    // Shadow caster counts are read back a few frames late: null until then.
     for (const field of casterFields) result[field] = stats[field] ?? null;
     return result;
   } finally { stats.free(); }

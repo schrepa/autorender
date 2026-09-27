@@ -69,6 +69,17 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
         resolution: 4096,
         ..Shadows::default()
     });
+    // Sun shafts (decision 024) and screen-space reflections (decision 025)
+    // are opt-in engine effects; street lamps near the camera light the
+    // city (decision 023), brighter as the look darkens.
+    world.insert_resource(stress_shafts());
+    world.insert_resource(Reflections::default());
+    world.insert_resource(LocalLights {
+        max_lights: MAX_LOCAL_LIGHTS,
+        distance: 220.0,
+        intensity: lamp_intensity(config.scene, "scene")?,
+        ..LocalLights::default()
+    });
     if collision_enabled {
         refresh_collision_world(world).map_err(|error| error.to_string())?;
     }
@@ -405,6 +416,29 @@ fn query_workload(
         metrics.query_result(result);
     }
     metrics.queries_ms += metrics::now_ms() - start;
+}
+
+/// Sun shafts strong enough to read over the scenes' light fog.
+pub fn stress_shafts() -> SunShafts {
+    SunShafts {
+        intensity: 1.5,
+        ..SunShafts::default()
+    }
+}
+
+/// Street lamp brightness under the lighting preset `name`: off by day.
+pub fn lamp_intensity(scene: StressScene, name: &str) -> Result<f32, String> {
+    Ok(match name {
+        "scene" => match scene {
+            StressScene::Field => 1.0,
+            StressScene::City => 0.35,
+        },
+        "golden" => 0.35,
+        "dusk" => 0.8,
+        "night" => 1.0,
+        "day" => 0.0,
+        _ => return Err("look must be scene, golden, dusk, night or day".into()),
+    })
 }
 
 /// The lighting preset `name`: `golden`, `dusk`, `night` or `day`, or

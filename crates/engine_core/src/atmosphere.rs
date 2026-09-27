@@ -1,7 +1,7 @@
 //! Scene lighting and atmosphere (decision 018): a directional sun, a sky
 //! gradient that also colors ambient light, reflections and fog, and the
-//! exposure and saturation of the final image. Every extracted frame carries
-//! a copy.
+//! grade of the final image: exposure, contrast, saturation, vibrance and
+//! split toning (decision 027). Every extracted frame carries a copy.
 
 use bevy_ecs::prelude::Resource;
 use glam::Vec3;
@@ -44,6 +44,17 @@ pub struct Atmosphere {
     pub exposure: f32,
     /// Saturation after tone mapping; 1 keeps it.
     pub saturation: f32,
+    /// Contrast around mid grey after tone mapping (decision 027): the slope
+    /// of an S-curve that keeps black and white, from 0 (flat) through 1
+    /// (unchanged) to its steepest at 1.5.
+    pub contrast: f32,
+    /// Saturation added to muted colors more than to vivid ones; 0 adds none.
+    pub vibrance: f32,
+    /// Hue of dark and of bright tones after tone mapping (split toning), as
+    /// color gains scaled to keep luminance; white, like black, leaves tones
+    /// as they are. Cool shadows against warm highlights read as vivid.
+    pub shadow_tint: Vec3,
+    pub highlight_tint: Vec3,
 }
 
 impl Default for Atmosphere {
@@ -53,66 +64,81 @@ impl Default for Atmosphere {
 }
 
 impl Atmosphere {
-    /// A high sun under a blue sky.
+    /// A high sun under a deep blue sky, with clear air, sky-blue shadows and
+    /// sunlit highlights.
     pub fn day() -> Self {
         Self {
             sun_direction: Vec3::new(0.55, 0.75, 0.35),
-            sun_color: Vec3::new(2.2, 2.05, 1.8),
-            zenith: Vec3::new(0.16, 0.34, 0.85),
-            horizon: Vec3::new(0.62, 0.74, 0.92),
+            sun_color: Vec3::new(2.3, 2.1, 1.75),
+            zenith: Vec3::new(0.1, 0.3, 0.9),
+            horizon: Vec3::new(0.55, 0.75, 1.0),
             ground: Vec3::new(0.24, 0.21, 0.18),
             ambient: 0.6,
-            fog_start: 40.0,
-            fog_density: 0.0016,
+            fog_start: 80.0,
+            fog_density: 0.0011,
             fog_falloff: 0.02,
-            fog_max: 0.75,
+            fog_max: 0.4,
             rim: 0.15,
             specular: 1.0,
             emission: 0.1,
-            exposure: 0.9,
-            saturation: 1.1,
+            exposure: 0.85,
+            saturation: 1.2,
+            contrast: 1.12,
+            vibrance: 0.35,
+            shadow_tint: Vec3::new(0.85, 0.95, 1.2),
+            highlight_tint: Vec3::new(1.08, 1.02, 0.92),
         }
     }
 
-    /// A low warm sun, a peach horizon and long blue shadows: the default.
+    /// A low warm sun, an amber horizon under a deep blue zenith, and violet
+    /// shadows against golden highlights: the default.
     pub fn golden_hour() -> Self {
         Self {
             sun_direction: Vec3::new(0.82, 0.45, 0.1),
             sun_color: Vec3::new(2.6, 1.6, 0.85),
-            zenith: Vec3::new(0.12, 0.22, 0.6),
-            horizon: Vec3::new(1.05, 0.62, 0.45),
+            zenith: Vec3::new(0.05, 0.16, 0.62),
+            horizon: Vec3::new(1.15, 0.56, 0.32),
             ground: Vec3::new(0.2, 0.13, 0.12),
             ambient: 0.62,
-            fog_start: 40.0,
-            fog_density: 0.0022,
+            fog_start: 80.0,
+            fog_density: 0.0014,
             fog_falloff: 0.022,
-            fog_max: 0.75,
+            fog_max: 0.45,
             rim: 0.45,
             specular: 1.0,
             emission: 0.5,
-            exposure: 0.85,
-            saturation: 1.15,
+            exposure: 0.75,
+            saturation: 1.2,
+            contrast: 1.15,
+            vibrance: 0.4,
+            shadow_tint: Vec3::new(0.75, 0.9, 1.35),
+            highlight_tint: Vec3::new(1.15, 1.0, 0.85),
         }
     }
 
-    /// The sun at the horizon under an indigo sky, with pink haze.
+    /// The sun at the horizon under an indigo sky, with pink haze, blue-violet
+    /// shadows and coral highlights.
     pub fn dusk() -> Self {
         Self {
             sun_direction: Vec3::new(0.9, 0.07, 0.4),
             sun_color: Vec3::new(2.2, 0.85, 0.5),
-            zenith: Vec3::new(0.05, 0.05, 0.24),
-            horizon: Vec3::new(0.95, 0.36, 0.48),
+            zenith: Vec3::new(0.03, 0.04, 0.32),
+            horizon: Vec3::new(1.0, 0.36, 0.42),
             ground: Vec3::new(0.08, 0.05, 0.09),
             ambient: 0.65,
-            fog_start: 40.0,
-            fog_density: 0.0026,
+            fog_start: 60.0,
+            fog_density: 0.0016,
             fog_falloff: 0.02,
-            fog_max: 0.78,
+            fog_max: 0.45,
             rim: 0.6,
             specular: 1.0,
             emission: 1.0,
             exposure: 0.95,
-            saturation: 1.25,
+            saturation: 1.15,
+            contrast: 1.18,
+            vibrance: 0.35,
+            shadow_tint: Vec3::new(0.75, 0.8, 1.45),
+            highlight_tint: Vec3::new(1.25, 0.95, 0.75),
         }
     }
 
@@ -126,14 +152,18 @@ impl Atmosphere {
             ground: Vec3::new(0.02, 0.02, 0.04),
             ambient: 0.9,
             fog_start: 40.0,
-            fog_density: 0.0028,
+            fog_density: 0.0022,
             fog_falloff: 0.02,
-            fog_max: 0.85,
+            fog_max: 0.7,
             rim: 0.8,
             specular: 1.0,
             emission: 1.0,
             exposure: 1.35,
-            saturation: 1.15,
+            saturation: 1.2,
+            contrast: 1.2,
+            vibrance: 0.5,
+            shadow_tint: Vec3::new(0.8, 0.9, 1.35),
+            highlight_tint: Vec3::new(1.15, 1.0, 0.85),
         }
     }
 
@@ -141,7 +171,14 @@ impl Atmosphere {
     /// scales nonnegative, a nonzero sun direction and a fog maximum in
     /// `[0, 1]`. Otherwise the default.
     pub fn sanitized(self) -> Self {
-        let colors = [self.sun_color, self.zenith, self.horizon, self.ground];
+        let colors = [
+            self.sun_color,
+            self.zenith,
+            self.horizon,
+            self.ground,
+            self.shadow_tint,
+            self.highlight_tint,
+        ];
         let scales = [
             self.ambient,
             self.fog_start,
@@ -152,6 +189,8 @@ impl Atmosphere {
             self.emission,
             self.exposure,
             self.saturation,
+            self.contrast,
+            self.vibrance,
         ];
         let usable = self.sun_direction.is_finite()
             && self.sun_direction.length_squared() > 0.0
@@ -195,6 +234,14 @@ mod tests {
             },
             Atmosphere {
                 fog_max: 1.5,
+                ..Atmosphere::day()
+            },
+            Atmosphere {
+                shadow_tint: Vec3::new(1.0, -0.1, 1.0),
+                ..Atmosphere::day()
+            },
+            Atmosphere {
+                contrast: f32::INFINITY,
                 ..Atmosphere::day()
             },
         ];

@@ -3,13 +3,15 @@ use std::{collections::BTreeMap, io::Write};
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
     AmbientOcclusion, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime, FrameTime,
-    GlobalTransforms, InterpolateTransform, Mesh3d, Parent, PresentationMode, PresentationState,
-    PresentedTransforms, Shadows, Transform,
+    GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
+    ParticleEmitter, Particles, PresentationMode, PresentationState, PresentedTransforms,
+    Reflections, Shadows, SunShafts, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneEntity, SceneEnvironment,
-    SceneInstance, SceneShadows,
+    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneEmitter, SceneEntity,
+    SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
+    SceneReflections, SceneShadows, SceneSunShafts,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -190,6 +192,7 @@ impl Default for DevTools {
                     indices: mesh.map(|mesh| mesh.indices().len()),
                     local_bounds: mesh.map(|mesh| MeshBoundsView { min: mesh.bounds().min().to_array(), max: mesh.bounds().max().to_array() }),
                     color: material.map(|material| material.color()),
+                    opacity: material.map(|material| material.opacity()),
                     surface: material.map(|material| {
                         let surface = material.surface();
                         SurfaceView { roughness: surface.roughness, metalness: surface.metalness, emission: surface.emission, ripples: surface.ripples }
@@ -222,8 +225,38 @@ impl Default for DevTools {
                 .with_default(json!(SceneBloom::default())),
             |bloom| json!(SceneBloom::from(bloom)),
         ).expect("built-in descriptor is bounded");
+        tools.register_resource::<LocalLights>(
+            InspectorDescriptor::new("LocalLights", "Local lighting settings (decision 023): whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow.", schemas["LocalLights"].clone())
+                .with_default(json!(SceneLocalLights::default())),
+            |lights| json!(SceneLocalLights::from(lights)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<SunShafts>(
+            InspectorDescriptor::new("SunShafts", "Sunlight scattered by the fog between shadow casters (decision 024). Opt-in: missing or intensity 0 means off; it needs shadows.", schemas["SunShafts"].clone())
+                .with_default(json!(SceneSunShafts::default())),
+            |shafts| json!(SceneSunShafts::from(shafts)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Reflections>(
+            InspectorDescriptor::new("Reflections", "Screen-space reflections in glossy surfaces (decision 025), falling back to the sky off screen. Opt-in: missing or intensity 0 means off.", schemas["Reflections"].clone())
+                .with_default(json!(SceneReflections::default())),
+            |reflections| json!(SceneReflections::from(reflections)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Particles>(
+            InspectorDescriptor::new("Particles", "Particle settings (decision 026): whether emitters draw and the per-frame particle budget. Missing means no particles.", schemas["Particles"].clone())
+                .with_default(json!(SceneParticles::default())),
+            |particles| json!(SceneParticles::from(particles)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_component::<LocalLight>(
+            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
+                .with_default(json!(SceneLight::default())),
+            |light| json!(SceneLight::from(light)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_component::<ParticleEmitter>(
+            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
+                .with_default(json!(SceneEmitter::default())),
+            |emitter| json!(SceneEmitter::from(emitter)),
+        ).expect("built-in descriptor is bounded");
         tools.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a v5 scene environment (decision 022): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off.", schemas["Environment"].clone()),
+            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off.", schemas["Environment"].clone()),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
@@ -453,14 +486,14 @@ impl DevTools {
     fn describe(&self, name: Option<&str>) -> Result<Value, DevError> {
         let Some(name) = name else {
             let mut types: Vec<Value> = self.inspectors.values().map(|inspector| json!({"name": inspector.descriptor.name, "kind": inspector.kind, "description": inspector.descriptor.description})).collect();
-            types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": "docs/schema/scene-v5.schema.json"}));
+            types.push(json!({"name": "SceneDocument", "kind": "authoring", "source": "docs/schema/scene-v6.schema.json"}));
             types.push(json!({"name": "protocol", "kind": "protocol"}));
             types.push(json!({"name": "BrowserControl", "kind": "protocol"}));
             return Ok(json!({"types": types}));
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v5.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 4 remain accepted without the newer fields. Prefabs cannot nest. A v5 environment sets every section on instantiation, defaulting omitted ones."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts and reflections off)."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

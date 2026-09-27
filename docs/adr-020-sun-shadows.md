@@ -5,7 +5,8 @@ GPU-presented frames keep the shadows of still casters between frames;
 exact captures, previews and CPU presentation draw every caster each frame
 and shade alike. Decision 022 makes the resource optional (missing means
 off), creates the shadow pipelines only once shadows run, and exposes the
-settings to scenes and agents.
+settings to scenes and agents. Decision 028 splits the near map into
+cascades and replaces the lookup biases with receiver planes.
 
 ## Context
 

@@ -278,7 +278,9 @@ impl Sources {
                 material.surface(),
             )
         } else {
-            (cube_mesh, cube?.color, None, Surface::MATTE)
+            let [r, g, b, _] = cube?.color;
+            // Cubes are always opaque.
+            (cube_mesh, [r, g, b, 1.0], None, Surface::MATTE)
         };
         let mesh = assets.mesh(handle)?;
         // Resolve all weak handles before retaining any source for this record.
@@ -533,6 +535,35 @@ impl RetainedRender {
         Some(index)
     }
 
+    /// Fills this frame's local lights and particle emitters (decisions 023
+    /// and 026). A light on an entity whose slot draws a mesh stays in that
+    /// slot's model space, following the pose the renderer already has.
+    pub(crate) fn extract_lights_and_particles(
+        &mut self,
+        world: &World,
+        lights: &mut crate::lights::LightExtraction,
+        particles: &mut crate::particles::ParticleExtraction,
+        gpu: bool,
+    ) {
+        let entities = &self.entities;
+        let frames = &self.frames;
+        let slot_of = |entity: Entity| {
+            entities
+                .get(&entity)
+                .copied()
+                .filter(|&index| frames[index].mesh != NO_SOURCE)
+                .map(|index| index as u32)
+        };
+        lights.extract_retained(
+            world,
+            &mut self.snapshot,
+            slot_of,
+            self.source_revision,
+            gpu,
+        );
+        particles.extract(world, &mut self.snapshot, gpu);
+    }
+
     /// Creates the source stamp window used by GPU-presented frames.
     pub(crate) fn ensure_source_scan(&mut self, world: &mut World) {
         if self.source_stamps.is_none() {
@@ -730,7 +761,11 @@ impl RetainedRender {
                     ..
                 }) = resolved
                 {
-                    let keys_changed = record.mesh != mesh || record.texture != texture;
+                    // Opacity decides the pass (decision 026): switching
+                    // between opaque and transparent regroups draws.
+                    let keys_changed = record.mesh != mesh
+                        || record.texture != texture
+                        || (record.color[3] < 1.0) != (color[3] < 1.0);
                     structure_changed |= keys_changed;
                     sources_changed |= keys_changed;
                     record.mesh = mesh;

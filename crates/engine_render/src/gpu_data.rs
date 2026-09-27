@@ -1,7 +1,9 @@
 //! Explicit schemas for the adjacent shader, separate from gameplay components.
 
 use bytemuck::{Pod, Zeroable};
-use engine_core::{Atmosphere, Bloom, MeshVertex, RenderInstance, Surface, glam::Mat4};
+use engine_core::{
+    Atmosphere, Bloom, MeshVertex, Reflections, RenderInstance, Surface, glam::Mat4,
+};
 
 /// WGSL `Camera` uniform: three column-major mat4x4<f32> and two vec4<f32>,
 /// alignment 16, size 224. `view_projection` is the rasterized projection.
@@ -64,8 +66,9 @@ impl CameraUniform {
     }
 }
 
-/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018): seven
-/// vec4<f32>, 112 bytes. Scalars ride in the fourth components.
+/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018) and
+/// grade (decision 027): ten vec4<f32>, 160 bytes. Scalars ride in the fourth
+/// components.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct LightingUniform {
@@ -81,14 +84,42 @@ pub(crate) struct LightingUniform {
     pub ground: [f32; 4],
     /// Start, density, height falloff and maximum.
     pub fog: [f32; 4],
-    /// Emission scale, and the exposed brightness above which light glows
-    /// (decision 021); zw unused.
+    /// Emission scale, the exposed brightness above which light glows
+    /// (decision 021), the roughness beyond which surfaces reflect only the
+    /// sky, and 1 when screen-space reflections run (decision 025).
     pub effects: [f32; 4],
+    /// The contrast curve's weight (see [`contrast_weight`]) and vibrance
+    /// (decision 027); zw unused.
+    pub grade: [f32; 4],
+    /// Luminance-normalized split-toning gains of shadows and highlights; w
+    /// unused.
+    pub shadow_tint: [f32; 4],
+    pub highlight_tint: [f32; 4],
+}
+
+/// Weight of the grade's S-curve for `contrast`: the shader mixes a
+/// perceptual value `s` toward `smoothstep(0, 1, s)` by it, a curve that keeps
+/// black and white, is monotonic for weights in `[-2, 1]` and has slope
+/// `1 + weight / 2` at mid grey, which is the contrast from 0 up to 1.5.
+pub(crate) fn contrast_weight(contrast: f32) -> f32 {
+    engine_core::math::clamp(2.0 * (contrast - 1.0), -2.0, 1.0)
+}
+
+/// `tint` scaled to unit luminance, so it shifts hue without darkening; white
+/// for tints without luminance.
+fn unit_luminance(tint: glam::Vec3) -> [f32; 4] {
+    let luminance = tint.dot(glam::Vec3::new(0.2126, 0.7152, 0.0722));
+    if luminance > 1.0e-6 {
+        (tint / luminance).extend(0.0).to_array()
+    } else {
+        [1.0, 1.0, 1.0, 0.0]
+    }
 }
 
 impl LightingUniform {
-    pub(crate) fn new(atmosphere: &Atmosphere, bloom: &Bloom) -> Self {
+    pub(crate) fn new(atmosphere: &Atmosphere, bloom: &Bloom, reflections: &Reflections) -> Self {
         let atmosphere = atmosphere.sanitized();
+        let reflections = reflections.sanitized();
         Self {
             sun: atmosphere
                 .sun_direction
@@ -105,7 +136,20 @@ impl LightingUniform {
                 atmosphere.fog_falloff,
                 atmosphere.fog_max,
             ],
-            effects: [atmosphere.emission, bloom.sanitized().threshold, 0.0, 0.0],
+            effects: [
+                atmosphere.emission,
+                bloom.sanitized().threshold,
+                reflections.max_roughness,
+                if reflections.enabled() { 1.0 } else { 0.0 },
+            ],
+            grade: [
+                contrast_weight(atmosphere.contrast),
+                atmosphere.vibrance,
+                0.0,
+                0.0,
+            ],
+            shadow_tint: unit_luminance(atmosphere.shadow_tint),
+            highlight_tint: unit_luminance(atmosphere.highlight_tint),
         }
     }
 }
@@ -126,6 +170,21 @@ pub(crate) fn pack_surface(surface: Surface) -> u32 {
         | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
+/// Linear color and opacity (decision 026) as four 16-bit fractions in two
+/// words: red and green, then blue and opacity (WGSL `unpack2x16unorm`, or a
+/// `Unorm16x4` vertex attribute). Out-of-range values clamp; NaN color reads
+/// as 0 and NaN opacity as opaque.
+pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
+    let unit = |value: f32, fallback: f32| {
+        let value = if value.is_nan() { fallback } else { value };
+        (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u32
+    };
+    [
+        unit(color[0], 0.0) | unit(color[1], 0.0) << 16,
+        unit(color[2], 0.0) | unit(color[3], 1.0) << 16,
+    ]
+}
+
 /// `view_projection` followed by a clip-space translation of `jitter` units
 /// per w: the projection a jittered frame rasterizes, and culls with.
 pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
@@ -138,23 +197,24 @@ pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
 }
 
 /// Vertex attributes, NOT a uniform/storage struct: columns at offsets
-/// 0/16/32/48, color at 64 and the packed surface at 76, with explicit
-/// 80-byte instance stride.
+/// 0/16/32/48, packed color and opacity at 64 ([`pack_color`]) and the
+/// packed surface at 72, with explicit 80-byte instance stride.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct InstanceData {
     pub model: [[f32; 4]; 4],
-    pub color: [f32; 3],
+    pub color: [u32; 2],
     pub surface: u32,
+    pub flags: u32,
 }
 
 impl From<&RenderInstance> for InstanceData {
     fn from(instance: &RenderInstance) -> Self {
-        let [r, g, b, _] = instance.color;
         Self {
             model: instance.model.to_cols_array_2d(),
-            color: [r, g, b],
+            color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
+            flags: 0,
         }
     }
 }
@@ -188,21 +248,23 @@ impl From<&RenderInstance> for PoseData {
     }
 }
 
-/// Separate per-instance color and packed surface; unchanged colors need no
-/// pose upload. WGSL `SlotColor`: vec3<f32> and u32, 16 bytes.
+/// Separate per-instance color, opacity and packed surface; unchanged colors
+/// need no pose upload. WGSL `SlotColor`: vec2<u32> ([`pack_color`]) and two
+/// u32, 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct ColorData {
-    pub color: [f32; 3],
+    pub color: [u32; 2],
     pub surface: u32,
+    pub flags: u32,
 }
 
 impl From<&RenderInstance> for ColorData {
     fn from(instance: &RenderInstance) -> Self {
-        let [r, g, b, _] = instance.color;
         Self {
-            color: [r, g, b],
+            color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
+            flags: 0,
         }
     }
 }
@@ -227,7 +289,8 @@ impl From<&MeshVertex> for Vertex {
     }
 }
 
-pub(crate) const SHADER: &str = include_str!("meshes.wgsl");
+/// Meshes after the shared scene declarations.
+pub(crate) const SHADER: &str = concat!(include_str!("scene.wgsl"), include_str!("meshes.wgsl"));
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
 /// Temporal antialiasing resolve (decision 017), after the shared effects.
@@ -235,65 +298,98 @@ pub(crate) const TEMPORAL_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
 /// Mip generation of base color textures.
 pub(crate) const MIPMAP_SHADER: &str = include_str!("mipmaps.wgsl");
+/// Local light binning into view clusters (decision 023).
+pub(crate) const LIGHT_SHADER: &str = include_str!("lights.wgsl");
+/// Stateless particles after the shared scene declarations (decision 026).
+pub(crate) const PARTICLE_SHADER: &str =
+    concat!(include_str!("scene.wgsl"), include_str!("particles.wgsl"));
+/// The composite of weighted blended transparency (decision 026).
+pub(crate) const TRANSPARENT_SHADER: &str = include_str!("transparent.wgsl");
+/// Sun shafts (decision 024) after the scene declarations and effects.
+pub(crate) const SHAFTS_SHADER: &str = concat!(
+    include_str!("scene.wgsl"),
+    include_str!("effects.wgsl"),
+    include_str!("shafts.wgsl")
+);
 /// Shadow caster selection and depth drawing (decision 020).
 pub(crate) const SHADOW_SHADER: &str = include_str!("shadows.wgsl");
 /// Ambient occlusion, bloom and their composite (decision 021).
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
 
-/// WGSL `Shadow` uniform of `meshes.wgsl` (decision 020): world to the near
-/// and far shadow maps and their settings, 160 bytes.
+/// Most near shadow cascades (decision 028).
+pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
+
+/// WGSL `Shadow` uniform of `scene.wgsl` (decisions 020 and 028): world to
+/// each near cascade and to the far shadow maps, and their settings, 400
+/// bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct ShadowUniform {
-    /// World to the near map: x and y in [-1, 1] across it, z in [0, 1].
-    pub near: [[f32; 4]; 4],
+    /// World to each near cascade: x and y in [-1, 1] across it, z in
+    /// [0, 1].
+    pub near: [[[f32; 4]; 4]; MAX_CASCADES],
     /// World to both far maps.
     pub far: [[f32; 4]; 4],
-    /// Shadows on, the kept far map holds casters, the view distance the
-    /// near map covers, and the distance where shadows begin to fade.
+    /// Shadows on, the kept far map holds casters, the near cascades in use,
+    /// and the distance where shadows begin to fade.
     pub state: [f32; 4],
-    /// Distance where shadows are gone, then the normal offsets (world
-    /// units) of lookups in the near and far maps; w unused.
+    /// View distance each near cascade reaches; unreachable beyond those in
+    /// use.
+    pub reach: [f32; 4],
+    /// Normal offsets (world units) of lookups in each near cascade.
+    pub near_offsets: [f32; 4],
+    /// Steepest receiver plane (depth per texel) of each near cascade.
+    pub near_limits: [f32; 4],
+    /// Distance where shadows are gone, the normal offset (world units) of
+    /// far lookups and the far maps' steepest receiver plane; w unused.
     pub offsets: [f32; 4],
 }
 
 /// Most draw groups (distinct meshes) shadow maps draw: the resident meshes.
 pub(crate) const MAX_SHADOW_GROUPS: usize = crate::MAX_RESIDENT_MESHES;
 
-/// WGSL `Cull` uniform of `shadows.wgsl`: 656 bytes.
+/// WGSL `Cull` uniform of `shadows.wgsl`: 736 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct ShadowCullUniform {
     /// World to light space: the sun's right, up and away-from-sun axes.
     pub light: [[f32; 4]; 3],
-    /// Light-space rectangles (minimum x and y, maximum x and y) of the near
-    /// map, the far maps and the region of the kept map redrawn this frame.
-    pub near: [f32; 4],
+    /// Light-space rectangles (minimum x and y, maximum x and y) of each
+    /// near cascade, the far maps and the region of the kept map redrawn
+    /// this frame.
+    pub near: [[f32; 4]; MAX_CASCADES],
     pub far: [f32; 4],
     pub refresh: [f32; 4],
     /// Light-space depth beyond which casters cannot darken receivers of
-    /// the near map, the far maps and the refreshed region.
+    /// each near cascade; then (y and z) of the far maps and the refreshed
+    /// region.
+    pub near_depths: [f32; 4],
     pub depths: [f32; 4],
     pub candidates: u32,
     pub groups: u32,
     /// Instance IDs per map.
     pub capacity: u32,
-    /// `STILLNESS | REFRESH | NEAR` of the shader.
+    /// `STILLNESS | REFRESH` of the shader.
     pub mode: u32,
     /// Light-space y of the first kept-map strip, the strip height and the
     /// strip count; w unused.
     pub strips: [f32; 4],
+    /// Near cascades drawn this frame; yzw unused.
+    pub cascades: [u32; 4],
     /// Start of each group's ID region within a map.
     pub starts: [u32; MAX_SHADOW_GROUPS],
 }
 
-/// WGSL `Post` uniform of `effects.wgsl` (decision 021): 128 bytes.
+/// WGSL `Post` uniform of `effects.wgsl` (decisions 021, 024 and 025): 240
+/// bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct PostUniform {
     /// Unjittered clip to world space.
     pub inverse_view_projection: [[f32; 4]; 4],
+    /// Unjittered world to clip space, for reflection rays.
+    pub view_projection: [[f32; 4]; 4],
     /// The eye; w: depth-buffer pixels per world unit at distance 1.
     pub eye: [f32; 4],
     /// Scene target size in pixels, and its inverse.
@@ -302,6 +398,12 @@ pub(crate) struct PostUniform {
     pub occlusion: [f32; 4],
     /// Strength and 1 when bloom runs; half-resolution texel size.
     pub bloom: [f32; 4],
+    /// Ray distance, strength and 1 when reflections run; w unused.
+    pub reflections: [f32; 4],
+    /// Strength, forward scattering, distance and 1 when sun shafts run.
+    pub shafts: [f32; 4],
+    /// The sun's exposed color; w unused.
+    pub sun: [f32; 4],
 }
 
 /// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
@@ -480,11 +582,11 @@ mod tests {
         );
         assert_eq!(std::mem::offset_of!(CameraUniform, position), 192);
         assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 208);
-        assert_eq!(size_of::<LightingUniform>(), 112);
+        assert_eq!(size_of::<LightingUniform>(), 160);
         assert_eq!(size_of::<InstanceData>(), 80);
         assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
-        assert_eq!(std::mem::offset_of!(InstanceData, surface), 76);
-        assert_eq!(std::mem::offset_of!(ColorData, surface), 12);
+        assert_eq!(std::mem::offset_of!(InstanceData, surface), 72);
+        assert_eq!(std::mem::offset_of!(ColorData, surface), 8);
         assert_eq!(size_of::<PoseData>(), 48);
         assert_eq!(size_of::<ColorData>(), 16);
         assert_eq!(size_of::<Vertex>(), 32);
@@ -505,7 +607,16 @@ mod tests {
         };
         let upload = InstanceData::from(&instance);
         assert_eq!(upload.model[3], [2.0, 3.0, 4.0, 1.0]);
-        assert_eq!(upload.color, [0.1, 0.2, 0.3]);
+        assert_eq!(upload.color, pack_color([0.1, 0.2, 0.3, 1.0]));
+        // Four 16-bit fractions: red and green, then blue and opacity.
+        assert_eq!(
+            pack_color([0.0, 1.0, 0.5, 0.25]),
+            [0xffff << 16, 32768 | 16384 << 16]
+        );
+        assert_eq!(
+            pack_color([f32::NAN, 2.0, -1.0, f32::NAN]),
+            [0xffff << 16, 0xffff << 16]
+        );
         assert_eq!(upload.surface, 51 | 255 << 8 | 64 << 16);
         assert_eq!(ColorData::from(&instance).surface, upload.surface);
         let affine = Mat4::from_scale_rotation_translation(
@@ -654,19 +765,75 @@ mod tests {
             intensity: 1.0,
             threshold: 3.0,
         };
-        let lighting = LightingUniform::new(&night, &bloom);
+        let off = engine_core::Reflections {
+            intensity: 0.0,
+            ..engine_core::Reflections::default()
+        };
+        let lighting = LightingUniform::new(&night, &bloom, &off);
         assert_eq!(lighting.sun_color[3], night.specular);
         assert_eq!(lighting.horizon[3], night.exposure);
-        assert_eq!(lighting.effects, [night.emission, 3.0, 0.0, 0.0]);
+        assert_eq!(
+            lighting.effects,
+            [night.emission, 3.0, off.max_roughness, 0.0]
+        );
+        let on = engine_core::Reflections {
+            max_roughness: 0.3,
+            ..engine_core::Reflections::default()
+        };
+        assert_eq!(
+            LightingUniform::new(&night, &bloom, &on).effects,
+            [night.emission, 3.0, 0.3, 1.0]
+        );
         let sun = glam::Vec3::from_slice(&lighting.sun[..3]);
         assert!((sun.length() - 1.0).abs() < 1.0e-6);
+        assert_eq!(
+            lighting.grade,
+            [contrast_weight(night.contrast), night.vibrance, 0.0, 0.0]
+        );
+        // The contrast curve's slope at mid grey is the contrast up to 1.5;
+        // it keeps black and white and never falls.
+        let curve = |weight: f32, s: f32| s + weight * (s * s * (3.0 - 2.0 * s) - s);
+        for contrast in [0.0, 0.5, 1.0, 1.2, 1.5, 9.0] {
+            let weight = contrast_weight(contrast);
+            let slope = (curve(weight, 0.501) - curve(weight, 0.499)) / 0.002;
+            assert!(
+                (slope - engine_core::math::min(contrast, 1.5)).abs() < 1.0e-3,
+                "{contrast}: {slope}"
+            );
+            assert_eq!((curve(weight, 0.0), curve(weight, 1.0)), (0.0, 1.0));
+            let mut previous = 0.0;
+            for step in 1..=100 {
+                let value = curve(weight, step as f32 / 100.0);
+                assert!(value >= previous - 1.0e-6, "{contrast}");
+                previous = value;
+            }
+        }
+        // Split-toning gains keep the tint's hue at unit luminance, so they
+        // shift color without darkening; a black tint changes nothing.
+        let weights = glam::Vec3::new(0.2126, 0.7152, 0.0722);
+        for (tint, packed) in [
+            (night.shadow_tint, lighting.shadow_tint),
+            (night.highlight_tint, lighting.highlight_tint),
+        ] {
+            let gain = glam::Vec3::from_slice(&packed[..3]);
+            assert!((gain.dot(weights) - 1.0).abs() < 1.0e-6);
+            assert!((gain * tint.x - tint * gain.x).abs().max_element() < 1.0e-6);
+        }
+        let black = engine_core::Atmosphere {
+            shadow_tint: glam::Vec3::ZERO,
+            ..night
+        };
+        assert_eq!(
+            LightingUniform::new(&black, &bloom, &off).shadow_tint,
+            [1.0, 1.0, 1.0, 0.0]
+        );
         let broken = engine_core::Atmosphere {
             exposure: f32::NAN,
             ..night
         };
         assert_eq!(
-            LightingUniform::new(&broken, &bloom),
-            LightingUniform::new(&engine_core::Atmosphere::default(), &bloom)
+            LightingUniform::new(&broken, &bloom, &off),
+            LightingUniform::new(&engine_core::Atmosphere::default(), &bloom, &off)
         );
     }
 
@@ -697,16 +864,68 @@ mod tests {
             ty.inner.size(module.to_ctx()) as usize
         };
         assert_eq!(size(SHADER, "Shadow"), size_of::<ShadowUniform>());
-        assert_eq!(size_of::<ShadowUniform>(), 160);
+        assert_eq!(size_of::<ShadowUniform>(), 400);
         assert_eq!(size(SHADOW_SHADER, "Cull"), size_of::<ShadowCullUniform>());
-        assert_eq!(size_of::<ShadowCullUniform>(), 656);
+        assert_eq!(size_of::<ShadowCullUniform>(), 736);
+        // Members sit where Rust puts them (decision 028's arrays).
+        let offset = |source: &str, name: &str, member: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, ty) = module
+                .types
+                .iter()
+                .find(|(_, ty)| ty.name.as_deref() == Some(name))
+                .unwrap();
+            let naga::TypeInner::Struct { members, .. } = &ty.inner else {
+                panic!("{name} is a struct");
+            };
+            members
+                .iter()
+                .find(|field| field.name.as_deref() == Some(member))
+                .unwrap()
+                .offset as usize
+        };
+        assert_eq!(
+            offset(SHADER, "Shadow", "offsets"),
+            std::mem::offset_of!(ShadowUniform, offsets)
+        );
+        assert_eq!(
+            offset(SHADOW_SHADER, "Cull", "cascades"),
+            std::mem::offset_of!(ShadowCullUniform, cascades)
+        );
+        assert_eq!(
+            offset(SHADOW_SHADER, "Cull", "starts"),
+            std::mem::offset_of!(ShadowCullUniform, starts)
+        );
         assert_eq!(size(SHADOW_SHADER, "Batch"), size_of::<BatchData>());
         assert_eq!(size(SHADOW_SHADER, "Candidate"), size_of::<CandidateData>());
         assert_eq!(size(SHADOW_SHADER, "DrawArgs") as u64, DRAW_ARGS_BYTES);
         assert_eq!(size(POST_SHADER, "Post"), size_of::<PostUniform>());
         assert_eq!(size(TEMPORAL_SHADER, "Post"), size_of::<PostUniform>());
-        assert_eq!(size_of::<PostUniform>(), 128);
+        assert_eq!(size(SHAFTS_SHADER, "Post"), size_of::<PostUniform>());
+        assert_eq!(size_of::<PostUniform>(), 240);
         assert_eq!(size(SHADER, "SlotColor"), size_of::<ColorData>());
+        // Local lights (decision 023): binning and shading agree on layouts.
+        let clusters = size_of::<crate::lights::ClusterUniform>();
+        assert_eq!(size(LIGHT_SHADER, "Clusters"), clusters);
+        assert_eq!(size(SHADER, "Clusters"), clusters);
+        assert_eq!(
+            size(LIGHT_SHADER, "Input"),
+            size_of::<crate::lights::LightInput>()
+        );
+        assert_eq!(
+            size(LIGHT_SHADER, "Light") as u64,
+            crate::lights::LIGHT_BYTES
+        );
+        assert_eq!(size(SHADER, "Light") as u64, crate::lights::LIGHT_BYTES);
+        // Particles (decision 026).
+        assert_eq!(
+            size(PARTICLE_SHADER, "Emitter"),
+            size_of::<crate::particles::EmitterData>()
+        );
+        assert_eq!(
+            size(PARTICLE_SHADER, "Particles"),
+            size_of::<crate::particles::ParticleUniform>()
+        );
         // Selection reads the presentation flag culling writes for valid poses.
         let bits = |source: &str, name: &str| {
             let module = naga::front::wgsl::parse_str(source).unwrap();
@@ -735,6 +954,10 @@ mod tests {
             MIPMAP_SHADER,
             SHADOW_SHADER,
             POST_SHADER,
+            LIGHT_SHADER,
+            PARTICLE_SHADER,
+            TRANSPARENT_SHADER,
+            SHAFTS_SHADER,
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             naga::valid::Validator::new(
@@ -756,6 +979,10 @@ mod tests {
             MIPMAP_SHADER,
             SHADOW_SHADER,
             POST_SHADER,
+            LIGHT_SHADER,
+            PARTICLE_SHADER,
+            TRANSPARENT_SHADER,
+            SHAFTS_SHADER,
         ] {
             let bytes = source.as_bytes();
             let mut index = 0;

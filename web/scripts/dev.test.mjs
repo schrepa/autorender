@@ -77,6 +77,8 @@ function setup(t, options = {}) {
         shadows_enabled: true, shadow_draws: 2, shadow_kept_redraw: 0,
         shadow_near_casters: undefined, shadow_moving_casters: 5, shadow_kept_casters: 0,
         ambient_occlusion: true, bloom: false,
+        local_lights: 3, dropped_lights: 0, lights_visible: undefined, light_cluster_overflow: 0,
+        sun_shafts: false, reflections: true, transparent_draws: 1, particles: 40,
         free() { statsFreed++; },
       };
     },
@@ -213,6 +215,10 @@ test("capture renders current state then waits for two animation frames without 
   assert.equal(reply.result.rendering.shadow_moving_casters, 5);
   assert.equal(reply.result.rendering.ambient_occlusion, true);
   assert.equal(reply.result.rendering.bloom, false);
+  assert.equal(reply.result.rendering.local_lights, 3);
+  assert.equal(reply.result.rendering.lights_visible, null);
+  assert.equal(reply.result.rendering.reflections, true);
+  assert.equal(reply.result.rendering.particles, 40);
   assert.equal(session.counters.statsFreed, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);

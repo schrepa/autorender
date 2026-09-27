@@ -11,6 +11,7 @@ mod environment;
 mod error;
 mod hierarchy;
 mod instance;
+mod lighting;
 mod texture;
 mod validation;
 
@@ -21,10 +22,12 @@ pub use document::{
 };
 pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
-    SceneBounds, SceneEnvironment, SceneShadows,
+    SceneBounds, SceneEnvironment, SceneLocalLights, SceneParticles, SceneReflections,
+    SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;
 pub use instance::{SceneEntity, SceneInstance};
+pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use texture::SceneTexture;
 
 #[cfg(test)]

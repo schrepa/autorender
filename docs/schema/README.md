@@ -1,6 +1,6 @@
 # Generated authoring schemas
 
-`scene-v5.schema.json` is generated from the versioned Rust types in
+`scene-v6.schema.json` is generated from the versioned Rust types in
 `engine_scene`, using its host-only `schema` feature. Regenerate deliberately:
 
 ```sh
@@ -16,6 +16,18 @@ collection limits. Runtime validation additionally checks unique IDs, references
 geometry, numeric invariants and authoring bounds. Use `cargo xtask assets` for
 the same validation used by the browser scene loader. Schemas do not encode or
 persist runtime entity IDs or asset handles.
+
+Version 6 adds material `opacity` (below 1, transparent), entity `light`
+(point or spot) and `particles` (an emitter), and the `local_lights`,
+`sun_shafts`, `reflections` and `particles` environment sections (decisions
+[023](../adr-023-local-lights.md) to
+[026](../adr-026-transparency-and-particles.md)), and the atmosphere's
+`contrast`, `vibrance`, `shadow_tint` and `highlight_tint`
+([decision 027](../adr-027-stylized-grading.md)), and `shadows.cascades`
+([decision 028](../adr-028-shadow-cascades-and-receiver-planes.md)). An environment that omits
+`sun_shafts` or `reflections` turns them off. Versions 1–5 keep their
+meaning and schema artifacts; atmosphere presets are engine looks, so their
+values follow the engine.
 
 Version 5 adds an optional material `surface`: roughness, metalness,
 emission and ripples, matte when omitted

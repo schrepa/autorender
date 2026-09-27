@@ -39,7 +39,7 @@ Temporary `input` applies to paused stepping; it does not edit source. Persisten
 
 Paused `camera`, `culling` and `environment` commands update temporary render
 state and render without advancing gameplay. `environment` takes the sections of
-a scene version 5 `environment` (for example `--json '{"atmosphere":{"preset":"night"}}'`),
+a scene `environment` (for example `--json '{"atmosphere":{"preset":"night"},"sun_shafts":{}}'`),
 replaces only those, and never edits source; inspect `Environment` first. `benchmark` holds the same busy boundary across RAF
 sampling (maximum ten seconds), clearing input and optionally stepping gameplay.
 It returns bounded CPU/frame distributions and residency/counter ranges. Use the

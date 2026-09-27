@@ -1158,3 +1158,179 @@ fn cpu_frames_list_culled_slots_as_shadow_casters() {
     assert_eq!(frame.casters(), casters);
     assert_eq!(frame.caster_revision(), revision);
 }
+
+#[test]
+fn sun_shafts_and_reflections_are_opt_in_resources() {
+    let mut engine = Engine::default();
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert!(!snapshot.sun_shafts.enabled(), "not inserted by default");
+    assert!(!snapshot.reflections.enabled());
+    engine.app.insert_resource(SunShafts::default());
+    engine.app.insert_resource(Reflections {
+        intensity: 7.0,
+        ..Reflections::default()
+    });
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.sun_shafts, SunShafts::default());
+    assert_eq!(snapshot.reflections.intensity, 1.0, "sanitized");
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    assert!(frame.snapshot().sun_shafts.enabled());
+}
+
+fn spawn_lamp(world: &mut World, translation: Vec3, light: LocalLight, mesh: bool) -> Entity {
+    let entity = world
+        .spawn((
+            Transform {
+                translation,
+                ..Default::default()
+            },
+            light,
+        ))
+        .id();
+    if mesh {
+        world.entity_mut(entity).insert(Cube { color: [1.0; 4] });
+    }
+    entity
+}
+
+#[test]
+fn lights_follow_slots_on_meshes_and_world_poses_elsewhere() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    let spot = LocalLight::spot(Vec3::ONE, 10.0, 8.0, Vec3::NEG_Y, 0.3, 0.6)
+        .with_offset(Vec3::new(0.0, 0.5, 0.0));
+    spawn_lamp(world, Vec3::new(4.0, 0.0, 0.0), spot, true);
+    let bare = LocalLight::point(Vec3::new(1.0, 0.5, 0.25), 3.0, 5.0);
+    spawn_lamp(world, Vec3::new(-2.0, 1.0, 0.0), bare, false);
+    // Unusable lights are skipped.
+    spawn_lamp(
+        world,
+        Vec3::ZERO,
+        LocalLight::point(Vec3::ONE, 0.0, 5.0),
+        false,
+    );
+    world.resource_mut::<LocalLights>().intensity = 2.0;
+    // Owned snapshots place every light in world space.
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.lights.len(), 2);
+    let owned_spot = snapshot
+        .lights
+        .iter()
+        .find(|light| light.cone != RenderLight::POINT)
+        .unwrap();
+    assert_eq!(owned_spot.slot, None);
+    assert_eq!(owned_spot.position, Vec3::new(4.0, 0.5, 0.0));
+    assert_eq!(owned_spot.direction, Vec3::NEG_Y);
+    assert_eq!(
+        owned_spot.color,
+        Vec3::splat(20.0),
+        "intensity times the settings' scale"
+    );
+    assert!(owned_spot.cone[0] > owned_spot.cone[1]);
+    // Retained frames keep a light on a drawn entity in its slot's space.
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    let lights = &frame.snapshot().lights;
+    let slotted = lights.iter().find(|light| light.slot.is_some()).unwrap();
+    assert_eq!(slotted.position, Vec3::new(0.0, 0.5, 0.0));
+    let slot = slotted.slot.unwrap() as usize;
+    assert_eq!(
+        frame.model(slot).transform_point3(slotted.position),
+        Vec3::new(4.0, 0.5, 0.0)
+    );
+    let world_light = lights.iter().find(|light| light.slot.is_none()).unwrap();
+    assert_eq!(world_light.position, Vec3::new(-2.0, 1.0, 0.0));
+    assert_eq!(world_light.cone, RenderLight::POINT);
+    // A missing or disabled setting turns local lights off.
+    engine.app.world_mut().remove_resource::<LocalLights>();
+    engine.extract(1.5, &mut snapshot);
+    assert!(snapshot.lights.is_empty());
+    assert!(!snapshot.local_lights.active());
+}
+
+#[test]
+fn light_budget_keeps_the_nearest_lights() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    world.insert_resource(Camera {
+        position: Vec3::ZERO,
+        target: Vec3::NEG_Z,
+        ..Camera::default()
+    });
+    for distance in [30.0, 10.0, 50.0, 20.0] {
+        spawn_lamp(
+            world,
+            Vec3::new(0.0, 0.0, -distance),
+            LocalLight::point(Vec3::ONE, 1.0, 1.0),
+            false,
+        );
+    }
+    world.resource_mut::<LocalLights>().max_lights = 2;
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.dropped_lights, 2);
+    let mut kept: Vec<f32> = snapshot
+        .lights
+        .iter()
+        .map(|light| -light.position.z)
+        .collect();
+    kept.sort_by(f32::total_cmp);
+    assert_eq!(kept, [10.0, 20.0]);
+}
+
+#[test]
+fn emitters_extract_in_world_space_and_the_nearest_win_the_budget() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    world.insert_resource(Camera {
+        position: Vec3::ZERO,
+        target: Vec3::NEG_Z,
+        ..Camera::default()
+    });
+    let emitter = ParticleEmitter {
+        rate: 10.0,
+        lifetime: 2.0,
+        offset: Vec3::new(0.0, 1.0, 0.0),
+        ..ParticleEmitter::default()
+    };
+    for distance in [40.0, 5.0] {
+        world.spawn((
+            Transform {
+                translation: Vec3::new(0.0, 0.0, -distance),
+                rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                ..Default::default()
+            },
+            emitter,
+        ));
+    }
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.emitters.len(), 2);
+    assert!(snapshot.emitters.iter().all(|emitter| emitter.count == 20));
+    let near = snapshot
+        .emitters
+        .iter()
+        .find(|emitter| emitter.origin.z > -10.0)
+        .unwrap();
+    // The local offset and direction turn with the entity.
+    assert!((near.origin - Vec3::new(-1.0, 0.0, -5.0)).length() < 1.0e-5);
+    assert!((near.direction - Vec3::NEG_X).length() < 1.0e-5);
+    // Over budget, the nearer emitter stays and the other is skipped whole.
+    engine
+        .app
+        .world_mut()
+        .resource_mut::<Particles>()
+        .max_particles = 25;
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.emitters.len(), 1);
+    assert!(snapshot.emitters[0].origin.z > -10.0);
+    assert_eq!(snapshot.dropped_particles, 20);
+    engine.app.world_mut().resource_mut::<Particles>().enabled = false;
+    engine.extract(1.5, &mut snapshot);
+    assert!(snapshot.emitters.is_empty());
+}

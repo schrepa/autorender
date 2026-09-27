@@ -1,10 +1,14 @@
 //! Rendering effects of the scene: sun shadows (decision 020), ambient
-//! occlusion and bloom (decision 021). Every extracted frame carries sanitized
-//! copies with the atmosphere; renderers skip the work of disabled effects.
+//! occlusion and bloom (decision 021), sun shafts (decision 024) and
+//! screen-space reflections (decision 025). Every extracted frame carries
+//! sanitized copies with the atmosphere; renderers skip the work of disabled
+//! effects.
 //!
-//! Each effect is its own resource, inserted by default: disable one with its
-//! settings, or remove the resource to remove the effect. Without an
-//! `Atmosphere` frames use the default one.
+//! Each effect is its own resource: disable one with its settings, or remove
+//! the resource to remove the effect. Shadows, ambient occlusion and bloom
+//! are inserted by default; sun shafts and reflections are opt-in: insert
+//! them (their defaults are on). Without an `Atmosphere` frames use the
+//! default one.
 
 use bevy_ecs::prelude::{Resource, World};
 use glam::Vec3;
@@ -43,15 +47,33 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
         },
         |value| value.sanitized(),
     );
+    snapshot.sun_shafts = world.get_resource::<SunShafts>().map_or(
+        SunShafts {
+            intensity: 0.0,
+            ..SunShafts::default()
+        },
+        |value| value.sanitized(),
+    );
+    snapshot.reflections = world.get_resource::<Reflections>().map_or(
+        Reflections {
+            intensity: 0.0,
+            ..Reflections::default()
+        },
+        |value| value.sanitized(),
+    );
 }
+
+/// Most near shadow cascades ([`Shadows::cascades`]).
+pub const MAX_SHADOW_CASCADES: u32 = 4;
 
 /// Shadows cast by the atmosphere's sun (decision 020).
 ///
 /// Every rendered instance casts and receives them. One map covers `bounds`,
 /// or without bounds a sphere of `distance` around the camera that moves
 /// when the camera travels a quarter of it. Instances that stay still are
-/// drawn into that map once and kept; moving ones are drawn every frame. A
-/// sharper map follows the first `near_distance` of the view.
+/// drawn into that map once and kept; moving ones are drawn every frame.
+/// Sharper maps follow the first `near_distance` of the view, split into
+/// `cascades` (decision 028).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Shadows {
     pub enabled: bool,
@@ -61,10 +83,15 @@ pub struct Shadows {
     pub bounds: Option<(Vec3, Vec3)>,
     /// Shadows fade out this far from the camera.
     pub distance: f32,
-    /// View distance covered by the sharper map that follows the camera.
+    /// View distance covered by the sharper maps that follow the camera.
     pub near_distance: f32,
+    /// Near maps (cascades) splitting `near_distance`, 1 to
+    /// [`MAX_SHADOW_CASCADES`]: each reaches a third as far as the next and
+    /// so has three times its texel density. Each is a depth pass per frame
+    /// over the casters it covers.
+    pub cascades: u32,
     /// Texels per side of the far maps: a power of two in `1024..=4096`.
-    /// The near map has half as many.
+    /// Each near map has half as many.
     pub resolution: u32,
 }
 
@@ -75,6 +102,7 @@ impl Default for Shadows {
             bounds: None,
             distance: 500.0,
             near_distance: 100.0,
+            cascades: 3,
             resolution: 2048,
         }
     }
@@ -82,8 +110,9 @@ impl Default for Shadows {
 
 impl Shadows {
     /// Usable settings: unusable bounds are dropped, a resolution rounds up
-    /// to the next accepted power of two, and unusable distances (or a near
-    /// distance beyond the shadow distance) fall back to the defaults.
+    /// to the next accepted power of two, cascades clamp to their range, and
+    /// unusable distances (or a near distance beyond the shadow distance)
+    /// fall back to the defaults.
     pub fn sanitized(self) -> Self {
         let defaults = Self::default();
         let bounds = self
@@ -107,8 +136,19 @@ impl Shadows {
             bounds,
             distance,
             near_distance,
+            cascades: self.cascades.clamp(1, MAX_SHADOW_CASCADES),
             resolution: self.resolution.clamp(1024, 4096).next_power_of_two(),
         }
+    }
+
+    /// View distance each near cascade reaches, nearest first: the last
+    /// reaches `near_distance`, and each one before it a third as far.
+    pub fn cascade_reaches(&self) -> impl Iterator<Item = f32> {
+        let settings = self.sanitized();
+        (0..settings.cascades).map(move |cascade| {
+            let steps = (settings.cascades - 1 - cascade) as i32;
+            settings.near_distance / 3.0_f32.powi(steps)
+        })
     }
 }
 
@@ -197,6 +237,110 @@ impl Bloom {
     }
 }
 
+/// Sunlight scattered toward the eye by the atmosphere's fog (decision 024):
+/// shafts of light between shadow casters and a glow around the sun. Opt-in:
+/// insert this resource (its default is on). It needs sun shadows, and reads
+/// the fog's density and height falloff as the medium.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SunShafts {
+    /// Strength in `[0, 4]`; 0 turns the shafts off.
+    pub intensity: f32,
+    /// Forward scattering in `[0, 0.95]`: higher concentrates light toward
+    /// the sun.
+    pub anisotropy: f32,
+    /// World distance along each view ray light is gathered over.
+    pub distance: f32,
+}
+
+impl Default for SunShafts {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            anisotropy: 0.6,
+            distance: 300.0,
+        }
+    }
+}
+
+impl SunShafts {
+    /// Intensity and anisotropy clamped into their ranges (NaN disables);
+    /// an unusable distance falls back to the default.
+    pub fn sanitized(self) -> Self {
+        Self {
+            intensity: if self.intensity.is_nan() {
+                0.0
+            } else {
+                crate::math::clamp(self.intensity, 0.0, 4.0)
+            },
+            anisotropy: if self.anisotropy.is_nan() {
+                Self::default().anisotropy
+            } else {
+                crate::math::clamp(self.anisotropy, 0.0, 0.95)
+            },
+            distance: if self.distance.is_finite() && self.distance > 0.0 {
+                self.distance
+            } else {
+                Self::default().distance
+            },
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.intensity > 0.0
+    }
+}
+
+/// Screen-space reflections (decision 025): glossy surfaces reflect the
+/// scene on screen, falling back to the sky where their rays leave it.
+/// Opt-in: insert this resource (its default is on).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Reflections {
+    /// Strength in `[0, 1]`; 0 turns reflections off.
+    pub intensity: f32,
+    /// Surfaces rougher than this, in `[0.05, 1]`, reflect only the sky.
+    pub max_roughness: f32,
+    /// World distance reflection rays travel.
+    pub distance: f32,
+}
+
+impl Default for Reflections {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            max_roughness: 0.5,
+            distance: 120.0,
+        }
+    }
+}
+
+impl Reflections {
+    /// Values clamped into their ranges (NaN intensity disables); an
+    /// unusable distance falls back to the default.
+    pub fn sanitized(self) -> Self {
+        Self {
+            intensity: if self.intensity.is_nan() {
+                0.0
+            } else {
+                crate::math::clamp(self.intensity, 0.0, 1.0)
+            },
+            max_roughness: if self.max_roughness.is_nan() {
+                Self::default().max_roughness
+            } else {
+                crate::math::clamp(self.max_roughness, 0.05, 1.0)
+            },
+            distance: if self.distance.is_finite() && self.distance > 0.0 {
+                self.distance
+            } else {
+                Self::default().distance
+            },
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.intensity > 0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +391,22 @@ mod tests {
         }
         .sanitized();
         assert_eq!(short.near_distance, 30.0);
+        // Cascades clamp to their range and split the near distance by
+        // thirds.
+        for (cascades, expected) in [(0, 1), (3, 3), (9, MAX_SHADOW_CASCADES)] {
+            let shadows = Shadows {
+                cascades,
+                ..Shadows::default()
+            };
+            assert_eq!(shadows.sanitized().cascades, expected);
+        }
+        let reaches: Vec<f32> = Shadows {
+            near_distance: 90.0,
+            ..Shadows::default()
+        }
+        .cascade_reaches()
+        .collect();
+        assert_eq!(reaches, [10.0, 30.0, 90.0]);
         let occlusion = AmbientOcclusion {
             intensity: f32::NAN,
             radius: -1.0,
@@ -261,5 +421,31 @@ mod tests {
         .sanitized();
         assert_eq!(bloom.intensity, 4.0);
         assert_eq!(bloom.threshold, Bloom::default().threshold);
+    }
+
+    #[test]
+    fn opt_in_effects_default_on_and_sanitize_their_ranges() {
+        assert!(SunShafts::default().enabled());
+        assert!(Reflections::default().enabled());
+        assert_eq!(SunShafts::default().sanitized(), SunShafts::default());
+        assert_eq!(Reflections::default().sanitized(), Reflections::default());
+        let shafts = SunShafts {
+            intensity: f32::NAN,
+            anisotropy: 2.0,
+            distance: -1.0,
+        }
+        .sanitized();
+        assert!(!shafts.enabled());
+        assert_eq!(shafts.anisotropy, 0.95);
+        assert_eq!(shafts.distance, SunShafts::default().distance);
+        let reflections = Reflections {
+            intensity: 3.0,
+            max_roughness: 0.0,
+            distance: f32::INFINITY,
+        }
+        .sanitized();
+        assert_eq!(reflections.intensity, 1.0);
+        assert_eq!(reflections.max_roughness, 0.05);
+        assert_eq!(reflections.distance, Reflections::default().distance);
     }
 }

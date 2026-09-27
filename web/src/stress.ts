@@ -193,8 +193,12 @@ const pipeline = params.get("pipeline") === "off" ? "off" : "on";
 const taa = params.get("taa") === "on" ? "on" : "off";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
-// ?effects=none|no-shadows|no-occlusion|no-bloom turns rendering effects off.
-const initialEffects = ["none", "no-shadows", "no-occlusion", "no-bloom"].includes(params.get("effects") ?? "") ? params.get("effects")! : "all";
+// ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
+// no-lights, no-shafts, no-reflections and no-particles, turns effects off.
+const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles"];
+const requestedEffects = params.get("effects") ?? "all";
+const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectNames.some(name => token === `no-${name}`))
+  ? requestedEffects : "all";
 if (params.has("config")) {
   try {
     const source = params.get("config")!;
@@ -245,7 +249,9 @@ boot({
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
     runtime.set_effects(initialEffects);
-    choice("effects").value = initialEffects;
+    // Combinations without an option of their own keep the select on the
+    // closest single choice; recordings report the actual setting.
+    if ([...choice("effects").options].some(option => option.value === initialEffects)) choice("effects").value = initialEffects;
     lock();
     el("active-preset").textContent = activeTitle;
     if (import.meta.env.MODE === "profiling") {

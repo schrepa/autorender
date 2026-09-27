@@ -15,21 +15,24 @@ use crate::gpu_data::{
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
+use crate::lights::{LightPass, LightPoses};
 use crate::mipmaps::{MipGenerator, TEXTURE_FORMAT};
+use crate::particles::ParticlePass;
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
+use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
-use crate::{MAX_INSTANCES, RenderStats, ShadowStats};
+use crate::{LightStats, MAX_INSTANCES, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 7 => Float32x2];
 // Columns, color and packed surface of public instance records.
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x3, 8 => Uint32];
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Unorm16x4, 8 => Uint32];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 
 fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
@@ -115,6 +118,22 @@ pub struct Renderer {
     sky_pipeline: wgpu::RenderPipeline,
     // Sun shadows (decision 020).
     shadows: ShadowPass,
+    // Local lights (decision 023): binning and the lit mesh pipelines,
+    // created with the first frame that has lights. Lit public-instance
+    // pipelines bind an empty group 2.
+    lights: Option<LightPass>,
+    lit: Option<LitPipelines>,
+    empty_layout: wgpu::BindGroupLayout,
+    empty_group: wgpu::BindGroup,
+    // Transparent surfaces and particles (decision 026): targets, the
+    // composite and particle pipelines, created with the first frame that
+    // draws them; transparent mesh pipelines `[unlit, lit][full, affine]`.
+    transparent: Option<TransparentPass>,
+    transparent_pipelines: [[Option<wgpu::RenderPipeline>; 2]; 2],
+    particles: Option<ParticlePass>,
+    // Poses of odd temporal frames with the colors, for transparent draws
+    // of pose storage generation `.0`.
+    alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     texture_layout: wgpu::BindGroupLayout,
@@ -259,12 +278,12 @@ impl Renderer {
             },
             count: None,
         };
-        let shadow_map_entry = |binding| wgpu::BindGroupLayoutEntry {
+        let shadow_map_entry = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension: wgpu::TextureViewDimension::D2,
+                view_dimension,
                 multisampled: false,
             },
             count: None,
@@ -283,15 +302,23 @@ impl Renderer {
                     wgpu::ShaderStages::FRAGMENT,
                     size_of::<LightingUniform>(),
                 ),
-                // Shadow lookups (decision 020): near, kept and moving maps.
+                // Shadow lookups (decisions 020 and 028): the near cascades,
+                // then the kept and moving maps.
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT, size_of::<ShadowUniform>()),
-                shadow_map_entry(3),
-                shadow_map_entry(4),
-                shadow_map_entry(5),
+                shadow_map_entry(3, wgpu::TextureViewDimension::D2Array),
+                shadow_map_entry(4, wgpu::TextureViewDimension::D2),
+                shadow_map_entry(5, wgpu::TextureViewDimension::D2),
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                // Receiver-plane lookups read four texels (decision 028).
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
             ],
@@ -404,6 +431,7 @@ impl Renderer {
             fragment: "fs_main",
             targets: &canvas_target,
             constants: &canvas_constants,
+            depth_write: true,
         };
         let pipeline = mesh_pipeline(&device, &shader, &pipeline_layout, false, &direct);
         let affine_pipeline =
@@ -418,6 +446,15 @@ impl Renderer {
         );
         let instance_buffer =
             create_instance_buffer(&device, INITIAL_CAPACITY, size_of::<InstanceData>());
+        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/empty-layout"),
+            entries: &[],
+        });
+        let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/empty-group"),
+            layout: &empty_layout,
+            entries: &[],
+        });
         if let Some(error) = scope.pop().await {
             return Err(js_error("WebGPU pipeline initialization failed", error));
         }
@@ -455,6 +492,14 @@ impl Renderer {
             lighting: None,
             sky_pipeline,
             shadows,
+            lights: None,
+            lit: None,
+            empty_layout,
+            empty_group,
+            transparent: None,
+            transparent_pipelines: Default::default(),
+            particles: None,
+            alternate_pose_group: None,
             meshes: BTreeMap::new(),
             textures: BTreeMap::new(),
             texture_layout,
@@ -917,7 +962,8 @@ impl Renderer {
             self.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
-        let lighting = LightingUniform::new(&snapshot.atmosphere, &snapshot.bloom);
+        let lighting =
+            LightingUniform::new(&snapshot.atmosphere, &snapshot.bloom, &snapshot.reflections);
         if self.lighting != Some(lighting) {
             self.queue
                 .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
@@ -1096,10 +1142,65 @@ impl Renderer {
                 &self.shadows,
             );
         }
+        // Local lights (decision 023): binned on the GPU from this frame's
+        // poses, so slot lights follow GPU-presented meshes.
+        let light_frame = if snapshot.local_lights.active() && !snapshot.lights.is_empty() {
+            let device = &self.device;
+            let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
+            if self.lit.is_none() {
+                self.lit = Some(LitPipelines::new(
+                    device,
+                    &self.mesh_shader,
+                    [
+                        &self.camera_layout,
+                        &self.texture_layout,
+                        &self.pose_layout,
+                        &self.empty_layout,
+                        lights.fragment_layout(),
+                    ],
+                    self.configuration.format,
+                ));
+            }
+            if temporal && let Some(pass) = self.temporal.as_mut() {
+                pass.ensure_lit(
+                    device,
+                    &self.mesh_shader,
+                    [
+                        &self.camera_layout,
+                        &self.texture_layout,
+                        lights.fragment_layout(),
+                    ],
+                    &affine_layouts(),
+                    DEPTH_FORMAT,
+                );
+            }
+            let (buffer, index) = match &temporal_frame {
+                Some(frame) if frame.parity == 1 => {
+                    (self.alternate_poses.as_ref().expect("created above"), 1)
+                }
+                _ => (&self.instance_buffer, 0),
+            };
+            let poses = affine.then_some(LightPoses {
+                buffer,
+                generation: self.pose_generation,
+                index,
+            });
+            lights.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                poses,
+            )
+        } else {
+            None
+        };
         // Screen effects (decision 021); temporal frames apply them in their
         // resolve, whose history averages the occlusion noise.
         let effects = snapshot.ambient_occlusion.sanitized().enabled()
-            || snapshot.bloom.sanitized().enabled();
+            || snapshot.bloom.sanitized().enabled()
+            || snapshot.reflections.sanitized().enabled()
+            || (snapshot.sun_shafts.sanitized().enabled() && snapshot.shadows.enabled);
         let post_frame = if temporal_frame.is_some() || effects {
             if self.post_pipelines.is_none() {
                 self.post_pipelines = Some(PostPipelines::new(
@@ -1110,10 +1211,10 @@ impl Renderer {
                 ));
             }
             let format = self.configuration.format;
-            let device = &self.device;
+            let (device, camera_layout) = (&self.device, &self.camera_layout);
             let post = self
                 .post
-                .get_or_insert_with(|| PostPass::new(device, format));
+                .get_or_insert_with(|| PostPass::new(device, format, camera_layout));
             Some(post.begin(
                 &self.device,
                 &self.queue,
@@ -1133,6 +1234,114 @@ impl Renderer {
             (&temporal_frame, self.temporal.as_mut(), self.post.as_ref())
         {
             pass.prepare_resolve(&self.device, post);
+        }
+        // Transparent surfaces and particles (decision 026). Particles
+        // sample the depth buffer for their soft edges.
+        let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
+        let particle_frame = if snapshot.particles.enabled && !snapshot.emitters.is_empty() {
+            let device = &self.device;
+            let (camera_layout, format) = (&self.camera_layout, self.configuration.format);
+            let particles = self.particles.get_or_insert_with(|| {
+                ParticlePass::new(
+                    device,
+                    camera_layout,
+                    format,
+                    DEPTH_FORMAT,
+                    &accumulation_targets(),
+                )
+            });
+            let prepared = particles.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                &self.depth.view,
+                self.depth_generation,
+            );
+            if prepared.is_some() {
+                particles.ensure_additive(device, post_frame.is_some());
+            }
+            prepared
+        } else {
+            None
+        };
+        let transparency = transparent_draws || particle_frame.is_some();
+        if transparency {
+            let (device, format) = (&self.device, self.configuration.format);
+            let pass = self
+                .transparent
+                .get_or_insert_with(|| TransparentPass::new(device, format, DEPTH_FORMAT));
+            pass.begin(
+                device,
+                (self.configuration.width, self.configuration.height),
+            );
+            pass.ensure_composite(device, post_frame.is_some());
+            if transparent_draws {
+                let lit = light_frame.is_some();
+                let pipeline =
+                    &mut self.transparent_pipelines[usize::from(lit)][usize::from(affine)];
+                if pipeline.is_none() {
+                    let layout = match (lit, affine) {
+                        (false, false) => &self.pipeline_layout,
+                        (false, true) => &self.affine_pipeline_layout,
+                        (true, _) => {
+                            &self.lit.as_ref().expect("created with lights").layouts
+                                [usize::from(affine)]
+                        }
+                    };
+                    let targets = accumulation_targets();
+                    *pipeline = Some(mesh_pipeline(
+                        device,
+                        &self.mesh_shader,
+                        layout,
+                        affine,
+                        &MeshTargets {
+                            fragment: if lit {
+                                "fs_transparent_lit"
+                            } else {
+                                "fs_transparent"
+                            },
+                            targets: &targets,
+                            constants: &[],
+                            depth_write: false,
+                        },
+                    ));
+                }
+                if temporal_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.parity == 1)
+                    && self
+                        .alternate_pose_group
+                        .as_ref()
+                        .is_none_or(|(built, _)| *built != self.pose_generation)
+                {
+                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("engine/alternate-pose-group"),
+                        layout: &self.pose_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: self
+                                    .alternate_poses
+                                    .as_ref()
+                                    .expect("created above")
+                                    .as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: self
+                                    .color_buffer
+                                    .as_ref()
+                                    .expect("affine color buffer")
+                                    .as_entire_binding(),
+                            },
+                        ],
+                    });
+                    self.alternate_pose_group = Some((self.pose_generation, group));
+                }
+            }
+        } else if let Some(pass) = self.transparent.as_mut() {
+            pass.release_targets();
         }
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -1179,6 +1388,9 @@ impl Renderer {
             _effects_timed |= encoded.timed;
             shadow_draws = encoded.draws;
         }
+        if let (Some(frame), Some(lights)) = (&light_frame, self.lights.as_mut()) {
+            lights.encode(&self.device, &mut encoder, frame);
+        }
         if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
             pass.prepare_pose_groups(
                 &self.device,
@@ -1191,6 +1403,11 @@ impl Renderer {
             );
         }
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
+        // Lit frames shade with the lit pipelines and the lights' group.
+        let lit = light_frame
+            .as_ref()
+            .and(self.lit.as_ref())
+            .zip(self.lights.as_ref());
         let post = self.post.as_ref().filter(|_| post_frame.is_some());
         let post_pipelines = self
             .post_pipelines
@@ -1233,8 +1450,11 @@ impl Renderer {
                     1
                 }
             };
-            // Ambient occlusion reads the depth buffer afterwards.
-            let keep_depth = post_frame.is_some_and(|frame| frame.occlusion);
+            // Ambient occlusion and the transparent passes read the depth
+            // buffer afterwards.
+            let keep_depth = post_frame
+                .is_some_and(|frame| frame.occlusion || frame.reflections || frame.shafts)
+                || transparency;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
                 color_attachments: &targets[..count],
@@ -1258,9 +1478,14 @@ impl Renderer {
                 multiview_mask: None,
             });
             if instance_count > 0 {
-                pass.set_pipeline(match temporal_pass {
-                    Some((_, temporal)) => temporal.mesh_pipeline(),
-                    None => match post_pipelines {
+                pass.set_pipeline(match (temporal_pass, lit) {
+                    (Some((_, temporal)), Some(_)) => temporal.lit_mesh_pipeline(),
+                    (Some((_, temporal)), None) => temporal.mesh_pipeline(),
+                    (None, Some((pipelines, _))) => {
+                        &pipelines.variants[usize::from(post_pipelines.is_some())]
+                            [usize::from(affine)]
+                    }
+                    (None, None) => match post_pipelines {
                         Some(pipelines) if affine => &pipelines.affine,
                         Some(pipelines) => &pipelines.full,
                         None if affine => &self.affine_pipeline,
@@ -1268,6 +1493,12 @@ impl Renderer {
                     },
                 });
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                if let Some((_, lights)) = lit {
+                    pass.set_bind_group(3, lights.fragment_group(), &[]);
+                    if !affine {
+                        pass.set_bind_group(2, &self.empty_group, &[]);
+                    }
+                }
                 if affine {
                     pass.set_bind_group(
                         2,
@@ -1294,6 +1525,10 @@ impl Renderer {
                     pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                 }
                 for (index, batch) in self.plan.batches.iter().enumerate() {
+                    // Transparent batches draw after the opaque pass.
+                    if batch.transparent {
+                        continue;
+                    }
                     // Every planned source was validated and uploaded above.
                     let mesh = &self.meshes[&batch.mesh];
                     let texture = batch
@@ -1320,9 +1555,122 @@ impl Renderer {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
+        if let Some(transparent) = self.transparent.as_ref().filter(|_| transparency) {
+            // Read-only depth: surfaces behind the opaque ones stay hidden,
+            // and particles sample it.
+            let depth = Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth.view,
+                depth_ops: None,
+                stencil_ops: None,
+            });
+            {
+                let attachments = transparent.attachments();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/transparent-accumulation"),
+                    color_attachments: &attachments,
+                    depth_stencil_attachment: depth.clone(),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if transparent_draws && instance_count > 0 {
+                    let pipeline = self.transparent_pipelines[usize::from(lit.is_some())]
+                        [usize::from(affine)]
+                    .as_ref()
+                    .expect("created with the transparent frame");
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    if let Some((_, lights)) = lit {
+                        pass.set_bind_group(3, lights.fragment_group(), &[]);
+                        if !affine {
+                            pass.set_bind_group(2, &self.empty_group, &[]);
+                        }
+                    }
+                    if affine {
+                        let odd = temporal_frame
+                            .as_ref()
+                            .is_some_and(|frame| frame.parity == 1);
+                        let group = if odd {
+                            &self.alternate_pose_group.as_ref().expect("built above").1
+                        } else {
+                            self.pose_bind_group
+                                .as_ref()
+                                .expect("retained pose bindings")
+                        };
+                        pass.set_bind_group(2, group, &[]);
+                        if !gpu_mode {
+                            pass.set_vertex_buffer(
+                                1,
+                                self.slot_buffer
+                                    .as_ref()
+                                    .expect("retained slot buffer")
+                                    .slice(..),
+                            );
+                        }
+                    } else {
+                        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                    }
+                    for (index, batch) in self.plan.batches.iter().enumerate() {
+                        if !batch.transparent {
+                            continue;
+                        }
+                        let mesh = &self.meshes[&batch.mesh];
+                        let texture = batch
+                            .texture
+                            .map_or(&self.white_texture, |handle| &self.textures[&handle]);
+                        pass.set_bind_group(1, &texture.bind_group, &[]);
+                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        if gpu_mode {
+                            let (ids, draws, offset) =
+                                self.gpu_presentation.draw_source(batch, index);
+                            pass.set_vertex_buffer(1, ids);
+                            pass.draw_indexed_indirect(draws, offset);
+                        } else {
+                            pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
+                        }
+                    }
+                }
+                if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
+                    particles.draw_alpha(&mut pass, &self.camera_bind_group, frame);
+                }
+            }
+            // The composite over the frame's color, then additive particles.
+            let load = |view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            };
+            let attachments = match post {
+                Some(post) => {
+                    let (scene, glow) = post.targets();
+                    [load(scene), load(glow)]
+                }
+                None => [load(&view), None],
+            };
+            let count = if post.is_some() { 2 } else { 1 };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/transparent-composite"),
+                color_attachments: &attachments[..count],
+                depth_stencil_attachment: depth,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            transparent.composite(&mut pass, post.is_some());
+            if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
+                particles.draw_additive(&mut pass, &self.camera_bind_group, frame, post.is_some());
+            }
+        }
         if let (Some(post_frame), Some(post)) = (post_frame, post) {
             let queries = effect_queries.map(|(set, first)| (set, first + 4));
-            post.encode_effects(&mut encoder, post_frame, queries);
+            post.encode_effects(&mut encoder, post_frame, &self.camera_bind_group, queries);
             _effects_timed |= u8::from(post_frame.occlusion) << 2 | u8::from(post_frame.bloom) << 3;
             if temporal_pass.is_none() {
                 let queries = effect_queries.map(|(set, first)| (set, first + 8));
@@ -1361,6 +1709,9 @@ impl Renderer {
             self.gpu_presentation.after_submit();
         }
         self.shadows.after_submit();
+        if let Some(lights) = self.lights.as_mut() {
+            lights.after_submit();
+        }
         if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
             pass.submitted(frame);
         }
@@ -1401,6 +1752,27 @@ impl Renderer {
             }),
             ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
             bloom: post_frame.is_some_and(|frame| frame.bloom),
+            lights: light_frame.as_ref().map(|_| {
+                let totals = self.lights.as_ref().and_then(LightPass::totals);
+                LightStats {
+                    lights: snapshot.lights.len() as u32,
+                    dropped: snapshot.dropped_lights.min(u32::MAX as usize) as u32,
+                    visible: totals.map(|totals| totals[0]),
+                    overflow: totals.map(|totals| totals[1]),
+                }
+            }),
+            transparent_draws: if instance_count > 0 {
+                self.plan
+                    .batches
+                    .iter()
+                    .filter(|batch| batch.transparent)
+                    .count() as u32
+            } else {
+                0
+            },
+            particles: particle_frame.as_ref().map_or(0, |frame| frame.total),
+            sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
+            reflections: post_frame.is_some_and(|frame| frame.reflections),
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -1446,6 +1818,34 @@ impl Renderer {
             engine_profile::counter(
                 "memory.gpu_post_bytes",
                 self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
+            );
+            if let Some(lights) = &stats.lights {
+                engine_profile::counter("render.local_lights", f64::from(lights.lights));
+                if let Some([visible, overflow]) = self.lights.as_ref().and_then(LightPass::totals)
+                {
+                    engine_profile::counter("render.lights_visible", f64::from(visible));
+                    engine_profile::counter("render.light_cluster_overflow", f64::from(overflow));
+                }
+            }
+            engine_profile::counter(
+                "memory.gpu_light_bytes",
+                self.lights.as_ref().map_or(0, LightPass::capacity_bytes) as f64,
+            );
+            engine_profile::counter(
+                "render.transparent_draws",
+                f64::from(stats.transparent_draws),
+            );
+            engine_profile::counter("render.particles", f64::from(stats.particles));
+            engine_profile::counter(
+                "memory.gpu_transparent_bytes",
+                (self
+                    .transparent
+                    .as_ref()
+                    .map_or(0, TransparentPass::capacity_bytes)
+                    + self
+                        .particles
+                        .as_ref()
+                        .map_or(0, ParticlePass::capacity_bytes)) as f64,
             );
             if let Some(frame) = &temporal_frame {
                 engine_profile::counter(
@@ -1776,11 +2176,13 @@ pub(crate) fn sky_pipeline(
 }
 
 /// Fragment stage of a mesh pipeline: entry point, color targets and
-/// pipeline constants.
+/// pipeline constants, and whether it writes depth (transparent surfaces do
+/// not).
 struct MeshTargets<'a> {
     fragment: &'a str,
     targets: &'a [Option<wgpu::ColorTargetState>],
     constants: &'a [(&'a str, f64)],
+    depth_write: bool,
 }
 
 /// An opaque mesh pipeline over `layout`: affine slot-stream inputs or public
@@ -1821,7 +2223,7 @@ fn mesh_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
+            depth_write_enabled: Some(fragment.depth_write),
             depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: Default::default(),
             bias: Default::default(),
@@ -1839,6 +2241,72 @@ fn mesh_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+/// Mesh pipelines shading local lights (decision 023): canvas and scene
+/// target variants, each over public instances and retained slots.
+struct LitPipelines {
+    /// `[direct, post][full, affine]`.
+    variants: [[wgpu::RenderPipeline; 2]; 2],
+    /// Full and affine pipeline layouts with the lights' group.
+    layouts: [wgpu::PipelineLayout; 2],
+}
+
+impl LitPipelines {
+    /// `layouts`: camera, texture, pose, empty and lights layouts.
+    fn new(
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        layouts: [&wgpu::BindGroupLayout; 5],
+        surface_format: wgpu::TextureFormat,
+    ) -> Self {
+        let [camera, texture, pose, empty, lights] = layouts;
+        let layout = |group_two: &wgpu::BindGroupLayout| {
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/lit-mesh-pipeline-layout"),
+                bind_group_layouts: &[Some(camera), Some(texture), Some(group_two), Some(lights)],
+                immediate_size: 0,
+            })
+        };
+        let full_layout = layout(empty);
+        let affine_layout = layout(pose);
+        let canvas_target = [Some(wgpu::ColorTargetState {
+            format: surface_format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let canvas_constants = [(
+            "SURFACE_IS_SRGB",
+            if surface_format.is_srgb() { 1.0 } else { 0.0 },
+        )];
+        let direct = MeshTargets {
+            fragment: "fs_main_lit",
+            targets: &canvas_target,
+            constants: &canvas_constants,
+            depth_write: true,
+        };
+        let post_targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+        let post = MeshTargets {
+            fragment: "fs_post_lit",
+            targets: &post_targets,
+            constants: &[],
+            depth_write: true,
+        };
+        let variants = [
+            [
+                mesh_pipeline(device, shader, &full_layout, false, &direct),
+                mesh_pipeline(device, shader, &affine_layout, true, &direct),
+            ],
+            [
+                mesh_pipeline(device, shader, &full_layout, false, &post),
+                mesh_pipeline(device, shader, &affine_layout, true, &post),
+            ],
+        ];
+        Self {
+            variants,
+            layouts: [full_layout, affine_layout],
+        }
+    }
 }
 
 /// Mesh and sky pipelines drawing into the screen effects' scene and glow
@@ -1862,6 +2330,7 @@ impl PostPipelines {
             fragment: "fs_post",
             targets: &targets,
             constants: &[],
+            depth_write: true,
         };
         Self {
             full: mesh_pipeline(device, shader, layouts[0], false, &post),
@@ -1879,7 +2348,7 @@ fn camera_bind_group(
     lighting: &wgpu::Buffer,
     shadows: &ShadowPass,
 ) -> wgpu::BindGroup {
-    let [shadow, near, kept, moving, sampler] = shadows.entries();
+    let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("engine/camera-bind-group"),
         layout,
@@ -1897,6 +2366,7 @@ fn camera_bind_group(
             kept,
             moving,
             sampler,
+            texel_sampler,
         ],
     })
 }

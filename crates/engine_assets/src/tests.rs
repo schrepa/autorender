@@ -155,6 +155,24 @@ fn material_accepts_only_finite_opaque_linear_color() {
 }
 
 #[test]
+fn materials_become_transparent_only_through_a_valid_opacity() {
+    let opaque = Material::new([0.2, 0.4, 0.6, 1.0]).unwrap();
+    assert!(!opaque.is_transparent());
+    assert_eq!(opaque.opacity(), 1.0);
+    let glass = opaque.with_opacity(0.35).unwrap();
+    assert!(glass.is_transparent());
+    assert_eq!(glass.color(), [0.2, 0.4, 0.6, 0.35]);
+    assert!(!opaque.with_opacity(1.0).unwrap().is_transparent());
+    for opacity in [0.0, -0.1, 1.01, f32::NAN, f32::INFINITY] {
+        assert_eq!(
+            opaque.with_opacity(opacity).unwrap_err(),
+            AssetError::InvalidOpacity
+        );
+    }
+    assert_eq!(AssetError::InvalidOpacity.code(), "asset.invalid_opacity");
+}
+
+#[test]
 fn material_surfaces_default_to_matte_and_reject_values_outside_their_ranges() {
     let material = Material::new([1.0; 4]).unwrap();
     assert_eq!(material.surface(), Surface::MATTE);

@@ -245,8 +245,10 @@ impl Default for Surface {
     }
 }
 
-/// An opaque linear RGBA factor with an optional weak sRGB texture reference
-/// and a [`Surface`] response.
+/// A linear RGBA factor with an optional weak sRGB texture reference and a
+/// [`Surface`] response. Materials are opaque unless given an opacity below 1
+/// ([`Material::with_opacity`], decision 026); the color's alpha is that
+/// opacity.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Material {
     color: [f32; 4],
@@ -269,6 +271,29 @@ impl Material {
             texture: None,
             surface: Surface::MATTE,
         })
+    }
+
+    /// This material drawn transparent with `opacity` in `(0, 1]` (decision
+    /// 026): the fraction of light behind it that it covers. 1 keeps it
+    /// opaque. Transparent surfaces blend in any order, write no depth and
+    /// cast no shadow.
+    pub fn with_opacity(mut self, opacity: f32) -> Result<Self, AssetError> {
+        if !opacity.is_finite() || !(opacity > 0.0 && opacity <= 1.0) {
+            return Err(AssetError::InvalidOpacity);
+        }
+        self.color[3] = opacity;
+        Ok(self)
+    }
+
+    /// The fraction of light behind the surface it covers: 1 for opaque
+    /// materials.
+    pub fn opacity(&self) -> f32 {
+        self.color[3]
+    }
+
+    /// Whether this material draws in the transparent pass.
+    pub fn is_transparent(&self) -> bool {
+        self.color[3] < 1.0
     }
 
     /// This material with `surface`, whose values must lie in their ranges.

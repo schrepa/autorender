@@ -1,11 +1,14 @@
 //! A scene's environment (decision 022): its atmosphere (decision 018) and
-//! rendering effects (decisions 020 and 021) as authored data. Version 5
-//! documents with an `environment` apply it when instantiated; development
-//! controls apply the same sections temporarily, and inspection reports the
-//! current resources in the same shape.
+//! rendering effects (decisions 020, 021, 023 to 026) as authored data.
+//! Version 5 documents with an `environment` apply it when instantiated
+//! (local lights, particles, sun shafts and reflections need version 6);
+//! development controls apply the same sections temporarily, and inspection
+//! reports the current resources in the same shape.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, Shadows, bevy_ecs::prelude::World, glam::Vec3,
+    AmbientOcclusion, Atmosphere, Bloom, LocalLights, MAX_LOCAL_LIGHTS, MAX_PARTICLES,
+    MAX_SHADOW_CASCADES, Particles, Reflections, Shadows, SunShafts, bevy_ecs::prelude::World,
+    glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -85,6 +88,21 @@ pub struct SceneAtmosphere {
     /// Saturation after tone mapping; 1 keeps it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saturation: Option<f32>,
+    /// Contrast around mid grey after tone mapping: 1 keeps it, and the
+    /// curve, which keeps black and white, is steepest at 1.5. Version 6
+    /// (decision 027), like the grade fields below.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f32>,
+    /// Saturation added to muted colors more than to vivid ones; 0 adds none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vibrance: Option<f32>,
+    /// Hue of dark tones after tone mapping (split toning), as a color gain
+    /// scaled to keep luminance; white or black keeps them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadow_tint: Option<[f32; 3]>,
+    /// Hue of bright tones, like `shadow_tint`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight_tint: Option<[f32; 3]>,
 }
 
 impl From<&Atmosphere> for SceneAtmosphere {
@@ -107,6 +125,10 @@ impl From<&Atmosphere> for SceneAtmosphere {
             emission: Some(atmosphere.emission),
             exposure: Some(atmosphere.exposure),
             saturation: Some(atmosphere.saturation),
+            contrast: Some(atmosphere.contrast),
+            vibrance: Some(atmosphere.vibrance),
+            shadow_tint: Some(atmosphere.shadow_tint.to_array()),
+            highlight_tint: Some(atmosphere.highlight_tint.to_array()),
         }
     }
 }
@@ -129,6 +151,12 @@ impl SceneAtmosphere {
             ("zenith", self.zenith, &mut atmosphere.zenith),
             ("horizon", self.horizon, &mut atmosphere.horizon),
             ("ground", self.ground, &mut atmosphere.ground),
+            ("shadow_tint", self.shadow_tint, &mut atmosphere.shadow_tint),
+            (
+                "highlight_tint",
+                self.highlight_tint,
+                &mut atmosphere.highlight_tint,
+            ),
         ];
         for (field, value, target) in colors {
             if let Some(value) = value {
@@ -160,6 +188,8 @@ impl SceneAtmosphere {
             ("emission", self.emission, &mut atmosphere.emission),
             ("exposure", self.exposure, &mut atmosphere.exposure),
             ("saturation", self.saturation, &mut atmosphere.saturation),
+            ("contrast", self.contrast, &mut atmosphere.contrast),
+            ("vibrance", self.vibrance, &mut atmosphere.vibrance),
         ];
         for (field, value, target) in scalars {
             if let Some(value) = value {
@@ -198,9 +228,15 @@ pub struct SceneShadows {
     /// Shadows fade out this far from the camera (world units).
     #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub distance: f32,
-    /// View distance of the sharper map that follows the camera.
+    /// View distance of the sharper maps that follow the camera.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub near_distance: f32,
+    /// Sharper maps (cascades) splitting `near_distance`, each reaching a
+    /// third as far as the next: 1 to 4, 3 when omitted. Version 6
+    /// (decision 028).
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 4)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cascades: Option<u32>,
     /// Texels per side of the far maps: 1024, 2048 or 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 1024, max = 4096)))]
     pub resolution: u32,
@@ -222,6 +258,7 @@ impl From<&Shadows> for SceneShadows {
             }),
             distance: shadows.distance,
             near_distance: shadows.near_distance,
+            cascades: Some(shadows.cascades),
             resolution: shadows.resolution,
         }
     }
@@ -251,6 +288,13 @@ impl SceneShadows {
         if ![1024, 2048, 4096].contains(&self.resolution) {
             return Err(invalid("resolution", "must be 1024, 2048 or 4096"));
         }
+        let cascades = self.cascades.unwrap_or(Shadows::default().cascades);
+        if !(1..=MAX_SHADOW_CASCADES).contains(&cascades) {
+            return Err(invalid(
+                "cascades",
+                &format!("must be 1 to {MAX_SHADOW_CASCADES}"),
+            ));
+        }
         let bounds = match self.bounds {
             Some(bounds) => {
                 let (min, max) = (Vec3::from_array(bounds.min), Vec3::from_array(bounds.max));
@@ -269,6 +313,7 @@ impl SceneShadows {
             bounds,
             distance: self.distance,
             near_distance: self.near_distance,
+            cascades,
             resolution: self.resolution,
         })
     }
@@ -374,9 +419,224 @@ impl SceneBloom {
     }
 }
 
+/// Local lighting settings (decision 023). Requires version 6.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneLocalLights {
+    pub enabled: bool,
+    /// Most lights a frame shades; beyond it the nearest to the camera win.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 4096)))]
+    pub max_lights: u32,
+    /// Scales every light's intensity, e.g. to dim lamps by day.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
+    pub intensity: f32,
+    /// View distance beyond which local light fades out: distant lights
+    /// cost no shading.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 100000.0)))]
+    pub distance: f32,
+}
+
+impl Default for SceneLocalLights {
+    fn default() -> Self {
+        Self::from(&LocalLights::default())
+    }
+}
+
+impl From<&LocalLights> for SceneLocalLights {
+    fn from(lights: &LocalLights) -> Self {
+        Self {
+            enabled: lights.enabled,
+            max_lights: lights.max_lights,
+            intensity: lights.intensity,
+            distance: lights.distance,
+        }
+    }
+}
+
+impl SceneLocalLights {
+    pub fn resolve(&self, path: &str) -> Result<LocalLights, SceneError> {
+        if !(1..=MAX_LOCAL_LIGHTS).contains(&self.max_lights) {
+            return Err(section_error(path, "max_lights", "must be in [1, 4096]"));
+        }
+        if !(self.intensity.is_finite() && (0.0..=100.0).contains(&self.intensity)) {
+            return Err(section_error(path, "intensity", "must be in [0, 100]"));
+        }
+        if !(self.distance.is_finite() && (1.0..=100_000.0).contains(&self.distance)) {
+            return Err(section_error(path, "distance", "must be in [1, 100000]"));
+        }
+        Ok(LocalLights {
+            enabled: self.enabled,
+            max_lights: self.max_lights,
+            intensity: self.intensity,
+            distance: self.distance,
+        })
+    }
+}
+
+/// Particle settings (decision 026). Requires version 6.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneParticles {
+    pub enabled: bool,
+    /// Most particles a frame draws; emitters beyond it are skipped.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 262144)))]
+    pub max_particles: u32,
+}
+
+impl Default for SceneParticles {
+    fn default() -> Self {
+        Self::from(&Particles::default())
+    }
+}
+
+impl From<&Particles> for SceneParticles {
+    fn from(particles: &Particles) -> Self {
+        Self {
+            enabled: particles.enabled,
+            max_particles: particles.max_particles,
+        }
+    }
+}
+
+impl SceneParticles {
+    pub fn resolve(&self, path: &str) -> Result<Particles, SceneError> {
+        if !(1..=MAX_PARTICLES).contains(&self.max_particles) {
+            return Err(section_error(
+                path,
+                "max_particles",
+                "must be in [1, 262144]",
+            ));
+        }
+        Ok(Particles {
+            enabled: self.enabled,
+            max_particles: self.max_particles,
+        })
+    }
+}
+
+/// Sun shafts (decision 024): sunlight scattered by the fog between shadow
+/// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneSunShafts {
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
+    pub intensity: f32,
+    /// Forward scattering: higher concentrates light toward the sun.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.95)))]
+    pub anisotropy: f32,
+    /// World distance along each view ray light is gathered over.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 100000.0)))]
+    pub distance: f32,
+}
+
+impl Default for SceneSunShafts {
+    fn default() -> Self {
+        Self::from(&SunShafts::default())
+    }
+}
+
+impl From<&SunShafts> for SceneSunShafts {
+    fn from(shafts: &SunShafts) -> Self {
+        Self {
+            intensity: shafts.intensity,
+            anisotropy: shafts.anisotropy,
+            distance: shafts.distance,
+        }
+    }
+}
+
+impl SceneSunShafts {
+    pub fn resolve(&self, path: &str) -> Result<SunShafts, SceneError> {
+        if !(0.0..=4.0).contains(&self.intensity) {
+            return Err(section_error(path, "intensity", "must be in [0, 4]"));
+        }
+        if !(0.0..=0.95).contains(&self.anisotropy) {
+            return Err(section_error(path, "anisotropy", "must be in [0, 0.95]"));
+        }
+        if !(self.distance.is_finite() && self.distance > 0.0 && self.distance <= 100_000.0) {
+            return Err(section_error(
+                path,
+                "distance",
+                "must be positive and at most 100000",
+            ));
+        }
+        Ok(SunShafts {
+            intensity: self.intensity,
+            anisotropy: self.anisotropy,
+            distance: self.distance,
+        })
+    }
+}
+
+/// Screen-space reflections (decision 025). Requires version 6; an intensity
+/// of 0 turns them off.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneReflections {
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub intensity: f32,
+    /// Surfaces rougher than this reflect only the sky.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.05, max = 1.0)))]
+    pub max_roughness: f32,
+    /// World distance reflection rays travel.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 100000.0)))]
+    pub distance: f32,
+}
+
+impl Default for SceneReflections {
+    fn default() -> Self {
+        Self::from(&Reflections::default())
+    }
+}
+
+impl From<&Reflections> for SceneReflections {
+    fn from(reflections: &Reflections) -> Self {
+        Self {
+            intensity: reflections.intensity,
+            max_roughness: reflections.max_roughness,
+            distance: reflections.distance,
+        }
+    }
+}
+
+impl SceneReflections {
+    pub fn resolve(&self, path: &str) -> Result<Reflections, SceneError> {
+        if !(0.0..=1.0).contains(&self.intensity) {
+            return Err(section_error(path, "intensity", "must be in [0, 1]"));
+        }
+        if !(0.05..=1.0).contains(&self.max_roughness) {
+            return Err(section_error(path, "max_roughness", "must be in [0.05, 1]"));
+        }
+        if !(self.distance.is_finite() && self.distance > 0.0 && self.distance <= 100_000.0) {
+            return Err(section_error(
+                path,
+                "distance",
+                "must be positive and at most 100000",
+            ));
+        }
+        Ok(Reflections {
+            intensity: self.intensity,
+            max_roughness: self.max_roughness,
+            distance: self.distance,
+        })
+    }
+}
+
+fn section_error(path: &str, field: &str, rule: &str) -> SceneError {
+    SceneError::new(
+        "invalid_environment",
+        format!("{path}.{field}"),
+        rule.to_owned(),
+    )
+}
+
 /// A scene's look (decision 022). In a document, every omitted section takes
-/// the engine default; in a development control, omitted sections stay as
-/// they are.
+/// the engine's default state (sun shafts and reflections: off); in a
+/// development control, omitted sections stay as they are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -389,6 +649,15 @@ pub struct SceneEnvironment {
     pub ambient_occlusion: Option<SceneAmbientOcclusion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom: Option<SceneBloom>,
+    /// Version 6 sections (decisions 023 to 026).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_lights: Option<SceneLocalLights>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sun_shafts: Option<SceneSunShafts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reflections: Option<SceneReflections>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub particles: Option<SceneParticles>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -398,6 +667,10 @@ pub struct EnvironmentSettings {
     pub shadows: Option<Shadows>,
     pub ambient_occlusion: Option<AmbientOcclusion>,
     pub bloom: Option<Bloom>,
+    pub local_lights: Option<LocalLights>,
+    pub sun_shafts: Option<SunShafts>,
+    pub reflections: Option<Reflections>,
+    pub particles: Option<Particles>,
 }
 
 impl SceneEnvironment {
@@ -424,12 +697,70 @@ impl SceneEnvironment {
             intensity: 0.0,
             ..Bloom::default()
         });
+        let local_lights = world
+            .get_resource::<LocalLights>()
+            .copied()
+            .unwrap_or(LocalLights {
+                enabled: false,
+                ..LocalLights::default()
+            });
+        let particles = world
+            .get_resource::<Particles>()
+            .copied()
+            .unwrap_or(Particles {
+                enabled: false,
+                ..Particles::default()
+            });
+        let shafts = world
+            .get_resource::<SunShafts>()
+            .copied()
+            .unwrap_or(SunShafts {
+                intensity: 0.0,
+                ..SunShafts::default()
+            });
+        let reflections = world
+            .get_resource::<Reflections>()
+            .copied()
+            .unwrap_or(Reflections {
+                intensity: 0.0,
+                ..Reflections::default()
+            });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
             ambient_occlusion: Some(SceneAmbientOcclusion::from(&occlusion)),
             bloom: Some(SceneBloom::from(&bloom)),
+            local_lights: Some(SceneLocalLights::from(&local_lights)),
+            sun_shafts: Some(SceneSunShafts::from(&shafts)),
+            reflections: Some(SceneReflections::from(&reflections)),
+            particles: Some(SceneParticles::from(&particles)),
         }
+    }
+
+    /// The first version 6 field present, as its path below the environment:
+    /// the grade of decision 027, shadow cascades (decision 028) and the
+    /// sections of decisions 023 to 026.
+    pub(crate) fn version_six_field(&self) -> Option<&'static str> {
+        let atmosphere = self.atmosphere.unwrap_or_default();
+        let cascades = self
+            .shadows
+            .is_some_and(|shadows| shadows.cascades.is_some());
+        [
+            ("atmosphere.contrast", atmosphere.contrast.is_some()),
+            ("atmosphere.vibrance", atmosphere.vibrance.is_some()),
+            ("atmosphere.shadow_tint", atmosphere.shadow_tint.is_some()),
+            (
+                "atmosphere.highlight_tint",
+                atmosphere.highlight_tint.is_some(),
+            ),
+            ("shadows.cascades", cascades),
+            ("local_lights", self.local_lights.is_some()),
+            ("sun_shafts", self.sun_shafts.is_some()),
+            ("reflections", self.reflections.is_some()),
+            ("particles", self.particles.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(name, present)| present.then_some(name))
     }
 
     /// The sections at authored path `path`, validated; omitted ones are
@@ -452,6 +783,22 @@ impl SceneEnvironment {
                 .bloom
                 .map(|section| section.resolve(&format!("{path}.bloom")))
                 .transpose()?,
+            local_lights: self
+                .local_lights
+                .map(|section| section.resolve(&format!("{path}.local_lights")))
+                .transpose()?,
+            sun_shafts: self
+                .sun_shafts
+                .map(|section| section.resolve(&format!("{path}.sun_shafts")))
+                .transpose()?,
+            reflections: self
+                .reflections
+                .map(|section| section.resolve(&format!("{path}.reflections")))
+                .transpose()?,
+            particles: self
+                .particles
+                .map(|section| section.resolve(&format!("{path}.particles")))
+                .transpose()?,
         })
     }
 }
@@ -471,14 +818,41 @@ impl EnvironmentSettings {
         if let Some(bloom) = self.bloom {
             world.insert_resource(bloom);
         }
+        if let Some(lights) = self.local_lights {
+            world.insert_resource(lights);
+        }
+        if let Some(shafts) = self.sun_shafts {
+            world.insert_resource(shafts);
+        }
+        if let Some(reflections) = self.reflections {
+            world.insert_resource(reflections);
+        }
+        if let Some(particles) = self.particles {
+            world.insert_resource(particles);
+        }
     }
 
-    /// Inserts all four resources into `world`, defaults for omitted
-    /// sections: a document's environment owns the whole look.
+    /// Sets every section in `world`, omitted ones to the engine's default
+    /// state: a document's environment owns the whole look. Sun shafts and
+    /// reflections are opt-in, so omitting them removes them.
     pub fn apply_all(&self, world: &mut World) {
         world.insert_resource(self.atmosphere.unwrap_or_default());
         world.insert_resource(self.shadows.unwrap_or_default());
         world.insert_resource(self.ambient_occlusion.unwrap_or_default());
         world.insert_resource(self.bloom.unwrap_or_default());
+        world.insert_resource(self.local_lights.unwrap_or_default());
+        world.insert_resource(self.particles.unwrap_or_default());
+        match self.sun_shafts {
+            Some(shafts) => world.insert_resource(shafts),
+            None => {
+                world.remove_resource::<SunShafts>();
+            }
+        }
+        match self.reflections {
+            Some(reflections) => world.insert_resource(reflections),
+            None => {
+                world.remove_resource::<Reflections>();
+            }
+        }
     }
 }

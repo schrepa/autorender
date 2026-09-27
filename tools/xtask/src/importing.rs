@@ -416,6 +416,8 @@ mod tests {
             parent: None,
             prefab: prefab.map(str::to_owned),
             collider: None,
+            light: None,
+            particles: None,
             transform: engine_scene::SceneTransform::default(),
             tags: Vec::new(),
         }

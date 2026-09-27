@@ -1,7 +1,8 @@
-//! Sun shadows (decision 020): three depth maps seen from the atmosphere's sun.
+//! Sun shadows (decision 020): depth maps seen from the atmosphere's sun.
 //!
-//! The near map covers the first stretch of the view and is redrawn every
-//! frame. Two far maps share one projection over the shadow region: the kept
+//! Near cascades, layers of one texture, cover the first stretch of the view,
+//! each reaching a third as far as the next (decision 028), and are redrawn
+//! every frame. Two far maps share one projection over the shadow region: the kept
 //! map holds casters whose pose stayed the same for a few frames and is
 //! redrawn only where that changes, one horizontal strip per frame, or whole
 //! after its projection or the sun moved; the moving map holds every other
@@ -18,8 +19,8 @@ use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
-    BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_SHADOW_GROUPS, SHADOW_SHADER, ShadowCullUniform,
-    ShadowUniform,
+    BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, MAX_SHADOW_GROUPS, SHADOW_SHADER,
+    ShadowCullUniform, ShadowUniform,
 };
 use crate::shadow_fit::{LightBasis, MapRegion, view_sphere};
 
@@ -27,20 +28,26 @@ pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth
 /// Horizontal strips of the kept map; a dirty one is redrawn per frame.
 const STRIPS: u32 = 16;
 const ALL_STRIPS: u32 = u32::MAX >> (32 - STRIPS);
-const NEAR_MAP: usize = 0;
-const MOVING_MAP: usize = 1;
-const KEPT_MAP: usize = 2;
-const MAPS: usize = 3;
-// Uniform offset alignment between the near and far view matrices.
+// Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow.
+const MOVING_MAP: usize = MAX_CASCADES;
+const KEPT_MAP: usize = MAX_CASCADES + 1;
+const MAPS: usize = MAX_CASCADES + 2;
+// Uniform offset alignment between view matrices: each near cascade's, then
+// the far maps'.
 const VIEW_STRIDE: u64 = 256;
+const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
 const GROUP: u32 = 256;
 const READBACKS: usize = 3;
 // Mode bits of the selection pass.
 const STILLNESS: u32 = 1;
 const REFRESH: u32 = 2;
-const NEAR: u32 = 4;
-// Lookups move this many texels along the surface normal.
-const NORMAL_OFFSET_TEXELS: f32 = 1.5;
+// Lookups move this many texels along the surface normal. Receiver planes
+// (decision 028) keep tilted surfaces off their own depths; the offset only
+// covers where a lookup's texels meet another surface.
+const NORMAL_OFFSET_TEXELS: f32 = 0.5;
+// Receiver planes steeper than this, in texels of depth per texel (86
+// degrees from the sun), are clamped.
+const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 // Shadows fade over the last part of their distance.
 const FADE_START: f32 = 0.85;
 // Texels of margin around the far region.
@@ -105,7 +112,8 @@ pub(crate) struct ShadowEncoded {
 pub(crate) struct ShadowFrame {
     source: Source,
     candidates: u32,
-    near: bool,
+    // Near cascades drawn and looked up.
+    cascades: u32,
     refresh: Option<Refresh>,
     pose_index: usize,
     read_dirty: bool,
@@ -125,8 +133,15 @@ impl ShadowFrame {
 
 struct Maps {
     resolution: u32,
-    textures: [wgpu::Texture; MAPS],
-    views: [wgpu::TextureView; MAPS],
+    cascades: u32,
+    // The near cascades as layers of one texture, and the moving and kept
+    // far maps.
+    textures: [wgpu::Texture; 3],
+    // The near cascades as one array (lookups) and each layer (drawing).
+    near_array: wgpu::TextureView,
+    near_layers: Vec<wgpu::TextureView>,
+    moving: wgpu::TextureView,
+    kept: wgpu::TextureView,
 }
 
 impl Drop for Maps {
@@ -354,14 +369,15 @@ impl ShadowPipelines {
                         wgpu::CompareFunction::Less
                     }),
                     stencil: Default::default(),
-                    // Constant and slope-scaled bias keep lit surfaces off
-                    // their own depth.
+                    // Receiver planes (decision 028) keep lit surfaces off
+                    // their own depth; a unit of bias covers the sun shafts'
+                    // plain comparisons.
                     bias: if clear {
                         Default::default()
                     } else {
                         wgpu::DepthBiasState {
-                            constant: 2,
-                            slope_scale: 1.5,
+                            constant: 1,
+                            slope_scale: 0.0,
                             clamp: 0.0,
                         }
                     },
@@ -403,7 +419,7 @@ impl ShadowPipelines {
         let clear = pipeline("engine/shadow-clear", &[], "vs_clear", &[], true);
         let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/shadow-views"),
-            size: 2 * VIEW_STRIDE,
+            size: FAR_VIEW + VIEW_STRIDE,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -449,8 +465,11 @@ pub(crate) struct ShadowPass {
     uniform: wgpu::Buffer,
     written: Option<ShadowUniform>,
     sampler: wgpu::Sampler,
+    // Reads the four texels around a receiver-plane lookup (decision 028).
+    texel_sampler: wgpu::Sampler,
     _placeholder: wgpu::Texture,
     placeholder_view: wgpu::TextureView,
+    placeholder_array: wgpu::TextureView,
     maps: Option<Maps>,
     // Advances when map views change: bindings of the main passes follow.
     generation: u64,
@@ -519,6 +538,12 @@ impl ShadowPass {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
+        let texel_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("engine/shadow-texel-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
         let placeholder = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("engine/shadow-placeholder"),
             size: wgpu::Extent3d {
@@ -534,6 +559,10 @@ impl ShadowPass {
             view_formats: &[],
         });
         let placeholder_view = placeholder.create_view(&Default::default());
+        let placeholder_array = placeholder.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         let empty = |label: &str, extra| storage(device, label, 0, extra);
         Self {
             pipelines: None,
@@ -542,8 +571,10 @@ impl ShadowPass {
             uniform,
             written: None,
             sampler,
+            texel_sampler,
             _placeholder: placeholder,
             placeholder_view,
+            placeholder_array,
             maps: None,
             generation: 0,
             stillness: empty("engine/shadow-stillness", wgpu::BufferUsages::empty()),
@@ -590,33 +621,39 @@ impl ShadowPass {
         self.generation
     }
 
-    /// Bindings 2 to 6 of the main passes' first group: the lookup uniform,
-    /// the near, kept and moving maps and the comparison sampler.
-    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 5] {
-        let view = |map: usize| {
-            wgpu::BindingResource::TextureView(
-                self.maps
-                    .as_ref()
-                    .map_or(&self.placeholder_view, |maps| &maps.views[map]),
-            )
+    /// Bindings 2 to 7 of the main passes' first group: the lookup uniform,
+    /// the near cascades, the kept and moving maps, the comparison sampler
+    /// and the texel sampler of receiver planes.
+    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 6] {
+        let (near, kept, moving) = match &self.maps {
+            Some(maps) => (&maps.near_array, &maps.kept, &maps.moving),
+            None => (
+                &self.placeholder_array,
+                &self.placeholder_view,
+                &self.placeholder_view,
+            ),
         };
         [
             entry(2, &self.uniform),
             wgpu::BindGroupEntry {
                 binding: 3,
-                resource: view(NEAR_MAP),
+                resource: wgpu::BindingResource::TextureView(near),
             },
             wgpu::BindGroupEntry {
                 binding: 4,
-                resource: view(KEPT_MAP),
+                resource: wgpu::BindingResource::TextureView(kept),
             },
             wgpu::BindGroupEntry {
                 binding: 5,
-                resource: view(MOVING_MAP),
+                resource: wgpu::BindingResource::TextureView(moving),
             },
             wgpu::BindGroupEntry {
                 binding: 6,
                 resource: wgpu::BindingResource::Sampler(&self.sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::Sampler(&self.texel_sampler),
             },
         ]
     }
@@ -632,9 +669,9 @@ impl ShadowPass {
         self.batch_groups.get(index).copied().unwrap_or(0)
     }
 
-    /// The latest caster totals of the near, moving and kept maps read back
-    /// from GPU-selected frames, a few frames old; the kept total counts only
-    /// frames that redrew part of it.
+    /// The latest caster totals of the near cascades together, the moving
+    /// map and the kept map read back from GPU-selected frames, a few frames
+    /// old; the kept total counts only frames that redrew part of it.
     pub(crate) fn caster_counts(&self) -> Option<[u32; 3]> {
         self.casters.get()
     }
@@ -643,7 +680,7 @@ impl ShadowPass {
     pub(crate) fn capacity_bytes(&self) -> u64 {
         let maps = self.maps.as_ref().map_or(0, |maps| {
             let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
-            2 * far + far / 4
+            2 * far + u64::from(maps.cascades) * far / 4
         });
         maps + [
             &self.stillness,
@@ -680,9 +717,15 @@ impl ShadowPass {
                 Source::Presented,
                 (0, frame.identity(), frame.source_revision()),
             ),
+            // Both stamps only grow: a source change (such as a slot turning
+            // transparent) regroups casters too.
             Some(frame) => (
                 Source::Listed,
-                (1, frame.identity(), frame.caster_revision()),
+                (
+                    1,
+                    frame.identity(),
+                    frame.caster_revision().max(frame.source_revision()),
+                ),
             ),
             None => (Source::Snapshot, (2, 0, 0)),
         };
@@ -707,6 +750,10 @@ impl ShadowPass {
             let instances = &frame.snapshot().instances;
             self.listed_staging.clear();
             for &slot in frame.casters() {
+                // Transparent surfaces cast no shadow (decision 026).
+                if crate::batches::is_transparent(&instances[slot]) {
+                    continue;
+                }
                 let mesh = instances[slot].mesh;
                 let Some(&source_index) = sources.get(&mesh) else {
                     continue;
@@ -730,6 +777,11 @@ impl ShadowPass {
             self.listed_count = self.listed_staging.len() as u32;
         } else {
             for batch in &plan.batches {
+                // Transparent surfaces cast no shadow (decision 026).
+                if batch.transparent {
+                    self.batch_groups.push(u32::MAX);
+                    continue;
+                }
                 let count = batch.instances.end - batch.instances.start;
                 let group = add_to_group(
                     &mut self.groups,
@@ -788,15 +840,8 @@ impl ShadowPass {
                 self.generation += 1;
             }
             self.kept_valid &= settings.enabled;
-            self.write_uniform(
-                queue,
-                ShadowUniform {
-                    near: [[0.0; 4]; 4],
-                    far: [[0.0; 4]; 4],
-                    state: [0.0; 4],
-                    offsets: [0.0; 4],
-                },
-            );
+            // Shadows off: lookups see state.x 0.
+            self.write_uniform(queue, bytemuck::Zeroable::zeroed());
             return None;
         }
         if self.pipelines.is_none() {
@@ -806,9 +851,10 @@ impl ShadowPass {
         if self
             .maps
             .as_ref()
-            .is_none_or(|maps| maps.resolution != resolution)
+            .is_none_or(|maps| maps.resolution != resolution || maps.cascades != settings.cascades)
         {
-            self.maps = Some(create_maps(device, resolution));
+            // New maps hold nothing: the kept one is redrawn whole.
+            self.maps = Some(create_maps(device, resolution, settings.cascades));
             self.generation += 1;
             self.kept_valid = false;
         }
@@ -847,8 +893,19 @@ impl ShadowPass {
             self.kept_region = Some(far);
             self.kept_valid = false;
         }
-        let near = view_sphere(snapshot.view_projection, eye, settings.near_distance)
-            .map(|(center, radius)| MapRegion::of_sphere(&basis, center, radius, near_resolution));
+        // Near cascades (decision 028): the smallest sphere around the view
+        // within each one's reach, nested. A reach inside the camera's near
+        // plane covers nothing and has no cascade.
+        let mut near = [(0.0, far); MAX_CASCADES];
+        let mut cascades = 0;
+        for reach in settings.cascade_reaches() {
+            if let Some((center, radius)) = view_sphere(snapshot.view_projection, eye, reach) {
+                let region = MapRegion::of_sphere(&basis, center, radius, near_resolution);
+                near[cascades] = (reach, region);
+                cascades += 1;
+            }
+        }
+        let near = &near[..cascades];
         let classify = self.source == Source::Presented;
         if classify && self.stillness_capacity < slot_capacity {
             self.stillness_capacity = slot_capacity.next_power_of_two();
@@ -945,18 +1002,21 @@ impl ShadowPass {
                 );
             }
         }
-        // View matrices: the near map at offset 0, both far maps after it.
+        // View matrices: each near cascade's, then both far maps'.
         let far_clip = far.clip(&basis);
-        let near_clip = near.map_or(far_clip, |near| near.clip(&basis));
+        let mut near_clips = [far_clip; MAX_CASCADES];
+        for (clip, (_, region)) in near_clips.iter_mut().zip(near) {
+            *clip = region.clip(&basis);
+        }
+        let mut views = [0.0_f32; (MAX_CASCADES + 1) * VIEW_STRIDE as usize / 4];
+        for (index, clip) in near_clips.iter().chain([&far_clip]).enumerate() {
+            let start = index * VIEW_STRIDE as usize / 4;
+            views[start..start + 16].copy_from_slice(&clip.to_cols_array());
+        }
         queue.write_buffer(
             &self.pipelines.as_ref().expect("created above").view_buffer,
             0,
-            bytemuck::cast_slice(&near_clip.to_cols_array()),
-        );
-        queue.write_buffer(
-            &self.pipelines.as_ref().expect("created above").view_buffer,
-            VIEW_STRIDE,
-            bytemuck::cast_slice(&far_clip.to_cols_array()),
+            bytemuck::cast_slice(&views),
         );
         let candidates = match (&presented, self.source) {
             (Some(presented), Source::Presented) => presented.count,
@@ -985,25 +1045,28 @@ impl ShadowPass {
                 *start = group.start;
             }
             let row = |axis: Vec3| axis.extend(0.0).to_array();
-            let near_region = near.unwrap_or(far);
+            let mut near_rects = [[0.0; 4]; MAX_CASCADES];
+            let mut near_depths = [0.0; 4];
+            for (index, (_, region)) in near.iter().enumerate() {
+                near_rects[index] = region.rect;
+                near_depths[index] = region.depth[1];
+            }
             let cull = ShadowCullUniform {
                 light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],
-                near: near_region.rect,
+                near: near_rects,
                 far: far.rect,
                 refresh: refresh_rect,
-                depths: [near_region.depth[1], far.depth[1], far.depth[1], 0.0],
+                near_depths,
+                depths: [0.0, far.depth[1], far.depth[1], 0.0],
                 candidates,
                 groups: groups as u32,
                 capacity: self.id_capacity as u32,
-                mode: [
-                    (classify, STILLNESS),
-                    (refresh.is_some(), REFRESH),
-                    (near.is_some(), NEAR),
-                ]
-                .iter()
-                .filter(|(set, _)| *set)
-                .fold(0, |mode, (_, bit)| mode | bit),
+                mode: [(classify, STILLNESS), (refresh.is_some(), REFRESH)]
+                    .iter()
+                    .filter(|(set, _)| *set)
+                    .fold(0, |mode, (_, bit)| mode | bit),
                 strips: [far.rect[1], strip_height, STRIPS as f32, 0.0],
+                cascades: [near.len() as u32, 0, 0, 0],
                 starts,
             };
             queue.write_buffer(
@@ -1012,27 +1075,34 @@ impl ShadowPass {
                 bytemuck::bytes_of(&cull),
             );
         }
-        let near_texel = near.map_or(0.0, |near| near.texel(near_resolution));
+        // Cascades beyond those in use are never reached.
+        let mut reach = [f32::MAX; 4];
+        let mut near_offsets = [0.0; 4];
+        let mut near_limits = [0.0; 4];
+        for (index, (distance, region)) in near.iter().enumerate() {
+            reach[index] = *distance;
+            near_offsets[index] = region.texel(near_resolution) * NORMAL_OFFSET_TEXELS;
+            near_limits[index] = slope_limit(region, near_resolution);
+        }
         let far_texel = far.texel(resolution);
         self.write_uniform(
             queue,
             ShadowUniform {
-                near: near_clip.to_cols_array_2d(),
+                near: near_clips.map(|clip| clip.to_cols_array_2d()),
                 far: far_clip.to_cols_array_2d(),
                 state: [
                     1.0,
                     if classify { 1.0 } else { 0.0 },
-                    if near.is_some() {
-                        settings.near_distance
-                    } else {
-                        0.0
-                    },
+                    near.len() as f32,
                     settings.distance * FADE_START,
                 ],
+                reach,
+                near_offsets,
+                near_limits,
                 offsets: [
                     settings.distance,
-                    near_texel * NORMAL_OFFSET_TEXELS,
                     far_texel * NORMAL_OFFSET_TEXELS,
+                    slope_limit(&far, resolution),
                     0.0,
                 ],
             },
@@ -1109,7 +1179,7 @@ impl ShadowPass {
         Some(ShadowFrame {
             source: self.source,
             candidates,
-            near: near.is_some(),
+            cascades: near.len() as u32,
             refresh,
             pose_index,
             read_dirty: self.source != Source::Snapshot,
@@ -1227,6 +1297,7 @@ impl ShadowPass {
             }
         };
         // The first depth pass writes the begin timestamp, the last the end.
+        let first_map = if frame.cascades > 0 { 0 } else { MOVING_MAP };
         let last = if frame.refresh.is_some() {
             KEPT_MAP
         } else {
@@ -1234,7 +1305,7 @@ impl ShadowPass {
         };
         let writes = |map: usize| {
             timestamps.and_then(|(query_set, first)| {
-                let begin = (map == NEAR_MAP).then_some(first + 2);
+                let begin = (map == first_map).then_some(first + 2);
                 let end = (map == last).then_some(first + 3);
                 (begin.is_some() || end.is_some()).then_some(wgpu::RenderPassTimestampWrites {
                     query_set,
@@ -1243,20 +1314,18 @@ impl ShadowPass {
                 })
             })
         };
-        for (map, offset, runs) in [
-            (NEAR_MAP, 0, frame.near),
-            (MOVING_MAP, VIEW_STRIDE as u32, true),
-        ] {
-            let mut pass = map_pass(
-                encoder,
-                &maps.views[map],
-                wgpu::LoadOp::Clear(1.0),
-                writes(map),
-            );
-            if !runs {
-                continue;
-            }
-            pass.set_bind_group(0, &pipelines.view_group, &[offset]);
+        // Each near cascade in use (map and view matrix `cascade`), then the
+        // moving map.
+        let cascades = (0..frame.cascades as usize).map(|cascade| {
+            (
+                cascade,
+                &maps.near_layers[cascade],
+                cascade as u64 * VIEW_STRIDE,
+            )
+        });
+        for (map, view, offset) in cascades.chain([(MOVING_MAP, &maps.moving, FAR_VIEW)]) {
+            let mut pass = map_pass(encoder, view, wgpu::LoadOp::Clear(1.0), writes(map));
+            pass.set_bind_group(0, &pipelines.view_group, &[offset as u32]);
             if frame.source == Source::Snapshot {
                 draw_snapshot(&mut pass);
             } else {
@@ -1267,7 +1336,7 @@ impl ShadowPass {
             let whole = refresh == Refresh::Whole;
             let mut pass = map_pass(
                 encoder,
-                &maps.views[KEPT_MAP],
+                &maps.kept,
                 if whole {
                     wgpu::LoadOp::Clear(1.0)
                 } else {
@@ -1288,7 +1357,7 @@ impl ShadowPass {
                 pass.set_pipeline(&pipelines.clear);
                 pass.draw(0..3, 0..1);
             }
-            pass.set_bind_group(0, &pipelines.view_group, &[VIEW_STRIDE as u32]);
+            pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
             draw_selected(&mut pass, KEPT_MAP);
         }
         ShadowEncoded {
@@ -1354,6 +1423,12 @@ impl ShadowPass {
     }
 }
 
+/// Steepest receiver plane of `region` with `texels` texels a side, in its
+/// depth (0 to 1 over the region's depths) per texel.
+fn slope_limit(region: &MapRegion, texels: u32) -> f32 {
+    SLOPE_LIMIT_TEXELS * region.texel(texels) / (region.depth[1] - region.depth[0])
+}
+
 fn map_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     view: &wgpu::TextureView,
@@ -1377,14 +1452,16 @@ fn map_pass<'e>(
     })
 }
 
-fn create_maps(device: &wgpu::Device, resolution: u32) -> Maps {
-    let texture = |label, size| {
+/// Maps of `resolution` texels (the near cascades half as many) with
+/// `cascades` near layers.
+fn create_maps(device: &wgpu::Device, resolution: u32, cascades: u32) -> Maps {
+    let texture = |label, size, layers| {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
                 width: size,
                 height: size,
-                depth_or_array_layers: 1,
+                depth_or_array_layers: layers,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -1395,16 +1472,35 @@ fn create_maps(device: &wgpu::Device, resolution: u32) -> Maps {
         })
     };
     let textures = [
-        texture("engine/shadow-near", resolution / 2),
-        texture("engine/shadow-moving", resolution),
-        texture("engine/shadow-kept", resolution),
+        texture("engine/shadow-near", resolution / 2, cascades),
+        texture("engine/shadow-moving", resolution, 1),
+        texture("engine/shadow-kept", resolution, 1),
     ];
-    let views = textures
-        .each_ref()
-        .map(|texture| texture.create_view(&Default::default()));
+    let near_array = textures[0].create_view(&wgpu::TextureViewDescriptor {
+        label: Some("engine/shadow-near-cascades"),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    });
+    let near_layers = (0..cascades)
+        .map(|layer| {
+            textures[0].create_view(&wgpu::TextureViewDescriptor {
+                label: Some("engine/shadow-near-cascade"),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let moving = textures[1].create_view(&Default::default());
+    let kept = textures[2].create_view(&Default::default());
     Maps {
         resolution,
+        cascades,
         textures,
-        views,
+        near_array,
+        near_layers,
+        moving,
+        kept,
     }
 }

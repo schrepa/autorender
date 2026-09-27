@@ -213,7 +213,10 @@ mod tests {
         let changed = cache.prepare_instances(&source, &[0, 1, 2], &mut staging);
         assert!(changed.write);
         assert_eq!(changed.repacked, 1);
-        assert_eq!(staging[1].color[2], 0.25);
+        assert_eq!(
+            staging[1].color,
+            crate::gpu_data::pack_color(source[1].color)
+        );
         cache.commit_instances();
         source[1].model = Mat4::from_translation(Vec3::Z);
         let moved = cache.prepare_instances(&source, &[0, 1, 2], &mut staging);
@@ -275,7 +278,14 @@ mod tests {
                 .prepare_instances(&source, &[0, 1, 2], &mut staging)
                 .write
         );
+        // Another NaN payload packs to the same record: nothing to write.
         source[0].color[0] = f32::from_bits(0x7fc0_0002);
+        assert!(
+            !cache
+                .prepare_instances(&source, &[0, 1, 2], &mut staging)
+                .write
+        );
+        source[0].color[0] = 0.5;
         assert!(
             cache
                 .prepare_instances(&source, &[0, 1, 2], &mut staging)

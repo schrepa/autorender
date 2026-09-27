@@ -1,22 +1,30 @@
-//! Screen effects (decision 021): ambient occlusion and bloom.
+//! Screen effects: ambient occlusion and bloom (decision 021), sun shafts
+//! (decision 024) and screen-space reflections (decision 025).
 //!
 //! Frames with an effect draw the scene into a color target whose alpha is the
 //! ambient share of each pixel's light, and a glow target of each pixel's
-//! exposed brightness above the bloom threshold. Ambient occlusion samples the
-//! depth buffer at half resolution; bloom filters the glowing light down a
-//! chain of half-resolution levels and back up. Temporally antialiased frames
-//! (decision 017) apply both in their resolve, other frames in a composite
+//! exposed brightness above the bloom threshold and its reflectivity. Ambient
+//! occlusion samples the depth buffer at half resolution; reflections trace
+//! the depth buffer at half resolution; sun shafts march the far shadow maps
+//! at half resolution; bloom filters the glowing light down a chain of
+//! half-resolution levels and back up. Temporally antialiased frames
+//! (decision 017) apply them in their resolve, other frames in a composite
 //! that writes the canvas.
 
 use engine_core::{RenderSnapshot, glam::Mat4};
 
-use crate::gpu_data::{POST_SHADER, PostUniform};
+use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// Glow weight (decision 021) and reflectivity (decision 025).
+pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Reflected color and weight (decision 025).
+const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Scattered sunlight (decision 024).
+const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// Half-resolution bloom levels; each halves the one before.
 const BLOOM_LEVELS: u32 = 6;
 
@@ -25,15 +33,20 @@ const BLOOM_LEVELS: u32 = 6;
 pub(crate) struct PostFrame {
     pub occlusion: bool,
     pub bloom: bool,
+    pub reflections: bool,
+    pub shafts: bool,
 }
 
 struct Targets {
     size: (u32, u32),
-    // Scene, glow, occlusion and bloom, destroyed with the targets.
-    textures: [wgpu::Texture; 4],
+    // Scene, glow, occlusion, bloom, reflections and shafts, destroyed with
+    // the targets.
+    textures: [wgpu::Texture; 6],
     scene: wgpu::TextureView,
     glow: wgpu::TextureView,
     occlusion: wgpu::TextureView,
+    reflections: wgpu::TextureView,
+    shafts: wgpu::TextureView,
     // One view per bloom level, and the level count.
     bloom: Vec<wgpu::TextureView>,
     bloom_first: wgpu::BindGroup,
@@ -54,6 +67,11 @@ impl Drop for Targets {
 
 pub(crate) struct PostPass {
     occlusion: wgpu::RenderPipeline,
+    reflections: wgpu::RenderPipeline,
+    // Sun shafts read the camera group of the main passes (shadow maps and
+    // lighting) and their own.
+    shafts: wgpu::RenderPipeline,
+    shafts_layout: wgpu::BindGroupLayout,
     bloom_first: wgpu::RenderPipeline,
     bloom_down: wgpu::RenderPipeline,
     bloom_up: wgpu::RenderPipeline,
@@ -62,14 +80,23 @@ pub(crate) struct PostPass {
     written: Option<PostUniform>,
     sampler: wgpu::Sampler,
     targets: Option<Targets>,
-    // Occlusion bindings over the depth buffer of that generation.
+    // Occlusion, reflection and shaft bindings over the depth buffer and
+    // targets of those generations.
     occlusion_group: Option<(u64, u64, wgpu::BindGroup)>,
+    reflections_group: Option<(u64, u64, wgpu::BindGroup)>,
+    shafts_group: Option<(u64, wgpu::BindGroup)>,
     // Advances when targets are replaced: the temporal resolve rebinds.
     generation: u64,
 }
 
 impl PostPass {
-    pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+    /// `camera_layout` is the first group of the main passes, which sun
+    /// shafts read.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        surface_format: wgpu::TextureFormat,
+        camera_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/post.wgsl"),
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
@@ -129,6 +156,62 @@ impl PostPass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let shafts_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/post-shafts-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(size_of::<PostUniform>() as u64),
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shafts_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/shafts.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(SHAFTS_SHADER.into()),
+        });
+        let shafts_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/post-shafts-pipeline-layout"),
+                bind_group_layouts: &[Some(camera_layout), Some(&shafts_layout)],
+                immediate_size: 0,
+            });
+        let shafts = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("engine/post-shafts"),
+            layout: Some(&shafts_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shafts_module,
+                entry_point: Some("vs_fullscreen"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shafts_module,
+                entry_point: Some("fs_shafts"),
+                compilation_options: Default::default(),
+                targets: &[Some(SHAFT_FORMAT.into())],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
         Self {
             occlusion: pipeline(
                 "engine/post-occlusion",
@@ -137,6 +220,15 @@ impl PostPass {
                 None,
                 None,
             ),
+            reflections: pipeline(
+                "engine/post-reflections",
+                "fs_reflections",
+                REFLECTION_FORMAT,
+                None,
+                None,
+            ),
+            shafts,
+            shafts_layout,
             bloom_first: pipeline(
                 "engine/post-bloom-first",
                 "fs_bloom_first",
@@ -170,6 +262,8 @@ impl PostPass {
             sampler,
             targets: None,
             occlusion_group: None,
+            reflections_group: None,
+            shafts_group: None,
             generation: 0,
         }
     }
@@ -184,14 +278,16 @@ impl PostPass {
     pub(crate) fn release_targets(&mut self) {
         self.targets = None;
         self.occlusion_group = None;
+        self.reflections_group = None;
     }
 
-    /// Target bytes: scene (4) and glow (1) per pixel, occlusion at half
-    /// resolution and the bloom chain (8 bytes per half-resolution texel).
+    /// Target bytes: scene (4) and glow (2) per pixel, and at half
+    /// resolution occlusion (1), reflections (8), shafts (2) and the bloom
+    /// chain (8 bytes per texel of its first level).
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.as_ref().map_or(0, |targets| {
             let pixels = u64::from(targets.size.0) * u64::from(targets.size.1);
-            pixels * 5 + pixels / 4 + pixels / 4 * 8 * 4 / 3
+            pixels * 6 + pixels / 4 * 11 + pixels / 4 * 8 * 4 / 3
         })
     }
 
@@ -217,9 +313,14 @@ impl PostPass {
         }
         let occlusion = snapshot.ambient_occlusion.sanitized();
         let bloom = snapshot.bloom.sanitized();
+        let reflections = snapshot.reflections.sanitized();
+        let shafts = snapshot.sun_shafts.sanitized();
         let frame = PostFrame {
             occlusion: occlusion.enabled(),
             bloom: bloom.enabled(),
+            reflections: reflections.enabled(),
+            // Shafts gather light through the shadow maps.
+            shafts: shafts.enabled() && snapshot.shadows.enabled,
         };
         if frame.occlusion
             && self
@@ -245,6 +346,59 @@ impl PostPass {
             });
             self.occlusion_group = Some((depth_generation, self.generation, group));
         }
+        if frame.reflections
+            && self
+                .reflections_group
+                .as_ref()
+                .is_none_or(|(depth, targets, _)| {
+                    *depth != depth_generation || *targets != self.generation
+                })
+        {
+            let targets = self.targets.as_ref().expect("sized above");
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/post-reflections-group"),
+                layout: &self.reflections.get_bind_group_layout(0),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                    texture_entry(2, &targets.scene),
+                    texture_entry(3, &targets.glow),
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            });
+            self.reflections_group = Some((depth_generation, self.generation, group));
+        }
+        if frame.shafts
+            && self
+                .shafts_group
+                .as_ref()
+                .is_none_or(|(depth, _)| *depth != depth_generation)
+        {
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/post-shafts-group"),
+                layout: &self.shafts_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(depth),
+                    },
+                ],
+            });
+            self.shafts_group = Some((depth_generation, group));
+        }
         let (width, height) = (size.0 as f32, size.1 as f32);
         let view_projection = snapshot.view_projection;
         // Row y of a perspective view-projection is the focal scale times a
@@ -252,8 +406,10 @@ impl PostPass {
         // distance into half the viewport height.
         let focal = view_projection.row(1).truncate().length();
         let half = ((size.0 / 2).max(1) as f32, (size.1 / 2).max(1) as f32);
+        let atmosphere = snapshot.atmosphere.sanitized();
         let uniform = PostUniform {
             inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
+            view_projection: view_projection.to_cols_array_2d(),
             eye: snapshot
                 .camera_position
                 .extend(focal * height * 0.5)
@@ -271,6 +427,21 @@ impl PostPass {
                 1.0 / half.0,
                 1.0 / half.1,
             ],
+            reflections: [
+                reflections.distance,
+                reflections.intensity,
+                if frame.reflections { 1.0 } else { 0.0 },
+                0.0,
+            ],
+            shafts: [
+                shafts.intensity,
+                shafts.anisotropy,
+                shafts.distance,
+                if frame.shafts { 1.0 } else { 0.0 },
+            ],
+            sun: (atmosphere.sun_color * atmosphere.exposure)
+                .extend(0.0)
+                .to_array(),
         };
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -285,32 +456,32 @@ impl PostPass {
         (&targets.scene, &targets.glow)
     }
 
-    /// Views the temporal resolve reads: scene, occlusion and bloom, and the
-    /// settings uniform.
-    pub(crate) fn resolve_inputs(
-        &self,
-    ) -> (
-        &wgpu::TextureView,
-        &wgpu::TextureView,
-        &wgpu::TextureView,
-        &wgpu::Buffer,
-    ) {
+    /// Views the temporal resolve reads: scene, occlusion, bloom,
+    /// reflections and shafts, and the settings uniform.
+    pub(crate) fn resolve_inputs(&self) -> ([&wgpu::TextureView; 5], &wgpu::Buffer) {
         let targets = self.targets.as_ref().expect("sized in begin");
         (
-            &targets.scene,
-            &targets.occlusion,
-            &targets.bloom[0],
+            [
+                &targets.scene,
+                &targets.occlusion,
+                &targets.bloom[0],
+                &targets.reflections,
+                &targets.shafts,
+            ],
             &self.uniform,
         )
     }
 
-    /// Records ambient occlusion and bloom after the opaque pass. With
-    /// `timestamps` (a query set and its first index), occlusion writes
-    /// queries `first` and `first + 1`, bloom `first + 2` and `first + 3`.
+    /// Records ambient occlusion, reflections, sun shafts (over the camera
+    /// group `camera` of the main passes) and bloom after the opaque and
+    /// transparent passes. With `timestamps` (a query set and its first
+    /// index), occlusion writes queries `first` and `first + 1`, bloom
+    /// `first + 2` and `first + 3`.
     pub(crate) fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: PostFrame,
+        camera: &wgpu::BindGroup,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
@@ -326,6 +497,35 @@ impl PostPass {
             );
             pass.set_pipeline(&self.occlusion);
             pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        if frame.reflections
+            && let Some((_, _, group)) = &self.reflections_group
+        {
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/post-reflections",
+                &targets.reflections,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                None,
+            );
+            pass.set_pipeline(&self.reflections);
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        if frame.shafts
+            && let Some((_, group)) = &self.shafts_group
+        {
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/post-shafts",
+                &targets.shafts,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                None,
+            );
+            pass.set_pipeline(&self.shafts);
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(1, group, &[]);
             pass.draw(0..3, 0..1);
         }
         if frame.bloom {
@@ -420,8 +620,10 @@ impl PostPass {
             texture("engine/post-glow", (width, height), GLOW_FORMAT, 1),
             texture("engine/post-occlusion", half, OCCLUSION_FORMAT, 1),
             texture("engine/post-bloom", half, BLOOM_FORMAT, levels),
+            texture("engine/post-reflections", half, REFLECTION_FORMAT, 1),
+            texture("engine/post-shafts", half, SHAFT_FORMAT, 1),
         ];
-        let [scene, glow, occlusion, _] = textures
+        let [scene, glow, occlusion, _, reflections, shafts] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         let bloom: Vec<wgpu::TextureView> = (0..levels)
@@ -481,6 +683,8 @@ impl PostPass {
                 texture_entry(5, &occlusion),
                 texture_entry(6, &bloom[0]),
                 sampler.clone(),
+                texture_entry(8, &reflections),
+                texture_entry(9, &shafts),
             ],
         );
         Targets {
@@ -489,6 +693,8 @@ impl PostPass {
             scene,
             glow,
             occlusion,
+            reflections,
+            shafts,
             bloom,
             bloom_first,
             bloom_down,

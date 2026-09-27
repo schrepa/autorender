@@ -108,6 +108,9 @@ pub struct Mesh3dView {
     pub indices: Option<usize>,
     pub local_bounds: Option<MeshBoundsView>,
     pub color: Option<[f32; 4]>,
+    /// Fraction of light behind the surface it covers; below 1 it draws
+    /// transparent (decision 026).
+    pub opacity: Option<f32>,
     /// The material's response to light (decision 019).
     pub surface: Option<SurfaceView>,
     /// None denotes an untextured material; false denotes a missing dependency.

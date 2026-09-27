@@ -81,9 +81,22 @@ occlusion and bloom (`AmbientOcclusion`, `Bloom`) through scene and glow
 targets, applied in the temporal resolve or a composite pass. Captures,
 previews and CPU-presented frames render all three alike.
 [Decision 022](adr-022-scene-environments-and-agent-controls.md) gives the
-look one JSON shape: a scene version 5 `environment`, its inspection
-projections and a temporary agent control. Each effect resource is optional,
-and the renderer creates an effect's GPU resources only while it runs.
+look one JSON shape: a scene `environment`, its inspection projections and a
+temporary agent control. Each effect resource is optional, and the renderer
+creates an effect's GPU resources only while it runs.
+[Decision 023](adr-023-local-lights.md) adds point and spot lights binned
+into view clusters by a compute pass, transformed by the poses of the meshes
+that carry them; [decision 024](adr-024-sun-shafts.md) marches the far
+shadow maps through the fog at half resolution for sun shafts;
+[decision 025](adr-025-screen-space-reflections.md) traces the depth buffer
+at half resolution for screen-space reflections; and
+[decision 026](adr-026-transparency-and-particles.md) blends transparent
+materials and stateless GPU particles order-independently after the opaque
+pass. Every pass shades captures, previews and GPU frames alike.
+[Decision 027](adr-027-stylized-grading.md) grades every shaded color with a
+hue-keeping filmic curve, contrast, split toning and vibrance.
+[Decision 028](adr-028-shadow-cascades-and-receiver-planes.md) splits the near
+shadow map into cascades and compares lookups against receiver planes.
 
 ## Ownership and compatibility
 

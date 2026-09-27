@@ -38,6 +38,14 @@ pub struct FrameStats {
     /// Screen effects applied (decision 021).
     pub ambient_occlusion: bool,
     pub bloom: bool,
+    /// Local lights (decision 023); `None` when the frame shaded none.
+    pub lights: Option<engine_render::LightStats>,
+    /// Sun shafts (decision 024) and reflections (decision 025) applied.
+    pub sun_shafts: bool,
+    pub reflections: bool,
+    /// Transparent draws and particles drawn (decision 026).
+    pub transparent_draws: u32,
+    pub particles: u32,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -79,6 +87,20 @@ pub struct BrowserStats {
     /// Whether ambient occlusion and bloom ran (decision 021).
     pub ambient_occlusion: bool,
     pub bloom: bool,
+    /// Local lights shaded (decision 023) and usable lights beyond the budget.
+    pub local_lights: u32,
+    pub dropped_lights: u32,
+    /// Lights that reached a view cluster and cluster entries lost to full
+    /// lists, read back a few frames late; undefined before then.
+    pub lights_visible: Option<u32>,
+    pub light_cluster_overflow: Option<u32>,
+    /// Whether sun shafts (decision 024) and reflections (decision 025) ran.
+    pub sun_shafts: bool,
+    pub reflections: bool,
+    /// Transparent draws, included in `draw_calls`, and particles drawn
+    /// (decision 026).
+    pub transparent_draws: u32,
+    pub particles: u32,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -124,6 +146,14 @@ impl From<FrameStats> for BrowserStats {
                 .map(|c| c[2]),
             ambient_occlusion: stats.ambient_occlusion,
             bloom: stats.bloom,
+            local_lights: stats.lights.map_or(0, |lights| lights.lights),
+            dropped_lights: stats.lights.map_or(0, |lights| lights.dropped),
+            lights_visible: stats.lights.and_then(|lights| lights.visible),
+            light_cluster_overflow: stats.lights.and_then(|lights| lights.overflow),
+            sun_shafts: stats.sun_shafts,
+            reflections: stats.reflections,
+            transparent_draws: stats.transparent_draws,
+            particles: stats.particles,
         }
     }
 }
@@ -460,6 +490,11 @@ impl BrowserApp {
             shadows: rendered.shadows,
             ambient_occlusion: rendered.ambient_occlusion,
             bloom: rendered.bloom,
+            lights: rendered.lights,
+            sun_shafts: rendered.sun_shafts,
+            reflections: rendered.reflections,
+            transparent_draws: rendered.transparent_draws,
+            particles: rendered.particles,
         };
         Ok(())
     }

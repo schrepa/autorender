@@ -611,3 +611,210 @@ fn generated_schema_rejects_unknown_properties_and_describes_source_variants() {
     assert!(text.contains("octahedron"));
     assert!(text.contains("inline"));
 }
+
+#[test]
+fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
+    use engine_core::{
+        LocalLight, LocalLights, ParticleBlend, ParticleEmitter, Particles, Reflections, SunShafts,
+    };
+    let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
+    source["materials"][0]["opacity"] = serde_json::json!(0.4);
+    source["entities"][0]["light"] = serde_json::json!({
+        "color": [1.0, 0.5, 0.25], "intensity": 30, "range": 9, "offset": [0, 2, 0],
+        "spot": {"direction": [0, -2, 0], "inner_angle_degrees": 20, "outer_angle_degrees": 35}
+    });
+    source["entities"][0]["particles"] = serde_json::json!({
+        "rate": 10, "lifetime": 3, "blend": "additive", "spread_degrees": 90
+    });
+    source["environment"] = serde_json::json!({
+        "local_lights": {"max_lights": 64, "distance": 90},
+        "sun_shafts": {"intensity": 2},
+        "particles": {"max_particles": 500}
+    });
+    // Every version 6 field is refused by earlier versions, with its path.
+    for (version, path) in [
+        (5, "$.environment.local_lights"),
+        (4, "$.environment.local_lights"),
+    ] {
+        source["version"] = serde_json::json!(version);
+        let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+        assert_eq!(
+            (error.code, error.path.as_str()),
+            ("version_required", path)
+        );
+    }
+    let environment = source["environment"].take();
+    source["version"] = serde_json::json!(5);
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(error.path, "$.materials[0].opacity");
+    source["environment"] = environment;
+    source["version"] = serde_json::json!(crate::SCENE_VERSION);
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    world.insert_resource(Reflections::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let player = instance.entity("player").unwrap();
+    let light = *world.get::<LocalLight>(player).unwrap();
+    assert_eq!(light.offset, engine_core::glam::Vec3::new(0.0, 2.0, 0.0));
+    let spot = light.spot.unwrap();
+    assert!((spot.outer_angle - 35.0_f32.to_radians()).abs() < 1.0e-6);
+    let emitter = *world.get::<ParticleEmitter>(player).unwrap();
+    assert_eq!(emitter.blend, ParticleBlend::Additive);
+    assert!((emitter.spread - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
+    // The material is transparent.
+    let mesh = world.get::<Mesh3d>(player).unwrap().material;
+    assert!(
+        world
+            .resource::<AssetLibrary>()
+            .material(mesh)
+            .unwrap()
+            .is_transparent()
+    );
+    // The environment owns the look: named sections set, opt-in effects
+    // omitted from it removed, the others at their defaults.
+    assert_eq!(world.resource::<LocalLights>().max_lights, 64);
+    assert_eq!(world.resource::<LocalLights>().distance, 90.0);
+    assert_eq!(world.resource::<SunShafts>().intensity, 2.0);
+    assert_eq!(world.resource::<Particles>().max_particles, 500);
+    assert!(world.get_resource::<Reflections>().is_none());
+    // Inspection round trips: the current look resolves to itself, with
+    // missing reflections read as off.
+    let current = crate::SceneEnvironment::current(&world);
+    let resolved = current.resolve("$").unwrap();
+    assert_eq!(resolved.sun_shafts, Some(*world.resource::<SunShafts>()));
+    assert!(!resolved.reflections.unwrap().enabled());
+    assert_eq!(crate::SceneLight::from(&light).runtime("$").unwrap(), light);
+    assert_eq!(
+        crate::SceneEmitter::from(&emitter).runtime("$").unwrap(),
+        emitter
+    );
+    instance.despawn(&mut world);
+
+    for (field, value, path) in [
+        (
+            "light",
+            serde_json::json!({"range": 0}),
+            "$.entities[0].light.range",
+        ),
+        (
+            "light",
+            serde_json::json!({"spot": {"inner_angle_degrees": 50, "outer_angle_degrees": 40}}),
+            "$.entities[0].light.spot.outer_angle_degrees",
+        ),
+        (
+            "particles",
+            serde_json::json!({"rate": 0}),
+            "$.entities[0].particles.rate",
+        ),
+        (
+            "particles",
+            serde_json::json!({"color": [[2, 0, 0, 1], [0, 0, 0, 0]]}),
+            "$.entities[0].particles.color",
+        ),
+    ] {
+        let mut invalid = source.clone();
+        invalid["entities"][0][field] = value;
+        let error = SceneDocument::from_json(&invalid.to_string()).unwrap_err();
+        assert_eq!(error.path, path, "{field}");
+    }
+    let mut invalid = source.clone();
+    invalid["environment"]["sun_shafts"] = serde_json::json!({"anisotropy": 1});
+    let error = SceneDocument::from_json(&invalid.to_string()).unwrap_err();
+    assert_eq!(error.path, "$.environment.sun_shafts.anisotropy");
+}
+
+#[test]
+fn version_six_shadow_cascades_validate_and_earlier_versions_refuse_them() {
+    use engine_core::Shadows;
+    let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
+    source["environment"] = serde_json::json!({"shadows": {"cascades": 2}});
+    source["version"] = serde_json::json!(5);
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("version_required", "$.environment.shadows.cascades")
+    );
+    source["version"] = serde_json::json!(crate::SCENE_VERSION);
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    assert_eq!(world.resource::<Shadows>().cascades, 2);
+    // Inspection reproduces them; an omitted count takes the default.
+    let current = crate::SceneEnvironment::current(&world);
+    assert_eq!(current.shadows.unwrap().cascades, Some(2));
+    instance.despawn(&mut world);
+    source["environment"]["shadows"] = serde_json::json!({"enabled": true});
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let instance = document.instantiate(&mut world).unwrap();
+    assert_eq!(
+        world.resource::<Shadows>().cascades,
+        Shadows::default().cascades
+    );
+    instance.despawn(&mut world);
+    for cascades in [0, 5] {
+        source["environment"]["shadows"] = serde_json::json!({"cascades": cascades});
+        let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+        assert_eq!(
+            (error.code, error.path.as_str()),
+            ("invalid_environment", "$.environment.shadows.cascades")
+        );
+    }
+}
+
+#[test]
+fn version_six_grading_overrides_its_preset_and_earlier_versions_refuse_it() {
+    use engine_core::{Atmosphere, glam::Vec3};
+    let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
+    source["environment"] = serde_json::json!({"atmosphere": {
+        "preset": "dusk", "vibrance": 0.6, "contrast": 1.3,
+        "shadow_tint": [0.7, 0.8, 1.5], "highlight_tint": [1.2, 1.0, 0.8]
+    }});
+    for (version, path) in [
+        (5, "$.environment.atmosphere.contrast"),
+        (4, "$.environment.atmosphere.contrast"),
+    ] {
+        source["version"] = serde_json::json!(version);
+        let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+        assert_eq!(
+            (error.code, error.path.as_str()),
+            ("version_required", path)
+        );
+    }
+    source["version"] = serde_json::json!(crate::SCENE_VERSION);
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let atmosphere = *world.resource::<Atmosphere>();
+    assert_eq!(
+        atmosphere,
+        Atmosphere {
+            contrast: 1.3,
+            vibrance: 0.6,
+            shadow_tint: Vec3::new(0.7, 0.8, 1.5),
+            highlight_tint: Vec3::new(1.2, 1.0, 0.8),
+            ..Atmosphere::dusk()
+        }
+    );
+    // Inspection reproduces the grade.
+    let current = crate::SceneEnvironment::current(&world);
+    assert_eq!(current.resolve("$").unwrap().atmosphere, Some(atmosphere));
+    instance.despawn(&mut world);
+    for (field, value) in [
+        ("contrast", serde_json::json!(-0.5)),
+        ("vibrance", serde_json::json!(-1.0)),
+        ("highlight_tint", serde_json::json!([1.0, -0.5, 1.0])),
+    ] {
+        let mut invalid = source.clone();
+        invalid["environment"]["atmosphere"][field] = value;
+        let error = SceneDocument::from_json(&invalid.to_string()).unwrap_err();
+        assert_eq!(
+            (error.code, error.path.as_str()),
+            (
+                "invalid_environment",
+                format!("$.environment.atmosphere.{field}").as_str()
+            ),
+            "{field}"
+        );
+    }
+}

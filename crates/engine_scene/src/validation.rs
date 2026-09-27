@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use engine_core::{Material, Mesh, Texture, Transform};
+use engine_core::{LocalLight, Material, Mesh, ParticleEmitter, Texture, Transform};
 
 use crate::{
     MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneTransform, hierarchy::ExpandedObject,
@@ -9,6 +9,8 @@ use crate::{
 pub(crate) struct PreparedScene {
     pub environment: Option<crate::EnvironmentSettings>,
     pub colliders: Vec<Option<engine_collision::Collider>>,
+    pub lights: Vec<Option<LocalLight>>,
+    pub emitters: Vec<Option<ParticleEmitter>>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<Material>,
     pub textures: Vec<Texture>,
@@ -35,6 +37,58 @@ impl SceneDocument {
                     self.version
                 ),
             ));
+        }
+        if self.version < 6 {
+            let version_six = |path: String, what: &str| {
+                SceneError::new(
+                    "version_required",
+                    path,
+                    format!(
+                        "{what} require scene version 6; set version to 6 and increment revision"
+                    ),
+                )
+            };
+            if let Some(section) = self
+                .environment
+                .as_ref()
+                .and_then(|environment| environment.version_six_field())
+            {
+                return Err(version_six(
+                    format!("$.environment.{section}"),
+                    "grading, shadow cascade, local light, particle, sun shaft and reflection settings",
+                ));
+            }
+            if let Some(index) = self
+                .materials
+                .iter()
+                .position(|material| material.opacity.is_some())
+            {
+                return Err(version_six(
+                    format!("$.materials[{index}].opacity"),
+                    "material opacities",
+                ));
+            }
+            if let Some(index) = self
+                .entities
+                .iter()
+                .position(|entity| entity.light.is_some() || entity.particles.is_some())
+            {
+                return Err(version_six(
+                    format!("$.entities[{index}]"),
+                    "entity lights and particles",
+                ));
+            }
+            if self
+                .prefabs
+                .iter()
+                .flat_map(|prefab| &prefab.entities)
+                .any(|entity| entity.light.is_some() || entity.particles.is_some())
+            {
+                return Err(version_six(
+                    "$.prefabs".to_owned(),
+                    "entity lights and particles",
+                ));
+            }
         }
         if self.version < 5 && self.environment.is_some() {
             return Err(SceneError::new(
@@ -123,6 +177,28 @@ impl SceneDocument {
                     .transpose()
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let lights = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .light
+                    .map(|light| light.runtime(&format!("{}.light", entity.path)))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let emitters = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .particles
+                    .map(|emitter| emitter.runtime(&format!("{}.particles", entity.path)))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         // Build every CPU asset before acquiring a mutable world resource.
         // Invalid late assets cannot leave earlier ones resident.
@@ -176,6 +252,8 @@ impl SceneDocument {
         Ok(PreparedScene {
             environment,
             colliders,
+            lights,
+            emitters,
             meshes,
             materials,
             textures,

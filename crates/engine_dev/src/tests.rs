@@ -857,7 +857,7 @@ fn environment_projections_share_scene_sections_and_surfaces_are_inspectable() {
         .iter()
         .find(|entry| entry["name"] == "SceneDocument")
         .unwrap();
-    assert_eq!(scene_entry["source"], "docs/schema/scene-v5.schema.json");
+    assert_eq!(scene_entry["source"], "docs/schema/scene-v6.schema.json");
     let described = execute(
         &tools,
         &mut engine,
@@ -1163,4 +1163,120 @@ mod authoring {
             "5"
         );
     }
+}
+
+#[test]
+fn lights_particles_and_opt_in_effects_are_discoverable_and_controllable() {
+    use engine_core::{LocalLight, ParticleEmitter, Reflections, SunShafts, glam::Vec3};
+    let tools = DevTools::default();
+    let mut engine = Engine::default();
+    let listing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe"}),
+    );
+    let names: Vec<&str> = listing["result"]["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    for name in [
+        "LocalLight",
+        "ParticleEmitter",
+        "LocalLights",
+        "SunShafts",
+        "Reflections",
+        "Particles",
+    ] {
+        assert!(names.contains(&name), "{name}");
+    }
+    // Opt-in effects are missing until inserted; the combined look reads
+    // them as off.
+    let missing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"SunShafts"}),
+    );
+    assert_eq!(missing["ok"], false);
+    let look = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Environment"}),
+    );
+    assert_eq!(look["result"]["value"]["sun_shafts"]["intensity"], 0.0);
+    assert_eq!(look["result"]["value"]["local_lights"]["enabled"], true);
+    engine.app.insert_resource(Reflections::default());
+    let reflections = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Reflections"}),
+    );
+    let section: engine_scene::SceneReflections =
+        serde_json::from_value(reflections["result"]["value"].clone()).unwrap();
+    assert_eq!(section.resolve("$").unwrap(), Reflections::default());
+    let _ = SunShafts::default();
+
+    // Entity projections are the scene fields.
+    let mut source: Value = serde_json::from_str(SOURCE).unwrap();
+    source["version"] = json!(6);
+    source["entities"][0]["light"] = json!({"intensity": 12, "range": 7});
+    source["entities"][0]["particles"] = json!({"rate": 4, "lifetime": 2});
+    let scene = SceneDocument::from_json(&source.to_string())
+        .unwrap()
+        .instantiate(engine.app.world_mut())
+        .unwrap();
+    let light = execute(
+        &tools,
+        &mut engine,
+        Some(&scene),
+        json!({"version":1,"op":"inspect","entity":"player","component":"LocalLight"}),
+    );
+    let view = &light["result"]["entity"]["components"]["LocalLight"];
+    assert_eq!(view["intensity"], 12.0);
+    let restored: engine_scene::SceneLight = serde_json::from_value(view.clone()).unwrap();
+    let player = scene.entity("player").unwrap();
+    assert_eq!(
+        restored.runtime("$").unwrap(),
+        *engine.app.world().get::<LocalLight>(player).unwrap()
+    );
+    assert_eq!(
+        engine.app.world().get::<LocalLight>(player).unwrap().color,
+        Vec3::new(1.0, 0.85, 0.6),
+        "omitted fields take the scene defaults"
+    );
+    let emitter = execute(
+        &tools,
+        &mut engine,
+        Some(&scene),
+        json!({"version":1,"op":"inspect","entity":"player","component":"ParticleEmitter"}),
+    );
+    assert_eq!(
+        emitter["result"]["entity"]["components"]["ParticleEmitter"]["rate"],
+        4.0
+    );
+    assert!(engine.app.world().get::<ParticleEmitter>(player).is_some());
+    scene.despawn(engine.app.world_mut());
+
+    // The environment control takes the version 6 sections too.
+    let control: crate::BrowserControl = serde_json::from_value(json!({
+        "version":1,"op":"environment",
+        "sun_shafts":{"intensity":2},"local_lights":{"enabled":false},
+        "reflections":{},"particles":{"max_particles":100}
+    }))
+    .unwrap();
+    assert!(matches!(
+        control,
+        crate::BrowserControl::Environment {
+            sun_shafts: Some(_),
+            local_lights: Some(engine_scene::SceneLocalLights { enabled: false, .. }),
+            reflections: Some(_),
+            particles: Some(_),
+            ..
+        }
+    ));
 }

@@ -24,6 +24,12 @@ fn main() {
         "AmbientOcclusion": schemars::schema_for!(engine_scene::SceneAmbientOcclusion),
         "Bloom": schemars::schema_for!(engine_scene::SceneBloom),
         "Environment": schemars::schema_for!(engine_scene::SceneEnvironment),
+        "LocalLights": schemars::schema_for!(engine_scene::SceneLocalLights),
+        "SunShafts": schemars::schema_for!(engine_scene::SceneSunShafts),
+        "Reflections": schemars::schema_for!(engine_scene::SceneReflections),
+        "Particles": schemars::schema_for!(engine_scene::SceneParticles),
+        "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
+        "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
     });

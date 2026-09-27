@@ -2,7 +2,10 @@ use engine::browser::{BrowserApp, BrowserStats};
 use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
-use crate::{FrameMetrics, StressConfig, create_workload, look, set_view, stress_observation};
+use crate::{
+    FrameMetrics, StressConfig, create_workload, lamp_intensity, look, set_view,
+    stress_observation, stress_shafts,
+};
 
 #[wasm_bindgen]
 pub struct StressGame {
@@ -50,18 +53,48 @@ impl StressGame {
     /// Rendering effects: `all`, `none`, or all but one with `no-shadows`,
     /// `no-occlusion` or `no-bloom` (decisions 020 and 021).
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
-        let (shadows, occlusion, bloom) = match name {
-            "all" => (true, true, true),
-            "none" => (false, false, false),
-            "no-shadows" => (false, true, true),
-            "no-occlusion" => (true, false, true),
-            "no-bloom" => (true, true, false),
+        // `all`, `none`, or comma-separated `no-<effect>` exclusions.
+        const EFFECTS: [&str; 7] = [
+            "shadows",
+            "occlusion",
+            "bloom",
+            "lights",
+            "shafts",
+            "reflections",
+            "particles",
+        ];
+        let mut on = [true; EFFECTS.len()];
+        match name {
+            "all" => {}
+            "none" => on = [false; EFFECTS.len()],
             _ => {
-                return Err(js_error(
-                    "effects must be all, none, no-shadows, no-occlusion or no-bloom".into(),
-                ));
+                for token in name.split(',') {
+                    let excluded = token
+                        .strip_prefix("no-")
+                        .and_then(|effect| EFFECTS.iter().position(|name| *name == effect));
+                    match excluded {
+                        Some(index) => on[index] = false,
+                        None => {
+                            return Err(js_error(format!(
+                                "effects must be all, none or comma-separated no-<effect> for {}",
+                                EFFECTS.join(", ")
+                            )));
+                        }
+                    }
+                }
             }
-        };
+        }
+        let [
+            shadows,
+            occlusion,
+            bloom,
+            lights,
+            shafts,
+            reflections,
+            particles,
+        ] = on;
+        let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
+        let lamps = lamp_intensity(scene, &self.look).map_err(js_error)?;
         let world = self.app.engine.app.world_mut();
         world.resource_mut::<Shadows>().enabled = shadows;
         world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
@@ -74,6 +107,23 @@ impl StressGame {
         } else {
             0.0
         };
+        // Opt-in effects are removed entirely when off.
+        if shafts {
+            world.insert_resource(stress_shafts());
+        } else {
+            world.remove_resource::<SunShafts>();
+        }
+        if reflections {
+            world.insert_resource(Reflections::default());
+        } else {
+            world.remove_resource::<Reflections>();
+        }
+        {
+            let mut local = world.resource_mut::<LocalLights>();
+            local.enabled = lights;
+            local.intensity = lamps;
+        }
+        world.resource_mut::<Particles>().enabled = particles;
         self.effects = name.into();
         Ok(())
     }
@@ -83,7 +133,17 @@ impl StressGame {
     pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
         let atmosphere = look(scene, name).map_err(js_error)?;
+        let lamps = lamp_intensity(scene, name).map_err(js_error)?;
         self.app.engine.app.insert_resource(atmosphere);
+        if let Some(mut local) = self
+            .app
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<LocalLights>()
+        {
+            local.intensity = lamps;
+        }
         self.look = name.into();
         Ok(())
     }
