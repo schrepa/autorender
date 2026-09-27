@@ -1,7 +1,8 @@
 // Local light binning (decision 023). One thread per light places it in
 // world space, from the displayed pose of its slot when it follows one, and
-// visits every view cluster its sphere's screen and depth bounds cover: a
-// tile of the screen by an exponential depth slice. A first pass counts each
+// the threads of its workgroup share the view clusters their lights' spheres'
+// screen and depth bounds cover: a tile of the screen by an exponential
+// depth slice. A first pass counts each
 // cluster's lights, one workgroup turns the counts into list ranges, and a
 // second pass fills the lists, so every list is exactly as long as its
 // lights (an optional budget shortens them). Fragments shade their
@@ -87,9 +88,38 @@ fn ndc_range(center: f32, radius: f32, near: f32, far: f32) -> vec2<f32> {
     return vec2<f32>(low_ndc, high_ndc);
 }
 
-// Places light `index` and visits its clusters: counting them, or with
-// `fill` writing it into their lists.
-fn visit(index: u32, fill: bool) {
+const WORKGROUP: u32 = 64u;
+// Lights per workgroup: few enough that lights near the eye, with thousands
+// of clusters, spread over many workgroups.
+const LIGHTS: u32 = 8u;
+
+// A placed light's clusters: its first tile, its columns and rows of tiles,
+// its first slice, the clusters of that box (0: none), and its sphere in
+// view space (x and y scaled like clip coordinates) with its squared radius.
+struct LightBox {
+    first: vec2<u32>,
+    columns: u32,
+    rows: u32,
+    first_slice: u32,
+    covered: u32,
+    index: u32,
+    pad: u32,
+    view_center: vec3<f32>,
+    radius2: f32,
+}
+
+// A workgroup's lights, the running total of their clusters, and whether
+// each reached one.
+var<workgroup> boxes: array<LightBox, LIGHTS>;
+var<workgroup> box_ends: array<u32, LIGHTS>;
+var<workgroup> reached_lights: array<atomic<u32>, LIGHTS>;
+
+// Places light `index` in world space (writing its binned record while
+// counting) and returns the clusters its sphere's screen and depth bounds
+// cover.
+fn place(index: u32, fill: bool) -> LightBox {
+    var none: LightBox;
+    none.index = index;
     let input = inputs[index];
     var position = input.position;
     var direction = input.direction;
@@ -112,7 +142,7 @@ fn visit(index: u32, fill: bool) {
         lights[index] = light;
     }
     if !all(abs(position) < vec3<f32>(1.0e30)) {
-        return;
+        return none;
     }
     // The sphere the light reaches: a spot cone's bounding sphere (Wronski)
     // is smaller and centered along the cone.
@@ -132,7 +162,7 @@ fn visit(index: u32, fill: bool) {
     let depth = dot(clusters.depth.xyz, center) + clusters.depth.w;
     // Behind the eye or beyond the far plane.
     if depth + radius <= 0.0 || depth - radius > clusters.projection.w {
-        return;
+        return none;
     }
     let tiles = clusters.counts.xy;
     var first = vec2<u32>(0u);
@@ -145,7 +175,7 @@ fn visit(index: u32, fill: bool) {
         let x = ndc_range(clip.x, radius * clusters.projection.x, near, far);
         let y = ndc_range(clip.y, radius * clusters.projection.y, near, far);
         if x.x > 1.0 || x.y < -1.0 || y.x > 1.0 || y.y < -1.0 {
-            return;
+            return none;
         }
         let size = vec2<f32>(tiles);
         // Screen rows run down while NDC y runs up.
@@ -158,68 +188,130 @@ fn visit(index: u32, fill: bool) {
     }
     let first_slice = slice_of(max(near, 1.0e-6));
     let last_slice = slice_of(depth + radius);
-    // The sphere in view space: x and y scaled like clip coordinates.
-    let view_center = vec3<f32>(clip.x / clusters.projection.x, clip.y / clusters.projection.y, depth);
+    var placed: LightBox;
+    placed.index = index;
+    placed.first = first;
+    placed.columns = last.x - first.x + 1u;
+    placed.rows = last.y - first.y + 1u;
+    placed.first_slice = first_slice;
+    placed.covered = placed.columns * placed.rows * (last_slice - first_slice + 1u);
+    placed.view_center = vec3<f32>(clip.x / clusters.projection.x,
+        clip.y / clusters.projection.y, depth);
+    placed.radius2 = radius * radius;
+    return placed;
+}
+
+// Cluster `box` (in slice, row, column order) of `light`: whether its sphere
+// reaches the cluster's view-space box, then counting it there or, with
+// `fill`, writing the light into its list.
+fn visit_cluster(light: LightBox, box: u32, fill: bool) -> bool {
+    let x = light.first.x + box % light.columns;
+    let y = light.first.y + (box / light.columns) % light.rows;
+    let z = light.first_slice + box / (light.columns * light.rows);
+    let tiles = clusters.counts.xy;
     let tile_size = 2.0 / vec2<f32>(tiles);
-    let radius2 = radius * radius;
-    var reached = false;
-    for (var z = first_slice; z <= last_slice; z++) {
-        // Depth range of the slice, the first spanning everything nearer.
-        let slice_near = select(exp2((f32(z) - clusters.grid.w) / clusters.grid.z), 0.0, z == 0u);
-        let slice_far = exp2((f32(z + 1u) - clusters.grid.w) / clusters.grid.z);
-        let dz = max(max(slice_near - depth, depth - slice_far), 0.0);
-        if dz * dz > radius2 {
-            continue;
+    let depth = light.view_center.z;
+    // Depth range of the slice, the first spanning everything nearer.
+    let slice_near = select(exp2((f32(z) - clusters.grid.w) / clusters.grid.z), 0.0, z == 0u);
+    let slice_far = exp2((f32(z + 1u) - clusters.grid.w) / clusters.grid.z);
+    let dz = max(max(slice_near - depth, depth - slice_far), 0.0);
+    if dz * dz > light.radius2 {
+        return false;
+    }
+    // NDC y of the row's edges: rows run down the screen.
+    let top = 1.0 - f32(y) * tile_size.y;
+    let bottom = top - tile_size.y;
+    // The cluster's view-space box: its NDC edges at its nearest and
+    // farthest depths.
+    let left = -1.0 + f32(x) * tile_size.x;
+    let right = left + tile_size.x;
+    let x_low = min(left * slice_near, left * slice_far) / clusters.projection.x;
+    let x_high = max(right * slice_near, right * slice_far) / clusters.projection.x;
+    let y_low = min(bottom * slice_near, bottom * slice_far) / clusters.projection.y;
+    let y_high = max(top * slice_near, top * slice_far) / clusters.projection.y;
+    let dx = max(max(x_low - light.view_center.x, light.view_center.x - x_high), 0.0);
+    let dy = max(max(y_low - light.view_center.y, light.view_center.y - y_high), 0.0);
+    if dx * dx + dy * dy + dz * dz > light.radius2 {
+        return false;
+    }
+    let cluster = (z * tiles.y + y) * tiles.x + x;
+    if fill {
+        // The range already excludes entries the budget or the capacity
+        // cannot hold.
+        let slot = atomicAdd(&counts[cluster], 1u);
+        let range = ranges[cluster];
+        if slot < range.y {
+            indices[range.x + slot] = light.index;
         }
-        for (var y = first.y; y <= last.y; y++) {
-            // NDC y of the row's edges: rows run down the screen.
-            let top = 1.0 - f32(y) * tile_size.y;
-            let bottom = top - tile_size.y;
-            for (var x = first.x; x <= last.x; x++) {
-                // The cluster's view-space box: its NDC edges at its nearest
-                // and farthest depths.
-                let left = -1.0 + f32(x) * tile_size.x;
-                let right = left + tile_size.x;
-                let x_low = min(left * slice_near, left * slice_far) / clusters.projection.x;
-                let x_high = max(right * slice_near, right * slice_far) / clusters.projection.x;
-                let y_low = min(bottom * slice_near, bottom * slice_far) / clusters.projection.y;
-                let y_high = max(top * slice_near, top * slice_far) / clusters.projection.y;
-                let dx = max(max(x_low - view_center.x, view_center.x - x_high), 0.0);
-                let dy = max(max(y_low - view_center.y, view_center.y - y_high), 0.0);
-                if dx * dx + dy * dy + dz * dz > radius2 {
-                    continue;
-                }
-                let cluster = (z * tiles.y + y) * tiles.x + x;
-                let slot = atomicAdd(&counts[cluster], 1u);
-                reached = true;
-                if fill {
-                    // The range already excludes entries the budget or
-                    // the capacity cannot hold.
-                    let range = ranges[cluster];
-                    if slot < range.y {
-                        indices[range.x + slot] = index;
-                    }
-                }
+    } else {
+        atomicAdd(&counts[cluster], 1u);
+    }
+    return true;
+}
+
+// Workgroup `group`'s lights: a thread places each, then all threads share
+// every cluster the lights cover, so a light near the eye with thousands of
+// clusters takes the whole workgroup.
+fn visit(group: u32, fill: bool, lane: u32) {
+    if lane < LIGHTS {
+        let index = group * LIGHTS + lane;
+        var light: LightBox;
+        light.index = index;
+        if index < clusters.lights.x {
+            light = place(index, fill);
+        }
+        boxes[lane] = light;
+        box_ends[lane] = light.covered;
+        atomicStore(&reached_lights[lane], 0u);
+    }
+    workgroupBarrier();
+    // Running totals of the lights' clusters.
+    for (var stride = 1u; stride < LIGHTS; stride *= 2u) {
+        var earlier = 0u;
+        if lane < LIGHTS && lane >= stride {
+            earlier = box_ends[lane - stride];
+        }
+        workgroupBarrier();
+        if lane < LIGHTS {
+            box_ends[lane] += earlier;
+        }
+        workgroupBarrier();
+    }
+    let total = box_ends[LIGHTS - 1u];
+    for (var item = lane; item < total; item += WORKGROUP) {
+        // The light whose clusters hold `item`: the first total beyond it.
+        var low = 0u;
+        var high = LIGHTS - 1u;
+        while low < high {
+            let middle = (low + high) / 2u;
+            if box_ends[middle] > item {
+                high = middle;
+            } else {
+                low = middle + 1u;
             }
         }
+        let start = select(0u, box_ends[max(low, 1u) - 1u], low > 0u);
+        if visit_cluster(boxes[low], item - start, fill) {
+            atomicStore(&reached_lights[low], 1u);
+        }
     }
-    if reached && !fill {
+    workgroupBarrier();
+    if !fill && lane < LIGHTS && atomicLoad(&reached_lights[lane]) != 0u {
         atomicAdd(&totals[0], 1u);
     }
 }
 
+// LIGHTS lights per workgroup; dispatches beyond 65,535 workgroups add rows.
 @compute @workgroup_size(64)
-fn count_lights(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x < clusters.lights.x {
-        visit(id.x, false);
-    }
+fn count_lights(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    visit(group.y * 65535u + group.x, false, lane);
 }
 
 @compute @workgroup_size(64)
-fn bin_lights(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x < clusters.lights.x {
-        visit(id.x, true);
-    }
+fn bin_lights(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    visit(group.y * 65535u + group.x, true, lane);
 }
 
 const SCAN_THREADS: u32 = 256u;

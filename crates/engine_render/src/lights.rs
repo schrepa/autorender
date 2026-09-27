@@ -19,8 +19,9 @@ pub(crate) const SLICES: u32 = 24;
 #[cfg(target_arch = "wasm32")]
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
 const NO_SLOT: u32 = u32::MAX;
+/// Lights each binning workgroup places (`LIGHTS` of lights.wgsl).
 #[cfg(target_arch = "wasm32")]
-const WORKGROUP: u32 = 64;
+const LIGHTS: u32 = 8;
 /// Bytes of a binned light (WGSL `Light`).
 pub(crate) const LIGHT_BYTES: u64 = 48;
 #[cfg(target_arch = "wasm32")]
@@ -514,14 +515,16 @@ mod gpu {
                         }
                     }),
                 });
-                let workgroups = frame.count.div_ceil(WORKGROUP);
+                // LIGHTS lights per workgroup, in rows of at most 65,535.
+                let workgroups = frame.count.div_ceil(LIGHTS);
+                let (columns, rows) = (workgroups.min(65_535), workgroups.div_ceil(65_535));
                 pass.set_bind_group(0, &self.compute_groups[frame.group].1, &[]);
                 pass.set_pipeline(&self.count);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.dispatch_workgroups(columns, rows, 1);
                 pass.set_pipeline(&self.scan);
                 pass.dispatch_workgroups(1, 1, 1);
                 pass.set_pipeline(&self.fill);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.dispatch_workgroups(columns, rows, 1);
             }
             if let Some(index) = self.idle_readback(device) {
                 let readback = &self.readbacks[index];

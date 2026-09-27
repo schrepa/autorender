@@ -28,8 +28,11 @@ values skip the light.
   change.
 - **Clusters.** A compute pass bins each light's bounding sphere (a spot's
   tighter cone sphere) into 16×9 screen tiles by 24 exponential depth
-  slices, testing each candidate cluster's view-space box. Binning counts
-  each cluster's lights, one workgroup scans the counts into list ranges,
+  slices, testing each candidate cluster's view-space box. Each workgroup
+  places eight lights and its threads share their candidate clusters, so a
+  light near the eye covering thousands of clusters takes a whole
+  workgroup instead of one thread. Binning counts each cluster's lights,
+  one workgroup scans the counts into list ranges,
   and a second pass fills the lists, so every list is exactly as long as
   the lights reaching its cluster. List storage grows to the entries a
   frame read back needed (a first guess of 32 per light before that). Lit
@@ -69,7 +72,10 @@ street level 169 reach clusters. Seen from above with `distance` 2,000,
 ## Consequences
 
 Lights cast no shadows. Binning visits each light's clusters twice (count
-and fill) plus a one-workgroup scan of the 3,456 clusters. Per-pixel cost
+and fill) plus a one-workgroup scan of the 3,456 clusters. On the Stress
+Lab Metro street-level view (947 of 11,418 lights visible, Firefox on an
+integrated GPU) sharing clusters within workgroups cut binning from 0.83
+to 0.34 ms; the aerial overview went from 0.14 to 0.20 ms. Per-pixel cost
 grows with the lights per cluster: keep ranges short and `distance` modest,
 or set `lights_per_cluster`. Transparent surfaces are lit; particles are
 not.
