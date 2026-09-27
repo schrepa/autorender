@@ -1061,6 +1061,84 @@ fn version_eight_fields_need_version_eight_and_valid_references() {
         ),
         ("invalid_material", "$.materials[0].emissive".into())
     );
+    // Glass (decision 038).
+    assert_eq!(
+        reject(&|material| material.transmission = Some(1.0), 7),
+        ("version_required", "$.materials[0].transmission".into())
+    );
+    assert_eq!(
+        reject(&|material| material.ior = Some(1.3), 8),
+        ("invalid_material", "$.materials[0].ior".into())
+    );
+    assert_eq!(
+        reject(
+            &|material| {
+                material.transmission = Some(0.5);
+                material.ior = Some(0.5);
+            },
+            8
+        ),
+        ("invalid_material", "$.materials[0].transmission".into())
+    );
+}
+
+#[test]
+fn version_eight_glass_and_refraction_instantiate_opt_in() {
+    use engine_core::{Refraction, Transmission};
+    let mut document = textured_document();
+    document.materials[0].transmission = Some(0.9);
+    document.materials[0].ior = Some(1.33);
+    document.materials[0].thickness = Some(0.25);
+    let mut world = world(AssetBudget::default());
+    world.insert_resource(Refraction::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let player = instance.entity("player").unwrap();
+    let handle = world.get::<Mesh3d>(player).unwrap().material;
+    let material = *world.resource::<AssetLibrary>().material(handle).unwrap();
+    assert_eq!(
+        material.transmission(),
+        Transmission {
+            factor: 0.9,
+            ior: 1.33,
+            thickness: 0.25
+        }
+    );
+    assert!(material.is_transparent());
+    // A scene environment owns refraction: omitted, it is removed.
+    let mut source = serde_json::to_value(&document).unwrap();
+    source["environment"] = serde_json::json!({});
+    let bare = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world_with_refraction();
+    let _ = bare.instantiate(&mut world).unwrap();
+    assert!(world.get_resource::<Refraction>().is_none());
+    source["environment"] = serde_json::json!({"refraction": {"strength": 2, "blur": 4}});
+    let refracting = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world_with_refraction();
+    let _ = refracting.instantiate(&mut world).unwrap();
+    assert_eq!(
+        *world.resource::<Refraction>(),
+        Refraction {
+            strength: 2.0,
+            blur: 4.0
+        }
+    );
+    // Earlier versions refuse the section.
+    source["version"] = serde_json::json!(7);
+    source["materials"][0]
+        .as_object_mut()
+        .unwrap()
+        .retain(|key, _| !["transmission", "ior", "thickness"].contains(&key.as_str()));
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("version_required", "$.environment.refraction")
+    );
+}
+
+fn world_with_refraction() -> World {
+    let mut world = world(AssetBudget::default());
+    world.insert_resource(engine_core::Refraction::default());
+    world
 }
 
 #[test]

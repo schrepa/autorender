@@ -50,12 +50,15 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-/// Extensions the importer reads (decisions 031 and 037); other optional
-/// extensions are ignored and reported.
-pub(crate) const SUPPORTED_EXTENSIONS: [&str; 3] = [
+/// Extensions the importer reads (decisions 031, 037 and 038); other
+/// optional extensions are ignored and reported.
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_texture_transform",
     "KHR_materials_emissive_strength",
     "KHR_texture_basisu",
+    "KHR_materials_transmission",
+    "KHR_materials_ior",
+    "KHR_materials_volume",
 ];
 
 /// Checks the static import profile; returns the used extensions it ignores.

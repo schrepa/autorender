@@ -24,6 +24,9 @@ struct MaterialMaps {
     emissive: vec4<f32>,
     // Normal scale, occlusion strength and alpha cutoff.
     params: vec4<f32>,
+    // Transmission (decision 038): its share, index of refraction and
+    // thickness.
+    volume: vec4<f32>,
 }
 @group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
 
@@ -34,6 +37,14 @@ override MATERIAL_MAPS: bool = false;
 override NORMAL_MAP: bool = false;
 override ALPHA_MASK: bool = false;
 override DOUBLE_SIDED: bool = false;
+// Transmissive materials shade as glass in the transparent pass (decision
+// 038).
+override TRANSMISSION: bool = false;
+
+// What glass refracts (decision 038): the frame's opaque color while
+// transparent surfaces draw with refraction, a white texel otherwise.
+@group(0) @binding(8) var refraction_source: texture_2d<f32>;
+@group(0) @binding(9) var refraction_sampler: sampler;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
@@ -731,8 +742,73 @@ fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32
     return targets;
 }
 
-fn transparent_targets(shaded: Shaded, input: Fragment) -> TransparentTargets {
-    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
+// The share of light glass lets through (decision 038); 0 for materials
+// without transmission.
+fn transmitted_share() -> f32 {
+    if TRANSMISSION {
+        return material_maps.volume.x;
+    }
+    return 0.0;
+}
+
+// A transparent surface's point: glass diffuses only the light it does not
+// let through.
+fn transparent_point(input: Fragment, front: bool) -> SurfacePoint {
+    var point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
+        input.surface, front);
+    point.diffuse_color *= 1.0 - transmitted_share();
+    return point;
+}
+
+// Directions of the blur taps of rough glass, alternating full and half
+// radius.
+const GLASS_TAPS = array<vec2<f32>, 8>(
+    vec2<f32>(1.0, 0.0), vec2<f32>(0.3535534, 0.3535534),
+    vec2<f32>(0.0, 1.0), vec2<f32>(-0.3535534, 0.3535534),
+    vec2<f32>(-1.0, 0.0), vec2<f32>(-0.3535534, -0.3535534),
+    vec2<f32>(0.0, -1.0), vec2<f32>(0.3535534, -0.3535534),
+);
+
+// Weighted blending of a transparent surface (decision 026). Glass (decision
+// 038) with refraction covers what is behind it with the opaque scene seen
+// through it: along the ray its index of refraction bends through its
+// thickness, blurred by its roughness and tinted by its color. Without
+// refraction its transmitted share lets what is behind show through.
+fn transparent_targets(shaded: Shaded, point: SurfacePoint, input: Fragment)
+        -> TransparentTargets {
+    let distance = length(camera.position.xyz - input.world);
+    let share = transmitted_share();
+    if share <= 0.0 {
+        return weighted(shaded.color, shaded.opacity, distance);
+    }
+    // Light glass reflects instead of letting through.
+    let reflectance = saturate(luminance(environment_brdf(point.f0, point.roughness,
+        point.n_v)));
+    let through = share * (1.0 - reflectance);
+    if lighting.refraction.x <= 0.0 {
+        let coverage = max(shaded.opacity * (1.0 - through), 1.0e-3);
+        return weighted(min(shaded.color / coverage, vec3<f32>(1.0)), coverage, distance);
+    }
+    let bent = refract(-point.view, point.normal, 1.0 / material_maps.volume.y);
+    let exit = point.world + bent * (material_maps.volume.z * lighting.refraction.x);
+    let clip = camera.view_projection * vec4<f32>(exit, 1.0);
+    let size = vec2<f32>(textureDimensions(refraction_source));
+    // A ray leaving behind the eye shows what is straight behind the pixel.
+    var uv = input.pixel / size;
+    if clip.w > 1.0e-6 {
+        uv = vec2<f32>(clip.x, -clip.y) / clip.w * 0.5 + 0.5;
+    }
+    var behind = textureSampleLevel(refraction_source, refraction_sampler, uv, 0.0).rgb;
+    let radius = point.roughness * lighting.refraction.y / size;
+    if radius.x * size.x >= 0.5 {
+        var sum = behind;
+        for (var tap = 0u; tap < 8u; tap++) {
+            sum += textureSampleLevel(refraction_source, refraction_sampler,
+                uv + GLASS_TAPS[tap] * radius, 0.0).rgb;
+        }
+        behind = sum / 9.0;
+    }
+    return weighted(shaded.color + behind * point.albedo * through, shaded.opacity, distance);
 }
 
 @fragment
@@ -774,14 +850,16 @@ fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
 fn fs_transparent(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
     let values = fragment(input);
-    return transparent_targets(shade(values, front), values);
+    let point = transparent_point(values, front);
+    return transparent_targets(finish(point, vec3<f32>(0.0)), point, values);
 }
 
 @fragment
 fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
     let values = fragment(input);
-    return transparent_targets(shade_lit(values, front), values);
+    let point = transparent_point(values, front);
+    return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }
 
 // The same passes for meshes with a second vertex stream (decision 034).
@@ -827,14 +905,16 @@ fn fs_temporal_lit_extended(input: ExtendedTemporalOutput,
 fn fs_transparent_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
     let values = extended_fragment(input);
-    return transparent_targets(shade(values, front), values);
+    let point = transparent_point(values, front);
+    return transparent_targets(finish(point, vec3<f32>(0.0)), point, values);
 }
 
 @fragment
 fn fs_transparent_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
     let values = extended_fragment(input);
-    return transparent_targets(shade_lit(values, front), values);
+    let point = transparent_point(values, front);
+    return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }
 
 // The sky behind all geometry: one triangle over the viewport at the far

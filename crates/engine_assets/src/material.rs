@@ -58,6 +58,59 @@ impl Default for Surface {
     }
 }
 
+/// Light passing through a surface instead of diffusing off it (decision
+/// 038): glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
+/// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
+/// validates the ranges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transmission {
+    /// The share of light passing through, in `[0, 1]`, tinted by the base
+    /// color; 0 is an ordinary surface.
+    pub factor: f32,
+    /// Index of refraction in `[1, 3]`: how far rays bend entering the
+    /// surface (1.5 for glass, 1.33 for water).
+    pub ior: f32,
+    /// Depth of the volume beneath the surface, in world units: how far a
+    /// bent ray travels before it leaves. 0 is a thin wall, which does not
+    /// bend what shows through it.
+    pub thickness: f32,
+}
+
+impl Transmission {
+    /// No light passes through: the default.
+    pub const NONE: Self = Self {
+        factor: 0.0,
+        ior: 1.5,
+        thickness: 0.0,
+    };
+
+    /// Thin, clear glass: all light passes through, tinted by the color.
+    pub const GLASS: Self = Self {
+        factor: 1.0,
+        ior: 1.5,
+        thickness: 0.0,
+    };
+
+    fn validate(&self) -> Result<(), AssetError> {
+        for (field, value, min, max) in [
+            ("transmission", self.factor, 0.0, 1.0),
+            ("ior", self.ior, 1.0, 3.0),
+            ("thickness", self.thickness, 0.0, f32::MAX),
+        ] {
+            if !value.is_finite() || !(min..=max).contains(&value) {
+                return Err(AssetError::InvalidSurface { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for Transmission {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
 /// How a texture continues outside `[0, 1]` along one axis (glTF sampler wrap
 /// modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -233,6 +286,7 @@ pub struct Material {
     emissive_texture: Option<TextureRef>,
     alpha_mode: AlphaMode,
     double_sided: bool,
+    transmission: Transmission,
 }
 
 impl Material {
@@ -258,6 +312,7 @@ impl Material {
             emissive_texture: None,
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
+            transmission: Transmission::NONE,
         })
     }
 
@@ -301,9 +356,24 @@ impl Material {
         self.alpha_mode
     }
 
-    /// Whether this material draws in the transparent pass.
+    /// Whether this material draws in the transparent pass: it blends, or
+    /// light passes through it (decision 038).
     pub fn is_transparent(&self) -> bool {
-        self.alpha_mode == AlphaMode::Blend
+        self.alpha_mode == AlphaMode::Blend || self.transmission.factor > 0.0
+    }
+
+    /// This material letting light through (decision 038). Transmissive
+    /// materials draw in the transparent pass; with the `Refraction`
+    /// resource they show the opaque scene behind them, bent and blurred,
+    /// and without it they blend as plain transparency.
+    pub fn with_transmission(mut self, transmission: Transmission) -> Result<Self, AssetError> {
+        transmission.validate()?;
+        self.transmission = transmission;
+        Ok(self)
+    }
+
+    pub fn transmission(&self) -> Transmission {
+        self.transmission
     }
 
     /// This material with `surface`, whose values must lie in their ranges.
@@ -464,14 +534,16 @@ impl Material {
     }
 
     /// Whether renderers bind this material's own maps and parameters: it
-    /// has a texture, an emissive color, two sides, an alpha mask or blends
-    /// with full alpha. Other materials draw from color and surface alone.
+    /// has a texture, an emissive color, two sides, an alpha mask, blends
+    /// with full alpha or transmits light. Other materials draw from color
+    /// and surface alone.
     pub fn has_maps(&self) -> bool {
         self.maps().iter().any(Option::is_some)
             || self.emissive != [0.0; 3]
             || self.double_sided
             || matches!(self.alpha_mode, AlphaMode::Mask { .. })
             || (self.alpha_mode == AlphaMode::Blend && self.color[3] == 1.0)
+            || self.transmission.factor > 0.0
     }
 
     /// What renderers bind for a material with maps: everything but its
@@ -504,6 +576,9 @@ impl Material {
                     AlphaMode::Mask { cutoff } => cutoff,
                     _ => 0.0,
                 },
+                self.transmission.factor,
+                self.transmission.ior,
+                self.transmission.thickness,
             ]
             .map(f32::to_bits),
             alpha: match self.alpha_mode {
@@ -522,11 +597,11 @@ type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
 
 /// A material's maps and map parameters ([`Material::binding`]): its
 /// textures with their samplers and transforms, normal scale, occlusion
-/// strength, emissive color, alpha mode and sides.
+/// strength, emissive color, alpha mode, transmission and sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
     maps: [Option<BoundMap>; 5],
-    parameters: [u32; 6],
+    parameters: [u32; 9],
     alpha: u8,
     double_sided: bool,
 }

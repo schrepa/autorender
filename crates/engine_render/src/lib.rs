@@ -47,6 +47,8 @@ pub struct RenderStats {
     /// reflections (decision 025).
     pub sun_shafts: bool,
     pub reflections: bool,
+    /// Whether this frame's glass refracted the opaque scene (decision 038).
+    pub refraction: bool,
     /// Transparent draws (decision 026), also counted in `draw_calls`, and
     /// the particles this frame drew; dropped particles are those a budget
     /// or the GPU's bindings left out.

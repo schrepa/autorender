@@ -7,7 +7,7 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, LocalLights, MAX_SHADOW_CASCADES, Particles, Reflections,
-    Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
+    Refraction, Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -639,6 +639,50 @@ impl SceneReflections {
     }
 }
 
+/// Refraction through glass (decision 038). Requires version 8; a strength
+/// of 0 turns it off.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneRefraction {
+    /// Scales how far rays bend through transmissive materials.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
+    pub strength: f32,
+    /// Blur radius in pixels that fully rough glass reaches.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 64.0)))]
+    pub blur: f32,
+}
+
+impl Default for SceneRefraction {
+    fn default() -> Self {
+        Self::from(&Refraction::default())
+    }
+}
+
+impl From<&Refraction> for SceneRefraction {
+    fn from(refraction: &Refraction) -> Self {
+        Self {
+            strength: refraction.strength,
+            blur: refraction.blur,
+        }
+    }
+}
+
+impl SceneRefraction {
+    pub fn resolve(&self, path: &str) -> Result<Refraction, SceneError> {
+        if !(0.0..=4.0).contains(&self.strength) {
+            return Err(section_error(path, "strength", "must be in [0, 4]"));
+        }
+        if !(0.0..=64.0).contains(&self.blur) {
+            return Err(section_error(path, "blur", "must be in [0, 64]"));
+        }
+        Ok(Refraction {
+            strength: self.strength,
+            blur: self.blur,
+        })
+    }
+}
+
 fn section_error(path: &str, field: &str, rule: &str) -> SceneError {
     SceneError::new(
         "invalid_environment",
@@ -648,8 +692,8 @@ fn section_error(path: &str, field: &str, rule: &str) -> SceneError {
 }
 
 /// A scene's look (decision 022). In a document, every omitted section takes
-/// the engine's default state (sun shafts and reflections: off); in a
-/// development control, omitted sections stay as they are.
+/// the engine's default state (sun shafts, reflections and refraction: off);
+/// in a development control, omitted sections stay as they are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -671,6 +715,9 @@ pub struct SceneEnvironment {
     pub reflections: Option<SceneReflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneParticles>,
+    /// Version 8 sections (decision 038).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refraction: Option<SceneRefraction>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -684,6 +731,7 @@ pub struct EnvironmentSettings {
     pub sun_shafts: Option<SunShafts>,
     pub reflections: Option<Reflections>,
     pub particles: Option<Particles>,
+    pub refraction: Option<Refraction>,
 }
 
 impl SceneEnvironment {
@@ -738,6 +786,13 @@ impl SceneEnvironment {
                 intensity: 0.0,
                 ..Reflections::default()
             });
+        let refraction = world
+            .get_resource::<Refraction>()
+            .copied()
+            .unwrap_or(Refraction {
+                strength: 0.0,
+                ..Refraction::default()
+            });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
@@ -747,7 +802,15 @@ impl SceneEnvironment {
             sun_shafts: Some(SceneSunShafts::from(&shafts)),
             reflections: Some(SceneReflections::from(&reflections)),
             particles: Some(SceneParticles::from(&particles)),
+            refraction: Some(SceneRefraction::from(&refraction)),
         }
+    }
+
+    /// The first version 8 section present (decision 038).
+    pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
+        [("refraction", self.refraction.is_some())]
+            .into_iter()
+            .find_map(|(name, present)| present.then_some(name))
     }
 
     /// The first version 6 field present, as its path below the environment:
@@ -812,6 +875,10 @@ impl SceneEnvironment {
                 .particles
                 .map(|section| section.resolve(&format!("{path}.particles")))
                 .transpose()?,
+            refraction: self
+                .refraction
+                .map(|section| section.resolve(&format!("{path}.refraction")))
+                .transpose()?,
         })
     }
 }
@@ -843,11 +910,14 @@ impl EnvironmentSettings {
         if let Some(particles) = self.particles {
             world.insert_resource(particles);
         }
+        if let Some(refraction) = self.refraction {
+            world.insert_resource(refraction);
+        }
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
-    /// state: a document's environment owns the whole look. Sun shafts and
-    /// reflections are opt-in, so omitting them removes them.
+    /// state: a document's environment owns the whole look. Sun shafts,
+    /// reflections and refraction are opt-in, so omitting them removes them.
     pub fn apply_all(&self, world: &mut World) {
         world.insert_resource(self.atmosphere.unwrap_or_default());
         world.insert_resource(self.shadows.unwrap_or_default());
@@ -865,6 +935,12 @@ impl EnvironmentSettings {
             Some(reflections) => world.insert_resource(reflections),
             None => {
                 world.remove_resource::<Reflections>();
+            }
+        }
+        match self.refraction {
+            Some(refraction) => world.insert_resource(refraction),
+            None => {
+                world.remove_resource::<Refraction>();
             }
         }
     }

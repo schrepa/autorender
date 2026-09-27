@@ -1,6 +1,6 @@
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneLocalLights, SceneParticles,
-    SceneReflections, SceneShadows, SceneSunShafts,
+    SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
 };
 use serde::{Deserialize, Serialize};
 
@@ -216,6 +216,8 @@ pub enum BrowserControl {
         reflections: Option<SceneReflections>,
         #[serde(default)]
         particles: Option<SceneParticles>,
+        #[serde(default)]
+        refraction: Option<SceneRefraction>,
     },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {

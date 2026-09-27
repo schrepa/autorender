@@ -116,8 +116,8 @@ that differ from it. Its grade sets the palette
 ([decision 027](adr-027-stylized-grading.md)): `exposure`, `contrast`,
 `saturation`, `vibrance` (color for muted tones) and the split-toning gains
 `shadow_tint` and `highlight_tint`; fog (`fog_start`, `fog_density`,
-`fog_max`) is what most often grays a large scene. Sun shafts and reflections are opt-in: missing, they
-read as intensity 0, and an empty section (`"sun_shafts":{}`) turns them on
+`fog_max`) is what most often grays a large scene. Sun shafts, reflections and refraction are opt-in: missing, they
+read as intensity (or strength) 0, and an empty section (`"sun_shafts":{}`) turns them on
 with their defaults.
 
 Try a look with the `environment` control. It takes the same sections,
@@ -126,9 +126,9 @@ changing nothing), replaces only the sections it names, renders, and lists
 them in `environment_changed`. It never changes source. To keep a look, put
 the sections in the scene's `environment` (version 5; version 6 for the
 local light, shaft, reflection and particle sections and the atmosphere's
-grade fields), save and reload: the
+grade fields; version 8 for refraction), save and reload: the
 scene then sets every section, omitted ones taking the engine's default state
-(sun shafts and reflections off), and replaces any temporary look. Scenes
+(sun shafts, reflections and refraction off), and replaces any temporary look. Scenes
 without an environment leave the look to the game's code. Compare looks in
 captures at identical canvas sizes.
 
@@ -136,7 +136,9 @@ Lights, particles and glass are scene data too. Version 6 entities author a
 `light` (color, intensity, range, local `offset`, optional `spot` with
 angles in degrees) and `particles` (rate, lifetime, speed, `spread_degrees`,
 acceleration, size and color at birth and death, `blend` `alpha` or
-`additive`, ...); materials author `opacity`. A light on an entity with a mesh
+`additive`, ...); materials author `opacity`, and version 8 materials
+`transmission`, `ior` and `thickness` for glass that the environment's
+`refraction` bends and blurs. A light on an entity with a mesh
 follows its displayed pose. Particles are a function of presentation time,
 so paused captures are exact and repeatable.
 
@@ -147,7 +149,7 @@ shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_c
 (read back a few frames late, null until then), `ambient_occlusion` and
 `bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and
 `light_cluster_overflow` read back late (overflow means shorter light ranges
-are needed); `sun_shafts` and `reflections`; `transparent_draws` and
+are needed); `sun_shafts`, `reflections` and `refraction`; `transparent_draws` and
 `particles`. `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 

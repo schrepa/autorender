@@ -1,14 +1,14 @@
 //! Rendering effects of the scene: sun shadows (decision 020), ambient
-//! occlusion and bloom (decision 021), sun shafts (decision 024) and
-//! screen-space reflections (decision 025). Every extracted frame carries
-//! sanitized copies with the atmosphere; renderers skip the work of disabled
-//! effects.
+//! occlusion and bloom (decision 021), sun shafts (decision 024),
+//! screen-space reflections (decision 025) and refraction through glass
+//! (decision 038). Every extracted frame carries sanitized copies with the
+//! atmosphere; renderers skip the work of disabled effects.
 //!
 //! Each effect is its own resource: disable one with its settings, or remove
 //! the resource to remove the effect. Shadows, ambient occlusion and bloom
-//! are inserted by default; sun shafts and reflections are opt-in: insert
-//! them (their defaults are on). Without an `Atmosphere` frames use the
-//! default one.
+//! are inserted by default; sun shafts, reflections and refraction are
+//! opt-in: insert them (their defaults are on). Without an `Atmosphere`
+//! frames use the default one.
 
 use bevy_ecs::prelude::{Resource, World};
 use glam::Vec3;
@@ -58,6 +58,13 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
         Reflections {
             intensity: 0.0,
             ..Reflections::default()
+        },
+        |value| value.sanitized(),
+    );
+    snapshot.refraction = world.get_resource::<Refraction>().map_or(
+        Refraction {
+            strength: 0.0,
+            ..Refraction::default()
         },
         |value| value.sanitized(),
     );
@@ -341,9 +348,73 @@ impl Reflections {
     }
 }
 
+/// Refraction through glass (decision 038): transmissive materials show the
+/// opaque scene behind them, along rays their index of refraction bends
+/// through their thickness, blurred by their roughness. Opt-in: insert this
+/// resource (its default is on); without it transmissive materials blend as
+/// plain transparency, and frames without glass never pay for it.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Refraction {
+    /// Scales how far rays bend, in `[0, 4]`; 0 turns refraction off.
+    pub strength: f32,
+    /// The blur radius in pixels, in `[0, 64]`, that fully rough glass
+    /// reaches; smoother glass blurs less.
+    pub blur: f32,
+}
+
+impl Default for Refraction {
+    fn default() -> Self {
+        Self {
+            strength: 1.0,
+            blur: 12.0,
+        }
+    }
+}
+
+impl Refraction {
+    /// Values clamped into their ranges; NaN strength disables and a NaN
+    /// blur reads as the default.
+    pub fn sanitized(self) -> Self {
+        Self {
+            strength: if self.strength.is_nan() {
+                0.0
+            } else {
+                crate::math::clamp(self.strength, 0.0, 4.0)
+            },
+            blur: if self.blur.is_nan() {
+                Self::default().blur
+            } else {
+                crate::math::clamp(self.blur, 0.0, 64.0)
+            },
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.strength > 0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refraction_clamps_into_its_ranges() {
+        let wild = Refraction {
+            strength: 9.0,
+            blur: -3.0,
+        }
+        .sanitized();
+        assert_eq!((wild.strength, wild.blur), (4.0, 0.0));
+        let broken = Refraction {
+            strength: f32::NAN,
+            blur: f32::NAN,
+        }
+        .sanitized();
+        assert!(!broken.enabled());
+        assert_eq!(broken.blur, Refraction::default().blur);
+        assert!(Refraction::default().enabled());
+    }
 
     #[test]
     fn defaults_are_usable_and_unusable_settings_fall_back() {

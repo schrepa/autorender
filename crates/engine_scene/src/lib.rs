@@ -29,7 +29,7 @@ pub use document::{
 pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
     SceneBounds, SceneEnvironment, SceneLocalLights, SceneParticles, SceneReflections,
-    SceneShadows, SceneSunShafts,
+    SceneRefraction, SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;
 pub use files::{

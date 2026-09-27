@@ -31,7 +31,9 @@ Documents take `animations` (inline channels or `EAN1` files) and entities an
 documents take `skins`, entities with a mesh a `skin`, and inline vertices
 `joints` and `weights` ([decision 036](../adr-036-skinning.md)). Texture files
 may be KTX2 images, which hosts transcode to compressed textures
-([decision 037](../adr-037-compressed-textures.md)).
+([decision 037](../adr-037-compressed-textures.md)). Materials take
+`transmission`, `ior` and `thickness`, and the environment a `refraction`
+section ([decision 038](../adr-038-glass-and-refraction.md)).
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

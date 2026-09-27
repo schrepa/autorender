@@ -27,11 +27,13 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
-pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Shadows, SunShafts};
+pub use effects::{
+    AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
+};
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
     Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface,
-    Texture, TextureFormat, TextureHandle, TextureRef, UvTransform, Wrap,
+    Texture, TextureFormat, TextureHandle, TextureRef, Transmission, UvTransform, Wrap,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
@@ -897,7 +899,7 @@ pub mod prelude {
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
-        Reflections, RenderEmitter, RenderLight, Spot, SunShafts,
+        Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine

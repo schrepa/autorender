@@ -124,6 +124,20 @@ pub(crate) fn import(
             .as_f64()
             .unwrap_or(1.0) as f32;
         let emissive = material.emissive_factor().map(|value| value * strength);
+        // Glass (decision 038): the transmission factor, with the index of
+        // refraction and the volume's thickness factor that bend it; the
+        // thickness counts as world units and transmission textures are
+        // not read.
+        let extensions = &source["extensions"];
+        let factor = |value: &Value| value.as_f64().map(|value| value as f32);
+        let transmission = factor(&extensions["KHR_materials_transmission"]["transmissionFactor"])
+            .filter(|share| *share > 0.0)
+            .map(|share| engine_core::math::min(share, 1.0));
+        let ior = factor(&extensions["KHR_materials_ior"]["ior"])
+            .filter(|_| transmission.is_some())
+            .map(|ior| engine_core::math::clamp(ior, 1.0, 3.0));
+        let thickness = factor(&extensions["KHR_materials_volume"]["thicknessFactor"])
+            .filter(|thickness| transmission.is_some() && *thickness > 0.0);
         scene.materials.push(SceneMaterial {
             id: format!("{id}.material{index}"),
             color: [red, green, blue, 1.0],
@@ -149,6 +163,9 @@ pub(crate) fn import(
             alpha_mode,
             alpha_cutoff,
             double_sided: material.double_sided().then_some(true),
+            transmission,
+            ior,
+            thickness,
         });
     }
     Ok(())

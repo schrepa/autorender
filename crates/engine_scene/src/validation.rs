@@ -137,6 +137,17 @@ impl SceneDocument {
                     "vertex colors, second texture coordinates, joints and weights require scene version 8; set version to 8 and increment revision",
                 ));
             }
+            if let Some(section) = self
+                .environment
+                .as_ref()
+                .and_then(|environment| environment.version_eight_field())
+            {
+                return Err(SceneError::new(
+                    "version_required",
+                    format!("$.environment.{section}"),
+                    "refraction settings require scene version 8; set version to 8 and increment revision",
+                ));
+            }
             let animated =
                 |entity: &SceneObject| entity.animation.is_some() || entity.skin.is_some();
             let path = if !self.animations.is_empty() {

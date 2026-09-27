@@ -306,6 +306,9 @@ pub struct RenderSnapshot {
     /// 025), sanitized; intensity 0 when their resources are missing.
     pub sun_shafts: crate::SunShafts,
     pub reflections: crate::Reflections,
+    /// Refraction through glass (decision 038), sanitized; strength 0 when
+    /// the resource is missing.
+    pub refraction: crate::Refraction,
     /// Local lighting settings (decision 023), sanitized; disabled when the
     /// resource is missing.
     pub local_lights: crate::LocalLights,

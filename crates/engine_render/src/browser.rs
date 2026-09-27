@@ -149,6 +149,13 @@ pub struct Renderer {
     lighting: Option<LightingUniform>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
+    // Refraction through glass (decision 038): the white texel group 0 binds
+    // where no opaque color is, its sampler, and group 0 of transparent
+    // passes over the opaque color of post target generation `.0` and
+    // shadow generation `.1`.
+    refraction_fallback: wgpu::TextureView,
+    refraction_sampler: wgpu::Sampler,
+    refraction_group: Option<((u64, u64), wgpu::BindGroup)>,
     // Sun shadows (decision 020).
     shadows: ShadowPass,
     // Local lights (decision 023): binning and the lit mesh pipelines,
@@ -383,7 +390,60 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
+                // What glass refracts (decision 038) and its sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
+        });
+        let refraction_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/refraction-fallback"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            refraction_texture.as_image_copy(),
+            &[255; 4],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        let refraction_fallback =
+            refraction_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let refraction_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("engine/refraction-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
         let materials = MaterialStore::new(&device, &queue);
         let shadows = ShadowPass::new(
@@ -401,6 +461,7 @@ impl Renderer {
             &camera_buffer,
             &lighting_buffer,
             &shadows,
+            (&refraction_fallback, &refraction_sampler),
         );
         let texture_layout = materials.layout();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -532,6 +593,9 @@ impl Renderer {
             lighting_buffer,
             lighting: None,
             sky_pipeline,
+            refraction_fallback,
+            refraction_sampler,
+            refraction_group: None,
             shadows,
             lights: None,
             lit: None,
@@ -1022,8 +1086,12 @@ impl Renderer {
             self.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
-        let lighting =
-            LightingUniform::new(&snapshot.atmosphere, &snapshot.bloom, &snapshot.reflections);
+        let lighting = LightingUniform::new(
+            &snapshot.atmosphere,
+            &snapshot.bloom,
+            &snapshot.reflections,
+            &snapshot.refraction,
+        );
         if self.lighting != Some(lighting) {
             self.queue
                 .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
@@ -1218,6 +1286,7 @@ impl Renderer {
                 &self.camera_buffer,
                 &self.lighting_buffer,
                 &self.shadows,
+                (&self.refraction_fallback, &self.refraction_sampler),
             );
         }
         // Local lights (decision 023): binned on the GPU from this frame's
@@ -1279,7 +1348,13 @@ impl Renderer {
             || snapshot.bloom.sanitized().enabled()
             || snapshot.reflections.sanitized().enabled()
             || (snapshot.sun_shafts.sanitized().enabled() && snapshot.shadows.enabled);
-        let post_frame = if temporal_frame.is_some() || effects {
+        // Glass refracts the opaque color of the scene target (decision
+        // 038): frames drawing it render into the target.
+        let refraction = snapshot.refraction.enabled()
+            && self.plan.batches.iter().any(|batch| {
+                batch.transparent && self.materials.binding(batch.material).1.transmission()
+            });
+        let post_frame = if temporal_frame.is_some() || effects || refraction {
             if self.post_pipelines.is_none() {
                 self.post_pipelines = Some(PostPipelines::new(
                     &self.device,
@@ -1489,6 +1564,25 @@ impl Renderer {
                 [&self.palettes[0], &self.palettes[1]],
             );
         }
+        if refraction && let Some(post) = self.post.as_ref() {
+            let key = (post.generation(), self.shadow_generation);
+            if self
+                .refraction_group
+                .as_ref()
+                .is_none_or(|(built, _)| *built != key)
+            {
+                let (scene, _) = post.targets();
+                let group = camera_bind_group(
+                    &self.device,
+                    &self.camera_layout,
+                    &self.camera_buffer,
+                    &self.lighting_buffer,
+                    &self.shadows,
+                    (scene, &self.refraction_sampler),
+                );
+                self.refraction_group = Some((key, group));
+            }
+        }
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
         // Lit frames shade with the lit pipelines and the lights' group.
         let lit = light_frame
@@ -1684,7 +1778,12 @@ impl Renderer {
                     .as_ref()
                     .expect("created with the transparent frame");
                     pass.set_pipeline(transparent_base);
-                    pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                    // Glass reads the opaque color the pass draws over.
+                    let camera_group = match &self.refraction_group {
+                        Some((_, group)) if refraction && post_frame.is_some() => group,
+                        _ => &self.camera_bind_group,
+                    };
+                    pass.set_bind_group(0, camera_group, &[]);
                     if let Some((_, lights)) = lit {
                         pass.set_bind_group(3, lights.fragment_group(), &[]);
                         if !affine {
@@ -1898,6 +1997,7 @@ impl Renderer {
             .min(u64::from(u32::MAX)) as u32,
             sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
             reflections: post_frame.is_some_and(|frame| frame.reflections),
+            refraction: refraction && post_frame.is_some(),
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -2549,13 +2649,15 @@ impl PostPipelines {
     }
 }
 
-/// The main passes' first group: camera, lighting and shadow lookups.
+/// The main passes' first group: camera, lighting, shadow lookups and what
+/// glass refracts (decision 038) with its sampler.
 fn camera_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     camera: &wgpu::Buffer,
     lighting: &wgpu::Buffer,
     shadows: &ShadowPass,
+    (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
 ) -> wgpu::BindGroup {
     let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2576,6 +2678,14 @@ fn camera_bind_group(
             moving,
             sampler,
             texel_sampler,
+            wgpu::BindGroupEntry {
+                binding: 8,
+                resource: wgpu::BindingResource::TextureView(refraction),
+            },
+            wgpu::BindGroupEntry {
+                binding: 9,
+                resource: wgpu::BindingResource::Sampler(refraction_sampler),
+            },
         ],
     })
 }

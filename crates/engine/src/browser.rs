@@ -137,6 +137,8 @@ pub struct FrameStats {
     /// Sun shafts (decision 024) and reflections (decision 025) applied.
     pub sun_shafts: bool,
     pub reflections: bool,
+    /// Glass refracted the opaque scene (decision 038).
+    pub refraction: bool,
     /// Transparent draws, particles drawn and particles a budget or the
     /// GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
@@ -193,6 +195,8 @@ pub struct BrowserStats {
     /// Whether sun shafts (decision 024) and reflections (decision 025) ran.
     pub sun_shafts: bool,
     pub reflections: bool,
+    /// Whether glass refracted the opaque scene (decision 038).
+    pub refraction: bool,
     /// Transparent draws, included in `draw_calls`, particles drawn and
     /// particles a budget or the GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
@@ -249,6 +253,7 @@ impl From<FrameStats> for BrowserStats {
             light_cluster_overflow: stats.lights.and_then(|lights| lights.overflow),
             sun_shafts: stats.sun_shafts,
             reflections: stats.reflections,
+            refraction: stats.refraction,
             transparent_draws: stats.transparent_draws,
             particles: stats.particles,
             dropped_particles: stats.dropped_particles,
@@ -591,6 +596,7 @@ impl BrowserApp {
             lights: rendered.lights,
             sun_shafts: rendered.sun_shafts,
             reflections: rendered.reflections,
+            refraction: rendered.refraction,
             transparent_draws: rendered.transparent_draws,
             particles: rendered.particles,
             dropped_particles: rendered.dropped_particles,

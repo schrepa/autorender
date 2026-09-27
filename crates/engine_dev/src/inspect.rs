@@ -5,13 +5,13 @@ use engine_core::{
     AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Engine, FixedTime,
     FrameTime, GlobalTransforms, InterpolateTransform, LocalLight, LocalLights, Mesh3d, Parent,
     ParticleEmitter, Particles, PresentationMode, PresentationState, PresentedTransforms,
-    Reflections, Shadows, Skin, SunShafts, Tint, Transform,
+    Reflections, Refraction, Shadows, Skin, SunShafts, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneEmitter, SceneEntity,
     SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
-    SceneReflections, SceneShadows, SceneSunShafts,
+    SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -239,6 +239,11 @@ impl Default for DevTools {
             InspectorDescriptor::new("Reflections", "Screen-space reflections in glossy surfaces (decision 025), falling back to the sky off screen. Opt-in: missing or intensity 0 means off.", schemas["Reflections"].clone())
                 .with_default(json!(SceneReflections::default())),
             |reflections| json!(SceneReflections::from(reflections)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<Refraction>(
+            InspectorDescriptor::new("Refraction", "Refraction through glass (decision 038): transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency.", schemas["Refraction"].clone())
+                .with_default(json!(SceneRefraction::default())),
+            |refraction| json!(SceneRefraction::from(refraction)),
         ).expect("built-in descriptor is bounded");
         tools.register_resource::<Particles>(
             InspectorDescriptor::new("Particles", "Particle settings (decision 026): whether emitters draw and the per-frame particle budget. Missing means no particles.", schemas["Particles"].clone())
@@ -534,7 +539,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts and reflections off)."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off); material transmission, ior and thickness and the refraction section require version 8."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

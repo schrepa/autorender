@@ -826,6 +826,41 @@ fn animation_channels_sample_step_linear_and_cubic_splines_like_gltf() {
 }
 
 #[test]
+fn transmissive_materials_draw_transparent_and_validate_their_ranges() {
+    use crate::Transmission;
+    let plain = Material::new([0.9, 0.95, 1.0, 1.0]).unwrap();
+    assert_eq!(plain.transmission(), Transmission::NONE);
+    assert!(!plain.is_transparent() && !plain.has_maps());
+    let glass = plain.with_transmission(Transmission::GLASS).unwrap();
+    assert!(glass.is_transparent() && glass.has_maps());
+    // Transmission belongs to the binding: glass never batches with others.
+    assert_ne!(glass.binding(), plain.with_double_sided(true).binding());
+    for broken in [
+        Transmission {
+            factor: 1.5,
+            ..Transmission::GLASS
+        },
+        Transmission {
+            ior: 3.5,
+            ..Transmission::GLASS
+        },
+        Transmission {
+            thickness: -1.0,
+            ..Transmission::GLASS
+        },
+        Transmission {
+            factor: f32::NAN,
+            ..Transmission::GLASS
+        },
+    ] {
+        assert_eq!(
+            plain.with_transmission(broken).unwrap_err().code(),
+            "asset.invalid_surface"
+        );
+    }
+}
+
+#[test]
 fn compressed_textures_keep_whole_block_levels_and_reject_partial_ones() {
     use crate::TextureFormat;
     // An 8 × 4 texture: two blocks, then one per level down to 1 × 1.

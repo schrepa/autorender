@@ -19,7 +19,8 @@ pub use library::{
     AssetBudget, AssetLibrary, ClipHandle, MaterialHandle, MeshHandle, TextureHandle,
 };
 pub use material::{
-    AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, UvTransform, Wrap,
+    AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, Transmission,
+    UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};

@@ -40,6 +40,9 @@ struct Lighting {
     // Split toning: luminance-normalized gains of shadows and highlights.
     shadow_tint: vec4<f32>,
     highlight_tint: vec4<f32>,
+    // Refraction through glass (decision 038): the bend's strength (0 without
+    // refraction) and the blur radius in pixels of fully rough glass.
+    refraction: vec4<f32>,
 }
 // Sun shadows (decisions 020 and 028): world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).

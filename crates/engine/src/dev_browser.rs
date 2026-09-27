@@ -189,6 +189,7 @@ impl DevBrowser {
                 sun_shafts,
                 reflections,
                 particles,
+                refraction,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -202,6 +203,7 @@ impl DevBrowser {
                     sun_shafts,
                     reflections,
                     particles,
+                    refraction,
                 };
                 let settings = match environment.resolve("$") {
                     Ok(settings) => settings,
@@ -219,6 +221,7 @@ impl DevBrowser {
                     ("sun_shafts", settings.sun_shafts.is_some()),
                     ("reflections", settings.reflections.is_some()),
                     ("particles", settings.particles.is_some()),
+                    ("refraction", settings.refraction.is_some()),
                 ]
                 .into_iter()
                 .filter_map(|(name, set)| set.then_some(name))

@@ -701,3 +701,40 @@ fn basisu_textures_import_their_ktx2_images_unchanged() {
         "invalid_image"
     );
 }
+
+#[test]
+fn transmission_ior_and_volume_import_as_glass() {
+    let imported = import_glb(
+        &changed(|json| {
+            json["materials"][0]["extensions"] = json!({
+                "KHR_materials_transmission": {"transmissionFactor": 0.8},
+                "KHR_materials_ior": {"ior": 1.4},
+                "KHR_materials_volume": {"thicknessFactor": 0.3}
+            });
+            json["extensionsUsed"] = json!([
+                "KHR_materials_transmission",
+                "KHR_materials_ior",
+                "KHR_materials_volume"
+            ]);
+        }),
+        "garden",
+    )
+    .unwrap();
+    assert!(imported.ignored_extensions.is_empty());
+    let material = &imported.document.materials[0];
+    assert_eq!(
+        (material.transmission, material.ior, material.thickness),
+        (Some(0.8), Some(1.4), Some(0.3))
+    );
+    // Without transmission the other two have nothing to bend.
+    let opaque = &import_glb(
+        &changed(|json| {
+            json["materials"][0]["extensions"] = json!({"KHR_materials_ior": {"ior": 1.4}});
+        }),
+        "garden",
+    )
+    .unwrap()
+    .document
+    .materials[0];
+    assert_eq!((opaque.transmission, opaque.ior), (None, None));
+}

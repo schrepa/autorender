@@ -871,7 +871,7 @@
       "additionalProperties": false
     },
     "SceneEnvironment": {
-      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine's default state (sun shafts and reflections: off); in a\ndevelopment control, omitted sections stay as they are.",
+      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
       "type": "object",
       "properties": {
         "ambient_occlusion": {
@@ -929,6 +929,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneReflections"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refraction": {
+          "description": "Version 8 sections (decision 038).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneRefraction"
             },
             {
               "type": "null"
@@ -1161,6 +1172,16 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
+        "ior": {
+          "description": "Version 8, with `transmission`: the index of refraction in `[1, 3]`;\ndefault 1.5.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 3.0,
+          "minimum": 1.0
+        },
         "metallic_roughness_texture": {
           "description": "Version 8: linear green multiplies roughness and blue metalness.",
           "anyOf": [
@@ -1243,6 +1264,25 @@
               "type": "null"
             }
           ]
+        },
+        "thickness": {
+          "description": "Version 8, with `transmission`: the depth in world units of the\nvolume beneath the surface that bends rays; default 0, a thin wall.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "minimum": 0.0
+        },
+        "transmission": {
+          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (decision 038,\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false,
@@ -1555,6 +1595,29 @@
           "default": 0.5,
           "maximum": 1.0,
           "minimum": 0.05
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneRefraction": {
+      "description": "Refraction through glass (decision 038). Requires version 8; a strength\nof 0 turns it off.",
+      "type": "object",
+      "properties": {
+        "blur": {
+          "description": "Blur radius in pixels that fully rough glass reaches.",
+          "type": "number",
+          "format": "float",
+          "default": 12.0,
+          "maximum": 64.0,
+          "minimum": 0.0
+        },
+        "strength": {
+          "description": "Scales how far rays bend through transmissive materials.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 4.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false

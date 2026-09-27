@@ -2,7 +2,8 @@
 //! glTF 2.0 metallic-roughness texture maps (decision 031).
 
 use engine_core::{
-    AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
+    AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
+    Wrap,
 };
 use serde::{Deserialize, Serialize};
 
@@ -73,6 +74,24 @@ pub struct SceneMaterial {
     /// Version 8: draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
+    /// Version 8: the share of light passing through the surface instead of
+    /// diffusing off it, in `[0, 1]`, tinted by its color (decision 038,
+    /// glTF `KHR_materials_transmission`). Transmissive materials draw in
+    /// the transparent pass; the environment's `refraction` bends what shows
+    /// through them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub transmission: Option<f32>,
+    /// Version 8, with `transmission`: the index of refraction in `[1, 3]`;
+    /// default 1.5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 3.0)))]
+    pub ior: Option<f32>,
+    /// Version 8, with `transmission`: the depth in world units of the
+    /// volume beneath the surface that bends rays; default 0, a thin wall.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
+    pub thickness: Option<f32>,
 }
 
 /// A material's use of a texture: its ID, or (version 8) a map with glTF
@@ -266,6 +285,9 @@ impl SceneMaterial {
             ("alpha_mode", self.alpha_mode.is_some()),
             ("alpha_cutoff", self.alpha_cutoff.is_some()),
             ("double_sided", self.double_sided.is_some()),
+            ("transmission", self.transmission.is_some()),
+            ("ior", self.ior.is_some()),
+            ("thickness", self.thickness.is_some()),
         ]
         .into_iter()
         .find_map(|(field, set)| set.then_some(field))
@@ -325,6 +347,30 @@ impl SceneMaterial {
         }
         if let Some(double_sided) = self.double_sided {
             material = material.with_double_sided(double_sided);
+        }
+        match (self.transmission, self.ior, self.thickness) {
+            (Some(factor), ior, thickness) => {
+                material = material
+                    .with_transmission(Transmission {
+                        factor,
+                        ior: ior.unwrap_or(Transmission::NONE.ior),
+                        thickness: thickness.unwrap_or(0.0),
+                    })
+                    .map_err(|error| invalid("transmission", error.to_string()))?;
+            }
+            (None, Some(_), _) => {
+                return Err(invalid(
+                    "ior",
+                    "an index of refraction needs transmission".into(),
+                ));
+            }
+            (None, None, Some(_)) => {
+                return Err(invalid(
+                    "thickness",
+                    "a thickness needs transmission".into(),
+                ));
+            }
+            (None, None, None) => {}
         }
         let normal_scale = self.normal_scale.unwrap_or(1.0);
         if !normal_scale.is_finite() {

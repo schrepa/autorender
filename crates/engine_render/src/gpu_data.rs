@@ -96,6 +96,10 @@ pub(crate) struct LightingUniform {
     /// unused.
     pub shadow_tint: [f32; 4],
     pub highlight_tint: [f32; 4],
+    /// Refraction through glass (decision 038): the bend's strength (0
+    /// without refraction) and the blur radius in pixels of fully rough
+    /// glass; zw unused.
+    pub refraction: [f32; 4],
 }
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
@@ -118,9 +122,15 @@ fn unit_luminance(tint: glam::Vec3) -> [f32; 4] {
 }
 
 impl LightingUniform {
-    pub(crate) fn new(atmosphere: &Atmosphere, bloom: &Bloom, reflections: &Reflections) -> Self {
+    pub(crate) fn new(
+        atmosphere: &Atmosphere,
+        bloom: &Bloom,
+        reflections: &Reflections,
+        refraction: &engine_core::Refraction,
+    ) -> Self {
         let atmosphere = atmosphere.sanitized();
         let reflections = reflections.sanitized();
+        let refraction = refraction.sanitized();
         Self {
             sun: atmosphere
                 .sun_direction
@@ -151,6 +161,7 @@ impl LightingUniform {
             ],
             shadow_tint: unit_luminance(atmosphere.shadow_tint),
             highlight_tint: unit_luminance(atmosphere.highlight_tint),
+            refraction: [refraction.strength, refraction.blur, 0.0, 0.0],
         }
     }
 }
@@ -417,6 +428,9 @@ pub(crate) struct MaterialUniform {
     /// Normal scale, occlusion strength, alpha cutoff, and the maps reading
     /// the second texture coordinates as bits in map order.
     pub params: [f32; 4],
+    /// Transmission (decision 038): its share, index of refraction and
+    /// thickness; w unused.
+    pub volume: [f32; 4],
 }
 
 impl MaterialUniform {
@@ -436,6 +450,7 @@ impl MaterialUniform {
         ],
         emissive: [0.0; 4],
         params: [1.0, 1.0, 0.5, 0.0],
+        volume: [0.0, 1.5, 0.0, 0.0],
     };
 
     pub(crate) fn new(material: &Material) -> Self {
@@ -465,6 +480,13 @@ impl MaterialUniform {
             material.occlusion_strength(),
             cutoff,
             second as f32,
+        ];
+        let transmission = material.transmission();
+        uniform.volume = [
+            transmission.factor,
+            transmission.ior,
+            transmission.thickness,
+            0.0,
         ];
         uniform
     }
@@ -501,6 +523,9 @@ impl Variant {
     // Skinned slots' meshes (decision 036): skinned entry points, which
     // read the second stream and a skin stream.
     const SKINNED: u8 = 32;
+    // Transmissive materials (decision 038): glass shading in the
+    // transparent pass.
+    const TRANSMISSION: u8 = 64;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -526,18 +551,26 @@ impl Variant {
         if material.is_double_sided() {
             bits |= Self::DOUBLE_SIDED;
         }
+        if material.transmission().factor > 0.0 {
+            bits |= Self::TRANSMISSION;
+        }
         Self(bits)
     }
 
     /// Fragment override constants.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 4] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 5] {
         let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("MATERIAL_MAPS", set(Self::MAPS)),
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),
             ("DOUBLE_SIDED", set(Self::DOUBLE_SIDED)),
+            ("TRANSMISSION", set(Self::TRANSMISSION)),
         ]
+    }
+
+    pub(crate) fn transmission(self) -> bool {
+        self.0 & Self::TRANSMISSION != 0
     }
 
     pub(crate) fn double_sided(self) -> bool {
@@ -835,7 +868,7 @@ mod tests {
         );
         assert_eq!(std::mem::offset_of!(CameraUniform, position), 192);
         assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 208);
-        assert_eq!(size_of::<LightingUniform>(), 160);
+        assert_eq!(size_of::<LightingUniform>(), 176);
         assert_eq!(size_of::<InstanceData>(), 80);
         assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
         assert_eq!(std::mem::offset_of!(InstanceData, surface), 72);
@@ -1049,7 +1082,17 @@ mod tests {
             intensity: 0.0,
             ..engine_core::Reflections::default()
         };
-        let lighting = LightingUniform::new(&night, &bloom, &off);
+        let glassless = engine_core::Refraction {
+            strength: 0.0,
+            ..engine_core::Refraction::default()
+        };
+        let lighting = LightingUniform::new(&night, &bloom, &off, &glassless);
+        assert_eq!(lighting.refraction, [0.0, 12.0, 0.0, 0.0]);
+        assert_eq!(
+            LightingUniform::new(&night, &bloom, &off, &engine_core::Refraction::default())
+                .refraction,
+            [1.0, 12.0, 0.0, 0.0]
+        );
         assert_eq!(lighting.sun_color[3], night.specular);
         assert_eq!(lighting.horizon[3], night.exposure);
         assert_eq!(
@@ -1061,7 +1104,7 @@ mod tests {
             ..engine_core::Reflections::default()
         };
         assert_eq!(
-            LightingUniform::new(&night, &bloom, &on).effects,
+            LightingUniform::new(&night, &bloom, &on, &glassless).effects,
             [night.emission, 3.0, 0.3, 1.0]
         );
         let sun = glam::Vec3::from_slice(&lighting.sun[..3]);
@@ -1104,7 +1147,7 @@ mod tests {
             ..night
         };
         assert_eq!(
-            LightingUniform::new(&black, &bloom, &off).shadow_tint,
+            LightingUniform::new(&black, &bloom, &off, &glassless).shadow_tint,
             [1.0, 1.0, 1.0, 0.0]
         );
         let broken = engine_core::Atmosphere {
@@ -1112,8 +1155,13 @@ mod tests {
             ..night
         };
         assert_eq!(
-            LightingUniform::new(&broken, &bloom, &off),
-            LightingUniform::new(&engine_core::Atmosphere::default(), &bloom, &off)
+            LightingUniform::new(&broken, &bloom, &off, &glassless),
+            LightingUniform::new(
+                &engine_core::Atmosphere::default(),
+                &bloom,
+                &off,
+                &glassless
+            )
         );
     }
 
@@ -1287,17 +1335,17 @@ mod tests {
             constants(Variant::of(
                 &plain.with_base_color_texture(transformed).unwrap()
             )),
-            [1.0, 0.0, 0.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert_eq!(
             constants(Variant::of(&plain.with_normal_texture(map, 1.0).unwrap())),
-            [1.0, 1.0, 0.0, 0.0]
+            [1.0, 1.0, 0.0, 0.0, 0.0]
         );
         let masked = plain
             .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
             .unwrap()
             .with_double_sided(true);
-        assert_eq!(constants(Variant::of(&masked)), [1.0, 0.0, 1.0, 1.0]);
+        assert_eq!(constants(Variant::of(&masked)), [1.0, 0.0, 1.0, 1.0, 0.0]);
         assert!(Variant::of(&masked).double_sided());
         // Blending reads texture alpha as coverage.
         let glass = plain
@@ -1305,10 +1353,31 @@ mod tests {
             .unwrap()
             .with_base_color_texture(map)
             .unwrap();
-        assert_eq!(constants(Variant::of(&glass)), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(constants(Variant::of(&glass)), [1.0, 0.0, 0.0, 0.0, 0.0]);
         assert_eq!(
             Variant::of(&plain.with_opacity(0.5).unwrap()),
             Variant::BASIC
+        );
+        // Transmissive materials (decision 038) bind their own parameters
+        // and shade as glass in the transparent pass.
+        let clear = plain
+            .with_transmission(engine_core::Transmission {
+                factor: 0.9,
+                ior: 1.33,
+                thickness: 0.25,
+            })
+            .unwrap();
+        assert!(clear.is_transparent() && clear.has_maps());
+        assert_eq!(constants(Variant::of(&clear)), [0.0, 0.0, 0.0, 0.0, 1.0]);
+        assert!(Variant::of(&clear).transmission());
+        assert_eq!(MaterialUniform::new(&clear).volume, [0.9, 1.33, 0.25, 0.0]);
+        assert!(
+            plain
+                .with_transmission(engine_core::Transmission {
+                    ior: 0.9,
+                    ..engine_core::Transmission::GLASS
+                })
+                .is_err()
         );
     }
 
@@ -1363,7 +1432,8 @@ mod tests {
         assert_eq!(size(SHADER, "SlotColor"), size_of::<ColorData>());
         // Material maps (decision 031).
         assert_eq!(size(SHADER, "MaterialMaps"), size_of::<MaterialUniform>());
-        assert_eq!(size_of::<MaterialUniform>(), 192);
+        assert_eq!(size_of::<MaterialUniform>(), 208);
+        assert_eq!(size(SHADER, "Lighting"), size_of::<LightingUniform>());
         // Local lights (decision 023): binning and shading agree on layouts.
         let clusters = size_of::<crate::lights::ClusterUniform>();
         assert_eq!(size(LIGHT_SHADER, "Clusters"), clusters);

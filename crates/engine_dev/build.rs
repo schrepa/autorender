@@ -27,6 +27,7 @@ fn main() {
         "LocalLights": schemars::schema_for!(engine_scene::SceneLocalLights),
         "SunShafts": schemars::schema_for!(engine_scene::SceneSunShafts),
         "Reflections": schemars::schema_for!(engine_scene::SceneReflections),
+        "Refraction": schemars::schema_for!(engine_scene::SceneRefraction),
         "Particles": schemars::schema_for!(engine_scene::SceneParticles),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
