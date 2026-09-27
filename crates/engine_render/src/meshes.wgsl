@@ -1,14 +1,33 @@
-// Uniform: two column-major mat4 and a vec4, 16-byte alignment, exactly 144
-// bytes. `view_projection` is the rasterized projection; temporally
+// Uniform: three column-major mat4 and two vec4, 16-byte alignment, exactly
+// 224 bytes. `view_projection` is the rasterized projection; temporally
 // antialiased frames (decision 017) jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
-// and `jitter.zw`, two over the viewport size in pixels.
+// and `jitter.zw`, two over the viewport size in pixels. The unjittered
+// inverse turns pixels into sky rays; `position.xyz` is the eye.
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
+    inverse_view_projection: mat4x4<f32>,
+    position: vec4<f32>,
     jitter: vec4<f32>,
 }
+// The scene's atmosphere (decision 018) in linear color; scalars ride in w.
+struct Lighting {
+    // Toward the sun; w: rim strength.
+    sun: vec4<f32>,
+    // w: specular strength.
+    sun_color: vec4<f32>,
+    // w: ambient scale.
+    zenith: vec4<f32>,
+    // w: exposure.
+    horizon: vec4<f32>,
+    // w: saturation.
+    ground: vec4<f32>,
+    // Start, density, height falloff and maximum.
+    fog: vec4<f32>,
+}
 @group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(1) var<uniform> lighting: Lighting;
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var base_color_sampler: sampler;
 
@@ -51,7 +70,7 @@ struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) distance: f32,
+    @location(2) world: vec3<f32>,
     @location(3) uv: vec2<f32>,
 }
 
@@ -60,7 +79,7 @@ struct TemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) distance: f32,
+    @location(2) world: vec3<f32>,
     @location(3) uv: vec2<f32>,
     @location(4) previous: vec3<f32>,
 }
@@ -122,7 +141,7 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     output.clip_position = vertex.clip_position;
     output.color = vertex.color;
     output.normal = vertex.normal;
-    output.distance = vertex.distance;
+    output.world = vertex.world;
     output.uv = vertex.uv;
     output.previous = previous.xyw;
     return output;
@@ -152,7 +171,7 @@ fn transform_vertex(position: vec3<f32>, normal: vec3<f32>, color: vec4<f32>,
     output.clip_position = camera.view_projection * world_position;
     output.normal = stable_normalize(normal_matrix * normal) * sign(determinant);
     output.color = color;
-    output.distance = output.clip_position.w;
+    output.world = world_position.xyz;
     output.uv = uv;
     return output;
 }
@@ -163,23 +182,93 @@ fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.0031308));
 }
 
-// Lit, fogged linear color. Sampling uses implicit derivatives, so callers
-// shade in uniform control flow.
-fn shade(color: vec4<f32>, surface_normal: vec3<f32>, distance: f32, uv: vec2<f32>) -> vec3<f32> {
+// The sky's light in `direction` without the sun's disc: horizon to zenith
+// above; below, haze darkening only partway toward the ground, as distant
+// ground seen through air does; and a wide halo toward the sun. Fog takes
+// this color.
+fn haze(direction: vec3<f32>) -> vec3<f32> {
+    let up = direction.y;
+    var color = mix(lighting.horizon.rgb, lighting.zenith.rgb, sqrt(max(up, 0.0)));
+    color = mix(color, lighting.ground.rgb, min(max(-up, 0.0) * 1.5, 0.35));
+    let toward = max(dot(direction, lighting.sun.xyz), 0.0);
+    let square = toward * toward;
+    return color + lighting.sun_color.rgb * (0.12 * square * square * square);
+}
+
+// The sky itself: its haze and the sun's small disc.
+fn sky(direction: vec3<f32>) -> vec3<f32> {
+    let toward = max(dot(direction, lighting.sun.xyz), 0.0);
+    return haze(direction) + lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));
+}
+
+// Sky light reaching a surface facing `normal`: the zenith from above, half
+// horizon and half zenith from the side (cooler than the sun, so shade
+// contrasts with light) and the ground from below.
+fn ambient(normal: vec3<f32>) -> vec3<f32> {
+    let side = mix(lighting.horizon.rgb, lighting.zenith.rgb, 0.5);
+    let above = mix(side, lighting.zenith.rgb, max(normal.y, 0.0));
+    return mix(above, lighting.ground.rgb, max(-normal.y, 0.0)) * lighting.zenith.w;
+}
+
+// Fog covering `point` seen from `eye`: exponential in the distance beyond
+// the start, with a density decaying exponentially with height, integrated
+// along the ray.
+fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    let ray = point - eye;
+    let distance = length(ray);
+    let start = lighting.fog.x;
+    if distance <= start {
+        return 0.0;
+    }
+    let falloff = lighting.fog.z;
+    // Far below the ground the density would overflow; it is saturated there.
+    let from_height = max(eye.y + ray.y * (start / distance), -1000.0);
+    let to_height = max(point.y, -1000.0);
+    let rise = falloff * (to_height - from_height);
+    let near = exp(-falloff * from_height);
+    let far = exp(-falloff * to_height);
+    // The mean density along the ray; its limit where the ray is level.
+    let mean = select(near, (near - far) / rise, abs(rise) > 1.0e-4);
+    let depth = lighting.fog.y * (distance - start) * mean;
+    return min(1.0 - exp(-depth), lighting.fog.w);
+}
+
+// Exposure, a filmic curve (Narkowicz's ACES fit) and saturation.
+fn grade(color: vec3<f32>) -> vec3<f32> {
+    let exposed = max(color, vec3<f32>(0.0)) * lighting.horizon.w;
+    let mapped = saturate((exposed * (2.51 * exposed + 0.03))
+        / (exposed * (2.43 * exposed + 0.59) + 0.14));
+    let luma = dot(mapped, vec3<f32>(0.2126, 0.7152, 0.0722));
+    return saturate(mix(vec3<f32>(luma), mapped, lighting.ground.w));
+}
+
+// Lit, fogged and graded color. Sampling uses implicit derivatives, so
+// callers shade in uniform control flow.
+fn shade(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     let normal = stable_normalize(surface_normal);
-    let sun = max(dot(normal, normalize(vec3<f32>(-0.5, 0.85, 0.35))), 0.0);
-    let sky = normal.y * 0.5 + 0.5;
-    let ambient = mix(vec3<f32>(0.12, 0.14, 0.18), vec3<f32>(0.30, 0.38, 0.46), sky);
     // RGBA8UnormSrgb sampling decodes source RGB; material factors are linear.
     let albedo = textureSample(base_color_texture, base_color_sampler, uv).rgb * color.rgb;
-    let lit = albedo * (ambient + vec3<f32>(1.0, 0.91, 0.76) * sun * 0.85);
-    let fog = 1.0 - exp(-max(distance - 35.0, 0.0) * 0.006);
-    return mix(lit, vec3<f32>(0.009, 0.015, 0.025), min(fog, 0.85));
+    let eye = camera.position.xyz;
+    let view = stable_normalize(eye - world);
+    let sun = lighting.sun.xyz;
+    // Wrapped diffuse softens the terminator of flat low-poly faces.
+    let facing = dot(normal, sun);
+    let diffuse = max((facing + 0.25) / 1.25, 0.0);
+    let highlight = pow(max(dot(normal, normalize(view + sun)), 0.0), 48.0)
+        * lighting.sun_color.w * step(0.0, facing);
+    // Rim light outlines walls against the sky; level surfaces seen at
+    // grazing angles (distant ground and roofs) take none.
+    let grazing = 1.0 - max(dot(normal, view), 0.0);
+    let rim = (grazing * grazing) * (grazing * grazing) * lighting.sun.w
+        * (1.0 - abs(normal.y));
+    let lit = albedo * (ambient(normal) + lighting.sun_color.rgb * diffuse
+        + lighting.horizon.rgb * rim) + lighting.sun_color.rgb * highlight;
+    return grade(mix(lit, haze(-view), fog(eye, world)));
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let color = shade(input.color, input.normal, input.distance, input.uv);
+    let color = shade(input.color, input.normal, input.world, input.uv);
     if SURFACE_IS_SRGB {
         return vec4<f32>(color, 1.0);
     }
@@ -190,7 +279,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 @fragment
 fn fs_temporal(input: TemporalOutput) -> TemporalTargets {
     var targets: TemporalTargets;
-    targets.color = vec4<f32>(shade(input.color, input.normal, input.distance, input.uv), 1.0);
+    targets.color = vec4<f32>(shade(input.color, input.normal, input.world, input.uv), 1.0);
     // This pixel center without the jitter, and the same point last frame.
     let current = vec2<f32>(input.clip_position.x * camera.jitter.z - 1.0,
         1.0 - input.clip_position.y * camera.jitter.w) - camera.jitter.xy;
@@ -199,6 +288,51 @@ fn fs_temporal(input: TemporalOutput) -> TemporalTargets {
     // A point behind the previous camera has no position there: send its
     // history lookup out of the viewport.
     if !(input.previous.z > 0.0) {
+        targets.motion = vec2<f32>(2.0);
+    }
+    return targets;
+}
+
+// The sky behind all geometry: one triangle over the viewport at the far
+// plane, drawn after the meshes so depth testing leaves only uncovered pixels.
+struct SkyOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) ndc: vec2<f32>,
+}
+
+@vertex
+fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
+    let ndc = vec2<f32>(f32((index << 1u) & 2u) * 2.0 - 1.0, f32(index & 2u) * 2.0 - 1.0);
+    var output: SkyOutput;
+    output.clip_position = vec4<f32>(ndc, 1.0, 1.0);
+    output.ndc = ndc;
+    return output;
+}
+
+// The view ray through unjittered `ndc`.
+fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
+    let far = camera.inverse_view_projection * vec4<f32>(ndc, 1.0, 1.0);
+    return stable_normalize(far.xyz / far.w - camera.position.xyz);
+}
+
+@fragment
+fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
+    let color = grade(sky(sky_ray(input.ndc)));
+    if SURFACE_IS_SRGB {
+        return vec4<f32>(color, 1.0);
+    }
+    return vec4<f32>(linear_to_srgb(color), 1.0);
+}
+
+// Temporal frames: the unjittered sky reprojects by the camera's turn alone.
+@fragment
+fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
+    let ray = sky_ray(input.ndc);
+    var targets: TemporalTargets;
+    targets.color = vec4<f32>(grade(sky(ray)), 1.0);
+    let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
+    targets.motion = (previous.xy / previous.w - input.ndc) * vec2<f32>(0.5, -0.5);
+    if !(previous.w > 0.0) {
         targets.motion = vec2<f32>(2.0);
     }
     return targets;

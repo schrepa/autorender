@@ -1,31 +1,37 @@
 //! Explicit schemas for the adjacent shader, separate from gameplay components.
 
 use bytemuck::{Pod, Zeroable};
-use engine_core::{MeshVertex, RenderInstance, glam::Mat4};
+use engine_core::{Atmosphere, MeshVertex, RenderInstance, glam::Mat4};
 
-/// WGSL `Camera` uniform: two column-major mat4x4<f32> and a vec4<f32>,
-/// alignment 16, size 144. `view_projection` is the rasterized projection.
+/// WGSL `Camera` uniform: three column-major mat4x4<f32> and two vec4<f32>,
+/// alignment 16, size 224. `view_projection` is the rasterized projection.
 /// Temporally antialiased frames (decision 017) jitter it by `jitter.xy` clip
 /// units per w, and their motion vectors use the previous frame's unjittered
 /// `previous_view_projection` and `jitter.zw`, two over the viewport size in
 /// pixels. Other frames repeat the view-projection and keep the jitter zero.
-/// The GPU buffer starts at offset zero; only these 144 initialized bytes are
+/// The unjittered `inverse_view_projection` turns pixels into sky rays and
+/// `position` (xyz) is the eye, for view-dependent lighting (decision 018).
+/// The GPU buffer starts at offset zero; only these 224 initialized bytes are
 /// copied into it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CameraUniform {
     pub view_projection: [[f32; 4]; 4],
     pub previous_view_projection: [[f32; 4]; 4],
+    pub inverse_view_projection: [[f32; 4]; 4],
+    pub position: [f32; 4],
     pub jitter: [f32; 4],
 }
 
 impl CameraUniform {
-    /// An unjittered camera without temporal history.
-    pub(crate) fn exact(view_projection: Mat4) -> Self {
+    /// An unjittered camera at `position` without temporal history.
+    pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
             view_projection: columns,
             previous_view_projection: columns,
+            inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
+            position: position.extend(1.0).to_array(),
             jitter: [0.0; 4],
         }
     }
@@ -35,6 +41,7 @@ impl CameraUniform {
     /// previous frame's unjittered `previous` for motion vectors.
     pub(crate) fn temporal(
         view_projection: Mat4,
+        position: glam::Vec3,
         previous: Mat4,
         jitter: [f32; 2],
         width: u32,
@@ -48,6 +55,49 @@ impl CameraUniform {
                 jitter[1],
                 2.0 / width.max(1) as f32,
                 2.0 / height.max(1) as f32,
+            ],
+            ..Self::exact(view_projection, position)
+        }
+    }
+}
+
+/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018): six
+/// vec4<f32>, 96 bytes. Scalars ride in the fourth components.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct LightingUniform {
+    /// Normalized direction toward the sun; w: rim strength.
+    pub sun: [f32; 4],
+    /// w: specular strength.
+    pub sun_color: [f32; 4],
+    /// w: ambient scale.
+    pub zenith: [f32; 4],
+    /// w: exposure.
+    pub horizon: [f32; 4],
+    /// w: saturation.
+    pub ground: [f32; 4],
+    /// Start, density, height falloff and maximum.
+    pub fog: [f32; 4],
+}
+
+impl From<&Atmosphere> for LightingUniform {
+    fn from(atmosphere: &Atmosphere) -> Self {
+        let atmosphere = atmosphere.sanitized();
+        Self {
+            sun: atmosphere
+                .sun_direction
+                .normalize()
+                .extend(atmosphere.rim)
+                .to_array(),
+            sun_color: atmosphere.sun_color.extend(atmosphere.specular).to_array(),
+            zenith: atmosphere.zenith.extend(atmosphere.ambient).to_array(),
+            horizon: atmosphere.horizon.extend(atmosphere.exposure).to_array(),
+            ground: atmosphere.ground.extend(atmosphere.saturation).to_array(),
+            fog: [
+                atmosphere.fog_start,
+                atmosphere.fog_density,
+                atmosphere.fog_falloff,
+                atmosphere.fog_max,
             ],
         }
     }
@@ -310,12 +360,18 @@ mod tests {
 
     #[test]
     fn gpu_records_have_documented_offsets_and_column_order() {
-        assert_eq!(size_of::<CameraUniform>(), 144);
+        assert_eq!(size_of::<CameraUniform>(), 224);
         assert_eq!(
             std::mem::offset_of!(CameraUniform, previous_view_projection),
             64
         );
-        assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 128);
+        assert_eq!(
+            std::mem::offset_of!(CameraUniform, inverse_view_projection),
+            128
+        );
+        assert_eq!(std::mem::offset_of!(CameraUniform, position), 192);
+        assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 208);
+        assert_eq!(size_of::<LightingUniform>(), 96);
         assert_eq!(size_of::<InstanceData>(), 80);
         assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
         assert_eq!(size_of::<PoseData>(), 48);
@@ -606,7 +662,7 @@ mod tests {
             ty.inner.size(module.to_ctx()) as usize
         };
         assert_eq!(size(SHADER, "Camera"), size_of::<CameraUniform>());
-        assert_eq!(size_of::<CameraUniform>(), 144);
+        assert_eq!(size(SHADER, "Lighting"), size_of::<LightingUniform>());
         assert_eq!(
             size(TEMPORAL_SHADER, "Resolve"),
             size_of::<ResolveUniform>()
@@ -628,9 +684,14 @@ mod tests {
         };
         assert_eq!(bits(PRESENTATION_SHADER, "MOVED_SLOT"), MOVED_SLOT);
         assert_eq!(bits(SHADER, "MOVED_SLOT"), MOVED_SLOT);
-        let exact = CameraUniform::exact(Mat4::from_scale(glam::Vec3::splat(2.0)));
+        let exact = CameraUniform::exact(Mat4::from_scale(glam::Vec3::splat(2.0)), glam::Vec3::X);
         assert_eq!(exact.previous_view_projection, exact.view_projection);
         assert_eq!(exact.jitter, [0.0; 4]);
+        assert_eq!(exact.position, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            Mat4::from_cols_array_2d(&exact.inverse_view_projection),
+            Mat4::from_scale(glam::Vec3::splat(0.5))
+        );
     }
 
     #[test]
@@ -639,7 +700,8 @@ mod tests {
         let view_projection = camera.view_projection(1.5);
         let previous = view_projection * Mat4::from_translation(Vec3::X);
         let jitter = jitter_clip([0.25, -0.5], 200, 100);
-        let temporal = CameraUniform::temporal(view_projection, previous, jitter, 200, 100);
+        let temporal =
+            CameraUniform::temporal(view_projection, camera.position, previous, jitter, 200, 100);
         let rasterized = Mat4::from_cols_array_2d(&temporal.view_projection);
         for point in [Vec3::ZERO, Vec3::new(1.0, -2.0, -8.0)] {
             let clip = view_projection * point.extend(1.0);

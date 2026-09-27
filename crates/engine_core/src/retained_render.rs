@@ -593,6 +593,8 @@ impl RetainedRender {
         self.sources.mesh_used.fill(false);
         self.sources.texture_used.fill(false);
         let view = world.resource::<Camera>().view_projection(aspect);
+        self.snapshot.camera_position = world.resource::<Camera>().eye();
+        self.snapshot.atmosphere = crate::atmosphere::current(world);
         let total = query.iter(world).len();
         if gpu
             && self.gpu

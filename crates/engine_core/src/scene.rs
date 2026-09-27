@@ -126,6 +126,16 @@ impl Default for Camera {
 }
 
 impl Camera {
+    /// The position [`Self::view_projection`] looks from: `position`, or
+    /// the default position when it is not finite.
+    pub fn eye(&self) -> Vec3 {
+        if self.position.is_finite() {
+            self.position
+        } else {
+            Self::default().position
+        }
+    }
+
     /// Builds a WebGPU-compatible projection (depth in [0, 1]).
     /// Invalid aspect/lens values fall back to sensible defaults; a coincident
     /// target looks down -Z and a vertical direction uses Z as the up axis.
@@ -162,6 +172,7 @@ impl Camera {
         let direction = (self.target - position)
             .try_normalize()
             .unwrap_or(Vec3::NEG_Z);
+        // `eye` repeats this fallback.
         let up = if direction.dot(Vec3::Y).abs() > 0.999 {
             Vec3::Z
         } else {
@@ -211,6 +222,10 @@ pub struct RenderTexture {
 #[derive(Debug, Default)]
 pub struct RenderSnapshot {
     pub view_projection: Mat4,
+    /// The camera's position ([`Camera::eye`]), for view-dependent lighting.
+    pub camera_position: Vec3,
+    /// The scene's lighting, sanitized ([`crate::Atmosphere::sanitized`]).
+    pub atmosphere: crate::Atmosphere,
     pub instances: Vec<RenderInstance>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;

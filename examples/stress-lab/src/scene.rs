@@ -1,6 +1,6 @@
 use engine::prelude::*;
 
-use crate::{FrameMetrics, StressConfig, metrics};
+use crate::{FrameMetrics, StressConfig, StressScene, city, metrics};
 
 const GROUP_SIZE: u32 = 32;
 const SPACING: f32 = 2.4;
@@ -23,7 +23,7 @@ struct Motion {
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct Animation;
+pub(crate) struct Animation;
 
 /// Creates an independently owned world. Failed configuration leaves any active
 /// BrowserApp untouched. Distinct AssetLibrary identities prevent GPU aliasing.
@@ -38,9 +38,54 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
         engine.app.add_plugins(CollisionPlugin);
     }
     engine.app.insert_resource(config.clone());
+    engine.app.insert_resource(look(config.scene, "scene")?);
     engine.app.init_resource::<FrameMetrics>();
     let world = engine.app.world_mut();
-    let meshes = create_assets(&mut world.resource_mut::<AssetLibrary>(), &config)?;
+    let moving_nodes = match config.scene {
+        StressScene::Field => field(world, &config)?,
+        StressScene::City => {
+            let city = city::populate(world, &config)?;
+            world.insert_resource(Workload {
+                transform_nodes: city.transform_nodes,
+                moving_nodes: city.moving_nodes,
+                sensor_nodes: city.sensor_nodes,
+                probes: city.probes,
+                overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
+            });
+            city.moving_nodes
+        }
+    };
+    if collision_enabled {
+        refresh_collision_world(world).map_err(|error| error.to_string())?;
+    }
+    set_view(&mut engine, "overview")?;
+    engine.app.add_plugins(FlyCameraPlugin);
+    if moving_nodes > 0 {
+        match config.scene {
+            StressScene::Field => {
+                engine
+                    .app
+                    .add_systems(FixedSimulation, animate.in_set(Animation));
+            }
+            StressScene::City => city::add_systems(&mut engine.app),
+        }
+    }
+    if config.queries_per_tick > 0 {
+        engine
+            .app
+            .add_systems(FixedSimulation, query_workload.after(Animation));
+    }
+    if collision_enabled {
+        metrics::add_timers(&mut engine.app);
+    }
+    Ok(engine)
+}
+
+/// The tower field: a grid of towers, optionally grouped under parents of
+/// 32, with the first `colliders` carrying colliders. Returns the moving
+/// node count.
+fn field(world: &mut World, config: &StressConfig) -> Result<u32, String> {
+    let meshes = create_assets(&mut world.resource_mut::<AssetLibrary>(), config)?;
     let mut parent_changes = Vec::with_capacity(if config.hierarchy {
         config.renderables as usize
     } else {
@@ -53,10 +98,10 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     let mut moving_nodes = 0;
     let mut sensor_nodes = 0;
     for index in 0..config.renderables {
-        let position = position_for_index(index, &config);
+        let position = position_for_index(index, config);
         if config.hierarchy && index % GROUP_SIZE == 0 {
             let end = (index + GROUP_SIZE - 1).min(config.renderables - 1);
-            let anchor = (position + position_for_index(end, &config)) * 0.5;
+            let anchor = (position + position_for_index(end, config)) * 0.5;
             let transform = Transform {
                 translation: anchor,
                 rotation: Quat::from_rotation_y(0.25 + (index % 5) as f32 * 0.1),
@@ -124,28 +169,10 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
         probes,
         overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
     });
-    if collision_enabled {
-        refresh_collision_world(world).map_err(|error| error.to_string())?;
-    }
-    set_view(&mut engine, "overview")?;
-    engine.app.add_plugins(FlyCameraPlugin);
-    if moving_nodes > 0 {
-        engine
-            .app
-            .add_systems(FixedSimulation, animate.in_set(Animation));
-    }
-    if config.queries_per_tick > 0 {
-        engine
-            .app
-            .add_systems(FixedSimulation, query_workload.after(Animation));
-    }
-    if collision_enabled {
-        metrics::add_timers(&mut engine.app);
-    }
-    Ok(engine)
+    Ok(moving_nodes)
 }
 
-fn position_for_index(index: u32, config: &StressConfig) -> Vec3 {
+pub(crate) fn position_for_index(index: u32, config: &StressConfig) -> Vec3 {
     if config.dense_colliders && index < config.colliders {
         let side = math::max((config.colliders as f32).cbrt().ceil(), 1.0) as u32;
         let center = (side - 1) as f32 * 0.125;
@@ -166,7 +193,7 @@ fn position_for_index(index: u32, config: &StressConfig) -> Vec3 {
     )
 }
 
-fn hash(mut value: u32) -> u32 {
+pub(crate) fn hash(mut value: u32) -> u32 {
     value ^= value >> 16;
     value = value.wrapping_mul(0x7feb_352d);
     value ^= value >> 15;
@@ -349,6 +376,23 @@ fn query_workload(
     metrics.queries_ms += metrics::now_ms() - start;
 }
 
+/// The lighting preset `name`: `golden`, `dusk`, `night` or `day`, or
+/// `scene` for the scene's own (night over the tower field, golden hour over
+/// the city).
+pub fn look(scene: StressScene, name: &str) -> Result<Atmosphere, String> {
+    Ok(match name {
+        "scene" => match scene {
+            StressScene::Field => Atmosphere::night(),
+            StressScene::City => Atmosphere::golden_hour(),
+        },
+        "golden" => Atmosphere::golden_hour(),
+        "dusk" => Atmosphere::dusk(),
+        "night" => Atmosphere::night(),
+        "day" => Atmosphere::day(),
+        _ => return Err("look must be scene, golden, dusk, night or day".into()),
+    })
+}
+
 pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
     let config = engine.app.world().resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
@@ -360,6 +404,16 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
             vertical_fov_radians: 55.0_f32.to_radians(),
             ..Camera::default()
         },
+        // Across the river toward the city's core.
+        "close" if config.scene == StressScene::City => {
+            let (position, target) = city::close_view(config);
+            Camera {
+                position,
+                target,
+                far: 5000.0,
+                ..Camera::default()
+            }
+        }
         "close" => Camera {
             position: Vec3::new(15.0, 15.0, 23.0),
             target: Vec3::new(0.0, 3.0, 0.0),

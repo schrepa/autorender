@@ -1,13 +1,15 @@
 //! Deterministic stress workloads built exclusively through the public engine SDK.
 #[cfg(target_arch = "wasm32")]
 mod browser;
+mod city;
 mod config;
 mod metrics;
 mod scene;
+mod shapes;
 
-pub use config::StressConfig;
+pub use config::{StressConfig, StressScene};
 pub use metrics::FrameMetrics;
-pub use scene::{create_workload, set_view};
+pub use scene::{create_workload, look, set_view};
 
 use engine::prelude::*;
 

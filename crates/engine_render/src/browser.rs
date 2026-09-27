@@ -10,8 +10,8 @@ use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
-    CameraUniform, ColorData, InstanceData, PoseData, SHADER, Vertex, clamped_extent,
-    mip_chain_bytes, mip_levels,
+    CameraUniform, ColorData, InstanceData, LightingUniform, PoseData, SHADER, Vertex,
+    clamped_extent, mip_chain_bytes, mip_levels,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
@@ -94,6 +94,11 @@ pub struct Renderer {
     camera_layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    // The scene's atmosphere (decision 018), written when it changes.
+    lighting_buffer: wgpu::Buffer,
+    lighting: Option<LightingUniform>,
+    // The sky behind all geometry, drawn last in the opaque pass.
+    sky_pipeline: wgpu::RenderPipeline,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     texture_layout: wgpu::BindGroupLayout,
@@ -222,27 +227,51 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let lighting_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/lighting-uniform"),
+            size: size_of::<LightingUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform_entry = |binding, visibility, size: usize| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size as u64),
+            },
+            count: None,
+        };
         let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/camera-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                // Temporal fragments read the jitter for motion vectors.
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(size_of::<CameraUniform>() as u64),
-                },
-                count: None,
-            }],
+            entries: &[
+                // Fragments read the eye, sky rays and the jitter.
+                uniform_entry(
+                    0,
+                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    size_of::<CameraUniform>(),
+                ),
+                uniform_entry(
+                    1,
+                    wgpu::ShaderStages::FRAGMENT,
+                    size_of::<LightingUniform>(),
+                ),
+            ],
         });
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("engine/camera-bind-group"),
             layout: &camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: lighting_buffer.as_entire_binding(),
+                },
+            ],
         });
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/base-color-layout"),
@@ -386,6 +415,14 @@ impl Renderer {
         };
         let pipeline = make_pipeline(false);
         let affine_pipeline = make_pipeline(true);
+        let sky_pipeline = sky_pipeline(
+            &device,
+            &shader,
+            &camera_layout,
+            "fs_sky",
+            &[Some(configuration.format.into())],
+            Some(configuration.format.is_srgb()),
+        );
         let instance_buffer =
             create_instance_buffer(&device, INITIAL_CAPACITY, size_of::<InstanceData>());
         if let Some(error) = scope.pop().await {
@@ -415,6 +452,9 @@ impl Renderer {
             camera_layout,
             camera_buffer,
             camera_bind_group,
+            lighting_buffer,
+            lighting: None,
+            sky_pipeline,
             meshes: BTreeMap::new(),
             textures: BTreeMap::new(),
             texture_layout,
@@ -839,7 +879,7 @@ impl Renderer {
         drop(profile_packing);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let camera = temporal_frame.as_ref().map_or_else(
-            || CameraUniform::exact(snapshot.view_projection),
+            || CameraUniform::exact(snapshot.view_projection, snapshot.camera_position),
             |frame| frame.camera,
         );
         let mut camera_upload_bytes = 0_u64;
@@ -848,6 +888,13 @@ impl Renderer {
                 .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera));
             self.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
+        }
+        let lighting = LightingUniform::from(&snapshot.atmosphere);
+        if self.lighting != Some(lighting) {
+            self.queue
+                .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
+            self.lighting = Some(lighting);
+            camera_upload_bytes += size_of::<LightingUniform>() as u64;
         }
         let mut instance_upload_bytes = 0_u64;
         let mut pose_upload_bytes = 0_u64;
@@ -1104,6 +1151,12 @@ impl Renderer {
                     }
                 }
             }
+            // Last, so depth testing leaves the sky only uncovered pixels.
+            pass.set_pipeline(
+                temporal_pass.map_or(&self.sky_pipeline, |(_, temporal)| temporal.sky_pipeline()),
+            );
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.draw(0..3, 0..1);
         }
         if let Some((frame, pass)) = temporal_pass {
             #[cfg(not(feature = "profiling"))]
@@ -1457,6 +1510,55 @@ fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) 
         size: (capacity * stride) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
+    })
+}
+
+/// The sky pass of `fragment` into `targets`: one triangle at the far
+/// plane, tested but not written against depth, over the camera bindings.
+/// `surface_srgb` tells a pass into the canvas whether it is sRGB.
+pub(crate) fn sky_pipeline(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    camera_layout: &wgpu::BindGroupLayout,
+    fragment: &str,
+    targets: &[Option<wgpu::ColorTargetState>],
+    surface_srgb: Option<bool>,
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("engine/sky-pipeline-layout"),
+        bind_group_layouts: &[Some(camera_layout)],
+        immediate_size: 0,
+    });
+    let constants = surface_srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("engine/sky"),
+        layout: Some(&layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_sky"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some(fragment),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
+                ..Default::default()
+            },
+            targets,
+        }),
+        multiview_mask: None,
+        cache: None,
     })
 }
 

@@ -4,6 +4,7 @@
 //! systems in [`FixedSimulation`] or [`Presentation`], then drive [`Engine`]
 //! from the platform event loop. Bevy's default `Main` schedules are not run.
 
+mod atmosphere;
 mod clock;
 mod culling;
 mod hierarchy;
@@ -16,6 +17,7 @@ mod scene;
 mod transform_edits;
 mod visibility_cache;
 
+pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
@@ -194,6 +196,7 @@ impl Engine {
             })
             .init_resource::<FrameTime>()
             .init_resource::<Camera>()
+            .init_resource::<Atmosphere>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -557,6 +560,8 @@ impl Engine {
         interpolation::prepare(self.app.world_mut(), mode);
         let world = self.app.world();
         snapshot.view_projection = world.resource::<Camera>().view_projection(aspect);
+        snapshot.camera_position = world.resource::<Camera>().eye();
+        snapshot.atmosphere = atmosphere::current(world);
         snapshot.instances.clear();
         snapshot.meshes.clear();
         snapshot.textures.clear();
@@ -782,15 +787,15 @@ pub mod prelude {
     pub use crate::DevStepError;
     pub use crate::math;
     pub use crate::{
-        Aabb, App, AssetBudget, AssetError, AssetLibrary, Camera, Cube, Engine, EngineConfig,
-        FixedSimulation, FixedTime, FrameReport, FrameTime, GlobalTransform, GlobalTransforms,
-        HierarchyError, HierarchyReport, InputState, InterpolateTransform, InterpolationError,
-        MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Material, MaterialHandle, Mesh, Mesh3d,
-        MeshHandle, MeshVertex, Parent, Plugin, Presentation, PresentationMode, PresentationState,
-        PresentedTransform, PresentedTransforms, RenderFrame, RenderInstance, RenderMesh,
-        RenderSnapshot, RenderTexture, Texture, TextureHandle, Transform, TransformIndex,
-        TransformPropagation, propagate_transforms, reset_all_interpolation, reset_interpolation,
-        set_parent, set_parents, valid_global_matrix,
+        Aabb, App, AssetBudget, AssetError, AssetLibrary, Atmosphere, Camera, Cube, Engine,
+        EngineConfig, FixedSimulation, FixedTime, FrameReport, FrameTime, GlobalTransform,
+        GlobalTransforms, HierarchyError, HierarchyReport, InputState, InterpolateTransform,
+        InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Material, MaterialHandle,
+        Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin, Presentation, PresentationMode,
+        PresentationState, PresentedTransform, PresentedTransforms, RenderFrame, RenderInstance,
+        RenderMesh, RenderSnapshot, RenderTexture, Texture, TextureHandle, Transform,
+        TransformIndex, TransformPropagation, propagate_transforms, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};

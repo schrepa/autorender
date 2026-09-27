@@ -639,6 +639,8 @@ mod tests {
                 .collect(),
             meshes,
             textures: Vec::new(),
+            camera_position: glam::Vec3::ZERO,
+            atmosphere: Default::default(),
             dropped_instances: 0,
             missing_assets: 0,
             invalid_transforms: 0,

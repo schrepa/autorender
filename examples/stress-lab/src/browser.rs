@@ -2,12 +2,14 @@ use engine::browser::{BrowserApp, BrowserStats};
 use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
-use crate::{FrameMetrics, StressConfig, create_workload, set_view, stress_observation};
+use crate::{FrameMetrics, StressConfig, create_workload, look, set_view, stress_observation};
 
 #[wasm_bindgen]
 pub struct StressGame {
     app: BrowserApp,
     generation: u32,
+    // The lighting preset, kept across workload changes.
+    look: String,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -24,6 +26,7 @@ impl StressGame {
         Ok(Self {
             app: BrowserApp::new(canvas, engine).await?,
             generation: 1,
+            look: "scene".into(),
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -36,7 +39,18 @@ impl StressGame {
             .map_err(js_error)?;
         self.app.engine = engine;
         self.generation = self.generation.saturating_add(1);
+        self.set_look(&self.look.clone())?;
         self.suspend();
+        Ok(())
+    }
+
+    /// Lighting preset: `scene` (the scene's own), `golden`, `dusk`,
+    /// `night` or `day`.
+    pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
+        let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
+        let atmosphere = look(scene, name).map_err(js_error)?;
+        self.app.engine.app.insert_resource(atmosphere);
+        self.look = name.into();
         Ok(())
     }
 

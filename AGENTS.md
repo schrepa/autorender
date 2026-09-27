@@ -14,7 +14,7 @@ Read `README.md` for setup and `docs/architecture.md` for the frame and ownershi
 - `crates/engine`: public façade and browser composition.
 - `examples/orbit-demo`: game client and its generated Wasm binding surface.
 - `examples/playground`: authored game, movement/collection plugin, scene reload example.
-- `examples/stress-lab`: deterministic configurable stress workloads, demo phase timers, production measurement UI. See `docs/stress-lab.md`.
+- `examples/stress-lab`: deterministic configurable stress workloads (a tower field and a procedural city, selected by `scene`), demo phase timers, production measurement UI. See `docs/stress-lab.md`.
 - `web`: thin TypeScript host, input/lifecycle handling, diagnostics display.
 - `tools/xtask`: shared build and verification commands.
 - `tools/assetc`: native bounded static GLB/PNG conversion; never a runtime dependency.
@@ -42,6 +42,8 @@ For GPU presentation read `docs/adr-014-gpu-presentation-and-culling.md`. Ordina
 For tick pipelining read `docs/adr-015-pipelined-fixed-ticks.md`. With GPU presentation `BrowserApp` runs one stage of the next fixed tick after each submitted frame and presents the previous interval until that tick is due. `Presentation` systems can observe an in-flight tick's gameplay effects and fixed time before its transforms, and its input is sampled up to two frames early; exact extraction, steps, resets and dev commands complete a started tick first. Opt out with `set_tick_pipelining(false)`, compare `?pipeline=off` in the Stress Lab, and count ticks as `fixed_tick` plus `fixed_tick_end` spans.
 
 For temporal antialiasing read `docs/adr-017-temporal-antialiasing.md`. `BrowserApp::set_temporal_antialiasing(true)` (Stress Lab `?taa=on`) jitters and resolves ordinary GPU-presented frames only; captures, previews, steps and CPU-presented frames stay exact, so compare TAA visually with ordinary frames (`web/scripts/taa-smoke.mjs`), not captures. Its GPU cost scales with canvas pixels: measure `taa_resolve` and `opaque_meshes` at identical canvas sizes, alternating the setting in one page when possible, and run the TAA and GPU-presentation smoke checks after shader or presentation changes.
+
+For lighting read `docs/adr-018-atmosphere-and-stylized-lighting.md`. Set the `Atmosphere` resource (presets `day`, `golden_hour`, `dusk`, `night`) instead of editing shader constants; snapshots carry it sanitized with the camera eye, and every path shades alike. Keep per-fragment shading light (the opaque pass bounds large scenes) and compare looks at identical canvas sizes; the Stress Lab accepts `?look=`.
 
 For collision read `docs/adr-009-collision-and-spatial-queries.md`. Install `CollisionPlugin` explicitly; author v4 `collider` fields independently of meshes. Query authoritative `CollisionWorld`, refresh after out-of-band edits, and handle completeness/errors. Sensor consumers run in `FixedPostSimulation` after `CollisionSystems::Detect`. Agents discover `Collider`/`CollisionWorld` and use `raycast`, `overlap`, `shape_cast`, and non-consuming `collision_events`. Geometry queries never advance simulation or consume events.
 

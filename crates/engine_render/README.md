@@ -44,8 +44,12 @@ engine structural revision. Camera finiteness is checked on every call. Source
 indices are refreshed after source-list edits. Public transform/color records
 use one reusable staging vector, with one contiguous
 draw range per mesh/texture pair. Material colors are per-instance data, so color variations share a
-draw. Instances are opaque, with depth testing, back-face culling, directional
-and ambient light, and distance fog. Inputs use right-handed world coordinates,
+draw. Instances are opaque, with depth testing and back-face culling, lit by
+the snapshot's `Atmosphere` ([decision 018](../../docs/adr-018-atmosphere-and-stylized-lighting.md)):
+sky-colored ambient light, a wrapped sun with a highlight, a rim light on walls,
+height fog in the color of the sky haze, filmic tone mapping and saturation,
+and a sky pass over uncovered pixels. The atmosphere uploads as a 96-byte
+uniform only when it changes. Inputs use right-handed world coordinates,
 a WebGPU 0..1 depth projection, linear RGB colors, and finite, nonsingular model
 transforms with positive determinant. Shader cofactors preserve normals under
 nonuniform positive scale. These transform requirements are client obligations;

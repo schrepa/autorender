@@ -9,10 +9,64 @@ world.
 | Preset | What it exercises |
 | --- | --- |
 | Maximum visual | 90,000 static objects, 32 meshes and textures; no collision plugin or motion systems |
+| Wild city | 90,000 objects of 52 shapes in a procedural city; 10% are traffic and machines, with hierarchies and interpolation |
 | Mixed | 10,000 objects, moving hierarchies/interpolation, 1,000 colliders and 32 queries per tick |
 | Transforms | 50,000 moving objects with parent hierarchies and interpolation |
 | Queries | 10,000 colliders, moving bounds and 256 ray/overlap/sweep queries per fixed tick |
 | Dense sensors | 2,500 sensor colliders in tight clusters; pair-budget exhaustion is deliberately observable |
+
+The `scene` configuration field selects the world: `field` (the tower
+field above, the default) or `city`. Configurations and links without `scene`
+build the tower field, unchanged.
+
+## Wild city
+
+The city is procedural Rust in `examples/stress-lab/src/city.rs` and
+`shapes.rs`, deterministic per seed. Every mesh fits the unit cube, so an
+object's scale is its size, and textures are generated at startup (façades of
+30 floors, roads, water, grass, foliage, metal, vehicles). The same settings
+apply with city meanings:
+
+- **Objects** are exactly the renderables. Static ones fill 20-unit blocks
+  between 4-unit streets outward from the center: a skyscraper core and a few
+  secondary downtowns, midtown, low-rise streets, industrial outskirts,
+  parks, plazas, construction sites, stadiums, a river with bridges and an
+  elevated rail ring around the core.
+- **Moving objects** are the traffic: cars and buses on block loops, trains
+  on the rail ring, boats, drones carrying loads, helicopters with spinning
+  rotors, crane jibs with their loads, Ferris wheels, rooftop beacons and
+  façade elevators. At 100% the city is traffic only.
+- **Parent hierarchies** make each block's parts children of a transform-only
+  block node, and moving assemblies (crane jib and load, wheel and cabins,
+  drone and cargo, helicopter and rotor) children of moving pivots. Without
+  them every part is a root whose motion reproduces the same poses; tests
+  compare both layouts. Block and pivot nodes stay within the 262,144
+  transform-node limit, falling back to roots.
+- **Mesh batches** keep 64 (all 52 shapes), 32, 8 or 1 shape; other shapes
+  fall back to a simpler one. Draw groups are the mesh and texture pairs in
+  use: 91 at 64, 36 at 8.
+- **Colliders** spread evenly over the objects; dense clusters place them on
+  crates at the tower field's cluster positions.
+
+The inside view looks across the river at the core from street level.
+The Lighting control picks an atmosphere ([decision 018](adr-018-atmosphere-and-stylized-lighting.md)):
+the scene's own (night over the tower field, golden hour over the city),
+golden hour, dusk, night or day. `look=golden|dusk|night|day` in the URL sets
+it at startup; it survives workload changes, and recordings and profiles
+report `look`.
+The city averages about 60 vertices and 29 triangles per object, against 24
+and 12 for the tower field, so the opaque pass does most of the added work.
+In Firefox 156 on the Intel iGPU (canvas 2262×987, 10% moving, no collision,
+two page loads each):
+
+| Workload | Frames per second | Opaque pass GPU (ms) | Main thread per frame (ms, median) |
+| --- | --- | --- | --- |
+| Tower field, 90,000 objects, 32 meshes | 118–120 | 1.95–2.0 | 1.0–1.2 |
+| City, 90,000 objects, 52 shapes | 101–104 | 4.2–4.75 | 1.3–1.4 |
+| City, 250,000 objects, 52 shapes | 69–71 | 8.4–9.8 | 2.5–3.3 |
+
+With 8 shapes (41 vertices per object) the 90,000-object city's opaque pass
+measured 3.1 ms. Temporal antialiasing adds its resolve (1.3 ms at this size).
 
 Overview, inside-field and look-away cameras isolate visibility changes. Culling
 and resolution controls isolate draw submission and pixel costs; mesh variety

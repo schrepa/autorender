@@ -5,11 +5,13 @@ import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressGame } from "../pkg/stress_lab";
 import "./stress.css";
 
+type Scene = "field" | "city";
 type Config = {
   seed: number; renderables: number; moving_percent: number; hierarchy: boolean;
   interpolation: boolean; colliders: number; sensor_percent: number; dense_colliders: boolean;
-  queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean;
+  queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean; scene: Scene;
 };
+const scenes: Scene[] = ["field", "city"];
 type Snapshot = {
   version: number; generation: number; frame: string; tick: string; config: Config;
   renderables: number; transform_nodes: number; moving_nodes: number; sensor_nodes: number;
@@ -32,9 +34,11 @@ const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
 const baseline: Config = { seed: 1337, renderables: 90000, moving_percent: 0, hierarchy: false, interpolation: false,
-  colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true };
+  colliders: 0, sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 32, textured: true, culling: true, scene: "field" };
 const presets: Record<string, { title: string; note: string; config: Config }> = {
   visual: { title: "MAXIMUM VISUAL LOAD", note: "Rendering, extraction, batching and texture sampling at maximum object count.", config: baseline },
+  city: { title: "WILD CITY", note: "52 building, vehicle and machine shapes: skyscrapers, traffic, trains, drones, cranes and Ferris wheels. Moving objects are the traffic.",
+    config: { ...baseline, scene: "city", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64 } },
   mixed: { title: "MIXED WORKLOAD", note: "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
     config: { ...baseline, renderables: 10000, moving_percent: 25, hierarchy: true, interpolation: true, colliders: 1000, sensor_percent: 10, queries_per_tick: 32, mesh_variety: 8 } },
   motion: { title: "TRANSFORM PRESSURE", note: "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
@@ -70,7 +74,7 @@ function notice(text: string, error = false) {
 function lock() {
   const value = recorder.active || !!profiler?.busy;
   el<HTMLFieldSetElement>("workload-fields").disabled = value;
-  for (const id of ["preset", "view", "resolution", "culling", "reset", "share"]) {
+  for (const id of ["preset", "view", "resolution", "look", "culling", "reset", "share"]) {
     (el(id) as HTMLButtonElement | HTMLSelectElement | HTMLInputElement).disabled = value;
   }
   controls?.setInputEnabled(!value);
@@ -105,11 +109,13 @@ function fill(config: Config) {
   for (const [id, field] of [["hierarchy", "hierarchy"], ["interpolation", "interpolation"], ["textures", "textured"], ["dense", "dense_colliders"], ["culling", "culling"]] as const) {
     el<HTMLInputElement>(id).checked = config[field];
   }
+  choice("scene").value = config.scene;
 }
 function readConfig(): Config {
   return { seed: number("seed"), renderables: number("objects"), moving_percent: number("moving"), colliders: number("colliders"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
-    interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling") };
+    interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
+    scene: choice("scene").value as Scene };
 }
 function apply(config: Config, title: string) {
   if (!controls) return;
@@ -185,16 +191,20 @@ const params = new URLSearchParams(location.search);
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
 const taa = params.get("taa") === "on" ? "on" : "off";
+// ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
+const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 if (params.has("config")) {
   try {
     const source = params.get("config")!;
     if (source.length > 2000) throw new Error("Workload link is too large.");
-    const parsed = JSON.parse(source) as Config;
+    const parsed = JSON.parse(source) as Partial<Config>;
+    // Links from before scenes existed build the tower field.
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) parsed.scene ??= "field";
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.keys(parsed).length !== Object.keys(baseline).length ||
-        Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof Config] !== typeof value)) {
+        Object.entries(baseline).some(([key, value]) => typeof parsed[key as keyof Config] !== typeof value) || !scenes.includes(parsed.scene as Scene)) {
       throw new Error("Expected the complete workload configuration.");
     }
-    activeConfig = parsed;
+    activeConfig = parsed as Config;
     activeTitle = "SHARED WORKLOAD";
   } catch (error) { notice(`Invalid workload link; using visual preset. ${String(error)}`, true); activeConfig = { ...baseline }; }
 }
@@ -230,6 +240,8 @@ boot({
     runtime.set_gpu_presentation(presentation === "gpu");
     runtime.set_tick_pipelining(pipeline === "on");
     runtime.set_temporal_antialiasing(taa === "on");
+    runtime.set_look(initialLook);
+    choice("look").value = initialLook;
     lock();
     el("active-preset").textContent = activeTitle;
     if (import.meta.env.MODE === "profiling") {
@@ -246,7 +258,7 @@ boot({
           metadata() {
             const data = snapshot(runtime);
             return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa,
+              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, look: choice("look").value,
               build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
               start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
               viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
@@ -309,6 +321,7 @@ el("view").addEventListener("change", () => mutate(runtime => runtime.set_view(c
 el("reset").addEventListener("click", () => { recorder.abort("camera_changed"); choice("view").value = "overview"; mutate(runtime => runtime.reset_camera()); }, listenerOptions);
 el("culling").addEventListener("change", () => mutate(runtime => { runtime.set_culling(checked("culling")); activeConfig.culling = checked("culling"); }), listenerOptions);
 el("resolution").addEventListener("change", () => mutate(() => controls!.setResolutionScale(number("resolution"))), listenerOptions);
+el("look").addEventListener("change", () => mutate(runtime => runtime.set_look(choice("look").value)), listenerOptions);
 el("record").addEventListener("click", () => {
   if (recorder.active) { recorder.abort("stopped_by_user"); return; }
   if (profiler?.busy) { notice("Finish the detailed profile before recording a baseline.", true); return; }
@@ -316,7 +329,7 @@ el("record").addEventListener("click", () => {
   try {
     const data = snapshot(game);
     recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa,
+      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, look: choice("look").value,
       build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
       start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
       scroll: [window.scrollX, window.scrollY],

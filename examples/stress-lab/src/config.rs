@@ -1,7 +1,19 @@
 use engine::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// The world a workload builds from its configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StressScene {
+    /// A grid of towers (the original workload).
+    #[default]
+    Field,
+    /// A procedural city of diverse buildings, traffic and machines.
+    City,
+}
+
 /// Configuration changes rebuild the owned workload outside the frame loop.
+/// Configurations without `scene` build the tower field.
 #[derive(Resource, Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StressConfig {
@@ -17,6 +29,7 @@ pub struct StressConfig {
     pub mesh_variety: u32,
     pub textured: bool,
     pub culling: bool,
+    pub scene: StressScene,
 }
 
 impl Default for StressConfig {
@@ -34,6 +47,7 @@ impl Default for StressConfig {
             mesh_variety: 8,
             textured: true,
             culling: true,
+            scene: StressScene::Field,
         }
     }
 }
@@ -61,8 +75,8 @@ impl StressConfig {
         if self.queries_per_tick > 512 {
             return Err("queries_per_tick must be in 0..=512".into());
         }
-        if ![1, 8, 32].contains(&self.mesh_variety) {
-            return Err("mesh_variety must be 1, 8 or 32".into());
+        if ![1, 8, 32, 64].contains(&self.mesh_variety) {
+            return Err("mesh_variety must be 1, 8, 32 or 64".into());
         }
         Ok(())
     }

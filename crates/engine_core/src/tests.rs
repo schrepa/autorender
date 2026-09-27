@@ -992,3 +992,27 @@ fn frames_during_an_in_flight_tick_present_the_last_gathered_inputs() {
     engine.advance(2.0 * delta);
     assert_eq!(engine.app.world().resource::<FixedTime>().tick, tick + 1);
 }
+
+#[test]
+fn frames_carry_the_atmosphere_and_the_eye() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    world.resource_mut::<Camera>().position = Vec3::new(1.0, 2.0, 3.0);
+    *world.resource_mut::<Atmosphere>() = Atmosphere::night();
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.camera_position, Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(snapshot.atmosphere, Atmosphere::night());
+    let frame = engine
+        .extract_frame(1.5, PresentationMode::Current)
+        .unwrap();
+    assert_eq!(frame.snapshot().atmosphere, Atmosphere::night());
+    assert_eq!(frame.snapshot().camera_position, Vec3::new(1.0, 2.0, 3.0));
+    // Unusable lighting and a non-finite eye fall back to defaults.
+    let world = engine.app.world_mut();
+    world.resource_mut::<Atmosphere>().fog_max = 2.0;
+    world.resource_mut::<Camera>().position = Vec3::NAN;
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.atmosphere, Atmosphere::default());
+    assert_eq!(snapshot.camera_position, Camera::default().position);
+}

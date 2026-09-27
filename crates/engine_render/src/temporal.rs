@@ -70,6 +70,7 @@ pub(crate) struct TemporalFrame {
 
 pub(crate) struct TemporalPass {
     mesh_pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
     pose_layout: wgpu::BindGroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_layout: wgpu::BindGroupLayout,
@@ -155,6 +156,14 @@ impl TemporalPass {
             multiview_mask: None,
             cache: None,
         });
+        let sky_pipeline = crate::browser::sky_pipeline(
+            device,
+            mesh_shader,
+            camera_layout,
+            "fs_sky_temporal",
+            &[Some(SCENE_FORMAT.into()), Some(MOTION_FORMAT.into())],
+            None,
+        );
         let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -242,6 +251,7 @@ impl TemporalPass {
         });
         Self {
             mesh_pipeline,
+            sky_pipeline,
             pose_layout,
             resolve_pipeline,
             resolve_layout,
@@ -310,7 +320,14 @@ impl TemporalPass {
         }
         TemporalFrame {
             parity: (self.frame & 1) as usize,
-            camera: CameraUniform::temporal(view_projection, previous, jitter, size.0, size.1),
+            camera: CameraUniform::temporal(
+                view_projection,
+                frame.snapshot().camera_position,
+                previous,
+                jitter,
+                size.0,
+                size.1,
+            ),
             rasterized: jittered(view_projection, jitter),
             history_valid: last.is_some(),
             motion_valid: last.is_some_and(|last| {
@@ -375,6 +392,10 @@ impl TemporalPass {
 
     pub(crate) fn mesh_pipeline(&self) -> &wgpu::RenderPipeline {
         &self.mesh_pipeline
+    }
+
+    pub(crate) fn sky_pipeline(&self) -> &wgpu::RenderPipeline {
+        &self.sky_pipeline
     }
 
     /// The scene color and motion attachments of the opaque pass.

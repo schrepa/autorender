@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn static_cache_camera_reuse_requires_committed_exact_bytes() {
         let mut cache = UploadCache::default();
-        let camera = CameraUniform::exact(Mat4::IDENTITY);
+        let camera = CameraUniform::exact(Mat4::IDENTITY, glam::Vec3::ZERO);
         assert!(cache.camera_needs_write(&camera));
         // Merely inspecting or preparing a skipped frame does not commit it.
         assert!(cache.camera_needs_write(&camera));

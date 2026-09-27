@@ -64,6 +64,11 @@ antialiasing of GPU-presented frames: jittered rasterization, per-pixel motion
 from alternating pose buffers, and one resolve pass that writes the canvas and
 the next history. Captures, previews and CPU-presented frames stay exact.
 
+[Decision 018](adr-018-atmosphere-and-stylized-lighting.md) makes lighting
+scene data: the `Atmosphere` resource (sun, sky colors, fog, grade) travels in
+every snapshot, and the renderer adds sky-colored ambient and height fog,
+filmic tone mapping and a sky pass behind geometry.
+
 ## Ownership and compatibility
 
 `engine` composes `engine_core` and `engine_render`. The renderer consumes core snapshots. Core imports neither rendering nor browser APIs. Platform glue is a module inside the façade until it needs a separate reusable interface. The demo imports the façade only. Host tools never become Wasm runtime dependencies.
