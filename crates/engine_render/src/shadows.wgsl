@@ -35,8 +35,12 @@ struct Cull {
     // Kept-map strips: light-space y of the first, the strip height and the
     // strip count.
     strips: vec4<f32>,
-    // x: near cascades drawn this frame.
-    cascades: vec4<u32>,
+    // Near cascades drawn this frame, and skinned slots of GPU-presented
+    // frames.
+    cascades: u32,
+    skinned: u32,
+    pad0: u32,
+    pad1: u32,
 }
 
 struct Candidate {
@@ -92,8 +96,21 @@ struct Counters {
     starts: array<u32>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
+// GPU-presented frames: skinned slots (decision 036), each with its
+// candidate position, draw group and joint count, and their world bounds
+// from their palettes (minimum, then maximum).
+struct Skinned {
+    slot: u32,
+    position: u32,
+    batch: u32,
+    joints: u32,
+}
+@group(0) @binding(10) var<storage, read> skinned: array<Skinned>;
+@group(0) @binding(11) var<storage, read> skin_bounds: array<vec4<f32>>;
 
 const STILLNESS: u32 = 1u;
+// Exact hex literal: browsers reject decimal spellings above f32::MAX.
+const F32_MAX: f32 = 0x1.fffffep+127f;
 const REFRESH: u32 = 2u;
 // Presentation's candidate flag of a valid pose.
 const VALID: u32 = 4u;
@@ -150,6 +167,44 @@ fn append(map: u32, group: u32, slot: u32) {
     ids[map * cull.capacity + group_start(group) + offset] = slot;
 }
 
+// Skinned slots of GPU-presented frames (decision 036): each casts into the
+// near cascades and the moving map its palette bounds overlap, like any
+// moving caster, and never into the kept map.
+@compute @workgroup_size(64)
+fn select_skinned(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= cull.skinned {
+        return;
+    }
+    let record = skinned[id.x];
+    if (flags[record.position] & VALID) == 0u {
+        return;
+    }
+    let group = batches[record.batch].group;
+    if group >= cull.groups {
+        return;
+    }
+    let world_low = skin_bounds[2u * id.x].xyz;
+    let world_high = skin_bounds[2u * id.x + 1u].xyz;
+    let world_center = (world_low + world_high) * 0.5;
+    let world_half = (world_high - world_low) * 0.5;
+    let light_center = vec3<f32>(dot(cull.light[0].xyz, world_center),
+        dot(cull.light[1].xyz, world_center), dot(cull.light[2].xyz, world_center));
+    let light_half = vec3<f32>(dot(abs(cull.light[0].xyz), world_half),
+        dot(abs(cull.light[1].xyz), world_half), dot(abs(cull.light[2].xyz), world_half));
+    let low = light_center - light_half;
+    let high = light_center + light_half;
+    // Bounds that are not finite cast into every map drawn each frame.
+    let bounded = all(abs(low) <= vec3<f32>(F32_MAX)) && all(abs(high) <= vec3<f32>(F32_MAX));
+    for (var cascade = 0u; cascade < cull.cascades; cascade++) {
+        if !bounded || overlaps(cull.near[cascade], low, high, cull.near_depths[cascade]) {
+            append(cascade, group, record.slot);
+        }
+    }
+    if !bounded || overlaps(cull.moving, low, high, cull.depths.w) {
+        append(MOVING_MAP, group, record.slot);
+    }
+}
+
 // Kept-map strips covering light-space heights `low` to `high`, one bit each.
 fn strip_bits(low: f32, high: f32) -> u32 {
     let count = cull.strips.z;
@@ -175,9 +230,14 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     // Joints place meshes with joints (decision 036), wherever their slot
-    // is: they cast into every map drawn each frame, never the kept one.
+    // is: GPU-presented frames select them by their palette bounds
+    // (`select_skinned`); others cast them into every map drawn each frame.
+    // Neither keeps them.
     if batch.bounds_min.w != 0.0 {
-        for (var cascade = 0u; cascade < cull.cascades.x; cascade++) {
+        if classify {
+            return;
+        }
+        for (var cascade = 0u; cascade < cull.cascades; cascade++) {
             append(cascade, batch.group, candidate.slot);
         }
         append(MOVING_MAP, batch.group, candidate.slot);
@@ -234,7 +294,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             stillness[candidate.slot] = vec2<u32>(key, packed);
         }
     }
-    for (var cascade = 0u; cascade < cull.cascades.x; cascade++) {
+    for (var cascade = 0u; cascade < cull.cascades; cascade++) {
         if overlaps(cull.near[cascade], low, high, cull.near_depths[cascade]) {
             append(cascade, batch.group, candidate.slot);
         }

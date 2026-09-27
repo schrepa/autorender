@@ -42,9 +42,19 @@ GPU and keep no complete per-node pose buffer.
   and use the pose for rigid slots of the same mesh. Owned snapshots draw
   every mesh rigidly.
 - **Bounds.** Joints place skinned vertices anywhere, so meshes with joints
-  are never frustum culled, cast into every shadow map drawn each frame and
-  never into the kept map (decision 020), and their temporally antialiased
-  frames (decision 017) always read the previous frame's palette for motion.
+  never enter the kept shadow map (decision 020), and their temporally
+  antialiased frames (decision 017) always read the previous frame's palette
+  for motion. Each vertex is a weighted average (weights are normalized and
+  not negative) of its mesh-bounded position moved by the joints of its
+  mesh, so on GPU-presented frames a pass after culling (`skin_bounds_pass`)
+  bounds every skinned slot by the union of its mesh bounds moved by each
+  of those joints' palette matrices (widened for f32 rounding; bounds that
+  are not finite cover everything). Slots outside the view are culled like
+  rigid ones, and shadow selection (`select_skinned`) casts each into the
+  near cascades and moving map its bounds overlap. CPU-prepared frames keep
+  every skinned slot visible and cast it into every map drawn each frame,
+  so their visible counts include skinned slots the GPU culled; pixels are
+  the same.
 - **Authoring.** Scene version 8 inline vertices take `joints` and
   `weights` (every vertex or none); mesh buffers carry them as `EMB2` flag
   4 (joints as four u16, then weights as four f32). Documents take `skins`
@@ -63,6 +73,11 @@ GPU and keep no complete per-node pose buffer.
 ## Consequences
 
 Palettes cost one compute invocation per joint on GPU-presented frames and
-48 bytes per joint of upload on CPU-prepared ones. Tighter bounds (from
-joint positions) would allow culling skinned meshes; dual quaternion
-skinning and more than four joints per vertex are not supported.
+48 bytes per joint of upload on CPU-prepared ones; bounds cost one
+invocation per skinned slot that visits its mesh's joints, and 48 bytes of
+storage per skinned slot. On the Stress Lab Metro scene (1,350 skinned people,
+Firefox on an integrated GPU) bounds cut the near cascades from 1.47 to
+0.43 ms in the overview (49.1 to 50.8 fps) and from 2.35 to 1.37 ms in the
+close view (54.1 to 57.4 fps). Per-joint bounds (each joint's vertices
+only) would be tighter; dual quaternion skinning and more than four joints
+per vertex are not supported.

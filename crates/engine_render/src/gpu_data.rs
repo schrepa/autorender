@@ -636,7 +636,7 @@ pub(crate) struct ShadowUniform {
     pub offsets: [f32; 4],
 }
 
-/// WGSL `Cull` uniform of `shadows.wgsl`: 224 bytes. Each draw group's ID
+/// WGSL `Cull` uniform of `shadows.wgsl`: 240 bytes. Each draw group's ID
 /// region start is in a storage buffer beside it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -666,8 +666,11 @@ pub(crate) struct ShadowCullUniform {
     /// Light-space y of the first kept-map strip, the strip height and the
     /// strip count; w unused.
     pub strips: [f32; 4],
-    /// Near cascades drawn this frame; yzw unused.
-    pub cascades: [u32; 4],
+    /// Near cascades drawn this frame.
+    pub cascades: u32,
+    /// Skinned slots `select_skinned` visits on GPU-presented frames.
+    pub skinned: u32,
+    pub pad: [u32; 2],
 }
 
 /// WGSL `Post` uniform of `effects.wgsl` (decisions 021, 024 and 025): 240
@@ -750,7 +753,7 @@ pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2]
     ]
 }
 
-/// `Frame` uniform of `presentation.wgsl`: 288 bytes, WGSL uniform layout.
+/// `Frame` uniform of `presentation.wgsl`: 304 bytes, WGSL uniform layout.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct PresentationFrame {
@@ -781,6 +784,10 @@ pub(crate) struct PresentationFrame {
     pub view_projection: [[f32; 4]; 4],
     /// Viewport width and height in pixels, and the depth pyramid's levels.
     pub viewport: [f32; 4],
+    /// Skinned slots (decision 036) whose palette bounds `skin_bounds_pass`
+    /// computes and culls.
+    pub skinned: u32,
+    pub pad: [u32; 3],
 }
 
 /// Candidate flags of `presentation.wgsl` the compaction passes gather.
@@ -805,8 +812,9 @@ pub(crate) struct CandidateData {
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
 /// mesh index count, shadow draw group (decision 020) and local bounds (48
-/// bytes). `bounds_min[3]` is 1 for meshes with joints (decision 036), which
-/// neither cull nor cast kept shadows: their joints place them.
+/// bytes). `bounds_min[3]` is 1 for meshes with joints (decision 036), whose
+/// joints place them: GPU-presented frames bound their slots by their
+/// palettes ([`SkinnedData`]), and they never cast kept shadows.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct BatchData {
@@ -816,6 +824,18 @@ pub(crate) struct BatchData {
     pub pad: u32,
     pub bounds_min: [f32; 4],
     pub bounds_max: [f32; 4],
+}
+
+/// A skinned slot of GPU-presented frames (decision 036): its slot, its
+/// candidate's draw-group position, its draw group and its mesh's joint count
+/// (16 bytes).
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct SkinnedData {
+    pub slot: u32,
+    pub position: u32,
+    pub batch: u32,
+    pub joints: u32,
 }
 
 /// Indexed indirect draw arguments written by the GPU (20 bytes).
@@ -1604,7 +1624,7 @@ mod tests {
 
     #[test]
     fn presentation_layouts_match_wgsl() {
-        assert_eq!(size_of::<PresentationFrame>(), 288);
+        assert_eq!(size_of::<PresentationFrame>(), 304);
         assert_eq!(std::mem::offset_of!(PresentationFrame, planes), 32);
         assert_eq!(
             std::mem::offset_of!(PresentationFrame, absolute_view_projection),
@@ -1617,7 +1637,9 @@ mod tests {
             208
         );
         assert_eq!(std::mem::offset_of!(PresentationFrame, viewport), 272);
+        assert_eq!(std::mem::offset_of!(PresentationFrame, skinned), 288);
         assert_eq!(size_of::<CandidateData>(), 16);
+        assert_eq!(size_of::<SkinnedData>(), 16);
         assert_eq!(size_of::<BatchData>(), 48);
         // Ten floats per pose, matching POSE_FLOATS in the shader.
         assert_eq!(size_of::<engine_core::NodePose>(), 40);
@@ -1637,7 +1659,8 @@ mod tests {
                 .unwrap();
             ty.inner.size(module.to_ctx())
         };
-        assert_eq!(size("Frame"), 288);
+        assert_eq!(size("Frame"), 304);
+        assert_eq!(size("Skinned"), size_of::<SkinnedData>() as u32);
         let (_, pose_floats) = module
             .constants
             .iter()

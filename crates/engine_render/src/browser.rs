@@ -1280,12 +1280,13 @@ impl Renderer {
                             meshes[&batch.mesh].index_count,
                             mesh.bounds(),
                             shadows.batch_group(index),
-                            mesh.joint_count() != 0,
+                            mesh.joint_count(),
                         )
                     },
                     !shadows.groups().is_empty(),
                     poses,
                     &self.palettes[poses_index],
+                    self.color_buffer.as_ref().expect("affine color buffer"),
                     poses_index,
                     self.pose_generation,
                     temporal_frame

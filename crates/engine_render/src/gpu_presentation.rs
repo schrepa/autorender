@@ -17,7 +17,7 @@ use engine_core::{
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::gpu_data::{
     BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, FLAG_PHASE1, FLAG_PHASE2,
-    FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, frustum_uniform,
+    FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, SkinnedData, frustum_uniform,
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
@@ -60,6 +60,7 @@ impl<'a> StageStamps<'a> {
 const GROUP: u32 = 256;
 const PARENT_GROUP: u32 = 64;
 const JOINT_GROUP: u32 = 64;
+const SKINNED_GROUP: u32 = 64;
 const ARGS_GROUP: u32 = 64;
 const LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const READBACKS: usize = 3;
@@ -75,6 +76,7 @@ struct Pipelines {
     compose_parents: wgpu::ComputePipeline,
     cull: wgpu::ComputePipeline,
     skin_palette: wgpu::ComputePipeline,
+    skin_bounds: wgpu::ComputePipeline,
     sum_groups: wgpu::ComputePipeline,
     scan_groups: wgpu::ComputePipeline,
     batch_args: wgpu::ComputePipeline,
@@ -89,6 +91,8 @@ struct BindGroups {
     cull: [Option<wgpu::BindGroup>; 2],
     // One per palette buffer, which alternate with the pose buffers.
     skin: [Option<wgpu::BindGroup>; 2],
+    // Skinned slots' bounds (decision 036), per pose and palette buffer.
+    skin_bounds: [Option<wgpu::BindGroup>; 2],
     sum_groups: wgpu::BindGroup,
     scan_groups: wgpu::BindGroup,
     batch_args: wgpu::BindGroup,
@@ -212,6 +216,15 @@ pub(crate) struct GpuPresentationPass {
     uploaded_nodes: Vec<u32>,
     uploaded_binds: Vec<PoseRows>,
     joint_count: u32,
+    // Skinned slots among the candidates (decision 036), with each draw
+    // group's joint count, and their world bounds from this frame's
+    // palettes.
+    skinned_capacity: usize,
+    skinned: wgpu::Buffer,
+    skin_bounds: wgpu::Buffer,
+    skinned_count: u32,
+    skinned_staging: Vec<SkinnedData>,
+    batch_joints: Vec<u32>,
     readbacks: Vec<VisibleReadback>,
     // Current poses staged between frames for the next gather, with the
     // `GpuPresentation::current_version` they were copied at.
@@ -266,6 +279,7 @@ impl GpuPresentationPass {
             compose_parents: pipeline("compose_parents"),
             cull: pipeline("cull"),
             skin_palette: pipeline("skin_palette"),
+            skin_bounds: pipeline("skin_bounds_pass"),
             sum_groups: pipeline("sum_groups"),
             scan_groups: pipeline("scan_groups"),
             batch_args: pipeline("batch_args"),
@@ -387,6 +401,12 @@ impl GpuPresentationPass {
             uploaded_nodes: Vec::new(),
             uploaded_binds: Vec::new(),
             joint_count: 0,
+            skinned_capacity: 0,
+            skinned: empty("engine/presentation-skinned"),
+            skin_bounds: empty("engine/presentation-skin-bounds"),
+            skinned_count: 0,
+            skinned_staging: Vec::new(),
+            batch_joints: Vec::new(),
             readbacks: Vec::new(),
             prestaged: None,
             last_visible: Rc::new(Cell::new(None)),
@@ -564,6 +584,9 @@ impl GpuPresentationPass {
             batches: &self.batches,
             flags: &self.scan,
             count: self.candidate_count,
+            skinned: &self.skinned,
+            skin_bounds: &self.skin_bounds,
+            skinned_count: self.skinned_count,
             generation: self.buffers_generation,
         }
     }
@@ -573,6 +596,7 @@ impl GpuPresentationPass {
         device: &wgpu::Device,
         poses: &wgpu::Buffer,
         palette: &wgpu::Buffer,
+        colors: &wgpu::Buffer,
         index: usize,
     ) {
         if let Some(groups) = &self.bind_groups {
@@ -583,6 +607,19 @@ impl GpuPresentationPass {
             if self.bind_groups.as_ref().expect("checked above").skin[index].is_none() {
                 let skin = self.skin_group(device, palette);
                 self.bind_groups.as_mut().expect("checked above").skin[index] = Some(skin);
+            }
+            if self
+                .bind_groups
+                .as_ref()
+                .expect("checked above")
+                .skin_bounds[index]
+                .is_none()
+            {
+                let bounds = self.skin_bounds_group(device, poses, palette, colors);
+                self.bind_groups
+                    .as_mut()
+                    .expect("checked above")
+                    .skin_bounds[index] = Some(bounds);
             }
             return;
         }
@@ -598,6 +635,8 @@ impl GpuPresentationPass {
         cull[index] = Some(self.cull_group(device, poses));
         let mut skin = [None, None];
         skin[index] = Some(self.skin_group(device, palette));
+        let mut skin_bounds = [None, None];
+        skin_bounds[index] = Some(self.skin_bounds_group(device, poses, palette, colors));
         self.bind_groups = Some(BindGroups {
             shift_previous: group(
                 &pipelines.shift_previous,
@@ -618,6 +657,7 @@ impl GpuPresentationPass {
             ),
             cull,
             skin,
+            skin_bounds,
             sum_groups: group(
                 &pipelines.sum_groups,
                 "engine/presentation-sum-group",
@@ -722,6 +762,29 @@ impl GpuPresentationPass {
         })
     }
 
+    fn skin_bounds_group(
+        &self,
+        device: &wgpu::Device,
+        poses: &wgpu::Buffer,
+        palette: &wgpu::Buffer,
+        colors: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/presentation-skin-bounds-group"),
+            layout: &self.pipelines.skin_bounds.get_bind_group_layout(0),
+            entries: &[
+                entry(0, &self.frame),
+                entry(7, &self.batches),
+                entry(8, poses),
+                entry(9, &self.scan),
+                entry(17, palette),
+                entry(20, colors),
+                entry(21, &self.skinned),
+                entry(22, &self.skin_bounds),
+            ],
+        })
+    }
+
     /// Uploads skinned slots' joints (decision 036) when they changed.
     fn prepare_joints(
         &mut self,
@@ -788,10 +851,11 @@ impl GpuPresentationPass {
     /// against `view_projection`, the projection the frame rasterizes.
     /// With `motion`, visible IDs of moving slots carry `MOVED_SLOT`.
     /// `batch_meta` gives each plan batch's index count, mesh bounds, shadow
-    /// draw group and whether its mesh has joints; `shadow_groups`
-    /// distinguishes plans whose batch records carry shadow groups. Skinned
-    /// slots' palettes (decision 036) are written into `palette`, of the
-    /// pose storage generation, from the frame's joints. With `occlusion`
+    /// draw group and its mesh's joint count; `shadow_groups` distinguishes
+    /// plans whose batch records carry shadow groups. Skinned slots'
+    /// palettes (decision 036) are written into `palette`, of the pose
+    /// storage generation, from the frame's joints, and bound with their
+    /// offsets in the slot `colors`. With `occlusion`
     /// (the viewport's width and height and the depth pyramid's levels),
     /// frames that cull without an instance budget draw in two phases around
     /// the occlusion test (decision 040).
@@ -805,10 +869,11 @@ impl GpuPresentationPass {
         frame: &RenderFrame<'_>,
         gpu: &GpuPresentation<'_>,
         plan: &BatchPlan,
-        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, bool),
+        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, u32),
         shadow_groups: bool,
         poses: &wgpu::Buffer,
         palette: &wgpu::Buffer,
+        colors: &wgpu::Buffer,
         poses_index: usize,
         poses_generation: u64,
         view_projection: glam::Mat4,
@@ -833,7 +898,7 @@ impl GpuPresentationPass {
             self.poses_generation = Some(poses_generation);
             self.bind_groups = None;
         }
-        self.bind_groups(device, poses, palette, poses_index);
+        self.bind_groups(device, poses, palette, colors, poses_index);
         self.poses_index = poses_index;
 
         // Node inputs: records newer than the last uploaded gather.
@@ -1049,8 +1114,11 @@ impl GpuPresentationPass {
             self.candidate_staging.reserve_exact(candidates);
             self.batch_staging.clear();
             self.batch_staging.reserve_exact(plan.batches.len());
+            self.batch_joints.clear();
             for (index, batch) in plan.batches.iter().enumerate() {
-                let (index_count, bounds, group, skinned) = batch_meta(index, batch);
+                let (index_count, bounds, group, joints) = batch_meta(index, batch);
+                let skinned = joints != 0;
+                self.batch_joints.push(joints);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
                 self.batch_staging.push(BatchData {
                     start: batch.instances.start,
@@ -1102,6 +1170,45 @@ impl GpuPresentationPass {
                     *position = u32::MAX;
                 }
             }
+            // Skinned slots (decision 036), in slot order.
+            self.skinned_staging.clear();
+            self.skinned_staging
+                .extend(self.slot_staging.iter().filter_map(|candidate| {
+                    let joints = self.batch_joints[candidate.batch as usize];
+                    (joints != 0).then_some(SkinnedData {
+                        slot: candidate.slot,
+                        position: candidate.position,
+                        batch: candidate.batch,
+                        joints,
+                    })
+                }));
+            if self.skinned_staging.len() > self.skinned_capacity {
+                self.skinned_capacity = grow(self.skinned_staging.len());
+                let capacity = self.skinned_capacity as u64;
+                self.skinned = storage(
+                    device,
+                    "engine/presentation-skinned",
+                    capacity * size_of::<SkinnedData>() as u64,
+                    wgpu::BufferUsages::empty(),
+                );
+                // A minimum and a maximum per skinned slot.
+                self.skin_bounds = storage(
+                    device,
+                    "engine/presentation-skin-bounds",
+                    capacity * 32,
+                    wgpu::BufferUsages::empty(),
+                );
+                self.bind_groups = None;
+                self.buffers_generation += 1;
+            }
+            if !self.skinned_staging.is_empty() {
+                queue.write_buffer(
+                    &self.skinned,
+                    0,
+                    bytemuck::cast_slice(&self.skinned_staging),
+                );
+            }
+            self.skinned_count = self.skinned_staging.len() as u32;
             if !self.candidate_staging.is_empty() {
                 queue.write_buffer(
                     &self.candidates,
@@ -1119,12 +1226,15 @@ impl GpuPresentationPass {
             }
             prepared.group_upload_bytes =
                 (2 * self.candidate_staging.len() * size_of::<CandidateData>()
-                    + self.batch_staging.len() * size_of::<BatchData>()) as u64;
+                    + self.batch_staging.len() * size_of::<BatchData>()
+                    + self.skinned_staging.len() * size_of::<SkinnedData>()) as u64;
             self.candidate_count = candidates as u32;
             self.batch_count = plan.batches.len() as u32;
             self.groups_key = Some(key);
         }
         prepared.candidates = self.candidate_count;
+        // Groups replaced with grown skinned storage.
+        self.bind_groups(device, poses, palette, colors, poses_index);
 
         // A view-projection the CPU frustum rejects disables culling there too.
         let (planes, absolute) = frustum_uniform(view_projection);
@@ -1162,6 +1272,8 @@ impl GpuPresentationPass {
             occlusion: u32::from(self.occlusion),
             view_projection: view_projection.to_cols_array_2d(),
             viewport: [width as f32, height as f32, levels as f32, 0.0],
+            skinned: self.skinned_count,
+            pad: [0; 3],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         if self.occlusion {
@@ -1221,6 +1333,18 @@ impl GpuPresentationPass {
                     &[],
                 );
                 pass.dispatch_workgroups(workgroups, 1, 1);
+                // Skinned slots' bounds from their palettes, culled.
+                if self.skinned_count != 0 {
+                    pass.set_pipeline(&self.pipelines.skin_bounds);
+                    pass.set_bind_group(
+                        0,
+                        groups.skin_bounds[self.poses_index]
+                            .as_ref()
+                            .expect("bound in prepare"),
+                        &[],
+                    );
+                    pass.dispatch_workgroups(self.skinned_count.div_ceil(SKINNED_GROUP), 1, 1);
+                }
                 pass.set_pipeline(&self.pipelines.sum_groups);
                 pass.set_bind_group(0, &groups.sum_groups, &[]);
                 pass.dispatch_workgroups(workgroups, 1, 1);

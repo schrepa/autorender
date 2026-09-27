@@ -33,6 +33,11 @@ struct Frame {
     view_projection: mat4x4<f32>,
     // Viewport width and height in pixels, and the depth pyramid's levels.
     viewport: vec4<f32>,
+    // Skinned slots (decision 036) whose bounds `skin_bounds` computes.
+    skinned: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 }
 
 // One local pose per node in 10 floats: [t.xyz, s.x, r.xyzw, s.yz]. Current
@@ -119,6 +124,23 @@ struct Level {
 // one; and the count of candidates phase two finds hidden.
 @group(0) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(0) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
+// Skinned slots (decision 036): each slot's palette offset plus one (in
+// `flags`), the skinned slots with their candidate position, draw group and
+// joint count, and each one's world bounds (minimum, then maximum).
+struct SlotColor {
+    color: vec2<u32>,
+    surface: u32,
+    flags: u32,
+}
+struct Skinned {
+    slot: u32,
+    position: u32,
+    batch: u32,
+    joints: u32,
+}
+@group(0) @binding(20) var<storage, read> slot_colors: array<SlotColor>;
+@group(0) @binding(21) var<storage, read> skinned: array<Skinned>;
+@group(0) @binding(22) var<storage, read_write> skin_bounds: array<vec4<f32>>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -529,6 +551,61 @@ fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     palette[id.x] = matrix_rows(model * rows_matrix(inverse_binds[id.x]));
+}
+
+// Meshes with joints (decision 036): each skinned slot's world bounds, the
+// union of its mesh's bounds moved by each joint of its palette (its
+// vertices are weighted averages of those points), then culled against the
+// view like any slot. A slot without a palette draws rigidly by its pose.
+@compute @workgroup_size(64)
+fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.skinned {
+        return;
+    }
+    let record = skinned[id.x];
+    let batch = batches[record.batch];
+    let center = (batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5;
+    let half = (batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5;
+    var low = vec3<f32>(F32_MAX);
+    var high = vec3<f32>(-F32_MAX);
+    let offset = slot_colors[record.slot].flags;
+    let joints = select(1u, record.joints, offset != 0u);
+    for (var joint = 0u; joint < joints; joint++) {
+        var rows: Rows;
+        if offset == 0u {
+            rows = poses[record.slot];
+        } else {
+            rows = palette[offset - 1u + joint];
+        }
+        let world_center = vec3<f32>(dot(rows.r0.xyz, center) + rows.r0.w,
+            dot(rows.r1.xyz, center) + rows.r1.w, dot(rows.r2.xyz, center) + rows.r2.w);
+        let world_half = vec3<f32>(dot(abs(rows.r0.xyz), half), dot(abs(rows.r1.xyz), half),
+            dot(abs(rows.r2.xyz), half));
+        low = min(low, world_center - world_half);
+        high = max(high, world_center + world_half);
+    }
+    // Widened by the rounding of blends and of these bounds; bounds that
+    // are not finite cover everything: never culled, cast into every map.
+    let pad = max(abs(low), abs(high)) * 0x1p-20f;
+    low -= pad;
+    high += pad;
+    if !(all(low >= vec3<f32>(-F32_MAX)) && all(high <= vec3<f32>(F32_MAX))) {
+        low = vec3<f32>(-F32_MAX);
+        high = vec3<f32>(F32_MAX);
+    }
+    skin_bounds[2u * id.x] = vec4<f32>(low, 0.0);
+    skin_bounds[2u * id.x + 1u] = vec4<f32>(high, 0.0);
+    var flags = scan[record.position];
+    let identity = mat4x4<f32>(
+        vec4<f32>(1.0, 0.0, 0.0, 0.0),
+        vec4<f32>(0.0, 1.0, 0.0, 0.0),
+        vec4<f32>(0.0, 0.0, 1.0, 0.0),
+        vec4<f32>(0.0, 0.0, 0.0, 1.0),
+    );
+    if (flags & VISIBLE) != 0u && outside(identity, low, high) {
+        flags &= ~(VISIBLE | MOVING | PHASE1);
+        scan[record.position] = flags;
+    }
 }
 
 // Visible count of every group of 256 candidates in draw-group order.

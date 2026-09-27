@@ -43,6 +43,7 @@ const MAPS: usize = MAX_CASCADES + 2;
 const VIEW_STRIDE: u64 = 256;
 const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
 const GROUP: u32 = 256;
+const SKINNED_GROUP: u32 = 64;
 const READBACKS: usize = 3;
 // Mode bits of the selection pass.
 const STILLNESS: u32 = 1;
@@ -96,6 +97,11 @@ pub(crate) struct Presented<'a> {
     pub batches: &'a wgpu::Buffer,
     pub flags: &'a wgpu::Buffer,
     pub count: u32,
+    /// Skinned slots (decision 036) and their world bounds from this
+    /// frame's palettes.
+    pub skinned: &'a wgpu::Buffer,
+    pub skin_bounds: &'a wgpu::Buffer,
+    pub skinned_count: u32,
     /// Advances when any of these buffers is replaced.
     pub generation: u64,
 }
@@ -126,6 +132,8 @@ pub(crate) struct ShadowEncoded {
 pub(crate) struct ShadowFrame {
     source: Source,
     candidates: u32,
+    // Skinned slots selected by their palette bounds (GPU-presented frames).
+    skinned: u32,
     // Near cascades drawn and looked up.
     cascades: u32,
     refresh: Option<Refresh>,
@@ -251,6 +259,9 @@ struct ShadowPipelines {
     select: wgpu::ComputePipeline,
     count: wgpu::ComputePipeline,
     select_layout: wgpu::BindGroupLayout,
+    // Skinned casters of GPU-presented frames (decision 036).
+    select_skinned: wgpu::ComputePipeline,
+    skinned_layout: wgpu::BindGroupLayout,
     affine: wgpu::RenderPipeline,
     full: wgpu::RenderPipeline,
     // Alpha-masked casters (decision 031), with a material group.
@@ -292,21 +303,20 @@ impl ShadowPipelines {
             },
             count: None,
         };
+        let cull_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size_of::<ShadowCullUniform>() as u64),
+            },
+            count: None,
+        };
         let select_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-select-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            size_of::<ShadowCullUniform>() as u64
-                        ),
-                    },
-                    count: None,
-                },
+                cull_entry,
                 storage_entry(1, true),
                 storage_entry(2, true),
                 storage_entry(3, true),
@@ -334,6 +344,35 @@ impl ShadowPipelines {
         };
         let select = compute("select_casters");
         let count = compute("count_casters");
+        // Skinned casters (decision 036) bind their palette bounds instead of
+        // candidates, poses and stillness: within eight storage buffers.
+        let skinned_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/shadow-skinned-layout"),
+            entries: &[
+                cull_entry,
+                storage_entry(2, true),
+                storage_entry(4, true),
+                storage_entry(6, false),
+                storage_entry(7, false),
+                storage_entry(8, false),
+                storage_entry(10, true),
+                storage_entry(11, true),
+            ],
+        });
+        let skinned_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/shadow-skinned-pipeline-layout"),
+                bind_group_layouts: &[Some(&skinned_layout)],
+                immediate_size: 0,
+            });
+        let select_skinned = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("select_skinned"),
+            layout: Some(&skinned_pipeline_layout),
+            module: &module,
+            entry_point: Some("select_skinned"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
         let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-view-layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -572,6 +611,8 @@ impl ShadowPipelines {
             select,
             count,
             select_layout,
+            select_skinned,
+            skinned_layout,
             affine,
             full,
             affine_masked,
@@ -633,6 +674,9 @@ pub(crate) struct ShadowPass {
     listed_group_staging: Vec<BatchData>,
     // Selection bindings and the inputs they were built for.
     select_group: Option<(SelectKey, wgpu::BindGroup)>,
+    // Skinned selection's bindings (decision 036) and the buffer and
+    // presentation generations they were built for.
+    skinned_group: Option<((u64, u64), wgpu::BindGroup)>,
     // Advances when this pass replaces a selection buffer.
     buffers_generation: u64,
     groups: Vec<ShadowGroup>,
@@ -744,6 +788,7 @@ impl ShadowPass {
             listed_staging: Vec::new(),
             listed_group_staging: Vec::new(),
             select_group: None,
+            skinned_group: None,
             buffers_generation: 0,
             groups: Vec::new(),
             group_total: 0,
@@ -1198,6 +1243,10 @@ impl ShadowPass {
             (_, Source::Listed) => self.listed_count,
             _ => 0,
         };
+        let skinned = match (&presented, self.source) {
+            (Some(presented), Source::Presented) => presented.skinned_count,
+            _ => 0,
+        };
         if self.source != Source::Snapshot {
             let strip_height = (far.rect[3] - far.rect[1]) / STRIPS as f32;
             let refresh_rect = match refresh {
@@ -1266,7 +1315,9 @@ impl ShadowPass {
                     .filter(|(set, _)| *set)
                     .fold(0, |mode, (_, bit)| mode | bit),
                 strips: [far.rect[1], strip_height, STRIPS as f32, 0.0],
-                cascades: [near.len() as u32, 0, 0, 0],
+                cascades: near.len() as u32,
+                skinned,
+                pad: [0; 2],
             };
             queue.write_buffer(
                 &self.pipelines.as_ref().expect("created above").cull,
@@ -1376,11 +1427,37 @@ impl ShadowPass {
                     });
                     self.select_group = Some((key, group));
                 }
+                if let Some(presented) = presented.as_ref().filter(|_| skinned != 0) {
+                    let key = (self.buffers_generation, presented.generation);
+                    if self
+                        .skinned_group
+                        .as_ref()
+                        .is_none_or(|(built, _)| *built != key)
+                    {
+                        let pipelines = self.pipelines.as_ref().expect("created above");
+                        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("engine/shadow-skinned-group"),
+                            layout: &pipelines.skinned_layout,
+                            entries: &[
+                                entry(0, &pipelines.cull),
+                                entry(2, presented.batches),
+                                entry(4, presented.flags),
+                                entry(6, &self.ids),
+                                entry(7, &self.args),
+                                entry(8, &self.dirty),
+                                entry(10, presented.skinned),
+                                entry(11, presented.skin_bounds),
+                            ],
+                        });
+                        self.skinned_group = Some((key, group));
+                    }
+                }
             }
         }
         Some(ShadowFrame {
             source: self.source,
             candidates,
+            skinned,
             cascades: near.len() as u32,
             refresh,
             pose_index,
@@ -1452,6 +1529,15 @@ impl ShadowPass {
                 pass.set_pipeline(&pipelines.select);
                 pass.set_bind_group(0, group, &[]);
                 pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
+                // Skinned casters by their palette bounds (decision 036).
+                if frame.skinned != 0
+                    && let Some((_, skinned)) = &self.skinned_group
+                {
+                    pass.set_pipeline(&pipelines.select_skinned);
+                    pass.set_bind_group(0, skinned, &[]);
+                    pass.dispatch_workgroups(frame.skinned.div_ceil(SKINNED_GROUP), 1, 1);
+                    pass.set_bind_group(0, group, &[]);
+                }
                 pass.set_pipeline(&pipelines.count);
                 pass.dispatch_workgroups(1, 1, 1);
                 timed |= u16::from(timestamps.is_some());
