@@ -25,6 +25,10 @@ pub struct RenderStats {
     /// instances the occlusion test left undrawn, read back with
     /// `gpu_visible`; `None` otherwise.
     pub occluded_instances: Option<u32>,
+    /// GPU-culled frames with sub-pixel culling (decision 041): visible
+    /// instances whose bounds cover no pixel center, left undrawn, read back
+    /// with `gpu_visible`; `None` otherwise.
+    pub subpixel_instances: Option<u32>,
     /// Number of distinct meshes retained on the GPU.
     pub resident_meshes: u32,
     /// Vertex/index bytes initialized for meshes first seen this frame.

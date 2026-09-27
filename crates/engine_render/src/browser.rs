@@ -180,6 +180,9 @@ pub struct Renderer {
     // turned off, and its depth pyramid.
     occlusion_culling: bool,
     depth_pyramid: Option<DepthPyramid>,
+    // Sub-pixel culling of GPU-presented frames (decision 041), on unless
+    // turned off.
+    subpixel_culling: bool,
     // Poses of odd temporal frames with the colors, for transparent draws
     // of pose storage generation `.0`.
     alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
@@ -615,6 +618,7 @@ impl Renderer {
             particles: None,
             decals: None,
             occlusion_culling: true,
+            subpixel_culling: true,
             depth_pyramid: None,
             alternate_pose_group: None,
             palettes,
@@ -740,6 +744,18 @@ impl Renderer {
 
     pub fn occlusion_culling(&self) -> bool {
         self.occlusion_culling
+    }
+
+    /// Enables sub-pixel culling of GPU-presented frames (decision 041), on
+    /// by default: frames that cull without an instance budget leave
+    /// visible instances whose projected bounds cover no pixel center
+    /// undrawn. They could produce no fragments, so output is unchanged.
+    pub fn set_subpixel_culling(&mut self, enabled: bool) {
+        self.subpixel_culling = enabled;
+    }
+
+    pub fn subpixel_culling(&self) -> bool {
+        self.subpixel_culling
     }
 
     pub fn temporal_antialiasing(&self) -> bool {
@@ -1296,6 +1312,8 @@ impl Renderer {
                         .as_ref()
                         .is_some_and(|temporal| temporal.motion_valid),
                     occlusion,
+                    self.subpixel_culling,
+                    (self.configuration.width, self.configuration.height),
                     stamps,
                 ),
             )
@@ -2164,6 +2182,11 @@ impl Renderer {
             } else {
                 None
             },
+            subpixel_instances: if gpu_mode && self.subpixel_culling {
+                self.gpu_presentation.subpixel()
+            } else {
+                None
+            },
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
@@ -2271,6 +2294,9 @@ impl Renderer {
             engine_profile::counter("render.decals", f64::from(stats.decals));
             if let Some(occluded) = stats.occluded_instances {
                 engine_profile::counter("render.occluded_instances", f64::from(occluded));
+            }
+            if let Some(subpixel) = stats.subpixel_instances {
+                engine_profile::counter("render.subpixel_instances", f64::from(subpixel));
             }
             engine_profile::counter(
                 "memory.gpu_transparent_bytes",

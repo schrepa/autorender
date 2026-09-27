@@ -151,6 +151,10 @@ pub struct FrameStats {
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; `None` without occlusion culling.
     pub occluded_instances: Option<u32>,
+    /// Visible instances left undrawn because their bounds cover no pixel
+    /// center (decision 041), read back a few frames late; `None` without
+    /// sub-pixel culling.
+    pub subpixel_instances: Option<u32>,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -216,6 +220,10 @@ pub struct BrowserStats {
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; undefined without occlusion culling.
     pub occluded_instances: Option<u32>,
+    /// Visible instances left undrawn because their bounds cover no pixel
+    /// center (decision 041), read back a few frames late; undefined without
+    /// sub-pixel culling.
+    pub subpixel_instances: Option<u32>,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -274,6 +282,7 @@ impl From<FrameStats> for BrowserStats {
             decals: stats.decals,
             dropped_decals: stats.dropped_decals,
             occluded_instances: stats.occluded_instances,
+            subpixel_instances: stats.subpixel_instances,
         }
     }
 }
@@ -372,6 +381,18 @@ impl BrowserApp {
 
     pub fn occlusion_culling(&self) -> bool {
         self.renderer.occlusion_culling()
+    }
+
+    /// Sub-pixel culling of GPU-presented frames (decision 041), on by
+    /// default: frames that cull without an instance budget leave visible
+    /// instances whose projected bounds cover no pixel center undrawn.
+    /// Output is unchanged; they could produce no fragments.
+    pub fn set_subpixel_culling(&mut self, enabled: bool) {
+        self.renderer.set_subpixel_culling(enabled);
+    }
+
+    pub fn subpixel_culling(&self) -> bool {
+        self.renderer.subpixel_culling()
     }
 
     /// Advance once per animation frame; input is a bounded, owned value.
@@ -633,6 +654,7 @@ impl BrowserApp {
             decals: rendered.decals,
             dropped_decals: rendered.dropped_decals,
             occluded_instances: rendered.occluded_instances,
+            subpixel_instances: rendered.subpixel_instances,
         };
         Ok(())
     }

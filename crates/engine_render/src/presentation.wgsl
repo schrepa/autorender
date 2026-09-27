@@ -35,7 +35,9 @@ struct Frame {
     viewport: vec4<f32>,
     // Skinned slots (decision 036) whose bounds `skin_bounds` computes.
     skinned: u32,
-    pad0: u32,
+    // Nonzero when frustum-visible candidates whose bounds cover no pixel
+    // center are left undrawn (decision 041).
+    subpixel: u32,
     pad1: u32,
     pad2: u32,
 }
@@ -159,6 +161,13 @@ const VALID: u32 = 4u;
 const PHASE1: u32 = 8u;
 const PHASE2: u32 = 16u;
 const OCCLUDED: u32 = 32u;
+// Sub-pixel culling (decision 041): a frustum-visible candidate whose
+// projected bounds cover no pixel center, counted visible and never drawn.
+const SUBPIXEL: u32 = 64u;
+// Pixels the projected bounds are widened by before looking for pixel
+// centers: covers the rasterizer's snapping of vertices to its subpixel grid
+// and rounding differences between this projection and the vertex shaders'.
+const SUBPIXEL_MARGIN: f32 = 0.0625;
 // Depth a box must lie beyond the pyramid to count as hidden: more than
 // depth-buffer steps and the projection's rounding, so boxes touching what
 // is in front of them (a sign on a wall) keep drawing in phase one, in the
@@ -421,6 +430,13 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         let skinned = batch.bounds_min.w != 0.0;
         if skinned || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
             visible |= VISIBLE;
+        }
+        if (visible & VISIBLE) != 0u && !skinned && frame.subpixel != 0u
+                && covers_no_pixel(frame.view_projection * model, batch.bounds_min.xyz,
+                    batch.bounds_max.xyz) {
+            visible = (visible & ~VISIBLE) | SUBPIXEL;
+        }
+        if (visible & VISIBLE) != 0u {
             // Inactive nodes display unchanged authority rows. A node that
             // stopped this interval moves by the rest of its last one: its
             // motion is left to the camera and the history clamp.
@@ -437,6 +453,41 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     scan[candidate.position] = visible;
+}
+
+// Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
+// covers no pixel center (decision 041): the screen rectangle of its
+// projection, widened by SUBPIXEL_MARGIN, holds no pixel center on some
+// axis, so no triangle within it can produce a fragment. Boxes reaching the
+// eye plane or far outside the viewport, and non-finite ones, cover some.
+fn covers_no_pixel(clip_from_local: mat4x4<f32>, bounds_min: vec3<f32>,
+        bounds_max: vec3<f32>) -> bool {
+    var low = vec2<f32>(F32_MAX);
+    var high = vec2<f32>(-F32_MAX);
+    for (var corner = 0u; corner < 8u; corner++) {
+        let local = vec3<f32>(
+            select(bounds_min.x, bounds_max.x, (corner & 1u) != 0u),
+            select(bounds_min.y, bounds_max.y, (corner & 2u) != 0u),
+            select(bounds_min.z, bounds_max.z, (corner & 4u) != 0u));
+        let clip = clip_from_local * vec4<f32>(local, 1.0);
+        if !(clip.w > 1.0e-6) {
+            return false;
+        }
+        let ndc = clip.xy / clip.w;
+        low = min(low, ndc);
+        high = max(high, ndc);
+    }
+    // Within a few viewports of the screen, pixel coordinates keep ample
+    // subpixel precision.
+    if !(all(low >= vec2<f32>(-4.0)) && all(high <= vec2<f32>(4.0))) {
+        return false;
+    }
+    // Pixel coordinates, rows downward; centers sit at i + 0.5.
+    let size = frame.viewport.xy;
+    let first = vec2<f32>(low.x * 0.5 + 0.5, 0.5 - high.y * 0.5) * size - SUBPIXEL_MARGIN;
+    let last = vec2<f32>(high.x * 0.5 + 0.5, 0.5 - low.y * 0.5) * size + SUBPIXEL_MARGIN;
+    let centers = floor(last - 0.5) - ceil(first - 0.5);
+    return centers.x < 0.0 || centers.y < 0.0;
 }
 
 // Whether the pyramid of phase one's depths hides the box `bounds_min` to
@@ -602,9 +653,14 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
         vec4<f32>(0.0, 0.0, 1.0, 0.0),
         vec4<f32>(0.0, 0.0, 0.0, 1.0),
     );
-    if (flags & VISIBLE) != 0u && outside(identity, low, high) {
-        flags &= ~(VISIBLE | MOVING | PHASE1);
-        scan[record.position] = flags;
+    if (flags & VISIBLE) != 0u {
+        if outside(identity, low, high) {
+            flags &= ~(VISIBLE | MOVING | PHASE1);
+            scan[record.position] = flags;
+        } else if frame.subpixel != 0u && covers_no_pixel(frame.view_projection, low, high) {
+            flags = (flags & ~(VISIBLE | MOVING | PHASE1)) | SUBPIXEL;
+            scan[record.position] = flags;
+        }
     }
 }
 
@@ -615,9 +671,15 @@ fn sum_groups(
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group: vec3<u32>,
 ) {
+    // Gathered candidates in the low half, sub-pixel ones (counted once,
+    // before phase two) in the high half.
     var visible = 0u;
     if id.x < frame.candidates {
-        visible = select(0u, 1u, (scan[id.x] & frame.mask) != 0u);
+        let flags = scan[id.x];
+        visible = select(0u, 1u, (flags & frame.mask) != 0u);
+        if (flags & SUBPIXEL) != 0u && frame.mask != PHASE2 {
+            visible += 0x10000u;
+        }
     }
     shared_values[lane] = visible;
     workgroupBarrier();
@@ -628,7 +690,11 @@ fn sum_groups(
         workgroupBarrier();
     }
     if lane == 0u {
-        scan[frame.candidates + group.x] = shared_values[0];
+        let sums = shared_values[0];
+        scan[frame.candidates + group.x] = sums & 0xffffu;
+        if (sums >> 16u) != 0u {
+            atomicAdd(&occlusion_counts[1], sums >> 16u);
+        }
     }
 }
 

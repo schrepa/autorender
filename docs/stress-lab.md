@@ -109,8 +109,10 @@ frames also pipeline fixed ticks ([decision 015](adr-015-pipelined-fixed-ticks.m
 `taa=on` temporally antialiases GPU-presented frames
 ([decision 017](adr-017-temporal-antialiasing.md)); recordings and profiles
 report `taa`. `occlusion=off` draws every frustum-visible object without the
-occlusion test ([decision 040](adr-040-occlusion-culling.md)), for same-build
-comparisons; recordings report `occlusion`. Spatial
+occlusion test ([decision 040](adr-040-occlusion-culling.md)), and
+`subpixel=off` also every instance covering no pixel center
+([decision 041](adr-041-subpixel-culling.md)), for same-build comparisons;
+recordings report `occlusion` and `subpixel`. Spatial
 queries require the collision-enabled presets. No automated suite starts when
 opening the page. Runtime code lives in `examples/stress-lab`, independent of
 engine implementations.

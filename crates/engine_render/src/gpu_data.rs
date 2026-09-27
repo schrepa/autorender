@@ -787,7 +787,10 @@ pub(crate) struct PresentationFrame {
     /// Skinned slots (decision 036) whose palette bounds `skin_bounds_pass`
     /// computes and culls.
     pub skinned: u32,
-    pub pad: [u32; 3],
+    /// Nonzero when candidates covering no pixel center are left undrawn
+    /// (decision 041).
+    pub subpixel: u32,
+    pub pad: [u32; 2],
 }
 
 /// Candidate flags of `presentation.wgsl` the compaction passes gather.

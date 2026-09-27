@@ -117,6 +117,7 @@ struct VisibleReadback {
     state: Rc<Cell<Readback>>,
     value: Rc<Cell<Option<u32>>>,
     occluded: Rc<Cell<Option<u32>>>,
+    subpixel: Rc<Cell<Option<u32>>>,
 }
 
 // The occlusion test group's pose buffer index, pyramid generation, buffer
@@ -124,8 +125,9 @@ struct VisibleReadback {
 type OcclusionKey = (usize, u64, u64, Option<u64>);
 
 // Totals read back: phase one's (or the only) visible count, phase two's,
-// and the candidates phase two found hidden.
-const TOTALS_BYTES: u64 = 12;
+// the candidates phase two found hidden, and those covering no pixel center
+// (decision 041).
+const TOTALS_BYTES: u64 = 16;
 
 /// Per-frame outcome for profiling counters and stats.
 #[derive(Default)]
@@ -187,6 +189,9 @@ pub(crate) struct GpuPresentationPass {
     occlusion_group: Option<(OcclusionKey, wgpu::BindGroup)>,
     // This frame draws in two phases.
     occlusion: bool,
+    // This frame leaves candidates covering no pixel center undrawn
+    // (decision 041).
+    subpixel: bool,
     bind_groups: Option<BindGroups>,
     // Advances when candidate, batch or scan storage is replaced.
     buffers_generation: u64,
@@ -231,6 +236,7 @@ pub(crate) struct GpuPresentationPass {
     prestaged: Option<(Prestaged, (u64, u64))>,
     last_visible: Rc<Cell<Option<u32>>>,
     last_occluded: Rc<Cell<Option<u32>>>,
+    last_subpixel: Rc<Cell<Option<u32>>>,
 }
 
 fn storage(
@@ -380,6 +386,7 @@ impl GpuPresentationPass {
             }),
             occlusion_group: None,
             occlusion: false,
+            subpixel: false,
             bind_groups: None,
             buffers_generation: 0,
             poses_generation: None,
@@ -411,6 +418,7 @@ impl GpuPresentationPass {
             prestaged: None,
             last_visible: Rc::new(Cell::new(None)),
             last_occluded: Rc::new(Cell::new(None)),
+            last_subpixel: Rc::new(Cell::new(None)),
         }
     }
 
@@ -447,6 +455,12 @@ impl GpuPresentationPass {
     /// (decision 040), read back with [`Self::visible`].
     pub(crate) fn occluded(&self) -> Option<u32> {
         self.last_occluded.get()
+    }
+
+    /// Visible instances left undrawn because their bounds cover no pixel
+    /// center (decision 041), read back with [`Self::visible`].
+    pub(crate) fn subpixel(&self) -> Option<u32> {
+        self.last_subpixel.get()
     }
 
     /// Whether this frame draws in two phases around the occlusion test.
@@ -661,7 +675,11 @@ impl GpuPresentationPass {
             sum_groups: group(
                 &pipelines.sum_groups,
                 "engine/presentation-sum-group",
-                &[entry(0, &self.frame), entry(9, &self.scan)],
+                &[
+                    entry(0, &self.frame),
+                    entry(9, &self.scan),
+                    entry(19, &self.occlusion_counts),
+                ],
             ),
             scan_groups: group(
                 &pipelines.scan_groups,
@@ -694,7 +712,11 @@ impl GpuPresentationPass {
             sum_groups2: group(
                 &pipelines.sum_groups,
                 "engine/presentation-sum-group2",
-                &[entry(0, &self.frame_phase2), entry(9, &self.scan)],
+                &[
+                    entry(0, &self.frame_phase2),
+                    entry(9, &self.scan),
+                    entry(19, &self.occlusion_counts),
+                ],
             ),
             scan_groups2: group(
                 &pipelines.scan_groups,
@@ -858,7 +880,9 @@ impl GpuPresentationPass {
     /// offsets in the slot `colors`. With `occlusion`
     /// (the viewport's width and height and the depth pyramid's levels),
     /// frames that cull without an instance budget draw in two phases around
-    /// the occlusion test (decision 040).
+    /// the occlusion test (decision 040), and with `subpixel` they leave
+    /// candidates covering no pixel center of the `viewport` (its width and
+    /// height) undrawn (decision 041).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -879,6 +903,8 @@ impl GpuPresentationPass {
         view_projection: glam::Mat4,
         motion: bool,
         occlusion: Option<(u32, u32, u32)>,
+        subpixel: bool,
+        viewport: (u32, u32),
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
         let mut prepared = GpuPrepared::default();
@@ -1250,7 +1276,13 @@ impl GpuPresentationPass {
             && culling
             && self.candidate_count != 0
             && frame.instance_budget() >= self.candidate_count as usize;
-        let (width, height, levels) = occlusion.unwrap_or((1, 1, 0));
+        // Sub-pixel culling needs culling and no instance budget, and it
+        // measures pixels of the viewport occlusion culling sizes.
+        self.subpixel = subpixel
+            && culling
+            && self.candidate_count != 0
+            && frame.instance_budget() >= self.candidate_count as usize;
+        let (width, height, levels) = occlusion.unwrap_or((viewport.0, viewport.1, 0));
         let mut uniform = PresentationFrame {
             alpha: gpu.alpha,
             candidates: self.candidate_count,
@@ -1273,7 +1305,8 @@ impl GpuPresentationPass {
             view_projection: view_projection.to_cols_array_2d(),
             viewport: [width as f32, height as f32, levels as f32, 0.0],
             skinned: self.skinned_count,
-            pad: [0; 3],
+            subpixel: u32::from(self.subpixel),
+            pad: [0; 2],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         if self.occlusion {
@@ -1297,6 +1330,10 @@ impl GpuPresentationPass {
         };
         let compose = !self.level_ranges.is_empty();
         let candidates = self.candidate_count != 0;
+        // Hidden and sub-pixel counts start at zero every frame.
+        if candidates {
+            encoder.clear_buffer(&self.occlusion_counts, 0, None);
+        }
         // Dispatches of each stage, in order.
         let record = |pass: &mut wgpu::ComputePass<'_>, stage: usize| match stage {
             COMPOSE => {
@@ -1397,6 +1434,8 @@ impl GpuPresentationPass {
             // culling read it back now, without waiting for it.
             encoder.clear_buffer(&self.totals, 0, None);
             encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 0, 4);
+            // Phase one's group sums counted sub-pixel candidates.
+            encoder.copy_buffer_to_buffer(&self.occlusion_counts, 4, &self.totals, 12, 4);
             if !self.occlusion {
                 self.read_back_totals(device, encoder);
             }
@@ -1465,7 +1504,6 @@ impl GpuPresentationPass {
             });
             self.occlusion_group = Some((key, group));
         }
-        encoder.clear_buffer(&self.occlusion_counts, 0, None);
         let workgroups = self.candidate_count.div_ceil(GROUP);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1525,6 +1563,7 @@ impl GpuPresentationPass {
             state: Rc::new(Cell::new(Readback::Idle)),
             value: Rc::clone(&self.last_visible),
             occluded: Rc::clone(&self.last_occluded),
+            subpixel: Rc::clone(&self.last_subpixel),
         });
         self.readbacks.last()
     }
@@ -1539,6 +1578,7 @@ impl GpuPresentationPass {
             let state = Rc::clone(&readback.state);
             let value = Rc::clone(&readback.value);
             let occluded = Rc::clone(&readback.occluded);
+            let subpixel = Rc::clone(&readback.subpixel);
             let buffer = readback.buffer.clone();
             readback
                 .buffer
@@ -1551,10 +1591,18 @@ impl GpuPresentationPass {
                                     view[index * 4..index * 4 + 4].try_into().unwrap_or([0; 4]);
                                 u32::from_le_bytes(bytes)
                             };
-                            // Visible: drawn in either phase, or hidden.
+                            // Visible: drawn in either phase, hidden, or
+                            // covering no pixel center.
                             let hidden = word(2);
-                            value.set(Some(word(0).saturating_add(word(1)).saturating_add(hidden)));
+                            let tiny = word(3);
+                            value.set(Some(
+                                word(0)
+                                    .saturating_add(word(1))
+                                    .saturating_add(hidden)
+                                    .saturating_add(tiny),
+                            ));
                             occluded.set(Some(hidden));
+                            subpixel.set(Some(tiny));
                         }
                         buffer.unmap();
                     }

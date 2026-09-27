@@ -78,7 +78,7 @@ function setup(t, options = {}) {
         shadow_near_casters: undefined, shadow_moving_casters: 5, shadow_kept_casters: 0,
         ambient_occlusion: true, bloom: false,
         local_lights: 3, dropped_lights: 0, lights_visible: undefined, light_cluster_overflow: 0,
-        sun_shafts: false, reflections: true, refraction: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined,
+        sun_shafts: false, reflections: true, refraction: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined, subpixel_instances: undefined,
         free() { statsFreed++; },
       };
     },

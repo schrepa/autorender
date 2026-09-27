@@ -17,6 +17,7 @@ export interface RuntimeStats {
   lights_visible: number | undefined; light_cluster_overflow: number | undefined;
   sun_shafts: boolean; reflections: boolean; refraction: boolean; transparent_draws: number; particles: number; dropped_particles: number;
   decals: number; dropped_decals: number; occluded_instances: number | undefined;
+  subpixel_instances: number | undefined;
   free(): void;
 }
 export interface Runtime {

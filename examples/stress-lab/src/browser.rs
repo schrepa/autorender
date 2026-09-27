@@ -237,6 +237,13 @@ impl StressGame {
     pub fn occlusion_culling(&self) -> bool {
         self.app.occlusion_culling()
     }
+    /// Sub-pixel culling of GPU-presented frames (on by default).
+    pub fn set_subpixel_culling(&mut self, enabled: bool) {
+        self.app.set_subpixel_culling(enabled);
+    }
+    pub fn subpixel_culling(&self) -> bool {
+        self.app.subpixel_culling()
+    }
     pub fn reset_camera(&mut self) {
         set_view(&mut self.app.engine, "overview").expect("known view");
     }
