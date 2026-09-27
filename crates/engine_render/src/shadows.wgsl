@@ -285,3 +285,72 @@ fn vs_clear(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     let y = f32(index & 2u) * 2.0 - 1.0;
     return vec4<f32>(x, y, 1.0, 1.0);
 }
+
+// Alpha-masked casters (decision 031): the base color texture's alpha times
+// the object's color alpha, tested against the material's cutoff.
+struct SlotColor {
+    color: vec2<u32>,
+    surface: u32,
+    flags: u32,
+}
+@group(1) @binding(1) var<storage, read> slot_colors: array<SlotColor>;
+// The material group of meshes.wgsl: base color texture and sampler, and
+// the maps' transforms and parameters.
+@group(2) @binding(0) var base_color_texture: texture_2d<f32>;
+@group(2) @binding(1) var base_color_sampler: sampler;
+struct MaterialMaps {
+    transforms: array<vec4<f32>, 10>,
+    emissive: vec4<f32>,
+    params: vec4<f32>,
+}
+@group(2) @binding(10) var<uniform> material_maps: MaterialMaps;
+
+struct MaskedOutput {
+    @builtin(position) clip: vec4<f32>,
+    // Mesh texture coordinates, and the object's color alpha.
+    @location(0) uv_alpha: vec3<f32>,
+}
+
+fn masked_output(clip: vec4<f32>, uv: vec2<f32>, color: vec2<u32>) -> MaskedOutput {
+    var output: MaskedOutput;
+    output.clip = clip;
+    output.uv_alpha = vec3<f32>(uv, unpack2x16unorm(color.y).y);
+    return output;
+}
+
+@vertex
+fn vs_affine_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
+        @location(2) slot: u32) -> MaskedOutput {
+    let pose = slot_poses[slot];
+    let point = vec4<f32>(position, 1.0);
+    let clip = project(vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point)));
+    return masked_output(clip, uv, slot_colors[slot].color);
+}
+
+@vertex
+fn vs_full_masked(
+    @location(0) position: vec3<f32>,
+    @location(7) uv: vec2<f32>,
+    @location(2) model_0: vec4<f32>,
+    @location(3) model_1: vec4<f32>,
+    @location(4) model_2: vec4<f32>,
+    @location(5) model_3: vec4<f32>,
+    @location(6) color: vec2<u32>,
+) -> MaskedOutput {
+    let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
+    let world = model * vec4<f32>(position, 1.0);
+    return masked_output(project(world.xyz / world.w), uv, color);
+}
+
+// Material bindings are fragment-visible: the base color map's transform
+// applies here.
+@fragment
+fn fs_masked(input: MaskedOutput) {
+    let point = vec3<f32>(input.uv_alpha.xy, 1.0);
+    let uv = vec2<f32>(dot(material_maps.transforms[0].xyz, point),
+        dot(material_maps.transforms[1].xyz, point));
+    let texel = textureSample(base_color_texture, base_color_sampler, uv);
+    if texel.a * input.uv_alpha.z < material_maps.params.z {
+        discard;
+    }
+}

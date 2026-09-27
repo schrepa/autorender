@@ -36,8 +36,16 @@ impl Texture {
         Ok(texture)
     }
 
-    /// [`Self::new`] with any alpha: it masks the emission of materials using
-    /// this texture, from 0 (none) to 255 (the material's full emission).
+    /// [`Self::new`] with any alpha: coverage for masked and blended
+    /// materials (decision 031); for opaque ones it masks the emission, from
+    /// 0 (none) to 255 (the material's full emission).
+    pub fn with_alpha(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
+        Self::with_emission_mask(width, height, rgba8)
+    }
+
+    /// [`Self::with_alpha`], named for its use by opaque materials: alpha
+    /// masks the emission of materials using this texture, from 0 (none) to
+    /// 255 (the material's full emission).
     pub fn with_emission_mask(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
         if width == 0
             || height == 0

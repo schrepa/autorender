@@ -343,10 +343,15 @@ impl Renderer {
                 },
             ],
         });
+        let materials = MaterialStore::new(&device, &queue);
         let shadows = ShadowPass::new(
             &device,
-            size_of::<Vertex>() as u64,
-            size_of::<InstanceData>() as u64,
+            (
+                size_of::<Vertex>() as u64,
+                size_of::<InstanceData>() as u64,
+                std::mem::offset_of!(Vertex, uv) as u64,
+            ),
+            materials.layout(),
         );
         let camera_bind_group = camera_bind_group(
             &device,
@@ -355,7 +360,6 @@ impl Renderer {
             &lighting_buffer,
             &shadows,
         );
-        let materials = MaterialStore::new(&device, &queue);
         let texture_layout = materials.layout();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/mesh-pipeline-layout"),
@@ -774,11 +778,18 @@ impl Renderer {
         // New textures' mip levels render from their uploaded base level in
         // a command buffer submitted ahead of this frame's.
         let mut mip_encoder = None;
+        // Masked shadow casters bind their materials even when culled.
+        let shadow_materials = self
+            .shadows
+            .groups()
+            .iter()
+            .filter_map(|group| group.material);
         let (texture_upload_bytes, mip_levels) = self.materials.upload(
             &self.device,
             &self.queue,
             snapshot,
             &self.plan,
+            shadow_materials,
             &mut mip_encoder,
         );
         drop(profile_upload);
@@ -1097,6 +1108,7 @@ impl Renderer {
         let shadow_frame = {
             let poses = affine.then(|| Poses {
                 buffers: [Some(&self.instance_buffer), self.alternate_poses.as_ref()],
+                colors: self.color_buffer.as_ref().expect("affine color buffer"),
                 index: temporal_frame.as_ref().map_or(0, |frame| frame.parity),
                 generation: self.pose_generation,
             });
@@ -1379,6 +1391,7 @@ impl Renderer {
                         .get(&mesh)
                         .map(|mesh| (&mesh.vertices, &mesh.indices, mesh.index_count))
                 },
+                |material| self.materials.group(material),
                 effect_queries,
             );
             _effects_timed |= encoded.timed;

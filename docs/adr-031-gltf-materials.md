@@ -29,8 +29,12 @@ matched the engine's.
   Khronos' TextureTransformTest checks). Only `TEXCOORD_0` exists.
 - **Alpha modes.** `AlphaMode::Opaque` ignores alpha, `Mask { cutoff }`
   discards surfaces whose alpha (color alpha times base color texture alpha)
-  is below the cutoff, and `Blend` draws in the transparent pass (decision
-  026). `with_opacity` below 1 still makes an opaque material blend. Opaque
+  is below the cutoff, in shadow maps too, and `Blend` draws in the
+  transparent pass (decision 026). Masked casters form their own shadow
+  groups (mesh and material) drawn with a pipeline that tests their base
+  color texels; other casters keep the depth-only pipelines. From scene
+  version 8 texels may be translucent (`Texture::with_alpha`); earlier
+  versions keep opaque textures. `with_opacity` below 1 still makes an opaque material blend. Opaque
   materials keep the engine extension: base color texture alpha masks
   `Surface::emission`. **Double-sided** materials draw back faces, lit from
   their own side.
@@ -89,8 +93,7 @@ matched the engine's.
 
 ## Consequences
 
-Alpha-masked materials cast solid shadows: the shadow pass does not read
-materials yet. Only `TEXCOORD_0` is supported; a second texture coordinate
+Only `TEXCOORD_0` is supported; a second texture coordinate
 set, vertex colours and texture compression remain future work. Normal maps
 baked against MikkTSpace tangents can differ slightly from the derivative
 frame on strongly distorted UV layouts.

@@ -67,11 +67,14 @@ impl SceneTexture {
     }
 
     /// The texture at authored path `path`. Without `files` (structural
-    /// validation) a file texture reads as one white texel.
+    /// validation) a file texture reads as one white texel. With `alpha`
+    /// (version 8) texels may be translucent: coverage for masked and
+    /// blended materials (decision 031).
     pub(crate) fn texture(
         &self,
         path: &str,
         files: Option<&SceneFiles>,
+        alpha: bool,
     ) -> Result<Texture, SceneError> {
         match (&self.uri, self.width, self.height, &self.rgba8) {
             (Some(uri), None, None, None) => {
@@ -79,7 +82,7 @@ impl SceneTexture {
                 valid_uri(uri, &uri_path)?;
                 match files {
                     None => Ok(Texture::new(1, 1, vec![255; 4]).expect("one opaque texel")),
-                    Some(files) => files.texture(uri, &uri_path),
+                    Some(files) => files.texture(uri, &uri_path, alpha),
                 }
             }
             (None, Some(width), Some(height), Some(rgba8)) => {
@@ -108,8 +111,12 @@ impl SceneTexture {
                         error.to_string(),
                     )
                 })?;
-                Texture::new(width, height, pixels)
-                    .map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
+                let texture = if alpha {
+                    Texture::with_alpha(width, height, pixels)
+                } else {
+                    Texture::new(width, height, pixels)
+                };
+                texture.map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
             }
             _ => Err(SceneError::new(
                 "invalid_texture",

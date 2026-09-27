@@ -50,10 +50,21 @@ impl SceneFiles {
     }
 
     /// Image `uri` as a texture, validated.
-    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
+    /// Image `uri` as a texture; with `alpha` its alpha channel is kept,
+    /// otherwise every texel must be opaque.
+    pub(crate) fn texture(
+        &self,
+        uri: &str,
+        path: &str,
+        alpha: bool,
+    ) -> Result<Texture, SceneError> {
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
-        Texture::new(*width, *height, pixels.clone())
-            .map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
+        let texture = if alpha {
+            Texture::with_alpha(*width, *height, pixels.clone())
+        } else {
+            Texture::new(*width, *height, pixels.clone())
+        };
+        texture.map_err(|error| SceneError::new("invalid_texture", path, error.to_string()))
     }
 
     /// Buffer `uri` decoded as a mesh buffer.

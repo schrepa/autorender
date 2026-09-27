@@ -87,7 +87,8 @@ does not override template fields: edit the definition to change all placements.
 in row-major top-to-bottom order, or (version 7) a `uri` to an image file beside
 the scene that the host decodes and supplies as `SceneFiles`
 ([decision 030](../../docs/adr-030-scene-files.md)); meshes may likewise read
-`EMB1` buffer files. Alpha must be 255. Dimensions are 1..8192. A
+`EMB1` buffer files. Alpha must be 255 before version 8; from version 8
+it is coverage for masked and blended materials. Dimensions are 1..8192. A
 material's texture fields reference textures by authored ID. Procedural meshes
 provide UVs; inline vertices default to zero UV for legacy sources. Sampling is
 trilinear over mip levels the renderer generates from the authored pixels; plain

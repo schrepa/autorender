@@ -286,7 +286,10 @@ impl SceneDocument {
             .textures
             .iter()
             .enumerate()
-            .map(|(index, texture)| texture.texture(&format!("$.textures[{index}]"), files))
+            .map(|(index, texture)| {
+                // Texel alpha is coverage from version 8 (decision 031).
+                texture.texture(&format!("$.textures[{index}]"), files, self.version >= 8)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let meshes = self
             .meshes

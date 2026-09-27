@@ -13,9 +13,13 @@
 //! every caster into the moving map and leave the kept map unread; public
 //! snapshots draw their instances without selection.
 
-use std::{cell::Cell, collections::HashMap, rc::Rc};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
-use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
@@ -61,6 +65,9 @@ pub(crate) struct ShadowGroup {
     pub mesh: MeshHandle,
     /// Index of its source in the snapshot's meshes.
     pub source_index: usize,
+    /// The alpha-masked material (decision 031) whose base color alpha
+    /// these casters test; `None` casts the whole mesh.
+    pub material: Option<MaterialHandle>,
     start: u32,
 }
 
@@ -95,6 +102,8 @@ pub(crate) struct Presented<'a> {
 /// one this frame's poses are in.
 pub(crate) struct Poses<'a> {
     pub buffers: [Option<&'a wgpu::Buffer>; 2],
+    /// Slot colors, whose alpha masked casters test.
+    pub colors: &'a wgpu::Buffer,
     pub index: usize,
     pub generation: u64,
 }
@@ -199,26 +208,31 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
     }
 }
 
-/// Adds `count` casters of `mesh` to its group, creating it at the end.
+/// Group keys: a mesh, and the masked material its casters test.
+type GroupIndices = HashMap<(MeshHandle, Option<MaterialHandle>), u32>;
+
+/// Adds `count` casters of `mesh` (masked by `material`) to their group,
+/// creating it at the end.
 fn add_to_group(
     groups: &mut Vec<ShadowGroup>,
     counts: &mut Vec<u32>,
-    indices: &mut HashMap<MeshHandle, u32>,
-    mesh: MeshHandle,
+    indices: &mut GroupIndices,
+    (mesh, material): (MeshHandle, Option<MaterialHandle>),
     source_index: usize,
     count: u32,
 ) -> u32 {
-    let index = match indices.get(&mesh) {
+    let index = match indices.get(&(mesh, material)) {
         Some(&index) => index,
         None => {
             groups.push(ShadowGroup {
                 mesh,
                 source_index,
+                material,
                 start: 0,
             });
             counts.push(0);
             let index = groups.len() as u32 - 1;
-            indices.insert(mesh, index);
+            indices.insert((mesh, material), index);
             index
         }
     };
@@ -234,6 +248,9 @@ struct ShadowPipelines {
     select_layout: wgpu::BindGroupLayout,
     affine: wgpu::RenderPipeline,
     full: wgpu::RenderPipeline,
+    // Alpha-masked casters (decision 031), with a material group.
+    affine_masked: wgpu::RenderPipeline,
+    full_masked: wgpu::RenderPipeline,
     clear: wgpu::RenderPipeline,
     view_buffer: wgpu::Buffer,
     view_group: wgpu::BindGroup,
@@ -244,7 +261,13 @@ struct ShadowPipelines {
 impl ShadowPipelines {
     /// `vertex_stride` and `instance_stride` are the renderer's mesh vertex
     /// and public instance record sizes.
-    fn new(device: &wgpu::Device, vertex_stride: u64, instance_stride: u64) -> Self {
+    /// `layout`: the vertex and instance strides and the texture coordinate
+    /// offset in a vertex.
+    fn new(
+        device: &wgpu::Device,
+        (vertex_stride, instance_stride, uv_offset): (u64, u64, u64),
+        material_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shadows.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
@@ -315,34 +338,58 @@ impl ShadowPipelines {
                 count: None,
             }],
         });
+        // Slot poses, and slot colors for masked casters.
+        let storage = |binding, size| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: wgpu::BufferSize::new(size),
+            },
+            count: None,
+        };
         let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-pose-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(48),
-                },
-                count: None,
-            }],
+            entries: &[storage(0, 48), storage(1, 16)],
         });
         let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
+        let masked_vertex_attributes = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: uv_offset,
+                shader_location: 7,
+            },
+        ];
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
         let model_attributes = wgpu::vertex_attr_array![
             2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
+        ];
+        // Columns and the packed color of public instance records.
+        let masked_model_attributes = wgpu::vertex_attr_array![
+            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2
         ];
         let mesh_layout = wgpu::VertexBufferLayout {
             array_stride: vertex_stride,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &vertex_attributes,
         };
+        let masked_mesh_layout = wgpu::VertexBufferLayout {
+            array_stride: vertex_stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &masked_vertex_attributes,
+        };
         let pipeline = |label: &str,
                         layouts: &[Option<&wgpu::BindGroupLayout>],
                         entry_point: &str,
                         buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
-                        clear: bool| {
+                        clear: bool,
+                        masked: bool| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(label),
                 bind_group_layouts: layouts,
@@ -382,7 +429,13 @@ impl ShadowPipelines {
                     },
                 }),
                 multisample: wgpu::MultisampleState::default(),
-                fragment: None,
+                // Only masked casters test texels; the rest write depth alone.
+                fragment: masked.then_some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_masked"),
+                    compilation_options: Default::default(),
+                    targets: &[],
+                }),
                 multiview_mask: None,
                 cache: None,
             })
@@ -400,6 +453,7 @@ impl ShadowPipelines {
                 }),
             ],
             false,
+            false,
         );
         let full = pipeline(
             "engine/shadow-full",
@@ -414,8 +468,43 @@ impl ShadowPipelines {
                 }),
             ],
             false,
+            false,
         );
-        let clear = pipeline("engine/shadow-clear", &[], "vs_clear", &[], true);
+        let affine_masked = pipeline(
+            "engine/shadow-affine-masked",
+            &[
+                Some(&view_layout),
+                Some(&pose_layout),
+                Some(material_layout),
+            ],
+            "vs_affine_masked",
+            &[
+                Some(masked_mesh_layout.clone()),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: 4,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &slot_attributes,
+                }),
+            ],
+            false,
+            true,
+        );
+        let full_masked = pipeline(
+            "engine/shadow-full-masked",
+            &[Some(&view_layout), None, Some(material_layout)],
+            "vs_full_masked",
+            &[
+                Some(masked_mesh_layout),
+                Some(wgpu::VertexBufferLayout {
+                    array_stride: instance_stride,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &masked_model_attributes,
+                }),
+            ],
+            false,
+            true,
+        );
+        let clear = pipeline("engine/shadow-clear", &[], "vs_clear", &[], true, false);
         let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/shadow-views"),
             size: FAR_VIEW + VIEW_STRIDE,
@@ -446,6 +535,8 @@ impl ShadowPipelines {
             select_layout,
             affine,
             full,
+            affine_masked,
+            full_masked,
             clear,
             view_buffer,
             view_group,
@@ -458,7 +549,10 @@ impl ShadowPipelines {
 pub(crate) struct ShadowPass {
     pipelines: Option<ShadowPipelines>,
     // Mesh vertex and public instance record strides of the pipelines.
-    strides: (u64, u64),
+    // Vertex and instance strides and the texture coordinate offset, and the
+    // material group layout of masked casters.
+    layout: (u64, u64, u64),
+    material_layout: wgpu::BindGroupLayout,
     // Pose bindings of both pose buffers, for the generation they belong to.
     pose_groups: Option<(u64, [Option<wgpu::BindGroup>; 2])>,
     uniform: wgpu::Buffer,
@@ -522,7 +616,13 @@ impl ShadowPass {
     /// The bindings the main passes read; pipelines follow with the first
     /// frame that has shadows. `vertex_stride` and `instance_stride` are the
     /// renderer's mesh vertex and public instance record sizes.
-    pub(crate) fn new(device: &wgpu::Device, vertex_stride: u64, instance_stride: u64) -> Self {
+    /// `layout`: the vertex and instance strides and the texture coordinate
+    /// offset in a vertex; `material_layout`, the mesh material group.
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        layout: (u64, u64, u64),
+        material_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/shadow-uniform"),
             size: size_of::<ShadowUniform>() as u64,
@@ -567,7 +667,8 @@ impl ShadowPass {
         let empty = |label: &str, extra| storage(device, label, 0, extra);
         Self {
             pipelines: None,
-            strides: (vertex_stride, instance_stride),
+            layout,
+            material_layout: material_layout.clone(),
             pose_groups: None,
             uniform,
             written: None,
@@ -740,8 +841,18 @@ impl ShadowPass {
         self.groups_changed = true;
         self.groups.clear();
         self.batch_groups.clear();
-        let mut indices = HashMap::new();
+        let mut indices = GroupIndices::new();
         let mut counts = Vec::new();
+        // Casters of alpha-masked materials test their texels (decision 031).
+        let masked: HashSet<MaterialHandle> = snapshot
+            .materials
+            .iter()
+            .filter(|source| matches!(source.material.alpha_mode(), AlphaMode::Mask { .. }))
+            .map(|source| source.handle)
+            .collect();
+        let key = |mesh, material: Option<MaterialHandle>| {
+            (mesh, material.filter(|material| masked.contains(material)))
+        };
         if let Some(frame) = frame.filter(|_| !gpu) {
             let sources: HashMap<MeshHandle, usize> = snapshot
                 .meshes
@@ -764,7 +875,7 @@ impl ShadowPass {
                     &mut self.groups,
                     &mut counts,
                     &mut indices,
-                    mesh,
+                    key(mesh, instances[slot].material),
                     source_index,
                     1,
                 );
@@ -788,7 +899,7 @@ impl ShadowPass {
                     &mut self.groups,
                     &mut counts,
                     &mut indices,
-                    batch.mesh,
+                    key(batch.mesh, batch.material),
                     batch.source_index,
                     count,
                 );
@@ -844,7 +955,11 @@ impl ShadowPass {
             return None;
         }
         if self.pipelines.is_none() {
-            self.pipelines = Some(ShadowPipelines::new(device, self.strides.0, self.strides.1));
+            self.pipelines = Some(ShadowPipelines::new(
+                device,
+                self.layout,
+                &self.material_layout,
+            ));
         }
         let resolution = settings.resolution;
         if self
@@ -1134,7 +1249,7 @@ impl ShadowPass {
                         device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("engine/shadow-pose-group"),
                             layout: &self.pipelines.as_ref().expect("created above").pose_layout,
-                            entries: &[entry(0, buffer)],
+                            entries: &[entry(0, buffer), entry(1, poses.colors)],
                         })
                     })
                 };
@@ -1220,6 +1335,7 @@ impl ShadowPass {
         plan: &BatchPlan,
         instances: &'m wgpu::Buffer,
         meshes: impl Fn(MeshHandle) -> Option<(&'m wgpu::Buffer, &'m wgpu::Buffer, u32)>,
+        materials: impl Fn(MaterialHandle) -> Option<&'m wgpu::BindGroup>,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
     ) -> ShadowEncoded {
         if self.maps.is_none() || self.pipelines.is_none() {
@@ -1274,16 +1390,41 @@ impl ShadowPass {
             .pose_groups
             .as_ref()
             .and_then(|(_, groups)| groups[frame.pose_index].as_ref());
+        // Masked groups switch to the masked pipeline and their material.
+        let bind_material = |pass: &mut wgpu::RenderPass<'_>,
+                             masked: &mut bool,
+                             material: Option<MaterialHandle>,
+                             pipelines: [&wgpu::RenderPipeline; 2]| {
+            let group = material.map(&materials);
+            if group.is_some() != *masked {
+                *masked = group.is_some();
+                pass.set_pipeline(pipelines[usize::from(*masked)]);
+            }
+            if let Some(Some(group)) = group {
+                pass.set_bind_group(2, group, &[]);
+            }
+            // A masked material without a binding draws nothing.
+            group.is_none_or(|group| group.is_some())
+        };
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             let Some(pose_group) = pose_group else {
                 return;
             };
             pass.set_pipeline(&pipelines.affine);
             pass.set_bind_group(1, pose_group, &[]);
+            let mut masked = false;
             for (index, group) in self.groups.iter().enumerate() {
                 let Some((vertices, indices, _)) = meshes(group.mesh) else {
                     continue;
                 };
+                if !bind_material(
+                    pass,
+                    &mut masked,
+                    group.material,
+                    [&pipelines.affine, &pipelines.affine_masked],
+                ) {
+                    continue;
+                }
                 let start = (map * self.id_capacity + group.start as usize) as u64 * 4;
                 pass.set_vertex_buffer(0, vertices.slice(..));
                 pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -1298,10 +1439,27 @@ impl ShadowPass {
         let draw_snapshot = |pass: &mut wgpu::RenderPass<'_>| {
             pass.set_pipeline(&pipelines.full);
             pass.set_vertex_buffer(1, instances.slice(..));
-            for batch in &plan.batches {
+            let mut masked = false;
+            for (index, batch) in plan.batches.iter().enumerate() {
+                // Transparent surfaces cast no shadow (decision 026).
+                let Some(group) = self
+                    .batch_groups
+                    .get(index)
+                    .and_then(|&group| self.groups.get(group as usize))
+                else {
+                    continue;
+                };
                 let Some((vertices, indices, index_count)) = meshes(batch.mesh) else {
                     continue;
                 };
+                if !bind_material(
+                    pass,
+                    &mut masked,
+                    group.material,
+                    [&pipelines.full, &pipelines.full_masked],
+                ) {
+                    continue;
+                }
                 pass.set_vertex_buffer(0, vertices.slice(..));
                 pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..index_count, 0, batch.instances.clone());

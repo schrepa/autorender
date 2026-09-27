@@ -5,7 +5,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use engine_core::{
-    Filter, Material, MaterialHandle, RenderSnapshot, Sampler, Texture, TextureHandle, Wrap,
+    Filter, Material, MaterialHandle, RenderMaterial, RenderSnapshot, Sampler, Texture,
+    TextureHandle, Wrap,
 };
 
 use crate::batches::BatchPlan;
@@ -184,21 +185,36 @@ impl MaterialStore {
     }
 
     /// Uploads the textures and builds the bind groups of `plan`'s used
-    /// materials. New textures' mip levels render from their base level in
-    /// commands recorded into `encoder`, created when needed. Returns the
-    /// uploaded bytes and generated levels.
+    /// materials and of `extra` listed ones (masked shadow casters). New
+    /// textures' mip levels render from their base level in commands
+    /// recorded into `encoder`, created when needed. Returns the uploaded
+    /// bytes and generated levels.
     pub(crate) fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
         plan: &BatchPlan,
+        extra: impl Iterator<Item = MaterialHandle>,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) -> (u64, u32) {
         let mut bytes = 0;
         let mut levels = 0;
-        for &index in &plan.material_sources {
-            let source = &snapshot.materials[index];
+        let extra: Vec<&RenderMaterial> = extra
+            .filter(|handle| !self.materials.contains_key(handle))
+            .filter_map(|handle| {
+                snapshot
+                    .materials
+                    .iter()
+                    .find(|source| source.handle == handle)
+            })
+            .collect();
+        let sources = plan
+            .material_sources
+            .iter()
+            .map(|&index| &snapshot.materials[index])
+            .chain(extra);
+        for source in sources {
             if self.materials.contains_key(&source.handle) {
                 continue;
             }
@@ -260,6 +276,13 @@ impl MaterialStore {
             _uniform: uniform,
             variant: Variant::of(material),
         }
+    }
+
+    /// The bind group of `material`, when uploaded.
+    pub(crate) fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
+        self.materials
+            .get(&material)
+            .map(|material| &material.group)
     }
 
     /// The bind group and pipeline variant of `material` (the default group

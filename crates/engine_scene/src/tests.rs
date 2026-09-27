@@ -540,7 +540,9 @@ fn rejects_texture_reference_encoding_dimensions_and_alpha_before_mutation() {
     let mut value = textured_document();
     value.textures[0].width = Some(u32::MAX);
     cases.push(value);
+    // Before version 8 texels are opaque.
     let mut value = textured_document();
+    value.version = 7;
     value.textures[0].rgba8 = Some(STANDARD.encode([0u8; 8]));
     cases.push(value);
     let mut value = textured_document();
@@ -560,6 +562,20 @@ fn rejects_texture_reference_encoding_dimensions_and_alpha_before_mutation() {
         assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), 0);
         assert_eq!(world.entities().len(), entity_count);
     }
+    // From version 8 texel alpha is coverage (decision 031).
+    let mut value = textured_document();
+    value.textures[0].rgba8 = Some(STANDARD.encode([0u8; 8]));
+    let mut world = world(AssetBudget::default());
+    let instance = value.instantiate(&mut world).unwrap();
+    let (_, texture) = instance.textures().next().unwrap();
+    assert_eq!(
+        world
+            .resource::<AssetLibrary>()
+            .texture(texture)
+            .unwrap()
+            .pixels(),
+        [0; 8]
+    );
 }
 
 #[test]
