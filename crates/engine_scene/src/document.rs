@@ -83,6 +83,7 @@ impl SceneDocument {
                         offset: None,
                         rotation: None,
                         scale: None,
+                        tex_coord: None,
                     }));
                 }
             }
@@ -284,7 +285,13 @@ pub enum MeshSource {
 impl MeshSource {
     /// The mesh at authored path `path`. Without `files` (structural
     /// validation) a buffer mesh reads as the cube.
-    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, SceneError> {
+    /// The mesh at authored path `path` of a document of `version`.
+    pub(crate) fn mesh(
+        &self,
+        path: &str,
+        files: Option<&SceneFiles>,
+        version: u32,
+    ) -> Result<Mesh, SceneError> {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
@@ -295,23 +302,84 @@ impl MeshSource {
                 let Some(files) = files else {
                     return Ok(Mesh::cube());
                 };
-                let (vertices, indices) = files.mesh(uri, &uri_path)?;
-                Mesh::new(vertices, indices)
-                    .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))
+                let buffer = files.mesh(uri, &uri_path)?;
+                if version < 8 && (buffer.colors.is_some() || buffer.uv1.is_some()) {
+                    return Err(SceneError::new(
+                        "version_required",
+                        uri_path,
+                        "vertex colors and second texture coordinates require scene version 8; set version to 8 and increment revision",
+                    ));
+                }
+                with_extras(
+                    Mesh::new(buffer.vertices, buffer.indices),
+                    buffer.colors,
+                    buffer.uv1,
+                    path,
+                )
             }
-            Self::Inline { vertices, indices } => Mesh::new(
-                vertices
-                    .iter()
-                    .map(|vertex| MeshVertex {
-                        position: vertex.position,
-                        normal: vertex.normal,
-                        uv: vertex.uv,
-                    })
-                    .collect(),
-                indices.clone(),
-            )
-            .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string())),
+            Self::Inline { vertices, indices } => {
+                // Vertices carry colors and second coordinates all or none.
+                let extras = |present: &dyn Fn(&SceneVertex) -> bool, what: &str| {
+                    let count = vertices.iter().filter(|vertex| present(vertex)).count();
+                    if count != 0 && count != vertices.len() {
+                        Err(SceneError::new(
+                            "invalid_mesh",
+                            format!("{path}.vertices"),
+                            format!("either every vertex has {what} or none does"),
+                        ))
+                    } else {
+                        Ok(count != 0)
+                    }
+                };
+                let colored = extras(&|vertex| vertex.color.is_some(), "a color")?;
+                let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
+                with_extras(
+                    Mesh::new(
+                        vertices.iter().copied().map(MeshVertex::from).collect(),
+                        indices.clone(),
+                    ),
+                    colored.then(|| {
+                        vertices
+                            .iter()
+                            .map(|vertex| vertex.color.unwrap_or([1.0; 4]))
+                            .collect()
+                    }),
+                    second.then(|| {
+                        vertices
+                            .iter()
+                            .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
+                            .collect()
+                    }),
+                    path,
+                )
+            }
         }
+    }
+}
+
+/// `mesh` with optional vertex colors and second texture coordinates.
+fn with_extras(
+    mesh: Result<Mesh, engine_core::AssetError>,
+    colors: Option<Vec<[f32; 4]>>,
+    uv1: Option<Vec<[f32; 2]>>,
+    path: &str,
+) -> Result<Mesh, SceneError> {
+    let invalid =
+        |error: engine_core::AssetError| SceneError::new("invalid_mesh", path, error.to_string());
+    let mut mesh = mesh.map_err(invalid)?;
+    if let Some(colors) = colors {
+        mesh = mesh.with_colors(colors).map_err(invalid)?;
+    }
+    if let Some(uv1) = uv1 {
+        mesh = mesh.with_uv1(uv1).map_err(invalid)?;
+    }
+    Ok(mesh)
+}
+
+impl MeshSource {
+    /// Whether any inline vertex has a color or second coordinates.
+    pub(crate) fn has_vertex_extras(&self) -> bool {
+        matches!(self, Self::Inline { vertices, .. } if vertices.iter().any(|vertex| vertex.color.is_some() || vertex.uv1.is_some()))
     }
 }
 
@@ -322,9 +390,17 @@ impl MeshSource {
 pub struct SceneVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
-    /// Top-left origin texture coordinates, sampled with clamp-to-edge.
+    /// Top-left origin texture coordinates.
     #[serde(default, skip_serializing_if = "zero_uv")]
     pub uv: [f32; 2],
+    /// Version 8: linear RGBA in `[0, 1]` multiplying the material's base
+    /// color (decision 034). Every vertex of a mesh has one or none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[f32; 4]>,
+    /// Version 8: second texture coordinates, which texture maps may read.
+    /// Every vertex of a mesh has them or none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uv1: Option<[f32; 2]>,
 }
 
 impl From<SceneVertex> for MeshVertex {

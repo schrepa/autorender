@@ -26,7 +26,8 @@ matched the engine's.
   `TextureRef`: a texture, a `Sampler` (wrap modes, magnification,
   minification and mip filters) and a `UvTransform`
   (`KHR_texture_transform`: coordinates scaled, rotated, then offset, as
-  Khronos' TextureTransformTest checks). Only `TEXCOORD_0` exists.
+  Khronos' TextureTransformTest checks). Maps read `TEXCOORD_0` (and
+  `TEXCOORD_1` since decision 034).
 - **Alpha modes.** `AlphaMode::Opaque` ignores alpha, `Mask { cutoff }`
   discards surfaces whose alpha (color alpha times base color texture alpha)
   is below the cutoff, in shadow maps too, and `Blend` draws in the
@@ -93,7 +94,7 @@ matched the engine's.
 
 ## Consequences
 
-Only `TEXCOORD_0` is supported; a second texture coordinate
-set, vertex colours and texture compression remain future work. Normal maps
+A second texture coordinate set and vertex colors followed in
+decision 034; texture compression remains future work. Normal maps
 baked against MikkTSpace tangents can differ slightly from the derivative
 frame on strongly distorted UV layouts.

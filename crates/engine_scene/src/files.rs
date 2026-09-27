@@ -68,11 +68,7 @@ impl SceneFiles {
     }
 
     /// Buffer `uri` decoded as a mesh buffer.
-    pub(crate) fn mesh(
-        &self,
-        uri: &str,
-        path: &str,
-    ) -> Result<(Vec<MeshVertex>, Vec<u32>), SceneError> {
+    pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, SceneError> {
         let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
         mesh_buffer(bytes, path)
     }
@@ -110,16 +106,44 @@ pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
 
 /// Magic of an engine mesh buffer.
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
+/// Magic of an engine mesh buffer with optional streams (decision 034).
+pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 
 /// An engine mesh buffer: `EMB1`, the vertex and index counts (little-endian
 /// u32), each vertex's position, normal and UV (eight little-endian f32),
 /// then the u32 indices. Takes runtime or authored ([`crate::SceneVertex`])
 /// vertices.
 pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &[u32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(12 + vertices.len() * 32 + indices.len() * 4);
-    bytes.extend_from_slice(&MESH_BUFFER_MAGIC);
+    encode_mesh_buffer_with(vertices, indices, None, None)
+}
+
+/// [`encode_mesh_buffer`] with optional vertex colors (linear RGBA) and
+/// second texture coordinates, one per vertex. With either, the buffer is
+/// `EMB2`: after the counts a u32 of flags (1 colors, 2 second
+/// coordinates), then the vertices, the colors (four f32 each), the second
+/// coordinates (two f32 each) and the indices. Scenes read `EMB2` from
+/// version 8.
+pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
+    vertices: &[V],
+    indices: &[u32],
+    colors: Option<&[[f32; 4]]>,
+    uv1: Option<&[[f32; 2]]>,
+) -> Vec<u8> {
+    let extras = colors.is_some() || uv1.is_some();
+    let mut bytes = Vec::with_capacity(
+        16 + vertices.len() * (32 + if extras { 24 } else { 0 }) + indices.len() * 4,
+    );
+    bytes.extend_from_slice(if extras {
+        &MESH_BUFFER_EXTRAS_MAGIC
+    } else {
+        &MESH_BUFFER_MAGIC
+    });
     bytes.extend_from_slice(&(vertices.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(indices.len() as u32).to_le_bytes());
+    if extras {
+        let flags = u32::from(colors.is_some()) | u32::from(uv1.is_some()) << 1;
+        bytes.extend_from_slice(&flags.to_le_bytes());
+    }
     for &vertex in vertices {
         let vertex: MeshVertex = vertex.into();
         for value in vertex
@@ -131,30 +155,64 @@ pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     }
+    for value in colors
+        .into_iter()
+        .flatten()
+        .flatten()
+        .chain(uv1.into_iter().flatten().flatten())
+    {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
     bytes
 }
 
-fn mesh_buffer(bytes: &[u8], path: &str) -> Result<(Vec<MeshVertex>, Vec<u32>), SceneError> {
+/// A decoded mesh buffer.
+pub(crate) struct MeshBuffer {
+    pub vertices: Vec<MeshVertex>,
+    pub indices: Vec<u32>,
+    pub colors: Option<Vec<[f32; 4]>>,
+    pub uv1: Option<Vec<[f32; 2]>>,
+}
+
+fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     let invalid = |rule: &str| SceneError::new("invalid_mesh", path, rule.to_owned());
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)
             .map(|word| u32::from_le_bytes(word.try_into().expect("four bytes")))
     };
-    if bytes.get(..4) != Some(&MESH_BUFFER_MAGIC[..]) {
-        return Err(invalid("a mesh buffer starts with EMB1"));
-    }
+    let extras = match bytes.get(..4) {
+        Some(magic) if magic == MESH_BUFFER_MAGIC => false,
+        Some(magic) if magic == MESH_BUFFER_EXTRAS_MAGIC => true,
+        _ => return Err(invalid("a mesh buffer starts with EMB1 or EMB2")),
+    };
     let (Some(vertex_count), Some(index_count)) = (word(4), word(8)) else {
         return Err(invalid("a mesh buffer has vertex and index counts"));
     };
+    let flags = if extras {
+        match word(12) {
+            Some(flags) if flags != 0 && flags & !3 == 0 => flags,
+            _ => {
+                return Err(invalid(
+                    "EMB2 flags name colors (1) and/or second coordinates (2)",
+                ));
+            }
+        }
+    } else {
+        0
+    };
+    let header = if extras { 16 } else { 12 };
     let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
+    // Floats per vertex: eight, four more with colors, two more with
+    // second coordinates.
+    let floats = 8 + if flags & 1 != 0 { 4 } else { 0 } + if flags & 2 != 0 { 2 } else { 0 };
     let expected = vertex_count
-        .checked_mul(32)
+        .checked_mul(floats * 4)
         .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
-        .and_then(|payload| payload.checked_add(12));
+        .and_then(|payload| payload.checked_add(header));
     if expected != Some(bytes.len()) {
         return Err(invalid(
             "the buffer's length must match its vertex and index counts",
@@ -165,7 +223,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<(Vec<MeshVertex>, Vec<u32>), 
     };
     let mut vertices = Vec::with_capacity(vertex_count);
     for vertex in 0..vertex_count {
-        let base = 12 + vertex * 32;
+        let base = header + vertex * 32;
         let values: [f32; 8] = std::array::from_fn(|index| float(base + index * 4));
         if !values[..3]
             .iter()
@@ -181,15 +239,34 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<(Vec<MeshVertex>, Vec<u32>), 
             uv: [values[6], values[7]],
         });
     }
-    let first_index = 12 + vertex_count * 32;
+    let mut offset = header + vertex_count * 32;
+    let colors = (flags & 1 != 0).then(|| {
+        let colors: Vec<[f32; 4]> = (0..vertex_count)
+            .map(|vertex| std::array::from_fn(|lane| float(offset + (vertex * 4 + lane) * 4)))
+            .collect();
+        offset += vertex_count * 16;
+        colors
+    });
+    let uv1 = (flags & 2 != 0).then(|| {
+        let uv1: Vec<[f32; 2]> = (0..vertex_count)
+            .map(|vertex| std::array::from_fn(|lane| float(offset + (vertex * 2 + lane) * 4)))
+            .collect();
+        offset += vertex_count * 8;
+        uv1
+    });
     let indices = (0..index_count)
         .map(|index| {
             u32::from_le_bytes(
-                bytes[first_index + index * 4..first_index + index * 4 + 4]
+                bytes[offset + index * 4..offset + index * 4 + 4]
                     .try_into()
                     .expect("four bytes"),
             )
         })
         .collect();
-    Ok((vertices, indices))
+    Ok(MeshBuffer {
+        vertices,
+        indices,
+        colors,
+        uv1,
+    })
 }

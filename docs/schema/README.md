@@ -23,7 +23,9 @@ with sampler and transform settings, beside `metallic_roughness_texture`,
 `normal_texture`, `normal_scale`, `occlusion_texture`, `occlusion_strength`,
 `emissive`, `emissive_texture`, `alpha_mode`, `alpha_cutoff` and
 `double_sided`. Plain texture IDs repeat from version 8 and clamp before it.
-Entities take a `tint` ([decision 033](../adr-033-tints-and-material-replacement.md)).
+Entities take a `tint` ([decision 033](../adr-033-tints-and-material-replacement.md)); inline
+vertices take `color` and `uv1`, texture maps `tex_coord`, and mesh buffers may
+be `EMB2` ([decision 034](../adr-034-vertex-colors-and-second-coordinates.md)).
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

@@ -233,6 +233,52 @@ fn mirrored_nodes_reverse_triangle_winding() {
 }
 
 #[test]
+fn vertex_colors_and_second_coordinates_import_as_emb2_streams() {
+    let imported = import_glb(
+        &changed(|json| {
+            // Normalized bytes of the position view: colors in [0, 1].
+            let accessors = json["accessors"].as_array_mut().unwrap();
+            accessors.push(
+                json!({"bufferView": 0, "componentType": 5121, "normalized": true,
+                "count": 108, "type": "VEC4"}),
+            );
+            let color = accessors.len() - 1;
+            let attributes = &mut json["meshes"][0]["primitives"][0]["attributes"];
+            attributes["COLOR_0"] = json!(color);
+            attributes["TEXCOORD_1"] = json!(2);
+            json["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["texCoord"] = json!(1);
+        }),
+        "garden",
+    )
+    .unwrap();
+    let MeshSource::Buffer { uri } = &imported.document.meshes[0].source else {
+        panic!("expected a mesh buffer");
+    };
+    let bytes = &imported
+        .files
+        .iter()
+        .find(|file| file.uri == *uri)
+        .unwrap()
+        .bytes;
+    assert_eq!(&bytes[..4], b"EMB2");
+    // Colors and second coordinates.
+    assert_eq!(u32::from_le_bytes(bytes[12..16].try_into().unwrap()), 3);
+    let Some(SceneMap::Map(map)) = &imported.document.materials[0].texture else {
+        panic!("expected a texture map");
+    };
+    assert_eq!(map.tex_coord, Some(1));
+    let mut files = engine_scene::SceneFiles::new();
+    for file in &imported.files {
+        if file.uri.ends_with(".bin") {
+            files.add_buffer(&file.uri, file.bytes.clone());
+        } else {
+            files.add_image(&file.uri, 1, 1, vec![255; 4]);
+        }
+    }
+    imported.document.validate_with(&files).unwrap();
+}
+
+#[test]
 fn primitives_without_normals_get_flat_ones() {
     let document = import_glb(
         &changed(|json| {
@@ -326,7 +372,7 @@ fn unsupported_resources_texture_sets_and_required_extensions_are_explicit() {
             json["extensionsRequired"] = json!(["KHR_draco_mesh_compression"]);
         },
         |json: &mut Value| {
-            json["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["texCoord"] = json!(1)
+            json["materials"][0]["pbrMetallicRoughness"]["baseColorTexture"]["texCoord"] = json!(2)
         },
     ] {
         assert_eq!(

@@ -163,15 +163,13 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(encoded - shift, z);
 }
 
-@vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
+fn vertex_main(input: VertexInput) -> VertexOutput {
     let model = mat4x4<f32>(input.model_0, input.model_1, input.model_2, input.model_3);
     return transform_vertex(input.position, input.normal, input.color, input.surface,
         input.uv, model);
 }
 
-@vertex
-fn vs_affine(input: AffineVertexInput) -> VertexOutput {
+fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     // Transparent draws of temporal frames see moving slots' marks.
     let index = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[index]);
@@ -181,7 +179,81 @@ fn vs_affine(input: AffineVertexInput) -> VertexOutput {
 }
 
 @vertex
+fn vs_main(input: VertexInput) -> VertexOutput {
+    return vertex_main(input);
+}
+
+@vertex
+fn vs_affine(input: AffineVertexInput) -> VertexOutput {
+    return vertex_affine(input);
+}
+
+@vertex
 fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
+    return vertex_affine_temporal(input);
+}
+
+// Meshes with vertex colors or second texture coordinates (decision 034)
+// read them from a second vertex stream, and their outputs carry both.
+struct ExtendedOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec3<u32>,
+    // Linear vertex color and opacity, and second texture coordinates.
+    @location(3) color: vec4<f32>,
+    @location(4) uv1: vec2<f32>,
+}
+
+struct ExtendedTemporalOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec3<u32>,
+    @location(3) previous: vec3<f32>,
+    @location(4) color: vec4<f32>,
+    @location(5) uv1: vec2<f32>,
+}
+
+fn extended_output(vertex: VertexOutput, color: vec4<f32>, uv1: vec2<f32>) -> ExtendedOutput {
+    var output: ExtendedOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.color = color;
+    output.uv1 = uv1;
+    return output;
+}
+
+@vertex
+fn vs_main_extended(input: VertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>) -> ExtendedOutput {
+    return extended_output(vertex_main(input), color, uv1);
+}
+
+@vertex
+fn vs_affine_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>) -> ExtendedOutput {
+    return extended_output(vertex_affine(input), color, uv1);
+}
+
+@vertex
+fn vs_affine_temporal_extended(input: AffineVertexInput, @location(9) color: vec4<f32>,
+        @location(10) uv1: vec2<f32>) -> ExtendedTemporalOutput {
+    let vertex = vertex_affine_temporal(input);
+    var output: ExtendedTemporalOutput;
+    output.clip_position = vertex.clip_position;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.previous = vertex.previous;
+    output.color = color;
+    output.uv1 = uv1;
+    return output;
+}
+
+fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let slot = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[slot]);
     let material = colors[slot];
@@ -282,9 +354,11 @@ struct Shaded {
 }
 
 // Texture coordinates of map `index` (base color, metallic-roughness,
-// normal, occlusion, emissive) through its transform.
-fn map_uv(index: u32, uv: vec2<f32>) -> vec2<f32> {
-    let point = vec3<f32>(uv, 1.0);
+// normal, occlusion, emissive) through its transform, from the first or
+// second set as the map reads.
+fn map_uv(index: u32, uv: vec2<f32>, uv1: vec2<f32>) -> vec2<f32> {
+    let second = ((u32(material_maps.params.w) >> index) & 1u) == 1u;
+    let point = vec3<f32>(select(uv, uv1, second), 1.0);
     return vec2<f32>(dot(material_maps.transforms[index * 2u].xyz, point),
         dot(material_maps.transforms[index * 2u + 1u].xyz, point));
 }
@@ -307,12 +381,12 @@ fn mapped_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: v
 // control flow; what follows may not be. `color` is linear color and
 // opacity; `front` whether the surface faces the camera.
 fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
-        uv: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
+        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
     // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission and,
     // with maps, is coverage.
     var base_uv = uv;
     if MATERIAL_MAPS {
-        base_uv = map_uv(0u, uv);
+        base_uv = map_uv(0u, uv, uv1);
     }
     let texel = textureSample(base_color_texture, base_color_sampler, base_uv);
     let world_dx = dpdx(world);
@@ -331,19 +405,20 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         point.opacity *= texel.a;
         // glTF: green is roughness and blue metalness.
         let packed_map = textureSample(metallic_roughness_texture, metallic_roughness_sampler,
-            map_uv(1u, uv));
+            map_uv(1u, uv, uv1));
         roughness *= packed_map.g;
         metalness *= packed_map.b;
-        let occluded = textureSample(occlusion_texture, occlusion_sampler, map_uv(3u, uv)).r;
+        let occluded = textureSample(occlusion_texture, occlusion_sampler,
+            map_uv(3u, uv, uv1)).r;
         point.occlusion = 1.0 + material_maps.params.y * (occluded - 1.0);
         point.emissive = material_maps.emissive.rgb
-            * textureSample(emissive_texture, emissive_sampler, map_uv(4u, uv)).rgb;
+            * textureSample(emissive_texture, emissive_sampler, map_uv(4u, uv, uv1)).rgb;
     }
     var sampled = vec3<f32>(0.0, 0.0, 1.0);
     var normal_dx = vec2<f32>(0.0);
     var normal_dy = vec2<f32>(0.0);
     if NORMAL_MAP {
-        let normal_uv = map_uv(2u, uv);
+        let normal_uv = map_uv(2u, uv, uv1);
         sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
         normal_dx = dpdx(normal_uv);
         normal_dy = dpdy(normal_uv);
@@ -429,9 +504,47 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     return shaded;
 }
 
-fn shade(color: vec4<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
-        packed: u32, front: bool) -> Shaded {
-    return finish(surface_point(color, normal, world, uv, packed, front), vec3<f32>(0.0));
+// What a fragment shades: linear color and opacity, world normal and
+// position, both texture coordinate sets, the packed surface and the pixel.
+struct Fragment {
+    color: vec4<f32>,
+    normal: vec3<f32>,
+    world: vec3<f32>,
+    uv: vec2<f32>,
+    uv1: vec2<f32>,
+    surface: u32,
+    pixel: vec2<f32>,
+}
+
+// Meshes without a second stream read their first coordinates as second.
+fn fragment(input: VertexOutput) -> Fragment {
+    var values: Fragment;
+    values.color = output_color(input.material);
+    values.normal = input.normal_u.xyz;
+    values.world = input.world_v.xyz;
+    values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
+    values.uv1 = values.uv;
+    values.surface = input.material.z;
+    values.pixel = input.clip_position.xy;
+    return values;
+}
+
+// Vertex colors multiply the color and opacity (glTF `COLOR_0`).
+fn extended_fragment(input: ExtendedOutput) -> Fragment {
+    var values: Fragment;
+    values.color = output_color(input.material) * input.color;
+    values.normal = input.normal_u.xyz;
+    values.world = input.world_v.xyz;
+    values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
+    values.uv1 = input.uv1;
+    values.surface = input.material.z;
+    values.pixel = input.clip_position.xy;
+    return values;
+}
+
+fn shade(input: Fragment, front: bool) -> Shaded {
+    return finish(surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
+        input.surface, front), vec3<f32>(0.0));
 }
 
 // Light of the local lights of this pixel's cluster at `point`: windowed
@@ -480,22 +593,10 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     return sum * saturate((end - depth) / (0.1 * end));
 }
 
-fn shade_lit(color: vec4<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
-        packed: u32, front: bool, pixel: vec2<f32>) -> Shaded {
-    let point = surface_point(color, normal, world, uv, packed, front);
-    return finish(point, local_light(point, pixel));
-}
-
-// Shading of a vertex output: without and with local lights.
-fn shade_output(input: VertexOutput, front: bool) -> Shaded {
-    return shade(output_color(input.material), input.normal_u.xyz, input.world_v.xyz,
-        vec2<f32>(input.normal_u.w, input.world_v.w), input.material.z, front);
-}
-
-fn shade_output_lit(input: VertexOutput, front: bool) -> Shaded {
-    return shade_lit(output_color(input.material), input.normal_u.xyz, input.world_v.xyz,
-        vec2<f32>(input.normal_u.w, input.world_v.w), input.material.z, front,
-        input.clip_position.xy);
+fn shade_lit(input: Fragment, front: bool) -> Shaded {
+    let point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
+        input.surface, front);
+    return finish(point, local_light(point, input.pixel));
 }
 
 fn temporal_output(input: TemporalOutput) -> VertexOutput {
@@ -507,6 +608,17 @@ fn temporal_output(input: TemporalOutput) -> VertexOutput {
     return output;
 }
 
+fn extended_temporal_output(input: ExtendedTemporalOutput) -> ExtendedOutput {
+    var output: ExtendedOutput;
+    output.clip_position = input.clip_position;
+    output.normal_u = input.normal_u;
+    output.world_v = input.world_v;
+    output.material = input.material;
+    output.color = input.color;
+    output.uv1 = input.uv1;
+    return output;
+}
+
 fn scene_targets(shaded: Shaded) -> SceneTargets {
     var targets: SceneTargets;
     targets.color = vec4<f32>(shaded.color, shaded.ambient);
@@ -514,70 +626,129 @@ fn scene_targets(shaded: Shaded) -> SceneTargets {
     return targets;
 }
 
-fn temporal_targets(shaded: Shaded, input: TemporalOutput) -> TemporalTargets {
+// `clip_position` is the fragment's, `previous` the same point's previous
+// clip position: x, y and w.
+fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32>)
+        -> TemporalTargets {
     var targets: TemporalTargets;
     targets.color = vec4<f32>(shaded.color, shaded.ambient);
     targets.glow = vec2<f32>(shaded.glow, shaded.reflect);
     // This pixel center without the jitter, and the same point last frame.
-    let current = vec2<f32>(input.clip_position.x * camera.jitter.z - 1.0,
-        1.0 - input.clip_position.y * camera.jitter.w) - camera.jitter.xy;
-    let previous = input.previous.xy / input.previous.z;
-    targets.motion = (previous - current) * vec2<f32>(0.5, -0.5);
+    let current = vec2<f32>(clip_position.x * camera.jitter.z - 1.0,
+        1.0 - clip_position.y * camera.jitter.w) - camera.jitter.xy;
+    targets.motion = (previous.xy / previous.z - current) * vec2<f32>(0.5, -0.5);
     // A point behind the previous camera has no position there: send its
     // history lookup out of the viewport.
-    if !(input.previous.z > 0.0) {
+    if !(previous.z > 0.0) {
         targets.motion = vec2<f32>(2.0);
     }
     return targets;
 }
 
+fn transparent_targets(shaded: Shaded, input: Fragment) -> TransparentTargets {
+    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
+}
+
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_output(input, front).color), 1.0);
+    return vec4<f32>(encoded(shade(fragment(input), front).color), 1.0);
 }
 
 @fragment
 fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_output_lit(input, front).color), 1.0);
+    return vec4<f32>(encoded(shade_lit(fragment(input), front).color), 1.0);
 }
 
 // The scene target is sRGB: it stores linear color with output encoding.
 @fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade_output(input, front));
+    return scene_targets(shade(fragment(input), front));
 }
 
 @fragment
 fn fs_post_lit(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade_output_lit(input, front));
+    return scene_targets(shade_lit(fragment(input), front));
 }
 
 @fragment
 fn fs_temporal(input: TemporalOutput, @builtin(front_facing) front: bool) -> TemporalTargets {
-    return temporal_targets(shade_output(temporal_output(input), front), input);
+    return temporal_targets(shade(fragment(temporal_output(input)), front),
+        input.clip_position, input.previous);
 }
 
 @fragment
 fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
         -> TemporalTargets {
-    return temporal_targets(shade_output_lit(temporal_output(input), front), input);
+    return temporal_targets(shade_lit(fragment(temporal_output(input)), front),
+        input.clip_position, input.previous);
 }
 
 @fragment
 fn fs_transparent(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
-    let shaded = shade_output(input, front);
-    return weighted(shaded.color, shaded.opacity,
-        length(camera.position.xyz - input.world_v.xyz));
+    let values = fragment(input);
+    return transparent_targets(shade(values, front), values);
 }
 
 @fragment
 fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
-    let shaded = shade_output_lit(input, front);
-    return weighted(shaded.color, shaded.opacity,
-        length(camera.position.xyz - input.world_v.xyz));
+    let values = fragment(input);
+    return transparent_targets(shade_lit(values, front), values);
+}
+
+// The same passes for meshes with a second vertex stream (decision 034).
+@fragment
+fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(encoded(shade(extended_fragment(input), front).color), 1.0);
+}
+
+@fragment
+fn fs_main_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(encoded(shade_lit(extended_fragment(input), front).color), 1.0);
+}
+
+@fragment
+fn fs_post_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> SceneTargets {
+    return scene_targets(shade(extended_fragment(input), front));
+}
+
+@fragment
+fn fs_post_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> SceneTargets {
+    return scene_targets(shade_lit(extended_fragment(input), front));
+}
+
+@fragment
+fn fs_temporal_extended(input: ExtendedTemporalOutput, @builtin(front_facing) front: bool)
+        -> TemporalTargets {
+    let values = extended_fragment(extended_temporal_output(input));
+    return temporal_targets(shade(values, front), input.clip_position, input.previous);
+}
+
+@fragment
+fn fs_temporal_lit_extended(input: ExtendedTemporalOutput,
+        @builtin(front_facing) front: bool) -> TemporalTargets {
+    let values = extended_fragment(extended_temporal_output(input));
+    return temporal_targets(shade_lit(values, front), input.clip_position, input.previous);
+}
+
+@fragment
+fn fs_transparent_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> TransparentTargets {
+    let values = extended_fragment(input);
+    return transparent_targets(shade(values, front), values);
+}
+
+@fragment
+fn fs_transparent_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> TransparentTargets {
+    let values = extended_fragment(input);
+    return transparent_targets(shade_lit(values, front), values);
 }
 
 // The sky behind all geometry: one triangle over the viewport at the far

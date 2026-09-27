@@ -632,14 +632,23 @@ fn mesh_pipeline(
     variant: Variant,
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
+    // Extended meshes (decision 034) read a third vertex buffer through
+    // their own entry points.
+    let suffix = if variant.extended() { "_extended" } else { "" };
+    let vertex_entry = format!("vs_affine_temporal{suffix}");
+    let fragment_entry = format!("{fragment}{suffix}");
+    let mut buffers = vertex_layouts.to_vec();
+    if variant.extended() {
+        buffers.push(crate::browser::extra_layout());
+    }
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("engine/temporal-meshes"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: mesh_shader,
-            entry_point: Some("vs_affine_temporal"),
+            entry_point: Some(&vertex_entry),
             compilation_options: Default::default(),
-            buffers: vertex_layouts,
+            buffers: &buffers,
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -656,7 +665,7 @@ fn mesh_pipeline(
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: mesh_shader,
-            entry_point: Some(fragment),
+            entry_point: Some(&fragment_entry),
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants: &constants,
                 ..Default::default()

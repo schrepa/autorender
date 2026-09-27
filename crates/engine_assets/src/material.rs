@@ -163,17 +163,27 @@ pub struct TextureRef {
     pub texture: TextureHandle,
     pub sampler: Sampler,
     pub transform: UvTransform,
+    /// The texture coordinates it reads (glTF `texCoord`): 0, the mesh's
+    /// first, or 1, its second ([`crate::Mesh::with_uv1`]; meshes without
+    /// them read their first).
+    pub tex_coord: u32,
 }
 
 impl TextureRef {
-    /// `texture` with glTF's default sampler (repeating, trilinear) and no
-    /// transform.
+    /// `texture` with glTF's default sampler (repeating, trilinear), no
+    /// transform, reading the first texture coordinates.
     pub const fn new(texture: TextureHandle) -> Self {
         Self {
             texture,
             sampler: Sampler::REPEAT,
             transform: UvTransform::IDENTITY,
+            tex_coord: 0,
         }
+    }
+
+    pub const fn with_tex_coord(mut self, tex_coord: u32) -> Self {
+        self.tex_coord = tex_coord;
+        self
     }
 
     pub const fn with_sampler(mut self, sampler: Sampler) -> Self {
@@ -480,6 +490,7 @@ impl Material {
                         map.texture,
                         map.sampler,
                         [u, v, rotation, x, y].map(f32::to_bits),
+                        map.tex_coord,
                     )
                 })
             }),
@@ -505,21 +516,27 @@ impl Material {
     }
 }
 
+/// One map of a binding: its texture, sampler, transform bits and
+/// coordinate set.
+type BoundMap = (TextureHandle, Sampler, [u32; 5], u32);
+
 /// A material's maps and map parameters ([`Material::binding`]): its
 /// textures with their samplers and transforms, normal scale, occlusion
 /// strength, emissive color, alpha mode and sides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MaterialBinding {
-    maps: [Option<(TextureHandle, Sampler, [u32; 5])>; 5],
+    maps: [Option<BoundMap>; 5],
     parameters: [u32; 6],
     alpha: u8,
     double_sided: bool,
 }
 
 fn checked(texture: TextureRef) -> Result<TextureRef, AssetError> {
-    if texture.transform.is_finite() {
-        Ok(texture)
-    } else {
-        Err(AssetError::InvalidMaterialMap { field: "transform" })
+    if !texture.transform.is_finite() {
+        return Err(AssetError::InvalidMaterialMap { field: "transform" });
     }
+    if texture.tex_coord > 1 {
+        return Err(AssetError::InvalidMaterialMap { field: "tex_coord" });
+    }
+    Ok(texture)
 }

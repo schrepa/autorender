@@ -10,8 +10,8 @@ use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
-    CameraUniform, ColorData, InstanceData, LightingUniform, PoseData, SHADER, ShadowUniform,
-    Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, InstanceData, LightingUniform, PoseData, SHADER,
+    ShadowUniform, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
@@ -35,6 +35,18 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
 // Columns, packed color and packed surface of public instance records.
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2, 8 => Uint32];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
+// Vertex color and second texture coordinates (decision 034).
+const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![9 => Unorm16x4, 10 => Float32x2];
+
+/// The second vertex stream of extended meshes.
+pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+    Some(wgpu::VertexBufferLayout {
+        array_stride: size_of::<ExtraVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &EXTRA_ATTRIBUTES,
+    })
+}
 
 fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     Some(wgpu::VertexBufferLayout {
@@ -64,6 +76,8 @@ struct DepthTarget {
 
 struct GpuMesh {
     vertices: wgpu::Buffer,
+    // Vertex colors and second texture coordinates, when the mesh has them.
+    extras: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
     index_count: u32,
     byte_len: u64,
@@ -765,9 +779,18 @@ impl Renderer {
                         contents: bytemuck::cast_slice(source.indices()),
                         usage: wgpu::BufferUsages::INDEX,
                     });
+                let extras = ExtraVertex::stream(source).map(|stream| {
+                    self.device
+                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                            label: Some("engine/mesh-extras"),
+                            contents: bytemuck::cast_slice(&stream),
+                            usage: wgpu::BufferUsages::VERTEX,
+                        })
+                });
                 let byte_len = source.byte_len() as u64;
                 entry.insert(GpuMesh {
                     vertices,
+                    extras,
                     indices,
                     index_count: source.indices().len() as u32,
                     byte_len,
@@ -1543,6 +1566,7 @@ impl Renderer {
                     // Every planned source was validated and uploaded above.
                     let mesh = &self.meshes[&batch.mesh];
                     let (group, variant) = self.materials.binding(batch.material);
+                    let variant = variant.with_extended(mesh.extras.is_some());
                     if variant != bound {
                         pass.set_pipeline(if variant == Variant::BASIC {
                             opaque_base
@@ -1553,6 +1577,9 @@ impl Renderer {
                     }
                     pass.set_bind_group(1, group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    if let Some(extras) = &mesh.extras {
+                        pass.set_vertex_buffer(2, extras.slice(..));
+                    }
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     if gpu_mode {
                         // Visible slots of this group, compacted and counted on the GPU.
@@ -1634,6 +1661,7 @@ impl Renderer {
                         }
                         let mesh = &self.meshes[&batch.mesh];
                         let (group, variant) = self.materials.binding(batch.material);
+                        let variant = variant.with_extended(mesh.extras.is_some());
                         if variant != bound {
                             pass.set_pipeline(if variant == Variant::BASIC {
                                 transparent_base
@@ -1644,6 +1672,9 @@ impl Renderer {
                         }
                         pass.set_bind_group(1, group, &[]);
                         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                        if let Some(extras) = &mesh.extras {
+                            pass.set_vertex_buffer(2, extras.slice(..));
+                        }
                         pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                         if gpu_mode {
                             let (ids, draws, offset) =
@@ -2026,6 +2057,11 @@ impl Renderer {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let (_, variant) = self.materials.binding(batch.material);
+            let extended = self
+                .meshes
+                .get(&batch.mesh)
+                .is_some_and(|mesh| mesh.extras.is_some());
+            let variant = variant.with_extended(extended);
             let kind = if batch.transparent {
                 transparent
             } else {
@@ -2246,6 +2282,12 @@ fn mesh_pipeline(
         .copied()
         .chain(variant.constants())
         .collect();
+    // Extended meshes (decision 034) read a third vertex buffer through
+    // their own entry points.
+    let extended = variant.extended();
+    let suffix = if extended { "_extended" } else { "" };
+    let vertex_entry = format!("{}{suffix}", if affine { "vs_affine" } else { "vs_main" });
+    let fragment_entry = format!("{}{suffix}", fragment.fragment);
     let full_layouts = [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -2253,19 +2295,22 @@ fn mesh_pipeline(
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &INSTANCE_ATTRIBUTES,
         }),
+        extra_layout(),
     ];
-    let affine_layouts = affine_layouts();
+    let [mesh, slots] = affine_layouts();
+    let affine_layouts = [mesh, slots, extra_layout()];
+    let streams = if extended { 3 } else { 2 };
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("engine/instanced-meshes"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
-            entry_point: Some(if affine { "vs_affine" } else { "vs_main" }),
+            entry_point: Some(&vertex_entry),
             compilation_options: Default::default(),
             buffers: if affine {
-                &affine_layouts
+                &affine_layouts[..streams]
             } else {
-                &full_layouts
+                &full_layouts[..streams]
             },
         },
         primitive: wgpu::PrimitiveState {
@@ -2283,7 +2328,7 @@ fn mesh_pipeline(
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some(fragment.fragment),
+            entry_point: Some(&fragment_entry),
             compilation_options: wgpu::PipelineCompilationOptions {
                 constants: &constants,
                 ..Default::default()

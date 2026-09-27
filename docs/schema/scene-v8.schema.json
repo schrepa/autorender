@@ -1680,6 +1680,15 @@
           "maxItems": 2,
           "minItems": 2
         },
+        "tex_coord": {
+          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second (decision 034).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "wrap_u": {
           "anyOf": [
             {
@@ -1759,6 +1768,19 @@
       "description": "CPU vertex authoring data; the renderer owns its separate upload layout.",
       "type": "object",
       "properties": {
+        "color": {
+          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor (decision 034). Every vertex of a mesh has one or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
         "normal": {
           "type": "array",
           "items": {
@@ -1778,8 +1800,21 @@
           "minItems": 3
         },
         "uv": {
-          "description": "Top-left origin texture coordinates, sampled with clamp-to-edge.",
+          "description": "Top-left origin texture coordinates.",
           "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "uv1": {
+          "description": "Version 8: second texture coordinates, which texture maps may read.\nEvery vertex of a mesh has them or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
           "items": {
             "type": "number",
             "format": "float"

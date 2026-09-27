@@ -153,6 +153,8 @@ fn rejects_invalid_inline_mesh_before_world_mutation() {
                 position: [0.0; 3],
                 normal: [0.0, 1.0, 0.0],
                 uv: [0.0; 2],
+                color: None,
+                uv1: None,
             }],
             indices: vec![0, 1, 2],
         },
@@ -1007,6 +1009,7 @@ fn version_eight_fields_need_version_eight_and_valid_references() {
                     offset: None,
                     rotation: None,
                     scale: Some([2.0, 2.0]),
+                    tex_coord: None,
                 }))
             },
             7
@@ -1107,4 +1110,90 @@ fn version_eight_tints_attach_to_their_objects_and_validate() {
         reject(&|document| document.entities[0].tint = Some([f32::NAN, 1.0, 1.0, 1.0])),
         ("invalid_tint", "$.entities[0].tint".into())
     );
+}
+
+#[test]
+fn version_eight_vertex_colors_and_second_coordinates_load_inline_and_from_buffers() {
+    use crate::{SceneFiles, encode_mesh_buffer_with};
+    let vertex = |position: [f32; 3]| crate::SceneVertex {
+        position,
+        normal: [0.0, 0.0, 1.0],
+        uv: [position[0], position[1]],
+        color: Some([1.0, 0.5, 0.25, 1.0]),
+        uv1: Some([0.5, 0.5]),
+    };
+    let vertices = vec![
+        vertex([0.0; 3]),
+        vertex([1.0, 0.0, 0.0]),
+        vertex([0.0, 1.0, 0.0]),
+    ];
+    let mut document = textured_document();
+    document.meshes.push(SceneMesh {
+        id: "inline-colors".into(),
+        source: MeshSource::Inline {
+            vertices: vertices.clone(),
+            indices: vec![0, 1, 2],
+        },
+    });
+    document.meshes.push(SceneMesh {
+        id: "buffer-colors".into(),
+        source: MeshSource::Buffer {
+            uri: "meshes/colors.bin".into(),
+        },
+    });
+    for mesh in ["inline-colors", "buffer-colors"] {
+        let mut entity = document.entities[0].clone();
+        entity.id = mesh.into();
+        entity.mesh = Some(mesh.into());
+        entity.tags.clear();
+        document.entities.push(entity);
+    }
+    let colors: Vec<[f32; 4]> = vertices
+        .iter()
+        .map(|vertex| vertex.color.unwrap())
+        .collect();
+    let uv1: Vec<[f32; 2]> = vertices.iter().map(|vertex| vertex.uv1.unwrap()).collect();
+    let bytes = encode_mesh_buffer_with(&vertices, &[0, 1, 2], Some(&colors), Some(&uv1));
+    assert_eq!(&bytes[..4], b"EMB2");
+    let mut files = SceneFiles::new();
+    files.add_buffer("meshes/colors.bin", bytes);
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate_with(&mut world, &files).unwrap();
+    for id in ["inline-colors", "buffer-colors"] {
+        let mesh = world
+            .get::<Mesh3d>(instance.entity(id).unwrap())
+            .unwrap()
+            .mesh;
+        let assets = world.resource::<AssetLibrary>();
+        let mesh = assets.mesh(mesh).unwrap();
+        assert_eq!(mesh.colors().unwrap(), &colors[..]);
+        assert_eq!(mesh.uv1().unwrap(), &uv1[..]);
+    }
+    // Mixed vertices and earlier versions refuse them.
+    let mut mixed = document.clone();
+    if let MeshSource::Inline { vertices, .. } = &mut mixed.meshes[1].source {
+        vertices[1].color = None;
+    }
+    let error = mixed.validate().unwrap_err();
+    assert_eq!(
+        (error.code, error.path),
+        ("invalid_mesh", "$.meshes[1].source.vertices".into())
+    );
+    let mut earlier = document.clone();
+    earlier.version = 7;
+    let error = earlier.validate().unwrap_err();
+    assert_eq!(
+        (error.code, error.path),
+        ("version_required", "$.meshes[1].source.vertices".into())
+    );
+    // A version 7 document may not read EMB2 extras either.
+    let mut earlier = document.clone();
+    earlier.version = 7;
+    earlier.meshes.remove(1);
+    earlier
+        .entities
+        .retain(|entity| entity.id != "inline-colors");
+    let error = earlier.validate_with(&files).unwrap_err();
+    assert_eq!(error.code, "version_required");
 }

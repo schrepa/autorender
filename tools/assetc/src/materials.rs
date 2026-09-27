@@ -147,10 +147,10 @@ fn texture_map(
         .as_u64()
         .or_else(|| info["texCoord"].as_u64())
         .unwrap_or(0);
-    if tex_coord != 0 {
+    if tex_coord > 1 {
         return Err(unsupported(
             format!("{path}.texCoord"),
-            "only TEXCOORD_0 is supported",
+            "maps read TEXCOORD_0 or TEXCOORD_1",
         ));
     }
     let sampler = texture.sampler();
@@ -181,6 +181,7 @@ fn texture_map(
         offset: pair(&transform["offset"]),
         rotation: number(&transform["rotation"]),
         scale: pair(&transform["scale"]),
+        tex_coord: (tex_coord == 1).then_some(1),
     };
     let plain = SceneTextureMap {
         id: map.id.clone(),
@@ -192,6 +193,7 @@ fn texture_map(
         offset: None,
         rotation: None,
         scale: None,
+        tex_coord: None,
     };
     Ok(if map == plain {
         SceneMap::Id(map.id)

@@ -132,6 +132,10 @@ pub struct SceneTextureMap {
     pub rotation: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<[f32; 2]>,
+    /// The texture coordinates the map reads: 0, the mesh's first (the
+    /// default), or 1, its second (decision 034).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tex_coord: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,7 +186,7 @@ const MAP_FIELDS: [&str; 5] = [
 /// scene's textures are resident.
 pub(crate) struct PreparedMaterial {
     material: Material,
-    maps: [Option<(String, Sampler, UvTransform)>; 5],
+    maps: [Option<(String, Sampler, UvTransform, u32)>; 5],
     normal_scale: f32,
     occlusion_strength: f32,
 }
@@ -191,10 +195,11 @@ impl PreparedMaterial {
     /// The material with its maps' textures, `texture` resolving IDs.
     pub(crate) fn material(&self, texture: impl Fn(&str) -> TextureHandle) -> Material {
         let [base, packed, normal, occlusion, emissive] = self.maps.each_ref().map(|map| {
-            map.as_ref().map(|(id, sampler, transform)| {
+            map.as_ref().map(|(id, sampler, transform, tex_coord)| {
                 TextureRef::new(texture(id))
                     .with_sampler(*sampler)
                     .with_transform(*transform)
+                    .with_tex_coord(*tex_coord)
             })
         });
         let mut material = self.material;
@@ -335,7 +340,7 @@ impl SceneMaterial {
                 "the occlusion strength must be in [0, 1]".into(),
             ));
         }
-        let mut maps: [Option<(String, Sampler, UvTransform)>; 5] = Default::default();
+        let mut maps: [Option<(String, Sampler, UvTransform, u32)>; 5] = Default::default();
         for ((slot, map), field) in maps.iter_mut().zip(self.maps()).zip(MAP_FIELDS) {
             let Some(map) = map else {
                 continue;
@@ -351,6 +356,7 @@ impl SceneMaterial {
                         Sampler::REPEAT
                     },
                     UvTransform::IDENTITY,
+                    0,
                 ),
                 SceneMap::Map(map) => {
                     let transform = UvTransform {
@@ -370,7 +376,14 @@ impl SceneMaterial {
                             "texture offset, rotation and scale must be finite".into(),
                         ));
                     }
-                    (map.id.clone(), map.sampler(), transform)
+                    let tex_coord = map.tex_coord.unwrap_or(0);
+                    if tex_coord > 1 {
+                        return Err(invalid(
+                            field,
+                            "maps read texture coordinates 0 or 1".into(),
+                        ));
+                    }
+                    (map.id.clone(), map.sampler(), transform, tex_coord)
                 }
             });
         }

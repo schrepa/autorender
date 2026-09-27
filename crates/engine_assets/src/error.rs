@@ -16,6 +16,17 @@ pub enum AssetError {
     InvalidUv {
         vertex: usize,
     },
+    /// An optional vertex attribute (decision 034) of the wrong length.
+    AttributeCount {
+        attribute: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    /// An optional vertex attribute value outside its range.
+    InvalidAttribute {
+        attribute: &'static str,
+        vertex: usize,
+    },
     IndexOutOfBounds {
         index: usize,
         value: u32,
@@ -71,6 +82,8 @@ impl AssetError {
             Self::InvalidVertex { .. } => "asset.invalid_vertex",
             Self::InvalidNormal { .. } => "asset.invalid_normal",
             Self::InvalidUv { .. } => "asset.invalid_uv",
+            Self::AttributeCount { .. } => "asset.attribute_count",
+            Self::InvalidAttribute { .. } => "asset.invalid_attribute",
             Self::IndexOutOfBounds { .. } => "asset.index_out_of_bounds",
             Self::InvalidColor { .. } => "asset.invalid_color",
             Self::UnsupportedAlpha => "asset.unsupported_alpha",
@@ -107,6 +120,18 @@ impl fmt::Display for AssetError {
             Self::InvalidUv { vertex } => {
                 write!(f, "mesh vertex {vertex} texture coordinates must be finite")
             }
+            Self::AttributeCount {
+                attribute,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "mesh {attribute} need one value per vertex: {expected}; received {actual}"
+            ),
+            Self::InvalidAttribute { attribute, vertex } => write!(
+                f,
+                "mesh vertex {vertex} {attribute} must be finite and within range"
+            ),
             Self::IndexOutOfBounds {
                 index,
                 value,

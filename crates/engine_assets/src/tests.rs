@@ -652,3 +652,69 @@ fn materials_replace_in_place_keeping_their_handles() {
         AssetError::InvalidMaterialHandle
     );
 }
+
+#[test]
+fn optional_vertex_colors_and_second_coordinates_validate() {
+    let mesh = || Mesh::new(triangle(), vec![0, 1, 2]).unwrap();
+    let colored = mesh()
+        .with_colors(vec![[1.0, 0.5, 0.0, 1.0]; 3])
+        .unwrap()
+        .with_uv1(vec![[0.5, 0.5]; 3])
+        .unwrap();
+    assert_eq!(colored.colors().unwrap()[0], [1.0, 0.5, 0.0, 1.0]);
+    assert_eq!(colored.uv1().unwrap().len(), 3);
+    assert_eq!(colored.byte_len(), mesh().byte_len() + 3 * 16 + 3 * 8);
+    assert!(mesh().colors().is_none() && mesh().uv1().is_none());
+    assert_eq!(
+        mesh().with_colors(vec![[1.0; 4]; 2]).unwrap_err(),
+        AssetError::AttributeCount {
+            attribute: "colors",
+            expected: 3,
+            actual: 2
+        }
+    );
+    assert_eq!(
+        mesh()
+            .with_colors(vec![[1.0; 4], [2.0, 0.0, 0.0, 1.0], [1.0; 4]])
+            .unwrap_err(),
+        AssetError::InvalidAttribute {
+            attribute: "colors",
+            vertex: 1
+        }
+    );
+    assert_eq!(
+        mesh()
+            .with_uv1(vec![[0.0; 2], [0.0; 2], [f32::NAN, 0.0]])
+            .unwrap_err()
+            .code(),
+        "asset.invalid_attribute"
+    );
+    // Maps read the first or second coordinates only.
+    let mut library = AssetLibrary::default();
+    let texture = library.insert_texture(one_pixel()).unwrap();
+    let plain = Material::new([1.0; 4]).unwrap();
+    let second = TextureRef::new(texture).with_tex_coord(1);
+    assert_eq!(
+        plain
+            .with_base_color_texture(second)
+            .unwrap()
+            .base_color_texture()
+            .unwrap()
+            .tex_coord,
+        1
+    );
+    assert_eq!(
+        plain
+            .with_base_color_texture(second.with_tex_coord(2))
+            .unwrap_err(),
+        AssetError::InvalidMaterialMap { field: "tex_coord" }
+    );
+    // The set is part of the binding.
+    assert_ne!(
+        plain
+            .with_base_color_texture(TextureRef::new(texture))
+            .unwrap()
+            .binding(),
+        plain.with_base_color_texture(second).unwrap().binding()
+    );
+}

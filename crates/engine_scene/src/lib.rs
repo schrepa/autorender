@@ -28,7 +28,10 @@ pub use environment::{
     SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;
-pub use files::{MESH_BUFFER_MAGIC, SceneFile, SceneFileKind, SceneFiles, encode_mesh_buffer};
+pub use files::{
+    MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, SceneFile, SceneFileKind, SceneFiles,
+    encode_mesh_buffer, encode_mesh_buffer_with,
+};
 pub use instance::{SceneEntity, SceneInstance};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{

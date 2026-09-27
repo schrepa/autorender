@@ -291,6 +291,41 @@ impl From<&MeshVertex> for Vertex {
     }
 }
 
+/// The second vertex stream of meshes with vertex colors or second texture
+/// coordinates (decision 034), 16 bytes: linear RGBA as four 16-bit
+/// fractions (white without colors) and the second coordinates (the first
+/// without them).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct ExtraVertex {
+    pub color: [u16; 4],
+    pub uv1: [f32; 2],
+}
+
+impl ExtraVertex {
+    /// The extra stream of `mesh`, or `None` without colors or second
+    /// coordinates.
+    pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
+        if mesh.colors().is_none() && mesh.uv1().is_none() {
+            return None;
+        }
+        Some(
+            mesh.vertices()
+                .iter()
+                .enumerate()
+                .map(|(index, vertex)| Self {
+                    color: mesh.colors().map_or([u16::MAX; 4], |colors| {
+                        colors[index].map(|value| {
+                            (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u16
+                        })
+                    }),
+                    uv1: mesh.uv1().map_or(vertex.uv, |uv1| uv1[index]),
+                })
+                .collect(),
+        )
+    }
+}
+
 /// A nonzero normal as two 16-bit signed fractions: its direction on the
 /// octahedron |x| + |y| + |z| = 1, the lower half folded over the upper
 /// (Cigolle et al. 2014). `meshes.wgsl` decodes it with `octahedral_normal`;
@@ -347,7 +382,8 @@ pub(crate) struct MaterialUniform {
     pub transforms: [[f32; 4]; 10],
     /// Linear emissive color, w unused.
     pub emissive: [f32; 4],
-    /// Normal scale, occlusion strength, alpha cutoff and unused.
+    /// Normal scale, occlusion strength, alpha cutoff, and the maps reading
+    /// the second texture coordinates as bits in map order.
     pub params: [f32; 4],
 }
 
@@ -385,11 +421,18 @@ impl MaterialUniform {
             AlphaMode::Mask { cutoff } => cutoff,
             _ => 0.5,
         };
+        // Maps reading the second texture coordinates, one bit each.
+        let second = material
+            .maps()
+            .iter()
+            .enumerate()
+            .filter(|(_, map)| map.is_some_and(|map| map.tex_coord == 1))
+            .fold(0_u32, |bits, (index, _)| bits | 1 << index);
         uniform.params = [
             material.normal_scale(),
             material.occlusion_strength(),
             cutoff,
-            0.0,
+            second as f32,
         ];
         uniform
     }
@@ -420,6 +463,9 @@ impl Variant {
     const NORMAL_MAP: u8 = 2;
     const ALPHA_MASK: u8 = 4;
     const DOUBLE_SIDED: u8 = 8;
+    // Meshes with a second vertex stream (decision 034): extended entry
+    // points rather than a constant.
+    const EXTENDED: u8 = 16;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -461,6 +507,19 @@ impl Variant {
 
     pub(crate) fn double_sided(self) -> bool {
         self.0 & Self::DOUBLE_SIDED != 0
+    }
+
+    /// This variant drawing a mesh with a second vertex stream, or not.
+    pub(crate) fn with_extended(self, extended: bool) -> Self {
+        Self(if extended {
+            self.0 | Self::EXTENDED
+        } else {
+            self.0 & !Self::EXTENDED
+        })
+    }
+
+    pub(crate) fn extended(self) -> bool {
+        self.0 & Self::EXTENDED != 0
     }
 }
 
@@ -1065,6 +1124,38 @@ mod tests {
         );
         assert_eq!(uniform.emissive, [2.0, 1.0, 0.0, 0.0]);
         assert_eq!(uniform.params, [0.5, 1.0, 0.3, 0.0]);
+    }
+
+    #[test]
+    fn extended_meshes_stream_colors_and_second_coordinates() {
+        let vertices: Vec<MeshVertex> = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+            .map(|uv| MeshVertex {
+                position: [uv[0], uv[1], 0.0],
+                normal: [0.0, 0.0, 1.0],
+                uv,
+            })
+            .to_vec();
+        let mesh = Mesh::new(vertices, vec![0, 1, 2]).unwrap();
+        assert!(ExtraVertex::stream(&mesh).is_none());
+        // Without second coordinates the stream repeats the first.
+        let colored = mesh.with_colors(vec![[1.0, 0.5, 0.0, 1.0]; 3]).unwrap();
+        let stream = ExtraVertex::stream(&colored).unwrap();
+        assert_eq!(stream[1].color, [65535, 32768, 0, 65535]);
+        assert_eq!(stream[1].uv1, [1.0, 0.0]);
+        let second = Mesh::new(colored.vertices().to_vec(), vec![0, 1, 2])
+            .unwrap()
+            .with_uv1(vec![[0.25, 0.75]; 3])
+            .unwrap();
+        let stream = ExtraVertex::stream(&second).unwrap();
+        // Without colors, white.
+        assert_eq!(stream[2].color, [u16::MAX; 4]);
+        assert_eq!(stream[2].uv1, [0.25, 0.75]);
+        assert_eq!(size_of::<ExtraVertex>(), 16);
+        // Extended meshes pick extended entry points on any variant.
+        let variant = Variant::BASIC.with_extended(true);
+        assert!(variant.extended() && variant != Variant::BASIC);
+        assert_eq!(variant.constants(), Variant::BASIC.constants());
+        assert_eq!(variant.with_extended(false), Variant::BASIC);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use engine_scene::{
     MeshSource, SceneDocument, SceneMesh, SceneObject, SceneTransform, SceneVertex,
-    encode_mesh_buffer,
+    encode_mesh_buffer_with,
 };
 use glam::{Mat3, Mat4, Vec3};
 use gltf::{
@@ -75,11 +75,16 @@ pub(crate) fn import(
                 }
                 let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
                 let mesh_id = format!("{object_id}.mesh");
+                // Vertex colors and second coordinates (decision 034) ride in
+                // an EMB2 buffer's optional streams.
+                let colors: Option<Vec<[f32; 4]>> =
+                    vertices.iter().map(|vertex| vertex.color).collect();
+                let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
                 let file = ImportedFile::named(
                     id,
                     &format!("node{}.p{}", node.index(), primitive.index()),
                     "bin",
-                    encode_mesh_buffer(&vertices, &indices),
+                    encode_mesh_buffer_with(&vertices, &indices, colors.as_deref(), uv1.as_deref()),
                 );
                 output.meshes.push(SceneMesh {
                     id: mesh_id.clone(),
@@ -142,8 +147,9 @@ fn primitive_data(
             Semantic::Positions | Semantic::Normals => Dimensions::Vec3,
             Semantic::TexCoords(0) => Dimensions::Vec2,
             // Normal maps derive their tangent frames (decision 031); maps
-            // read TEXCOORD_0 only.
-            Semantic::Tangents | Semantic::TexCoords(_) => continue,
+            // read TEXCOORD_0 or TEXCOORD_1, and base colors COLOR_0
+            // (decision 034), whose formats the reader converts.
+            Semantic::Tangents | Semantic::TexCoords(_) | Semantic::Colors(_) => continue,
             _ => {
                 return Err(unsupported(
                     format!("{path}.attributes"),
@@ -231,6 +237,24 @@ fn primitive_data(
     };
     let uv_data: Option<Vec<[f32; 2]>> =
         reader.read_tex_coords(0).map(|uv| uv.into_f32().collect());
+    let uv1_data: Option<Vec<[f32; 2]>> =
+        reader.read_tex_coords(1).map(|uv| uv.into_f32().collect());
+    let color_data: Option<Vec<[f32; 4]>> = reader
+        .read_colors(0)
+        .map(|colors| colors.into_rgba_f32().collect());
+    if uv1_data
+        .as_ref()
+        .is_some_and(|uv1| uv1.len() != position_data.len())
+        || color_data
+            .as_ref()
+            .is_some_and(|colors| colors.len() != position_data.len())
+    {
+        return Err(ImportError::new(
+            "attribute_count",
+            path,
+            "vertex attribute counts must match",
+        ));
+    }
     let mut indices: Vec<u32> = reader
         .read_indices()
         .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
@@ -285,10 +309,26 @@ fn primitive_data(
                 "vertices must have finite bounded positions, nonzero finite normals and finite UVs",
             ));
         }
+        let color = color_data.as_ref().map(|colors| colors[source as usize]);
+        let uv1 = uv1_data.as_ref().map(|uv1| uv1[source as usize]);
+        if color.is_some_and(|color| {
+            !color
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        }) || uv1.is_some_and(|uv1| uv1.iter().any(|value| !value.is_finite()))
+        {
+            return Err(ImportError::new(
+                "invalid_vertex",
+                path,
+                "vertex colors must be finite in [0, 1] and second UVs finite",
+            ));
+        }
         vertices.push(SceneVertex {
             position: position.to_array(),
             normal: normal.normalize().to_array(),
             uv,
+            color,
+            uv1,
         });
     }
     Ok((vertices, indices))

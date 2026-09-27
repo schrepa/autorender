@@ -111,6 +111,17 @@ impl SceneDocument {
                     "object tints require scene version 8; set version to 8 and increment revision",
                 ));
             }
+            if let Some(index) = self
+                .meshes
+                .iter()
+                .position(|mesh| mesh.source.has_vertex_extras())
+            {
+                return Err(SceneError::new(
+                    "version_required",
+                    format!("$.meshes[{index}].source.vertices"),
+                    "vertex colors and second texture coordinates require scene version 8; set version to 8 and increment revision",
+                ));
+            }
         }
         if self.version < 7 {
             let version_seven = |path: String| {
@@ -344,7 +355,7 @@ impl SceneDocument {
             .enumerate()
             .map(|(index, mesh)| {
                 mesh.source
-                    .mesh(&format!("$.meshes[{index}].source"), files)
+                    .mesh(&format!("$.meshes[{index}].source"), files, self.version)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let materials = self

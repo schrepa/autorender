@@ -31,11 +31,15 @@ impl Aabb {
 }
 
 /// Validated, immutable indexed triangles. Winding is counterclockwise.
+/// Optional vertex colors and second texture coordinates (decision 034)
+/// follow the vertices one to one.
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
     indices: Box<[u32]>,
     bounds: Aabb,
+    colors: Option<Box<[[f32; 4]]>>,
+    uv1: Option<Box<[[f32; 2]]>>,
 }
 
 impl Mesh {
@@ -84,11 +88,70 @@ impl Mesh {
             vertices: vertices.into_boxed_slice(),
             indices: indices.into_boxed_slice(),
             bounds: Aabb { min, max },
+            colors: None,
+            uv1: None,
         })
+    }
+
+    /// This mesh with linear RGBA vertex colors in `[0, 1]`, one per vertex,
+    /// multiplying its material's base color (glTF `COLOR_0`).
+    pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, AssetError> {
+        self.check_count("colors", colors.len())?;
+        if let Some(vertex) = colors.iter().position(|color| {
+            !color
+                .iter()
+                .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+        }) {
+            return Err(AssetError::InvalidAttribute {
+                attribute: "colors",
+                vertex,
+            });
+        }
+        self.colors = Some(colors.into_boxed_slice());
+        Ok(self)
+    }
+
+    /// This mesh with finite second texture coordinates, one per vertex,
+    /// which texture maps may read (glTF `TEXCOORD_1`).
+    pub fn with_uv1(mut self, uv1: Vec<[f32; 2]>) -> Result<Self, AssetError> {
+        self.check_count("uv1", uv1.len())?;
+        if let Some(vertex) = uv1
+            .iter()
+            .position(|uv| !uv.iter().all(|value| value.is_finite()))
+        {
+            return Err(AssetError::InvalidAttribute {
+                attribute: "uv1",
+                vertex,
+            });
+        }
+        self.uv1 = Some(uv1.into_boxed_slice());
+        Ok(self)
+    }
+
+    fn check_count(&self, attribute: &'static str, actual: usize) -> Result<(), AssetError> {
+        if actual == self.vertices.len() {
+            Ok(())
+        } else {
+            Err(AssetError::AttributeCount {
+                attribute,
+                expected: self.vertices.len(),
+                actual,
+            })
+        }
     }
 
     pub fn vertices(&self) -> &[MeshVertex] {
         &self.vertices
+    }
+
+    /// Vertex colors, when the mesh has them.
+    pub fn colors(&self) -> Option<&[[f32; 4]]> {
+        self.colors.as_deref()
+    }
+
+    /// Second texture coordinates, when the mesh has them.
+    pub fn uv1(&self) -> Option<&[[f32; 2]]> {
+        self.uv1.as_deref()
     }
 
     pub fn indices(&self) -> &[u32] {
@@ -102,7 +165,10 @@ impl Mesh {
 
     /// Owned vertex/index payload bytes; excludes bounds, allocation and `Arc` metadata.
     pub fn byte_len(&self) -> usize {
-        std::mem::size_of_val(self.vertices()) + std::mem::size_of_val(self.indices())
+        std::mem::size_of_val(self.vertices())
+            + std::mem::size_of_val(self.indices())
+            + self.colors().map_or(0, std::mem::size_of_val)
+            + self.uv1().map_or(0, std::mem::size_of_val)
     }
 
     /// Unit cube centered at the origin, with flat face normals.
