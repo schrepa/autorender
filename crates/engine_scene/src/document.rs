@@ -1,23 +1,29 @@
 use engine_core::{Camera, Material, Mesh, MeshVertex, Surface, Transform, glam};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneLight, SceneTexture};
+use crate::{
+    SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneFiles, SceneLight,
+    SceneTexture, files::valid_uri,
+};
 
 /// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 6;
-pub(crate) const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+pub const SCENE_VERSION: u32 = 7;
+/// Largest scene source parsed: a sanity bound on JSON, not on content,
+/// which references image and buffer files for bulk data (decision 030).
+pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
 ///
-/// Loading is bounded to 1 MiB, 10,000 expanded entities, 128 meshes and 256
-/// materials. Prefabs share those scene-wide assets across their placements.
+/// Loading sets no count budget (decision 029); bulk pixels and geometry
+/// belong in files beside the scene (version 7). Prefabs share scene-wide
+/// assets across their placements.
 /// Unknown fields are rejected to expose authoring mistakes. Arrays retain
 /// authored order when serialized, yielding stable, readable source diffs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 6)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 7)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -33,19 +39,14 @@ pub struct SceneDocument {
     /// game's own settings stay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<SceneEnvironment>,
-    /// Decoded opaque sRGB pixels, encoded as base64 only for transport.
+    /// Opaque sRGB pixels: inline base64, or image files (version 7).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "schema", schemars(length(max = 64)))]
     pub textures: Vec<SceneTexture>,
-    #[cfg_attr(feature = "schema", schemars(length(max = 256)))]
     pub materials: Vec<SceneMaterial>,
-    #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
     pub meshes: Vec<SceneMesh>,
     /// Reusable local entity trees. Definitions share this document's assets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
     pub prefabs: Vec<ScenePrefab>,
-    #[cfg_attr(feature = "schema", schemars(length(max = 10_000)))]
     pub entities: Vec<SceneObject>,
 }
 
@@ -297,19 +298,42 @@ pub enum MeshSource {
     Plane {},
     Octahedron {},
     Inline {
-        #[cfg_attr(feature = "schema", schemars(length(min = 1, max = 32_768)))]
+        #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
         vertices: Vec<SceneVertex>,
-        #[cfg_attr(feature = "schema", schemars(length(min = 3, max = 98_304)))]
+        #[cfg_attr(feature = "schema", schemars(length(min = 3)))]
         indices: Vec<u32>,
+    },
+    /// An engine mesh buffer file (`EMB1`) beside the scene. Version 7.
+    Buffer {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                length(min = 1, max = 256),
+                regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
+            )
+        )]
+        uri: String,
     },
 }
 
 impl MeshSource {
-    pub(crate) fn mesh(&self, path: &str) -> Result<Mesh, SceneError> {
+    /// The mesh at authored path `path`. Without `files` (structural
+    /// validation) a buffer mesh reads as the cube.
+    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, SceneError> {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
             Self::Octahedron {} => Ok(Mesh::octahedron()),
+            Self::Buffer { uri } => {
+                let uri_path = format!("{path}.uri");
+                valid_uri(uri, &uri_path)?;
+                let Some(files) = files else {
+                    return Ok(Mesh::cube());
+                };
+                let (vertices, indices) = files.mesh(uri, &uri_path)?;
+                Mesh::new(vertices, indices)
+                    .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))
+            }
             Self::Inline { vertices, indices } => Mesh::new(
                 vertices
                     .iter()

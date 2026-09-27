@@ -18,7 +18,7 @@ interface Host {
   isBusy?(): boolean;
   size(): [number, number];
   poll(): void;
-  source?: { url: string; load(signal: AbortSignal): Promise<string> };
+  source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
 }
 
 declare global {
@@ -120,9 +120,10 @@ export function connectDevelopment(host: Host): () => void {
               }
               if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
               const source = await host.source.load(host.signal);
+              const files = await host.source.files?.(source, host.signal);
               host.signal.throwIfAborted();
               if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
-              reply = JSON.parse(runtime.dev_reload(source, command.expected_revision, command.revision));
+              reply = JSON.parse(runtime.dev_reload(source, command.expected_revision, command.revision, files));
               if (reply.ok) {
                 const rendered = invoke({ op: "render" });
                 if (!rendered.ok) return finish(rendered);

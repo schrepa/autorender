@@ -26,8 +26,8 @@ pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
 pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Shadows, SunShafts};
 pub use engine_assets::{
-    Aabb, AssetBudget, AssetError, AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle,
-    MeshVertex, Surface, Texture, TextureHandle,
+    Aabb, AssetBudget, AssetError, AssetLibrary, MAX_TEXTURE_DIMENSION, Material, MaterialHandle,
+    Mesh, MeshHandle, MeshVertex, Surface, Texture, TextureHandle,
 };
 pub use glam;
 pub use hierarchy::{

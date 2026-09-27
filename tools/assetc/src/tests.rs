@@ -42,7 +42,7 @@ fn fixture_is_deterministic_self_contained_and_small() {
         ),
         (2, 2, 1, 2)
     );
-    assert_eq!(a.textures[0].width, 64);
+    assert_eq!(a.textures[0].width, Some(64));
     assert_eq!(a.entities[1].material.as_deref(), Some("garden.material1"));
     assert_eq!(source_sha256(FIXTURE).len(), 64);
     engine_scene::SceneDocument::from_json(&source).unwrap();

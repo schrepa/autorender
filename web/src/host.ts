@@ -25,7 +25,7 @@ export interface Runtime {
   reset_camera(): void;
   set_count?(count: number): void;
   dev_command?(request: string, width: number, height: number): string;
-  dev_reload?(source: string, expectedRevision: string, revision: string): string;
+  dev_reload?(source: string, expectedRevision: string, revision: string, files?: unknown): string;
   profiling_start?(maxEvents: number): void;
   profiling_stop?(): string;
   profiling_status?(): string;
@@ -46,7 +46,7 @@ export function boot<T extends Runtime>(options: {
   create(canvas: HTMLCanvasElement, count: number, signal: AbortSignal): Promise<T>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
-  source?: { url: string; load(signal: AbortSignal): Promise<string> };
+  source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
   ready?(game: T, controls: HostControls<T>): void;
   beforeFrame?(game: T, timestamp: number): void;
   afterFrame?(game: T, timestamp: number): void;

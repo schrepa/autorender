@@ -139,7 +139,7 @@ fn prefabs_validate_unused_definitions_and_keep_parent_references_local() {
 }
 
 #[test]
-fn expansion_rejects_collisions_long_qualified_ids_and_output_amplification() {
+fn expansion_rejects_collisions_and_long_qualified_ids_without_a_count_budget() {
     let mut document = document();
     document.entities.push(node("west.body", None));
     assert_eq!(document.validate().unwrap_err().code, "duplicate_id");
@@ -155,29 +155,8 @@ fn expansion_rejects_collisions_long_qualified_ids_and_output_amplification() {
             root
         })
         .collect();
-    assert_eq!(document.validate().unwrap_err().code, "count_limit");
-    document.entities.pop();
-    assert_eq!(document.expanded_entities().unwrap().len(), 9999);
-}
-
-#[test]
-fn definition_counts_are_bounded_even_when_no_prefabs_are_placed() {
-    let mut document = document();
-    document.entities.clear();
-    document.prefabs[0].entities = (0..10_001)
-        .map(|index| node(&format!("n{index}"), None))
-        .collect();
-    assert_eq!(document.validate().unwrap_err().code, "count_limit");
-    document.prefabs[0].entities.clear();
-    let prefab = document.prefabs[0].clone();
-    document.prefabs = (0..129)
-        .map(|index| {
-            let mut prefab = prefab.clone();
-            prefab.id = format!("p{index}");
-            prefab
-        })
-        .collect();
-    assert_eq!(document.validate().unwrap_err().code, "count_limit");
+    // Placements expand without a count budget (decision 029).
+    assert_eq!(document.expanded_entities().unwrap().len(), 3334 * 3);
 }
 
 #[test]

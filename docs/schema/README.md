@@ -1,6 +1,6 @@
 # Generated authoring schemas
 
-`scene-v6.schema.json` is generated from the versioned Rust types in
+`scene-v7.schema.json` is generated from the versioned Rust types in
 `engine_scene`, using its host-only `schema` feature. Regenerate deliberately:
 
 ```sh
@@ -16,6 +16,11 @@ collection limits. Runtime validation additionally checks unique IDs, references
 geometry, numeric invariants and authoring bounds. Use `cargo xtask assets` for
 the same validation used by the browser scene loader. Schemas do not encode or
 persist runtime entity IDs or asset handles.
+
+Version 7 lets textures set `uri` to an image file beside the scene and
+meshes use `buffer` sources (`EMB1` files), and removes count limits
+([decision 030](../adr-030-scene-files.md)). Versions 1–6 keep their
+meaning and schema artifacts.
 
 Version 6 adds material `opacity` (below 1, transparent), entity `light`
 (point or spot) and `particles` (an emitter), and the `local_lights`,

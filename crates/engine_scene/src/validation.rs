@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use engine_core::{LocalLight, Material, Mesh, ParticleEmitter, Texture, Transform};
 
 use crate::{
-    MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneTransform, hierarchy::ExpandedObject,
+    MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
+    SceneTransform, hierarchy::ExpandedObject,
 };
 
 pub(crate) struct PreparedScene {
@@ -23,11 +24,44 @@ impl SceneDocument {
     ///
     /// Validation is independent of a world and may allocate temporary CPU
     /// geometry. Asset residency budgets are checked during instantiation.
+    /// Referenced files are checked only by [`Self::validate_with`].
     pub fn validate(&self) -> Result<(), SceneError> {
-        self.prepare().map(|_| ())
+        self.prepare(None).map(|_| ())
     }
 
-    pub(crate) fn prepare(&self) -> Result<PreparedScene, SceneError> {
+    /// Validates the document and the contents of the files it references.
+    pub fn validate_with(&self, files: &SceneFiles) -> Result<(), SceneError> {
+        self.prepare(Some(files)).map(|_| ())
+    }
+
+    /// The files this document references (decision 030), each once, in
+    /// authored order: the host supplies them as [`SceneFiles`].
+    pub fn files(&self) -> Vec<SceneFile> {
+        let mut files: Vec<SceneFile> = Vec::new();
+        let mut add = |uri: &String, kind| {
+            if !files.iter().any(|file| file.uri == *uri) {
+                files.push(SceneFile {
+                    uri: uri.clone(),
+                    kind,
+                });
+            }
+        };
+        for texture in &self.textures {
+            if let Some(uri) = &texture.uri {
+                add(uri, SceneFileKind::Image);
+            }
+        }
+        for mesh in &self.meshes {
+            if let MeshSource::Buffer { uri } = &mesh.source {
+                add(uri, SceneFileKind::Buffer);
+            }
+        }
+        files
+    }
+
+    /// `files`: `None` validates structure only, reading referenced files as
+    /// placeholders.
+    pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, SceneError> {
         if !(1..=SCENE_VERSION).contains(&self.version) {
             return Err(SceneError::new(
                 "unsupported_version",
@@ -37,6 +71,29 @@ impl SceneDocument {
                     self.version
                 ),
             ));
+        }
+        if self.version < 7 {
+            let version_seven = |path: String| {
+                SceneError::new(
+                    "version_required",
+                    path,
+                    "image and buffer files require scene version 7; set version to 7 and increment revision",
+                )
+            };
+            if let Some(index) = self
+                .textures
+                .iter()
+                .position(|texture| texture.uri.is_some())
+            {
+                return Err(version_seven(format!("$.textures[{index}].uri")));
+            }
+            if let Some(index) = self
+                .meshes
+                .iter()
+                .position(|mesh| matches!(mesh.source, MeshSource::Buffer { .. }))
+            {
+                return Err(version_seven(format!("$.meshes[{index}].source")));
+            }
         }
         if self.version < 6 {
             let version_six = |path: String, what: &str| {
@@ -142,10 +199,6 @@ impl SceneDocument {
             ));
         }
         identifier(&self.id, "$.id")?;
-        count(self.entities.len(), 10_000, "$.entities")?;
-        count(self.meshes.len(), 128, "$.meshes")?;
-        count(self.materials.len(), 256, "$.materials")?;
-        count(self.textures.len(), 64, "$.textures")?;
         self.validate_camera()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
         let material_ids = unique_ids(
@@ -203,10 +256,8 @@ impl SceneDocument {
         // Build every CPU asset before acquiring a mutable world resource.
         // Invalid late assets cannot leave earlier ones resident.
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
-            if let MeshSource::Inline { vertices, indices } = &mesh.source {
+            if let MeshSource::Inline { vertices, .. } = &mesh.source {
                 let path = format!("$.meshes[{mesh_index}].source");
-                count(vertices.len(), 32_768, &format!("{path}.vertices"))?;
-                count(indices.len(), 98_304, &format!("{path}.indices"))?;
                 for (index, vertex) in vertices.iter().enumerate() {
                     bounded_vector(
                         vertex.position,
@@ -216,28 +267,20 @@ impl SceneDocument {
                 }
             }
         }
-        let encoded_bytes = self
-            .textures
-            .iter()
-            .try_fold(0usize, |sum, texture| sum.checked_add(texture.rgba8.len()));
-        if encoded_bytes.is_none_or(|bytes| bytes > crate::document::MAX_SOURCE_BYTES) {
-            return Err(SceneError::new(
-                "source_too_large",
-                "$.textures",
-                "encoded texture payload must fit the 1 MiB source budget",
-            ));
-        }
         let textures = self
             .textures
             .iter()
             .enumerate()
-            .map(|(index, texture)| texture.texture(&format!("$.textures[{index}]")))
+            .map(|(index, texture)| texture.texture(&format!("$.textures[{index}]"), files))
             .collect::<Result<Vec<_>, _>>()?;
         let meshes = self
             .meshes
             .iter()
             .enumerate()
-            .map(|(index, mesh)| mesh.source.mesh(&format!("$.meshes[{index}].source")))
+            .map(|(index, mesh)| {
+                mesh.source
+                    .mesh(&format!("$.meshes[{index}].source"), files)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let materials = self
             .materials
@@ -301,17 +344,6 @@ impl SceneDocument {
         }
         Ok(())
     }
-}
-
-pub(crate) fn count(actual: usize, maximum: usize, path: &str) -> Result<(), SceneError> {
-    if actual > maximum {
-        return Err(SceneError::new(
-            "count_limit",
-            path,
-            format!("at most {maximum} entries are allowed; found {actual}"),
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {

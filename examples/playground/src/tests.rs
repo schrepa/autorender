@@ -1,10 +1,11 @@
 use super::*;
+use engine::scene::SceneFiles;
 const SCENE: &str = include_str!("../../../web/public/scenes/playground.scene.json");
 
 #[test]
 fn accessory_follows_player_and_parented_physics_reload_is_rejected() {
     let mut engine = Engine::default();
-    let mut game = Playground::new(&mut engine, SCENE).unwrap();
+    let mut game = Playground::new(&mut engine, SCENE, &SceneFiles::default()).unwrap();
     let accessory = game
         .scene_instance()
         .unwrap()
@@ -111,7 +112,11 @@ fn accessory_follows_player_and_parented_physics_reload_is_rejected() {
         .parent = Some("west-lantern".into());
     let before = game.player();
     let error = game
-        .reload(&mut engine, &document.to_json().unwrap())
+        .reload(
+            &mut engine,
+            &document.to_json().unwrap(),
+            &SceneFiles::default(),
+        )
         .unwrap_err();
     assert_eq!(error.code, "gameplay_transform");
     assert_eq!(game.player(), before);
@@ -121,7 +126,7 @@ fn accessory_follows_player_and_parented_physics_reload_is_rejected() {
 #[test]
 fn player_lands_on_a_solid_top_instead_of_falling_through() {
     let mut engine = Engine::default();
-    let game = Playground::new(&mut engine, SCENE).unwrap();
+    let game = Playground::new(&mut engine, SCENE, &SceneFiles::default()).unwrap();
     let player = game.player().unwrap();
     edit_transform(engine.app.world_mut(), player, |transform| {
         transform.translation = Vec3::new(7.0, 3.0, 4.0);
@@ -150,7 +155,7 @@ fn player_lands_on_a_solid_top_instead_of_falling_through() {
 #[test]
 fn authored_game_moves_collects_and_jumps_once_during_catchup() {
     let mut engine = Engine::default();
-    let game = Playground::new(&mut engine, SCENE).unwrap();
+    let game = Playground::new(&mut engine, SCENE, &SceneFiles::default()).unwrap();
     engine
         .app
         .world_mut()
@@ -210,7 +215,7 @@ fn swept_movement_stops_at_a_thin_parented_rotated_wall() {
         "collider":{"shape":{"kind":"cuboid","half_extents":[3,2,0.01]},"memberships":1,"filter":2,"sensor":false}
     }));
     let mut engine = Engine::default();
-    let game = Playground::new(&mut engine, &source.to_string()).unwrap();
+    let game = Playground::new(&mut engine, &source.to_string(), &SceneFiles::default()).unwrap();
     engine
         .app
         .world_mut()
@@ -240,7 +245,7 @@ fn swept_movement_stops_at_a_thin_parented_rotated_wall() {
 #[test]
 fn incomplete_collision_snapshot_stops_player_without_tunneling() {
     let mut engine = Engine::default();
-    let game = Playground::new(&mut engine, SCENE).unwrap();
+    let game = Playground::new(&mut engine, SCENE, &SceneFiles::default()).unwrap();
     let player = game.player().unwrap();
     let before = engine
         .app
@@ -289,7 +294,7 @@ fn repeated_tangent_movement_keeps_player_on_large_floor() {
     entities.iter_mut().find(|e| e["id"] == "player").unwrap()["transform"]["translation"] =
         serde_json::json!([0, 0.6, 0]);
     let mut engine = Engine::default();
-    let game = Playground::new(&mut engine, &source.to_string()).unwrap();
+    let game = Playground::new(&mut engine, &source.to_string(), &SceneFiles::default()).unwrap();
     engine
         .app
         .world_mut()
@@ -321,18 +326,22 @@ fn repeated_tangent_movement_keeps_player_on_large_floor() {
 #[test]
 fn failed_reload_preserves_game_and_repeated_reload_retires_assets() {
     let mut engine = Engine::default();
-    let mut game = Playground::new(&mut engine, SCENE).unwrap();
+    let mut game = Playground::new(&mut engine, SCENE, &SceneFiles::default()).unwrap();
     let initial_assets = engine
         .app
         .world()
         .resource::<AssetLibrary>()
         .resident_bytes();
     let player = game.player().unwrap();
-    assert!(game.reload(&mut engine, "{\"version\":99}").is_err());
+    assert!(
+        game.reload(&mut engine, "{\"version\":99}", &SceneFiles::default())
+            .is_err()
+    );
     assert_eq!(game.player(), Some(player));
     assert!(engine.app.world().get::<Transform>(player).is_some());
     for _ in 0..10 {
-        game.reload(&mut engine, SCENE).unwrap();
+        game.reload(&mut engine, SCENE, &SceneFiles::default())
+            .unwrap();
     }
     assert_eq!(
         engine

@@ -5,11 +5,12 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
     await response.body?.cancel().catch(() => {});
     throw new Error(`Scene fetch failed: HTTP ${response.status}`);
   }
-  const limit = 1024 * 1024;
+  // A sanity bound on JSON; bulk pixels and geometry are separate files.
+  const limit = 64 * 1024 * 1024;
   const declared = Number(response.headers.get("content-length"));
   if (declared > limit) {
     await response.body?.cancel().catch(() => {});
-    throw new Error("Scene exceeds the 1 MiB source budget.");
+    throw new Error("Scene exceeds the 64 MiB source budget.");
   }
   if (!response.body) throw new Error("Scene response has no body.");
   const reader = response.body.getReader();
@@ -21,7 +22,7 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > limit) throw new Error("Scene exceeds the 1 MiB source budget.");
+      if (length > limit) throw new Error("Scene exceeds the 64 MiB source budget.");
       source += decoder.decode(value, { stream: true });
     }
     return source + decoder.decode();
@@ -29,4 +30,54 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
     await reader.cancel().catch(() => {});
     throw error;
   } finally { reader.releaseLock(); }
+}
+
+/** The generated bindings a scene's file loader needs (decision 030). */
+export interface SceneFileBindings {
+  scene_file_list(source: string): string;
+  SceneFileSet: new () => {
+    add_image(uri: string, width: number, height: number, pixels: Uint8Array): void;
+    add_buffer(uri: string, bytes: Uint8Array): void;
+    free(): void;
+  };
+}
+
+/**
+ * Fetch the image and buffer files a scene references, relative to its URL,
+ * and decode images with the browser's own decoder into RGBA8 pixels. Runs at
+ * load boundaries only, never per frame.
+ */
+export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
+  const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" }[];
+  const files = new bindings.SceneFileSet();
+  const base = new URL(sceneUrl, location.href);
+  try {
+    await Promise.all(list.map(async ({ uri, kind }) => {
+      const response = await fetch(new URL(uri, base), { cache: "no-store", signal });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`Scene file ${uri} fetch failed: HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      if (kind === "buffer") {
+        files.add_buffer(uri, new Uint8Array(await blob.arrayBuffer()));
+        return;
+      }
+      const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+      try {
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) throw new Error(`Scene file ${uri} could not be decoded.`);
+        context.drawImage(bitmap, 0, 0);
+        const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+        files.add_image(uri, bitmap.width, bitmap.height, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
+      } finally {
+        bitmap.close();
+      }
+    }));
+    return files;
+  } catch (error) {
+    files.free();
+    throw error;
+  }
 }

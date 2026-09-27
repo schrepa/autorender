@@ -251,7 +251,7 @@ inspection work or serialization runs during ordinary gameplay frames.
 ## Saved source edits
 
 Native clients share `authoring::validate_scene`, `read_scene_source`, and
-`save_scene`. Reads and candidates are capped at 1 MiB. Save requires an existing
+`save_scene`. Reads and candidates are capped at 64 MiB. Save requires an existing
 valid source, the same scene ID, the expected saved revision, and a candidate
 revision exactly one greater. Candidate bytes are preserved, including
 formatting. A successful report identifies the path and resulting revision and

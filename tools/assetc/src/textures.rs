@@ -1,6 +1,5 @@
 use std::io::Cursor;
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use engine_scene::{SceneDocument, SceneMaterial, SceneTexture};
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
@@ -57,12 +56,12 @@ pub(crate) fn import(
         }
         let bytes = &binary[view.offset()..view.offset() + view.length()];
         let (width, height, rgba) = decode_png(bytes, &path, resident_bytes)?;
-        scene.textures.push(SceneTexture {
-            id: format!("{id}.image{}", image.index()),
+        scene.textures.push(SceneTexture::inline(
+            format!("{id}.image{}", image.index()),
             width,
             height,
-            rgba8: STANDARD.encode(rgba),
-        });
+            &rgba,
+        ));
     }
     for material in document.materials() {
         let index = material.index().expect("enumerated materials have indices");

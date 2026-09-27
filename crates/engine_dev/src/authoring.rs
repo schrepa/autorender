@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::DevError;
 
-pub const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 static NEXT_SAVE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Serialize)]

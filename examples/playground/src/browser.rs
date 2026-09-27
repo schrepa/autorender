@@ -1,5 +1,5 @@
 use super::*;
-use engine::browser::{BrowserApp, BrowserStats};
+use engine::browser::{BrowserApp, BrowserStats, SceneFileSet};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -12,10 +12,14 @@ pub struct PlaygroundGame {
 
 #[wasm_bindgen]
 impl PlaygroundGame {
-    pub async fn create(canvas: web_sys::HtmlCanvasElement, source: &str) -> Result<Self, JsValue> {
+    pub async fn create(
+        canvas: web_sys::HtmlCanvasElement,
+        source: &str,
+        files: SceneFileSet,
+    ) -> Result<Self, JsValue> {
         console_error_panic_hook::set_once();
         let mut engine = Engine::default();
-        let game = Playground::new(&mut engine, source).map_err(scene_error)?;
+        let game = Playground::new(&mut engine, source, files.files()).map_err(scene_error)?;
         Ok(Self {
             app: BrowserApp::new(canvas, engine).await?,
             game,
@@ -81,9 +85,9 @@ impl PlaygroundGame {
         #[cfg(feature = "dev")]
         self.development.clear_input();
     }
-    pub fn reload_scene(&mut self, source: &str) -> Result<(), JsValue> {
+    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
         self.game
-            .reload(&mut self.app.engine, source)
+            .reload(&mut self.app.engine, source, files.files())
             .map_err(scene_error)?;
         self.app.suspend();
         #[cfg(feature = "dev")]
@@ -127,7 +131,14 @@ impl PlaygroundGame {
     }
 
     /// Reload saved authoring data only when both current and target revisions match.
-    pub fn dev_reload(&mut self, source: &str, expected_revision: &str, revision: &str) -> String {
+    pub fn dev_reload(
+        &mut self,
+        source: &str,
+        expected_revision: &str,
+        revision: &str,
+        files: Option<SceneFileSet>,
+    ) -> String {
+        let files = files.unwrap_or_default();
         let expected = expected_revision.parse::<u64>();
         let target = revision.parse::<u64>();
         let result = (|| {
@@ -153,7 +164,8 @@ impl PlaygroundGame {
                     message: "saved scene ID and revision must match the requested scene".into(),
                 });
             }
-            self.game.reload(&mut self.app.engine, source)
+            self.game
+                .reload(&mut self.app.engine, source, files.files())
         })();
         match result {
             Ok(()) => {

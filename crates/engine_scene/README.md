@@ -20,10 +20,10 @@ IDs contain 1–64 ASCII letters, digits, underscores, hyphens or periods. Runti
 entity indices and asset handles never appear in persisted sources. Entity tags
 are game-defined names for adding game components once after loading.
 
-`from_json` rejects sources over 1 MiB, unknown fields, unsupported versions,
-duplicate IDs, missing references and invalid geometry/transforms/cameras.
-Limits are 10,000 expanded entities, 128 prefab definitions, 10,000 total template
-entities, 128 meshes, 256 materials, 64 textures and 16 tags per entity.
+`from_json` rejects sources over 64 MiB (a parsing sanity bound), unknown fields,
+unsupported versions, duplicate IDs, missing references and invalid
+geometry/transforms/cameras. There is no entity, prefab, mesh, material,
+texture or tag count limit ([decision 029](../../docs/adr-029-budgets-and-device-limits.md)).
 Names are at most 128 UTF-8 bytes. Translation is bounded to ±1,000,000, Euler
 XYZ angles to ±360,000 degrees, and positive scales to `[0.0001, 10000]`.
 Inline meshes allow up to 32,768 vertices and 98,304 triangle indices, with
@@ -84,8 +84,10 @@ entity can explicitly reference an expanded ID as its parent. Instance placement
 does not override template fields: edit the definition to change all placements.
 
 `SceneTexture` stores width/height and canonical padded base64 RGBA8 sRGB pixels
-in row-major top-to-bottom order. Alpha must be 255. Dimensions are 1..2048;
-encoded texture payload shares the complete 1 MiB scene source limit. A
+in row-major top-to-bottom order, or (version 7) a `uri` to an image file beside
+the scene that the host decodes and supplies as `SceneFiles`
+([decision 030](../../docs/adr-030-scene-files.md)); meshes may likewise read
+`EMB1` buffer files. Alpha must be 255. Dimensions are 1..8192. A
 material's optional texture field is an authored ID. Procedural meshes provide
 UVs; inline vertices default to zero UV for legacy sources. Sampling is
 trilinear and clamp-to-edge over mip levels the renderer generates from the

@@ -4,7 +4,7 @@ mod browser;
 mod gameplay;
 
 use engine::prelude::*;
-use engine::scene::SceneError;
+use engine::scene::{SceneError, SceneFiles};
 pub use gameplay::{GameProgress, PlaygroundPlugin};
 
 /// Retains explicit ownership of the active scene across reloads.
@@ -15,18 +15,24 @@ pub struct Playground {
 
 impl Playground {
     /// Register gameplay once, then load an authored world at the frame boundary.
-    pub fn new(engine: &mut Engine, source: &str) -> Result<Self, SceneError> {
+    pub fn new(engine: &mut Engine, source: &str, files: &SceneFiles) -> Result<Self, SceneError> {
         let mut game = Self {
             instance: None,
             player_entity: None,
         };
-        game.reload(engine, source)?;
+        game.reload(engine, source, files)?;
         engine.app.add_plugins(PlaygroundPlugin);
         Ok(game)
     }
 
-    /// A failed parse, validation, or asset allocation preserves the current game.
-    pub fn reload(&mut self, engine: &mut Engine, source: &str) -> Result<(), SceneError> {
+    /// A failed parse, validation, or asset allocation preserves the current
+    /// game. `files` holds the image and buffer files the scene references.
+    pub fn reload(
+        &mut self,
+        engine: &mut Engine,
+        source: &str,
+        files: &SceneFiles,
+    ) -> Result<(), SceneError> {
         let document = SceneDocument::from_json(source)?;
         let expanded = document.expanded_entities()?;
         for object in &expanded {
@@ -72,7 +78,7 @@ impl Playground {
                 message: "the playground requires exactly one entity tagged player".into(),
             });
         }
-        let instance = document.instantiate(engine.app.world_mut())?;
+        let instance = document.instantiate_with(engine.app.world_mut(), files)?;
         let player_id = &expanded
             .iter()
             .find(|entity| entity.tags.iter().any(|tag| tag == "player"))

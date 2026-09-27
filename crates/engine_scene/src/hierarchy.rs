@@ -2,10 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
 
-use crate::validation::{count, identifier, reference, transform, unique_ids};
+use crate::validation::{identifier, reference, transform, unique_ids};
 use crate::{SceneDocument, SceneError, SceneObject};
-
-const MAX_ENTITIES: usize = 10_000;
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -30,7 +28,7 @@ impl SceneDocument {
     /// and [`crate::SceneEntity`] metadata instead of expanding a second time.
     pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, SceneError> {
         Ok(self
-            .prepare()?
+            .prepare(None)?
             .entities
             .into_iter()
             .map(|entity| entity.source)
@@ -42,16 +40,6 @@ impl SceneDocument {
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
     ) -> Result<ExpandedScene, SceneError> {
-        count(self.entities.len(), MAX_ENTITIES, "$.entities")?;
-        count(self.prefabs.len(), 128, "$.prefabs")?;
-        let definition_count = self.prefabs.iter().try_fold(0usize, |total, prefab| {
-            total.checked_add(prefab.entities.len())
-        });
-        count(
-            definition_count.unwrap_or(usize::MAX),
-            MAX_ENTITIES,
-            "$.prefabs",
-        )?;
         unique_ids(
             self.entities.iter().map(|entity| entity.id.as_str()),
             "$.entities",
@@ -106,7 +94,6 @@ impl SceneDocument {
             validate_object(entity, &path, mesh_ids, material_ids, &prefab_ids)?;
             if let Some(id) = &entity.prefab {
                 expanded_count += prefab_lookup[id.as_str()].1.entities.len();
-                count(expanded_count, MAX_ENTITIES, "$.entities")?;
             }
         }
         let mut entities = Vec::with_capacity(expanded_count);
@@ -204,7 +191,6 @@ fn validate_object(
             "names must be at most 128 UTF-8 bytes without control characters",
         ));
     }
-    count(entity.tags.len(), 16, &format!("{path}.tags"))?;
     let mut tags = BTreeSet::new();
     for (index, tag) in entity.tags.iter().enumerate() {
         let path = format!("{path}.tags[{index}]");

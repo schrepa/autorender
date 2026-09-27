@@ -8,6 +8,60 @@ use web_sys::HtmlCanvasElement;
 #[path = "browser_profiling.rs"]
 mod profiling;
 
+/// Decoded images and buffers of the files a scene references (decision
+/// 030), filled by the page before the scene loads.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct SceneFileSet {
+    files: engine_scene::SceneFiles,
+}
+
+#[wasm_bindgen]
+impl SceneFileSet {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds image `uri`, decoded to `width` × `height` RGBA8 sRGB pixels.
+    pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
+        self.files.add_image(uri, width, height, pixels);
+    }
+
+    /// Adds buffer `uri`'s bytes.
+    pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
+        self.files.add_buffer(uri, bytes);
+    }
+}
+
+impl SceneFileSet {
+    pub fn files(&self) -> &engine_scene::SceneFiles {
+        &self.files
+    }
+}
+
+/// The files scene `source` references, as JSON `[{"uri", "kind"}]` with
+/// kind `image` or `buffer`, for the page to fetch; an unparsable source
+/// references none (loading reports its error).
+#[wasm_bindgen]
+pub fn scene_file_list(source: &str) -> String {
+    let files = engine_scene::SceneDocument::from_json(source)
+        .map(|document| document.files())
+        .unwrap_or_default();
+    // Validated URIs hold only letters, digits and `_./-`: no escaping.
+    let entries: Vec<String> = files
+        .iter()
+        .map(|file| {
+            let kind = match file.kind {
+                engine_scene::SceneFileKind::Image => "image",
+                engine_scene::SceneFileKind::Buffer => "buffer",
+            };
+            format!(r#"{{"uri":"{}","kind":"{kind}"}}"#, file.uri)
+        })
+        .collect();
+    format!("[{}]", entries.join(","))
+}
+
 /// CPU observations from the last submitted frame. Render time is not GPU time.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameStats {

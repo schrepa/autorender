@@ -1,25 +1,28 @@
 import { playgroundBindings } from "./bindings";
 import { boot } from "./host";
-import { loadSceneSource } from "./source";
+import { loadSceneFiles, loadSceneSource } from "./source";
 
 const selected = import.meta.env.DEV ? new URLSearchParams(location.search).get("scene") : null;
 if (selected && !/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(selected)) throw new Error("Development scene must be a /scenes/<name>.scene.json path.");
 const sourceUrl = selected ?? "/scenes/playground.scene.json";
 const loadScene = (signal: AbortSignal) => loadSceneSource(sourceUrl, signal);
+const loadFiles = async (source: string, signal: AbortSignal) => loadSceneFiles(sourceUrl, source, await playgroundBindings(), signal);
 
 boot({
-  source: { url: sourceUrl, load: loadScene },
+  source: { url: sourceUrl, load: loadScene, files: loadFiles },
   async create(canvas, _count, signal) {
     const { default: init, PlaygroundGame } = await playgroundBindings();
     await init();
     const source = await loadScene(signal);
+    const files = await loadFiles(source, signal);
     signal.throwIfAborted();
-    return PlaygroundGame.create(canvas, source);
+    return PlaygroundGame.create(canvas, source, files);
   },
   async reload(game, signal) {
     const source = await loadScene(signal);
+    const files = await loadFiles(source, signal);
     signal.throwIfAborted();
-    game.reload_scene(source);
+    game.reload_scene(source, files);
   },
   poll(game) {
     const progress = JSON.parse(game.progress());

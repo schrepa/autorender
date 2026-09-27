@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadSceneSource } from "../src/source.ts";
 
-const LIMIT = 1024 * 1024;
+const LIMIT = 64 * 1024 * 1024;
 
 function streamed(chunks, options = {}) {
   let pulls = 0;
@@ -46,7 +46,7 @@ test("source loading preserves multibyte UTF-8 split across transport chunks", a
 test("declared oversized responses are canceled without reading their body", async t => {
   const stream = streamed([Uint8Array.of(65)], { headers: { "Content-Length": String(LIMIT + 1) } });
   fetchResponse(t, stream.response);
-  await assert.rejects(loadSceneSource("/scene.json", new AbortController().signal), /1 MiB source budget/);
+  await assert.rejects(loadSceneSource("/scene.json", new AbortController().signal), /64 MiB source budget/);
   assert.equal(stream.pulls, 0);
   assert.equal(stream.canceled, 1);
   assert.equal(stream.body.locked, false);
@@ -55,7 +55,7 @@ test("declared oversized responses are canceled without reading their body", asy
 test("chunked responses cannot exceed the byte budget and stop at the first overflow", async t => {
   const stream = streamed([new Uint8Array(LIMIT).fill(65), Uint8Array.of(66), Uint8Array.of(67)]);
   fetchResponse(t, stream.response);
-  await assert.rejects(loadSceneSource("/scene.json", new AbortController().signal), /1 MiB source budget/);
+  await assert.rejects(loadSceneSource("/scene.json", new AbortController().signal), /64 MiB source budget/);
   assert.equal(stream.pulls, 2, "overflow must not read the next chunk");
   assert.equal(stream.canceled, 1);
   assert.equal(stream.body.locked, false);

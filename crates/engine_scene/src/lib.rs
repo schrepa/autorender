@@ -9,6 +9,7 @@ mod collider;
 mod document;
 mod environment;
 mod error;
+mod files;
 mod hierarchy;
 mod instance;
 mod lighting;
@@ -26,6 +27,7 @@ pub use environment::{
     SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;
+pub use files::{MESH_BUFFER_MAGIC, SceneFile, SceneFileKind, SceneFiles, encode_mesh_buffer};
 pub use instance::{SceneEntity, SceneInstance};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use texture::SceneTexture;

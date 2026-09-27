@@ -122,7 +122,7 @@ fn rejects_bad_lens_and_coincident_camera() {
 #[test]
 fn bounds_input_names_and_game_tags() {
     assert_eq!(
-        SceneDocument::from_json(&" ".repeat(1024 * 1024 + 1))
+        SceneDocument::from_json(&" ".repeat(crate::document::MAX_SOURCE_BYTES + 1))
             .unwrap_err()
             .code,
         "source_too_large"
@@ -138,8 +138,9 @@ fn bounds_input_names_and_game_tags() {
     document.entities[0].name.clear();
     document.entities[0].tags.push("spin".into());
     assert_eq!(document.validate().unwrap_err().code, "duplicate_tag");
-    document.entities[0].tags = (0..17).map(|index| format!("tag-{index}")).collect();
-    assert_eq!(document.validate().unwrap_err().code, "count_limit");
+    // Any number of distinct tags.
+    document.entities[0].tags = (0..64).map(|index| format!("tag-{index}")).collect();
+    assert!(document.validate().is_ok());
 }
 
 #[test]
@@ -309,15 +310,14 @@ fn errors_have_stable_serializable_structure() {
 }
 
 fn textured_document() -> SceneDocument {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
     let mut document = document();
     document.version = crate::SCENE_VERSION;
-    document.textures.push(crate::SceneTexture {
-        id: "tiles".into(),
-        width: 2,
-        height: 1,
-        rgba8: STANDARD.encode([255, 80, 20, 255, 40, 180, 240, 255]),
-    });
+    document.textures.push(crate::SceneTexture::inline(
+        "tiles",
+        2,
+        1,
+        &[255, 80, 20, 255, 40, 180, 240, 255],
+    ));
     document.materials[0].texture = Some("tiles".into());
     document
 }
@@ -505,16 +505,20 @@ fn version_five_environments_own_the_look_and_validate_every_field() {
 }
 
 #[test]
-fn serialization_stops_at_source_budget_for_large_valid_rust_documents() {
+fn large_documents_have_no_count_budget() {
     let mut document = document();
     let entity = document.entities.pop().unwrap();
-    for index in 0..10_000 {
+    for index in 0..20_000 {
         let mut entity = entity.clone();
         entity.id = format!("object-{index}");
         document.entities.push(entity);
     }
-    assert!(document.validate().is_ok());
-    assert_eq!(document.to_json().unwrap_err().code, "source_too_large");
+    let source = document.to_json().unwrap();
+    assert!(source.len() > 1024 * 1024);
+    assert_eq!(
+        SceneDocument::from_json(&source).unwrap().entities.len(),
+        20_000
+    );
 }
 
 #[test]
@@ -528,19 +532,23 @@ fn rejects_texture_reference_encoding_dimensions_and_alpha_before_mutation() {
     );
     let mut cases = Vec::new();
     let mut value = textured_document();
-    value.textures[0].rgba8 = "!".repeat(12);
+    value.textures[0].rgba8 = Some("!".repeat(12));
     cases.push(value);
     let mut value = textured_document();
-    value.textures[0].width = 0;
+    value.textures[0].width = Some(0);
     cases.push(value);
     let mut value = textured_document();
-    value.textures[0].width = u32::MAX;
+    value.textures[0].width = Some(u32::MAX);
     cases.push(value);
     let mut value = textured_document();
-    value.textures[0].rgba8 = STANDARD.encode([0u8; 8]);
+    value.textures[0].rgba8 = Some(STANDARD.encode([0u8; 8]));
     cases.push(value);
     let mut value = textured_document();
-    value.textures[0].rgba8 = STANDARD.encode([255u8; 4]);
+    value.textures[0].rgba8 = Some(STANDARD.encode([255u8; 4]));
+    cases.push(value);
+    // Both inline pixels and a file, or neither.
+    let mut value = textured_document();
+    value.textures[0].uri = Some("tiles.png".into());
     cases.push(value);
     for value in cases {
         let mut world = world(AssetBudget::default());
@@ -552,6 +560,87 @@ fn rejects_texture_reference_encoding_dimensions_and_alpha_before_mutation() {
         assert_eq!(world.resource::<AssetLibrary>().resident_bytes(), 0);
         assert_eq!(world.entities().len(), entity_count);
     }
+}
+
+#[test]
+fn version_seven_files_resolve_from_the_host_and_earlier_versions_refuse_them() {
+    use crate::{SceneFileKind, SceneFiles, encode_mesh_buffer};
+    use engine_core::MeshVertex;
+    let mut document = textured_document();
+    document.textures[0] = crate::SceneTexture::file("tiles", "textures/tiles.png");
+    document.meshes.push(crate::SceneMesh {
+        id: "tri".into(),
+        source: MeshSource::Buffer {
+            uri: "meshes/tri.bin".into(),
+        },
+    });
+    // Structure validates without the files, which the document lists.
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let files = document.files();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| (file.uri.as_str(), file.kind))
+            .collect::<Vec<_>>(),
+        [
+            ("textures/tiles.png", SceneFileKind::Image),
+            ("meshes/tri.bin", SceneFileKind::Buffer),
+        ]
+    );
+    let mut world = world(AssetBudget::default());
+    let missing = document.instantiate(&mut world).unwrap_err();
+    assert_eq!(
+        (missing.code, missing.path.as_str()),
+        ("missing_file", "$.textures[0].uri")
+    );
+    let mut supplied = SceneFiles::new();
+    supplied.add_image(
+        "textures/tiles.png",
+        2,
+        1,
+        vec![255, 80, 20, 255, 40, 180, 240, 255],
+    );
+    let vertex = |position: [f32; 3]| MeshVertex {
+        position,
+        normal: [0.0, 0.0, 1.0],
+        uv: [0.0; 2],
+    };
+    supplied.add_buffer(
+        "meshes/tri.bin",
+        encode_mesh_buffer(
+            &[
+                vertex([0.0; 3]),
+                vertex([1.0, 0.0, 0.0]),
+                vertex([0.0, 1.0, 0.0]),
+            ],
+            &[0, 1, 2],
+        ),
+    );
+    document.validate_with(&supplied).unwrap();
+    let instance = document.instantiate_with(&mut world, &supplied).unwrap();
+    assert_eq!(world.resource::<AssetLibrary>().texture_count(), 1);
+    instance.despawn(&mut world);
+    // A truncated buffer and paths leaving the folder are refused.
+    let mut broken = supplied.clone();
+    broken.add_buffer("meshes/tri.bin", b"EMB1".to_vec());
+    assert_eq!(
+        document.validate_with(&broken).unwrap_err().code,
+        "invalid_mesh"
+    );
+    for uri in ["../secret.png", "/abs.png", "a//b.png", "https://x.y/z.png"] {
+        let mut outside = document.clone();
+        outside.textures[0].uri = Some(uri.into());
+        assert_eq!(outside.validate().unwrap_err().code, "invalid_uri", "{uri}");
+    }
+    let mut old = document.clone();
+    old.version = 6;
+    assert_eq!(
+        (
+            old.validate().unwrap_err().code,
+            old.validate().unwrap_err().path
+        ),
+        ("version_required", "$.textures[0].uri".to_owned())
+    );
 }
 
 #[test]

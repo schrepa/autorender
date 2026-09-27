@@ -10,7 +10,7 @@ use engine_core::{
     propagate_transforms, set_parents,
 };
 
-use crate::{SceneDocument, SceneError};
+use crate::{SceneDocument, SceneError, SceneFiles};
 
 /// Authored identity retained for game setup and development inspection.
 ///
@@ -123,7 +123,17 @@ impl SceneDocument {
     /// For transactional reload, instantiate a replacement before disposing of
     /// the previous instance. Budgets must allow both instances to coexist.
     pub fn instantiate(&self, world: &mut World) -> Result<SceneInstance, SceneError> {
-        let prepared = self.prepare()?;
+        self.instantiate_with(world, &SceneFiles::default())
+    }
+
+    /// [`Self::instantiate`] with the contents of the files the document
+    /// references (decision 030); a missing or invalid one fails first.
+    pub fn instantiate_with(
+        &self,
+        world: &mut World,
+        files: &SceneFiles,
+    ) -> Result<SceneInstance, SceneError> {
+        let prepared = self.prepare(Some(files))?;
         let mut meshes = Vec::with_capacity(prepared.meshes.len());
         let mut materials = Vec::with_capacity(prepared.materials.len());
         let mut textures = Vec::with_capacity(prepared.textures.len());

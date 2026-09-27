@@ -12,23 +12,31 @@ export default defineConfig(({ command, mode }) => ({
   server: { watch: { ignored: ["**/public/scenes/**"] } },
   plugins: [{
     name: "explicit-scene-reload",
-    // Vite caches public file names. Read scenes directly so newly authored
-    // files work while source changes remain excluded from automatic reload.
+    // Vite caches public file names. Read scenes and the image and buffer
+    // files they reference (decision 030) directly so newly authored files
+    // work while source changes remain excluded from automatic reload.
     configureServer(server) {
+      const types = new Map([["json", "application/json; charset=utf-8"], ["png", "image/png"], ["jpg", "image/jpeg"],
+        ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["bin", "application/octet-stream"]]);
       server.middlewares.use(async (request, response, next) => {
         const path = request.url?.split("?")[0];
-        if (!path || !/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(path)) return next();
+        const scene = !!path && /^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(path);
+        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|bin)$/.test(path)
+          && !path.split("/").some(part => part === "." || part === "..");
+        if (!path || (!scene && !asset)) return next();
         if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }
+        // Sanity bounds: scene JSON and one referenced file.
+        const limit = scene ? 64 * 1024 * 1024 : 1024 * 1024 * 1024;
         try {
           const file = resolve(import.meta.dirname, "public", path.slice(1));
           const metadata = await stat(file);
           if (!metadata.isFile()) { response.statusCode = 404; response.end(); return; }
-          if (metadata.size > 1024 * 1024) { response.statusCode = 413; response.end("Scene exceeds 1 MiB"); return; }
-          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          if (metadata.size > limit) { response.statusCode = 413; response.end("Scene file exceeds its size bound"); return; }
+          response.setHeader("Content-Type", types.get(path.split(".").pop()!.toLowerCase()) ?? "application/octet-stream");
           response.setHeader("Cache-Control", "no-store");
           if (request.method === "HEAD") { response.end(); return; }
           // Include at most one overflow byte if the file grows after stat.
-          const stream = createReadStream(file, { start: 0, end: 1024 * 1024 });
+          const stream = createReadStream(file, { start: 0, end: limit });
           stream.on("error", () => response.destroy());
           response.on("close", () => stream.destroy());
           stream.pipe(response);
