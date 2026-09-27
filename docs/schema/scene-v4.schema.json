@@ -478,7 +478,7 @@
       ]
     },
     "SceneTexture": {
-      "description": "Immutable opaque RGBA8 sRGB pixels in row-major, top-to-bottom order.\n\nPNG/GLB decoding happens offline. Base64 is decoded only during validation\nand loading, never in simulation or rendering. Sampling is linear with\nclamp-to-edge and one mip level. The complete scene still must fit 1 MiB.",
+      "description": "Immutable opaque RGBA8 sRGB pixels in row-major, top-to-bottom order.\n\nPNG/GLB decoding happens offline. Base64 is decoded only during validation\nand loading, never in simulation or rendering. Scenes store one level; the\nrenderer generates mip levels and samples them trilinearly with\nclamp-to-edge. The complete scene still must fit 1 MiB.",
       "type": "object",
       "properties": {
         "height": {

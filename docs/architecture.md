@@ -59,6 +59,11 @@ presenting the previous interval until the tick is due.
 their parent's admission certificate proves valid without composing their world
 matrices; reads compose them on demand with the same bits.
 
+[Decision 017](adr-017-temporal-antialiasing.md) adds opt-in temporal
+antialiasing of GPU-presented frames: jittered rasterization, per-pixel motion
+from alternating pose buffers, and one resolve pass that writes the canvas and
+the next history. Captures, previews and CPU-presented frames stay exact.
+
 ## Ownership and compatibility
 
 `engine` composes `engine_core` and `engine_render`. The renderer consumes core snapshots. Core imports neither rendering nor browser APIs. Platform glue is a module inside the façade until it needs a separate reusable interface. The demo imports the façade only. Host tools never become Wasm runtime dependencies.

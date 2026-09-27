@@ -107,6 +107,13 @@ impl StressGame {
     pub fn tick_pipelining(&self) -> bool {
         self.app.tick_pipelining()
     }
+    /// Temporal antialiasing of GPU-presented frames (off by default).
+    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+        self.app.set_temporal_antialiasing(enabled);
+    }
+    pub fn temporal_antialiasing(&self) -> bool {
+        self.app.temporal_antialiasing()
+    }
     pub fn reset_camera(&mut self) {
         set_view(&mut self.app.engine, "overview").expect("known view");
     }

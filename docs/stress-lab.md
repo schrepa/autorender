@@ -33,7 +33,10 @@ frames use GPU presentation ([decision 014](adr-014-gpu-presentation-and-culling
 `presentation=cpu` keeps the exact CPU presentation path for same-build
 comparisons, and recordings and profiles report the selected `presentation`. Those
 frames also pipeline fixed ticks ([decision 015](adr-015-pipelined-fixed-ticks.md));
-`pipeline=off` runs each tick when due, and recordings report the setting. Spatial
+`pipeline=off` runs each tick when due, and recordings report the setting.
+`taa=on` temporally antialiases GPU-presented frames
+([decision 017](adr-017-temporal-antialiasing.md)); recordings and profiles
+report `taa`. Spatial
 queries require the collision-enabled presets. No automated suite starts when
 opening the page. Runtime code lives in `examples/stress-lab`, independent of
 engine implementations.

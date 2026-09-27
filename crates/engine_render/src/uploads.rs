@@ -179,9 +179,7 @@ mod tests {
     #[test]
     fn static_cache_camera_reuse_requires_committed_exact_bytes() {
         let mut cache = UploadCache::default();
-        let camera = CameraUniform {
-            view_projection: Mat4::IDENTITY.to_cols_array_2d(),
-        };
+        let camera = CameraUniform::exact(Mat4::IDENTITY);
         assert!(cache.camera_needs_write(&camera));
         // Merely inspecting or preparing a skipped frame does not commit it.
         assert!(cache.camera_needs_write(&camera));
@@ -193,6 +191,10 @@ mod tests {
         cache.commit_camera(changed);
         assert!(!cache.camera_needs_write(&changed));
         assert!(cache.camera_needs_write(&camera));
+        // Temporal jitter and history are camera bytes too.
+        let mut jittered = changed;
+        jittered.jitter[0] = 0.001;
+        assert!(cache.camera_needs_write(&jittered));
     }
 
     #[test]

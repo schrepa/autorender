@@ -18,8 +18,10 @@ pub(crate) const STAGES: [&str; STAGE_COUNT] = [
     "presentation_scan",
     "presentation_scatter",
 ];
-// Render pass begin/end, then begin/end of each presentation stage.
-const QUERIES: u32 = 2 + 2 * STAGE_COUNT as u32;
+// Render pass begin/end, begin/end of each presentation stage, then of the
+// temporal antialiasing resolve (decision 017).
+const RESOLVE_QUERY: u32 = 2 + 2 * STAGE_COUNT as u32;
+const QUERIES: u32 = RESOLVE_QUERY + 2;
 const QUERY_BYTES: u64 = QUERIES as u64 * 8;
 
 #[derive(Clone, Copy)]
@@ -44,6 +46,8 @@ struct Slot {
     origin: Option<Origin>,
     // Presentation stages this submission timed, one bit per `STAGES` entry.
     stages: u8,
+    // Whether this submission timed a temporal antialiasing resolve.
+    resolved: bool,
 }
 
 impl Slot {
@@ -69,6 +73,7 @@ impl Slot {
             mapped: Rc::new(Cell::new(MapState::Pending)),
             origin: None,
             stages: 0,
+            resolved: false,
         }
     }
 }
@@ -79,6 +84,7 @@ struct Sample {
     // First to last timed stage of the frame's own compute passes.
     compute_ms: Option<f64>,
     stages: [Option<f64>; STAGES.len()],
+    resolve_ms: Option<f64>,
 }
 
 /// Retains one capture and a small reusable ring. A new capture clears samples,
@@ -158,6 +164,7 @@ impl GpuProfiler {
         });
         slot.mapped.set(MapState::Pending);
         slot.stages = 0;
+        slot.resolved = false;
         self.submitted += 1;
         Some(index)
     }
@@ -179,6 +186,25 @@ impl GpuProfiler {
         Some(StageStamps::new(&self.slots[index?].queries))
     }
 
+    /// Times a temporal antialiasing resolve pass; report it with
+    /// [`Self::timed_resolve`].
+    pub(crate) fn resolve_writes(
+        &self,
+        index: Option<usize>,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        index.map(|index| wgpu::RenderPassTimestampWrites {
+            query_set: &self.slots[index].queries,
+            beginning_of_pass_write_index: Some(RESOLVE_QUERY),
+            end_of_pass_write_index: Some(RESOLVE_QUERY + 1),
+        })
+    }
+
+    pub(crate) fn timed_resolve(&mut self, index: Option<usize>) {
+        if let Some(index) = index {
+            self.slots[index].resolved = true;
+        }
+    }
+
     /// Records the stages (bits of `STAGES`) whose passes wrote timestamps.
     pub(crate) fn timed_stages(&mut self, index: Option<usize>, stages: u8) {
         if let Some(index) = index {
@@ -189,8 +215,14 @@ impl GpuProfiler {
     pub(crate) fn resolve(&self, index: Option<usize>, encoder: &mut wgpu::CommandEncoder) {
         if let Some(index) = index {
             let slot = &self.slots[index];
-            // Queries of stages that did not run are never read.
-            let queries = if slot.stages != 0 { QUERIES } else { 2 };
+            // Queries of passes that did not run are never read.
+            let queries = if slot.resolved {
+                QUERIES
+            } else if slot.stages != 0 {
+                RESOLVE_QUERY
+            } else {
+                2
+            };
             encoder.resolve_query_set(&slot.queries, 0..queries, &slot.resolve, 0);
             encoder.copy_buffer_to_buffer(
                 &slot.resolve,
@@ -246,12 +278,17 @@ impl GpuProfiler {
                 ))
             };
             let mut stages = [None; STAGES.len()];
+            let mut resolve_ms = None;
             let (duration, compute_ms) =
                 slot.readback
                     .get_mapped_range(..)
                     .ok()
                     .map_or((None, None), |bytes| {
                         let timed = |stage: usize| slot.stages & (1 << stage) != 0;
+                        if slot.resolved {
+                            resolve_ms = elapsed(&bytes, RESOLVE_QUERY as usize * 8)
+                                .filter(|value| value.is_finite());
+                        }
                         for (stage, value) in stages.iter_mut().enumerate() {
                             if timed(stage) {
                                 *value = elapsed(&bytes, 16 + 16 * stage)
@@ -284,6 +321,7 @@ impl GpuProfiler {
                     duration_ms,
                     compute_ms,
                     stages,
+                    resolve_ms,
                 });
             } else {
                 self.errors = self.errors.saturating_add(1);
@@ -306,7 +344,7 @@ impl GpuProfiler {
             "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
             "capture_id": self.capture.map(|id| id.to_string()),
             "active": active,
-            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing); excludes uploads, queue latency, presentation and timestamp readback",
+            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), and taa_resolve for temporally antialiased frames (decision 017); excludes uploads, queue latency, presentation and timestamp readback",
             "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
             "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
             "precision": "browser may quantize timestamp values; zero durations remain valid samples",
@@ -348,9 +386,13 @@ impl GpuProfiler {
                         .iter()
                         .zip(sample.stages)
                         .filter_map(|(name, value)| Some(entry(sample, name, value?)));
+                    let resolve = sample
+                        .resolve_ms
+                        .map(|resolve| entry(sample, "taa_resolve", resolve));
                     std::iter::once(entry(sample, "opaque_meshes", sample.duration_ms))
                         .chain(compute)
                         .chain(stages)
+                        .chain(resolve)
                         .collect::<Vec<_>>()
                 })
                 .collect(),

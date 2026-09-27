@@ -3,13 +3,65 @@
 use bytemuck::{Pod, Zeroable};
 use engine_core::{MeshVertex, RenderInstance, glam::Mat4};
 
-/// WGSL uniform layout: one column-major mat4x4<f32>, alignment 16, size 64.
-/// The GPU buffer starts at offset zero. Rust alignment need not match the GPU
-/// allocation: only these 64 initialized bytes are copied into that buffer.
+/// WGSL `Camera` uniform: two column-major mat4x4<f32> and a vec4<f32>,
+/// alignment 16, size 144. `view_projection` is the rasterized projection.
+/// Temporally antialiased frames (decision 017) jitter it by `jitter.xy` clip
+/// units per w, and their motion vectors use the previous frame's unjittered
+/// `previous_view_projection` and `jitter.zw`, two over the viewport size in
+/// pixels. Other frames repeat the view-projection and keep the jitter zero.
+/// The GPU buffer starts at offset zero; only these 144 initialized bytes are
+/// copied into it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CameraUniform {
     pub view_projection: [[f32; 4]; 4],
+    pub previous_view_projection: [[f32; 4]; 4],
+    pub jitter: [f32; 4],
+}
+
+impl CameraUniform {
+    /// An unjittered camera without temporal history.
+    pub(crate) fn exact(view_projection: Mat4) -> Self {
+        let columns = view_projection.to_cols_array_2d();
+        Self {
+            view_projection: columns,
+            previous_view_projection: columns,
+            jitter: [0.0; 4],
+        }
+    }
+
+    /// A temporally antialiased frame of a `width` x `height` viewport:
+    /// `view_projection` jittered by `jitter` (see [`jitter_clip`]), with the
+    /// previous frame's unjittered `previous` for motion vectors.
+    pub(crate) fn temporal(
+        view_projection: Mat4,
+        previous: Mat4,
+        jitter: [f32; 2],
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            view_projection: jittered(view_projection, jitter).to_cols_array_2d(),
+            previous_view_projection: previous.to_cols_array_2d(),
+            jitter: [
+                jitter[0],
+                jitter[1],
+                2.0 / width.max(1) as f32,
+                2.0 / height.max(1) as f32,
+            ],
+        }
+    }
+}
+
+/// `view_projection` followed by a clip-space translation of `jitter` units
+/// per w: the projection a jittered frame rasterizes, and culls with.
+pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
+    Mat4::from_cols(
+        glam::Vec4::X,
+        glam::Vec4::Y,
+        glam::Vec4::Z,
+        glam::Vec4::new(jitter[0], jitter[1], 0.0, 1.0),
+    ) * view_projection
 }
 
 /// Vertex attributes, NOT a uniform/storage struct: columns at offsets
@@ -89,8 +141,67 @@ impl From<&MeshVertex> for Vertex {
 pub(crate) const SHADER: &str = include_str!("meshes.wgsl");
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
+/// Temporal antialiasing resolve (decision 017).
+pub(crate) const TEMPORAL_SHADER: &str = include_str!("temporal.wgsl");
+/// Mip generation of base color textures.
+pub(crate) const MIPMAP_SHADER: &str = include_str!("mipmaps.wgsl");
 
-/// `Frame` uniform of `presentation.wgsl`: 192 bytes, WGSL uniform layout.
+/// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.
+pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
+    u32::BITS - width.max(height).max(1).leading_zeros()
+}
+
+/// RGBA8 bytes of every level of that chain after the first.
+pub(crate) fn mip_chain_bytes(width: u32, height: u32) -> u64 {
+    (1..mip_levels(width, height))
+        .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
+        .sum()
+}
+
+/// `Resolve` uniform of `temporal.wgsl`: 16 bytes, WGSL uniform layout.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub(crate) struct ResolveUniform {
+    /// Size of one target pixel in texture coordinates.
+    pub texel: [f32; 2],
+    /// Weight of this frame's color against the reprojected history.
+    pub current_weight: f32,
+    /// Zero when the history must not be read (reset).
+    pub history_valid: u32,
+}
+
+/// Samples in the jitter sequence before it repeats.
+pub(crate) const JITTER_SAMPLES: u32 = 8;
+
+/// Radical inverse of `index` in `base`: the Halton sequence.
+fn halton(mut index: u32, base: u32) -> f32 {
+    let (mut scale, mut value) = (1.0, 0.0);
+    while index > 0 {
+        scale /= base as f32;
+        value += scale * (index % base) as f32;
+        index /= base;
+    }
+    value
+}
+
+/// Sub-pixel offset of display frame `frame` in pixels, in `[-0.5, 0.5)`:
+/// the Halton (2, 3) sequence of [`JITTER_SAMPLES`] samples, from its
+/// second point (the first is the pixel corner).
+pub(crate) fn jitter_offset(frame: u32) -> [f32; 2] {
+    let index = frame % JITTER_SAMPLES + 1;
+    [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
+}
+
+/// A pixel offset as the clip-space jitter a vertex shader adds to
+/// `xy / w`: two units span the viewport, and clip y points up.
+pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
+    [
+        2.0 * offset[0] / width.max(1) as f32,
+        -2.0 * offset[1] / height.max(1) as f32,
+    ]
+}
+
+/// `Frame` uniform of `presentation.wgsl`: 208 bytes, WGSL uniform layout.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct PresentationFrame {
@@ -106,7 +217,16 @@ pub(crate) struct PresentationFrame {
     pub blend: u32,
     pub planes: [[f32; 4]; 6],
     pub absolute_view_projection: [[f32; 4]; 4],
+    /// Nonzero on temporally antialiased frames with valid previous poses:
+    /// visible IDs of moving slots then carry [`MOVED_SLOT`].
+    pub motion: u32,
+    pub pad: [u32; 3],
 }
+
+/// Bit of a visible slot ID marking a slot whose displayed pose can differ
+/// from the previous frame's (decision 017); slot indices stay below it.
+pub(crate) const MOVED_SLOT: u32 = 1 << 31;
+const _: () = assert!(crate::MAX_INSTANCES as u32 <= MOVED_SLOT);
 
 /// One candidate slot, its hierarchy node, its draw group and its index in
 /// draw-group order (16 bytes).
@@ -190,7 +310,12 @@ mod tests {
 
     #[test]
     fn gpu_records_have_documented_offsets_and_column_order() {
-        assert_eq!(size_of::<CameraUniform>(), 64);
+        assert_eq!(size_of::<CameraUniform>(), 144);
+        assert_eq!(
+            std::mem::offset_of!(CameraUniform, previous_view_projection),
+            64
+        );
+        assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 128);
         assert_eq!(size_of::<InstanceData>(), 80);
         assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
         assert_eq!(size_of::<PoseData>(), 48);
@@ -349,7 +474,7 @@ mod tests {
 
     #[test]
     fn shader_is_valid_wgsl_with_no_optional_capabilities() {
-        for source in [SHADER, PRESENTATION_SHADER] {
+        for source in [SHADER, PRESENTATION_SHADER, TEMPORAL_SHADER, MIPMAP_SHADER] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
@@ -363,7 +488,7 @@ mod tests {
     #[test]
     fn shader_float_literals_are_finite_f32_values() {
         // Browsers reject decimal literals beyond f32::MAX that naga rounds.
-        for source in [SHADER, PRESENTATION_SHADER] {
+        for source in [SHADER, PRESENTATION_SHADER, TEMPORAL_SHADER, MIPMAP_SHADER] {
             let bytes = source.as_bytes();
             let mut index = 0;
             while index < bytes.len() {
@@ -424,12 +549,13 @@ mod tests {
 
     #[test]
     fn presentation_layouts_match_wgsl() {
-        assert_eq!(size_of::<PresentationFrame>(), 192);
+        assert_eq!(size_of::<PresentationFrame>(), 208);
         assert_eq!(std::mem::offset_of!(PresentationFrame, planes), 32);
         assert_eq!(
             std::mem::offset_of!(PresentationFrame, absolute_view_projection),
             128
         );
+        assert_eq!(std::mem::offset_of!(PresentationFrame, motion), 192);
         assert_eq!(size_of::<CandidateData>(), 16);
         assert_eq!(size_of::<BatchData>(), 48);
         // Ten floats per pose, matching POSE_FLOATS in the shader.
@@ -450,7 +576,7 @@ mod tests {
                 .unwrap();
             ty.inner.size(module.to_ctx())
         };
-        assert_eq!(size("Frame"), 192);
+        assert_eq!(size("Frame"), 208);
         let (_, pose_floats) = module
             .constants
             .iter()
@@ -466,6 +592,109 @@ mod tests {
         assert_eq!(size("Candidate"), 16);
         assert_eq!(size("Batch"), 48);
         assert_eq!(size("DrawArgs") as u64, DRAW_ARGS_BYTES);
+    }
+
+    #[test]
+    fn temporal_uniforms_match_wgsl() {
+        let size = |source: &str, name: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, ty) = module
+                .types
+                .iter()
+                .find(|(_, ty)| ty.name.as_deref() == Some(name))
+                .unwrap();
+            ty.inner.size(module.to_ctx()) as usize
+        };
+        assert_eq!(size(SHADER, "Camera"), size_of::<CameraUniform>());
+        assert_eq!(size_of::<CameraUniform>(), 144);
+        assert_eq!(
+            size(TEMPORAL_SHADER, "Resolve"),
+            size_of::<ResolveUniform>()
+        );
+        assert_eq!(size_of::<ResolveUniform>(), 16);
+        // Culling marks moving slots with the bit the temporal vertex stage
+        // tests and masks.
+        let bits = |source: &str, name: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, constant) = module
+                .constants
+                .iter()
+                .find(|(_, constant)| constant.name.as_deref() == Some(name))
+                .unwrap();
+            match module.global_expressions[constant.init] {
+                naga::Expression::Literal(naga::Literal::U32(value)) => value,
+                ref other => panic!("{name} is {other:?}"),
+            }
+        };
+        assert_eq!(bits(PRESENTATION_SHADER, "MOVED_SLOT"), MOVED_SLOT);
+        assert_eq!(bits(SHADER, "MOVED_SLOT"), MOVED_SLOT);
+        let exact = CameraUniform::exact(Mat4::from_scale(glam::Vec3::splat(2.0)));
+        assert_eq!(exact.previous_view_projection, exact.view_projection);
+        assert_eq!(exact.jitter, [0.0; 4]);
+    }
+
+    #[test]
+    fn jitter_translates_clip_positions_by_whole_units_of_w() {
+        let camera = engine_core::Camera::default();
+        let view_projection = camera.view_projection(1.5);
+        let previous = view_projection * Mat4::from_translation(Vec3::X);
+        let jitter = jitter_clip([0.25, -0.5], 200, 100);
+        let temporal = CameraUniform::temporal(view_projection, previous, jitter, 200, 100);
+        let rasterized = Mat4::from_cols_array_2d(&temporal.view_projection);
+        for point in [Vec3::ZERO, Vec3::new(1.0, -2.0, -8.0)] {
+            let clip = view_projection * point.extend(1.0);
+            let shifted = rasterized * point.extend(1.0);
+            let expected = clip + glam::Vec4::new(jitter[0], jitter[1], 0.0, 0.0) * clip.w;
+            assert!(
+                shifted.abs_diff_eq(expected, 1.0e-5),
+                "{shifted} {expected}"
+            );
+        }
+        // A quarter pixel right and half a pixel up, in clip units.
+        assert_eq!(jitter, [0.0025, 0.01]);
+        assert_eq!(
+            temporal.previous_view_projection,
+            previous.to_cols_array_2d()
+        );
+        assert_eq!(temporal.jitter, [0.0025, 0.01, 0.01, 0.02]);
+    }
+
+    #[test]
+    fn jitter_covers_the_pixel_without_repeating_within_a_cycle() {
+        let offsets: Vec<[f32; 2]> = (0..JITTER_SAMPLES).map(jitter_offset).collect();
+        for (index, offset) in offsets.iter().enumerate() {
+            assert!(
+                offset.iter().all(|value| (-0.5..0.5).contains(value)),
+                "{offset:?}"
+            );
+            assert!(!offsets[..index].contains(offset), "repeats {offset:?}");
+        }
+        // The cycle is balanced about the pixel center, and repeats.
+        for axis in 0..2 {
+            let mean: f32 =
+                offsets.iter().map(|offset| offset[axis]).sum::<f32>() / JITTER_SAMPLES as f32;
+            assert!(mean.abs() < 0.07, "axis {axis} mean {mean}");
+        }
+        assert_eq!(jitter_offset(JITTER_SAMPLES + 3), jitter_offset(3));
+        // Half a pixel right and down is one clip unit per viewport pixel.
+        assert_eq!(jitter_clip([0.5, 0.5], 100, 50), [0.01, -0.02]);
+    }
+
+    #[test]
+    fn mip_chains_reach_one_texel_and_add_at_most_a_third() {
+        assert_eq!(mip_levels(1, 1), 1);
+        assert_eq!(mip_levels(64, 64), 7);
+        assert_eq!(mip_levels(2048, 1), 12);
+        assert_eq!(mip_levels(3, 5), 3);
+        assert_eq!(mip_chain_bytes(1, 1), 0);
+        // 64x64: 32x32 + 16x16 + 8x8 + 4x4 + 2x2 + 1x1 texels.
+        assert_eq!(mip_chain_bytes(64, 64), 1365 * 4);
+        // Odd and one-texel-high levels round down, never below one texel.
+        assert_eq!(mip_chain_bytes(3, 5), (2 + 1) * 4);
+        assert_eq!(mip_chain_bytes(2048, 1), 2047 * 4);
+        // The CPU asset contract's dimension limit.
+        let limit = 2048_u32;
+        assert!(mip_chain_bytes(limit, limit) * 3 < u64::from(limit * limit) * 4);
     }
 
     #[test]

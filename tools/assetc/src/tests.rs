@@ -186,7 +186,7 @@ fn unsupported_material_sampler_and_external_resources_are_explicit() {
         },
         |json: &mut Value| json["materials"][0]["alphaMode"] = json!("BLEND"),
         |json: &mut Value| json["samplers"][0]["wrapS"] = json!(10497),
-        |json: &mut Value| json["samplers"][0]["minFilter"] = json!(9987),
+        |json: &mut Value| json["samplers"][0]["minFilter"] = json!(9984),
         |json: &mut Value| {
             json["images"][0] = json!({"uri":"https://example.invalid/texture.png"});
         },
@@ -201,6 +201,21 @@ fn unsupported_material_sampler_and_external_resources_are_explicit() {
             "unsupported_feature"
         );
     }
+}
+
+#[test]
+fn trilinear_samplers_import_like_linear_ones() {
+    // LINEAR_MIPMAP_LINEAR states how the renderer samples every texture.
+    let trilinear = import_glb(
+        &changed(|json| json["samplers"][0]["minFilter"] = json!(9987)),
+        "garden",
+    )
+    .unwrap();
+    let linear = import_glb(FIXTURE, "garden").unwrap();
+    assert_eq!(
+        serde_json::to_value(&trilinear.textures).unwrap(),
+        serde_json::to_value(&linear.textures).unwrap()
+    );
 }
 
 #[test]

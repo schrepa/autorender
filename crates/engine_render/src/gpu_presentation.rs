@@ -81,7 +81,8 @@ struct Pipelines {
 struct BindGroups {
     shift_previous: wgpu::BindGroup,
     compose_parents: wgpu::BindGroup,
-    cull: wgpu::BindGroup,
+    // One per pose buffer: temporally antialiased frames alternate two.
+    cull: [Option<wgpu::BindGroup>; 2],
     sum_groups: wgpu::BindGroup,
     scan_groups: wgpu::BindGroup,
     batch_args: wgpu::BindGroup,
@@ -152,6 +153,8 @@ pub(crate) struct GpuPresentationPass {
     bind_groups: Option<BindGroups>,
     // Identity of the pose storage bound for writing; rebuild groups on change.
     poses_generation: Option<u64>,
+    // The pose buffer this frame's culling writes.
+    poses_index: usize,
     uploaded: Option<(u64, u64)>,
     groups_key: Option<(u64, u64, u64, u64)>,
     candidate_count: u32,
@@ -288,6 +291,7 @@ impl GpuPresentationPass {
             ),
             bind_groups: None,
             poses_generation: None,
+            poses_index: 0,
             uploaded: None,
             groups_key: None,
             candidate_count: 0,
@@ -438,8 +442,12 @@ impl GpuPresentationPass {
         }
     }
 
-    fn bind_groups(&mut self, device: &wgpu::Device, poses: &wgpu::Buffer) {
-        if self.bind_groups.is_some() {
+    fn bind_groups(&mut self, device: &wgpu::Device, poses: &wgpu::Buffer, index: usize) {
+        if let Some(groups) = &self.bind_groups {
+            if groups.cull[index].is_none() {
+                let cull = self.cull_group(device, poses);
+                self.bind_groups.as_mut().expect("checked above").cull[index] = Some(cull);
+            }
             return;
         }
         let group = |pipeline: &wgpu::ComputePipeline, label, entries: &[wgpu::BindGroupEntry]| {
@@ -450,6 +458,8 @@ impl GpuPresentationPass {
             })
         };
         let pipelines = &self.pipelines;
+        let mut cull = [None, None];
+        cull[index] = Some(self.cull_group(device, poses));
         self.bind_groups = Some(BindGroups {
             shift_previous: group(
                 &pipelines.shift_previous,
@@ -468,21 +478,7 @@ impl GpuPresentationPass {
                     entry(5, &self.parents),
                 ],
             ),
-            cull: group(
-                &pipelines.cull,
-                "engine/presentation-cull-group",
-                &[
-                    entry(0, &self.frame),
-                    entry(1, &self.locals),
-                    entry(2, &self.info),
-                    entry(3, &self.authority),
-                    entry(4, &self.composed),
-                    entry(7, &self.batches),
-                    entry(8, poses),
-                    entry(9, &self.scan),
-                    entry(14, &self.slot_candidates),
-                ],
-            ),
+            cull,
             sum_groups: group(
                 &pipelines.sum_groups,
                 "engine/presentation-sum-group",
@@ -519,6 +515,24 @@ impl GpuPresentationPass {
         });
     }
 
+    fn cull_group(&self, device: &wgpu::Device, poses: &wgpu::Buffer) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/presentation-cull-group"),
+            layout: &self.pipelines.cull.get_bind_group_layout(0),
+            entries: &[
+                entry(0, &self.frame),
+                entry(1, &self.locals),
+                entry(2, &self.info),
+                entry(3, &self.authority),
+                entry(4, &self.composed),
+                entry(7, &self.batches),
+                entry(8, poses),
+                entry(9, &self.scan),
+                entry(14, &self.slot_candidates),
+            ],
+        })
+    }
+
     /// Holds current poses staged between frames for the next gather to copy.
     pub(crate) fn prestage(&mut self, prestaged: Prestaged, version: (u64, u64)) {
         self.prestaged = Some((prestaged, version));
@@ -526,6 +540,10 @@ impl GpuPresentationPass {
 
     /// Uploads changed inputs, groups and the frame uniform. Large node
     /// uploads record staged copies into `copies`, submitted before the frame.
+    /// Culling writes displayed poses into `poses`, pose buffer `poses_index`
+    /// (0 or 1) of the pair `poses_generation` identifies, and tests them
+    /// against `view_projection`, the projection the frame rasterizes.
+    /// With `motion`, visible IDs of moving slots carry `MOVED_SLOT`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
@@ -538,7 +556,10 @@ impl GpuPresentationPass {
         plan: &BatchPlan,
         batch_meta: impl Fn(&DrawBatch) -> (u32, Aabb),
         poses: &wgpu::Buffer,
+        poses_index: usize,
         poses_generation: u64,
+        view_projection: glam::Mat4,
+        motion: bool,
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
         let mut prepared = GpuPrepared::default();
@@ -557,7 +578,8 @@ impl GpuPresentationPass {
             self.poses_generation = Some(poses_generation);
             self.bind_groups = None;
         }
-        self.bind_groups(device, poses);
+        self.bind_groups(device, poses, poses_index);
+        self.poses_index = poses_index;
 
         // Node inputs: records newer than the last uploaded gather.
         let since = match self.uploaded {
@@ -842,7 +864,6 @@ impl GpuPresentationPass {
         prepared.candidates = self.candidate_count;
 
         // A view-projection the CPU frustum rejects disables culling there too.
-        let view_projection = frame.snapshot().view_projection;
         let (planes, absolute) = frustum_uniform(view_projection);
         let bounded = absolute
             .iter()
@@ -860,6 +881,8 @@ impl GpuPresentationPass {
             blend: u32::from(self.blend),
             planes,
             absolute_view_projection: absolute,
+            motion: u32::from(motion),
+            pad: [0; 3],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         prepared
@@ -895,7 +918,13 @@ impl GpuPresentationPass {
                 // Flags in slot order, then their sums in draw-group order.
                 let workgroups = self.candidate_count.div_ceil(GROUP);
                 pass.set_pipeline(&self.pipelines.cull);
-                pass.set_bind_group(0, &groups.cull, &[]);
+                pass.set_bind_group(
+                    0,
+                    groups.cull[self.poses_index]
+                        .as_ref()
+                        .expect("bound in prepare"),
+                    &[],
+                );
                 pass.dispatch_workgroups(workgroups, 1, 1);
                 pass.set_pipeline(&self.pipelines.sum_groups);
                 pass.set_bind_group(0, &groups.sum_groups, &[]);

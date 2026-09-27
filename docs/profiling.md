@@ -213,6 +213,19 @@ of previous poses, submitted before the frame's uploads and not included in
 `presentation_compute`. Splitting the stages adds pass boundaries, so compare
 per-stage samples within captures rather than with uncaptured frames.
 
+Temporally antialiased frames ([decision 017](adr-017-temporal-antialiasing.md))
+add a `taa_resolve` GPU sample for the full-screen resolve; their
+`opaque_meshes` also writes the motion target. They report `render.taa`,
+`render.taa_history` (0 when the history was reset), `render.taa_object_motion`
+(0 on frames that fall back to camera motion) and `memory.gpu_temporal_bytes`
+(targets and the second pose buffer). The resolve scales with canvas pixels, so
+compare it at identical sizes.
+
+Textures report `render.texture_mip_levels`, the mip levels the frame rendered
+for textures that became resident (their base levels still count in
+`render.texture_upload_bytes`), and `memory.gpu_texture_mip_bytes`, the GPU
+bytes of all generated levels beyond `memory.gpu_texture_payload_bytes`.
+
 With pipelined ticks ([decision 015](adr-015-pipelined-fixed-ticks.md)) a tick's
 stages appear as `fixed_tick_begin` and `fixed_tick_end` spans, usually in
 different frames, instead of one `fixed_tick`; frames that present an in-flight

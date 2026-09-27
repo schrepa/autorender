@@ -12,7 +12,10 @@ thread. `resize(width, height)` accepts physical pixels; zero dimensions suspend
 submission, and oversized dimensions fit the device limit while preserving
 aspect ratio. `render(&snapshot)` returns `RenderStats` for submitted work and
 current GPU asset residency. `render_frame(frame)` accepts the private core-owned
-revision certificate and uses compact affine uploads. `is_mesh_resident(handle)` and `is_texture_resident(handle)`
+revision certificate and uses compact affine uploads; it is always exact.
+`render_display_frame(frame)` renders an ordinary display frame, which
+`set_temporal_antialiasing(true)` temporally antialiases when it is GPU-presented
+([decision 017](../../docs/adr-017-temporal-antialiasing.md)). `is_mesh_resident(handle)` and `is_texture_resident(handle)`
 observe uploaded storage without waiting for GPU completion. The browser API exists only on `wasm32`; native
 tests exercise batch planning, budgets, asset retirement, shader validation,
 upload layouts, normal transforms, and dimension bounds.
@@ -105,7 +108,7 @@ draw-group position, and compacts visible slot IDs per draw group with a
 two-level scan. Each group
 draws with `draw_indexed_indirect` from its own region of the ID buffer, so no
 `indirect-first-instance` feature is needed. Per frame, the CPU writes one
-192-byte uniform and records a few dispatches. The instance budget is applied in
+208-byte uniform and records a few dispatches. The instance budget is applied in
 draw-group order. A four-byte visible total is copied into one of three readback
 buffers and mapped asynchronously; `RenderStats::gpu_visible` reports the latest
 completed value, and `instances` limits it by the budget. Switching back to CPU
@@ -117,10 +120,19 @@ exact hex literals tested against core's values.
 Base color textures are opaque, tightly packed RGBA8 sRGB with upper-left pixel
 and UV origins. The renderer uses `Rgba8UnormSrgb`, decoding samples to linear RGB
 before multiplying the material's linear color and lighting. A shared sampler
-uses clamp-to-edge and linear minification/magnification, with one mip level.
-Each resident texture owns one GPU texture and cached bind group; untextured
-instances use a renderer-owned white texel. There is no normal map, mip generation,
-anisotropy or per-material sampler specialization in this milestone.
+uses clamp-to-edge and trilinear filtering. Each texture uploads its base level
+only; the frame that makes it resident renders the rest of its mip chain on the
+GPU (`mipmaps.rs`, one small pass per level, each averaging the level above in
+linear space through the sRGB format), submitted before the frame's draws. The
+chain adds at most a third of the base bytes in GPU memory
+(`memory.gpu_texture_mip_bytes`); `render.texture_mip_levels` counts levels
+generated in a frame. Minified textures then read small, cached levels: in
+Firefox on the Intel iGPU the opaque pass stayed within run-to-run variation
+(1.92–2.01 ms without mipmaps, 1.93–1.99 ms with them at 90,000 textured
+objects; 5.77 against 5.51–6.05 ms at 250,000). Each resident texture owns one
+GPU texture and cached bind group; untextured instances use a renderer-owned
+white texel. There is no normal map, anisotropy or per-material sampler
+specialization in this milestone.
 
 An asset uploads only when an emitted instance references its handle and that
 handle is absent from its GPU cache. Snapshot mesh/texture sources include both
@@ -149,7 +161,8 @@ Visibility-only regrouping takes O(N + M * (T + 1) + M log M + T log T) for
 already mapped slots, without resolving mesh/texture handles again. Profiling
 reports `render.batch_key_resolutions` and `render.batch_slot_mapping_reused`
 to distinguish that work from a source change.
-Camera bytes are compared with the last queued 64-byte uniform. For public snapshots, each instance's
+Camera bytes are compared with the last queued 144-byte uniform (temporal
+frames change it every frame: jitter and previous view-projection). For public snapshots, each instance's
 matrix/color bytes are compared with the existing 80-byte staging record;
 unchanged records are not repacked. Changed records produce at most 32 upload
 ranges. Clean gaps of at most 205 records are included to avoid small queue
@@ -235,6 +248,18 @@ not a fallback. An outdated surface is reconfigured at the next render boundary,
 and a lost surface is recreated. Device loss or uncaptured GPU errors place the
 renderer in an explicit failed state; the host displays the error and asks for
 reload. Automatic device and asset reconstruction remain future work.
+
+Temporal antialiasing (`temporal.rs`, `temporal.wgsl`) renders GPU-presented
+display frames into an sRGB scene target and an `Rg16Float` motion target with
+a Halton sub-pixel jitter, culling with the same jittered projection. Culling
+alternates between the slot pose buffer and a second one of equal capacity, so
+the previous frame's poses stay readable; visible IDs of moving slots carry
+`MOVED_SLOT` and only those read their previous pose. One full-screen pass then
+blends with the reprojected history (YCoCg neighborhood clamp, Catmull-Rom
+history filter) and writes the canvas and the next `Rgba8UnormSrgb` history.
+Targets follow the surface size and are destroyed when replaced; pipelines are
+created when the feature is enabled. A profiling capture times the resolve as
+`taa_resolve`.
 
 Dependencies: core snapshot contracts, `glam`, `bytemuck`, and target-specific
 `wgpu`, `web-sys`, and `wasm-bindgen`; Naga is a shader-validation test dependency.

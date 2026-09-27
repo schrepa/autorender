@@ -90,6 +90,14 @@ GPU frame and GPU-presented ordinary frames. Captures go under
 `artifacts/gpu-presentation-smoke-*/`. See
 [GPU presentation](../docs/adr-014-gpu-presentation-and-culling.md).
 
+`node web/scripts/taa-smoke.mjs` loads Stress Lab with temporal antialiasing
+(`?taa=on`) and checks that captures are identical with the setting on and off
+and after temporal frames, that converged still frames are smoother (lower total
+variation) with the same 8×8 block averages and do not flicker, that
+CPU-presented frames stay exact, and that moving frames keep their detail.
+Screenshots hide the viewport overlays and go under `artifacts/taa-smoke-*/`.
+See [temporal antialiasing](../docs/adr-017-temporal-antialiasing.md).
+
 `node web/scripts/collision-smoke.mjs` verifies geometry queries, symmetric layers,
 sensors, affine hierarchy targets, swept movement, and read-only query semantics
 in real Chrome. It uses disposable routed scenes and saves a screenshot/report

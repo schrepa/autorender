@@ -11,11 +11,14 @@ use wgpu::util::DeviceExt;
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
     CameraUniform, ColorData, InstanceData, PoseData, SHADER, Vertex, clamped_extent,
+    mip_chain_bytes, mip_levels,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
+use crate::mipmaps::{MipGenerator, TEXTURE_FORMAT};
 use crate::retained_uploads::RetainedUploads;
 use crate::staging::{self, StagingRing};
+use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::uploads::UploadCache;
 use crate::{MAX_INSTANCES, RenderStats};
 
@@ -25,6 +28,26 @@ const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 7 => Float32x2];
 const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Float32x4];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
+
+fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+    Some(wgpu::VertexBufferLayout {
+        array_stride: size_of::<Vertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &VERTEX_ATTRIBUTES,
+    })
+}
+
+/// Mesh vertices and the slot ID stream of retained frames.
+fn affine_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
+    [
+        vertex_layout(),
+        Some(wgpu::VertexBufferLayout {
+            array_stride: size_of::<u32>() as u64,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &SLOT_ATTRIBUTES,
+        }),
+    ]
+}
 
 struct DepthTarget {
     // Keep texture ownership explicit alongside its reusable view.
@@ -42,7 +65,9 @@ struct GpuMesh {
 struct GpuTexture {
     _texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    // Base level (asset) bytes, and the generated levels' bytes.
     byte_len: u64,
+    mip_bytes: u64,
 }
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
@@ -65,12 +90,15 @@ pub struct Renderer {
     depth: DepthTarget,
     pipeline: wgpu::RenderPipeline,
     affine_pipeline: wgpu::RenderPipeline,
+    mesh_shader: wgpu::ShaderModule,
+    camera_layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     texture_layout: wgpu::BindGroupLayout,
     texture_sampler: wgpu::Sampler,
+    mips: MipGenerator,
     white_texture: GpuTexture,
     plan: BatchPlan,
     vertex_staging: Vec<Vertex>,
@@ -92,6 +120,10 @@ pub struct Renderer {
     pose_uploads: StagingRing,
     // Blending, composition and culling for GPU-presented frames (decision 014).
     gpu_presentation: GpuPresentationPass,
+    // Temporal antialiasing of GPU-presented display frames (decision 017).
+    temporal: Option<TemporalPass>,
+    // Temporal frames cull into this buffer and `instance_buffer` in turn.
+    alternate_poses: Option<wgpu::Buffer>,
     // Advances when retained pose storage is replaced (compute bindings follow).
     pose_generation: u64,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.
@@ -194,7 +226,8 @@ impl Renderer {
             label: Some("engine/camera-layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                // Temporal fragments read the jitter for motion vectors.
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -232,20 +265,24 @@ impl Renderer {
                 },
             ],
         });
+        // Trilinear: minified textures read small, cached levels.
         let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/base-color-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        let mips = MipGenerator::new(&device);
         let white_texture = create_texture(
             &device,
             &queue,
             &texture_layout,
             &texture_sampler,
             &Texture::new(1, 1, vec![255; 4]).expect("opaque white texel"),
+            None,
         );
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/mesh-pipeline-layout"),
@@ -283,13 +320,6 @@ impl Renderer {
             label: Some("engine/meshes.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
-        let vertex_layout = || {
-            Some(wgpu::VertexBufferLayout {
-                array_stride: size_of::<Vertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &VERTEX_ATTRIBUTES,
-            })
-        };
         let full_layouts = [
             vertex_layout(),
             Some(wgpu::VertexBufferLayout {
@@ -298,14 +328,7 @@ impl Renderer {
                 attributes: &INSTANCE_ATTRIBUTES,
             }),
         ];
-        let affine_layouts = [
-            vertex_layout(),
-            Some(wgpu::VertexBufferLayout {
-                array_stride: size_of::<u32>() as u64,
-                step_mode: wgpu::VertexStepMode::Instance,
-                attributes: &SLOT_ATTRIBUTES,
-            }),
-        ];
+        let affine_layouts = affine_layouts();
         let make_pipeline = |affine| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("engine/instanced-meshes"),
@@ -388,12 +411,15 @@ impl Renderer {
             depth,
             pipeline,
             affine_pipeline,
+            mesh_shader: shader,
+            camera_layout,
             camera_buffer,
             camera_bind_group,
             meshes: BTreeMap::new(),
             textures: BTreeMap::new(),
             texture_layout,
             texture_sampler,
+            mips,
             white_texture,
             plan: BatchPlan::default(),
             vertex_staging: Vec::new(),
@@ -413,6 +439,8 @@ impl Renderer {
             retained_uploads: RetainedUploads::default(),
             pose_uploads: StagingRing::default(),
             gpu_presentation,
+            temporal: None,
+            alternate_poses: None,
             pose_generation: 0,
             gpu_frame: false,
             failure,
@@ -449,13 +477,52 @@ impl Renderer {
     /// Snapshot budget/source errors return before uploads or cache changes.
     pub fn render(&mut self, snapshot: &RenderSnapshot) -> Result<RenderStats, JsValue> {
         self.retained_uploads.invalidate();
-        self.render_inner(snapshot, None)
+        self.render_inner(snapshot, None, false)
     }
 
     /// Render a borrowed core-owned frame using retained structural/pose revisions.
     /// Untrusted public snapshots remain on the full-matrix validated path above.
+    /// The frame is exact: never jittered or blended with earlier frames.
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
-        self.render_inner(frame.snapshot(), Some(&frame))
+        self.render_inner(frame.snapshot(), Some(&frame), false)
+    }
+
+    /// [`Self::render_frame`] for ordinary display frames. With temporal
+    /// antialiasing enabled, GPU-presented frames rasterize with a sub-pixel
+    /// jitter and blend with the reprojected output of the previous display
+    /// frame (decision 017). Any other frame ends that history.
+    pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
+        self.render_inner(frame.snapshot(), Some(&frame), true)
+    }
+
+    /// Enables temporal antialiasing of GPU-presented display frames, creating
+    /// its pipelines now; disabling releases its targets and pose buffer.
+    /// Frame targets follow the surface size, 16 bytes per pixel.
+    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+        if enabled == self.temporal.is_some() {
+            return;
+        }
+        if enabled {
+            self.temporal = Some(TemporalPass::new(
+                &self.device,
+                &self.mesh_shader,
+                &self.camera_layout,
+                &self.texture_layout,
+                &affine_layouts(),
+                DEPTH_FORMAT,
+                self.configuration.format,
+            ));
+        } else {
+            self.temporal = None;
+            if self.alternate_poses.take().is_some() {
+                // Culling must not keep writing the released buffer.
+                self.pose_generation += 1;
+            }
+        }
+    }
+
+    pub fn temporal_antialiasing(&self) -> bool {
+        self.temporal.is_some()
     }
 
     /// Copies GPU presentation's current poses into a staging buffer between
@@ -483,6 +550,7 @@ impl Renderer {
         &mut self,
         snapshot: &RenderSnapshot,
         retained: Option<&RenderFrame<'_>>,
+        display: bool,
     ) -> Result<RenderStats, JsValue> {
         let _profile = engine_profile::span("render", "render_snapshot");
         if let Ok(failure) = self.failure.lock()
@@ -508,6 +576,10 @@ impl Renderer {
             self.slot_revision = None;
         }
         self.gpu_frame = gpu_mode;
+        let temporal = display && gpu_mode && self.temporal.is_some();
+        if !temporal && let Some(pass) = &mut self.temporal {
+            pass.reset();
+        }
         let profile_residency = engine_profile::span("render", "validate_and_retire");
         for source in &snapshot.textures {
             if source.texture.width().max(source.texture.height()) > self.max_dimension {
@@ -602,6 +674,10 @@ impl Renderer {
             }
         }
         let mut texture_upload_bytes = 0_u64;
+        // New textures' mip levels render from their uploaded base level in
+        // a command buffer submitted ahead of this frame's.
+        let mut mip_encoder = None;
+        let mut mip_levels = 0;
         for &index in &self.plan.texture_sources {
             let source = &snapshot.textures[index];
             if let std::collections::btree_map::Entry::Vacant(entry) =
@@ -613,6 +689,7 @@ impl Renderer {
                     &self.texture_layout,
                     &self.texture_sampler,
                     &source.texture,
+                    Some((&self.mips, &mut mip_encoder, &mut mip_levels)),
                 );
                 texture_upload_bytes += texture.byte_len;
                 entry.insert(texture);
@@ -677,8 +754,27 @@ impl Renderer {
             });
             self.uploads.invalidate_instances();
             self.retained_uploads.invalidate();
+            self.alternate_poses = None;
             self.pose_generation += 1;
         }
+        if temporal && self.alternate_poses.is_none() {
+            self.alternate_poses = Some(create_storage_buffer(
+                &self.device,
+                self.instance_capacity,
+                size_of::<PoseData>(),
+            ));
+            self.pose_generation += 1;
+        }
+        let temporal_frame: Option<TemporalFrame> = match (self.temporal.as_mut(), retained) {
+            (Some(pass), Some(frame)) if temporal => Some(pass.begin(
+                &self.device,
+                &self.queue,
+                frame,
+                (self.configuration.width, self.configuration.height),
+                self.pose_generation,
+            )),
+            _ => None,
+        };
         // Pose/color buffers retain core slot positions. Only compact IDs follow
         // changing visibility and mesh/texture grouping, so order changes never
         // shift payload records or force otherwise unchanged colors to upload.
@@ -742,9 +838,10 @@ impl Renderer {
             };
         drop(profile_packing);
         let profile_writes = engine_profile::span("render", "queue_writes");
-        let camera = CameraUniform {
-            view_projection: snapshot.view_projection.to_cols_array_2d(),
-        };
+        let camera = temporal_frame.as_ref().map_or_else(
+            || CameraUniform::exact(snapshot.view_projection),
+            |frame| frame.camera,
+        );
         let mut camera_upload_bytes = 0_u64;
         if self.uploads.camera_needs_write(&camera) {
             self.queue
@@ -847,28 +944,45 @@ impl Renderer {
         let query_slot = self.profiler.reserve(&self.device);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
+            // Temporal frames alternate pose buffers; the other keeps the
+            // previous frame's poses.
+            let (poses, poses_index) = match &temporal_frame {
+                Some(temporal) if temporal.parity == 1 => {
+                    (self.alternate_poses.as_ref().expect("created above"), 1)
+                }
+                _ => (&self.instance_buffer, 0),
+            };
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
             #[cfg(not(feature = "profiling"))]
             let stamps = None;
-            Some(self.gpu_presentation.prepare(
-                &self.device,
-                &self.queue,
-                &mut self.pose_uploads,
-                &mut input_copies,
-                frame,
-                gpu,
-                &self.plan,
-                |batch| {
-                    (
-                        meshes[&batch.mesh].index_count,
-                        snapshot.meshes[batch.source_index].mesh.bounds(),
-                    )
-                },
-                &self.instance_buffer,
-                self.pose_generation,
-                stamps,
-            ))
+            Some(
+                self.gpu_presentation.prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut self.pose_uploads,
+                    &mut input_copies,
+                    frame,
+                    gpu,
+                    &self.plan,
+                    |batch| {
+                        (
+                            meshes[&batch.mesh].index_count,
+                            snapshot.meshes[batch.source_index].mesh.bounds(),
+                        )
+                    },
+                    poses,
+                    poses_index,
+                    self.pose_generation,
+                    temporal_frame
+                        .as_ref()
+                        .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
+                    temporal_frame
+                        .as_ref()
+                        .is_some_and(|temporal| temporal.motion_valid),
+                    stamps,
+                ),
+            )
         } else {
             None
         };
@@ -897,18 +1011,33 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             self.profiler.timed_stages(query_slot, _timed);
         }
+        if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
+            pass.prepare_pose_groups(
+                &self.device,
+                self.pose_generation,
+                [
+                    &self.instance_buffer,
+                    self.alternate_poses.as_ref().expect("created above"),
+                ],
+                self.color_buffer.as_ref().expect("affine color buffer"),
+            );
+        }
+        let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
         {
+            let canvas = [Some(wgpu::RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear_color(self.configuration.format.is_srgb())),
+                    store: wgpu::StoreOp::Store,
+                },
+            })];
+            // Temporal frames draw into their sRGB scene and motion targets.
+            let targets = temporal_pass.map(|(_, pass)| pass.attachments(clear_color(true)));
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/opaque-meshes"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear_color(self.configuration.format.is_srgb())),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: targets.as_ref().map_or(&canvas[..], |targets| &targets[..]),
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
@@ -925,18 +1054,23 @@ impl Renderer {
                 multiview_mask: None,
             });
             if instance_count > 0 {
-                pass.set_pipeline(if affine {
-                    &self.affine_pipeline
-                } else {
-                    &self.pipeline
+                pass.set_pipeline(match temporal_pass {
+                    Some((_, temporal)) => temporal.mesh_pipeline(),
+                    None if affine => &self.affine_pipeline,
+                    None => &self.pipeline,
                 });
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 if affine {
                     pass.set_bind_group(
                         2,
-                        self.pose_bind_group
-                            .as_ref()
-                            .expect("retained pose bindings"),
+                        temporal_pass.map_or_else(
+                            || {
+                                self.pose_bind_group
+                                    .as_ref()
+                                    .expect("retained pose bindings")
+                            },
+                            |(frame, temporal)| temporal.pose_group(frame),
+                        ),
                         &[],
                     );
                     if !gpu_mode {
@@ -971,20 +1105,34 @@ impl Renderer {
                 }
             }
         }
+        if let Some((frame, pass)) = temporal_pass {
+            #[cfg(not(feature = "profiling"))]
+            let writes = None;
+            #[cfg(feature = "profiling")]
+            let writes = self.profiler.resolve_writes(query_slot);
+            pass.encode_resolve(&mut encoder, &view, frame, writes);
+            #[cfg(feature = "profiling")]
+            self.profiler.timed_resolve(query_slot);
+        }
         #[cfg(feature = "profiling")]
         self.profiler.resolve(query_slot, &mut encoder);
         drop(profile_encoding);
         let profile_submit = engine_profile::span("render", "submit_and_present");
         // Staged pose/input copies precede the passes that read them.
         self.queue.submit(
-            staged_poses
+            mip_encoder
+                .map(wgpu::CommandEncoder::finish)
                 .into_iter()
+                .chain(staged_poses)
                 .chain(input_copies.map(wgpu::CommandEncoder::finish))
                 .chain([encoder.finish()]),
         );
         self.pose_uploads.after_submit();
         if gpu_mode {
             self.gpu_presentation.after_submit();
+        }
+        if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
+            pass.submitted(frame);
         }
         #[cfg(feature = "profiling")]
         self.profiler.map_after_submit(query_slot);
@@ -1024,6 +1172,7 @@ impl Renderer {
             engine_profile::counter("render.draw_calls", self.plan.batches.len() as f64);
             engine_profile::counter("render.mesh_upload_bytes", mesh_upload_bytes as f64);
             engine_profile::counter("render.texture_upload_bytes", texture_upload_bytes as f64);
+            engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_upload_bytes as f64);
             engine_profile::counter("render.instance_write_bytes", instance_upload_bytes as f64);
             engine_profile::counter("render.pose_write_bytes", pose_upload_bytes as f64);
@@ -1031,6 +1180,26 @@ impl Renderer {
             engine_profile::counter("render.instance_id_write_bytes", slot_upload_bytes as f64);
             engine_profile::counter("render.retained_frame", f64::from(u8::from(affine)));
             engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
+            engine_profile::counter("render.taa", f64::from(u8::from(temporal_frame.is_some())));
+            if let Some(frame) = &temporal_frame {
+                engine_profile::counter(
+                    "render.taa_history",
+                    f64::from(u8::from(frame.history_valid)),
+                );
+                engine_profile::counter(
+                    "render.taa_object_motion",
+                    f64::from(u8::from(frame.motion_valid)),
+                );
+            }
+            engine_profile::counter(
+                "memory.gpu_temporal_bytes",
+                (self
+                    .temporal
+                    .as_ref()
+                    .map_or(0, TemporalPass::capacity_bytes)
+                    + self.alternate_poses.as_ref().map_or(0, wgpu::Buffer::size))
+                    as f64,
+            );
             if let Some(prepared) = &gpu_prepared {
                 engine_profile::counter("render.gpu_candidates", f64::from(prepared.candidates));
                 engine_profile::counter(
@@ -1124,6 +1293,13 @@ impl Renderer {
                 "memory.gpu_texture_payload_bytes",
                 stats.resident_texture_bytes as f64,
             );
+            engine_profile::counter(
+                "memory.gpu_texture_mip_bytes",
+                self.textures
+                    .values()
+                    .map(|texture| texture.mip_bytes)
+                    .sum::<u64>() as f64,
+            );
         }
         Ok(stats)
     }
@@ -1178,26 +1354,39 @@ impl Renderer {
     }
 }
 
+/// Uploads `source` as the base level. With `mips` (generator, lazily created
+/// encoder and a level count to add to), the texture gets a full mip chain
+/// whose remaining levels are recorded into that encoder.
 fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
     sampler: &wgpu::Sampler,
     source: &Texture,
+    mips: Option<(&MipGenerator, &mut Option<wgpu::CommandEncoder>, &mut u32)>,
 ) -> GpuTexture {
     let extent = wgpu::Extent3d {
         width: source.width(),
         height: source.height(),
         depth_or_array_layers: 1,
     };
+    let levels = if mips.is_some() {
+        mip_levels(source.width(), source.height())
+    } else {
+        1
+    };
+    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+    if levels > 1 {
+        usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+    }
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine/base-color-texture"),
         size: extent,
-        mip_level_count: 1,
+        mip_level_count: levels,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        format: TEXTURE_FORMAT,
+        usage,
         view_formats: &[],
     });
     // Queue writes accept tightly packed rows; no 256-byte buffer-copy padding.
@@ -1216,6 +1405,16 @@ fn create_texture(
         },
         extent,
     );
+    if let Some((generator, encoder, generated)) = mips
+        && levels > 1
+    {
+        let encoder = encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/texture-mips"),
+            })
+        });
+        *generated += generator.record(device, encoder, &texture);
+    }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("engine/base-color-bind-group"),
@@ -1235,6 +1434,11 @@ fn create_texture(
         _texture: texture,
         bind_group,
         byte_len: source.byte_len() as u64,
+        mip_bytes: if levels > 1 {
+            mip_chain_bytes(source.width(), source.height())
+        } else {
+            0
+        },
     }
 }
 

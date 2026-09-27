@@ -180,9 +180,11 @@ function poll(runtime: StressGame) {
 
 const params = new URLSearchParams(location.search);
 // Ordinary frames blend, compose and cull on the GPU unless ?presentation=cpu,
-// and GPU-presented frames split fixed ticks across frames unless ?pipeline=off.
+// GPU-presented frames split fixed ticks across frames unless ?pipeline=off,
+// and ?taa=on temporally antialiases them.
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
+const taa = params.get("taa") === "on" ? "on" : "off";
 if (params.has("config")) {
   try {
     const source = params.get("config")!;
@@ -227,6 +229,7 @@ boot({
     game = runtime; controls = host;
     runtime.set_gpu_presentation(presentation === "gpu");
     runtime.set_tick_pipelining(pipeline === "on");
+    runtime.set_temporal_antialiasing(taa === "on");
     lock();
     el("active-preset").textContent = activeTitle;
     if (import.meta.env.MODE === "profiling") {
@@ -243,7 +246,7 @@ boot({
           metadata() {
             const data = snapshot(runtime);
             return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline,
+              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa,
               build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
               start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
               viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
@@ -313,7 +316,7 @@ el("record").addEventListener("click", () => {
   try {
     const data = snapshot(game);
     recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline,
+      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa,
       build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
       start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
       scroll: [window.scrollX, window.scrollY],

@@ -23,7 +23,8 @@ payload bytes; they support conservative extraction culling in `engine_core`.
 pixels, with rows from top to bottom. Width and height must each be in 1..=2048,
 the byte length must equal width × height × 4, and every alpha byte must be 255.
 Pixels remain encoded as sRGB on the CPU; the renderer decodes them when sampled.
-The texture has one mip level. This crate does not decode image containers.
+The texture holds one level; the renderer generates its mip chain on the GPU.
+This crate does not decode image containers.
 `Material::textured(color, texture_handle)` multiplies sampled linear texture
 color by an opaque linear color factor. `Material::new` remains the color-only API.
 

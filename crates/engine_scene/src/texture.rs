@@ -7,8 +7,9 @@ use crate::SceneError;
 /// Immutable opaque RGBA8 sRGB pixels in row-major, top-to-bottom order.
 ///
 /// PNG/GLB decoding happens offline. Base64 is decoded only during validation
-/// and loading, never in simulation or rendering. Sampling is linear with
-/// clamp-to-edge and one mip level. The complete scene still must fit 1 MiB.
+/// and loading, never in simulation or rendering. Scenes store one level; the
+/// renderer generates mip levels and samples them trilinearly with
+/// clamp-to-edge. The complete scene still must fit 1 MiB.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

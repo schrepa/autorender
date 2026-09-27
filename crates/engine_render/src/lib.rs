@@ -68,9 +68,13 @@ mod uploads;
 mod browser;
 #[cfg(target_arch = "wasm32")]
 mod gpu_presentation;
+#[cfg(target_arch = "wasm32")]
+mod mipmaps;
 #[cfg(all(target_arch = "wasm32", feature = "profiling"))]
 mod profiling;
 #[cfg(target_arch = "wasm32")]
 mod staging;
+#[cfg(target_arch = "wasm32")]
+mod temporal;
 #[cfg(target_arch = "wasm32")]
 pub use browser::Renderer;

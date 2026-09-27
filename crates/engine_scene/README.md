@@ -87,8 +87,9 @@ does not override template fields: edit the definition to change all placements.
 in row-major top-to-bottom order. Alpha must be 255. Dimensions are 1..2048;
 encoded texture payload shares the complete 1 MiB scene source limit. A
 material's optional texture field is an authored ID. Procedural meshes provide
-UVs; inline vertices default to zero UV for legacy sources. Sampling is linear,
-clamp-to-edge, single-mip. PNG/GLB decoding belongs to native `tools/assetc`;
+UVs; inline vertices default to zero UV for legacy sources. Sampling is
+trilinear and clamp-to-edge over mip levels the renderer generates from the
+authored pixels. PNG/GLB decoding belongs to native `tools/assetc`;
 base64 decoding belongs only to validation/loading here.
 
 Errors expose stable `code`, JSON `path` and a human-readable `message`.

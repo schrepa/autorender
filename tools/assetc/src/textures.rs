@@ -19,13 +19,15 @@ pub(crate) fn import(
             || sampler
                 .mag_filter()
                 .is_some_and(|filter| filter != MagFilter::Linear)
-            || sampler
-                .min_filter()
-                .is_some_and(|filter| filter != MinFilter::Linear)
+            // The renderer samples every texture trilinearly from mip levels
+            // it generates, which LINEAR_MIPMAP_LINEAR states explicitly.
+            || sampler.min_filter().is_some_and(|filter| {
+                !matches!(filter, MinFilter::Linear | MinFilter::LinearMipmapLinear)
+            })
         {
             return Err(unsupported(
                 format!("$.samplers[{}]", sampler.index().unwrap_or(0)),
-                "only CLAMP_TO_EDGE in both axes and LINEAR filters (or unspecified filters) are supported; mipmapping is unsupported",
+                "only CLAMP_TO_EDGE in both axes and LINEAR filters (or unspecified filters) are supported; the minification filter may also be LINEAR_MIPMAP_LINEAR",
             ));
         }
     }

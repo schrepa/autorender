@@ -159,6 +159,20 @@ impl BrowserApp {
         self.tick_pipelining
     }
 
+    /// Temporally antialiases ordinary GPU-presented frames (decision 017):
+    /// each rasterizes with a sub-pixel jitter and blends with the previous
+    /// frame's output, reprojected by per-pixel motion. Off by default.
+    /// Development steps, renders, previews and captures stay exact, as do
+    /// CPU-presented frames. Enabling creates its pipelines; disabling
+    /// releases its targets.
+    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
+        self.renderer.set_temporal_antialiasing(enabled);
+    }
+
+    pub fn temporal_antialiasing(&self) -> bool {
+        self.renderer.temporal_antialiasing()
+    }
+
     /// Advance once per animation frame; input is a bounded, owned value.
     pub fn frame(
         &mut self,
@@ -190,6 +204,7 @@ impl BrowserApp {
                 alpha: report.interpolation,
             },
             self.gpu_presentation,
+            true,
         )?;
         // After submission, so the GPU draws this frame while the next tick's
         // first stage runs; the frame interval predicts the next one.
@@ -245,6 +260,7 @@ impl BrowserApp {
             report,
             PresentationMode::Current,
             false,
+            false,
         )
     }
 
@@ -263,6 +279,7 @@ impl BrowserApp {
             0.0,
             FrameReport::default(),
             PresentationMode::Current,
+            false,
             false,
         )
     }
@@ -297,6 +314,7 @@ impl BrowserApp {
             FrameReport::default(),
             PresentationMode::Interpolated { alpha },
             gpu,
+            false,
         )
     }
 
@@ -318,6 +336,9 @@ impl BrowserApp {
         };
     }
 
+    /// `display` marks ordinary frames, which temporal antialiasing may
+    /// blend; others render exactly.
+    #[allow(clippy::too_many_arguments)]
     fn render_frame(
         &mut self,
         width: u32,
@@ -326,6 +347,7 @@ impl BrowserApp {
         report: FrameReport,
         presentation: PresentationMode,
         gpu: bool,
+        display: bool,
     ) -> Result<(), JsValue> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
@@ -349,7 +371,11 @@ impl BrowserApp {
         }
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
         let after_extraction = self.performance.now();
-        let rendered = self.renderer.render_frame(frame)?;
+        let rendered = if display {
+            self.renderer.render_display_frame(frame)?
+        } else {
+            self.renderer.render_frame(frame)?
+        };
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
         }
