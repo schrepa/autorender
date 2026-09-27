@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
-use engine_core::{LocalLight, Material, Mesh, ParticleEmitter, Texture, Transform};
+use engine_core::{LocalLight, Mesh, ParticleEmitter, Texture, Transform};
 
 use crate::{
     MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
-    SceneTransform, hierarchy::ExpandedObject,
+    SceneTransform, hierarchy::ExpandedObject, material::PreparedMaterial,
 };
 
 pub(crate) struct PreparedScene {
@@ -13,7 +13,7 @@ pub(crate) struct PreparedScene {
     pub lights: Vec<Option<LocalLight>>,
     pub emitters: Vec<Option<ParticleEmitter>>,
     pub meshes: Vec<Mesh>,
-    pub materials: Vec<Material>,
+    pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
@@ -70,6 +70,21 @@ impl SceneDocument {
                     "expected version 1 through {SCENE_VERSION}; found {}",
                     self.version
                 ),
+            ));
+        }
+        if self.version < 8
+            && let Some((index, field)) =
+                self.materials
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, material)| {
+                        material.version_eight_field().map(|field| (index, field))
+                    })
+        {
+            return Err(SceneError::new(
+                "version_required",
+                format!("$.materials[{index}].{field}"),
+                "glTF material maps, texture settings, emissive colors, alpha modes and double-sided materials require scene version 8; set version to 8 and increment revision",
             ));
         }
         if self.version < 7 {
@@ -210,11 +225,11 @@ impl SceneDocument {
             "$.textures",
         )?;
         for (index, material) in self.materials.iter().enumerate() {
-            if let Some(texture) = &material.texture {
+            for (field, texture) in material.texture_ids() {
                 reference(
                     texture,
                     &texture_ids,
-                    &format!("$.materials[{index}].texture"),
+                    &format!("$.materials[{index}].{field}"),
                 )?;
             }
         }
@@ -286,7 +301,9 @@ impl SceneDocument {
             .materials
             .iter()
             .enumerate()
-            .map(|(index, material)| material.material(&format!("$.materials[{index}]")))
+            .map(|(index, material)| {
+                material.prepare(&format!("$.materials[{index}]"), self.version)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let environment = self
             .environment

@@ -238,7 +238,7 @@ mod tests {
         vec![
             RenderInstance {
                 mesh,
-                texture: None,
+                material: None,
                 model: Mat4::IDENTITY,
                 color: [1.0; 4],
                 surface: engine_core::Surface::MATTE,

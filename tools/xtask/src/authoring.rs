@@ -7,7 +7,7 @@ use std::{
 use engine_scene::SceneDocument;
 
 const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
-const SCHEMA_PATH: &str = "docs/schema/scene-v7.schema.json";
+const SCHEMA_PATH: &str = "docs/schema/scene-v8.schema.json";
 
 pub fn validate_sources(root: &Path) -> Result<(), String> {
     let paths = scene_paths(root)?;

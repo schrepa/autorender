@@ -1,5 +1,6 @@
 use engine_scene::{
     MeshSource, SceneDocument, SceneMesh, SceneObject, SceneTransform, SceneVertex,
+    encode_mesh_buffer,
 };
 use glam::{Mat3, Mat4, Vec3};
 use gltf::{
@@ -7,14 +8,14 @@ use gltf::{
     mesh::Semantic,
 };
 
-use crate::{ImportError, reserve_bytes, unsupported};
+use crate::{ImportError, ImportedFile, unsupported};
 
 pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],
     id: &str,
     output: &mut SceneDocument,
-    resident_bytes: &mut usize,
+    files: &mut Vec<ImportedFile>,
 ) -> Result<(), ImportError> {
     let source = document.scenes().next().expect("validated single scene");
     let mut stack: Vec<_> = source.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
@@ -42,13 +43,6 @@ pub(crate) fn import(
         let normal_matrix = linear.inverse().transpose();
         if let Some(mesh) = node.mesh() {
             for primitive in mesh.primitives() {
-                if output.meshes.len() >= 128 {
-                    return Err(ImportError::new(
-                        "count_limit",
-                        &path,
-                        "baked nodes produce more than 128 mesh primitives",
-                    ));
-                }
                 let primitive_path = format!(
                     "$.meshes[{}].primitives[{}]",
                     mesh.index(),
@@ -57,10 +51,15 @@ pub(crate) fn import(
                 let material_index = primitive.material().index().ok_or_else(|| {
                     unsupported(
                         format!("{primitive_path}.material"),
-                        "an explicit diffuse material is required",
+                        "an explicit material is required",
                     )
                 })?;
-                let textured = output.materials[material_index].texture.is_some();
+                let material = &output.materials[material_index];
+                let textured = material.texture.is_some()
+                    || material.metallic_roughness_texture.is_some()
+                    || material.normal_texture.is_some()
+                    || material.occlusion_texture.is_some()
+                    || material.emissive_texture.is_some();
                 let (vertices, mut indices) = primitive_data(
                     &primitive,
                     binary,
@@ -68,7 +67,6 @@ pub(crate) fn import(
                     normal_matrix,
                     textured,
                     &primitive_path,
-                    resident_bytes,
                 )?;
                 if determinant < 0.0 {
                     for triangle in indices.as_chunks_mut::<3>().0 {
@@ -77,10 +75,19 @@ pub(crate) fn import(
                 }
                 let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
                 let mesh_id = format!("{object_id}.mesh");
+                let file = ImportedFile::named(
+                    id,
+                    &format!("node{}.p{}", node.index(), primitive.index()),
+                    "bin",
+                    encode_mesh_buffer(&vertices, &indices),
+                );
                 output.meshes.push(SceneMesh {
                     id: mesh_id.clone(),
-                    source: MeshSource::Inline { vertices, indices },
+                    source: MeshSource::Buffer {
+                        uri: file.uri.clone(),
+                    },
                 });
+                files.push(file);
                 output.entities.push(SceneObject {
                     id: object_id,
                     name: node
@@ -121,7 +128,6 @@ fn primitive_data(
     normal_matrix: Mat3,
     textured: bool,
     path: &str,
-    resident_bytes: &mut usize,
 ) -> Result<(Vec<SceneVertex>, Vec<u32>), ImportError> {
     if primitive.mode() != gltf::mesh::Mode::Triangles || primitive.morph_targets().next().is_some()
     {
@@ -134,10 +140,13 @@ fn primitive_data(
         let dimensions = match semantic {
             Semantic::Positions | Semantic::Normals => Dimensions::Vec3,
             Semantic::TexCoords(0) => Dimensions::Vec2,
+            // Normal maps derive their tangent frames (decision 031); maps
+            // read TEXCOORD_0 only.
+            Semantic::Tangents | Semantic::TexCoords(_) => continue,
             _ => {
                 return Err(unsupported(
                     format!("{path}.attributes"),
-                    "only POSITION, NORMAL and TEXCOORD_0 attributes are supported",
+                    "only POSITION, NORMAL, TANGENT and TEXCOORD attributes are supported",
                 ));
             }
         };
@@ -157,15 +166,12 @@ fn primitive_data(
             "POSITION is required",
         )
     })?;
-    let normals = primitive.get(&Semantic::Normals).ok_or_else(|| {
-        unsupported(
-            format!("{path}.attributes.NORMAL"),
-            "NORMAL is required; generate normals before importing",
-        )
-    })?;
+    // Without normals, glTF asks for flat ones.
+    let normals = primitive.get(&Semantic::Normals);
     let texcoords = primitive.get(&Semantic::TexCoords(0));
-    if positions.count() > 32_768
-        || positions.count() != normals.count()
+    if normals
+        .as_ref()
+        .is_some_and(|normals| normals.count() != positions.count())
         || texcoords
             .as_ref()
             .is_some_and(|uv| uv.count() != positions.count())
@@ -173,7 +179,7 @@ fn primitive_data(
         return Err(ImportError::new(
             "attribute_count",
             path,
-            "vertex counts must match and remain at most 32768 per primitive",
+            "vertex attribute counts must match",
         ));
     }
     if textured && texcoords.is_none() {
@@ -200,11 +206,6 @@ fn primitive_data(
             "indices must be tightly packed unsigned scalars in complete triangles",
         ));
     }
-    reserve_bytes(
-        resident_bytes,
-        positions.count() * 32 + accessor.count() * 4,
-        path,
-    )?;
     let reader = primitive.reader(|buffer| {
         if buffer.index() == 0 {
             Some(binary)
@@ -212,21 +213,65 @@ fn primitive_data(
             None
         }
     });
-    let position_data = reader
+    let position_data: Vec<Vec3> = reader
         .read_positions()
-        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read positions"))?;
-    let normal_data = reader
-        .read_normals()
-        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read normals"))?;
-    let mut uv_data = reader.read_tex_coords(0).map(|uv| uv.into_f32());
-    let mut vertices = Vec::with_capacity(positions.count());
-    for (position, normal) in position_data.zip(normal_data) {
-        let position = matrix.transform_point3(Vec3::from(position));
-        let normal = normal_matrix * Vec3::from(normal);
-        let uv = uv_data
-            .as_mut()
-            .and_then(Iterator::next)
-            .unwrap_or([0.0; 2]);
+        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read positions"))?
+        .map(Vec3::from)
+        .collect();
+    let normal_data: Option<Vec<Vec3>> = match normals {
+        Some(_) => Some(
+            reader
+                .read_normals()
+                .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read normals"))?
+                .map(Vec3::from)
+                .collect(),
+        ),
+        None => None,
+    };
+    let uv_data: Option<Vec<[f32; 2]>> =
+        reader.read_tex_coords(0).map(|uv| uv.into_f32().collect());
+    let mut indices: Vec<u32> = reader
+        .read_indices()
+        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
+        .into_u32()
+        .collect();
+    if indices
+        .iter()
+        .any(|index| *index as usize >= position_data.len())
+    {
+        return Err(ImportError::new(
+            "index_bounds",
+            format!("{path}.indices"),
+            "triangle index is outside the vertex array",
+        ));
+    }
+    // Flat normals give each triangle its own three vertices.
+    let (sources, local_normals): (Vec<u32>, Vec<Vec3>) = match &normal_data {
+        Some(normals) => ((0..position_data.len() as u32).collect(), normals.clone()),
+        None => {
+            let mut sources = Vec::with_capacity(indices.len());
+            let mut flat = Vec::with_capacity(indices.len());
+            for triangle in indices.as_chunks::<3>().0 {
+                let [a, b, c] = triangle.map(|index| position_data[index as usize]);
+                let normal = (b - a).cross(c - a);
+                // Degenerate triangles cover no pixels; any normal is valid.
+                let normal = if normal.length_squared() > 0.0 {
+                    normal
+                } else {
+                    Vec3::Y
+                };
+                sources.extend_from_slice(triangle);
+                flat.extend([normal; 3]);
+            }
+            indices = (0..sources.len() as u32).collect();
+            (sources, flat)
+        }
+    };
+    let mut vertices = Vec::with_capacity(sources.len());
+    for (&source, &normal) in sources.iter().zip(&local_normals) {
+        let position = matrix.transform_point3(position_data[source as usize]);
+        let normal = normal_matrix * normal;
+        let uv = uv_data.as_ref().map_or([0.0; 2], |uv| uv[source as usize]);
         if !position.is_finite()
             || position.abs().max_element() > 1_000_000.0
             || !normal.is_finite()
@@ -244,21 +289,6 @@ fn primitive_data(
             normal: normal.normalize().to_array(),
             uv,
         });
-    }
-    let indices: Vec<_> = reader
-        .read_indices()
-        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
-        .into_u32()
-        .collect();
-    if indices
-        .iter()
-        .any(|index| *index as usize >= vertices.len())
-    {
-        return Err(ImportError::new(
-            "index_bounds",
-            format!("{path}.indices"),
-            "triangle index is outside the vertex array",
-        ));
     }
     Ok((vertices, indices))
 }

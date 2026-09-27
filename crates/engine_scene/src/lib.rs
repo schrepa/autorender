@@ -13,13 +13,14 @@ mod files;
 mod hierarchy;
 mod instance;
 mod lighting;
+mod material;
 mod texture;
 mod validation;
 
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use document::{
-    MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMaterial, SceneMesh, SceneObject,
-    ScenePrefab, SceneSurface, SceneTransform, SceneVertex,
+    MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
+    SceneSurface, SceneTransform, SceneVertex,
 };
 pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
@@ -30,6 +31,10 @@ pub use error::SceneError;
 pub use files::{MESH_BUFFER_MAGIC, SceneFile, SceneFileKind, SceneFiles, encode_mesh_buffer};
 pub use instance::{SceneEntity, SceneInstance};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
+pub use material::{
+    SceneAlphaMode, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter, SceneTextureMap,
+    SceneWrap,
+};
 pub use texture::SceneTexture;
 
 #[cfg(test)]

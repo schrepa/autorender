@@ -753,7 +753,7 @@ impl ShadowPass {
             self.listed_staging.clear();
             for &slot in frame.casters() {
                 // Transparent surfaces cast no shadow (decision 026).
-                if crate::batches::is_transparent(&instances[slot]) {
+                if crate::batches::is_transparent(&instances[slot], &plan.transparent_materials) {
                     continue;
                 }
                 let mesh = instances[slot].mesh;

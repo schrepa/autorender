@@ -4,8 +4,36 @@
 // (decision 023); transparent ones accumulate weighted blended transparency
 // (decision 026). Unlit entry points never touch the lights' bindings.
 
+// Material maps (decision 031): glTF base color, metallic-roughness, normal,
+// occlusion and emissive textures, each with its sampler, and the material's
+// map parameters. Materials without maps bind white textures.
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var base_color_sampler: sampler;
+@group(1) @binding(2) var metallic_roughness_texture: texture_2d<f32>;
+@group(1) @binding(3) var metallic_roughness_sampler: sampler;
+@group(1) @binding(4) var normal_texture: texture_2d<f32>;
+@group(1) @binding(5) var normal_sampler: sampler;
+@group(1) @binding(6) var occlusion_texture: texture_2d<f32>;
+@group(1) @binding(7) var occlusion_sampler: sampler;
+@group(1) @binding(8) var emissive_texture: texture_2d<f32>;
+@group(1) @binding(9) var emissive_sampler: sampler;
+struct MaterialMaps {
+    // Rows of each map's texture coordinate transform, in map order.
+    transforms: array<vec4<f32>, 10>,
+    // Linear emissive color.
+    emissive: vec4<f32>,
+    // Normal scale, occlusion strength and alpha cutoff.
+    params: vec4<f32>,
+}
+@group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
+
+// The material's pipeline variant (decision 031). Without MATERIAL_MAPS only
+// the base color texture is read, untransformed, and its alpha masks
+// emission alone; the other flags need it except DOUBLE_SIDED.
+override MATERIAL_MAPS: bool = false;
+override NORMAL_MAP: bool = false;
+override ALPHA_MASK: bool = false;
+override DOUBLE_SIDED: bool = false;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
@@ -213,8 +241,13 @@ fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
 // What a shaded surface point needs: its material, normals and view.
 struct SurfacePoint {
     albedo: vec3<f32>,
+    // Coverage: color alpha, times base color texture alpha with maps.
+    opacity: f32,
     // Emitted light as a multiple of the albedo, masked by texture alpha.
     emission: f32,
+    // glTF emission, and how much indirect light reaches the point.
+    emissive: vec3<f32>,
+    occlusion: f32,
     roughness: f32,
     alpha: f32,
     f0: vec3<f32>,
@@ -231,37 +264,102 @@ struct SurfacePoint {
 }
 
 // Shaded light of a surface: graded color, the ambient share of its light
-// (for ambient occlusion), its glow weight and its reflectivity for
-// screen-space reflections.
+// (for ambient occlusion), its glow weight, its reflectivity for
+// screen-space reflections and its coverage.
 struct Shaded {
     color: vec3<f32>,
     ambient: f32,
     glow: f32,
     reflect: f32,
+    opacity: f32,
+}
+
+// Texture coordinates of map `index` (base color, metallic-roughness,
+// normal, occlusion, emissive) through its transform.
+fn map_uv(index: u32, uv: vec2<f32>) -> vec2<f32> {
+    let point = vec3<f32>(uv, 1.0);
+    return vec2<f32>(dot(material_maps.transforms[index * 2u].xyz, point),
+        dot(material_maps.transforms[index * 2u + 1u].xyz, point));
+}
+
+// Normal mapping without stored tangents (decision 031): the tangent frame
+// from screen derivatives of the position and of the normal map's texture
+// coordinates. glTF normal maps point green up the image, toward decreasing v.
+fn mapped_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: vec2<f32>,
+        uv_dy: vec2<f32>, sampled: vec3<f32>, scale: f32) -> vec3<f32> {
+    let dp_dy_perp = cross(dp_dy, normal);
+    let dp_dx_perp = cross(normal, dp_dx);
+    let tangent = dp_dy_perp * uv_dx.x + dp_dx_perp * uv_dy.x;
+    let bitangent = dp_dy_perp * uv_dx.y + dp_dx_perp * uv_dy.y;
+    let frame = inverseSqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1.0e-30));
+    let deflection = sampled.xy * (scale * frame);
+    return stable_normalize(tangent * deflection.x - bitangent * deflection.y + normal * sampled.z);
 }
 
 // Sampling uses implicit derivatives, so callers build the point in uniform
-// control flow; what follows may not be.
-fn surface_point(color: vec3<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
-        uv: vec2<f32>, packed: u32) -> SurfacePoint {
-    // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission.
-    let texel = textureSample(base_color_texture, base_color_sampler, uv);
+// control flow; what follows may not be. `color` is linear color and
+// opacity; `front` whether the surface faces the camera.
+fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
+        uv: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
+    // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission and,
+    // with maps, is coverage.
+    var base_uv = uv;
+    if MATERIAL_MAPS {
+        base_uv = map_uv(0u, uv);
+    }
+    let texel = textureSample(base_color_texture, base_color_sampler, base_uv);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     // Roughness, metalness, emission over 16 and ripples.
     let surface = unpack4x8unorm(packed);
     var point: SurfacePoint;
-    point.albedo = texel.rgb * color;
+    point.albedo = texel.rgb * color.rgb;
+    point.opacity = color.a;
     point.emission = surface.z * 16.0 * texel.a;
-    point.roughness = max(surface.x, 0.03);
+    point.emissive = vec3<f32>(0.0);
+    point.occlusion = 1.0;
+    var roughness = surface.x;
+    var metalness = surface.y;
+    if MATERIAL_MAPS {
+        point.opacity *= texel.a;
+        // glTF: green is roughness and blue metalness.
+        let packed_map = textureSample(metallic_roughness_texture, metallic_roughness_sampler,
+            map_uv(1u, uv));
+        roughness *= packed_map.g;
+        metalness *= packed_map.b;
+        let occluded = textureSample(occlusion_texture, occlusion_sampler, map_uv(3u, uv)).r;
+        point.occlusion = 1.0 + material_maps.params.y * (occluded - 1.0);
+        point.emissive = material_maps.emissive.rgb
+            * textureSample(emissive_texture, emissive_sampler, map_uv(4u, uv)).rgb;
+    }
+    var sampled = vec3<f32>(0.0, 0.0, 1.0);
+    var normal_dx = vec2<f32>(0.0);
+    var normal_dy = vec2<f32>(0.0);
+    if NORMAL_MAP {
+        let normal_uv = map_uv(2u, uv);
+        sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
+        normal_dx = dpdx(normal_uv);
+        normal_dy = dpdy(normal_uv);
+    }
+    point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
-    let metalness = surface.y;
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
     point.diffuse_color = point.albedo * (1.0 - metalness);
     point.geometric = stable_normalize(surface_normal);
+    // Back faces of double-sided materials are lit from their own side.
+    if DOUBLE_SIDED && !front {
+        point.geometric = -point.geometric;
+    }
     point.normal = point.geometric;
+    if NORMAL_MAP {
+        point.normal = mapped_normal(point.geometric, world_dx, world_dy, normal_dx, normal_dy,
+            sampled, material_maps.params.x);
+    }
     if surface.w > 0.0 {
         point.normal = rippled(point.normal, world, surface.w);
+    }
+    if ALPHA_MASK && point.opacity < material_maps.params.z {
+        discard;
     }
     let to_eye = camera.position.xyz - world;
     point.distance = length(to_eye);
@@ -300,16 +398,18 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
     let rim = (grazing * grazing) * (grazing * grazing) * lighting.sun.w
         * (1.0 - abs(point.geometric.y));
-    let sky_light = point.diffuse_color * (sky_average(normal) * lighting.zenith.w
-        + lighting.horizon.rgb * rim) + reflection;
+    // Occlusion maps darken indirect light only (glTF).
+    let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
+        + lighting.horizon.rgb * rim) + reflection) * point.occlusion;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world, point.geometric, point.world_dx, point.world_dy,
             point.distance);
-    let emitted = point.albedo * (point.emission * lighting.effects.x);
+    let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;
     let lit = sky_light + sun_light + emitted + local;
     let covered = fog(camera.position.xyz, point.world);
     let fogged = mix(lit, haze(-view), covered);
     var shaded: Shaded;
+    shaded.opacity = point.opacity;
     shaded.color = grade(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered);
     shaded.glow = glow_weight(fogged);
@@ -322,9 +422,9 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     return shaded;
 }
 
-fn shade(color: vec3<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
-        packed: u32) -> Shaded {
-    return finish(surface_point(color, normal, world, uv, packed), vec3<f32>(0.0));
+fn shade(color: vec4<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
+        packed: u32, front: bool) -> Shaded {
+    return finish(surface_point(color, normal, world, uv, packed, front), vec3<f32>(0.0));
 }
 
 // Light of the local lights of this pixel's cluster at `point`: windowed
@@ -373,9 +473,9 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     return sum * saturate((end - depth) / (0.1 * end));
 }
 
-fn shade_lit(color: vec3<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
-        packed: u32, pixel: vec2<f32>) -> Shaded {
-    let point = surface_point(color, normal, world, uv, packed);
+fn shade_lit(color: vec4<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>,
+        packed: u32, front: bool, pixel: vec2<f32>) -> Shaded {
+    let point = surface_point(color, normal, world, uv, packed, front);
     return finish(point, local_light(point, pixel));
 }
 
@@ -404,54 +504,58 @@ fn temporal_targets(shaded: Shaded, input: TemporalOutput) -> TemporalTargets {
 }
 
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let shaded = shade(input.color.rgb, input.normal, input.world, input.uv, input.surface);
+fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let shaded = shade(input.color, input.normal, input.world, input.uv, input.surface, front);
     return vec4<f32>(encoded(shaded.color), 1.0);
 }
 
 @fragment
-fn fs_main_lit(input: VertexOutput) -> @location(0) vec4<f32> {
-    let shaded = shade_lit(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface, input.clip_position.xy);
+fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    let shaded = shade_lit(input.color, input.normal, input.world, input.uv,
+        input.surface, front, input.clip_position.xy);
     return vec4<f32>(encoded(shaded.color), 1.0);
 }
 
 // The scene target is sRGB: it stores linear color with output encoding.
 @fragment
-fn fs_post(input: VertexOutput) -> SceneTargets {
-    return scene_targets(shade(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface));
+fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
+    return scene_targets(shade(input.color, input.normal, input.world, input.uv,
+        input.surface, front));
 }
 
 @fragment
-fn fs_post_lit(input: VertexOutput) -> SceneTargets {
-    return scene_targets(shade_lit(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface, input.clip_position.xy));
+fn fs_post_lit(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
+    return scene_targets(shade_lit(input.color, input.normal, input.world, input.uv,
+        input.surface, front, input.clip_position.xy));
 }
 
 @fragment
-fn fs_temporal(input: TemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface), input);
+fn fs_temporal(input: TemporalOutput, @builtin(front_facing) front: bool) -> TemporalTargets {
+    return temporal_targets(shade(input.color, input.normal, input.world, input.uv,
+        input.surface, front), input);
 }
 
 @fragment
-fn fs_temporal_lit(input: TemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade_lit(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface, input.clip_position.xy), input);
+fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
+        -> TemporalTargets {
+    return temporal_targets(shade_lit(input.color, input.normal, input.world, input.uv,
+        input.surface, front, input.clip_position.xy), input);
 }
 
 @fragment
-fn fs_transparent(input: VertexOutput) -> TransparentTargets {
-    let shaded = shade(input.color.rgb, input.normal, input.world, input.uv, input.surface);
-    return weighted(shaded.color, input.color.a, length(camera.position.xyz - input.world));
+fn fs_transparent(input: VertexOutput, @builtin(front_facing) front: bool)
+        -> TransparentTargets {
+    let shaded = shade(input.color, input.normal, input.world, input.uv, input.surface, front);
+    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
 }
 
 @fragment
-fn fs_transparent_lit(input: VertexOutput) -> TransparentTargets {
-    let shaded = shade_lit(input.color.rgb, input.normal, input.world, input.uv,
-        input.surface, input.clip_position.xy);
-    return weighted(shaded.color, input.color.a, length(camera.position.xyz - input.world));
+fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
+        -> TransparentTargets {
+    let shaded = shade_lit(input.color, input.normal, input.world, input.uv,
+        input.surface, front, input.clip_position.xy);
+    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
 }
 
 // The sky behind all geometry: one triangle over the viewport at the far

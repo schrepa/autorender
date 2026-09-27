@@ -19,14 +19,25 @@ avoids overflowing center/extent calculations for meshes spanning extreme finite
 coordinates. The bounds add no separate allocation and are excluded from mesh
 payload bytes; they support conservative extraction culling in `engine_core`.
 
-`Texture::new(width, height, rgba8)` owns tightly packed row-major RGBA8 sRGB
-pixels, with rows from top to bottom. Width and height must each be in 1..=2048,
-the byte length must equal width × height × 4, and every alpha byte must be 255.
-Pixels remain encoded as sRGB on the CPU; the renderer decodes them when sampled.
-The texture holds one level; the renderer generates its mip chain on the GPU.
-This crate does not decode image containers.
-`Material::textured(color, texture_handle)` multiplies sampled linear texture
-color by an opaque linear color factor. `Material::new` remains the color-only API.
+`Texture::new(width, height, rgba8)` owns tightly packed row-major RGBA8
+pixels, with rows from top to bottom. Width and height must each be in
+1..=8192, the byte length must equal width × height × 4, and every alpha byte
+must be 255 (`Texture::with_emission_mask` takes any alpha). Pixels stay
+encoded on the CPU; the renderer decodes color maps as sRGB and data maps
+(metallic-roughness, normal, occlusion) as linear when sampled. The texture
+holds one level; the renderer generates its mip chain on the GPU. This crate
+does not decode image containers.
+
+`Material` is a glTF 2.0 metallic-roughness material
+([decision 031](../../docs/adr-031-gltf-materials.md)): a linear color factor,
+a `Surface` (roughness and metallic factors plus emission and ripples) and
+optional base color, metallic-roughness, normal, occlusion and emissive maps.
+Each map is a `TextureRef` with a `Sampler` (wrap modes and filters; glTF's
+repeating trilinear default) and a `UvTransform`. `AlphaMode` chooses opaque,
+masked or blended alpha, and `with_double_sided` draws back faces.
+`Material::textured(color, texture_handle)` keeps its clamped base color
+texture; `Material::new` remains the color-only API. `has_maps` tells
+renderers which materials need their own maps bound.
 
 `AssetLibrary` is the sole library owner. Insert assets to obtain typed weak
 `MeshHandle`, `TextureHandle`, and `MaterialHandle` values; lookups borrow CPU data.

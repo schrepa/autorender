@@ -1,6 +1,6 @@
 # Import and replace textured scenery
 
-The supported path is **GLB source → native import → validated scene JSON → guarded save → browser reload → inspect/capture**. The importer and runtime share `engine_scene` validation. Importing does not run a browser, and reloading does not save source.
+The supported path is **GLB source → native import → validated scene JSON and its files → guarded save → browser reload → inspect/capture**. The importer and runtime share `engine_scene` validation. Importing does not run a browser, and reloading does not save source. Materials import as glTF 2.0 metallic-roughness materials ([decision 031](adr-031-gltf-materials.md)); images and meshes become files beside the scene ([decision 030](adr-030-scene-files.md)).
 
 ## Import
 
@@ -18,7 +18,7 @@ To place a model in an existing game, import into its scene using the current sa
 cargo xtask asset import --file assets/source/garden-prop.glb --id scenery --into web/public/scenes/playground.scene.json --expected-revision N
 ```
 
-This validates the entire candidate before the shared revision-checked writer commits it. It increments the revision and upgrades the document to scene version 6. Existing camera and gameplay records remain. Change the new entities' `transform` fields through the normal scene authoring workflow to place them. Asset names are stable within the import namespace and source node/primitive indices. No runtime handles are persisted.
+This validates the entire candidate before the shared revision-checked writer commits it. It increments the revision and upgrades the document to the current scene version with `SceneDocument::upgrade`, which keeps its existing textures clamped. Existing camera and gameplay records remain. Change the new entities' `transform` fields through the normal scene authoring workflow to place them. Asset names are stable within the import namespace and source node/primitive indices. No runtime handles are persisted.
 
 Importing the same namespace again fails on duplicate IDs unless `--replace` is supplied:
 
@@ -26,7 +26,7 @@ Importing the same namespace again fails on duplicate IDs unless `--replace` is 
 cargo xtask asset import --file assets/source/garden-prop.glb --id scenery --into web/public/scenes/playground.scene.json --expected-revision N --replace
 ```
 
-Replacement owns the generated IDs in that namespace: `NAMESPACE.imageN`, `.materialN`, `.nodeN.pN`, and `.nodeN.pN.mesh`. Reserve these names for the importer. Unrelated IDs are retained. Matching flat entity IDs retain authored placement, parent, names, game tags, and authored colliders. Source node reordering changes identity; review the result when editing model structure. References broken by removal are rejected before saving, leaving the previous source untouched. A stale revision or malformed import also leaves the previous source intact.
+Replacement owns the generated IDs in that namespace: `NAMESPACE.imageN`, `.materialN`, `.nodeN.pN`, and `.nodeN.pN.mesh`. Reserve these names for the importer. Files are written to the folder `NAMESPACE/` beside the scene, named by their content (`imageN.HASH.jpg`, `nodeN.pM.HASH.bin`), so a reimport never overwrites a file the saved scene reads; files a replacement no longer references stay until removed. Unrelated IDs are retained. Matching flat entity IDs retain authored placement, parent, names, game tags, and authored colliders. Source node reordering changes identity; review the result when editing model structure. References broken by removal are rejected before saving, leaving the previous source untouched. A stale revision or malformed import also leaves the previous source intact.
 
 ## Reusable prefab import
 
@@ -60,25 +60,25 @@ In the paused development session, use the saved scene reload command with the p
 
 Rendering observations include `resident_textures`, `resident_texture_bytes`, and `texture_upload_bytes`. Repeated frames with unchanged textures should upload zero texture bytes. A capture is the visual check that imported UVs and pixels match expectations. Failed scene validation/admission preserves the active game. Successful reload replaces scene-owned resources and resets the sample's gameplay, following the existing reload contract.
 
-## Supported subset and budgets
+## Supported subset
 
-- One GLB 2 scene with one embedded BIN buffer; indexed triangle primitives with FLOAT positions, normals, and optional FLOAT `TEXCOORD_0`. Textured primitives require UVs.
-- Static node transforms are baked into geometry, including normal transforms and mirrored triangle winding. Prefab mode groups those baked parts; it does not reconstruct the GLB node hierarchy or add animation.
-- Embedded 8-bit RGB/RGBA PNG base-color textures, opaque pixels only. Colors are sRGB texels multiplied by linear material color and the engine's existing diffuse lighting.
-- Explicit clamp-to-edge samplers with linear filtering; minification may also be `LINEAR_MIPMAP_LINEAR`. Scenes store one level: the renderer generates mip chains on the GPU and samples every texture trilinearly. Materials require opaque single-sided rendering, metallic factor 0 and roughness factor 1. This renderer does not implement glTF PBR.
-- External/data URIs, skins, animation, morphs, cameras, extensions/compression, extra vertex attributes, transparency, normal/emissive/occlusion/metallic textures, and unsupported samplers are rejected with source paths.
+- One GLB 2 scene with one embedded BIN buffer; indexed triangle primitives with FLOAT positions, optional normals and optional FLOAT `TEXCOORD_0`. Primitives without normals get flat normals, as glTF requires; `TANGENT` and further texture coordinate sets are ignored (normal maps derive their tangent frames). Textured primitives require UVs.
+- Static node transforms are baked into geometry, including normal transforms and mirrored triangle winding. Prefab mode groups those baked parts; it does not reconstruct the GLB node hierarchy or add animation. Cameras are not imported.
+- glTF metallic-roughness materials map one to one: base color, metallic and roughness factors; base color, metallic-roughness, normal (with scale), occlusion (with strength) and emissive textures; the emissive factor times `KHR_materials_emissive_strength`; `OPAQUE`, `MASK` (with its cutoff) and `BLEND` alpha modes; double-sided materials; every sampler wrap mode and filter; and `KHR_texture_transform` offsets, rotations and scales. Maps must read `TEXCOORD_0`.
+- Embedded PNG and JPEG images are written unchanged; the browser decodes them at load. Meshes are written as `EMB1` buffers.
+- External/data URIs, skins, animation, morphs, vertex colors, sparse accessors and required extensions other than `KHR_texture_transform` and `KHR_materials_emissive_strength` are rejected with source paths. Other optional extensions are ignored and listed in the result's `ignored_extensions`.
 
-The native input is bounded to 16 MiB. Output is still self-contained: indexed vertices plus base64 RGBA8 pixels in the scene source (now up to 64 MiB); version 7 scenes may instead reference image and mesh-buffer files (decision 030). The importer decodes PNG offline; the browser decodes base64 only at load/validation boundaries. This intentionally supports small static game assets. There is no binary streaming package or compressed GPU texture format yet (mips are generated on the GPU at upload); the source limit is often reached before the dimension limit.
+The input is bounded only by the GLB format's 4 GiB length field; there is no count, vertex or decoded-size budget (decision 029). There is no compressed GPU texture format yet (mips are generated on the GPU at upload).
 
 Textures are at most 8192×8192. The asset library and renderer set no texture count or byte budget by default (decision 029); a game may set an asset budget. Reload admission needs room for both old and new CPU assets until replacement commits. GPU objects remain renderer-owned; old snapshots can temporarily retain CPU pixels. Neither import libraries nor image decoders are browser runtime dependencies.
 
 ## Verification
 
-Native tests cover malformed input, unsupported features, accessor bounds, transforms, deterministic output, decoded budgets, explicit namespace replacement, and guarded source writes. `node web/scripts/texture-smoke.mjs` checks real Chrome rendering through the development interface; it routes disposable candidate responses and never edits scene files. Use `DEMO_URL` to select the development server. The test verifies texture readiness, zero repeat uploads, failed replacement preservation, visible pixel changes, stable repeated replacement, and GPU retirement.
+Native tests cover malformed input, unsupported features, accessor bounds, transforms, flat normals, one-to-one material mapping, deterministic content-named files, explicit namespace replacement, and guarded source writes. `node web/scripts/texture-smoke.mjs` checks real Chrome rendering through the development interface; it routes disposable candidate responses and never edits scene files. Use `DEMO_URL` to select the development server. The test verifies texture readiness, zero repeat uploads, failed replacement preservation, visible pixel changes, stable repeated replacement, and GPU retirement.
 
 Version 4 reimports preserve authored colliders on surviving deterministic flat
 and prefab-template IDs. Removing a generated collider-bearing node is rejected
 with `collider_reimport_conflict`; explicitly migrate or remove its collider in
 source first. Placement-root colliders remain with their placements. Importing
 never infers collider geometry from render meshes. This behavior is recorded by
-importer provenance version `static-glb-3`.
+importer provenance version `gltf-pbr-4`.

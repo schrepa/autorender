@@ -1,10 +1,10 @@
 # Static GLB source importer
 
 Owner: native asset tooling. Execution is synchronous in the calling host tool;
-decoded temporary data belongs to the import call and the returned document to
-its caller. Runtime assets and GPU resources have separate owners.
+temporary data belongs to the import call and the returned document and files
+to its caller. Runtime assets and GPU resources have separate owners.
 
-`engine_assetc` is a native tool dependency. `import_glb(bytes, namespace)` returns a validated flat `SceneDocument`; `import_glb_prefab(bytes, namespace)` returns one reusable prefab definition and its global assets with no placements. Both return a structured `{code,path,message}` error without filesystem access. Games load cooked scene data; they never parse glTF or PNG and do not link this crate. Importer version `static-glb-3` writes scene version 4; the static geometry conversion is unchanged. Imports do not infer colliders from visual geometry.
+`engine_assetc` is a native tool dependency. `import_glb(bytes, namespace)` returns an `Imported`: a validated flat `SceneDocument`, the image and mesh-buffer files it references (to write beside the scene) and the optional extensions it ignored; `import_glb_prefab(bytes, namespace)` returns one reusable prefab definition and its global assets with no placements. Both return a structured `{code,path,message}` error without filesystem access. Games load cooked scene data; they never parse glTF and do not link this crate; browsers decode the image files. Importer version `gltf-pbr-4` writes scene version 8 with glTF 2.0 metallic-roughness materials ([decision 031](../../docs/adr-031-gltf-materials.md)). Imports do not infer colliders from visual geometry.
 
 Reimport with `--replace` preserves authored colliders on surviving deterministic
 flat entity IDs and prefab template local IDs. Placement-root colliders remain
@@ -45,22 +45,22 @@ Flat and prefab namespaces are distinct authoring modes. Replacing a flat namesp
 
 ## Supported source profile
 
-This is a deliberately bounded **static diffuse subset of GLB 2.0**, not a general glTF renderer or PBR conversion:
+A **static subset of GLB 2.0 with glTF's metallic-roughness materials**:
 
-- Exactly one JSON chunk followed by one BIN chunk, one embedded buffer, and one scene. JSON `asset.version` and any `minVersion` must be `2.0`. No external/data URIs, extensions, compression, animations, skins, morph targets, cameras, disconnected nodes or shared/cyclic children.
-- Indexed triangles with `POSITION` and `NORMAL` as unnormalized float32 VEC3. Textured primitives require float32 VEC2 `TEXCOORD_0`; other attributes are rejected. Indices may be tightly packed u8/u16/u32. Dense, checked interleaved attributes are supported; sparse/matrix accessors are rejected. Normals must be nonzero and are normalized after transformation.
+- Exactly one JSON chunk followed by one BIN chunk, one embedded buffer, and one scene. JSON `asset.version` and any `minVersion` must be `2.0`. No external/data URIs, animations, skins, morph targets, disconnected nodes or shared/cyclic children. Cameras are ignored.
+- Indexed triangles with unnormalized float32 VEC3 `POSITION` and optional `NORMAL`; primitives without normals get flat normals, as glTF requires. Textured primitives require float32 VEC2 `TEXCOORD_0`. `TANGENT` and other texture coordinate sets are ignored (normal maps derive their tangent frames); other attributes are rejected. Indices may be tightly packed u8/u16/u32. Dense, checked interleaved attributes are supported; sparse/matrix accessors are rejected. Normals must be nonzero and are normalized after transformation.
 - Finite affine, nonsingular node matrices or TRS; matrix and TRS cannot coexist, and rotations must be unit quaternions. Hierarchies are baked into positions and inverse-transpose normals. Reflections reverse winding. World-transform determinant magnitude must be at least `1e-8`. Coordinates remain right handed, Y up; there is no unit or axis conversion.
-- Explicit opaque, single-sided materials with base color factor alpha 1, **metallicFactor 0** and **roughnessFactor 1**. No emissive factor or textures beyond base color. These restrictions select diffuse input; the engine applies its own ambient/directional lighting and fog, not glTF's PBR BRDF. glTF's omitted metallic factor defaults to 1 and is therefore rejected.
-- Embedded 8-bit RGB/RGBA PNG only, dimensions 1–2048, every texel opaque. No palette/grayscale/16-bit PNG, animation or transparency. Base color pixels retain sRGB encoding; material RGB factors remain linear. Embedded PNG color profiles do not alter this transfer function. Image rows and UV `(0,0)` start at the top left.
-- Samplers must explicitly specify `CLAMP_TO_EDGE` on both axes. Only `LINEAR` or omitted filters are accepted; the engine uses one mip level. Repeat/nearest/mipmap modes fail explicitly.
+- Materials map one to one: base color factor and texture, metallic and roughness factors and texture, normal texture and scale, occlusion texture and strength, emissive factor (times `KHR_materials_emissive_strength`) and texture, `OPAQUE`/`MASK`/`BLEND` alpha modes with the cutoff, and double-sided materials. Every sampler wrap mode and filter maps to the texture reference; `KHR_texture_transform` offsets, rotations and scales too. Maps must read `TEXCOORD_0`.
+- Embedded PNG and JPEG images are written unchanged, named by content hash under the namespace's folder; the browser decodes them. Meshes are written as `EMB1` buffers the same way.
+- Required extensions other than `KHR_texture_transform` and `KHR_materials_emissive_strength` are rejected; other optional extensions are ignored and reported.
 
-The importer uses [Khronos's glTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html) for transforms, base color encoding and sampler semantics. [gltf 1.4.1](https://docs.rs/gltf/1.4.1/gltf/) handles validated format access; [png 0.17.16](https://docs.rs/png/0.17.16/png/) decodes bounded PNG data. The profile above states additional engine restrictions rather than claiming full standard support.
+The importer uses [Khronos's glTF specification](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html) for transforms, materials, color encoding and sampler semantics. [gltf 1.4.1](https://docs.rs/gltf/1.4.1/gltf/) handles validated format access.
 
 ## Bounds and output
 
-Input is capped at 16 MiB before parsing. JSON/accessor/view/node counts are capped, hierarchy depth is 64, and all buffer ranges, alignment and strides are checked before reader access. At most 1024 nodes, 128 source meshes, 128 baked primitives, 256 materials and 64 images/textures are admitted. Each primitive has at most 32,768 vertices and 98,304 indices. Decoded textures and mesh data share a 32 MiB budget; the PNG decoder also has an explicit internal allocation limit.
+Input is bounded by the GLB length field (4 GiB); hierarchy depth is 64, and all buffer ranges, alignment and strides are checked before reader access. There is no count, vertex or decoded-size budget (decision 029).
 
-Output is a self-contained canonical scene, with embedded base64 RGBA8 texture pixels and inline geometry. The runtime's scene validation and **1 MiB canonical text limit** apply before an import succeeds; that limit usually admits much smaller models than the binary input budget. JSON is an inspectable first cooked representation, not a compressed streaming container. Static mesh reuse across nodes is baked into distinct meshes. Later binary cooking or mip/format support should follow an actual workload.
+Output is a canonical scene referencing its files (decision 030): textures by `uri`, meshes as `buffer` sources. Static mesh reuse across nodes is baked into distinct meshes.
 
 ## Original sample source
 

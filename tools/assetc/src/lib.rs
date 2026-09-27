@@ -1,8 +1,9 @@
-//! Native, bounded conversion of a documented static GLB subset into scenes.
-//! No filesystem access, runtime imports, or external resource resolution.
+//! Native conversion of static GLB models with glTF 2.0 metallic-roughness
+//! materials into scenes and the files beside them (decisions 030, 031). No
+//! filesystem access, runtime imports, or external resource resolution.
 
 mod geometry;
-mod textures;
+mod materials;
 mod validation;
 
 use std::{error::Error, fmt};
@@ -11,11 +12,39 @@ use engine_scene::{SCENE_VERSION, SceneCamera, SceneDocument, SceneError, SceneP
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-/// Maximum source container size before parsing or copying.
-pub const MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
+/// Largest source container: the GLB length field's range.
+pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 /// Changes whenever import behavior or supported settings change.
-pub const IMPORTER_VERSION: &str = "static-glb-3";
-pub(crate) const MAX_CPU_BYTES: usize = 32 * 1024 * 1024;
+pub const IMPORTER_VERSION: &str = "gltf-pbr-4";
+
+/// A file the imported scene references, at `uri` relative to the scene.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedFile {
+    pub uri: String,
+    pub bytes: Vec<u8>,
+}
+
+impl ImportedFile {
+    /// `ID/NAME.HASH.EXTENSION`: named by content, so a new import never
+    /// overwrites a file an existing scene reads.
+    pub(crate) fn named(id: &str, name: &str, extension: &str, bytes: Vec<u8>) -> Self {
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        Self {
+            uri: format!("{id}/{name}.{}.{extension}", &hash[..12]),
+            bytes,
+        }
+    }
+}
+
+/// An imported scene document and the image and mesh-buffer files it
+/// references, which the caller writes beside the scene.
+#[derive(Debug, Clone)]
+pub struct Imported {
+    pub document: SceneDocument,
+    pub files: Vec<ImportedFile>,
+    /// Optional glTF extensions the source uses that the import ignores.
+    pub ignored_extensions: Vec<String>,
+}
 
 /// Machine-readable failure; paths address the source glTF JSON where possible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -58,11 +87,12 @@ pub fn source_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// Imports one static GLB scene, baking node transforms and preserving primitive
-/// material mapping. IDs derive from source indices and the caller's namespace.
-/// The resulting document is validated with the runtime's scene validation and
-/// canonical 1 MiB text limit before being returned. Nothing is written.
-pub fn import_glb(bytes: &[u8], id: &str) -> Result<SceneDocument, ImportError> {
+/// Imports one static GLB scene, baking node transforms and preserving
+/// primitive material mapping. IDs derive from source indices and the
+/// caller's namespace; files are named `ID/image<N>.<HASH>.png|jpg` and
+/// `ID/node<N>.p<M>.<HASH>.bin`. The resulting document is validated with the
+/// runtime's scene validation before being returned. Nothing is written.
+pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     if id.is_empty()
         || id.len() > 40
         || !id
@@ -76,7 +106,7 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<SceneDocument, ImportError> 
         ));
     }
     let json = validation::container(bytes)?;
-    validation::structure(&json)?;
+    let ignored_extensions = validation::structure(&json)?;
     let gltf = gltf::Gltf::from_slice(bytes)
         .map_err(|error| ImportError::new("invalid_gltf", "$", error.to_string()))?;
     let binary = gltf
@@ -96,21 +126,25 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<SceneDocument, ImportError> 
         prefabs: Vec::new(),
         entities: Vec::new(),
     };
-    let mut resident_bytes = 0;
-    textures::import(&gltf.document, binary, id, &mut scene, &mut resident_bytes)?;
-    geometry::import(&gltf.document, binary, id, &mut scene, &mut resident_bytes)?;
-    // The serialization limit matters as much as the decoded CPU budget: these
-    // cooked artifacts use the exact authoring representation loaded by games.
+    let mut files = Vec::new();
+    materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;
+    geometry::import(&gltf.document, binary, id, &mut scene, &mut files)?;
+    // These cooked artifacts use the exact authoring representation games load.
     scene.to_json()?;
-    Ok(scene)
+    Ok(Imported {
+        document: scene,
+        files,
+        ignored_extensions,
+    })
 }
 
 /// Imports a reusable prefab definition and its shared global assets, without
 /// placing an instance in the scene. Static source transforms remain baked just
 /// as in [`import_glb`]. Template IDs omit the namespace, so placement roots can
 /// qualify them independently without duplicating mesh or texture data.
-pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<SceneDocument, ImportError> {
-    let mut scene = import_glb(bytes, id)?;
+pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
+    let mut imported = import_glb(bytes, id)?;
+    let scene = &mut imported.document;
     let prefix = format!("{id}.");
     let mut entities = std::mem::take(&mut scene.entities);
     for entity in &mut entities {
@@ -125,25 +159,7 @@ pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<SceneDocument, Import
         entities,
     });
     scene.to_json()?;
-    Ok(scene)
-}
-
-pub(crate) fn reserve_bytes(
-    used: &mut usize,
-    additional: usize,
-    path: &str,
-) -> Result<(), ImportError> {
-    *used = used
-        .checked_add(additional)
-        .filter(|next| *next <= MAX_CPU_BYTES)
-        .ok_or_else(|| {
-            ImportError::new(
-                "asset_budget",
-                path,
-                "decoded texture and mesh data exceed the 32 MiB import budget",
-            )
-        })?;
-    Ok(())
+    Ok(imported)
 }
 
 pub(crate) fn unsupported(path: impl Into<String>, message: impl Into<String>) -> ImportError {

@@ -106,6 +106,8 @@ mod browser;
 #[cfg(target_arch = "wasm32")]
 mod gpu_presentation;
 #[cfg(target_arch = "wasm32")]
+mod materials;
+#[cfg(target_arch = "wasm32")]
 mod mipmaps;
 #[cfg(target_arch = "wasm32")]
 mod post;

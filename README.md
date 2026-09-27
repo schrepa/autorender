@@ -12,7 +12,7 @@ Use **`cargo xtask profile`** for a separate Stress Lab build with detailed CPU,
 
 For automatic Rust iteration, run **`cargo xtask agent watch`**. It owns a web server, watches source changes, builds Wasm, and activates a fresh paused browser session after each successful build. Failures report structured diagnostics and preserve the running game. See [Rust iteration](docs/rust-iteration.md); query its status with `node web/scripts/agent.mjs development`.
 
-For static textured models, use **`cargo xtask asset import`**. The native importer converts a bounded GLB/PNG subset into scene version 6, with structured errors, explicit namespace replacement, and revision-checked saves. Add `--as-prefab` to create a reusable definition. See [asset import](docs/asset-import.md).
+For static textured models, use **`cargo xtask asset import`**. The native importer converts static GLB models with glTF metallic-roughness materials into scene version 8 and the image and mesh files beside it, with structured errors, explicit namespace replacement, and revision-checked saves. Add `--as-prefab` to create a reusable definition. See [asset import](docs/asset-import.md).
 
 ## Run
 

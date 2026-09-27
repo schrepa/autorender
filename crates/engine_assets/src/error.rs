@@ -29,6 +29,10 @@ pub enum AssetError {
     InvalidSurface {
         field: &'static str,
     },
+    /// A texture map parameter outside its range (decision 031).
+    InvalidMaterialMap {
+        field: &'static str,
+    },
     InvalidTextureDimensions {
         width: u32,
         height: u32,
@@ -71,6 +75,7 @@ impl AssetError {
             Self::UnsupportedAlpha => "asset.unsupported_alpha",
             Self::InvalidOpacity => "asset.invalid_opacity",
             Self::InvalidSurface { .. } => "asset.invalid_surface",
+            Self::InvalidMaterialMap { .. } => "asset.invalid_material_map",
             Self::InvalidTextureDimensions { .. } => "asset.invalid_texture_dimensions",
             Self::InvalidTextureLength { .. } => "asset.invalid_texture_length",
             Self::UnsupportedTextureAlpha { .. } => "asset.unsupported_texture_alpha",
@@ -120,6 +125,10 @@ impl fmt::Display for AssetError {
             Self::InvalidSurface { field } => write!(
                 f,
                 "material surface {field} must be finite and within its documented range"
+            ),
+            Self::InvalidMaterialMap { field } => write!(
+                f,
+                "material {field} must be finite and within its documented range"
             ),
             Self::InvalidTextureDimensions {
                 width,

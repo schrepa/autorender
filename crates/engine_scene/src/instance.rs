@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AssetLibrary, Material, MaterialHandle, Mesh3d, MeshHandle, TextureHandle,
+    AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, TextureHandle,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
@@ -178,12 +178,7 @@ impl SceneDocument {
                 .map(|(source, handle)| (source.id.as_str(), *handle))
                 .collect();
             for (index, material) in prepared.materials.into_iter().enumerate() {
-                let material = match &self.materials[index].texture {
-                    Some(id) => Material::textured(material.color(), texture_lookup[id.as_str()])
-                        .and_then(|textured| textured.with_surface(material.surface()))
-                        .expect("prepared opaque material remains valid with a texture"),
-                    None => material,
-                };
+                let material = material.material(|id| texture_lookup[id]);
                 match assets.insert_material(material) {
                     Ok(handle) => materials.push(handle),
                     Err(error) => {

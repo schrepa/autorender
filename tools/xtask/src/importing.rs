@@ -8,7 +8,8 @@ use std::{
 };
 
 use engine_assetc::{
-    IMPORTER_VERSION, ImportError, MAX_INPUT_BYTES, import_glb, import_glb_prefab, source_sha256,
+    IMPORTER_VERSION, ImportError, ImportedFile, MAX_INPUT_BYTES, import_glb, import_glb_prefab,
+    source_sha256,
 };
 use engine_dev::authoring;
 use engine_scene::SceneDocument;
@@ -34,14 +35,18 @@ pub fn asset(arguments: &[String]) -> Result<(), String> {
 fn command(arguments: &[String]) -> Result<Value, ImportError> {
     let options = Options::parse(arguments)?;
     let bytes = read_source(&options.file)?;
-    let imported = if options.as_prefab {
+    let result = if options.as_prefab {
         import_glb_prefab(&bytes, &options.id)?
     } else {
         import_glb(&bytes, &options.id)?
     };
-    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>()});
+    let imported = result.document;
+    let file_bytes: usize = result.files.iter().map(|file| file.bytes.len()).sum();
+    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"files":result.files.len(),"file_bytes":file_bytes});
     let (report, document) = if let Some(output) = &options.output {
         let source = imported.to_json()?;
+        // Files first: a scene is never written without them.
+        write_files(output, &result.files)?;
         write_new(output, &source)?;
         (
             json!({"path":output,"revision":imported.revision.to_string(),"persisted":true,"source_bytes":source.len(),"mode":"create"}),
@@ -64,6 +69,7 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
         }
         let candidate = merge(current, imported, &options.id, options.replace)?;
         let source = candidate.to_json()?;
+        write_files(target, &result.files)?;
         let report = authoring::save_scene(target, &source, revision).map_err(dev_error)?;
         (
             json!({"path":report.path,"revision":report.revision,"persisted":report.persisted,"source_bytes":report.source_bytes,"mode":if options.replace {"replace_namespace"} else {"append"}}),
@@ -72,7 +78,8 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     };
     Ok(json!({
         "save":report,"scene":document.id,"imported":counts,
-        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2-static-diffuse","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":"baked","textures":"opaque-srgb-rgba8","sampler":"clamp-linear-single-mip","lighting":"engine-diffuse-not-gltf-pbr"}}
+        "ignored_extensions":result.ignored_extensions,
+        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2-static","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":"baked","materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb1-files"}}
     }))
 }
 
@@ -198,7 +205,8 @@ fn merge(
             "namespace belongs to another or ambiguous import mode; use a new namespace or explicitly migrate its authoring data before import",
         ));
     }
-    current.version = engine_scene::SCENE_VERSION;
+    // Upgrading keeps the meaning of the scene's own content.
+    current.upgrade();
     if replace {
         let retained = if as_prefab {
             current
@@ -349,7 +357,7 @@ fn read_source(path: &Path) -> Result<Vec<u8>, ImportError> {
         return Err(ImportError::new(
             "input_too_large",
             path.display().to_string(),
-            "GLB source exceeds 16 MiB",
+            "GLB source exceeds the format's 4 GiB length field",
         ));
     }
     let mut bytes = Vec::new();
@@ -360,10 +368,24 @@ fn read_source(path: &Path) -> Result<Vec<u8>, ImportError> {
         return Err(ImportError::new(
             "input_too_large",
             path.display().to_string(),
-            "GLB source exceeds 16 MiB",
+            "GLB source exceeds the format's 4 GiB length field",
         ));
     }
     Ok(bytes)
+}
+
+/// Writes imported files beside `scene`, replacing earlier imports of the
+/// same namespace.
+fn write_files(scene: &Path, files: &[ImportedFile]) -> Result<(), ImportError> {
+    let folder = scene.parent().unwrap_or(Path::new("."));
+    for file in files {
+        let path = folder.join(&file.uri);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+        }
+        std::fs::write(&path, &file.bytes).map_err(|error| io_error(&path, error))?;
+    }
+    Ok(())
 }
 
 fn write_new(path: &Path, source: &str) -> Result<(), ImportError> {
@@ -405,6 +427,7 @@ mod tests {
             "garden",
         )
         .unwrap()
+        .document
     }
 
     fn root(id: &str, prefab: Option<&str>) -> engine_scene::SceneObject {
@@ -429,6 +452,7 @@ mod tests {
             "garden",
         )
         .unwrap()
+        .document
     }
 
     fn collider() -> engine_scene::SceneCollider {
@@ -486,12 +510,15 @@ mod tests {
         let placements = serde_json::to_value(&current.entities).unwrap();
         let asset_ids: Vec<_> = current.meshes.iter().map(|mesh| mesh.id.clone()).collect();
         let mut imported = prefab_fixture();
-        let engine_scene::MeshSource::Inline { vertices, .. } = &mut imported.meshes[0].source
-        else {
-            panic!("expected inline mesh")
+        // Changed geometry arrives in a new file.
+        imported.meshes[0].source = engine_scene::MeshSource::Buffer {
+            uri: "garden/node1.p0.changed.bin".into(),
         };
-        vertices[0].position[1] += 0.5;
         let replacement = merge(current, imported, "garden", true).unwrap();
+        assert!(matches!(
+            &replacement.meshes[0].source,
+            engine_scene::MeshSource::Buffer { uri } if uri == "garden/node1.p0.changed.bin"
+        ));
         assert_eq!(
             serde_json::to_value(&replacement.entities).unwrap(),
             placements
@@ -546,7 +573,8 @@ mod tests {
             include_bytes!("../../../assets/source/garden-prop.glb"),
             "garden2",
         )
-        .unwrap();
+        .unwrap()
+        .document;
         let merged = merge(prefab_fixture(), other, "garden2", false).unwrap();
         assert_eq!(merged.prefabs.len(), 2);
         assert_eq!(merged.meshes.len(), 4);
@@ -679,7 +707,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
         std::fs::remove_file(source).unwrap();
         std::fs::remove_file(target).unwrap();
-        std::fs::remove_dir(directory).unwrap();
+        // Imported files were written beside the scene.
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
@@ -727,7 +756,8 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&target).unwrap(), saved);
         std::fs::remove_file(source).unwrap();
         std::fs::remove_file(target).unwrap();
-        std::fs::remove_dir(directory).unwrap();
+        // Imported files were written beside the scene.
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     fn without_second_primitive() -> Vec<u8> {

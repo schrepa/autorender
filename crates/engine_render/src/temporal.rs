@@ -10,7 +10,7 @@
 use engine_core::{RenderFrame, glam::Mat4};
 
 use crate::gpu_data::{
-    CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
+    CameraUniform, ResolveUniform, TEMPORAL_SHADER, Variant, jitter_clip, jitter_offset, jittered,
 };
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
 
@@ -70,9 +70,11 @@ pub(crate) struct TemporalFrame {
 
 pub(crate) struct TemporalPass {
     mesh_pipeline: wgpu::RenderPipeline,
+    mesh_layout: wgpu::PipelineLayout,
     // Shading local lights (decision 023), created with the first lit
     // temporal frame.
     lit_mesh_pipeline: Option<wgpu::RenderPipeline>,
+    lit_layout: Option<wgpu::PipelineLayout>,
     sky_pipeline: wgpu::RenderPipeline,
     pose_layout: wgpu::BindGroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
@@ -135,6 +137,7 @@ impl TemporalPass {
             vertex_layouts,
             depth_format,
             "fs_temporal",
+            Variant::BASIC,
         );
         let sky_pipeline = crate::browser::sky_pipeline(
             device,
@@ -251,7 +254,9 @@ impl TemporalPass {
         });
         Self {
             mesh_pipeline,
+            mesh_layout,
             lit_mesh_pipeline: None,
+            lit_layout: None,
             sky_pipeline,
             pose_layout,
             resolve_pipeline,
@@ -427,7 +432,41 @@ impl TemporalPass {
             vertex_layouts,
             depth_format,
             "fs_temporal_lit",
+            Variant::BASIC,
         ));
+        self.lit_layout = Some(layout);
+    }
+
+    /// The mesh pipeline, lit or not, shading materials of `variant`
+    /// (decision 031); lit ones after [`Self::ensure_lit`].
+    pub(crate) fn variant(
+        &self,
+        device: &wgpu::Device,
+        mesh_shader: &wgpu::ShaderModule,
+        lit: bool,
+        variant: Variant,
+        vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
+        depth_format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let (layout, fragment) = if lit {
+            (
+                self.lit_layout
+                    .as_ref()
+                    .expect("created with the first lit frame"),
+                "fs_temporal_lit",
+            )
+        } else {
+            (&self.mesh_layout, "fs_temporal")
+        };
+        mesh_pipeline(
+            device,
+            mesh_shader,
+            layout,
+            vertex_layouts,
+            depth_format,
+            fragment,
+            variant,
+        )
     }
 
     /// The lit mesh pipeline; call [`Self::ensure_lit`] first.
@@ -581,7 +620,8 @@ impl TemporalPass {
 }
 
 /// A temporal mesh pipeline over `layout`: jittered retained slots drawn
-/// into the scene, motion and glow targets with fragment entry `fragment`.
+/// into the scene, motion and glow targets with fragment entry `fragment`,
+/// shading materials of `variant` (decision 031).
 fn mesh_pipeline(
     device: &wgpu::Device,
     mesh_shader: &wgpu::ShaderModule,
@@ -589,7 +629,9 @@ fn mesh_pipeline(
     vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
     depth_format: wgpu::TextureFormat,
     fragment: &str,
+    variant: Variant,
 ) -> wgpu::RenderPipeline {
+    let constants = variant.constants();
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("engine/temporal-meshes"),
         layout: Some(layout),
@@ -601,7 +643,7 @@ fn mesh_pipeline(
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -615,7 +657,10 @@ fn mesh_pipeline(
         fragment: Some(wgpu::FragmentState {
             module: mesh_shader,
             entry_point: Some(fragment),
-            compilation_options: Default::default(),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &constants,
+                ..Default::default()
+            },
             targets: &[
                 Some(SCENE_FORMAT.into()),
                 Some(MOTION_FORMAT.into()),

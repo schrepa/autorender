@@ -26,8 +26,9 @@ pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
 pub use effects::{AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Shadows, SunShafts};
 pub use engine_assets::{
-    Aabb, AssetBudget, AssetError, AssetLibrary, MAX_TEXTURE_DIMENSION, Material, MaterialHandle,
-    Mesh, MeshHandle, MeshVertex, Surface, Texture, TextureHandle,
+    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
+    Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface, Texture,
+    TextureHandle, TextureRef, UvTransform, Wrap,
 };
 pub use glam;
 pub use hierarchy::{
@@ -48,8 +49,8 @@ pub use particles::{
 };
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
-    Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMesh, RenderSnapshot, RenderTexture,
-    Transform,
+    Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
+    RenderTexture, Transform,
 };
 pub use transform_edits::{
     MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform,
@@ -150,6 +151,7 @@ pub struct Engine {
     render_query: RenderQuery,
     cube_mesh: MeshHandle,
     extracted_meshes: HashSet<MeshHandle>,
+    extracted_materials: HashSet<MaterialHandle>,
     extracted_textures: HashSet<TextureHandle>,
     visibility: VisibilityCache,
     retained: retained_render::RetainedRender,
@@ -239,6 +241,7 @@ impl Engine {
             render_query,
             cube_mesh,
             extracted_meshes: HashSet::new(),
+            extracted_materials: HashSet::new(),
             extracted_textures: HashSet::new(),
             visibility: VisibilityCache::default(),
             retained: retained_render::RetainedRender::default(),
@@ -589,6 +592,7 @@ impl Engine {
         self.particles.extract(world, snapshot, false);
         snapshot.instances.clear();
         snapshot.meshes.clear();
+        snapshot.materials.clear();
         snapshot.textures.clear();
         snapshot.dropped_instances = 0;
         snapshot.missing_assets = 0;
@@ -596,6 +600,7 @@ impl Engine {
         snapshot.visible_instances = 0;
         snapshot.culled_instances = 0;
         self.extracted_meshes.clear();
+        self.extracted_materials.clear();
         self.extracted_textures.clear();
         let assets = world.resource::<AssetLibrary>();
         let instances = self.render_query.iter(world);
@@ -624,7 +629,7 @@ impl Engine {
                 snapshot.invalid_transforms += 1;
                 continue;
             };
-            let (handle, color, texture_handle, surface) = if let Some(mesh3d) = mesh3d {
+            let (handle, color, mapped, surface) = if let Some(mesh3d) = mesh3d {
                 let Some(material) = assets.material(mesh3d.material) else {
                     snapshot.missing_assets += 1;
                     continue;
@@ -632,7 +637,7 @@ impl Engine {
                 (
                     mesh3d.mesh,
                     material.color(),
-                    material.texture(),
+                    material.has_maps().then_some((mesh3d.material, material)),
                     material.surface(),
                 )
             } else if let Some(cube) = cube {
@@ -645,15 +650,15 @@ impl Engine {
                 snapshot.missing_assets += 1;
                 continue;
             };
-            let texture = if let Some(handle) = texture_handle {
-                let Some(texture) = assets.texture(handle) else {
-                    snapshot.missing_assets += 1;
-                    continue;
-                };
-                Some((handle, texture))
-            } else {
-                None
-            };
+            // Materials with maps need every texture they read.
+            if mapped.is_some_and(|(_, material)| {
+                material
+                    .textures()
+                    .any(|texture| assets.texture(texture).is_none())
+            }) {
+                snapshot.missing_assets += 1;
+                continue;
+            }
             let culled = self.visibility.outside(handle, model, mesh.bounds());
             if culled {
                 snapshot.culled_instances += 1;
@@ -670,18 +675,26 @@ impl Engine {
                     mesh: Arc::clone(mesh),
                 });
             }
-            if let Some((handle, texture)) = texture
-                && self.extracted_textures.insert(handle)
+            if let Some((material_handle, material)) = mapped
+                && self.extracted_materials.insert(material_handle)
             {
-                snapshot.textures.push(RenderTexture {
-                    handle,
-                    texture: Arc::clone(texture),
+                snapshot.materials.push(RenderMaterial {
+                    handle: material_handle,
+                    material: *material,
                 });
+                for texture in material.textures() {
+                    if self.extracted_textures.insert(texture) {
+                        snapshot.textures.push(RenderTexture {
+                            handle: texture,
+                            texture: Arc::clone(assets.texture(texture).expect("checked above")),
+                        });
+                    }
+                }
             }
             if !culled {
                 snapshot.instances.push(RenderInstance {
                     mesh: handle,
-                    texture: texture_handle,
+                    material: mapped.map(|(material, _)| material),
                     model,
                     color,
                     surface,
@@ -837,8 +850,8 @@ pub mod prelude {
         InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES,
         Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent, Plugin,
         Presentation, PresentationMode, PresentationState, PresentedTransform, PresentedTransforms,
-        RenderFrame, RenderInstance, RenderMesh, RenderSnapshot, RenderTexture, Shadows, Surface,
-        Texture, TextureHandle, Transform, TransformIndex, TransformNodeLimit,
+        RenderFrame, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot, RenderTexture,
+        Shadows, Surface, Texture, TextureHandle, Transform, TransformIndex, TransformNodeLimit,
         TransformPropagation, propagate_transforms, reset_all_interpolation, reset_interpolation,
         set_parent, set_parents, valid_global_matrix,
     };

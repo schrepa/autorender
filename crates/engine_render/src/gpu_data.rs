@@ -2,7 +2,8 @@
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::{
-    Atmosphere, Bloom, MeshVertex, Reflections, RenderInstance, Surface, glam::Mat4,
+    AlphaMode, Atmosphere, Bloom, Material, MeshVertex, Reflections, RenderInstance, Surface,
+    UvTransform, glam::Mat4,
 };
 
 /// WGSL `Camera` uniform: three column-major mat4x4<f32> and two vec4<f32>,
@@ -317,6 +318,134 @@ pub(crate) const SHADOW_SHADER: &str = include_str!("shadows.wgsl");
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
 
+/// WGSL `MaterialMaps` uniform of `meshes.wgsl` (decision 031), 192 bytes:
+/// each map's texture coordinate transform, the emissive color and the map
+/// parameters of one material.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct MaterialUniform {
+    /// Rows of each map's 2x3 transform (base color, metallic-roughness,
+    /// normal, occlusion and emissive), w unused.
+    pub transforms: [[f32; 4]; 10],
+    /// Linear emissive color, w unused.
+    pub emissive: [f32; 4],
+    /// Normal scale, occlusion strength, alpha cutoff and unused.
+    pub params: [f32; 4],
+}
+
+impl MaterialUniform {
+    /// Maps of materials without them: identity transforms and no emission.
+    pub(crate) const DEFAULT: Self = Self {
+        transforms: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ],
+        emissive: [0.0; 4],
+        params: [1.0, 1.0, 0.5, 0.0],
+    };
+
+    pub(crate) fn new(material: &Material) -> Self {
+        let mut uniform = Self::DEFAULT;
+        for (index, map) in material.maps().iter().enumerate() {
+            if let Some(map) = map {
+                let [first, second] = transform_rows(&map.transform);
+                uniform.transforms[index * 2] = first;
+                uniform.transforms[index * 2 + 1] = second;
+            }
+        }
+        let [r, g, b] = material.emissive();
+        uniform.emissive = [r, g, b, 0.0];
+        let cutoff = match material.alpha_mode() {
+            AlphaMode::Mask { cutoff } => cutoff,
+            _ => 0.5,
+        };
+        uniform.params = [
+            material.normal_scale(),
+            material.occlusion_strength(),
+            cutoff,
+            0.0,
+        ];
+        uniform
+    }
+}
+
+/// The two rows of `transform`'s 2x3 matrix: coordinates scaled, rotated
+/// and offset (`KHR_texture_transform`, as Khronos' sample renderer reads it).
+pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
+    let (sin, cos) = engine_core::math::sin_cos(transform.rotation);
+    let [sx, sy] = transform.scale;
+    let [ox, oy] = transform.offset;
+    [
+        [cos * sx, sin * sy, ox, 0.0],
+        [-sin * sx, cos * sy, oy, 0.0],
+    ]
+}
+
+/// A material's pipeline variant (decision 031): the `meshes.wgsl` override
+/// constants it sets and whether back faces draw. Materials without maps and
+/// plain opaque base color textures use [`Variant::BASIC`], the shading of
+/// every material before glTF maps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) struct Variant(u8);
+
+impl Variant {
+    pub(crate) const BASIC: Self = Self(0);
+    const MAPS: u8 = 1;
+    const NORMAL_MAP: u8 = 2;
+    const ALPHA_MASK: u8 = 4;
+    const DOUBLE_SIDED: u8 = 8;
+
+    pub(crate) fn of(material: &Material) -> Self {
+        let mode = material.alpha_mode();
+        let base = material.base_color_texture();
+        let maps = material.metallic_roughness_texture().is_some()
+            || material.normal_texture().is_some()
+            || material.occlusion_texture().is_some()
+            || material.emissive_texture().is_some()
+            || material.emissive() != [0.0; 3]
+            || base.is_some_and(|map| map.transform != UvTransform::IDENTITY)
+            || matches!(mode, AlphaMode::Mask { .. })
+            || (mode == AlphaMode::Blend && base.is_some());
+        let mut bits = 0;
+        if maps {
+            bits |= Self::MAPS;
+        }
+        if material.normal_texture().is_some() {
+            bits |= Self::NORMAL_MAP;
+        }
+        if matches!(mode, AlphaMode::Mask { .. }) {
+            bits |= Self::ALPHA_MASK;
+        }
+        if material.is_double_sided() {
+            bits |= Self::DOUBLE_SIDED;
+        }
+        Self(bits)
+    }
+
+    /// Fragment override constants.
+    pub(crate) fn constants(self) -> [(&'static str, f64); 4] {
+        let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
+        [
+            ("MATERIAL_MAPS", set(Self::MAPS)),
+            ("NORMAL_MAP", set(Self::NORMAL_MAP)),
+            ("ALPHA_MASK", set(Self::ALPHA_MASK)),
+            ("DOUBLE_SIDED", set(Self::DOUBLE_SIDED)),
+        ]
+    }
+
+    pub(crate) fn double_sided(self) -> bool {
+        self.0 & Self::DOUBLE_SIDED != 0
+    }
+}
+
 /// Most near shadow cascades (decision 028).
 pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
 
@@ -598,7 +727,7 @@ mod tests {
                 ripples: 0.0,
             },
             mesh: assets.insert_mesh(Mesh::cube()).unwrap(),
-            texture: None,
+            material: None,
         };
         let upload = InstanceData::from(&instance);
         assert_eq!(upload.model[3], [2.0, 3.0, 4.0, 1.0]);
@@ -848,6 +977,102 @@ mod tests {
     }
 
     #[test]
+    fn material_maps_follow_gltf_texture_transforms() {
+        let mut library = AssetLibrary::default();
+        let texture = library
+            .insert_texture(engine_core::Texture::new(1, 1, vec![255; 4]).unwrap())
+            .unwrap();
+        let apply = |rows: [[f32; 4]; 2], uv: [f32; 2]| {
+            rows.map(|row| row[0] * uv[0] + row[1] * uv[1] + row[2])
+        };
+        // Scaled, rotated, then offset, as Khronos' TextureTransformTest
+        // expects: a quarter turn takes u to -v.
+        let transform = UvTransform {
+            offset: [0.5, 0.25],
+            rotation: std::f32::consts::FRAC_PI_2,
+            scale: [2.0, 3.0],
+        };
+        let [u, v] = apply(transform_rows(&transform), [1.0, 0.0]);
+        assert!(
+            (u - 0.5).abs() < 1.0e-6 && (v - -1.75).abs() < 1.0e-6,
+            "{u} {v}"
+        );
+        let [u, v] = apply(transform_rows(&transform), [0.0, 1.0]);
+        assert!(
+            (u - 3.5).abs() < 1.0e-6 && (v - 0.25).abs() < 1.0e-6,
+            "{u} {v}"
+        );
+        // Materials without maps keep identity transforms.
+        let plain = Material::new([1.0; 4]).unwrap();
+        assert_eq!(MaterialUniform::new(&plain), MaterialUniform::DEFAULT);
+        let map = engine_core::TextureRef::new(texture).with_transform(transform);
+        let material = plain
+            .with_normal_texture(map, 0.5)
+            .unwrap()
+            .with_emissive([2.0, 1.0, 0.0])
+            .unwrap()
+            .with_alpha_mode(AlphaMode::Mask { cutoff: 0.3 })
+            .unwrap();
+        let uniform = MaterialUniform::new(&material);
+        assert_eq!(uniform.transforms[4..6], transform_rows(&transform));
+        assert_eq!(
+            uniform.transforms[..4],
+            MaterialUniform::DEFAULT.transforms[..4]
+        );
+        assert_eq!(uniform.emissive, [2.0, 1.0, 0.0, 0.0]);
+        assert_eq!(uniform.params, [0.5, 1.0, 0.3, 0.0]);
+    }
+
+    #[test]
+    fn material_variants_keep_plain_and_base_color_materials_basic() {
+        let mut library = AssetLibrary::default();
+        let texture = library
+            .insert_texture(engine_core::Texture::new(1, 1, vec![255; 4]).unwrap())
+            .unwrap();
+        let map = engine_core::TextureRef::new(texture);
+        let plain = Material::new([1.0; 4]).unwrap();
+        let constants = |variant: Variant| variant.constants().map(|(_, value)| value);
+        assert_eq!(Variant::of(&plain), Variant::BASIC);
+        // Base color textures, even repeating, shade as before maps.
+        assert_eq!(
+            Variant::of(&Material::textured([1.0; 4], texture).unwrap()),
+            Variant::BASIC
+        );
+        assert_eq!(
+            Variant::of(&plain.with_base_color_texture(map).unwrap()),
+            Variant::BASIC
+        );
+        let transformed = map.with_transform(UvTransform::repeat([4.0, 4.0]));
+        assert_eq!(
+            constants(Variant::of(
+                &plain.with_base_color_texture(transformed).unwrap()
+            )),
+            [1.0, 0.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            constants(Variant::of(&plain.with_normal_texture(map, 1.0).unwrap())),
+            [1.0, 1.0, 0.0, 0.0]
+        );
+        let masked = plain
+            .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
+            .unwrap()
+            .with_double_sided(true);
+        assert_eq!(constants(Variant::of(&masked)), [1.0, 0.0, 1.0, 1.0]);
+        assert!(Variant::of(&masked).double_sided());
+        // Blending reads texture alpha as coverage.
+        let glass = plain
+            .with_opacity(0.5)
+            .unwrap()
+            .with_base_color_texture(map)
+            .unwrap();
+        assert_eq!(constants(Variant::of(&glass)), [1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            Variant::of(&plain.with_opacity(0.5).unwrap()),
+            Variant::BASIC
+        );
+    }
+
+    #[test]
     fn effect_uniforms_match_wgsl() {
         let size = |source: &str, name: &str| {
             let module = naga::front::wgsl::parse_str(source).unwrap();
@@ -896,6 +1121,9 @@ mod tests {
         assert_eq!(size(SHAFTS_SHADER, "Post"), size_of::<PostUniform>());
         assert_eq!(size_of::<PostUniform>(), 240);
         assert_eq!(size(SHADER, "SlotColor"), size_of::<ColorData>());
+        // Material maps (decision 031).
+        assert_eq!(size(SHADER, "MaterialMaps"), size_of::<MaterialUniform>());
+        assert_eq!(size_of::<MaterialUniform>(), 192);
         // Local lights (decision 023): binning and shading agree on layouts.
         let clusters = size_of::<crate::lights::ClusterUniform>();
         assert_eq!(size(LIGHT_SHADER, "Clusters"), clusters);

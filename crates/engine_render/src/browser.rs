@@ -1,9 +1,9 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     sync::{Arc, Mutex},
 };
 
-use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, Texture, TextureHandle};
+use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
 use wasm_bindgen::JsValue;
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
@@ -11,12 +11,12 @@ use wgpu::util::DeviceExt;
 use crate::batches::BatchPlan;
 use crate::gpu_data::{
     CameraUniform, ColorData, InstanceData, LightingUniform, PoseData, SHADER, ShadowUniform,
-    Vertex, clamped_extent, mip_chain_bytes, mip_levels,
+    Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
 use crate::lights::{LightPass, LightPoses};
-use crate::mipmaps::{MipGenerator, TEXTURE_FORMAT};
+use crate::materials::MaterialStore;
 use crate::particles::ParticlePass;
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
 use crate::retained_uploads::RetainedUploads;
@@ -68,17 +68,19 @@ struct GpuMesh {
     byte_len: u64,
 }
 
-struct GpuTexture {
-    _texture: wgpu::Texture,
-    bind_group: wgpu::BindGroup,
-    // Base level (asset) bytes, and the generated levels' bytes.
-    byte_len: u64,
-    mip_bytes: u64,
+/// The pipelines a material variant (decision 031) rebuilds: opaque meshes
+/// into the canvas or the screen effects' targets, temporal frames' opaque
+/// meshes, and transparent meshes, lit or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PassKind {
+    Opaque { post: bool, lit: bool, affine: bool },
+    Temporal { lit: bool },
+    Transparent { lit: bool, affine: bool },
 }
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
 ///
-/// Opaque instances are sorted by mesh/texture into reusable CPU upload storage.
+/// Opaque instances are sorted by mesh/material into reusable CPU upload storage.
 /// Immutable assets upload once per residency lifetime; unused asset resources
 /// retire at each valid render boundary, even when suspended.
 /// Instance buffers grow geometrically, up to 100,000.
@@ -135,11 +137,10 @@ pub struct Renderer {
     // of pose storage generation `.0`.
     alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
-    textures: BTreeMap<TextureHandle, GpuTexture>,
-    texture_layout: wgpu::BindGroupLayout,
-    texture_sampler: wgpu::Sampler,
-    mips: MipGenerator,
-    white_texture: GpuTexture,
+    // Material textures, samplers and bind groups (decision 031), and the
+    // pipelines of material variants, created with their first draw.
+    materials: MaterialStore,
+    variant_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     plan: BatchPlan,
     // Most instances this GPU's instance, pose and shadow buffers hold.
     instance_limit: usize,
@@ -353,52 +354,11 @@ impl Renderer {
             &lighting_buffer,
             &shadows,
         );
-        let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/base-color-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        // Trilinear: minified textures read small, cached levels. Anisotropic
-        // filtering keeps surfaces seen at grazing angles sharp along their
-        // steep axis instead of choosing the level of the blurriest one.
-        let texture_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/base-color-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
-        let mips = MipGenerator::new(&device);
-        let white_texture = create_texture(
-            &device,
-            &queue,
-            &texture_layout,
-            &texture_sampler,
-            &Texture::new(1, 1, vec![255; 4]).expect("opaque white texel"),
-            None,
-        );
+        let materials = MaterialStore::new(&device, &queue);
+        let texture_layout = materials.layout();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/mesh-pipeline-layout"),
-            bind_group_layouts: &[Some(&camera_layout), Some(&texture_layout)],
+            bind_group_layouts: &[Some(&camera_layout), Some(texture_layout)],
             immediate_size: 0,
         });
         let storage_entry = |binding, stride| wgpu::BindGroupLayoutEntry {
@@ -423,7 +383,7 @@ impl Renderer {
                 label: Some("engine/retained-mesh-pipeline-layout"),
                 bind_group_layouts: &[
                     Some(&camera_layout),
-                    Some(&texture_layout),
+                    Some(texture_layout),
                     Some(&pose_layout),
                 ],
                 immediate_size: 0,
@@ -451,9 +411,22 @@ impl Renderer {
             constants: &canvas_constants,
             depth_write: true,
         };
-        let pipeline = mesh_pipeline(&device, &shader, &pipeline_layout, false, &direct);
-        let affine_pipeline =
-            mesh_pipeline(&device, &shader, &affine_pipeline_layout, true, &direct);
+        let pipeline = mesh_pipeline(
+            &device,
+            &shader,
+            &pipeline_layout,
+            false,
+            &direct,
+            Variant::BASIC,
+        );
+        let affine_pipeline = mesh_pipeline(
+            &device,
+            &shader,
+            &affine_pipeline_layout,
+            true,
+            &direct,
+            Variant::BASIC,
+        );
         let sky_pipeline = sky_pipeline(
             &device,
             &shader,
@@ -519,11 +492,8 @@ impl Renderer {
             particles: None,
             alternate_pose_group: None,
             meshes: BTreeMap::new(),
-            textures: BTreeMap::new(),
-            texture_layout,
-            texture_sampler,
-            mips,
-            white_texture,
+            materials,
+            variant_pipelines: HashMap::new(),
             plan: BatchPlan::with_instance_limit(instance_limit),
             instance_limit,
             vertex_staging: Vec::new(),
@@ -611,13 +581,15 @@ impl Renderer {
                 &self.device,
                 &self.mesh_shader,
                 &self.camera_layout,
-                &self.texture_layout,
+                self.materials.layout(),
                 &affine_layouts(),
                 DEPTH_FORMAT,
                 self.configuration.format,
             ));
         } else {
             self.temporal = None;
+            self.variant_pipelines
+                .retain(|(kind, _), _| !matches!(kind, PassKind::Temporal { .. }));
             if self.alternate_poses.take().is_some() {
                 // Culling must not keep writing the released buffer.
                 self.pose_generation += 1;
@@ -708,8 +680,7 @@ impl Renderer {
         // only emitted draw batches, shadow casters and referenced textures.
         self.meshes
             .retain(|handle, _| self.plan.contains_mesh(*handle) || shadow_meshes.contains(handle));
-        self.textures
-            .retain(|handle, _| self.plan.contains_texture(*handle));
+        self.materials.retain(&self.plan);
         drop(profile_residency);
         if self.suspended {
             return Ok(self.residency_stats());
@@ -799,28 +770,16 @@ impl Renderer {
                 mesh_upload_bytes += byte_len;
             }
         }
-        let mut texture_upload_bytes = 0_u64;
         // New textures' mip levels render from their uploaded base level in
         // a command buffer submitted ahead of this frame's.
         let mut mip_encoder = None;
-        let mut mip_levels = 0;
-        for &index in &self.plan.texture_sources {
-            let source = &snapshot.textures[index];
-            if let std::collections::btree_map::Entry::Vacant(entry) =
-                self.textures.entry(source.handle)
-            {
-                let texture = create_texture(
-                    &self.device,
-                    &self.queue,
-                    &self.texture_layout,
-                    &self.texture_sampler,
-                    &source.texture,
-                    Some((&self.mips, &mut mip_encoder, &mut mip_levels)),
-                );
-                texture_upload_bytes += texture.byte_len;
-                entry.insert(texture);
-            }
-        }
+        let (texture_upload_bytes, mip_levels) = self.materials.upload(
+            &self.device,
+            &self.queue,
+            snapshot,
+            &self.plan,
+            &mut mip_encoder,
+        );
         drop(profile_upload);
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
         let affine = retained.is_some();
@@ -1172,7 +1131,7 @@ impl Renderer {
                     &self.mesh_shader,
                     [
                         &self.camera_layout,
-                        &self.texture_layout,
+                        self.materials.layout(),
                         &self.pose_layout,
                         &self.empty_layout,
                         lights.fragment_layout(),
@@ -1186,7 +1145,7 @@ impl Renderer {
                     &self.mesh_shader,
                     [
                         &self.camera_layout,
-                        &self.texture_layout,
+                        self.materials.layout(),
                         lights.fragment_layout(),
                     ],
                     &affine_layouts(),
@@ -1324,6 +1283,7 @@ impl Renderer {
                             constants: &[],
                             depth_write: false,
                         },
+                        Variant::BASIC,
                     ));
                 }
                 if temporal_frame
@@ -1421,6 +1381,22 @@ impl Renderer {
                 self.color_buffer.as_ref().expect("affine color buffer"),
             );
         }
+        // Pipelines of the material variants (decision 031) this frame draws.
+        let lit_frame = light_frame.is_some() && self.lit.is_some() && self.lights.is_some();
+        let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
+            PassKind::Temporal { lit: lit_frame }
+        } else {
+            PassKind::Opaque {
+                post: post_frame.is_some() && self.post_pipelines.is_some(),
+                lit: lit_frame,
+                affine,
+            }
+        };
+        let transparent_kind = PassKind::Transparent {
+            lit: lit_frame,
+            affine,
+        };
+        self.ensure_variants(opaque_kind, transparent_kind);
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
         // Lit frames shade with the lit pipelines and the lights' group.
         let lit = light_frame
@@ -1497,7 +1473,7 @@ impl Renderer {
                 multiview_mask: None,
             });
             if instance_count > 0 {
-                pass.set_pipeline(match (temporal_pass, lit) {
+                let opaque_base = match (temporal_pass, lit) {
                     (Some((_, temporal)), Some(_)) => temporal.lit_mesh_pipeline(),
                     (Some((_, temporal)), None) => temporal.mesh_pipeline(),
                     (None, Some((pipelines, _))) => {
@@ -1510,7 +1486,8 @@ impl Renderer {
                         None if affine => &self.affine_pipeline,
                         None => &self.pipeline,
                     },
-                });
+                };
+                pass.set_pipeline(opaque_base);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 if let Some((_, lights)) = lit {
                     pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -1543,6 +1520,7 @@ impl Renderer {
                 } else {
                     pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                 }
+                let mut bound = Variant::BASIC;
                 for (index, batch) in self.plan.batches.iter().enumerate() {
                     // Transparent batches draw after the opaque pass.
                     if batch.transparent {
@@ -1550,10 +1528,16 @@ impl Renderer {
                     }
                     // Every planned source was validated and uploaded above.
                     let mesh = &self.meshes[&batch.mesh];
-                    let texture = batch
-                        .texture
-                        .map_or(&self.white_texture, |handle| &self.textures[&handle]);
-                    pass.set_bind_group(1, &texture.bind_group, &[]);
+                    let (group, variant) = self.materials.binding(batch.material);
+                    if variant != bound {
+                        pass.set_pipeline(if variant == Variant::BASIC {
+                            opaque_base
+                        } else {
+                            &self.variant_pipelines[&(opaque_kind, variant)]
+                        });
+                        bound = variant;
+                    }
+                    pass.set_bind_group(1, group, &[]);
                     pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                     if gpu_mode {
@@ -1593,11 +1577,11 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 if transparent_draws && instance_count > 0 {
-                    let pipeline = self.transparent_pipelines[usize::from(lit.is_some())]
+                    let transparent_base = self.transparent_pipelines[usize::from(lit.is_some())]
                         [usize::from(affine)]
                     .as_ref()
                     .expect("created with the transparent frame");
-                    pass.set_pipeline(pipeline);
+                    pass.set_pipeline(transparent_base);
                     pass.set_bind_group(0, &self.camera_bind_group, &[]);
                     if let Some((_, lights)) = lit {
                         pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -1629,15 +1613,22 @@ impl Renderer {
                     } else {
                         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     }
+                    let mut bound = Variant::BASIC;
                     for (index, batch) in self.plan.batches.iter().enumerate() {
                         if !batch.transparent {
                             continue;
                         }
                         let mesh = &self.meshes[&batch.mesh];
-                        let texture = batch
-                            .texture
-                            .map_or(&self.white_texture, |handle| &self.textures[&handle]);
-                        pass.set_bind_group(1, &texture.bind_group, &[]);
+                        let (group, variant) = self.materials.binding(batch.material);
+                        if variant != bound {
+                            pass.set_pipeline(if variant == Variant::BASIC {
+                                transparent_base
+                            } else {
+                                &self.variant_pipelines[&(transparent_kind, variant)]
+                            });
+                            bound = variant;
+                        }
+                        pass.set_bind_group(1, group, &[]);
                         pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                         pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                         if gpu_mode {
@@ -1983,10 +1974,7 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_texture_mip_bytes",
-                self.textures
-                    .values()
-                    .map(|texture| texture.mip_bytes)
-                    .sum::<u64>() as f64,
+                self.materials.texture_totals().2 as f64,
             );
         }
         Ok(stats)
@@ -2018,6 +2006,114 @@ impl Renderer {
         self.profiler.report()
     }
 
+    /// Creates the pipelines of the plan's material variants for this frame's
+    /// opaque and transparent passes.
+    fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
+        let mut missing = Vec::new();
+        for batch in &self.plan.batches {
+            let (_, variant) = self.materials.binding(batch.material);
+            let kind = if batch.transparent {
+                transparent
+            } else {
+                opaque
+            };
+            if variant != Variant::BASIC
+                && !self.variant_pipelines.contains_key(&(kind, variant))
+                && !missing.contains(&(kind, variant))
+            {
+                missing.push((kind, variant));
+            }
+        }
+        for (kind, variant) in missing {
+            let pipeline = self.create_variant(kind, variant);
+            self.variant_pipelines.insert((kind, variant), pipeline);
+        }
+    }
+
+    /// The pipeline of `kind` shading materials of `variant`.
+    fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
+        let (device, shader) = (&self.device, &self.mesh_shader);
+        let layout = |lit: bool, affine: bool| {
+            if lit {
+                &self.lit.as_ref().expect("lit frames create it").layouts[usize::from(affine)]
+            } else if affine {
+                &self.affine_pipeline_layout
+            } else {
+                &self.pipeline_layout
+            }
+        };
+        match kind {
+            PassKind::Opaque { post, lit, affine } => {
+                let canvas_target = [Some(wgpu::ColorTargetState {
+                    format: self.configuration.format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })];
+                let canvas_constants = [(
+                    "SURFACE_IS_SRGB",
+                    if self.configuration.format.is_srgb() {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                )];
+                let post_targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+                let targets = MeshTargets {
+                    fragment: match (post, lit) {
+                        (false, false) => "fs_main",
+                        (false, true) => "fs_main_lit",
+                        (true, false) => "fs_post",
+                        (true, true) => "fs_post_lit",
+                    },
+                    targets: if post { &post_targets } else { &canvas_target },
+                    constants: if post { &[] } else { &canvas_constants },
+                    depth_write: true,
+                };
+                mesh_pipeline(
+                    device,
+                    shader,
+                    layout(lit, affine),
+                    affine,
+                    &targets,
+                    variant,
+                )
+            }
+            PassKind::Transparent { lit, affine } => {
+                let targets = accumulation_targets();
+                let targets = MeshTargets {
+                    fragment: if lit {
+                        "fs_transparent_lit"
+                    } else {
+                        "fs_transparent"
+                    },
+                    targets: &targets,
+                    constants: &[],
+                    depth_write: false,
+                };
+                mesh_pipeline(
+                    device,
+                    shader,
+                    layout(lit, affine),
+                    affine,
+                    &targets,
+                    variant,
+                )
+            }
+            PassKind::Temporal { lit } => self
+                .temporal
+                .as_ref()
+                .expect("temporal frames create it")
+                .variant(
+                    device,
+                    shader,
+                    lit,
+                    variant,
+                    &affine_layouts(),
+                    DEPTH_FORMAT,
+                ),
+        }
+    }
+
     /// Whether this immutable handle currently has GPU buffers. This observes
     /// residency, not completion of submitted GPU work, and never waits/readbacks.
     pub fn is_mesh_resident(&self, handle: MeshHandle) -> bool {
@@ -2028,105 +2124,18 @@ impl Renderer {
     /// Skipped frames do not upload missing sources; unused handles retire even
     /// when suspended. Device loss requires replacing this renderer.
     pub fn is_texture_resident(&self, handle: TextureHandle) -> bool {
-        self.textures.contains_key(&handle)
+        self.materials.is_texture_resident(handle)
     }
 
     fn residency_stats(&self) -> RenderStats {
+        let (resident_textures, resident_texture_bytes, _) = self.materials.texture_totals();
         RenderStats {
             resident_meshes: self.meshes.len() as u32,
             resident_mesh_bytes: self.meshes.values().map(|mesh| mesh.byte_len).sum(),
-            resident_textures: self.textures.len() as u32,
-            resident_texture_bytes: self.textures.values().map(|texture| texture.byte_len).sum(),
+            resident_textures,
+            resident_texture_bytes,
             ..RenderStats::default()
         }
-    }
-}
-
-/// Uploads `source` as the base level. With `mips` (generator, lazily created
-/// encoder and a level count to add to), the texture gets a full mip chain
-/// whose remaining levels are recorded into that encoder.
-fn create_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    layout: &wgpu::BindGroupLayout,
-    sampler: &wgpu::Sampler,
-    source: &Texture,
-    mips: Option<(&MipGenerator, &mut Option<wgpu::CommandEncoder>, &mut u32)>,
-) -> GpuTexture {
-    let extent = wgpu::Extent3d {
-        width: source.width(),
-        height: source.height(),
-        depth_or_array_layers: 1,
-    };
-    let levels = if mips.is_some() {
-        mip_levels(source.width(), source.height())
-    } else {
-        1
-    };
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-    if levels > 1 {
-        usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
-    }
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("engine/base-color-texture"),
-        size: extent,
-        mip_level_count: levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: TEXTURE_FORMAT,
-        usage,
-        view_formats: &[],
-    });
-    // Queue writes accept tightly packed rows; no 256-byte buffer-copy padding.
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        source.pixels(),
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(source.width() * 4),
-            rows_per_image: Some(source.height()),
-        },
-        extent,
-    );
-    if let Some((generator, encoder, generated)) = mips
-        && levels > 1
-    {
-        let encoder = encoder.get_or_insert_with(|| {
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/texture-mips"),
-            })
-        });
-        *generated += generator.record(device, encoder, &texture);
-    }
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("engine/base-color-bind-group"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Sampler(sampler),
-            },
-        ],
-    });
-    GpuTexture {
-        _texture: texture,
-        bind_group,
-        byte_len: source.byte_len() as u64,
-        mip_bytes: if levels > 1 {
-            mip_chain_bytes(source.width(), source.height())
-        } else {
-            0
-        },
     }
 }
 
@@ -2207,15 +2216,22 @@ struct MeshTargets<'a> {
     depth_write: bool,
 }
 
-/// An opaque mesh pipeline over `layout`: affine slot-stream inputs or public
-/// instance records.
+/// A mesh pipeline over `layout`: affine slot-stream inputs or public
+/// instance records, shading materials of `variant` (decision 031).
 fn mesh_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     affine: bool,
     fragment: &MeshTargets<'_>,
+    variant: Variant,
 ) -> wgpu::RenderPipeline {
+    let constants: Vec<(&str, f64)> = fragment
+        .constants
+        .iter()
+        .copied()
+        .chain(variant.constants())
+        .collect();
     let full_layouts = [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -2240,7 +2256,7 @@ fn mesh_pipeline(
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
             ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -2255,7 +2271,7 @@ fn mesh_pipeline(
             module: shader,
             entry_point: Some(fragment.fragment),
             compilation_options: wgpu::PipelineCompilationOptions {
-                constants: fragment.constants,
+                constants: &constants,
                 ..Default::default()
             },
             targets: fragment.targets,
@@ -2314,14 +2330,15 @@ impl LitPipelines {
             constants: &[],
             depth_write: true,
         };
+        let basic = Variant::BASIC;
         let variants = [
             [
-                mesh_pipeline(device, shader, &full_layout, false, &direct),
-                mesh_pipeline(device, shader, &affine_layout, true, &direct),
+                mesh_pipeline(device, shader, &full_layout, false, &direct, basic),
+                mesh_pipeline(device, shader, &affine_layout, true, &direct, basic),
             ],
             [
-                mesh_pipeline(device, shader, &full_layout, false, &post),
-                mesh_pipeline(device, shader, &affine_layout, true, &post),
+                mesh_pipeline(device, shader, &full_layout, false, &post, basic),
+                mesh_pipeline(device, shader, &affine_layout, true, &post, basic),
             ],
         ];
         Self {
@@ -2355,8 +2372,8 @@ impl PostPipelines {
             depth_write: true,
         };
         Self {
-            full: mesh_pipeline(device, shader, layouts[0], false, &post),
-            affine: mesh_pipeline(device, shader, layouts[1], true, &post),
+            full: mesh_pipeline(device, shader, layouts[0], false, &post, Variant::BASIC),
+            affine: mesh_pipeline(device, shader, layouts[1], true, &post, Variant::BASIC),
             sky: sky_pipeline(device, shader, camera_layout, "fs_sky_post", &targets, None),
         }
     }

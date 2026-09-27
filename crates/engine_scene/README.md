@@ -88,11 +88,17 @@ in row-major top-to-bottom order, or (version 7) a `uri` to an image file beside
 the scene that the host decodes and supplies as `SceneFiles`
 ([decision 030](../../docs/adr-030-scene-files.md)); meshes may likewise read
 `EMB1` buffer files. Alpha must be 255. Dimensions are 1..8192. A
-material's optional texture field is an authored ID. Procedural meshes provide
-UVs; inline vertices default to zero UV for legacy sources. Sampling is
-trilinear and clamp-to-edge over mip levels the renderer generates from the
-authored pixels. PNG/GLB decoding belongs to native `tools/assetc`;
-base64 decoding belongs only to validation/loading here.
+material's texture fields reference textures by authored ID. Procedural meshes
+provide UVs; inline vertices default to zero UV for legacy sources. Sampling is
+trilinear over mip levels the renderer generates from the authored pixels; plain
+IDs clamp at the edges before version 8 and repeat from version 8. Version 8
+materials are glTF 2.0 metallic-roughness materials
+([decision 031](../../docs/adr-031-gltf-materials.md)): map objects with
+sampler and transform settings, metallic-roughness, normal, occlusion and
+emissive textures, emissive colors, alpha modes and double-sided surfaces.
+`SceneDocument::upgrade` moves a document to the current version without
+changing its meaning. GLB decoding belongs to native `tools/assetc`; base64
+decoding belongs only to validation/loading here.
 
 Errors expose stable `code`, JSON `path` and a human-readable `message`.
 Parsing, validation and canonical serialization do not mutate a world or save a

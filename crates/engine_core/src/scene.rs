@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_assets::{MaterialHandle, Mesh, MeshHandle, Surface, Texture, TextureHandle};
+use engine_assets::{Material, MaterialHandle, Mesh, MeshHandle, Surface, Texture, TextureHandle};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 
 use crate::NodePose;
@@ -199,10 +199,15 @@ pub struct InputState {
 #[derive(Debug, Clone, Copy)]
 pub struct RenderInstance {
     pub mesh: MeshHandle,
-    /// Optional opaque base color texture; absence samples renderer white.
-    pub texture: Option<TextureHandle>,
+    /// The material whose maps the renderer binds, for materials with maps
+    /// ([`Material::has_maps`], decision 031); listed in
+    /// [`RenderSnapshot::materials`]. `None` draws from color and surface
+    /// alone.
+    pub material: Option<MaterialHandle>,
     pub model: Mat4,
     /// Linear color; alpha is the opacity (decision 026), 1 for opaque.
+    /// Without a material, an opacity below 1 draws transparent; a
+    /// material's alpha mode decides otherwise.
     pub color: [f32; 4],
     /// The material's surface response; cubes are [`Surface::MATTE`].
     pub surface: Surface,
@@ -220,6 +225,26 @@ pub struct RenderMesh {
 pub struct RenderTexture {
     pub handle: TextureHandle,
     pub texture: Arc<Texture>,
+}
+
+/// One referenced material with maps (decision 031), copied so it outlives
+/// its library entry; its textures are in [`RenderSnapshot::textures`].
+#[derive(Debug, Clone, Copy)]
+pub struct RenderMaterial {
+    pub handle: MaterialHandle,
+    pub material: Material,
+}
+
+impl RenderInstance {
+    /// Whether this instance draws in the transparent pass: its material's
+    /// alpha mode decides, `material` being the instance's listed material;
+    /// without one, an opacity below 1 (decision 026).
+    pub fn is_transparent(&self, material: Option<&Material>) -> bool {
+        match material {
+            Some(material) => material.is_transparent(),
+            None => self.color[3] < 1.0,
+        }
+    }
 }
 
 /// Owned render data, reusable across frames without borrowing the ECS world.
@@ -255,14 +280,17 @@ pub struct RenderSnapshot {
     pub emitters: Vec<crate::RenderEmitter>,
     /// Particles of emitters skipped beyond the budget.
     pub dropped_particles: usize,
-    /// Every instance's `color[3]` is its opacity: below 1 it draws in the
-    /// transparent pass (decision 026).
+    /// Every instance's `color[3]` is its opacity (decision 026); see
+    /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;
     /// they do not request uploads by themselves.
     pub meshes: Vec<RenderMesh>,
-    /// Unique textures used by emitted or frustum-culled valid instances.
+    /// Unique materials with maps used by emitted or frustum-culled valid
+    /// instances (decision 031).
+    pub materials: Vec<RenderMaterial>,
+    /// Unique textures of those materials.
     pub textures: Vec<RenderTexture>,
     /// Every entity carrying Cube or Mesh3d, before transform/asset checks.
     pub render_candidates: usize,

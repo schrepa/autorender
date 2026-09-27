@@ -102,13 +102,15 @@ pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
 
 /// An engine mesh buffer: `EMB1`, the vertex and index counts (little-endian
 /// u32), each vertex's position, normal and UV (eight little-endian f32),
-/// then the u32 indices.
-pub fn encode_mesh_buffer(vertices: &[MeshVertex], indices: &[u32]) -> Vec<u8> {
+/// then the u32 indices. Takes runtime or authored ([`crate::SceneVertex`])
+/// vertices.
+pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &[u32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(12 + vertices.len() * 32 + indices.len() * 4);
     bytes.extend_from_slice(&MESH_BUFFER_MAGIC);
     bytes.extend_from_slice(&(vertices.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(indices.len() as u32).to_le_bytes());
-    for vertex in vertices {
+    for &vertex in vertices {
+        let vertex: MeshVertex = vertex.into();
         for value in vertex
             .position
             .iter()

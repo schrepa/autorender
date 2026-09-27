@@ -457,10 +457,13 @@ fn textures_are_retained_once_and_missing_dependencies_skip_whole_entities() {
     engine.extract(1.0, &mut old);
     assert_eq!(old.instances.len(), 3);
     assert_eq!(old.textures.len(), 1);
+    assert_eq!(old.textures[0].handle, texture);
+    // A textured material has maps: instances bind it (decision 031).
+    assert_eq!(old.materials.len(), 1);
     assert!(
         old.instances
             .iter()
-            .all(|instance| instance.texture == Some(texture))
+            .all(|instance| instance.material == Some(material))
     );
     assert_eq!(
         std::sync::Arc::strong_count(

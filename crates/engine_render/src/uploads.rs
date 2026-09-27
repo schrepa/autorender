@@ -167,7 +167,7 @@ mod tests {
         [Vec3::ZERO, Vec3::X, Vec3::Y]
             .map(|position| RenderInstance {
                 mesh,
-                texture: None,
+                material: None,
                 model: Mat4::from_translation(position),
                 color: [1.0; 4],
                 surface: engine_core::Surface::MATTE,

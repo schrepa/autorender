@@ -1,13 +1,13 @@
-use engine_core::{Camera, Material, Mesh, MeshVertex, Surface, Transform, glam};
+use engine_core::{Camera, Mesh, MeshVertex, Surface, Transform, glam};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     SceneCollider, SceneEmitter, SceneEnvironment, SceneError, SceneFiles, SceneLight,
-    SceneTexture, files::valid_uri,
+    SceneMaterial, SceneTexture, files::valid_uri,
 };
 
 /// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 7;
+pub const SCENE_VERSION: u32 = 8;
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
 /// which references image and buffer files for bulk data (decision 030).
 pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -23,7 +23,7 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 7)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -64,6 +64,30 @@ impl SceneDocument {
             .map_err(|error| SceneError::new("invalid_json", "$", error.to_string()))?;
         document.validate()?;
         Ok(document)
+    }
+
+    /// Moves this document to [`SCENE_VERSION`] without changing what it
+    /// describes: from before version 8, plain texture IDs become maps that
+    /// clamp at the texture's edges, as those versions sample them.
+    pub fn upgrade(&mut self) {
+        if self.version < 8 {
+            for material in &mut self.materials {
+                if let Some(crate::SceneMap::Id(id)) = &material.texture {
+                    material.texture = Some(crate::SceneMap::Map(crate::SceneTextureMap {
+                        id: id.clone(),
+                        wrap_u: Some(crate::SceneWrap::ClampToEdge),
+                        wrap_v: Some(crate::SceneWrap::ClampToEdge),
+                        mag_filter: None,
+                        min_filter: None,
+                        mipmap_filter: None,
+                        offset: None,
+                        rotation: None,
+                        scale: None,
+                    }));
+                }
+            }
+        }
+        self.version = SCENE_VERSION;
     }
 
     /// Writes validated, pretty JSON with stable field order and a final newline.
@@ -169,65 +193,6 @@ impl SceneCamera {
             vertical_fov_radians: self.fov_degrees.to_radians(),
             near: self.near,
             far: self.far,
-        }
-    }
-}
-
-/// One named material; color channels are linear values in `[0, 1]` and
-/// alpha is 1. `opacity` below 1 (version 6) draws it transparent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneMaterial {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub id: String,
-    pub color: [f32; 4],
-    /// Optional authored texture ID; no runtime handle is persisted.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub texture: Option<String>,
-    /// How the surface responds to light beyond its color (decision 019).
-    /// Requires version 5; without it the material is matte.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub surface: Option<SceneSurface>,
-    /// The fraction of light behind it the surface covers, in `(0, 1]`
-    /// (decision 026). Below 1 it draws transparent, blending in any order,
-    /// writing no depth and casting no shadow. Requires version 6.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1.0)))]
-    pub opacity: Option<f32>,
-}
-
-impl SceneMaterial {
-    /// The material at authored path `path` (`$.materials[i]`).
-    pub(crate) fn material(&self, path: &str) -> Result<Material, SceneError> {
-        let mut material = Material::new(self.color).map_err(|error| {
-            SceneError::new(
-                "invalid_material",
-                format!("{path}.color"),
-                error.to_string(),
-            )
-        })?;
-        if let Some(opacity) = self.opacity {
-            material = material.with_opacity(opacity).map_err(|error| {
-                SceneError::new(
-                    "invalid_material",
-                    format!("{path}.opacity"),
-                    error.to_string(),
-                )
-            })?;
-        }
-        match self.surface {
-            Some(surface) => material.with_surface(surface.surface()).map_err(|error| {
-                SceneError::new(
-                    "invalid_material",
-                    format!("{path}.surface"),
-                    error.to_string(),
-                )
-            }),
-            None => Ok(material),
         }
     }
 }
@@ -360,6 +325,16 @@ pub struct SceneVertex {
     /// Top-left origin texture coordinates, sampled with clamp-to-edge.
     #[serde(default, skip_serializing_if = "zero_uv")]
     pub uv: [f32; 2],
+}
+
+impl From<SceneVertex> for MeshVertex {
+    fn from(vertex: SceneVertex) -> Self {
+        Self {
+            position: vertex.position,
+            normal: vertex.normal,
+            uv: vertex.uv,
+        }
+    }
 }
 
 fn zero_uv(uv: &[f32; 2]) -> bool {

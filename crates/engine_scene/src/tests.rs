@@ -907,3 +907,157 @@ fn version_six_grading_overrides_its_preset_and_earlier_versions_refuse_it() {
         );
     }
 }
+
+#[test]
+fn version_eight_gltf_maps_instantiate_with_samplers_transforms_and_parameters() {
+    let mut document = textured_document();
+    let source = r#"{
+      "id": "tiles-pbr", "color": [1.0, 1.0, 1.0, 1.0],
+      "texture": {"id": "tiles", "wrap_u": "mirrored_repeat", "mag_filter": "nearest",
+        "mipmap_filter": "none", "offset": [0.5, 0.0], "rotation": 0.25, "scale": [4.0, 2.0]},
+      "metallic_roughness_texture": "tiles",
+      "normal_texture": {"id": "tiles", "scale": [4.0, 4.0]}, "normal_scale": 0.5,
+      "occlusion_texture": "tiles", "occlusion_strength": 0.75,
+      "emissive": [2.0, 1.0, 0.0], "emissive_texture": "tiles",
+      "opacity": 0.8, "alpha_mode": "mask", "alpha_cutoff": 0.3, "double_sided": true
+    }"#;
+    document
+        .materials
+        .push(serde_json::from_str(source).unwrap());
+    document.entities[0].material = Some("tiles-pbr".into());
+    let document = SceneDocument::from_json(&document.to_json().unwrap()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    let mesh = world
+        .get::<Mesh3d>(instance.entity("player").unwrap())
+        .unwrap();
+    let assets = world.resource::<AssetLibrary>();
+    let material = assets.material(mesh.material).unwrap();
+    let base = material.base_color_texture().unwrap();
+    assert_eq!(base.sampler.wrap_u, engine_core::Wrap::MirroredRepeat);
+    assert_eq!(base.sampler.wrap_v, engine_core::Wrap::Repeat);
+    assert_eq!(base.sampler.mag_filter, engine_core::Filter::Nearest);
+    assert_eq!(base.sampler.mipmap_filter, None);
+    assert_eq!(
+        base.transform,
+        engine_core::UvTransform {
+            offset: [0.5, 0.0],
+            rotation: 0.25,
+            scale: [4.0, 2.0]
+        }
+    );
+    // Plain IDs take glTF's defaults from version 8.
+    assert_eq!(
+        material.metallic_roughness_texture().unwrap().sampler,
+        engine_core::Sampler::REPEAT
+    );
+    assert_eq!(material.normal_scale(), 0.5);
+    assert_eq!(material.occlusion_strength(), 0.75);
+    assert_eq!(material.emissive(), [2.0, 1.0, 0.0]);
+    assert!(material.emissive_texture().is_some());
+    assert_eq!(
+        material.alpha_mode(),
+        engine_core::AlphaMode::Mask { cutoff: 0.3 }
+    );
+    assert_eq!(material.opacity(), 0.8);
+    assert!(material.is_double_sided() && !material.is_transparent());
+    assert_eq!(material.textures().count(), 5);
+}
+
+#[test]
+fn version_eight_fields_need_version_eight_and_valid_references() {
+    let base = textured_document();
+    let reject = |edit: &dyn Fn(&mut crate::SceneMaterial), version: u32| {
+        let mut document = base.clone();
+        document.version = version;
+        edit(&mut document.materials[0]);
+        let error = document.validate().unwrap_err();
+        (error.code, error.path)
+    };
+    assert_eq!(
+        reject(&|material| material.double_sided = Some(true), 7),
+        ("version_required", "$.materials[0].double_sided".into())
+    );
+    assert_eq!(
+        reject(
+            &|material| {
+                material.texture = Some(crate::SceneMap::Map(crate::SceneTextureMap {
+                    id: "tiles".into(),
+                    wrap_u: None,
+                    wrap_v: None,
+                    mag_filter: None,
+                    min_filter: None,
+                    mipmap_filter: None,
+                    offset: None,
+                    rotation: None,
+                    scale: Some([2.0, 2.0]),
+                }))
+            },
+            7
+        ),
+        ("version_required", "$.materials[0].texture".into())
+    );
+    assert_eq!(
+        reject(
+            &|material| material.normal_texture = Some("missing".into()),
+            8
+        ),
+        ("unknown_reference", "$.materials[0].normal_texture".into())
+    );
+    assert_eq!(
+        reject(&|material| material.alpha_cutoff = Some(0.5), 8),
+        ("invalid_material", "$.materials[0].alpha_cutoff".into())
+    );
+    assert_eq!(
+        reject(
+            &|material| {
+                material.opacity = Some(0.5);
+                material.alpha_mode = Some(crate::SceneAlphaMode::Opaque);
+            },
+            8
+        ),
+        ("invalid_material", "$.materials[0].alpha_mode".into())
+    );
+    assert_eq!(
+        reject(&|material| material.occlusion_strength = Some(2.0), 8),
+        (
+            "invalid_material",
+            "$.materials[0].occlusion_strength".into()
+        )
+    );
+    assert_eq!(
+        reject(
+            &|material| material.emissive = Some([f32::NAN, 0.0, 0.0]),
+            8
+        ),
+        ("invalid_material", "$.materials[0].emissive".into())
+    );
+}
+
+#[test]
+fn texture_ids_clamp_before_version_eight_and_upgrading_keeps_that_meaning() {
+    let mut document = textured_document();
+    document.version = 7;
+    let sampler = |document: &SceneDocument| {
+        let mut world = world(AssetBudget::default());
+        let instance = document.instantiate(&mut world).unwrap();
+        let mesh = world
+            .get::<Mesh3d>(instance.entity("player").unwrap())
+            .unwrap();
+        world
+            .resource::<AssetLibrary>()
+            .material(mesh.material)
+            .unwrap()
+            .base_color_texture()
+            .unwrap()
+            .sampler
+    };
+    assert_eq!(sampler(&document), engine_core::Sampler::CLAMP);
+    let mut upgraded = document.clone();
+    upgraded.upgrade();
+    assert_eq!(upgraded.version, crate::SCENE_VERSION);
+    assert_eq!(sampler(&upgraded), engine_core::Sampler::CLAMP);
+    // The same plain ID repeats in a version 8 document.
+    document.version = 8;
+    assert_eq!(sampler(&document), engine_core::Sampler::REPEAT);
+}

@@ -8,7 +8,7 @@ pub(crate) fn container(bytes: &[u8]) -> Result<Value, ImportError> {
         return Err(ImportError::new(
             "input_too_large",
             "$",
-            "GLB source exceeds 16 MiB",
+            "GLB source exceeds the format's 4 GiB length field",
         ));
     }
     let invalid = || {
@@ -50,7 +50,13 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-pub(crate) fn structure(json: &Value) -> Result<(), ImportError> {
+/// Extensions the importer reads (decision 031); other optional extensions
+/// are ignored and reported.
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 2] =
+    ["KHR_texture_transform", "KHR_materials_emissive_strength"];
+
+/// Checks the static import profile; returns the used extensions it ignores.
+pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
     if json["asset"]["version"] != "2.0"
         || json["asset"]
             .get("minVersion")
@@ -61,47 +67,46 @@ pub(crate) fn structure(json: &Value) -> Result<(), ImportError> {
             "asset.version and any minVersion must be exactly 2.0",
         ));
     }
-    for (field, maximum) in [
-        ("buffers", 1),
-        ("bufferViews", 512),
-        ("accessors", 512),
-        ("nodes", 1024),
-        ("meshes", 128),
-        ("materials", 256),
-        ("images", 64),
-        ("textures", 64),
-        ("samplers", 64),
-        ("scenes", 1),
-    ] {
-        if json[field]
-            .as_array()
-            .is_some_and(|items| items.len() > maximum)
-        {
-            return Err(ImportError::new(
-                "count_limit",
-                format!("$.{field}"),
-                format!("at most {maximum} entries are supported"),
-            ));
-        }
+    // A GLB carries one binary buffer.
+    if json["buffers"]
+        .as_array()
+        .is_some_and(|items| items.len() > 1)
+    {
+        return Err(unsupported("$.buffers", "a GLB has at most one buffer"));
     }
-    for field in [
-        "animations",
-        "skins",
-        "cameras",
-        "extensionsUsed",
-        "extensionsRequired",
-    ] {
+    for field in ["animations", "skins"] {
         if json[field]
             .as_array()
             .is_some_and(|items| !items.is_empty())
         {
             return Err(unsupported(
                 format!("$.{field}"),
-                "animations, skins, cameras and extensions are outside the static diffuse import profile",
+                "animations and skins are outside the static import profile",
             ));
         }
     }
-    reject_extensions(json, "$", 0)?;
+    let names = |field: &str| -> Vec<&str> {
+        json[field]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect()
+    };
+    if let Some(required) = names("extensionsRequired")
+        .into_iter()
+        .find(|name| !SUPPORTED_EXTENSIONS.contains(name))
+    {
+        return Err(unsupported(
+            "$.extensionsRequired",
+            format!("required extension {required} is not supported"),
+        ));
+    }
+    let ignored = names("extensionsUsed")
+        .into_iter()
+        .filter(|name| !SUPPORTED_EXTENSIONS.contains(name))
+        .map(str::to_owned)
+        .collect();
     let scenes = json["scenes"]
         .as_array()
         .filter(|scenes| scenes.len() == 1)
@@ -133,51 +138,8 @@ pub(crate) fn structure(json: &Value) -> Result<(), ImportError> {
                 "morph weights are unsupported",
             ));
         }
-        if mesh["primitives"]
-            .as_array()
-            .is_some_and(|primitives| primitives.len() > 128)
-        {
-            return Err(ImportError::new(
-                "count_limit",
-                format!("$.meshes[{index}].primitives"),
-                "at most 128 primitives per source mesh",
-            ));
-        }
     }
-    Ok(())
-}
-
-fn reject_extensions(value: &Value, path: &str, depth: usize) -> Result<(), ImportError> {
-    if depth > 64 {
-        return Err(ImportError::new(
-            "depth_limit",
-            path,
-            "JSON nesting exceeds 64",
-        ));
-    }
-    match value {
-        Value::Object(fields) => {
-            for (key, child) in fields {
-                if key == "extensions" && child.as_object().is_none_or(|object| !object.is_empty())
-                {
-                    return Err(unsupported(
-                        format!("{path}.extensions"),
-                        "all glTF extensions are unsupported, including compression and texture transforms",
-                    ));
-                }
-                if key != "extras" {
-                    reject_extensions(child, &format!("{path}.{key}"), depth + 1)?;
-                }
-            }
-        }
-        Value::Array(items) => {
-            for (index, child) in items.iter().enumerate() {
-                reject_extensions(child, &format!("{path}[{index}]"), depth + 1)?;
-            }
-        }
-        _ => {}
-    }
-    Ok(())
+    Ok(ignored)
 }
 
 fn visit(
@@ -239,7 +201,8 @@ fn visit(
             ));
         }
     }
-    for field in ["skin", "weights", "camera"] {
+    // Cameras are not imported; skins and morph weights are not static.
+    for field in ["skin", "weights"] {
         if node.get(field).is_some() {
             return Err(unsupported(
                 format!("$.nodes[{index}].{field}"),
@@ -306,11 +269,11 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
         let view = accessor
             .view()
             .ok_or_else(|| unsupported(&path, "accessors must have a buffer view"))?;
-        if accessor.count() == 0 || accessor.count() > 98_304 {
+        if accessor.count() == 0 {
             return Err(ImportError::new(
                 "count_limit",
                 path,
-                "accessor count must be from 1 through 98304",
+                "accessors need at least one element",
             ));
         }
         let size = accessor.size();

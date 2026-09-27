@@ -1,6 +1,6 @@
 # Generated authoring schemas
 
-`scene-v7.schema.json` is generated from the versioned Rust types in
+`scene-v8.schema.json` is generated from the versioned Rust types in
 `engine_scene`, using its host-only `schema` feature. Regenerate deliberately:
 
 ```sh
@@ -16,6 +16,13 @@ collection limits. Runtime validation additionally checks unique IDs, references
 geometry, numeric invariants and authoring bounds. Use `cargo xtask assets` for
 the same validation used by the browser scene loader. Schemas do not encode or
 persist runtime entity IDs or asset handles.
+
+Version 8 gives materials glTF 2.0's metallic-roughness maps
+([decision 031](../adr-031-gltf-materials.md)): `texture` may be a map object
+with sampler and transform settings, beside `metallic_roughness_texture`,
+`normal_texture`, `normal_scale`, `occlusion_texture`, `occlusion_strength`,
+`emissive`, `emissive_texture`, `alpha_mode`, `alpha_cutoff` and
+`double_sided`. Plain texture IDs repeat from version 8 and clamp before it.
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

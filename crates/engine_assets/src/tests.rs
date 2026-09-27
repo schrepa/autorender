@@ -514,3 +514,106 @@ fn texture_admission_obeys_count_and_shared_cpu_budget_without_partial_changes()
     assert_eq!(library.texture_bytes(), 8);
     assert_eq!(library.resident_bytes(), 8);
 }
+
+#[test]
+fn gltf_material_maps_validate_and_every_texture_must_be_live() {
+    let mut library = AssetLibrary::default();
+    let mut other = AssetLibrary::default();
+    let texture = library.insert_texture(one_pixel()).unwrap();
+    let foreign = other.insert_texture(one_pixel()).unwrap();
+    let map = TextureRef::new(texture);
+    // glTF's defaults: repeating trilinear sampling, no transform.
+    assert_eq!(map.sampler, Sampler::REPEAT);
+    assert_eq!(map.transform, UvTransform::IDENTITY);
+    let plain = Material::new([1.0; 4]).unwrap();
+    assert!(!plain.has_maps());
+    let material = plain
+        .with_base_color_texture(map.with_sampler(Sampler::CLAMP))
+        .unwrap()
+        .with_metallic_roughness_texture(map)
+        .unwrap()
+        .with_normal_texture(map, 0.5)
+        .unwrap()
+        .with_occlusion_texture(map, 0.25)
+        .unwrap()
+        .with_emissive([4.0, 2.0, 0.0])
+        .unwrap()
+        .with_emissive_texture(map)
+        .unwrap();
+    assert!(material.has_maps());
+    assert_eq!(material.textures().count(), 5);
+    assert_eq!(material.texture(), Some(texture));
+    assert_eq!(
+        (material.normal_scale(), material.occlusion_strength()),
+        (0.5, 0.25)
+    );
+    library.insert_material(material).unwrap();
+    // A foreign texture in any map is refused.
+    let foreign_normal = plain
+        .with_normal_texture(TextureRef::new(foreign), 1.0)
+        .unwrap();
+    assert_eq!(
+        library.insert_material(foreign_normal).unwrap_err(),
+        AssetError::InvalidTextureHandle
+    );
+    // Parameters stay within their ranges.
+    let field = |error: AssetError| match error {
+        AssetError::InvalidMaterialMap { field } => field,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        field(plain.with_normal_texture(map, f32::NAN).unwrap_err()),
+        "normal_scale"
+    );
+    assert_eq!(
+        field(plain.with_occlusion_texture(map, 1.5).unwrap_err()),
+        "occlusion_strength"
+    );
+    assert_eq!(
+        field(plain.with_emissive([-1.0, 0.0, 0.0]).unwrap_err()),
+        "emissive"
+    );
+    let unplaced = map.with_transform(UvTransform {
+        rotation: f32::INFINITY,
+        ..UvTransform::IDENTITY
+    });
+    assert_eq!(
+        field(plain.with_base_color_texture(unplaced).unwrap_err()),
+        "transform"
+    );
+    assert_eq!(
+        field(
+            plain
+                .with_alpha_mode(AlphaMode::Mask { cutoff: -0.5 })
+                .unwrap_err()
+        ),
+        "alpha_cutoff"
+    );
+    assert_eq!(
+        AssetError::InvalidMaterialMap { field: "emissive" }.code(),
+        "asset.invalid_material_map"
+    );
+}
+
+#[test]
+fn alpha_modes_decide_transparency_and_which_materials_have_maps() {
+    let plain = Material::new([0.2, 0.4, 0.6, 1.0]).unwrap();
+    // An opacity below 1 blends, as before alpha modes.
+    let glass = plain.with_opacity(0.4).unwrap();
+    assert_eq!(glass.alpha_mode(), AlphaMode::Blend);
+    assert!(glass.is_transparent() && !glass.has_maps());
+    // A mask tests alpha instead: it is opaque, and binds its cutoff.
+    let cutout = glass
+        .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
+        .unwrap();
+    assert!(!cutout.is_transparent() && cutout.has_maps());
+    assert_eq!(cutout.opacity(), 0.4);
+    // Opaque materials ignore alpha.
+    let opaque = glass.with_alpha_mode(AlphaMode::Opaque).unwrap();
+    assert_eq!((opaque.opacity(), opaque.is_transparent()), (1.0, false));
+    // Blending at full alpha reads texture alpha, so it binds.
+    let blended = plain.with_alpha_mode(AlphaMode::Blend).unwrap();
+    assert!(blended.is_transparent() && blended.has_maps());
+    assert!(plain.with_double_sided(true).has_maps());
+    assert!(plain.with_emissive([0.0, 0.1, 0.0]).unwrap().has_maps());
+}

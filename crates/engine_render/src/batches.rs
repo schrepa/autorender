@@ -1,4 +1,4 @@
-//! CPU-only draw planning. Storage is reused for opaque mesh/texture batches.
+//! CPU-only draw planning. Storage is reused for mesh/material batches.
 
 use std::{
     collections::HashMap,
@@ -7,7 +7,9 @@ use std::{
     ops::Range,
 };
 
-use engine_core::{MeshHandle, RenderFrame, RenderInstance, RenderSnapshot, TextureHandle};
+use engine_core::{
+    MaterialHandle, MeshHandle, RenderFrame, RenderInstance, RenderSnapshot, TextureHandle,
+};
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
@@ -40,16 +42,32 @@ type GroupIds = HashMap<u64, u32, BuildHasherDefault<KeyHasher>>;
 pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
-    pub texture: Option<TextureHandle>,
-    /// Instances with an opacity below 1 draw in the transparent pass and
-    /// cast no shadow (decision 026).
+    /// The material whose maps the batch binds (decision 031).
+    pub material: Option<MaterialHandle>,
+    /// Transparent instances draw in the transparent pass and cast no shadow
+    /// (decision 026).
     pub transparent: bool,
     pub instances: Range<u32>,
 }
 
-/// Whether `instance` draws in the transparent pass (decision 026).
-pub(crate) fn is_transparent(instance: &RenderInstance) -> bool {
-    instance.color[3] < 1.0
+/// Whether `instance` draws in the transparent pass (decisions 026 and 031):
+/// `transparent` lists the snapshot's transparent materials.
+pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialHandle]) -> bool {
+    match instance.material {
+        Some(material) => transparent.contains(&material),
+        None => instance.color[3] < 1.0,
+    }
+}
+
+/// An instance's draw-group identity before source resolution: a material's
+/// alpha mode is fixed with its handle, so only unmapped instances need
+/// their opacity class.
+fn instance_key(instance: &RenderInstance) -> (MeshHandle, Option<MaterialHandle>, bool) {
+    (
+        instance.mesh,
+        instance.material,
+        instance.material.is_none() && instance.color[3] < 1.0,
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -64,6 +82,12 @@ pub(crate) enum SnapshotError {
     },
     MissingMesh {
         handle: MeshHandle,
+    },
+    DuplicateMaterial {
+        handle: MaterialHandle,
+    },
+    MissingMaterial {
+        handle: MaterialHandle,
     },
     DuplicateTexture {
         handle: TextureHandle,
@@ -89,14 +113,21 @@ impl fmt::Display for SnapshotError {
                 f,
                 "Render snapshot instance references missing mesh {handle:?}. Include its owned source in snapshot.meshes."
             ),
-
+            Self::DuplicateMaterial { handle } => write!(
+                f,
+                "Render snapshot contains duplicate source material {handle:?}. Include each material handle once."
+            ),
+            Self::MissingMaterial { handle } => write!(
+                f,
+                "Render snapshot instance references missing material {handle:?}. Include it in snapshot.materials."
+            ),
             Self::DuplicateTexture { handle } => write!(
                 f,
                 "Render snapshot contains duplicate source texture {handle:?}. Include each immutable texture handle once."
             ),
             Self::MissingTexture { handle } => write!(
                 f,
-                "Render snapshot instance references missing texture {handle:?}. Include its owned source in snapshot.textures."
+                "Render snapshot material references missing texture {handle:?}. Include its owned source in snapshot.textures."
             ),
             Self::InvalidCamera => f.write_str(
                 "Render snapshot view-projection contains a nonfinite value. Supply a finite camera matrix.",
@@ -106,37 +137,44 @@ impl fmt::Display for SnapshotError {
 }
 
 /// Indices avoid moving gameplay records. Counting scatter groups opaque draws
-/// by mesh/texture while preserving source order within each group, including
+/// by mesh/material while preserving source order within each group, including
 /// coherent static/moving runs. Exact keys retain ordering across pose/color
 /// edits; source validation still runs on every snapshot. Changed keys take
 /// O(N * (log M + log T) + M * T + M log M + T log T);
 /// unchanged keys take O(N + M log M + T log T + B log(M + T)) for B batches.
 /// Certified frames additionally retain one draw-group ID per stable slot;
 /// visibility-only changes scatter compact IDs without per-instance key lookup.
-/// Draw groups get compact IDs for the mesh, texture and opacity combinations
-/// in use, so no mesh or texture count bounds them.
+/// Draw groups get compact IDs for the mesh, material and opacity combinations
+/// in use, so no mesh or material count bounds them.
 #[derive(Default)]
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
     pub batches: Vec<DrawBatch>,
     source_indices: Vec<usize>,
+    material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
-    /// Texture sources referenced by emitted instances, sorted by handle for upload.
+    /// Material sources referenced by emitted instances, sorted by handle.
+    pub material_sources: Vec<usize>,
+    /// Texture sources those materials read, sorted by handle for upload.
     pub texture_sources: Vec<usize>,
+    /// Transparent materials among the supplied ones.
+    pub transparent_materials: Vec<MaterialHandle>,
     /// All supplied sources keep existing residency, including culled objects.
     mesh_handles: Vec<MeshHandle>,
+    material_handles: Vec<MaterialHandle>,
     texture_handles: Vec<TextureHandle>,
-    instance_keys: Vec<(MeshHandle, Option<TextureHandle>, bool)>,
+    instance_keys: Vec<(MeshHandle, Option<MaterialHandle>, bool)>,
     // Rebuild scratch: one draw group per admitted instance and one cursor
     // per group in use.
     instance_buckets: Vec<u32>,
     bucket_cursors: Vec<usize>,
-    // Compact IDs of draw-group keys (opacity class, mesh rank, texture slot)
+    // Compact IDs of draw-group keys (opacity class, mesh rank, material slot)
     // and each ID's key; they last as long as the slot mapping.
     group_ids: GroupIds,
     group_keys: Vec<u64>,
     group_order: Vec<u32>,
-    // Texture sources referenced by this plan's draws.
+    // Material and texture sources referenced by this plan's draws.
+    used_material_sources: Vec<bool>,
     used_texture_sources: Vec<bool>,
     /// Most instances the GPU's buffers hold; `None` bounds nothing.
     pub instance_limit: Option<usize>,
@@ -238,14 +276,18 @@ impl BatchPlan {
                 + self.bucket_cursors.capacity() * size_of::<usize>();
             let capacity_bytes = (self.ordered_instances.capacity()
                 + self.source_indices.capacity()
+                + self.material_source_indices.capacity()
                 + self.texture_source_indices.capacity()
+                + self.material_sources.capacity()
                 + self.texture_sources.capacity())
                 * size_of::<usize>()
                 + self.batches.capacity() * size_of::<DrawBatch>()
                 + self.mesh_handles.capacity() * size_of::<MeshHandle>()
+                + (self.material_handles.capacity() + self.transparent_materials.capacity())
+                    * size_of::<MaterialHandle>()
                 + self.texture_handles.capacity() * size_of::<TextureHandle>()
                 + self.instance_keys.capacity()
-                    * size_of::<(MeshHandle, Option<TextureHandle>, bool)>()
+                    * size_of::<(MeshHandle, Option<MaterialHandle>, bool)>()
                 + group_scratch_bytes;
             engine_profile::counter("memory.batch_plan_capacity_bytes", capacity_bytes as f64);
             engine_profile::counter(
@@ -271,9 +313,13 @@ impl BatchPlan {
         self.ordered_instances.clear();
         self.batches.clear();
         self.source_indices.clear();
+        self.material_source_indices.clear();
         self.texture_source_indices.clear();
+        self.material_sources.clear();
         self.texture_sources.clear();
+        self.transparent_materials.clear();
         self.mesh_handles.clear();
+        self.material_handles.clear();
         self.texture_handles.clear();
     }
 
@@ -286,9 +332,13 @@ impl BatchPlan {
         let instance_count = selected.map_or(snapshot.instances.len(), <[usize]>::len);
         let profile_validation = engine_profile::span("render", "batch_source_validation");
         self.source_indices.clear();
+        self.material_source_indices.clear();
         self.texture_source_indices.clear();
+        self.material_sources.clear();
         self.texture_sources.clear();
+        self.transparent_materials.clear();
         self.mesh_handles.clear();
+        self.material_handles.clear();
         self.texture_handles.clear();
         // Only the GPU's buffers bound instances; meshes and textures are
         // bounded by GPU memory alone.
@@ -321,6 +371,18 @@ impl BatchPlan {
                 .iter()
                 .map(|index| snapshot.meshes[*index].handle),
         );
+        self.material_source_indices
+            .reserve_exact(snapshot.materials.len());
+        self.material_source_indices
+            .extend(0..snapshot.materials.len());
+        self.material_source_indices
+            .sort_unstable_by_key(|index| snapshot.materials[*index].handle);
+        for pair in self.material_source_indices.windows(2) {
+            let handle = snapshot.materials[pair[0]].handle;
+            if handle == snapshot.materials[pair[1]].handle {
+                return Err(SnapshotError::DuplicateMaterial { handle });
+            }
+        }
         self.texture_source_indices
             .reserve_exact(snapshot.textures.len());
         self.texture_source_indices
@@ -331,6 +393,21 @@ impl BatchPlan {
             let handle = snapshot.textures[pair[0]].handle;
             if handle == snapshot.textures[pair[1]].handle {
                 return Err(SnapshotError::DuplicateTexture { handle });
+            }
+        }
+        // Every supplied material's textures must be supplied too.
+        for source in &snapshot.materials {
+            for handle in source.material.textures() {
+                if self
+                    .texture_source_indices
+                    .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
+                    .is_err()
+                {
+                    return Err(SnapshotError::MissingTexture { handle });
+                }
+            }
+            if source.material.is_transparent() {
+                self.transparent_materials.push(source.handle);
             }
         }
         drop(profile_sources);
@@ -352,13 +429,11 @@ impl BatchPlan {
                     .instance_keys
                     .iter()
                     .zip(selected_instances(snapshot, selected))
-                    .all(|(&key, (_, instance))| {
-                        key == (instance.mesh, instance.texture, is_transparent(instance))
-                    })
+                    .all(|(&key, (_, instance))| key == instance_key(instance))
         };
-        self.used_texture_sources.clear();
-        self.used_texture_sources
-            .resize(snapshot.textures.len(), false);
+        self.used_material_sources.clear();
+        self.used_material_sources
+            .resize(snapshot.materials.len(), false);
         if !reused {
             self.group_instances(snapshot, selected)?;
         } else {
@@ -366,16 +441,34 @@ impl BatchPlan {
             for batch in &mut self.batches {
                 // Sources are public mutable snapshot inputs. Unchanged keys
                 // still re-resolve after a source list reorder or replacement.
-                let (source_index, texture_index) = Self::resolve_sources(
+                let (source_index, material_index) = Self::resolve_sources(
                     snapshot,
                     &self.source_indices,
-                    &self.texture_source_indices,
+                    &self.material_source_indices,
                     batch.mesh,
-                    batch.texture,
+                    batch.material,
                 )?;
                 batch.source_index = source_index;
-                if let Some(index) = texture_index {
-                    self.used_texture_sources[index] = true;
+                if let Some(index) = material_index {
+                    self.used_material_sources[index] = true;
+                }
+            }
+        }
+        // Textures of the used materials.
+        self.used_texture_sources.clear();
+        self.used_texture_sources
+            .resize(snapshot.textures.len(), false);
+        for &index in &self.material_source_indices {
+            let source = &snapshot.materials[index];
+            self.material_handles.push(source.handle);
+            if self.used_material_sources[index] {
+                self.material_sources.push(index);
+                for handle in source.material.textures() {
+                    let rank = self
+                        .texture_source_indices
+                        .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
+                        .expect("validated above");
+                    self.used_texture_sources[self.texture_source_indices[rank]] = true;
                 }
             }
         }
@@ -389,10 +482,10 @@ impl BatchPlan {
             self.instance_keys.clear();
             if selected.is_none() {
                 self.instance_keys.reserve_exact(instance_count);
-                self.instance_keys
-                    .extend(selected_instances(snapshot, selected).map(|(_, instance)| {
-                        (instance.mesh, instance.texture, is_transparent(instance))
-                    }));
+                self.instance_keys.extend(
+                    selected_instances(snapshot, selected)
+                        .map(|(_, instance)| instance_key(instance)),
+                );
             }
         }
         self.order_reused = reused;
@@ -423,18 +516,24 @@ impl BatchPlan {
             let group = if cached != UNMAPPED_BUCKET {
                 cached
             } else {
-                let (mesh_rank, texture_rank) = Self::source_ranks(
+                let (mesh_rank, material_rank) = Self::source_ranks(
                     snapshot,
                     &self.source_indices,
-                    &self.texture_source_indices,
+                    &self.material_source_indices,
                     instance.mesh,
-                    instance.texture,
+                    instance.material,
                 )?;
                 self.key_resolutions += 1;
-                // Opaque groups sort first, then by mesh and texture.
-                let key = (u64::from(is_transparent(instance)) << 62)
+                let transparent = match material_rank {
+                    Some(rank) => snapshot.materials[self.material_source_indices[rank]]
+                        .material
+                        .is_transparent(),
+                    None => instance.color[3] < 1.0,
+                };
+                // Opaque groups sort first, then by mesh and material.
+                let key = (u64::from(transparent) << 62)
                     | ((mesh_rank as u64) << 31)
-                    | texture_rank.map_or(0, |rank| rank as u64 + 1);
+                    | material_rank.map_or(0, |rank| rank as u64 + 1);
                 let next = self.group_keys.len() as u32;
                 let group = *self.group_ids.entry(key).or_insert(next);
                 if group == next {
@@ -470,18 +569,18 @@ impl BatchPlan {
                 *count = start;
                 let key = self.group_keys[group as usize];
                 let source_index = self.source_indices[((key >> 31) & 0x7fff_ffff) as usize];
-                let texture_slot = (key & 0x7fff_ffff) as usize;
-                let texture = if texture_slot == 0 {
+                let material_slot = (key & 0x7fff_ffff) as usize;
+                let material = if material_slot == 0 {
                     None
                 } else {
-                    let index = self.texture_source_indices[texture_slot - 1];
-                    self.used_texture_sources[index] = true;
-                    Some(snapshot.textures[index].handle)
+                    let index = self.material_source_indices[material_slot - 1];
+                    self.used_material_sources[index] = true;
+                    Some(snapshot.materials[index].handle)
                 };
                 self.batches.push(DrawBatch {
                     mesh: snapshot.meshes[source_index].handle,
                     source_index,
-                    texture,
+                    material,
                     transparent: key >> 62 != 0,
                     instances: start as u32..end as u32,
                 });
@@ -502,36 +601,36 @@ impl BatchPlan {
     fn resolve_sources(
         snapshot: &RenderSnapshot,
         mesh_indices: &[usize],
-        texture_indices: &[usize],
+        material_indices: &[usize],
         mesh: MeshHandle,
-        texture: Option<TextureHandle>,
+        material: Option<MaterialHandle>,
     ) -> Result<(usize, Option<usize>), SnapshotError> {
-        let (mesh_rank, texture_rank) =
-            Self::source_ranks(snapshot, mesh_indices, texture_indices, mesh, texture)?;
+        let (mesh_rank, material_rank) =
+            Self::source_ranks(snapshot, mesh_indices, material_indices, mesh, material)?;
         Ok((
             mesh_indices[mesh_rank],
-            texture_rank.map(|rank| texture_indices[rank]),
+            material_rank.map(|rank| material_indices[rank]),
         ))
     }
 
     fn source_ranks(
         snapshot: &RenderSnapshot,
         mesh_indices: &[usize],
-        texture_indices: &[usize],
+        material_indices: &[usize],
         mesh: MeshHandle,
-        texture: Option<TextureHandle>,
+        material: Option<MaterialHandle>,
     ) -> Result<(usize, Option<usize>), SnapshotError> {
         let mesh_index = mesh_indices
             .binary_search_by_key(&mesh, |&index| snapshot.meshes[index].handle)
             .map_err(|_| SnapshotError::MissingMesh { handle: mesh })?;
-        let texture_index = texture
+        let material_index = material
             .map(|handle| {
-                texture_indices
-                    .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
-                    .map_err(|_| SnapshotError::MissingTexture { handle })
+                material_indices
+                    .binary_search_by_key(&handle, |&index| snapshot.materials[index].handle)
+                    .map_err(|_| SnapshotError::MissingMaterial { handle })
             })
             .transpose()?;
-        Ok((mesh_index, texture_index))
+        Ok((mesh_index, material_index))
     }
 
     /// Supplied sources retain already uploaded assets even when all their
@@ -541,6 +640,10 @@ impl BatchPlan {
     /// any internal references it needs until the GPU has finished with them.
     pub fn contains_mesh(&self, handle: MeshHandle) -> bool {
         self.mesh_handles.binary_search(&handle).is_ok()
+    }
+
+    pub fn contains_material(&self, handle: MaterialHandle) -> bool {
+        self.material_handles.binary_search(&handle).is_ok()
     }
 
     pub fn contains_texture(&self, handle: TextureHandle) -> bool {
@@ -562,7 +665,10 @@ fn selected_instances<'a>(
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
-    use engine_core::{AssetLibrary, Mesh, RenderInstance, RenderMesh, RenderTexture, Texture};
+    use engine_core::{
+        AssetLibrary, Material, Mesh, RenderInstance, RenderMaterial, RenderMesh, RenderTexture,
+        Texture,
+    };
     use glam::Mat4;
 
     use super::*;
@@ -648,6 +754,7 @@ mod tests {
             view_projection: frame.snapshot().view_projection,
             instances: vec![frame.snapshot().instances[frame.visible_indices()[0]]],
             meshes: frame.snapshot().meshes.clone(),
+            materials: frame.snapshot().materials.clone(),
             textures: frame.snapshot().textures.clone(),
             ..Default::default()
         };
@@ -682,10 +789,11 @@ mod tests {
                     color: [index as f32 / handles.len() as f32, 0.2, 0.8, 1.0],
                     surface: engine_core::Surface::MATTE,
                     mesh,
-                    texture: None,
+                    material: None,
                 })
                 .collect(),
             meshes,
+            materials: Vec::new(),
             textures: Vec::new(),
             camera_position: glam::Vec3::ZERO,
             atmosphere: Default::default(),
@@ -703,15 +811,32 @@ mod tests {
         }
     }
 
-    fn texture() -> RenderTexture {
+    /// An opaque textured material and the texture it reads, from one
+    /// library: a material's textures must be in its own library.
+    fn textured() -> (RenderMaterial, RenderTexture) {
+        textured_with_opacity(1.0)
+    }
+
+    /// Below an `opacity` of 1 the material blends (decision 026).
+    fn textured_with_opacity(opacity: f32) -> (RenderMaterial, RenderTexture) {
         let mut assets = AssetLibrary::default();
-        let handle = assets
+        let texture = assets
             .insert_texture(Texture::new(1, 1, vec![255; 4]).unwrap())
             .unwrap();
-        RenderTexture {
-            handle,
-            texture: Arc::clone(assets.texture(handle).unwrap()),
-        }
+        let material = Material::textured([1.0; 4], texture)
+            .unwrap()
+            .with_opacity(opacity)
+            .unwrap();
+        (
+            RenderMaterial {
+                handle: assets.insert_material(material).unwrap(),
+                material,
+            },
+            RenderTexture {
+                handle: texture,
+                texture: Arc::clone(assets.texture(texture).unwrap()),
+            },
+        )
     }
 
     fn assert_complete_plan(plan: &BatchPlan, snapshot: &RenderSnapshot) {
@@ -726,8 +851,12 @@ mod tests {
                 let index = plan.ordered_instances[offset as usize];
                 let instance = &snapshot.instances[index];
                 assert_eq!(
-                    (instance.mesh, instance.texture),
-                    (batch.mesh, batch.texture)
+                    (
+                        instance.mesh,
+                        instance.material,
+                        is_transparent(instance, &plan.transparent_materials)
+                    ),
+                    (batch.mesh, batch.material, batch.transparent)
                 );
                 assert!(!visited[index]);
                 visited[index] = true;
@@ -738,16 +867,32 @@ mod tests {
         let mut used: Vec<_> = snapshot
             .instances
             .iter()
-            .filter_map(|instance| instance.texture)
+            .filter_map(|instance| instance.material)
             .collect();
         used.sort_unstable();
         used.dedup();
+        assert_eq!(
+            plan.material_sources
+                .iter()
+                .map(|&index| snapshot.materials[index].handle)
+                .collect::<Vec<_>>(),
+            used
+        );
+        // Only the used materials' textures upload.
+        let mut textures: Vec<_> = snapshot
+            .materials
+            .iter()
+            .filter(|source| used.contains(&source.handle))
+            .flat_map(|source| source.material.textures())
+            .collect();
+        textures.sort_unstable();
+        textures.dedup();
         assert_eq!(
             plan.texture_sources
                 .iter()
                 .map(|&index| snapshot.textures[index].handle)
                 .collect::<Vec<_>>(),
-            used
+            textures
         );
     }
 
@@ -755,8 +900,8 @@ mod tests {
     fn grouping_preserves_source_order_after_membership_changes() {
         let first = mesh();
         let second = mesh();
-        let first_texture = texture();
-        let second_texture = texture();
+        let (first_material, first_texture) = textured();
+        let (second_material, second_texture) = textured();
         let handles = [
             second.handle,
             first.handle,
@@ -766,10 +911,11 @@ mod tests {
             first.handle,
         ];
         let mut scene = snapshot(vec![second, first], &handles);
-        scene.instances[0].texture = Some(second_texture.handle);
-        scene.instances[2].texture = Some(second_texture.handle);
-        scene.instances[3].texture = Some(first_texture.handle);
-        scene.instances[5].texture = Some(first_texture.handle);
+        scene.instances[0].material = Some(second_material.handle);
+        scene.instances[2].material = Some(second_material.handle);
+        scene.instances[3].material = Some(first_material.handle);
+        scene.instances[5].material = Some(first_material.handle);
+        scene.materials = vec![second_material, first_material];
         scene.textures = vec![second_texture, first_texture];
         let mut plan = BatchPlan::default();
         for edit in 0..3 {
@@ -783,7 +929,7 @@ mod tests {
             assert_complete_plan(&plan, &scene);
             let mut previous_key = None;
             for batch in &plan.batches {
-                let key = (batch.mesh, batch.texture);
+                let key = (batch.mesh, batch.material);
                 assert!(previous_key.is_none_or(|previous| previous < key));
                 previous_key = Some(key);
                 let expected: Vec<_> = scene
@@ -791,7 +937,7 @@ mod tests {
                     .iter()
                     .enumerate()
                     .filter_map(|(index, instance)| {
-                        ((instance.mesh, instance.texture) == key).then_some(index)
+                        ((instance.mesh, instance.material) == key).then_some(index)
                     })
                     .collect();
                 assert_eq!(
@@ -807,11 +953,12 @@ mod tests {
     fn static_cache_pose_color_and_camera_edits_retain_batch_order_ranges_and_storage() {
         let first = mesh();
         let second = mesh();
-        let source_texture = texture();
+        let (source_material, source_texture) = textured();
         let handles = [second.handle, first.handle, second.handle, first.handle];
         let mut scene = snapshot(vec![first, second], &handles);
-        scene.instances[1].texture = Some(source_texture.handle);
-        scene.instances[3].texture = Some(source_texture.handle);
+        scene.instances[1].material = Some(source_material.handle);
+        scene.instances[3].material = Some(source_material.handle);
+        scene.materials.push(source_material);
         scene.textures.push(source_texture);
         let mut plan = BatchPlan::default();
         plan.prepare(&scene).unwrap();
@@ -820,7 +967,7 @@ mod tests {
         let ranges: Vec<_> = plan
             .batches
             .iter()
-            .map(|batch| (batch.mesh, batch.texture, batch.instances.clone()))
+            .map(|batch| (batch.mesh, batch.material, batch.instances.clone()))
             .collect();
         let storage = (
             plan.ordered_instances.as_ptr(),
@@ -839,7 +986,7 @@ mod tests {
             assert_eq!(
                 plan.batches
                     .iter()
-                    .map(|batch| (batch.mesh, batch.texture, batch.instances.clone()))
+                    .map(|batch| (batch.mesh, batch.material, batch.instances.clone()))
                     .collect::<Vec<_>>(),
                 ranges
             );
@@ -859,19 +1006,22 @@ mod tests {
     fn static_cache_source_reorders_key_changes_and_scene_replacement_keep_mappings_current() {
         let first = mesh();
         let second = mesh();
-        let first_texture = texture();
-        let second_texture = texture();
+        let (first_material, first_texture) = textured();
+        let (second_material, second_texture) = textured();
         let handles = [first.handle, second.handle, first.handle];
+        let material_handles = [first_material.handle, second_material.handle];
         let texture_handles = [first_texture.handle, second_texture.handle];
         let mut scene = snapshot(vec![first, second], &handles);
-        scene.instances[0].texture = Some(texture_handles[0]);
-        scene.instances[1].texture = Some(texture_handles[1]);
+        scene.instances[0].material = Some(material_handles[0]);
+        scene.instances[1].material = Some(material_handles[1]);
+        scene.materials = vec![first_material, second_material];
         scene.textures = vec![first_texture, second_texture];
         let mut plan = BatchPlan::default();
         plan.prepare(&scene).unwrap();
 
         // Source order is independent of instance order and upload residency.
         scene.meshes.swap(0, 1);
+        scene.materials.swap(0, 1);
         scene.textures.swap(0, 1);
         plan.prepare(&scene).unwrap();
         assert!(plan.order_reused);
@@ -884,7 +1034,7 @@ mod tests {
         plan.prepare(&scene).unwrap();
         assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
-        scene.instances[0].texture = Some(texture_handles[0]);
+        scene.instances[0].material = Some(material_handles[0]);
         plan.prepare(&scene).unwrap();
         assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
@@ -894,24 +1044,30 @@ mod tests {
         assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
         assert!(plan.contains_mesh(handles[0]));
+        assert!(plan.contains_material(material_handles[0]));
         assert!(plan.contains_texture(texture_handles[0]));
         scene.meshes.clear();
+        scene.materials.clear();
         scene.textures.clear();
         plan.prepare(&scene).unwrap();
         assert!(plan.order_reused);
         assert!(!plan.contains_mesh(handles[0]));
+        assert!(!plan.contains_material(material_handles[0]));
         assert!(!plan.contains_texture(texture_handles[0]));
 
         let replacement_mesh = mesh();
-        let replacement_texture = texture();
+        let (replacement_material, replacement_texture) = textured();
         let replacement_handle = replacement_mesh.handle;
         scene = snapshot(vec![replacement_mesh], &[replacement_handle]);
-        scene.instances[0].texture = Some(replacement_texture.handle);
+        scene.instances[0].material = Some(replacement_material.handle);
+        scene.materials.push(replacement_material);
         scene.textures.push(replacement_texture);
         plan.prepare(&scene).unwrap();
         assert!(!plan.order_reused);
         assert!(plan.contains_mesh(replacement_handle));
+        assert!(plan.contains_material(replacement_material.handle));
         assert!(!plan.contains_mesh(handles[0]));
+        assert!(!plan.contains_material(material_handles[0]));
         assert!(!plan.contains_texture(texture_handles[0]));
         assert_complete_plan(&plan, &scene);
     }
@@ -919,39 +1075,53 @@ mod tests {
     #[test]
     fn static_cache_failed_prepares_clear_partial_plans_and_valid_retries_rebuild() {
         let source = mesh();
-        let source_texture = texture();
+        let (source_material, source_texture) = textured();
         let handle = source.handle;
+        let material_handle = source_material.handle;
         let texture_handle = source_texture.handle;
         let missing = mesh().handle;
         let mut scene = snapshot(vec![source.clone()], &[handle, handle]);
-        scene.instances[1].texture = Some(texture_handle);
+        scene.instances[1].material = Some(material_handle);
+        scene.materials.push(source_material);
         scene.textures.push(source_texture.clone());
         let mut plan = BatchPlan::default();
         plan.prepare(&scene).unwrap();
         let capacity = plan.ordered_instances.capacity();
-        for failure in 0..6 {
+        for failure in 0..8 {
             let expected = match failure {
                 0 => {
                     scene.meshes.clear();
                     SnapshotError::MissingMesh { handle }
                 }
                 1 => {
+                    scene.materials.clear();
+                    SnapshotError::MissingMaterial {
+                        handle: material_handle,
+                    }
+                }
+                2 => {
                     scene.textures.clear();
                     SnapshotError::MissingTexture {
                         handle: texture_handle,
                     }
                 }
-                2 => {
+                3 => {
                     // Sorting starts over and may already have formed valid
                     // ranges before encountering this missing source.
                     scene.instances[1].mesh = missing;
                     SnapshotError::MissingMesh { handle: missing }
                 }
-                3 => {
+                4 => {
                     scene.view_projection.x_axis.x = f32::NAN;
                     SnapshotError::InvalidCamera
                 }
-                4 => {
+                5 => {
+                    scene.materials.push(source_material);
+                    SnapshotError::DuplicateMaterial {
+                        handle: material_handle,
+                    }
+                }
+                6 => {
                     scene.textures.push(source_texture.clone());
                     SnapshotError::DuplicateTexture {
                         handle: texture_handle,
@@ -970,14 +1140,17 @@ mod tests {
             assert!(!plan.order_reused);
             assert!(plan.ordered_instances.is_empty());
             assert!(plan.batches.is_empty());
+            assert!(plan.material_sources.is_empty());
             assert!(plan.texture_sources.is_empty());
             assert!(plan.instance_keys.is_empty());
             assert!(!plan.contains_mesh(handle));
+            assert!(!plan.contains_material(material_handle));
             assert!(!plan.contains_texture(texture_handle));
             assert_eq!(plan.ordered_instances.capacity(), capacity);
 
             scene.view_projection = Mat4::IDENTITY;
             scene.meshes = vec![source.clone()];
+            scene.materials = vec![source_material];
             scene.textures = vec![source_texture.clone()];
             scene.instances[1].mesh = handle;
             plan.instance_limit = None;
@@ -1004,22 +1177,53 @@ mod tests {
         for batch in &plan.batches {
             for offset in batch.instances.clone() {
                 let instance = &snapshot.instances[plan.ordered_instances[offset as usize]];
-                assert_eq!(is_transparent(instance), batch.transparent);
+                assert_eq!(
+                    is_transparent(instance, &plan.transparent_materials),
+                    batch.transparent
+                );
             }
         }
-        // An opacity change regroups even with the same mesh and texture.
+        // An opacity change regroups even with the same mesh and no material.
         snapshot.instances[1].color[3] = 1.0;
         plan.prepare(&snapshot).unwrap();
         assert_eq!(plan.batches[0].instances.len(), 3);
         assert_eq!(plan.batches[1].instances.len(), 1);
+
+        // A mapped instance's material alpha mode decides, not its color.
+        let (opaque, opaque_texture) = textured();
+        let (glass, glass_texture) = textured_with_opacity(0.5);
+        snapshot.instances[0].material = Some(opaque.handle);
+        snapshot.instances[0].color[3] = 0.5;
+        snapshot.instances[2].material = Some(glass.handle);
+        snapshot.materials = vec![glass, opaque];
+        snapshot.textures = vec![glass_texture, opaque_texture];
+        plan.prepare(&snapshot).unwrap();
+        assert_eq!(plan.transparent_materials, [glass.handle]);
+        assert_eq!(
+            plan.batches
+                .iter()
+                .map(|batch| (batch.transparent, batch.material))
+                .collect::<Vec<_>>(),
+            [
+                (false, None),
+                (false, Some(opaque.handle)),
+                (true, None),
+                (true, Some(glass.handle)),
+            ]
+        );
+        assert_complete_plan(&plan, &snapshot);
+        // Its color's opacity is not part of its draw group.
+        snapshot.instances[0].color[3] = 1.0;
+        plan.prepare(&snapshot).unwrap();
+        assert!(plan.order_reused);
     }
 
     #[test]
-    fn colors_share_draws_but_different_textures_split_mesh_batches() {
+    fn colors_share_draws_but_different_materials_split_mesh_batches() {
         let first_mesh = mesh();
         let second_mesh = mesh();
-        let first_texture = texture();
-        let second_texture = texture();
+        let (first_material, first_texture) = textured();
+        let (second_material, second_texture) = textured();
         let handles = [
             first_mesh.handle,
             second_mesh.handle,
@@ -1027,21 +1231,23 @@ mod tests {
             first_mesh.handle,
             first_mesh.handle,
         ];
-        let textures = [
-            Some(first_texture.handle),
-            Some(first_texture.handle),
+        let materials = [
+            Some(first_material.handle),
+            Some(first_material.handle),
             None,
-            Some(second_texture.handle),
-            Some(first_texture.handle),
+            Some(second_material.handle),
+            Some(first_material.handle),
         ];
         let mut snapshot = snapshot(vec![second_mesh, first_mesh], &handles);
-        for (instance, texture) in snapshot.instances.iter_mut().zip(textures) {
-            instance.texture = texture;
+        for (instance, material) in snapshot.instances.iter_mut().zip(materials) {
+            instance.material = material;
         }
+        snapshot.materials = vec![second_material, first_material];
         snapshot.textures = vec![second_texture, first_texture];
         let mut plan = BatchPlan::default();
         plan.prepare(&snapshot).unwrap();
         assert_eq!(plan.batches.len(), 4);
+        assert_eq!(plan.material_sources.len(), 2);
         assert_eq!(plan.texture_sources.len(), 2);
         assert!(plan.batches.iter().any(|batch| batch.instances.len() == 2));
         let mut visited = [false; 5];
@@ -1050,8 +1256,8 @@ mod tests {
                 let index = plan.ordered_instances[offset as usize];
                 let instance = &snapshot.instances[index];
                 assert_eq!(
-                    (instance.mesh, instance.texture),
-                    (batch.mesh, batch.texture)
+                    (instance.mesh, instance.material),
+                    (batch.mesh, batch.material)
                 );
                 assert!(!visited[index]);
                 visited[index] = true;
@@ -1061,6 +1267,7 @@ mod tests {
         let capacities = (
             plan.ordered_instances.capacity(),
             plan.batches.capacity(),
+            plan.material_sources.capacity(),
             plan.texture_sources.capacity(),
         );
         plan.prepare(&snapshot).unwrap();
@@ -1069,40 +1276,60 @@ mod tests {
             (
                 plan.ordered_instances.capacity(),
                 plan.batches.capacity(),
+                plan.material_sources.capacity(),
                 plan.texture_sources.capacity()
             )
         );
     }
 
     #[test]
-    fn missing_and_duplicate_texture_sources_fail_before_residency_changes() {
+    fn missing_and_duplicate_material_sources_fail_before_residency_changes() {
         let source_mesh = mesh();
         let mesh_handle = source_mesh.handle;
-        let source = texture();
+        let (source, source_texture) = textured();
         let handle = source.handle;
+        let texture_handle = source_texture.handle;
         let mut snapshot = snapshot(vec![source_mesh], &[mesh_handle]);
-        snapshot.instances[0].texture = Some(handle);
+        snapshot.instances[0].material = Some(handle);
         let mut plan = BatchPlan::default();
         assert_eq!(
             plan.prepare(&snapshot),
-            Err(SnapshotError::MissingTexture { handle })
+            Err(SnapshotError::MissingMaterial { handle })
         );
-        snapshot.textures = vec![source.clone(), source];
+        snapshot.materials = vec![source, source];
         assert_eq!(
             plan.prepare(&snapshot),
-            Err(SnapshotError::DuplicateTexture { handle })
+            Err(SnapshotError::DuplicateMaterial { handle })
+        );
+        // Every listed material's textures must be listed, even when no
+        // instance uses the material.
+        snapshot.materials = vec![source];
+        snapshot.instances[0].material = None;
+        assert_eq!(
+            plan.prepare(&snapshot),
+            Err(SnapshotError::MissingTexture {
+                handle: texture_handle
+            })
+        );
+        snapshot.textures = vec![source_texture.clone(), source_texture];
+        assert_eq!(
+            plan.prepare(&snapshot),
+            Err(SnapshotError::DuplicateTexture {
+                handle: texture_handle
+            })
         );
     }
 
     #[test]
-    fn many_meshes_and_textures_plan_and_the_instance_limit_rejects_first() {
+    fn many_meshes_and_materials_plan_and_the_instance_limit_rejects_first() {
         let meshes: Vec<_> = (0..300).map(|_| mesh()).collect();
-        let textures: Vec<_> = (0..200).map(|_| texture()).collect();
+        let (materials, textures): (Vec<_>, Vec<_>) = (0..200).map(|_| textured()).unzip();
         let handles: Vec<_> = meshes.iter().map(|source| source.handle).collect();
         let mut scene = snapshot(meshes, &handles);
         for (index, instance) in scene.instances.iter_mut().enumerate() {
-            instance.texture = Some(textures[index % textures.len()].handle);
+            instance.material = Some(materials[index % materials.len()].handle);
         }
+        scene.materials = materials;
         scene.textures = textures;
         let mut plan = BatchPlan::default();
         plan.prepare(&scene).unwrap();
@@ -1123,41 +1350,51 @@ mod tests {
     }
 
     #[test]
-    fn culled_texture_sources_retain_residency_without_uploads() {
+    fn culled_material_and_texture_sources_retain_residency_without_uploads() {
         let source_mesh = mesh();
         let mesh_handle = source_mesh.handle;
-        let first = texture();
-        let second = texture();
+        let (first, first_texture) = textured();
+        let (second, second_texture) = textured();
         let first_handle = first.handle;
         let second_handle = second.handle;
+        let second_texture_handle = second_texture.handle;
         let mut snapshot = snapshot(vec![source_mesh], &[mesh_handle, mesh_handle]);
         snapshot
             .instances
             .iter_mut()
-            .for_each(|instance| instance.texture = Some(second_handle));
-        snapshot.textures = vec![first, second];
+            .for_each(|instance| instance.material = Some(second_handle));
+        let mut materials = BTreeMap::from([(first_handle, 4), (second_handle, 4)]);
+        let mut textures = BTreeMap::from([(first_texture.handle, 4), (second_texture_handle, 4)]);
+        snapshot.materials = vec![first, second];
+        snapshot.textures = vec![first_texture, second_texture];
+        // Resident GPU entries remain while the plan still lists their sources.
+        let mut resident = |plan: &BatchPlan| {
+            materials.retain(|handle, _| plan.contains_material(*handle));
+            textures.retain(|handle, _| plan.contains_texture(*handle));
+            (materials.len(), textures.len())
+        };
         let mut plan = BatchPlan::default();
-        let mut resident = BTreeMap::from([(first_handle, 4), (second_handle, 4)]);
         plan.prepare(&snapshot).unwrap();
+        assert_eq!(plan.material_sources.len(), 1);
+        assert_eq!(
+            snapshot.materials[plan.material_sources[0]].handle,
+            second_handle
+        );
         assert_eq!(plan.texture_sources.len(), 1);
         assert_eq!(
             snapshot.textures[plan.texture_sources[0]].handle,
-            second_handle
+            second_texture_handle
         );
-        resident.retain(|handle, _| plan.contains_texture(*handle));
-        assert_eq!(
-            resident,
-            BTreeMap::from([(first_handle, 4), (second_handle, 4)])
-        );
+        assert_eq!(resident(&plan), (2, 2));
         snapshot.instances.clear();
         plan.prepare(&snapshot).unwrap();
-        resident.retain(|handle, _| plan.contains_texture(*handle));
-        assert_eq!(resident.len(), 2);
+        assert_eq!(resident(&plan), (2, 2));
+        assert!(plan.material_sources.is_empty());
         assert!(plan.texture_sources.is_empty());
+        snapshot.materials.clear();
         snapshot.textures.clear();
         plan.prepare(&snapshot).unwrap();
-        resident.retain(|handle, _| plan.contains_texture(*handle));
-        assert!(resident.is_empty());
+        assert_eq!(resident(&plan), (0, 0));
     }
 
     #[test]
@@ -1244,26 +1481,37 @@ mod tests {
     fn first_culled_appearance_has_no_upload_plan_and_returning_visibility_reuses_handles() {
         let source_mesh = mesh();
         let mesh_handle = source_mesh.handle;
-        let source_texture = texture();
+        let (source_material, source_texture) = textured();
+        let material_handle = source_material.handle;
         let texture_handle = source_texture.handle;
         let mut snapshot = snapshot(vec![source_mesh], &[]);
+        snapshot.materials.push(source_material);
         snapshot.textures.push(source_texture);
         let mut plan = BatchPlan::default();
         plan.prepare(&snapshot).unwrap();
         assert!(plan.contains_mesh(mesh_handle));
+        assert!(plan.contains_material(material_handle));
         assert!(plan.contains_texture(texture_handle));
         assert!(plan.batches.is_empty());
+        assert!(plan.material_sources.is_empty());
         assert!(plan.texture_sources.is_empty());
         snapshot.instances.push(RenderInstance {
             model: Mat4::IDENTITY,
             color: [1.0; 4],
             surface: engine_core::Surface::MATTE,
             mesh: mesh_handle,
-            texture: Some(texture_handle),
+            material: Some(material_handle),
         });
         plan.prepare(&snapshot).unwrap();
         assert_eq!(plan.batches.len(), 1);
-        assert_eq!(plan.batches[0].mesh, mesh_handle);
+        assert_eq!(
+            (plan.batches[0].mesh, plan.batches[0].material),
+            (mesh_handle, Some(material_handle))
+        );
+        assert_eq!(
+            snapshot.materials[plan.material_sources[0]].handle,
+            material_handle
+        );
         assert_eq!(
             snapshot.textures[plan.texture_sources[0]].handle,
             texture_handle
@@ -1271,12 +1519,21 @@ mod tests {
         let visible = snapshot.instances.pop().unwrap();
         plan.prepare(&snapshot).unwrap();
         assert!(plan.batches.is_empty());
+        assert!(plan.material_sources.is_empty());
         assert!(plan.texture_sources.is_empty());
         assert!(plan.contains_mesh(mesh_handle));
+        assert!(plan.contains_material(material_handle));
         assert!(plan.contains_texture(texture_handle));
         snapshot.instances.push(visible);
         plan.prepare(&snapshot).unwrap();
-        assert_eq!(plan.batches[0].mesh, mesh_handle);
+        assert_eq!(
+            (plan.batches[0].mesh, plan.batches[0].material),
+            (mesh_handle, Some(material_handle))
+        );
+        assert_eq!(
+            snapshot.materials[plan.material_sources[0]].handle,
+            material_handle
+        );
         assert_eq!(
             snapshot.textures[plan.texture_sources[0]].handle,
             texture_handle

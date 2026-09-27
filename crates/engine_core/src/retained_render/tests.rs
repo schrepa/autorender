@@ -8,7 +8,7 @@ fn engine() -> Engine {
     engine
 }
 
-type InstanceFingerprint = (MeshHandle, Option<TextureHandle>, [u32; 16], [u32; 4]);
+type InstanceFingerprint = (MeshHandle, Option<MaterialHandle>, [u32; 16], [u32; 4]);
 
 fn fingerprint(frame: RenderFrame<'_>) -> Vec<InstanceFingerprint> {
     frame
@@ -18,7 +18,7 @@ fn fingerprint(frame: RenderFrame<'_>) -> Vec<InstanceFingerprint> {
             let record = &frame.snapshot().instances[index];
             (
                 record.mesh,
-                record.texture,
+                record.material,
                 frame.model(index).to_cols_array().map(f32::to_bits),
                 record.color.map(f32::to_bits),
             )
@@ -172,7 +172,7 @@ fn retained_asset_invalidation_and_entity_reuse_match_owned_extraction() {
         .map(|record| {
             (
                 record.mesh,
-                record.texture,
+                record.material,
                 record.model.to_cols_array().map(f32::to_bits),
                 record.color.map(f32::to_bits),
             )

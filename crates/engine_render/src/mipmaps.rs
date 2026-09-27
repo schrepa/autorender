@@ -1,15 +1,15 @@
-//! Mip chains of base color textures, generated on the GPU when a texture
+//! Mip chains of material textures, generated on the GPU when a texture
 //! becomes resident: one small render pass per level, each averaging the
 //! level above. Uploads stay the base level's texels; the chain adds at most a
 //! third of them in GPU memory and costs no CPU work beyond command encoding.
+//! Color textures average in linear light through their sRGB format; data
+//! textures (decision 031) average their stored values.
 
 use crate::gpu_data::MIPMAP_SHADER;
 
-/// Base color texture format; its levels are rendered in the same format.
-pub(crate) const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-
 pub(crate) struct MipGenerator {
-    pipeline: wgpu::RenderPipeline,
+    // sRGB color and linear data targets.
+    pipelines: [wgpu::RenderPipeline; 2],
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
 }
@@ -46,26 +46,32 @@ impl MipGenerator {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/texture-mips"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_mip"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_mip"),
-                compilation_options: Default::default(),
-                targets: &[Some(TEXTURE_FORMAT.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
+        let pipelines = [
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::TextureFormat::Rgba8Unorm,
+        ]
+        .map(|format| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("engine/texture-mips"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_mip"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_mip"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(format.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/texture-mip-sampler"),
@@ -76,7 +82,7 @@ impl MipGenerator {
             ..Default::default()
         });
         Self {
-            pipeline,
+            pipelines,
             layout,
             sampler,
         }
@@ -134,7 +140,7 @@ impl MipGenerator {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&self.pipelines[usize::from(!texture.format().is_srgb())]);
             pass.set_bind_group(0, &group, &[]);
             pass.draw(0..3, 0..1);
         }

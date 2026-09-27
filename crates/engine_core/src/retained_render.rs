@@ -21,8 +21,9 @@ use crate::hierarchy::HierarchyScratch;
 
 use crate::{
     Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
-    Mesh3d, MeshHandle, PresentedTransforms, RenderInstance, RenderMesh, RenderQuery,
-    RenderSnapshot, RenderTexture, Surface, TextureHandle, Transform, TransformIndex,
+    MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance, RenderMaterial,
+    RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface, TextureHandle, Transform,
+    TransformIndex,
     culling::{Classification, Frustum},
     hierarchy::ChangeWindow,
 };
@@ -78,7 +79,7 @@ pub struct RenderFrame<'a> {
 }
 
 impl<'a> RenderFrame<'a> {
-    /// Slot metadata (mesh, texture, color), counters, camera and sources.
+    /// Slot metadata (mesh, material, color), counters, camera and sources.
     pub fn snapshot(self) -> &'a RenderSnapshot {
         &self.owner.snapshot
     }
@@ -178,9 +179,9 @@ impl<'a> RenderFrame<'a> {
 
 struct ResolvedSource {
     mesh_index: usize,
-    texture_index: Option<usize>,
+    material_index: Option<usize>,
     mesh: MeshHandle,
-    texture: Option<TextureHandle>,
+    material: Option<MaterialHandle>,
     color: [f32; 4],
     surface: Surface,
 }
@@ -217,10 +218,10 @@ impl SourceKey {
 struct SlotFrame {
     // Published presented revisions are never 0.
     pose_revision: u64,
-    // Source indices of the resolved mesh/texture; NO_SOURCE when unresolved
-    // (mesh) or untextured (texture).
+    // Source indices of the resolved mesh/material; NO_SOURCE when unresolved
+    // (mesh) or without maps (material).
     mesh: u32,
-    texture: u32,
+    material: u32,
     source: SourceKey,
     outside: bool,
 }
@@ -229,7 +230,7 @@ impl SlotFrame {
     const NEW: Self = Self {
         pose_revision: 0,
         mesh: NO_SOURCE,
-        texture: NO_SOURCE,
+        material: NO_SOURCE,
         source: SourceKey::UNKNOWN,
         outside: false,
     };
@@ -240,26 +241,33 @@ struct Sources {
     meshes: Vec<RenderMesh>,
     // Local bounds of each mesh source, read by culling through slot indices.
     bounds: Vec<Aabb>,
+    // Materials with maps (decision 031) and the textures they read.
+    materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
     mesh_indices: HashMap<MeshHandle, usize>,
+    material_indices: HashMap<MaterialHandle, usize>,
     texture_indices: HashMap<TextureHandle, usize>,
     mesh_used: Vec<bool>,
-    texture_used: Vec<bool>,
+    material_used: Vec<bool>,
     previous_mesh_used: Vec<bool>,
-    previous_texture_used: Vec<bool>,
+    previous_material_used: Vec<bool>,
+    // Publishing scratch: textures already listed.
+    texture_listed: Vec<bool>,
 }
 
 impl Sources {
     fn clear(&mut self) {
         self.meshes.clear();
         self.bounds.clear();
+        self.materials.clear();
         self.textures.clear();
         self.mesh_indices.clear();
+        self.material_indices.clear();
         self.texture_indices.clear();
         self.mesh_used.clear();
-        self.texture_used.clear();
+        self.material_used.clear();
         self.previous_mesh_used.clear();
-        self.previous_texture_used.clear();
+        self.previous_material_used.clear();
     }
 
     fn resolve(
@@ -269,12 +277,12 @@ impl Sources {
         cube: Option<&Cube>,
         mesh3d: Option<&Mesh3d>,
     ) -> Option<ResolvedSource> {
-        let (handle, color, texture_handle, surface) = if let Some(mesh3d) = mesh3d {
+        let (handle, color, mapped, surface) = if let Some(mesh3d) = mesh3d {
             let material = assets.material(mesh3d.material)?;
             (
                 mesh3d.mesh,
                 material.color(),
-                material.texture(),
+                material.has_maps().then_some((mesh3d.material, material)),
                 material.surface(),
             )
         } else {
@@ -284,10 +292,11 @@ impl Sources {
         };
         let mesh = assets.mesh(handle)?;
         // Resolve all weak handles before retaining any source for this record.
-        let texture = match texture_handle {
-            Some(handle) => Some(assets.texture(handle)?),
-            None => None,
-        };
+        if let Some((_, material)) = mapped {
+            for texture in material.textures() {
+                assets.texture(texture)?;
+            }
+        }
         let mesh_index = *self.mesh_indices.entry(handle).or_insert_with(|| {
             let index = self.meshes.len();
             self.meshes.push(RenderMesh {
@@ -298,22 +307,35 @@ impl Sources {
             self.mesh_used.push(false);
             index
         });
-        let texture_index = texture_handle.zip(texture).map(|(handle, texture)| {
-            *self.texture_indices.entry(handle).or_insert_with(|| {
-                let index = self.textures.len();
-                self.textures.push(RenderTexture {
-                    handle,
-                    texture: Arc::clone(texture),
-                });
-                self.texture_used.push(false);
-                index
-            })
+        let material_index = mapped.map(|(material_handle, material)| {
+            *self
+                .material_indices
+                .entry(material_handle)
+                .or_insert_with(|| {
+                    for texture in material.textures() {
+                        self.texture_indices.entry(texture).or_insert_with(|| {
+                            self.textures.push(RenderTexture {
+                                handle: texture,
+                                texture: Arc::clone(
+                                    assets.texture(texture).expect("resolved above"),
+                                ),
+                            });
+                            self.textures.len() - 1
+                        });
+                    }
+                    self.materials.push(RenderMaterial {
+                        handle: material_handle,
+                        material: *material,
+                    });
+                    self.material_used.push(false);
+                    self.materials.len() - 1
+                })
         });
         Some(ResolvedSource {
             mesh_index,
-            texture_index,
+            material_index,
             mesh: handle,
-            texture: texture_handle,
+            material: mapped.map(|(material, _)| material),
             color,
             surface,
         })
@@ -322,11 +344,12 @@ impl Sources {
     fn publish(&mut self, snapshot: &mut RenderSnapshot, force: bool) -> bool {
         if !force
             && self.mesh_used == self.previous_mesh_used
-            && self.texture_used == self.previous_texture_used
+            && self.material_used == self.previous_material_used
         {
             return false;
         }
         snapshot.meshes.clear();
+        snapshot.materials.clear();
         snapshot.textures.clear();
         snapshot.meshes.extend(
             self.meshes
@@ -335,15 +358,25 @@ impl Sources {
                 .filter(|(_, used)| **used)
                 .map(|(mesh, _)| mesh.clone()),
         );
-        snapshot.textures.extend(
-            self.textures
-                .iter()
-                .zip(&self.texture_used)
-                .filter(|(_, used)| **used)
-                .map(|(texture, _)| texture.clone()),
-        );
+        // Used materials and each of their textures once.
+        self.texture_listed.clear();
+        self.texture_listed.resize(self.textures.len(), false);
+        for (material, _) in self
+            .materials
+            .iter()
+            .zip(&self.material_used)
+            .filter(|(_, used)| **used)
+        {
+            snapshot.materials.push(*material);
+            for texture in material.material.textures() {
+                let index = self.texture_indices[&texture];
+                if !std::mem::replace(&mut self.texture_listed[index], true) {
+                    snapshot.textures.push(self.textures[index].clone());
+                }
+            }
+        }
         self.previous_mesh_used.clone_from(&self.mesh_used);
-        self.previous_texture_used.clone_from(&self.texture_used);
+        self.previous_material_used.clone_from(&self.material_used);
         true
     }
 }
@@ -513,7 +546,7 @@ impl RetainedRender {
                 // Retained frames read poses through `pose_indices`.
                 self.snapshot.instances.push(RenderInstance {
                     mesh: cube,
-                    texture: None,
+                    material: None,
                     model: Mat4::IDENTITY,
                     color: [1.0; 4],
                     surface: Surface::MATTE,
@@ -656,7 +689,7 @@ impl RetainedRender {
             self.asset_revision = Some(revision);
         }
         self.sources.mesh_used.fill(false);
-        self.sources.texture_used.fill(false);
+        self.sources.material_used.fill(false);
         let view = world.resource::<Camera>().view_projection(aspect);
         crate::effects::extract_lighting(world, &mut self.snapshot);
         let total = query.iter(world).len();
@@ -749,27 +782,29 @@ impl RetainedRender {
                 frame.mesh = resolved
                     .as_ref()
                     .map_or(NO_SOURCE, |value| value.mesh_index as u32);
-                frame.texture = resolved
+                frame.material = resolved
                     .as_ref()
-                    .and_then(|value| value.texture_index)
-                    .map_or(NO_SOURCE, |texture| texture as u32);
+                    .and_then(|value| value.material_index)
+                    .map_or(NO_SOURCE, |material| material as u32);
                 if let Some(ResolvedSource {
                     mesh,
-                    texture,
+                    material,
                     color,
                     surface,
                     ..
                 }) = resolved
                 {
-                    // Opacity decides the pass (decision 026): switching
-                    // between opaque and transparent regroups draws.
+                    // Opacity decides the pass of materials without maps
+                    // (decision 026): switching between opaque and
+                    // transparent regroups draws. Materials are immutable,
+                    // so their alpha modes change only with their handles.
                     let keys_changed = record.mesh != mesh
-                        || record.texture != texture
+                        || record.material != material
                         || (record.color[3] < 1.0) != (color[3] < 1.0);
                     structure_changed |= keys_changed;
                     sources_changed |= keys_changed;
                     record.mesh = mesh;
-                    record.texture = texture;
+                    record.material = material;
                     let surface_bits = |surface: Surface| {
                         [
                             surface.roughness,
@@ -821,8 +856,8 @@ impl RetainedRender {
                 }
                 submitted += 1;
                 self.sources.mesh_used[frame.mesh as usize] = true;
-                if frame.texture != NO_SOURCE {
-                    self.sources.texture_used[frame.texture as usize] = true;
+                if frame.material != NO_SOURCE {
+                    self.sources.material_used[frame.material as usize] = true;
                 }
                 continue;
             }
@@ -901,8 +936,8 @@ impl RetainedRender {
                 submitted += 1;
             }
             self.sources.mesh_used[frame.mesh as usize] = true;
-            if frame.texture != NO_SOURCE {
-                self.sources.texture_used[frame.texture as usize] = true;
+            if frame.material != NO_SOURCE {
+                self.sources.material_used[frame.material as usize] = true;
             }
         }
         if submitted != self.visible.len() {

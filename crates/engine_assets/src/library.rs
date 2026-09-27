@@ -191,8 +191,8 @@ impl AssetLibrary {
 
     pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, AssetError> {
         if material
-            .texture()
-            .is_some_and(|texture| self.texture(texture).is_none())
+            .textures()
+            .any(|texture| self.texture(texture).is_none())
         {
             return Err(AssetError::InvalidTextureHandle);
         }
