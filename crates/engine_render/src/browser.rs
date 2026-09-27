@@ -29,10 +29,11 @@ use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+// Position, octahedral normal and texture coordinates.
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 7 => Float32x2];
-// Columns, color and packed surface of public instance records.
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Unorm16x4, 8 => Uint32];
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Snorm16x2, 7 => Float32x2];
+// Columns, packed color and packed surface of public instance records.
+const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2, 8 => Uint32];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 
 fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
@@ -1332,6 +1333,22 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             });
+        // Pipelines of the material variants (decision 031) this frame draws.
+        let lit_frame = light_frame.is_some() && self.lit.is_some() && self.lights.is_some();
+        let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
+            PassKind::Temporal { lit: lit_frame }
+        } else {
+            PassKind::Opaque {
+                post: post_frame.is_some() && self.post_pipelines.is_some(),
+                lit: lit_frame,
+                affine,
+            }
+        };
+        let transparent_kind = PassKind::Transparent {
+            lit: lit_frame,
+            affine,
+        };
+        self.ensure_variants(opaque_kind, transparent_kind);
         if gpu_mode {
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
@@ -1381,22 +1398,6 @@ impl Renderer {
                 self.color_buffer.as_ref().expect("affine color buffer"),
             );
         }
-        // Pipelines of the material variants (decision 031) this frame draws.
-        let lit_frame = light_frame.is_some() && self.lit.is_some() && self.lights.is_some();
-        let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
-            PassKind::Temporal { lit: lit_frame }
-        } else {
-            PassKind::Opaque {
-                post: post_frame.is_some() && self.post_pipelines.is_some(),
-                lit: lit_frame,
-                affine,
-            }
-        };
-        let transparent_kind = PassKind::Transparent {
-            lit: lit_frame,
-            affine,
-        };
-        self.ensure_variants(opaque_kind, transparent_kind);
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
         // Lit frames shade with the lit pipelines and the lights' group.
         let lit = light_frame

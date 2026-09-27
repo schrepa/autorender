@@ -270,13 +270,14 @@ impl From<&RenderInstance> for ColorData {
     }
 }
 
-/// Vertex attributes at offsets 0/12/24 with an explicit 32-byte vertex stride.
+/// Vertex attributes at offsets 0/12/16 with an explicit 24-byte vertex
+/// stride: the position, the [`octahedral`] normal and texture coordinates.
 /// The CPU asset representation has no GPU byte-layout contract.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Vertex {
     pub position: [f32; 3],
-    pub normal: [f32; 3],
+    pub normal: [i16; 2],
     pub uv: [f32; 2],
 }
 
@@ -284,10 +285,27 @@ impl From<&MeshVertex> for Vertex {
     fn from(vertex: &MeshVertex) -> Self {
         Self {
             position: vertex.position,
-            normal: vertex.normal,
+            normal: octahedral(vertex.normal),
             uv: vertex.uv,
         }
     }
+}
+
+/// A nonzero normal as two 16-bit signed fractions: its direction on the
+/// octahedron |x| + |y| + |z| = 1, the lower half folded over the upper
+/// (Cigolle et al. 2014). `meshes.wgsl` decodes it with `octahedral_normal`;
+/// directions keep about 0.003 degrees.
+pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
+    let [x, y, z] = normal;
+    let length = x.abs() + y.abs() + z.abs();
+    let (u, v) = (x / length, y / length);
+    let sign = |value: f32| if value >= 0.0 { 1.0 } else { -1.0 };
+    let (u, v) = if z < 0.0 {
+        ((1.0 - v.abs()) * sign(u), (1.0 - u.abs()) * sign(v))
+    } else {
+        (u, v)
+    };
+    [u, v].map(|value| (engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
 }
 
 /// Meshes after the shared scene declarations.
@@ -713,9 +731,9 @@ mod tests {
         assert_eq!(std::mem::offset_of!(ColorData, surface), 8);
         assert_eq!(size_of::<PoseData>(), 48);
         assert_eq!(size_of::<ColorData>(), 16);
-        assert_eq!(size_of::<Vertex>(), 32);
+        assert_eq!(size_of::<Vertex>(), 24);
         assert_eq!(std::mem::offset_of!(Vertex, normal), 12);
-        assert_eq!(std::mem::offset_of!(Vertex, uv), 24);
+        assert_eq!(std::mem::offset_of!(Vertex, uv), 16);
         let mut assets = AssetLibrary::default();
         let instance = RenderInstance {
             model: Mat4::from_translation(Vec3::new(2.0, 3.0, 4.0)),
@@ -773,10 +791,45 @@ mod tests {
             normal: [0.0, 1.0, 0.0],
             uv: [0.25, 0.75],
         });
-        assert_eq!(
-            bytemuck::cast_slice::<_, f32>(&[vertex]),
-            &[1.0, 2.0, 3.0, 0.0, 1.0, 0.0, 0.25, 0.75]
-        );
+        assert_eq!(vertex.position, [1.0, 2.0, 3.0]);
+        assert_eq!(vertex.normal, [0, 32767]);
+        assert_eq!(vertex.uv, [0.25, 0.75]);
+    }
+
+    /// `octahedral_normal` of `meshes.wgsl`, on Snorm16x2 inputs.
+    fn octahedral_normal(encoded: [i16; 2]) -> Vec3 {
+        let [x, y] = encoded.map(|value| engine_core::math::max(f32::from(value) / 32767.0, -1.0));
+        let z = 1.0 - x.abs() - y.abs();
+        let fold = engine_core::math::max(-z, 0.0);
+        let shift = |value: f32| if value >= 0.0 { fold } else { -fold };
+        Vec3::new(x - shift(x), y - shift(y), z)
+    }
+
+    #[test]
+    fn octahedral_normals_decode_every_direction_within_a_hundredth_of_a_degree() {
+        let mut state = 0x9e37_79b9_u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            f32::from((state >> 8) as u16) / 32767.5 - 1.0
+        };
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z, -Vec3::X, -Vec3::Y, -Vec3::Z];
+        let directions = axes
+            .into_iter()
+            .chain([Vec3::new(1.0, -1.0, -1.0), Vec3::new(-0.3, 0.0, -0.95)])
+            .chain((0..20_000).map(|_| Vec3::new(next(), next(), next())))
+            .filter(|direction| direction.length() > 1.0e-3);
+        for direction in directions {
+            let direction = direction.normalize();
+            let decoded = octahedral_normal(octahedral(direction.to_array())).normalize();
+            // The sine of the angle between them, precise for small angles.
+            assert!(decoded.dot(direction) > 0.0, "{direction} -> {decoded}");
+            assert!(
+                decoded.cross(direction).length() < 0.01_f32.to_radians(),
+                "{direction} -> {decoded}"
+            );
+        }
     }
 
     #[test]
@@ -808,17 +861,8 @@ mod tests {
             model.x_axis.cross(model.y_axis),
         );
         let sign = model.x_axis.dot(cofactors.x_axis).signum();
-        let scale = cofactors
-            .x_axis
-            .abs()
-            .max(cofactors.y_axis.abs())
-            .max(cofactors.z_axis.abs())
-            .max_element();
-        let cofactors = Mat3::from_cols(
-            cofactors.x_axis / scale,
-            cofactors.y_axis / scale,
-            cofactors.z_axis / scale,
-        );
+        // Cofactors of the rescaled basis stay within [-2, 2]; normalizing
+        // by the largest component handles their magnitude.
         let transformed = cofactors * normal;
         (transformed / transformed.abs().max_element()).normalize() * sign
     }

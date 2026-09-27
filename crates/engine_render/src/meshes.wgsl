@@ -83,14 +83,16 @@ struct Light {
 @group(3) @binding(2) var<storage, read> cluster_counts: array<u32>;
 @group(3) @binding(3) var<storage, read> cluster_lights: array<u32>;
 
+// Mesh vertices carry octahedral normals (`octahedral_normal`) in 24 bytes.
 struct VertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) normal: vec2<f32>,
     @location(2) model_0: vec4<f32>,
     @location(3) model_1: vec4<f32>,
     @location(4) model_2: vec4<f32>,
     @location(5) model_3: vec4<f32>,
-    @location(6) color: vec4<f32>,
+    // Four 16-bit color fractions, as slots store them.
+    @location(6) color: vec2<u32>,
     @location(7) uv: vec2<f32>,
     @location(8) surface: u32,
 }
@@ -98,30 +100,31 @@ struct VertexInput {
 // Visibility and batching reorder only this four-byte slot ID stream.
 struct AffineVertexInput {
     @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
+    @location(1) normal: vec2<f32>,
     @location(2) slot: u32,
     @location(7) uv: vec2<f32>,
 }
 
+// Four output slots: vertex outputs bound geometry throughput, so texture
+// coordinates ride in the w lanes and the material stays packed and flat.
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    // Linear color and opacity.
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) world: vec3<f32>,
-    @location(3) uv: vec2<f32>,
-    @location(4) @interpolate(flat) surface: u32,
+    // World normal and texture u.
+    @location(0) normal_u: vec4<f32>,
+    // World position and texture v.
+    @location(1) world_v: vec4<f32>,
+    // Linear color and opacity as four 16-bit fractions, and the packed
+    // surface (decision 019).
+    @location(2) @interpolate(flat) material: vec3<u32>,
 }
 
 // `VertexOutput` and the unjittered previous clip position: x, y and w.
 struct TemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) color: vec4<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) world: vec3<f32>,
-    @location(3) uv: vec2<f32>,
-    @location(4) @interpolate(flat) surface: u32,
-    @location(5) previous: vec3<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec3<u32>,
+    @location(3) previous: vec3<f32>,
 }
 
 // Frames with screen effects (decision 021): graded linear color with the
@@ -145,8 +148,19 @@ fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
         vec4<f32>(0.0, 0.0, 0.0, 1.0)));
 }
 
-fn slot_color(slot: SlotColor) -> vec4<f32> {
-    return vec4<f32>(unpack2x16unorm(slot.color.x), unpack2x16unorm(slot.color.y));
+// Linear color and opacity of a vertex output's packed material.
+fn output_color(material: vec3<u32>) -> vec4<f32> {
+    return vec4<f32>(unpack2x16unorm(material.x), unpack2x16unorm(material.y));
+}
+
+// A normal of `gpu_data::octahedral`: unfolded from the octahedron, not unit
+// length (the transform normalizes).
+fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
+    let z = 1.0 - abs(encoded.x) - abs(encoded.y);
+    let fold = max(-z, 0.0);
+    let shift = vec2<f32>(select(-fold, fold, encoded.x >= 0.0),
+        select(-fold, fold, encoded.y >= 0.0));
+    return vec3<f32>(encoded - shift, z);
 }
 
 @vertex
@@ -162,7 +176,7 @@ fn vs_affine(input: AffineVertexInput) -> VertexOutput {
     let index = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[index]);
     let slot = colors[index];
-    return transform_vertex(input.position, input.normal, slot_color(slot), slot.surface,
+    return transform_vertex(input.position, input.normal, slot.color, slot.surface,
         input.uv, model);
 }
 
@@ -171,7 +185,7 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let slot = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[slot]);
     let material = colors[slot];
-    let vertex = transform_vertex(input.position, input.normal, slot_color(material),
+    let vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
@@ -185,42 +199,35 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let previous = camera.previous_view_projection * world;
     var output: TemporalOutput;
     output.clip_position = vertex.clip_position;
-    output.color = vertex.color;
-    output.normal = vertex.normal;
-    output.world = vertex.world;
-    output.uv = vertex.uv;
-    output.surface = vertex.surface;
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
     output.previous = previous.xyw;
     return output;
 }
 
-fn transform_vertex(position: vec3<f32>, normal: vec3<f32>, color: vec4<f32>, surface: u32,
-        uv: vec2<f32>, model: mat4x4<f32>) -> VertexOutput {
+fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<u32>,
+        surface: u32, uv: vec2<f32>, model: mat4x4<f32>) -> VertexOutput {
     let world_position = model * vec4<f32>(position, 1.0);
-    // A common positive basis scale cancels out of normalized normals. Rescale
-    // before cross products and again before multiplication to avoid squared
-    // length overflow for large or small admitted world transforms. CPU
-    // admission separately bounds normal-matrix conditioning.
-    let basis_scale = max(maximum_abs(model[0].xyz),
+    // A common positive basis scale cancels out of normalized normals.
+    // Rescaling to a largest component of 1 keeps the cofactors within
+    // [-2, 2] for large or small admitted world transforms, and the final
+    // normalization handles their magnitude. CPU admission separately bounds
+    // normal-matrix conditioning.
+    let inverse_scale = 1.0 / max(maximum_abs(model[0].xyz),
         max(maximum_abs(model[1].xyz), maximum_abs(model[2].xyz)));
-    let x = model[0].xyz / basis_scale;
-    let y = model[1].xyz / basis_scale;
-    let z = model[2].xyz / basis_scale;
-    let cofactors = mat3x3<f32>(
-        cross(y, z), cross(z, x), cross(x, y),
-    );
-    let determinant = dot(x, cofactors[0]);
-    let cofactor_scale = max(maximum_abs(cofactors[0]),
-        max(maximum_abs(cofactors[1]), maximum_abs(cofactors[2])));
-    let normal_matrix = mat3x3<f32>(cofactors[0] / cofactor_scale,
-        cofactors[1] / cofactor_scale, cofactors[2] / cofactor_scale);
+    let x = model[0].xyz * inverse_scale;
+    let y = model[1].xyz * inverse_scale;
+    let z = model[2].xyz * inverse_scale;
+    let normal = octahedral_normal(encoded_normal);
+    // Cofactor columns times the normal: its inverse-transpose direction.
+    let yz = cross(y, z);
+    let transformed = yz * normal.x + cross(z, x) * normal.y + cross(x, y) * normal.z;
     var output: VertexOutput;
     output.clip_position = camera.view_projection * world_position;
-    output.normal = stable_normalize(normal_matrix * normal) * sign(determinant);
-    output.color = color;
-    output.world = world_position.xyz;
-    output.uv = uv;
-    output.surface = surface;
+    output.normal_u = vec4<f32>(stable_normalize(transformed) * sign(dot(x, yz)), uv.x);
+    output.world_v = vec4<f32>(world_position.xyz, uv.y);
+    output.material = vec3<u32>(color, surface);
     return output;
 }
 
@@ -479,6 +486,27 @@ fn shade_lit(color: vec4<f32>, normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32
     return finish(point, local_light(point, pixel));
 }
 
+// Shading of a vertex output: without and with local lights.
+fn shade_output(input: VertexOutput, front: bool) -> Shaded {
+    return shade(output_color(input.material), input.normal_u.xyz, input.world_v.xyz,
+        vec2<f32>(input.normal_u.w, input.world_v.w), input.material.z, front);
+}
+
+fn shade_output_lit(input: VertexOutput, front: bool) -> Shaded {
+    return shade_lit(output_color(input.material), input.normal_u.xyz, input.world_v.xyz,
+        vec2<f32>(input.normal_u.w, input.world_v.w), input.material.z, front,
+        input.clip_position.xy);
+}
+
+fn temporal_output(input: TemporalOutput) -> VertexOutput {
+    var output: VertexOutput;
+    output.clip_position = input.clip_position;
+    output.normal_u = input.normal_u;
+    output.world_v = input.world_v;
+    output.material = input.material;
+    return output;
+}
+
 fn scene_targets(shaded: Shaded) -> SceneTargets {
     var targets: SceneTargets;
     targets.color = vec4<f32>(shaded.color, shaded.ambient);
@@ -505,57 +533,51 @@ fn temporal_targets(shaded: Shaded, input: TemporalOutput) -> TemporalTargets {
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let shaded = shade(input.color, input.normal, input.world, input.uv, input.surface, front);
-    return vec4<f32>(encoded(shaded.color), 1.0);
+    return vec4<f32>(encoded(shade_output(input, front).color), 1.0);
 }
 
 @fragment
 fn fs_main_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
-    let shaded = shade_lit(input.color, input.normal, input.world, input.uv,
-        input.surface, front, input.clip_position.xy);
-    return vec4<f32>(encoded(shaded.color), 1.0);
+    return vec4<f32>(encoded(shade_output_lit(input, front).color), 1.0);
 }
 
 // The scene target is sRGB: it stores linear color with output encoding.
 @fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade(input.color, input.normal, input.world, input.uv,
-        input.surface, front));
+    return scene_targets(shade_output(input, front));
 }
 
 @fragment
 fn fs_post_lit(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade_lit(input.color, input.normal, input.world, input.uv,
-        input.surface, front, input.clip_position.xy));
+    return scene_targets(shade_output_lit(input, front));
 }
 
 @fragment
 fn fs_temporal(input: TemporalOutput, @builtin(front_facing) front: bool) -> TemporalTargets {
-    return temporal_targets(shade(input.color, input.normal, input.world, input.uv,
-        input.surface, front), input);
+    return temporal_targets(shade_output(temporal_output(input), front), input);
 }
 
 @fragment
 fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
         -> TemporalTargets {
-    return temporal_targets(shade_lit(input.color, input.normal, input.world, input.uv,
-        input.surface, front, input.clip_position.xy), input);
+    return temporal_targets(shade_output_lit(temporal_output(input), front), input);
 }
 
 @fragment
 fn fs_transparent(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
-    let shaded = shade(input.color, input.normal, input.world, input.uv, input.surface, front);
-    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
+    let shaded = shade_output(input, front);
+    return weighted(shaded.color, shaded.opacity,
+        length(camera.position.xyz - input.world_v.xyz));
 }
 
 @fragment
 fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
         -> TransparentTargets {
-    let shaded = shade_lit(input.color, input.normal, input.world, input.uv,
-        input.surface, front, input.clip_position.xy);
-    return weighted(shaded.color, shaded.opacity, length(camera.position.xyz - input.world));
+    let shaded = shade_output_lit(input, front);
+    return weighted(shaded.color, shaded.opacity,
+        length(camera.position.xyz - input.world_v.xyz));
 }
 
 // The sky behind all geometry: one triangle over the viewport at the far
