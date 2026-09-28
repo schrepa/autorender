@@ -35,8 +35,9 @@ Each fragment:
 - reflects the analytic sky (decision 018) in the mirror direction, blurred
   toward the hemisphere's average as roughness grows and weighted by Karis's
   fit of the split-sum environment BRDF, so glass and water mirror the sky
-  and every surface gains a Fresnel sheen at grazing angles, without
-  environment maps;
+  and every surface gains a Fresnel sheen at grazing angles (decision 043
+  reads the sky from an environment map blurred by the GGX lobe of each
+  roughness instead);
 - emits its color times its emission, times the texture's alpha, times the
   atmosphere's new `emission` scale (lights dim by day and full at night);
 - with ripples, tilts its normal by three directional waves that scroll with

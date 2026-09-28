@@ -11,6 +11,7 @@ use wgpu::util::DeviceExt;
 use crate::batches::BatchPlan;
 use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
+use crate::environment::Environment;
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
     SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
@@ -152,6 +153,9 @@ pub struct Renderer {
     // The scene's atmosphere (decision 018), written when it changes.
     lighting_buffer: wgpu::Buffer,
     lighting: Option<LightingUniform>,
+    // The environment maps surfaces reflect (decision 043), redrawn when the
+    // sky changes.
+    environment: Environment,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -422,6 +426,24 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The environment maps surfaces reflect (decision 043) and
+                // their sampler.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let refraction_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -470,6 +492,7 @@ impl Renderer {
             ),
             materials.layout(),
         );
+        let environment = Environment::new(&device, &lighting_buffer);
         let camera_bind_group = camera_bind_group(
             &device,
             &camera_layout,
@@ -477,6 +500,7 @@ impl Renderer {
             &lighting_buffer,
             &shadows,
             (&refraction_fallback, &refraction_sampler),
+            environment.binding(),
         );
         let texture_layout = materials.layout();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -607,6 +631,7 @@ impl Renderer {
             camera_bind_group,
             lighting_buffer,
             lighting: None,
+            environment,
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -1356,6 +1381,7 @@ impl Renderer {
                 &self.lighting_buffer,
                 &self.shadows,
                 (&self.refraction_fallback, &self.refraction_sampler),
+                self.environment.binding(),
             );
         }
         // Local lights (decision 023): binned on the GPU from this frame's
@@ -1615,6 +1641,8 @@ impl Renderer {
             affine,
         };
         self.ensure_variants(opaque_kind, transparent_kind);
+        // The sky's environment map, whenever the sky changes (decision 043).
+        self.environment.encode(&mut encoder, &lighting);
         if gpu_mode {
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
@@ -1700,6 +1728,7 @@ impl Renderer {
                     &self.lighting_buffer,
                     &self.shadows,
                     (scene, &self.refraction_sampler),
+                    self.environment.binding(),
                 );
                 self.refraction_group = Some((key, group));
             }
@@ -2280,6 +2309,10 @@ impl Renderer {
             engine_profile::counter(
                 "memory.gpu_post_bytes",
                 self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
+            );
+            engine_profile::counter(
+                "memory.gpu_environment_bytes",
+                self.environment.capacity_bytes() as f64,
             );
             if let Some(lights) = &stats.lights {
                 engine_profile::counter("render.local_lights", f64::from(lights.lights));
@@ -2921,6 +2954,7 @@ fn camera_bind_group(
     lighting: &wgpu::Buffer,
     shadows: &ShadowPass,
     (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
+    (environment, environment_sampler): (&wgpu::TextureView, &wgpu::Sampler),
 ) -> wgpu::BindGroup {
     let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2948,6 +2982,14 @@ fn camera_bind_group(
             wgpu::BindGroupEntry {
                 binding: 9,
                 resource: wgpu::BindingResource::Sampler(refraction_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 10,
+                resource: wgpu::BindingResource::TextureView(environment),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: wgpu::BindingResource::Sampler(environment_sampler),
             },
         ],
     })

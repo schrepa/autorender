@@ -122,6 +122,8 @@ mod uploads;
 #[cfg(target_arch = "wasm32")]
 mod browser;
 #[cfg(target_arch = "wasm32")]
+mod environment;
+#[cfg(target_arch = "wasm32")]
 mod gpu_presentation;
 #[cfg(target_arch = "wasm32")]
 mod materials;

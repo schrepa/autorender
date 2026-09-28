@@ -45,6 +45,10 @@ override TRANSMISSION: bool = false;
 // transparent surfaces draw with refraction, a white texel otherwise.
 @group(0) @binding(8) var refraction_source: texture_2d<f32>;
 @group(0) @binding(9) var refraction_sampler: sampler;
+// Environment maps (decision 043): cubes of the light around, blurred down
+// their levels by roughness; the first holds the sky.
+@group(0) @binding(10) var environment_maps: texture_cube_array<f32>;
+@group(0) @binding(11) var environment_sampler: sampler;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
@@ -570,6 +574,19 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     return point;
 }
 
+// The environment's light reflected toward `reflected` off a surface of
+// `normal` and `roughness`: the environment map's level blurred by that
+// roughness, read along the lobe's dominant direction, which leans toward
+// the normal as the surface roughens (Lagarde and de Rousiers).
+fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
+    let smoothness = 1.0 - roughness;
+    let lean = smoothness * (sqrt(smoothness) + roughness);
+    let direction = normalize(mix(normal, reflected, lean));
+    let deepest = f32(textureNumLevels(environment_maps) - 1u);
+    return textureSampleLevel(environment_maps, environment_sampler, direction, 0,
+        roughness * deepest).rgb;
+}
+
 // Lit, fogged and graded color of `point` with `local` light added.
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
@@ -586,10 +603,9 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         highlight = fresnel(point.f0, max(dot(view, half_vector), 0.0))
             * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
     }
-    // The sky mirrored in the surface, blurring toward its hemisphere
-    // average as the surface roughens, weighted by the environment BRDF.
-    let reflected = reflect(-view, normal);
-    let mirrored = mix(haze(reflected), sky_average(reflected), point.roughness);
+    // The environment mirrored in the surface, blurred by its roughness,
+    // weighted by the environment BRDF.
+    let mirrored = environment_light(reflect(-view, normal), normal, point.roughness);
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
     let reflection = mirrored * brdf * specular;
     // Rim light outlines walls against the sky; level surfaces seen at

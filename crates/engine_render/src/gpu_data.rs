@@ -415,6 +415,9 @@ pub(crate) const SHADOW_SHADER: &str = include_str!("shadows.wgsl");
 /// Ambient occlusion, bloom and their composite (decision 021).
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
+/// Environment maps (decision 043) after the scene declarations.
+pub(crate) const ENVIRONMENT_SHADER: &str =
+    concat!(include_str!("scene.wgsl"), include_str!("environment.wgsl"));
 
 /// WGSL `MaterialMaps` uniform of `meshes.wgsl` (decision 031), 192 bytes:
 /// each map's texture coordinate transform, the emissive color and the map
@@ -1534,7 +1537,7 @@ mod tests {
     }
 
     #[test]
-    fn shader_is_valid_wgsl_with_no_optional_capabilities() {
+    fn shader_is_valid_wgsl_with_webgpu_core_capabilities() {
         for source in [
             SHADER,
             PRESENTATION_SHADER,
@@ -1547,11 +1550,14 @@ mod tests {
             TRANSPARENT_SHADER,
             SHAFTS_SHADER,
             DEPTH_PYRAMID_SHADER,
+            ENVIRONMENT_SHADER,
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
+            // Cube arrays (the environment maps, decision 043) are core
+            // WebGPU; only its compatibility mode lacks them.
             naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
-                naga::valid::Capabilities::empty(),
+                naga::valid::Capabilities::CUBE_ARRAY_TEXTURES,
             )
             .validate(&module)
             .expect("WGSL semantics");
@@ -1572,6 +1578,7 @@ mod tests {
             PARTICLE_SHADER,
             TRANSPARENT_SHADER,
             SHAFTS_SHADER,
+            ENVIRONMENT_SHADER,
         ] {
             let bytes = source.as_bytes();
             let mut index = 0;
