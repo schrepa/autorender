@@ -338,6 +338,9 @@ pub struct RenderSnapshot {
     /// Reflection probe settings (decision 043), sanitized; disabled when
     /// the resource is missing.
     pub reflection_probe_settings: crate::ReflectionProbes,
+    /// Virtual geometry settings (decision 044), sanitized; disabled when
+    /// the resource is missing.
+    pub virtual_geometry: crate::VirtualGeometry,
     /// This frame's usable reflection probes, nearest the camera first,
     /// within the settings' budget.
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,

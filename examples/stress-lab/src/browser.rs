@@ -2,15 +2,45 @@ use engine::browser::{BrowserApp, BrowserStats};
 use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
+use std::collections::HashMap;
+
 use crate::{
-    FrameMetrics, StressConfig, StressScene, create_workload, lamp_intensity, look, set_view,
+    FrameMetrics, StressConfig, StressScene, create_workload_with, lamp_intensity, look, set_view,
     stress_observation, stress_shafts,
 };
+
+/// Files workloads read, by name: the dense scene's virtual meshes
+/// (decision 044), which the page fetches.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct StressFiles {
+    files: HashMap<String, Vec<u8>>,
+}
+
+#[wasm_bindgen]
+impl StressFiles {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds file `name`'s bytes.
+    pub fn add(&mut self, name: &str, bytes: Vec<u8>) {
+        self.files.insert(name.to_owned(), bytes);
+    }
+
+    /// The files the dense scene reads, as a JSON array of names.
+    pub fn dense_names() -> String {
+        serde_json::to_string(&crate::DENSE_FILES).unwrap_or_else(|_| "[]".into())
+    }
+}
 
 #[wasm_bindgen]
 pub struct StressGame {
     app: BrowserApp,
     generation: u32,
+    // Files the page supplied, kept for later workloads.
+    files: HashMap<String, Vec<u8>>,
     // The lighting preset and effect selection, kept across workload changes.
     look: String,
     effects: String,
@@ -23,13 +53,19 @@ impl StressGame {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
         config_json: &str,
+        files: Option<StressFiles>,
     ) -> Result<Self, JsValue> {
         console_error_panic_hook::set_once();
-        let engine = create_workload(StressConfig::from_json(config_json).map_err(js_error)?)
-            .map_err(js_error)?;
+        let files = files.map(|files| files.files).unwrap_or_default();
+        let engine = create_workload_with(
+            StressConfig::from_json(config_json).map_err(js_error)?,
+            &files,
+        )
+        .map_err(js_error)?;
         Ok(Self {
             app: BrowserApp::new(canvas, engine).await?,
             generation: 1,
+            files,
             look: "scene".into(),
             effects: "all".into(),
             #[cfg(feature = "dev")]
@@ -39,9 +75,19 @@ impl StressGame {
 
     /// Build first, then replace the complete Engine at a browser frame boundary.
     /// Asset library IDs separate old renderer snapshots from the new world.
-    pub fn configure(&mut self, config_json: &str) -> Result<(), JsValue> {
-        let engine = create_workload(StressConfig::from_json(config_json).map_err(js_error)?)
-            .map_err(js_error)?;
+    pub fn configure(
+        &mut self,
+        config_json: &str,
+        files: Option<StressFiles>,
+    ) -> Result<(), JsValue> {
+        if let Some(files) = files {
+            self.files.extend(files.files);
+        }
+        let engine = create_workload_with(
+            StressConfig::from_json(config_json).map_err(js_error)?,
+            &self.files,
+        )
+        .map_err(js_error)?;
         self.app.engine = engine;
         self.generation = self.generation.saturating_add(1);
         self.set_look(&self.look.clone())?;

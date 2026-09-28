@@ -641,8 +641,10 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     var flags = scan[candidate.position] & ~PROBE;
     let batch = batches[candidate.batch];
     let still = still_frames[candidate.slot].y >= STILL_FRAMES;
+    // Transparent groups (1) are left out; virtual geometry (decision 044,
+    // 2) draws its fallback meshes.
     if (flags & VALID) != 0u && still && batch.bounds_min.w == 0.0
-            && batch.bounds_max.w == 0.0 {
+            && batch.bounds_max.w != 1.0 {
         let model = rows_matrix(poses[candidate.slot]);
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,

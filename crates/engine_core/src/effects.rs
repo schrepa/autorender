@@ -68,6 +68,13 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
         },
         |value| value.sanitized(),
     );
+    snapshot.virtual_geometry = world.get_resource::<crate::VirtualGeometry>().map_or(
+        crate::VirtualGeometry {
+            enabled: false,
+            ..crate::VirtualGeometry::default()
+        },
+        |value| value.sanitized(),
+    );
 }
 
 /// Most near shadow cascades ([`Shadows::cascades`]).

@@ -18,6 +18,7 @@ export interface RuntimeStats {
   sun_shafts: boolean; reflections: boolean; refraction: boolean; transparent_draws: number; particles: number; dropped_particles: number;
   decals: number; dropped_decals: number; occluded_instances: number | undefined;
   reflection_probes: number; reflection_probe_faces: number; dropped_reflection_probes: number;
+  virtual_clusters: number; virtual_triangles: number; dropped_virtual: number;
   subpixel_instances: number | undefined;
   free(): void;
 }

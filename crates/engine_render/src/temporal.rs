@@ -14,7 +14,7 @@ use crate::gpu_data::{
 };
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
 
-const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Weight of each frame's color against the history: an exponential average
 /// over about ten frames, beyond the eight-sample jitter cycle.

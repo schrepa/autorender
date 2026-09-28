@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
+use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
 use wasm_bindgen::JsValue;
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
@@ -29,6 +29,7 @@ use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
+use crate::virtual_geometry::{VirtualBatch, VirtualGeometryPass, VirtualView};
 use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
@@ -169,6 +170,20 @@ pub struct Renderer {
     probes: ProbePass,
     probe_camera_groups: Vec<wgpu::BindGroup>,
     probe_sky_pipeline: Option<wgpu::RenderPipeline>,
+    // Virtual geometry (decision 044): the arena and cluster selection;
+    // pipelines per pass kind and material variant over their layouts
+    // (unlit, lit) and pose groups (poses, colors, previous poses and the
+    // arena); this frame's bins (material and variant) and the plan
+    // batches whose clusters draw instead of their fallback meshes; the
+    // generation of which batches those are.
+    virtual_geometry: VirtualGeometryPass,
+    virtual_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
+    virtual_pose_layout: wgpu::BindGroupLayout,
+    virtual_layouts: [Option<wgpu::PipelineLayout>; 2],
+    virtual_pose_groups: Option<((u64, u64, bool), [wgpu::BindGroup; 4])>,
+    virtual_bins: Vec<(Option<MaterialHandle>, Variant)>,
+    virtual_drawn: Vec<bool>,
+    virtual_generation: (u64, bool),
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -522,6 +537,7 @@ impl Renderer {
             engine_core::ReflectionProbes::default().resolution,
         );
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
+        let virtual_geometry = VirtualGeometryPass::new(&device);
         let camera_bind_group = camera_bind_group(
             &device,
             &camera_layout,
@@ -556,6 +572,20 @@ impl Renderer {
                 storage_entry(3, size_of::<PoseData>() as u64),
             ],
         });
+        // Virtual geometry (decision 044): poses, colors, previous poses and
+        // the arena's meshes, clusters and pages.
+        let virtual_pose_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("engine/virtual-pose-layout"),
+                entries: &[
+                    storage_entry(0, size_of::<PoseData>() as u64),
+                    storage_entry(1, size_of::<ColorData>() as u64),
+                    storage_entry(2, size_of::<PoseData>() as u64),
+                    storage_entry(5, 80),
+                    storage_entry(6, 48),
+                    storage_entry(7, 16),
+                ],
+            });
         let affine_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/retained-mesh-pipeline-layout"),
@@ -665,6 +695,14 @@ impl Renderer {
             probes,
             probe_camera_groups: Vec::new(),
             probe_sky_pipeline: None,
+            virtual_geometry,
+            virtual_pipelines: HashMap::new(),
+            virtual_pose_layout,
+            virtual_layouts: [None, None],
+            virtual_pose_groups: None,
+            virtual_bins: Vec::new(),
+            virtual_drawn: Vec::new(),
+            virtual_generation: (0, false),
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -902,6 +940,9 @@ impl Renderer {
         // only emitted draw batches, shadow casters and referenced textures.
         self.meshes
             .retain(|handle, _| self.plan.contains_mesh(*handle) || shadow_meshes.contains(handle));
+        let meshes = &self.meshes;
+        self.virtual_geometry
+            .retain(|handle| meshes.contains_key(&handle));
         self.materials.retain(&self.plan, snapshot);
         drop(profile_residency);
         if self.suspended {
@@ -1008,8 +1049,12 @@ impl Renderer {
                     byte_len,
                 });
                 mesh_upload_bytes += byte_len;
+                if let Some(geometry) = source.virtual_geometry() {
+                    self.virtual_geometry.insert(handle, geometry);
+                }
             }
         }
+        self.virtual_geometry.upload(&self.device);
         // New textures' mip levels render from their uploaded base level in
         // a command buffer submitted ahead of this frame's.
         let mut mip_encoder = None;
@@ -1122,11 +1167,16 @@ impl Renderer {
                     .max(INITIAL_CAPACITY)
                     .next_power_of_two()
                     .min(self.instance_limit);
-                self.slot_buffer = Some(create_instance_buffer(
-                    &self.device,
-                    self.slot_capacity,
-                    size_of::<u32>(),
-                ));
+                // Virtual geometry selection (decision 044) reads the slots
+                // of CPU-prepared frames.
+                self.slot_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("engine/retained-slots"),
+                    size: (self.slot_capacity * size_of::<u32>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX
+                        | wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
                 self.slot_revision = None;
             }
             if self.slot_revision != slot_key {
@@ -1327,9 +1377,21 @@ impl Renderer {
         } else {
             None
         };
+        // Batches drawing virtual geometry (decision 044) instead of their
+        // fallback meshes, by the arena and whether it draws.
+        let virtual_enabled = affine && snapshot.virtual_geometry.enabled;
+        let arena = self
+            .virtual_geometry
+            .arena()
+            .map_or(0, |(_, generation)| generation);
+        if self.virtual_generation != (arena, virtual_enabled) {
+            self.virtual_generation = (arena, virtual_enabled);
+        }
+        let virtual_key = arena * 2 + u64::from(virtual_enabled);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
             let shadows = &self.shadows;
+            let virtual_meshes = &self.virtual_geometry;
             // Temporal frames alternate pose buffers; the other keeps the
             // previous frame's poses.
             let (poses, poses_index) = match &temporal_frame {
@@ -1358,6 +1420,9 @@ impl Renderer {
                             mesh.bounds(),
                             shadows.batch_group(index),
                             mesh.joint_count(),
+                            virtual_enabled
+                                && !batch.transparent
+                                && virtual_meshes.mesh_index(batch.mesh).is_some(),
                         )
                     },
                     !shadows.groups().is_empty(),
@@ -1379,6 +1444,7 @@ impl Renderer {
                     (snapshot.reflection_probe_settings.enabled
                         && !snapshot.reflection_probes.is_empty())
                     .then(|| self.probes.slots.waiting()),
+                    virtual_key,
                     (self.configuration.width, self.configuration.height),
                     stamps,
                 ),
@@ -1736,11 +1802,28 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             self.profiler.timed_stages(query_slot, _timed);
         }
+        // Virtual geometry (decision 044): the clusters the visible
+        // instances of virtual meshes draw this frame.
+        let odd = temporal_frame
+            .as_ref()
+            .is_some_and(|frame| frame.parity == 1);
+        let virtual_frame = affine && self.prepare_virtual(snapshot, gpu_mode, odd);
+        if !affine {
+            self.virtual_drawn.clear();
+        }
         #[cfg(feature = "profiling")]
         let effect_queries = self.profiler.effect_queries(query_slot);
         #[cfg(not(feature = "profiling"))]
         let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
-        let mut _effects_timed = 0_u16;
+        let mut _effects_timed = 0_u32;
+        if virtual_frame {
+            self.ensure_virtual_pipelines(opaque_kind);
+            self.ensure_virtual_pose_groups();
+            timestamp_pass(&mut encoder, effect_queries, VIRTUAL_SELECTION, false);
+            self.virtual_geometry.encode(&self.device, &mut encoder);
+            timestamp_pass(&mut encoder, effect_queries, VIRTUAL_SELECTION, true);
+            _effects_timed |= u32::from(effect_queries.is_some()) << VIRTUAL_SELECTION;
+        }
         // Timestamp writes of effect `index` of the profiler's `EFFECTS`.
         let effect_writes = |index: u32| {
             effect_queries.map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
@@ -1771,7 +1854,7 @@ impl Renderer {
                 |material| self.materials.group(material),
                 effect_queries,
             );
-            _effects_timed |= encoded.timed;
+            _effects_timed |= u32::from(encoded.timed);
             shadow_draws = encoded.draws;
         }
         if let (Some(frame), Some(lights)) = (&light_frame, self.lights.as_mut()) {
@@ -1781,7 +1864,7 @@ impl Renderer {
                 frame,
                 effect_queries.map(|(set, first)| (set, first + 14)),
             );
-            _effects_timed |= u16::from(effect_queries.is_some()) << 7;
+            _effects_timed |= u32::from(effect_queries.is_some()) << 7;
         }
         if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
             pass.prepare_pose_groups(
@@ -1861,7 +1944,7 @@ impl Renderer {
                     poses,
                     timed(14, false),
                 );
-                _effects_timed |= u16::from(effect_queries.is_some()) << 14;
+                _effects_timed |= u32::from(effect_queries.is_some()) << 14;
             }
             let load = |clear| {
                 if phase == 0 {
@@ -2002,8 +2085,10 @@ impl Renderer {
                 }
                 let mut bound = Variant::BASIC;
                 for (index, batch) in self.plan.batches.iter().enumerate() {
-                    // Transparent batches draw after the opaque pass.
-                    if batch.transparent {
+                    // Transparent batches draw after the opaque pass; batches
+                    // drawing virtual geometry (decision 044) draw its clusters
+                    // below.
+                    if batch.transparent || self.virtual_drawn.get(index) == Some(&true) {
                         continue;
                     }
                     // Every planned source was validated and uploaded above.
@@ -2040,6 +2125,30 @@ impl Renderer {
                         pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
                     }
                 }
+                // Virtual geometry (decision 044): each bin's selected
+                // clusters, in phase one (its instances are never occluded).
+                if phase == 0 && virtual_frame {
+                    let groups = &self.virtual_pose_groups.as_ref().expect("built above").1;
+                    let group = match temporal_pass {
+                        Some((frame, _)) => {
+                            let previous = if frame.motion_valid {
+                                1 - frame.parity
+                            } else {
+                                frame.parity
+                            };
+                            &groups[2 * frame.parity + previous]
+                        }
+                        None => &groups[0],
+                    };
+                    pass.set_bind_group(2, group, &[]);
+                    for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
+                        pass.set_pipeline(&self.virtual_pipelines[&(opaque_kind, *variant)]);
+                        pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
+                        let (stream, args, offset) = self.virtual_geometry.bin_source(bin);
+                        pass.set_vertex_buffer(0, stream);
+                        pass.draw_indirect(args, offset);
+                    }
+                }
             }
             // Last, so depth testing leaves the sky only uncovered pixels.
             if phase + 1 == phases {
@@ -2069,7 +2178,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            _effects_timed |= u16::from(effect_queries.is_some()) << 8;
+            _effects_timed |= u32::from(effect_queries.is_some()) << 8;
             decals.draw(
                 &mut pass,
                 &self.camera_bind_group,
@@ -2212,8 +2321,8 @@ impl Renderer {
                 multiview_mask: None,
             });
             transparent.composite(&mut pass, post.is_some());
-            _effects_timed |= u16::from(effect_queries.is_some()) << 9
-                | u16::from(effect_queries.is_some()) << 10;
+            _effects_timed |= u32::from(effect_queries.is_some()) << 9
+                | u32::from(effect_queries.is_some()) << 10;
             if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
                 particles.draw_additive(&mut pass, &self.camera_bind_group, frame, post.is_some());
             }
@@ -2221,10 +2330,10 @@ impl Renderer {
         if let (Some(post_frame), Some(post)) = (post_frame, post) {
             let queries = effect_queries.map(|(set, first)| (set, first + 4));
             post.encode_effects(&mut encoder, post_frame, &self.camera_bind_group, queries);
-            _effects_timed |= u16::from(post_frame.occlusion) << 2
-                | u16::from(post_frame.bloom) << 3
-                | u16::from(post_frame.reflections) << 5
-                | u16::from(post_frame.shafts) << 6;
+            _effects_timed |= u32::from(post_frame.occlusion) << 2
+                | u32::from(post_frame.bloom) << 3
+                | u32::from(post_frame.reflections) << 5
+                | u32::from(post_frame.shafts) << 6;
             if temporal_pass.is_none() {
                 let queries = effect_queries.map(|(set, first)| (set, first + 8));
                 post.encode_composite(&mut encoder, &view, queries);
@@ -2302,6 +2411,9 @@ impl Renderer {
         if let Some(lights) = self.lights.as_mut() {
             lights.after_submit();
         }
+        if virtual_frame {
+            self.virtual_geometry.after_submit();
+        }
         if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
             pass.submitted(frame);
         }
@@ -2314,6 +2426,10 @@ impl Renderer {
         } else {
             None
         };
+        // Read back a few frames late (decision 044).
+        let virtual_stats = virtual_frame
+            .then(|| self.virtual_geometry.stats())
+            .flatten();
         let stats = RenderStats {
             draw_calls: self.plan.batches.len() as u32,
             upload_bytes: camera_upload_bytes
@@ -2386,6 +2502,9 @@ impl Renderer {
             reflection_probes: self.probes.slots.ready(),
             reflection_probe_faces: probe_faces,
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
+            virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
+            virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
+            dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -2436,6 +2555,21 @@ impl Renderer {
                 "memory.gpu_environment_bytes",
                 (self.environment.capacity_bytes() + self.probes.capacity_bytes()) as f64,
             );
+            engine_profile::counter(
+                "memory.gpu_virtual_bytes",
+                self.virtual_geometry.capacity_bytes() as f64,
+            );
+            if let Some(virtual_stats) = virtual_stats {
+                engine_profile::counter(
+                    "render.virtual_clusters",
+                    f64::from(virtual_stats.clusters),
+                );
+                engine_profile::counter(
+                    "render.virtual_triangles",
+                    f64::from(virtual_stats.triangles),
+                );
+                engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
+            }
             if let Some(lights) = &stats.lights {
                 engine_profile::counter("render.local_lights", f64::from(lights.lights));
                 if let Some([visible, overflow]) = self.lights.as_ref().and_then(LightPass::totals)
@@ -2835,6 +2969,291 @@ impl Renderer {
         drawn
     }
 
+    /// Plans this frame's virtual geometry (decision 044): the batches of
+    /// virtual meshes, their bins, the view, and the bindings selection
+    /// reads (this frame's poses and GPU-compacted visible IDs, or
+    /// CPU-prepared slots). Returns whether any batch draws clusters.
+    fn prepare_virtual(&mut self, snapshot: &RenderSnapshot, gpu_mode: bool, odd: bool) -> bool {
+        self.virtual_bins.clear();
+        self.virtual_drawn.clear();
+        self.virtual_drawn.resize(self.plan.batches.len(), false);
+        if !snapshot.virtual_geometry.enabled {
+            return false;
+        }
+        let mut batches = Vec::new();
+        let mut max_instances = 0;
+        for (index, batch) in self.plan.batches.iter().enumerate() {
+            if batch.transparent {
+                continue;
+            }
+            let Some(mesh) = self.virtual_geometry.mesh_index(batch.mesh) else {
+                continue;
+            };
+            let (_, variant) = self.materials.binding(batch.material);
+            let bin = match self
+                .virtual_bins
+                .iter()
+                .position(|(material, _)| *material == batch.material)
+            {
+                Some(bin) => bin,
+                None => {
+                    self.virtual_bins.push((batch.material, variant));
+                    self.virtual_bins.len() - 1
+                }
+            };
+            let count = batch.instances.end - batch.instances.start;
+            max_instances = max_instances.max(count);
+            batches.push(VirtualBatch {
+                start: batch.instances.start,
+                count: (!gpu_mode).then_some(count),
+                draw: index as u32,
+                mesh,
+                bin: bin as u32,
+                double_sided: variant.double_sided(),
+            });
+            self.virtual_drawn[index] = true;
+        }
+        if batches.is_empty() {
+            return false;
+        }
+        let view_projection = snapshot.view_projection;
+        let view = VirtualView {
+            planes: crate::virtual_geometry::planes(view_projection),
+            eye: snapshot.camera_position,
+            near: 0.05,
+            // The projection's y scale: its second row's length.
+            projection: view_projection.row(1).truncate().length() * 0.5,
+            threshold: snapshot.virtual_geometry.pixel_error
+                / self.configuration.height.max(1) as f32,
+        };
+        self.virtual_geometry.prepare(
+            &self.device,
+            &self.queue,
+            &batches,
+            self.virtual_bins.len(),
+            &view,
+        );
+        let poses = if odd {
+            self.alternate_poses
+                .as_ref()
+                .expect("temporal frames create it")
+        } else {
+            &self.instance_buffer
+        };
+        let (ids, draws, key) = if gpu_mode {
+            let (ids, draws, generation) = self.gpu_presentation.visible_sources();
+            (ids, draws, generation * 2)
+        } else {
+            let slots = self.slot_buffer.as_ref().expect("retained slot buffer");
+            (slots, slots, self.slot_capacity as u64 * 2 + 1)
+        };
+        self.virtual_geometry.bind(
+            &self.device,
+            (poses, self.pose_generation * 2 + u64::from(odd)),
+            (ids, key),
+            (draws, key),
+            max_instances,
+        );
+        true
+    }
+
+    /// Pose groups of virtual geometry pipelines (decision 044): each pair
+    /// of this frame's and the previous frame's pose buffers, with the
+    /// colors and the arena.
+    fn ensure_virtual_pose_groups(&mut self) {
+        let Some(([meshes, clusters, pages], arena)) = self.virtual_geometry.arena() else {
+            return;
+        };
+        let key = (self.pose_generation, arena, self.alternate_poses.is_some());
+        if self
+            .virtual_pose_groups
+            .as_ref()
+            .is_some_and(|(built, _)| *built == key)
+        {
+            return;
+        }
+        let buffers = [
+            &self.instance_buffer,
+            self.alternate_poses
+                .as_ref()
+                .unwrap_or(&self.instance_buffer),
+        ];
+        let colors = self.color_buffer.as_ref().expect("affine color buffer");
+        let group = |current: usize, previous: usize| {
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/virtual-pose-group"),
+                layout: &self.virtual_pose_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffers[current].as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: colors.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: buffers[previous].as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: meshes.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: clusters.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 7,
+                        resource: pages.as_entire_binding(),
+                    },
+                ],
+            })
+        };
+        let groups = [group(0, 0), group(0, 1), group(1, 0), group(1, 1)];
+        self.virtual_pose_groups = Some((key, groups));
+    }
+
+    /// The virtual geometry pipelines (decision 044) of `kind` for this
+    /// frame's bins' material variants.
+    fn ensure_virtual_pipelines(&mut self, kind: PassKind) {
+        let lit = matches!(
+            kind,
+            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
+        );
+        if self.virtual_layouts[usize::from(lit)].is_none() {
+            let lights = self.lights.as_ref().filter(|_| lit);
+            let mut layouts = vec![
+                Some(&self.camera_layout),
+                Some(self.materials.layout()),
+                Some(&self.virtual_pose_layout),
+            ];
+            if let Some(lights) = lights {
+                layouts.push(Some(lights.fragment_layout()));
+            }
+            self.virtual_layouts[usize::from(lit)] = Some(self.device.create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("engine/virtual-pipeline-layout"),
+                    bind_group_layouts: &layouts,
+                    immediate_size: 0,
+                },
+            ));
+        }
+        let missing: Vec<Variant> = self
+            .virtual_bins
+            .iter()
+            .map(|(_, variant)| *variant)
+            .filter(|variant| !self.virtual_pipelines.contains_key(&(kind, *variant)))
+            .collect();
+        for variant in missing {
+            let pipeline = self.create_virtual(kind, variant, lit);
+            self.virtual_pipelines.insert((kind, variant), pipeline);
+        }
+    }
+
+    /// A virtual geometry pipeline (decision 044): `vs_virtual` (or its
+    /// temporal twin) with `kind`'s fragment stage and targets.
+    fn create_virtual(&self, kind: PassKind, variant: Variant, lit: bool) -> wgpu::RenderPipeline {
+        let layout = self.virtual_layouts[usize::from(lit)]
+            .as_ref()
+            .expect("created above");
+        let canvas_target = [Some(wgpu::ColorTargetState {
+            format: self.configuration.format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let canvas_constants = [(
+            "SURFACE_IS_SRGB",
+            if self.configuration.format.is_srgb() {
+                1.0
+            } else {
+                0.0
+            },
+        )];
+        let post_targets = [
+            Some(SCENE_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
+        let temporal_targets = [
+            Some(SCENE_FORMAT.into()),
+            Some(crate::temporal::MOTION_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
+        let (vertex, fragment, targets, constants): VirtualStages<'_> = match kind {
+            PassKind::Opaque { post, lit, .. } => (
+                "vs_virtual",
+                match (post, lit) {
+                    (false, false) => "fs_main",
+                    (false, true) => "fs_main_lit",
+                    (true, false) => "fs_post",
+                    (true, true) => "fs_post_lit",
+                },
+                if post { &post_targets } else { &canvas_target },
+                if post { &[] } else { &canvas_constants },
+            ),
+            PassKind::Temporal { lit } => (
+                "vs_virtual_temporal",
+                if lit {
+                    "fs_temporal_lit"
+                } else {
+                    "fs_temporal"
+                },
+                &temporal_targets,
+                &[],
+            ),
+            PassKind::Transparent { .. } | PassKind::Probe { .. } => {
+                unreachable!("virtual geometry draws in opaque passes")
+            }
+        };
+        let constants: Vec<(&str, f64)> = constants
+            .iter()
+            .copied()
+            .chain(variant.constants())
+            .collect();
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("engine/virtual-meshes"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: &self.mesh_shader,
+                    entry_point: Some(vertex),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: crate::virtual_geometry::VISIBLE_BYTES,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &VIRTUAL_ATTRIBUTES,
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.mesh_shader,
+                    entry_point: Some(fragment),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    targets,
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+    }
+
     /// The reflection probe captures' pipelines (decision 043): the sky's,
     /// and `kind`'s for the variants of this frame's still opaque meshes.
     fn ensure_probe_pipelines(&mut self, kind: PassKind) {
@@ -3004,6 +3423,20 @@ fn create_instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize)
     })
 }
 
+/// A virtual geometry pipeline's entry points, color targets and constants
+/// (decision 044).
+type VirtualStages<'a> = (
+    &'a str,
+    &'a str,
+    &'a [Option<wgpu::ColorTargetState>],
+    &'a [(&'a str, f64)],
+);
+
+/// Selected clusters of virtual geometry (decision 044): visible ID and
+/// cluster, one entry per instance.
+const VIRTUAL_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+    wgpu::vertex_attr_array![2 => Uint32, 13 => Uint32];
+
 /// Group 2 of retained mesh pipelines: slot poses, colors and the joint
 /// palettes of skinned slots (decision 036).
 fn pose_group(
@@ -3044,6 +3477,9 @@ fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) 
 
 /// Reflection probe captures' entry in the profiler's effects (decision 043).
 const PROBE_CAPTURES: u32 = 15;
+/// Virtual geometry's cluster selection entry in the profiler's effects
+/// (decision 044).
+const VIRTUAL_SELECTION: u32 = 16;
 
 /// Writes query `first + 2 * effect` (or the next one at its `end`) of
 /// `queries`, the profiler's effect queries, from an empty pass: effects of

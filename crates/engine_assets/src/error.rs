@@ -66,6 +66,10 @@ pub enum AssetError {
     InvalidCompressedTexture {
         reason: &'static str,
     },
+    /// A virtual mesh file breaking a rule (decision 044).
+    InvalidVirtualMesh {
+        reason: &'static str,
+    },
     MeshCapacity {
         limit: usize,
     },
@@ -105,6 +109,7 @@ impl AssetError {
             Self::InvalidMaterialHandle => "asset.invalid_material_handle",
             Self::InvalidAnimation { .. } => "asset.invalid_animation",
             Self::InvalidCompressedTexture { .. } => "asset.invalid_compressed_texture",
+            Self::InvalidVirtualMesh { .. } => "asset.invalid_virtual_mesh",
             Self::MeshCapacity { .. } => "asset.mesh_capacity",
             Self::MaterialCapacity { .. } => "asset.material_capacity",
             Self::TextureCapacity { .. } => "asset.texture_capacity",
@@ -192,6 +197,7 @@ impl fmt::Display for AssetError {
             Self::InvalidCompressedTexture { reason } => {
                 write!(f, "compressed texture: {reason}")
             }
+            Self::InvalidVirtualMesh { reason } => write!(f, "virtual mesh: {reason}"),
             Self::MeshCapacity { limit } => write!(f, "mesh capacity of {limit} reached"),
             Self::MaterialCapacity { limit } => write!(f, "material capacity of {limit} reached"),
             Self::TextureCapacity { limit } => write!(f, "texture capacity of {limit} reached"),

@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::virtual_mesh::VirtualMesh;
 use glam::Vec3;
 
 use crate::AssetError;
@@ -21,6 +24,10 @@ pub struct Aabb {
 }
 
 impl Aabb {
+    pub(crate) fn from_min_max(min: Vec3, max: Vec3) -> Self {
+        Self { min, max }
+    }
+
     pub fn min(&self) -> Vec3 {
         self.min
     }
@@ -33,6 +40,8 @@ impl Aabb {
 /// Validated, immutable indexed triangles. Winding is counterclockwise.
 /// Optional vertex colors and second texture coordinates (decision 034) and
 /// skinning joints and weights (decision 036) follow the vertices one to one.
+/// A mesh with virtual geometry (decision 044) is its hierarchy's fallback
+/// cut, which renderers draw where they cannot draw its clusters.
 #[derive(Debug)]
 pub struct Mesh {
     vertices: Box<[MeshVertex]>,
@@ -41,6 +50,7 @@ pub struct Mesh {
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
     skin: Option<MeshSkin>,
+    virtual_geometry: Option<Arc<VirtualMesh>>,
 }
 
 /// Up to four joints per vertex and their weights (glTF `JOINTS_0` and
@@ -101,7 +111,30 @@ impl Mesh {
             colors: None,
             uv1: None,
             skin: None,
+            virtual_geometry: None,
         })
+    }
+
+    /// A mesh drawn from `geometry`'s cluster hierarchy (decision 044) where
+    /// renderers can, and as its fallback cut of at most `fallback_triangles`
+    /// triangles elsewhere; its bounds hold every level.
+    pub fn from_virtual(
+        geometry: Arc<VirtualMesh>,
+        fallback_triangles: u32,
+    ) -> Result<Self, AssetError> {
+        let mut mesh = geometry.fallback(fallback_triangles)?;
+        let bounds = geometry.bounds();
+        mesh.bounds = Aabb {
+            min: mesh.bounds.min.min(bounds.min()),
+            max: mesh.bounds.max.max(bounds.max()),
+        };
+        mesh.virtual_geometry = Some(geometry);
+        Ok(mesh)
+    }
+
+    /// The cluster hierarchy of a mesh with virtual geometry.
+    pub fn virtual_geometry(&self) -> Option<&Arc<VirtualMesh>> {
+        self.virtual_geometry.as_ref()
     }
 
     /// This mesh deformed by joints: per vertex up to four joint indices
@@ -238,6 +271,9 @@ impl Mesh {
             + self.uv1().map_or(0, std::mem::size_of_val)
             + self.joints().map_or(0, std::mem::size_of_val)
             + self.weights().map_or(0, std::mem::size_of_val)
+            + self
+                .virtual_geometry()
+                .map_or(0, |geometry| geometry.byte_len())
     }
 
     /// Unit cube centered at the origin, with flat face normals.

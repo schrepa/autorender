@@ -1,0 +1,24 @@
+[package]
+name = "engine_vgbuild"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Offline virtual geometry builder: cluster LOD hierarchies with meshoptimizer's clusterlod (native tools only)"
+
+[dependencies]
+engine_assets.workspace = true
+engine_math.workspace = true
+glam.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+# The workspace forbids unsafe code; calling the vendored C++ needs it, so
+# only `src/ffi.rs` allows it (as `engine_profile` does for its allocator).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"

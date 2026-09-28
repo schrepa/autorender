@@ -406,6 +406,8 @@ pub(crate) const SHADER: &str = concat!(include_str!("scene.wgsl"), include_str!
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
 /// The depth pyramid of occlusion culling (decision 040).
 pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
+/// Cluster selection of virtual geometry (decision 044).
+pub(crate) const VIRTUAL_SHADER: &str = include_str!("virtual_geometry.wgsl");
 /// Temporal antialiasing resolve (decision 017), after the shared effects.
 pub(crate) const TEMPORAL_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
@@ -1574,6 +1576,7 @@ mod tests {
             SHAFTS_SHADER,
             DEPTH_PYRAMID_SHADER,
             ENVIRONMENT_SHADER,
+            VIRTUAL_SHADER,
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             // Cube arrays (the environment maps, decision 043) are core

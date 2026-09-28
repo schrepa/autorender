@@ -14,10 +14,11 @@ world.
 | Transforms | 50,000 moving objects with parent hierarchies and interpolation |
 | Queries | 10,000 colliders, moving bounds and 256 ray/overlap/sweep queries per fixed tick |
 | Dense sensors | 2,500 sensor colliders in tight clusters; pair-budget exhaustion is deliberately observable |
+| Dense geometry | 2,000 boulders and columns of 330,000 to 590,000 triangles each on terrain tiles, drawn as virtual geometry |
 
 The `scene` configuration field selects the world: `field` (the tower
-field above, the default) or `city`. Configurations and links without `scene`
-build the tower field, unchanged.
+field above, the default), `city`, `metro` or `dense`. Configurations and links
+without `scene` build the tower field, unchanged.
 
 ## Wild city
 
@@ -86,6 +87,24 @@ two page loads each):
 
 With 8 shapes (41 vertices per object) the 90,000-object city's opaque pass
 measured 3.1 ms. Temporal antialiasing adds its resolve (1.3 ms at this size).
+
+## Dense geometry
+
+The dense scene (`scene=dense`, `examples/stress-lab/src/dense.rs`) draws
+virtual geometry ([decision 044](adr-044-virtual-geometry.md)): boulders of
+327,680 triangles, fluted columns of 591,360 and terrain tiles of 524,288, as
+cluster hierarchies the GPU selects from each frame. Build its files once
+with `cargo run -p engine_vgbuild --release --bin dense_assets`, which writes
+them to `web/public/stress/dense/` (generated, not committed); the page
+fetches them when the scene is first chosen. **Objects** are the boulders
+and columns (one in five a column), on as many 64-unit tiles as give each
+about 36 square units; **moving objects** bob and turn in place. The other
+settings do not apply. The Effects control and looks work as elsewhere;
+virtual meshes cast no shadows on GPU-presented frames yet. Frames report
+the clusters and triangles selected (`virtual_clusters`, `virtual_triangles`)
+and any entries dropped for want of room (`dropped_virtual`).
+
+## Measurement
 
 Overview, inside-field and look-away cameras isolate visibility changes. Culling
 and resolution controls isolate draw submission and pixel costs; mesh variety

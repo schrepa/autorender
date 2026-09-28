@@ -87,6 +87,21 @@ struct SlotColor {
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
 
+// Virtual geometry (decision 044): the arena `virtual_geometry.wgsl` selects
+// clusters from. Each mesh's bases and quantization; three words per
+// cluster (the second ends with its mesh, the third starts with its vertex
+// and triangle words in the pages); the pages' words.
+struct VirtualMeshRecord {
+    bases: vec4<u32>,
+    info: vec4<u32>,
+    position_min: vec4<f32>,
+    position_step: vec4<f32>,
+    uv: vec4<f32>,
+}
+@group(2) @binding(5) var<storage, read> virtual_meshes: array<VirtualMeshRecord>;
+@group(2) @binding(6) var<storage, read> virtual_clusters: array<vec4<u32>>;
+@group(2) @binding(7) var<storage, read> virtual_pages: array<u32>;
+
 // Local lights (decision 023), binned into view clusters by lights.wgsl.
 struct Clusters {
     view_projection: mat4x4<f32>,
@@ -212,6 +227,94 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     let slot = colors[index];
     return transform_vertex(input.position, input.normal, slot.color, slot.surface,
         input.uv, model);
+}
+
+// A selected cluster (decision 044) of a slot: 384 vertices, three per
+// triangle of the largest cluster; those past its triangles collapse.
+struct VirtualInput {
+    @builtin(vertex_index) vertex: u32,
+    @location(2) slot: u32,
+    @location(13) cluster: u32,
+}
+
+// A cluster corner in mesh space; `valid` is false past its triangles.
+struct VirtualCorner {
+    position: vec3<f32>,
+    normal: vec2<f32>,
+    uv: vec2<f32>,
+    valid: bool,
+}
+
+// The low 16 bits as a signed normalized value.
+fn snorm16(bits: u32) -> f32 {
+    return max(f32(bitcast<i32>(bits << 16u) >> 16u) / 32767.0, -1.0);
+}
+
+// Corner `vertex` of cluster `cluster`: its local index, then the stored
+// vertex of 16-bit position steps, octahedral normal and texture
+// coordinates, dequantized with its mesh's steps.
+fn virtual_corner(cluster: u32, vertex: u32) -> VirtualCorner {
+    let record = virtual_clusters[cluster * 3u + 1u];
+    let words = virtual_clusters[cluster * 3u + 2u];
+    var corner: VirtualCorner;
+    corner.valid = vertex / 3u < (words.z >> 16u);
+    if !corner.valid {
+        return corner;
+    }
+    let packed = virtual_pages[words.y + vertex / 4u];
+    let base = words.x + ((packed >> ((vertex % 4u) * 8u)) & 0xffu) * 4u;
+    let w0 = virtual_pages[base];
+    let w1 = virtual_pages[base + 1u];
+    let w2 = virtual_pages[base + 2u];
+    let w3 = virtual_pages[base + 3u];
+    let mesh = virtual_meshes[record.w];
+    let steps = vec3<f32>(f32(w0 & 0xffffu), f32(w0 >> 16u), f32(w1 & 0xffffu));
+    corner.position = mesh.position_min.xyz + steps * mesh.position_step.xyz;
+    corner.normal = vec2<f32>(snorm16(w1 >> 16u), snorm16(w2));
+    corner.uv = mesh.uv.xy + vec2<f32>(f32(w2 >> 16u), f32(w3 & 0xffffu)) * mesh.uv.zw;
+    return corner;
+}
+
+// Where collapsed corners go: one point outside the view.
+const COLLAPSED = vec4<f32>(2.0, 2.0, 0.5, 1.0);
+
+@vertex
+fn vs_virtual(input: VirtualInput) -> VertexOutput {
+    let corner = virtual_corner(input.cluster, input.vertex);
+    let index = input.slot & ~MOVED_SLOT;
+    let slot = colors[index];
+    var output = transform_vertex(corner.position, corner.normal, slot.color, slot.surface,
+        corner.uv, pose_matrix(poses[index]));
+    if !corner.valid {
+        output.clip_position = COLLAPSED;
+    }
+    return output;
+}
+
+@vertex
+fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
+    let corner = virtual_corner(input.cluster, input.vertex);
+    let slot = input.slot & ~MOVED_SLOT;
+    let model = pose_matrix(poses[slot]);
+    let material = colors[slot];
+    let vertex = transform_vertex(corner.position, corner.normal, material.color,
+        material.surface, corner.uv, model);
+    let point = vec4<f32>(corner.position, 1.0);
+    var world = model * point;
+    // Only moving slots read their previous pose, as `vertex_affine_temporal`.
+    if (input.slot & MOVED_SLOT) != 0u {
+        let pose = previous_poses[slot];
+        world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
+            dot(pose.row_2, point), 1.0);
+    }
+    let previous = camera.previous_view_projection * world;
+    var output: TemporalOutput;
+    output.clip_position = select(COLLAPSED, vertex.clip_position, corner.valid);
+    output.normal_u = vertex.normal_u;
+    output.world_v = vertex.world_v;
+    output.material = vertex.material;
+    output.previous = previous.xyw;
+    return output;
 }
 
 @vertex

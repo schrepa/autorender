@@ -2,17 +2,17 @@ import { stressBindings } from "./bindings";
 import { boot, type HostControls, type RuntimeStats } from "./host";
 import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
-import type { StressGame } from "../pkg/stress_lab";
+import type { StressFiles, StressGame } from "../pkg/stress_lab";
 import "./stress.css";
 
-type Scene = "field" | "city" | "metro";
+type Scene = "field" | "city" | "metro" | "dense";
 type Config = {
   seed: number; renderables: number; moving_percent: number; hierarchy: boolean;
   interpolation: boolean; colliders: number; sensor_percent: number; dense_colliders: boolean;
   queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean; scene: Scene;
   compressed_textures: boolean;
 };
-const scenes: Scene[] = ["field", "city", "metro"];
+const scenes: Scene[] = ["field", "city", "metro", "dense"];
 type Snapshot = {
   version: number; generation: number; frame: string; tick: string; config: Config;
   renderables: number; transform_nodes: number; moving_nodes: number; sensor_nodes: number;
@@ -43,6 +43,8 @@ const presets: Record<string, { title: string; note: string; config: Config }> =
     config: { ...baseline, scene: "city", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64 } },
   metro: { title: "METRO", note: "The city with every engine feature: glTF maps over procedural textures (BC7 where supported), refracting glass, masked foliage, tints and rotating ads, skinned people, keyframed props, thousands of lights and particles.",
     config: { ...baseline, scene: "metro", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64, compressed_textures: true } },
+  dense: { title: "DENSE GEOMETRY", note: "Boulders and fluted columns of 330,000 to 590,000 triangles each on terrain tiles, drawn as virtual geometry: the GPU picks the clusters each view needs. Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
+    config: { ...baseline, scene: "dense", renderables: 2000, moving_percent: 5, hierarchy: false, interpolation: true, mesh_variety: 8 } },
   mixed: { title: "MIXED WORKLOAD", note: "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
     config: { ...baseline, renderables: 10000, moving_percent: 25, hierarchy: true, interpolation: true, colliders: 1000, sensor_percent: 10, queries_per_tick: 32, mesh_variety: 8 } },
   motion: { title: "TRANSFORM PRESSURE", note: "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
@@ -58,6 +60,23 @@ let latest: Snapshot | undefined, report: StressRecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
 let profiler: DetailedProfiler | undefined, detailedReport: DetailedProfileReport | undefined;
 let wasmMemory: WebAssembly.Memory | undefined;
+// The dense scene's virtual meshes (decision 044), fetched once: the game
+// keeps them for later workloads.
+let filesClass: typeof StressFiles | undefined, denseSupplied = false;
+async function denseFiles(): Promise<StressFiles | undefined> {
+  if (denseSupplied || !filesClass) return undefined;
+  const files = new filesClass();
+  for (const name of JSON.parse(filesClass.dense_names()) as string[]) {
+    const response = await fetch(`${import.meta.env.BASE_URL}stress/dense/${name}`);
+    if (!response.ok) {
+      files.free();
+      throw new Error(`Missing ${name}: run \`cargo run -p engine_vgbuild --release --bin dense_assets\`.`);
+    }
+    files.add(name, new Uint8Array(await response.arrayBuffer()));
+  }
+  denseSupplied = true;
+  return files;
+}
 let lastDiagnostic = -Infinity;
 let wasmIdentity: { url: string | null; sha256: string | null } = { url: null, sha256: null };
 const listeners = new AbortController();
@@ -138,12 +157,16 @@ function supported(config: Config): Config {
   fill(fallback);
   return fallback;
 }
-function apply(requested: Config, title: string) {
+async function apply(requested: Config, title: string) {
   if (!controls) return;
   const config = supported(requested);
   if (profiler?.busy || recorder.active) { notice("Finish the active capture before changing the workload.", true); return; }
+  let files: StressFiles | undefined;
+  if (config.scene === "dense") {
+    try { files = await denseFiles(); } catch (error) { notice(`Workload unchanged: ${String(error)}`, true); return; }
+  }
   try {
-    controls.mutate(runtime => runtime.configure(JSON.stringify(config)));
+    controls.mutate(runtime => runtime.configure(JSON.stringify(config), files));
     activeConfig = config; activeTitle = title;
     choice("view").value = "overview";
     chart.length = 0; intervals.length = 0; previousTimestamp = undefined;
@@ -249,7 +272,8 @@ fill(activeConfig);
 
 boot({
   async create(canvas) {
-    const { default: init, StressGame } = await stressBindings();
+    const { default: init, StressGame, StressFiles: files } = await stressBindings();
+    filesClass = files;
     const initialized = await init();
     wasmMemory = (initialized as { memory?: WebAssembly.Memory }).memory;
     // One startup fingerprint outside measurement windows. Production filenames
@@ -272,7 +296,8 @@ boot({
     }
     blockCompression = await detectBlockCompression();
     activeConfig = supported(activeConfig);
-    return StressGame.create(canvas, JSON.stringify(activeConfig));
+    return StressGame.create(canvas, JSON.stringify(activeConfig),
+      activeConfig.scene === "dense" ? await denseFiles() : undefined);
   },
   ready(runtime, host) {
     game = runtime; controls = host;

@@ -14,6 +14,10 @@ pub enum StressScene {
     /// procedural textures, glass, skinned people, keyframed props, lights
     /// and effects.
     Metro,
+    /// Boulders and columns of hundreds of thousands of triangles on terrain
+    /// tiles, drawn as virtual geometry (decision 044) from files the page
+    /// fetches.
+    Dense,
 }
 
 /// Configuration changes rebuild the owned workload outside the frame loop.

@@ -239,7 +239,7 @@ pub(crate) struct GpuPresentationPass {
     // The pose buffer this frame's culling writes.
     poses_index: usize,
     uploaded: Option<(u64, u64)>,
-    groups_key: Option<(u64, u64, u64, u64, bool)>,
+    groups_key: Option<(u64, u64, u64, u64, bool, u64)>,
     candidate_count: u32,
     batch_count: u32,
     level_ranges: Vec<(u32, u32)>,
@@ -1012,7 +1012,7 @@ impl GpuPresentationPass {
         frame: &RenderFrame<'_>,
         gpu: &GpuPresentation<'_>,
         plan: &BatchPlan,
-        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, u32),
+        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, u32, bool),
         shadow_groups: bool,
         poses: &wgpu::Buffer,
         palette: &wgpu::Buffer,
@@ -1024,6 +1024,7 @@ impl GpuPresentationPass {
         occlusion: Option<(u32, u32, u32)>,
         subpixel: bool,
         stillness: Option<bool>,
+        virtual_generation: u64,
         viewport: (u32, u32),
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
@@ -1248,12 +1249,15 @@ impl GpuPresentationPass {
         prepared.blend = self.blend;
 
         // Candidate groups: rebuilt with the candidate structure or node space.
+        // Which batches draw virtual geometry (decision 044), by the
+        // generation of that choice.
         let key = (
             frame.identity(),
             frame.structure_revision(),
             frame.source_revision(),
             gpu.identity,
             shadow_groups,
+            virtual_generation,
         );
         if self.groups_key != Some(key) {
             let slot_nodes = frame.slot_nodes();
@@ -1263,7 +1267,8 @@ impl GpuPresentationPass {
             self.batch_staging.reserve_exact(plan.batches.len());
             self.batch_joints.clear();
             for (index, batch) in plan.batches.iter().enumerate() {
-                let (index_count, bounds, group, joints) = batch_meta(index, batch);
+                let (index_count, bounds, group, joints, virtual_geometry) =
+                    batch_meta(index, batch);
                 let skinned = joints != 0;
                 self.batch_joints.push(joints);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
@@ -1276,10 +1281,18 @@ impl GpuPresentationPass {
                         .min()
                         .extend(if skinned { 1.0 } else { 0.0 })
                         .to_array(),
-                    // Transparent groups are never occluded (decision 040).
+                    // Transparent groups are never occluded (decision 040),
+                    // nor are instances drawing virtual geometry (decision
+                    // 044, 2): their clusters draw in phase one.
                     bounds_max: bounds
                         .max()
-                        .extend(if batch.transparent { 1.0 } else { 0.0 })
+                        .extend(if batch.transparent {
+                            1.0
+                        } else if virtual_geometry {
+                            2.0
+                        } else {
+                            0.0
+                        })
                         .to_array(),
                 });
                 let base = self.candidate_staging.len() as u32;
@@ -1934,6 +1947,13 @@ impl GpuPresentationPass {
                 ],
             ),
         }
+    }
+
+    /// The visible IDs and indirect arguments of phase one's compaction and
+    /// the generation of their storage, which virtual geometry selection
+    /// (decision 044) reads.
+    pub(crate) fn visible_sources(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
+        (&self.visible_ids, &self.draws, self.buffers_generation)
     }
 
     /// Visible-ID region and indirect arguments of plan batch `index` in the

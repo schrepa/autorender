@@ -1,6 +1,8 @@
 use engine::prelude::*;
 
-use crate::{FrameMetrics, StressConfig, StressScene, city, metrics, metro};
+use std::collections::HashMap;
+
+use crate::{FrameMetrics, StressConfig, StressScene, city, dense, metrics, metro};
 
 const GROUP_SIZE: u32 = 32;
 const SPACING: f32 = 2.4;
@@ -10,16 +12,16 @@ pub(crate) struct Workload {
     pub transform_nodes: u32,
     pub moving_nodes: u32,
     pub sensor_nodes: u32,
-    probes: Vec<Entity>,
-    overlap_hits: Vec<Entity>,
+    pub probes: Vec<Entity>,
+    pub overlap_hits: Vec<Entity>,
 }
 
 #[derive(Component)]
-struct Motion {
-    anchor: Vec3,
-    rotation: Quat,
-    phase: f32,
-    speed: f32,
+pub(crate) struct Motion {
+    pub anchor: Vec3,
+    pub rotation: Quat,
+    pub phase: f32,
+    pub speed: f32,
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,6 +30,15 @@ pub(crate) struct Animation;
 /// Creates an independently owned world. Failed configuration leaves any active
 /// BrowserApp untouched. Distinct AssetLibrary identities prevent GPU aliasing.
 pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
+    create_workload_with(config, &HashMap::new())
+}
+
+/// [`create_workload`] reading the files a scene needs from `files` (the
+/// dense scene's virtual meshes, decision 044).
+pub fn create_workload_with(
+    config: StressConfig,
+    files: &HashMap<String, Vec<u8>>,
+) -> Result<Engine, String> {
     config.validate()?;
     let mut engine = Engine::new(EngineConfig {
         frustum_culling: config.culling,
@@ -72,6 +83,7 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
             world.insert_resource(Refraction::default());
             (city.moving_nodes, city.bounds)
         }
+        StressScene::Dense => dense::populate(world, &config, files)?,
     };
     // Shadows (decision 020) keep the whole scene in one map, seen from
     // every view.
@@ -447,6 +459,7 @@ pub fn lamp_intensity(scene: StressScene, name: &str) -> Result<f32, String> {
         "scene" => match scene {
             StressScene::Field => 1.0,
             StressScene::City | StressScene::Metro => 0.35,
+            StressScene::Dense => 0.0,
         },
         "golden" => 0.35,
         "dusk" => 0.8,
@@ -464,6 +477,7 @@ pub fn look(scene: StressScene, name: &str) -> Result<Atmosphere, String> {
         "scene" => match scene {
             StressScene::Field => Atmosphere::night(),
             StressScene::City | StressScene::Metro => Atmosphere::golden_hour(),
+            StressScene::Dense => Atmosphere::day(),
         },
         "golden" => Atmosphere::golden_hour(),
         "dusk" => Atmosphere::dusk(),

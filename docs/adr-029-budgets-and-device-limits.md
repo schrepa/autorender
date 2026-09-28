@@ -34,7 +34,10 @@ Constants are sorted into three kinds:
   buffer and storage-binding sizes, grows buffers to the content, derives
   its instance limit from them, and drops particles that do not fit a
   binding and reflection probes beyond the cubes its texture arrays hold
-  (`max_texture_array_layers / 6`, the sky's included). Textures may be 8,192 texels a side, the size every WebGPU device
+  (`max_texture_array_layers / 6`, the sky's included). Virtual geometry's
+  queues and cluster bins (decision 044) double after frames that dropped
+  entries, up to the storage binding size, and report the rest
+  (`dropped_virtual`). Textures may be 8,192 texels a side, the size every WebGPU device
   holds.
 - **Validity guards** stay: they reject invalid data, not large data
   (emission scales, coordinate ranges, hierarchy depth, one emitter's

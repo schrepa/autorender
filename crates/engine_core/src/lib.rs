@@ -22,6 +22,7 @@ mod retained_render;
 mod scene;
 mod skin;
 mod transform_edits;
+mod virtual_geometry;
 mod visibility_cache;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
@@ -41,6 +42,10 @@ pub use engine_assets::{
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
     KeyInterpolation, Keyframes,
+};
+pub use engine_assets::{
+    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, GROUP_WORDS, NODE_WORDS,
+    VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
 pub use glam;
 pub use hierarchy::{
@@ -69,6 +74,7 @@ pub use skin::{RenderJoint, Skin};
 pub use transform_edits::{
     MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform,
 };
+pub use virtual_geometry::VirtualGeometry;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -246,6 +252,7 @@ impl Engine {
             .init_resource::<Particles>()
             .init_resource::<Decals>()
             .init_resource::<ReflectionProbes>()
+            .init_resource::<VirtualGeometry>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -929,7 +936,7 @@ pub mod prelude {
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
-    pub use crate::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
+    pub use crate::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe, VirtualGeometry};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.
     pub use bevy_ecs::{self, prelude::*};

@@ -3,14 +3,18 @@
 mod browser;
 mod city;
 mod config;
+mod dense;
 mod metrics;
 mod metro;
 mod scene;
 mod shapes;
 
 pub use config::{StressConfig, StressScene};
+pub use dense::FILES as DENSE_FILES;
 pub use metrics::FrameMetrics;
-pub use scene::{create_workload, lamp_intensity, look, set_view, stress_shafts};
+pub use scene::{
+    create_workload, create_workload_with, lamp_intensity, look, set_view, stress_shafts,
+};
 
 use engine::prelude::*;
 

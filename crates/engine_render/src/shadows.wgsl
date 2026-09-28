@@ -225,8 +225,10 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let pose = poses[candidate.slot];
     let batch = batches[candidate.batch];
-    // Batches without a group (transparent ones) cast no shadow.
-    if batch.group >= cull.groups {
+    // Batches without a group (transparent ones) cast no shadow; batches
+    // drawing virtual geometry (decision 044, flag 2) cast their clusters,
+    // not their fallback meshes.
+    if batch.group >= cull.groups || batch.bounds_max.w == 2.0 {
         return;
     }
     // Joints place meshes with joints (decision 036), wherever their slot
