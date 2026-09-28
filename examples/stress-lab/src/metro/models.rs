@@ -2216,9 +2216,11 @@ fn car(b: &mut Builder, kind: Car) {
     };
     let (half, side) = (length * 0.5, width * 0.5);
     b.block(v(-half, 0.22, -side), v(half, body, side), PAINT);
+    // The glass stops below the roof panel's top and the grille behind the
+    // headlights' fronts: faces sharing a plane fight in the depth buffer.
     b.block(
         v(cabin.0, body, -side * 0.88),
-        v(cabin.1, roof, side * 0.88),
+        v(cabin.1, roof - 0.02, side * 0.88),
         WINDOW,
     );
     b.block(
@@ -2228,7 +2230,7 @@ fn car(b: &mut Builder, kind: Car) {
     );
     b.block(
         v(half - 0.02, 0.25, -side * 0.6),
-        v(half + 0.03, 0.4, side * 0.6),
+        v(half + 0.02, 0.4, side * 0.6),
         GRILLE,
     );
     lights(b, half + 0.01, body - 0.12, side * 0.65);
