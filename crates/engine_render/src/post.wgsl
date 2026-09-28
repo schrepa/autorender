@@ -180,6 +180,10 @@ const REFLECTION_STEPS: u32 = 96u;
 // it, in world units, plus this share of the ray's length.
 const REFLECTION_THICKNESS: f32 = 0.3;
 const REFLECTION_THICKNESS_SHARE: f32 = 0.05;
+// Rays heading toward the camera reach surfaces from their hidden side: the
+// visible surface stands in for it through this much more depth (a solid
+// object's), fading over it.
+const REFLECTION_SOLID: f32 = 1.0;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
 // The pixel of each 2x2 block the half-resolution reflection passes trace:
 // the first without temporal antialiasing; with it, another each frame
@@ -232,7 +236,8 @@ fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
 // SSSR's hierarchical march), so every pixel along the ray near a surface is
 // visited and thin objects are found alike from pixel to pixel. The first
 // pixel the ray passes behind is its hit, reflected where the ray passes
-// close to that surface, fading toward the screen edges, the ray's end and
+// close to that surface (or, heading toward the camera, within a solid
+// object's depth of it), fading toward the screen edges, the ray's end and
 // the surface's thickness; misses weigh nothing.
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
@@ -345,6 +350,18 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let thickness = REFLECTION_THICKNESS + REFLECTION_THICKNESS_SHARE * travelled;
     var confidence = 1.0 - smoothstep(0.0, thickness, behind);
     confidence *= confidence;
+    if ray.z > 0.0 {
+        // Heading toward the camera (reversed depth grows), the ray reaches
+        // what it meets from the side the camera cannot see, and crosses
+        // much of the world per pixel: the surface in front counts fully
+        // through the thickness and the ray's length across a pixel there,
+        // then fades over a solid object's depth.
+        let pixels = max(abs(ray.x), abs(ray.y));
+        let stride = distance(
+            world_point(point.xy + ray.xy / pixels, point.z + ray.z / pixels), ray_point);
+        let near = thickness + stride;
+        confidence = 1.0 - smoothstep(near, near + REFLECTION_SOLID, behind);
+    }
     let uv = point.xy * post.size.zw;
     let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);

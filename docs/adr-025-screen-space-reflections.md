@@ -26,7 +26,14 @@ everything is skipped and the next one is coarser, a cell it may meet is
 refined, down to single pixels, so every pixel along the ray near a surface
 is visited. The first pixel the ray passes behind is its hit, weighted by
 how close behind that surface the ray passes (0.3 world units plus 5% of
-its length), and faded toward the screen edges and the ray's end. A filter
+its length), and faded toward the screen edges and the ray's end. A ray
+heading toward the camera reaches what it meets from the side the camera
+cannot see, and crosses much of the world per pixel: for it the visible
+surface counts fully through that thickness plus the ray's length across a
+pixel there, then fades over a solid object's depth (1 world unit). Judged
+like other rays, the undersides of round mirror objects (the park
+sculptures) rejected the ground and objects around them in patches that
+showed the sky and moved with the camera. A filter
 then blends each half-resolution result with its 3x3 neighbors on the same
 surface (depth within 2%), by a tent and by their weights. The composite,
 or what the temporal resolve shows, replaces the pixel's reflectivity-
