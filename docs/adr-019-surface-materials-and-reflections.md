@@ -40,7 +40,12 @@ Each fragment:
 - emits its color times its emission, times the texture's alpha, times the
   atmosphere's new `emission` scale (lights dim by day and full at night);
 - with ripples, tilts its normal by three directional waves that scroll with
-  presentation time, which the camera uniform now carries (`position.w`).
+  presentation time, which the camera uniform now carries (`position.w`);
+- widens its highlight lobe where its shading normal turns within the pixel
+  (specular antialiasing: Kaplanyan et al.'s kernel with Filament's variance
+  0.15 and limit 0.2 on the squared GGX alpha), so fine bumps and facet
+  edges shade as the rougher surface they average to instead of sparkling
+  or streaking; reflections (decision 025) follow the widened roughness.
 
 Texture alpha is the emission mask. `Texture::new` still requires opaque
 alpha everywhere (so a material with emission glows over its whole

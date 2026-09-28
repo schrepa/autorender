@@ -147,11 +147,13 @@ struct TemporalOutput {
 }
 
 // Frames with screen effects (decision 021): graded linear color with the
-// ambient share of its light in alpha, and the pixel's glow weight and
-// reflectivity (decision 025).
+// ambient share of its light in alpha, the pixel's glow weight and
+// reflectivity (decision 025), and the surface reflections follow: its
+// shading normal, octahedral in [0, 1], and roughness.
 struct SceneTargets {
     @location(0) color: vec4<f32>,
     @location(1) glow: vec2<f32>,
+    @location(2) surface: vec4<f32>,
 }
 
 // The scene targets, and the offset from this pixel to the same surface
@@ -160,6 +162,7 @@ struct TemporalTargets {
     @location(0) color: vec4<f32>,
     @location(1) motion: vec2<f32>,
     @location(2) glow: vec2<f32>,
+    @location(3) surface: vec4<f32>,
 }
 
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
@@ -440,13 +443,15 @@ struct SurfacePoint {
 }
 
 // Shaded light of a surface: graded color, the ambient share of its light
-// (for ambient occlusion), its glow weight, its reflectivity for
-// screen-space reflections and its coverage.
+// (for ambient occlusion), its glow weight, its reflectivity, shading normal
+// and roughness for screen-space reflections, and its coverage.
 struct Shaded {
     color: vec3<f32>,
     ambient: f32,
     glow: f32,
     reflect: f32,
+    normal: vec3<f32>,
+    roughness: f32,
     opacity: f32,
 }
 
@@ -459,6 +464,11 @@ fn map_uv(index: u32, uv: vec2<f32>, uv1: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(dot(material_maps.transforms[index * 2u].xyz, point),
         dot(material_maps.transforms[index * 2u + 1u].xyz, point));
 }
+
+// Screen variance of the pixel footprint and the largest squared roughness
+// specular antialiasing adds.
+const SPECULAR_VARIANCE: f32 = 0.15;
+const SPECULAR_LIMIT: f32 = 0.2;
 
 // Normal mapping without stored tangents (decision 031): the tangent frame
 // from screen derivatives of the position and of the normal map's texture
@@ -537,6 +547,16 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     if surface.w > 0.0 {
         point.normal = rippled(point.normal, world, surface.w);
     }
+    // Specular antialiasing (Kaplanyan et al.'s kernel, with Filament's
+    // variance and limit): normals turning within a pixel, over fine bumps
+    // or across facet edges, widen the highlight lobe, so they shade as the
+    // rougher surface they average to instead of sparkling or streaking.
+    let turn_dx = dpdx(point.normal);
+    let turn_dy = dpdy(point.normal);
+    let widened = min(2.0 * SPECULAR_VARIANCE * (dot(turn_dx, turn_dx) + dot(turn_dy, turn_dy)),
+        SPECULAR_LIMIT);
+    point.alpha = sqrt(saturate(point.alpha * point.alpha + widened));
+    point.roughness = sqrt(point.alpha);
     if ALPHA_MASK && point.opacity < material_maps.params.z {
         discard;
     }
@@ -589,6 +609,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let fogged = mix(lit, haze(-view), covered);
     var shaded: Shaded;
     shaded.opacity = point.opacity;
+    shaded.normal = normal;
+    shaded.roughness = point.roughness;
     shaded.color = grade(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered);
     shaded.glow = glow_weight(fogged);
@@ -716,10 +738,25 @@ fn extended_temporal_output(input: ExtendedTemporalOutput) -> ExtendedOutput {
     return output;
 }
 
+// Octahedral coordinates of unit `normal` (as `gpu_data::octahedral`, which
+// `octahedral_normal` unfolds).
+fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
+    let n = normal / (abs(normal.x) + abs(normal.y) + abs(normal.z));
+    let sign = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0));
+    return select(n.xy, (vec2<f32>(1.0) - abs(n.yx)) * sign, n.z < 0.0);
+}
+
+// The surface target's texel: the shading normal, octahedral in [0, 1], and
+// the roughness.
+fn surface_texel(shaded: Shaded) -> vec4<f32> {
+    return vec4<f32>(octahedral_coordinates(shaded.normal) * 0.5 + 0.5, shaded.roughness, 1.0);
+}
+
 fn scene_targets(shaded: Shaded) -> SceneTargets {
     var targets: SceneTargets;
     targets.color = vec4<f32>(shaded.color, shaded.ambient);
     targets.glow = vec2<f32>(shaded.glow, shaded.reflect);
+    targets.surface = surface_texel(shaded);
     return targets;
 }
 
@@ -730,6 +767,7 @@ fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32
     var targets: TemporalTargets;
     targets.color = vec4<f32>(shaded.color, shaded.ambient);
     targets.glow = vec2<f32>(shaded.glow, shaded.reflect);
+    targets.surface = surface_texel(shaded);
     // This pixel center without the jitter, and the same point last frame.
     let current = vec2<f32>(clip_position.x * camera.jitter.z - 1.0,
         1.0 - clip_position.y * camera.jitter.w) - camera.jitter.xy;
@@ -945,6 +983,9 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(encoded(grade(sky(sky_ray(input.ndc)))), 1.0);
 }
 
+// The sky's surface texel: facing up, fully rough (it reflects nothing).
+const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
+
 // Screen-effect frames: the sky has no ambient occlusion; its sun glows.
 @fragment
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
@@ -952,6 +993,7 @@ fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     var targets: SceneTargets;
     targets.color = vec4<f32>(grade(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
+    targets.surface = SKY_SURFACE;
     return targets;
 }
 
@@ -963,6 +1005,7 @@ fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     var targets: TemporalTargets;
     targets.color = vec4<f32>(grade(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
+    targets.surface = SKY_SURFACE;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
     targets.motion = (previous.xy / previous.w - input.ndc) * vec2<f32>(0.5, -0.5);
     if !(previous.w > 0.0) {

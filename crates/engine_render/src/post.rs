@@ -21,6 +21,9 @@ use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Glow weight (decision 021) and reflectivity (decision 025).
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+/// The surface reflections follow (decision 025): the shading normal,
+/// octahedral, and roughness, 10 bits each.
+pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 /// Occlusion before its filter, and each texel's distance from the eye.
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -31,6 +34,8 @@ const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 /// Half-resolution bloom levels; each halves the one before.
 const BLOOM_LEVELS: u32 = 6;
+/// Blurred half-resolution levels of the scene rough reflections read.
+const SCENE_LEVELS: u32 = 6;
 
 /// Which effects a frame applies.
 #[derive(Clone, Copy)]
@@ -44,10 +49,17 @@ pub(crate) struct PostFrame {
 struct Targets {
     size: (u32, u32),
     // Scene, glow, occlusion, bloom, reflections, shafts, traced
-    // reflections and raw occlusion, destroyed with the targets.
-    textures: [wgpu::Texture; 8],
+    // reflections, raw occlusion, surface and scene levels, destroyed with
+    // the targets.
+    textures: [wgpu::Texture; 10],
     scene: wgpu::TextureView,
     glow: wgpu::TextureView,
+    surface: wgpu::TextureView,
+    // Every blurred scene level, which reflections read, and group `i`
+    // reading the scene (0) or level `i - 1` to write level `i`.
+    scene_levels: wgpu::TextureView,
+    scene_level_views: Vec<wgpu::TextureView>,
+    scene_level_groups: Vec<wgpu::BindGroup>,
     // Filtered occlusion, which the composite and resolve read, and the raw
     // occlusion the filter reads through its group.
     occlusion: wgpu::TextureView,
@@ -173,6 +185,8 @@ impl PostPass {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            // Blends the blurred scene levels reflections read.
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let shafts_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -319,14 +333,15 @@ impl PostPass {
         self.nearest.release();
     }
 
-    /// Target bytes: scene (4) and glow (2) per pixel, at half resolution
-    /// raw and filtered occlusion (4 and 1), traced and filtered reflections
-    /// (8 each), shafts (2) and the bloom chain (8 bytes per texel of its
-    /// first level), and the reflections' depth pyramid.
+    /// Target bytes: scene (4), glow (2) and surface (4) per pixel, at half
+    /// resolution raw and filtered occlusion (4 and 1), traced and filtered
+    /// reflections (8 each), shafts (2), and the bloom chain and blurred
+    /// scene levels (8 bytes per texel of their first levels), and the
+    /// reflections' depth pyramid.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.as_ref().map_or(0, |targets| {
             let pixels = u64::from(targets.size.0) * u64::from(targets.size.1);
-            pixels * 6 + pixels / 4 * 23 + pixels / 4 * 8 * 4 / 3
+            pixels * 10 + pixels / 4 * 23 + pixels / 4 * 8 * 4 / 3 * 2
         }) + self.nearest.capacity_bytes()
     }
 
@@ -427,6 +442,8 @@ impl PostPass {
                             resource: wgpu::BindingResource::Sampler(&self.sampler),
                         },
                         texture_entry(10, nearest),
+                        texture_entry(13, &targets.surface),
+                        texture_entry(14, &targets.scene_levels),
                     ],
                 });
                 self.reflections_group = Some((key, group));
@@ -530,10 +547,10 @@ impl PostPass {
         frame
     }
 
-    /// The scene color and glow targets of the opaque pass.
-    pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView) {
+    /// The scene color, glow and surface targets of the opaque pass.
+    pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
         let targets = self.targets.as_ref().expect("sized in begin");
-        (&targets.scene, &targets.glow)
+        (&targets.scene, &targets.glow, &targets.surface)
     }
 
     /// Views the temporal resolve reads: scene, occlusion, bloom,
@@ -599,6 +616,23 @@ impl PostPass {
         {
             self.nearest
                 .encode(encoder, timestamps.map(|(set, first)| (set, first + 6)));
+            // The scene blurred down its levels for rough reflections.
+            for (view, group) in targets
+                .scene_level_views
+                .iter()
+                .zip(&targets.scene_level_groups)
+            {
+                let mut pass = fullscreen_pass(
+                    encoder,
+                    "engine/post-scene-levels",
+                    view,
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    None,
+                );
+                pass.set_pipeline(&self.bloom_down);
+                pass.set_bind_group(0, group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             {
                 let mut pass = fullscreen_pass(
                     encoder,
@@ -724,6 +758,7 @@ impl PostPass {
             })
         };
         let levels = BLOOM_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
+        let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let textures = [
             texture("engine/post-scene", (width, height), SCENE_FORMAT, 1),
             texture("engine/post-glow", (width, height), GLOW_FORMAT, 1),
@@ -733,6 +768,8 @@ impl PostPass {
             texture("engine/post-shafts", half, SHAFT_FORMAT, 1),
             texture("engine/post-reflections-traced", half, REFLECTION_FORMAT, 1),
             texture("engine/post-occlusion-raw", half, RAW_OCCLUSION_FORMAT, 1),
+            texture("engine/post-surface", (width, height), SURFACE_FORMAT, 1),
+            texture("engine/post-scene-levels", half, BLOOM_FORMAT, scene_levels),
         ];
         let [
             scene,
@@ -743,6 +780,8 @@ impl PostPass {
             shafts,
             traced,
             raw_occlusion,
+            surface,
+            scene_levels_view,
         ] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
@@ -796,6 +835,30 @@ impl PostPass {
                 )
             })
             .collect();
+        // The scene levels blur with the bloom's downsampling filter, the
+        // first from the scene itself.
+        let scene_level_views: Vec<wgpu::TextureView> = (0..scene_levels)
+            .map(|level| {
+                textures[9].create_view(&wgpu::TextureViewDescriptor {
+                    base_mip_level: level,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        let scene_level_groups = (0..scene_level_views.len())
+            .map(|level| {
+                let source = if level == 0 {
+                    &scene
+                } else {
+                    &scene_level_views[level - 1]
+                };
+                group(
+                    &self.bloom_down,
+                    &[texture_entry(4, source), sampler.clone()],
+                )
+            })
+            .collect();
         let composite = group(
             &self.composite,
             &[
@@ -813,6 +876,10 @@ impl PostPass {
             textures,
             scene,
             glow,
+            surface,
+            scene_levels: scene_levels_view,
+            scene_level_views,
+            scene_level_groups,
             occlusion,
             raw_occlusion,
             occlusion_filter,

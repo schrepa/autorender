@@ -30,6 +30,11 @@
 // Ambient occlusion before its filter: visibility, and the distance from
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
+// Reflections (decision 025): the surface the opaque pass shaded (its
+// shading normal, octahedral in [0, 1], and roughness), and the scene
+// blurred down half-resolution levels for rough surfaces.
+@group(0) @binding(13) var surface_texture: texture_2d<f32>;
+@group(0) @binding(14) var scene_levels: texture_2d<f32>;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -184,6 +189,10 @@ const REFLECTION_THICKNESS_SHARE: f32 = 0.05;
 // visible surface stands in for it through this much more depth (a solid
 // object's), fading over it.
 const REFLECTION_SOLID: f32 = 1.0;
+// A roughness lobe's half-width in radians per GGX alpha: the Phong lobe
+// matching it narrows to 0.244 of its peak there (as in cone-traced
+// reflections).
+const REFLECTION_CONE: f32 = 1.19;
 const FLOAT_MAX: f32 = 0x1.fffffep+127f;
 // The pixel of each 2x2 block the half-resolution reflection passes trace:
 // the first without temporal antialiasing; with it, another each frame
@@ -219,6 +228,15 @@ fn screen_point(world: vec3<f32>) -> vec4<f32> {
         ndc.z, clip.w);
 }
 
+// The unit normal at octahedral coordinates `encoded` in [-1, 1].
+fn unfolded_normal(encoded: vec2<f32>) -> vec3<f32> {
+    let z = 1.0 - abs(encoded.x) - abs(encoded.y);
+    let fold = max(-z, 0.0);
+    let shift = vec2<f32>(select(-fold, fold, encoded.x >= 0.0),
+        select(-fold, fold, encoded.y >= 0.0));
+    return normalize(vec3<f32>(encoded - shift, z));
+}
+
 // The world point at pixel position `pixel` (continuous) and depth `depth`.
 fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let uv = pixel * post.size.zw;
@@ -252,22 +270,14 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         return vec4<f32>(0.0);
     }
     let p = center.xyz;
-    let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
-    let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
-    let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
-    let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
-    let across = select(right, left, dot(left, left) < dot(right, right));
-    let along = select(down, up, dot(up, up) < dot(down, down));
-    var normal = cross(along, across);
-    let length_squared = dot(normal, normal);
-    if !(length_squared > 0.0) {
-        return vec4<f32>(0.0);
-    }
-    normal = normal * inverseSqrt(length_squared);
+    // The normal the lighting shaded (with normal maps and ripples) and the
+    // roughness, bent back toward the eye where bumps turn it past the view
+    // so the ray leaves the surface.
+    let shading = textureLoad(surface_texture, pixel, 0);
+    let roughness = shading.z;
     let to_eye = normalize(post.eye.xyz - p);
-    if dot(normal, to_eye) < 0.0 {
-        normal = -normal;
-    }
+    var normal = unfolded_normal(shading.xy * 2.0 - 1.0);
+    normal = normalize(normal + max(0.05 - dot(normal, to_eye), 0.0) * to_eye);
     let direction = reflect(-to_eye, normal);
     // The ray's segment: `distance` long, ending nine tenths of the way to
     // the eye plane when it heads toward the camera.
@@ -366,7 +376,17 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);
     let fade = saturate(edge * 10.0) * (1.0 - fraction * fraction) * confidence;
-    let color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
+    // The light reflected over the roughness lobe: the cone's width where it
+    // lands, in pixels, picks the blurred scene level read, mirrors reading
+    // the scene itself.
+    let width = 2.0 * travelled * REFLECTION_CONE * roughness * roughness * post.eye.w
+        / max(distance(ray_point, post.eye.xyz), 1.0e-4);
+    let level = log2(max(width, 1.0));
+    var color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
+    if level > 0.0 {
+        let blurred = textureSampleLevel(scene_levels, linear, uv, max(level - 1.0, 0.0)).rgb;
+        color = mix(color, blurred, saturate(level));
+    }
     return vec4<f32>(color, reflectivity * fade);
 }
 

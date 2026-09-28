@@ -20,7 +20,7 @@ use crate::gpu_uploads;
 use crate::lights::{LightPass, LightPoses};
 use crate::materials::MaterialStore;
 use crate::particles::ParticlePass;
-use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
+use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
@@ -1692,7 +1692,7 @@ impl Renderer {
                 .as_ref()
                 .is_none_or(|(built, _)| *built != key)
             {
-                let (scene, _) = post.targets();
+                let (scene, ..) = post.targets();
                 let group = camera_bind_group(
                     &self.device,
                     &self.camera_layout,
@@ -1770,24 +1770,27 @@ impl Renderer {
                     },
                 })
             };
-            // Frames with screen effects draw into their sRGB scene and glow
-            // targets, temporal frames into their motion target as well.
-            let mut targets = [None, None, None];
+            // Frames with screen effects draw into their sRGB scene, glow and
+            // surface targets, temporal frames into their motion target as
+            // well.
+            let mut targets = [None, None, None, None];
             let count = match (temporal_pass, post) {
                 (Some((_, pass)), Some(post)) => {
-                    let (scene, glow) = post.targets();
+                    let (scene, glow, surface) = post.targets();
                     targets = [
                         attachment(scene, clear_color(true)),
                         attachment(pass.motion(), wgpu::Color::TRANSPARENT),
                         attachment(glow, wgpu::Color::TRANSPARENT),
+                        attachment(surface, wgpu::Color::TRANSPARENT),
                     ];
-                    3
+                    4
                 }
                 (_, Some(post)) => {
-                    let (scene, glow) = post.targets();
+                    let (scene, glow, surface) = post.targets();
                     targets[0] = attachment(scene, clear_color(true));
                     targets[1] = attachment(glow, wgpu::Color::TRANSPARENT);
-                    2
+                    targets[2] = attachment(surface, wgpu::Color::TRANSPARENT);
+                    3
                 }
                 (_, None) => {
                     targets[0] =
@@ -2083,7 +2086,7 @@ impl Renderer {
             };
             let attachments = match post {
                 Some(post) => {
-                    let (scene, glow) = post.targets();
+                    let (scene, glow, _) = post.targets();
                     [load(scene), load(glow)]
                 }
                 None => [load(&view), None],
@@ -2525,7 +2528,11 @@ impl Renderer {
                         0.0
                     },
                 )];
-                let post_targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+                let post_targets = [
+                    Some(SCENE_FORMAT.into()),
+                    Some(GLOW_FORMAT.into()),
+                    Some(SURFACE_FORMAT.into()),
+                ];
                 let targets = MeshTargets {
                     fragment: match (post, lit) {
                         (false, false) => "fs_main",
@@ -2841,7 +2848,11 @@ impl LitPipelines {
             constants: &canvas_constants,
             depth_write: true,
         };
-        let post_targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+        let post_targets = [
+            Some(SCENE_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
         let post = MeshTargets {
             fragment: "fs_post_lit",
             targets: &post_targets,
@@ -2866,8 +2877,8 @@ impl LitPipelines {
     }
 }
 
-/// Mesh and sky pipelines drawing into the screen effects' scene and glow
-/// targets (decision 021).
+/// Mesh and sky pipelines drawing into the screen effects' scene, glow and
+/// surface targets (decisions 021 and 025).
 struct PostPipelines {
     full: wgpu::RenderPipeline,
     affine: wgpu::RenderPipeline,
@@ -2882,7 +2893,11 @@ impl PostPipelines {
         camera_layout: &wgpu::BindGroupLayout,
         layouts: [&wgpu::PipelineLayout; 2],
     ) -> Self {
-        let targets = [Some(SCENE_FORMAT.into()), Some(GLOW_FORMAT.into())];
+        let targets = [
+            Some(SCENE_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
         let post = MeshTargets {
             fragment: "fs_post",
             targets: &targets,

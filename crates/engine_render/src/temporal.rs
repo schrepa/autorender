@@ -12,7 +12,7 @@ use engine_core::{RenderFrame, glam::Mat4};
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, Variant, jitter_clip, jitter_offset, jittered,
 };
-use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT};
+use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
 
 const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -152,6 +152,7 @@ impl TemporalPass {
                 Some(SCENE_FORMAT.into()),
                 Some(MOTION_FORMAT.into()),
                 Some(GLOW_FORMAT.into()),
+                Some(SURFACE_FORMAT.into()),
             ],
             None,
         );
@@ -696,6 +697,7 @@ fn mesh_pipeline(
                 Some(SCENE_FORMAT.into()),
                 Some(MOTION_FORMAT.into()),
                 Some(GLOW_FORMAT.into()),
+                Some(SURFACE_FORMAT.into()),
             ],
         }),
         multiview_mask: None,
