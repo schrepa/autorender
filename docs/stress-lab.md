@@ -96,7 +96,9 @@ virtual geometry ([decision 044](adr-044-virtual-geometry.md)): boulders of
 cluster hierarchies the GPU selects from each frame. Build its files once
 with `cargo run -p engine_vgbuild --release --bin dense_assets`, which writes
 them to `web/public/stress/dense/` (generated, not committed); the page
-fetches them when the scene is first chosen. **Objects** are the boulders
+fetches each file's prefix (its metadata and coarsest levels, about 2 MB in
+all) when the scene is first chosen, and the renderer streams the other
+pages as views need them. **Objects** are the boulders
 and columns (one in five a column), on as many 64-unit tiles as give each
 about 36 square units; **moving objects** bob and turn in place. The other
 settings do not apply. The Effects control and looks work as elsewhere, and
@@ -104,8 +106,10 @@ virtual meshes cast their clusters' shadows. Frames report the clusters and
 triangles the camera and the shadow maps drew (`virtual_clusters`,
 `virtual_triangles`, `virtual_shadow_clusters`, `virtual_shadow_triangles`),
 the camera's clusters occlusion culling left undrawn
-(`virtual_occluded_clusters`, with `?occlusion=off` to compare) and any
-entries dropped for want of room (`dropped_virtual`).
+(`virtual_occluded_clusters`, with `?occlusion=off` to compare), any
+entries dropped for want of room (`dropped_virtual`), and the pages resident,
+loading, wanted and lacking, and finding no room (`virtual_resident_pages`,
+`virtual_loading_pages`, `virtual_missing_pages`, `dropped_virtual_pages`).
 
 ## Measurement
 

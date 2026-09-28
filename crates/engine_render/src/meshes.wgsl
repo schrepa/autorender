@@ -88,9 +88,11 @@ struct SlotColor {
 const MOVED_SLOT: u32 = 0x80000000u;
 
 // Virtual geometry (decision 044): the arena `virtual_geometry.wgsl` selects
-// clusters from. Each mesh's bases and quantization; three words per
-// cluster (the second ends with its mesh, the third starts with its vertex
-// and triangle words in the pages); the pages' words.
+// clusters from. Each mesh's bases (the last where the pool's page slots
+// start) and quantization; three words per cluster (the second ends with
+// its mesh, the third holds its vertex and triangle words in its page and
+// ends with its global page); the page pool: each page's slot, then the
+// slots of VIRTUAL_PAGE_WORDS words.
 struct VirtualMeshRecord {
     bases: vec4<u32>,
     info: vec4<u32>,
@@ -101,6 +103,7 @@ struct VirtualMeshRecord {
 @group(2) @binding(5) var<storage, read> virtual_meshes: array<VirtualMeshRecord>;
 @group(2) @binding(6) var<storage, read> virtual_clusters: array<vec4<u32>>;
 @group(2) @binding(7) var<storage, read> virtual_pages: array<u32>;
+const VIRTUAL_PAGE_WORDS: u32 = 32768u;
 
 // Local lights (decision 023), binned into view clusters by lights.wgsl.
 struct Clusters {
@@ -261,13 +264,14 @@ fn virtual_corner(cluster: u32, vertex: u32) -> VirtualCorner {
     if !corner.valid {
         return corner;
     }
-    let packed = virtual_pages[words.y + vertex / 4u];
-    let base = words.x + ((packed >> ((vertex % 4u) * 8u)) & 0xffu) * 4u;
+    let mesh = virtual_meshes[record.w];
+    let page = mesh.bases.w + virtual_pages[words.w] * VIRTUAL_PAGE_WORDS;
+    let packed = virtual_pages[page + words.y + vertex / 4u];
+    let base = page + words.x + ((packed >> ((vertex % 4u) * 8u)) & 0xffu) * 4u;
     let w0 = virtual_pages[base];
     let w1 = virtual_pages[base + 1u];
     let w2 = virtual_pages[base + 2u];
     let w3 = virtual_pages[base + 3u];
-    let mesh = virtual_meshes[record.w];
     let steps = vec3<f32>(f32(w0 & 0xffffu), f32(w0 >> 16u), f32(w1 & 0xffffu));
     corner.position = mesh.position_min.xyz + steps * mesh.position_step.xyz;
     corner.normal = vec2<f32>(snorm16(w1 >> 16u), snorm16(w2));

@@ -10,18 +10,32 @@
 //! clusters the last frame's depth pyramid hid against this frame's, after
 //! phase one, and draw those it does not hide in phase two from twin bins.
 //!
-//! Arena records carry absolute indices, rebased once at upload; pages
-//! upload as the file stores them. Selection runs on the GPU only, for all
-//! views in one pass; each bin's region, the retest list and the node and
-//! group queues grow to what frames read back.
+//! Arena records carry absolute indices, rebased once at upload. Pages
+//! stream (`virtual_streaming`): each lives in a slot of the page pool,
+//! found through the pool's slot table, and selection draws a group only
+//! while it is resident. Selection reports the groups it used and those it
+//! would refine into; their pages load from the meshes' words or are
+//! fetched from their files by byte range, coarser groups first, and pages
+//! unused for a while make room under a budget or the device's limits.
+//!
+//! Selection runs on the GPU only, for all views in one pass; each bin's
+//! region, the retest list and the node and group queues grow to what
+//! frames read back.
 
-use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    rc::Rc,
+    sync::Arc,
+};
 
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, VirtualMesh};
+use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
+use wasm_bindgen::JsCast;
 
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::shadows::{SHADOW_FORMAT, VIRTUAL_SHADOW_PLANES as PLANES};
+use crate::virtual_streaming::{MeshLinks, PageState, Placement, Residency};
 
 const NONE: u32 = u32::MAX;
 const GROUP: u32 = 64;
@@ -34,8 +48,8 @@ pub(crate) const MAX_VIEWS: usize = 8;
 /// a direction.
 const VIEW_FLOATS: usize = PLANES * 4 + 12;
 /// Bytes of the uniform before its views: counts, two projections, the
-/// viewport and the camera's tests.
-const FRAME_BYTES: usize = 176;
+/// viewport, the camera's tests and the feedback's locations.
+const FRAME_BYTES: usize = 192;
 const UNIFORM_BYTES: u64 = (FRAME_BYTES + MAX_VIEWS * VIEW_FLOATS * 4) as u64;
 const READBACKS: usize = 3;
 /// Starting capacities, grown from read-back counts.
@@ -98,7 +112,8 @@ pub(crate) struct VirtualView {
 
 /// Counts a frame read back: clusters and triangles the camera and the
 /// shadow views selected, the camera's clusters occlusion culling left
-/// undrawn, and entries dropped for want of room.
+/// undrawn, and entries dropped for want of room; and this frame's pages:
+/// resident, loading, and loads dropped for want of room.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VirtualStats {
     pub clusters: u32,
@@ -107,6 +122,10 @@ pub(crate) struct VirtualStats {
     pub shadow_triangles: u32,
     pub occluded: u32,
     pub dropped: u32,
+    pub resident_pages: u32,
+    pub loading_pages: u32,
+    pub missing_pages: u32,
+    pub dropped_pages: u32,
 }
 
 /// The camera's cluster tests of a frame (decisions 040 and 041): the
@@ -142,6 +161,32 @@ enum ReadbackState {
 struct Readback {
     buffer: wgpu::Buffer,
     state: Rc<Cell<ReadbackState>>,
+    // The frame it recorded, where its used and requested group bits start
+    // and their words each.
+    frame: u64,
+    feedback: (usize, usize),
+}
+
+/// What a frame read back: its counts, dropped queue, group and cluster
+/// entries and whether its retest list overflowed, and the groups it used
+/// and would refine into (bits of global groups).
+struct Feedback {
+    stats: VirtualStats,
+    drops: [u32; 4],
+    used: Vec<u32>,
+    requested: Vec<u32>,
+    frame: u64,
+}
+
+/// A fetched byte range of a mesh's file: pages `first..first + count`,
+/// starting at byte `start`, or the failure; for arena `generation`.
+struct Arrival {
+    generation: u64,
+    mesh: u32,
+    first: u32,
+    count: u32,
+    start: u64,
+    bytes: Result<Vec<u8>, ()>,
 }
 
 struct Resident {
@@ -194,9 +239,6 @@ type GroupsKey = (u64, u64, u64, u64, Option<u64>, Option<u64>);
 /// The arena generation, the poses' key and the shadow views' buffer a
 /// shadow drawing group binds.
 type ShadowGroupKey = (u64, u64, wgpu::Buffer);
-/// Counts a frame read back, its dropped queue, group and cluster entries,
-/// and whether its retest list overflowed.
-type ReadCounts = (VirtualStats, [u32; 4]);
 
 pub(crate) struct VirtualGeometryPass {
     module: wgpu::ShaderModule,
@@ -207,6 +249,27 @@ pub(crate) struct VirtualGeometryPass {
     arena: Option<ArenaBuffers>,
     // Advances whenever arena buffers are replaced.
     arena_generation: u64,
+    // Streaming: the resident pages and groups, each mesh's first global
+    // group and page, the pool's slots, the words of its slot table (and of
+    // the groups buffer before the residency bits), fetched ranges that
+    // arrived, the frame count and this frame's dropped loads.
+    residency: Residency,
+    // Advances with every arena rebuild (not pool growth): fetches of an
+    // earlier one are ignored.
+    layout_generation: u64,
+    bases: Vec<(u32, u32)>,
+    pool_slots: usize,
+    table_words: u64,
+    bits_base: u64,
+    inbox: Rc<RefCell<Vec<Arrival>>>,
+    frame: u64,
+    // The first frame of the current layout: earlier frames' read-back
+    // groups are those of an older one.
+    layout_frame: u64,
+    // Pages the last read-back frame wanted and lacked, and those of them
+    // (with arrivals since) that found no room.
+    missing_pages: u32,
+    dropped_pages: u32,
     // Nodes on the longest root-to-leaf path of any resident mesh.
     depth: u32,
     uniform: wgpu::Buffer,
@@ -226,7 +289,10 @@ pub(crate) struct VirtualGeometryPass {
     visible: wgpu::Buffer,
     visible_capacity: u64,
     counters: wgpu::Buffer,
+    // Counters and bins; the used and requested group bits follow, this
+    // many words each.
     counter_capacity: u64,
+    feedback_words: u64,
     dispatch: wgpu::Buffer,
     draw_args: wgpu::Buffer,
     // Clusters waiting for this frame's depth pyramid, and whether this
@@ -247,9 +313,8 @@ pub(crate) struct VirtualGeometryPass {
     poses: Option<(wgpu::Buffer, u64)>,
     shadow_drawing: Option<ShadowDrawing>,
     readbacks: Vec<Readback>,
-    // Counts and dropped queue, group and cluster entries mapped since the
-    // last frame took them.
-    read: Rc<Cell<Option<ReadCounts>>>,
+    // Feedback mapped since the last frame took it.
+    read: Rc<Cell<Option<Feedback>>>,
     last: Option<VirtualStats>,
     grow: [bool; 4],
 }
@@ -281,8 +346,73 @@ fn storage_init(device: &wgpu::Device, label: &str, words: &[u32]) -> wgpu::Buff
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(label),
         contents: bytemuck::cast_slice(contents),
-        usage: wgpu::BufferUsages::STORAGE,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
     })
+}
+
+/// The page pool: a slot table of `table_words` words, then `slots` slots
+/// of PAGE_WORDS words.
+fn pool(device: &wgpu::Device, table_words: u64, slots: usize) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("engine/virtual-pages"),
+        size: (table_words + slots.max(1) as u64 * PAGE_WORDS as u64) * 4,
+        usage: wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_DST
+            | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
+/// Fetches bytes `range` of `url` into `inbox` as `arrival` (a server
+/// ignoring ranges sends the whole file, which is cut to the range).
+fn fetch(
+    url: &str,
+    range: std::ops::Range<u64>,
+    arrival: Arrival,
+    inbox: Rc<RefCell<Vec<Arrival>>>,
+) {
+    let request = (|| {
+        let init = web_sys::RequestInit::new();
+        init.set_method("GET");
+        let headers = web_sys::Headers::new().ok()?;
+        headers
+            .set("Range", &format!("bytes={}-{}", range.start, range.end - 1))
+            .ok()?;
+        init.set_headers(&headers);
+        web_sys::Request::new_with_str_and_init(url, &init).ok()
+    })();
+    let promise = request
+        .zip(web_sys::window())
+        .map(|(request, window)| window.fetch_with_request(&request));
+    wasm_bindgen_futures::spawn_local(async move {
+        let bytes = async {
+            let response: web_sys::Response =
+                wasm_bindgen_futures::JsFuture::from(promise.ok_or(())?)
+                    .await
+                    .map_err(|_| ())?
+                    .dyn_into()
+                    .map_err(|_| ())?;
+            if !response.ok() {
+                return Err(());
+            }
+            let whole = response.status() == 200;
+            let buffer =
+                wasm_bindgen_futures::JsFuture::from(response.array_buffer().map_err(|_| ())?)
+                    .await
+                    .map_err(|_| ())?;
+            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+            if whole {
+                bytes
+                    .get(range.start as usize..range.end as usize)
+                    .map(<[u8]>::to_vec)
+                    .ok_or(())
+            } else {
+                Ok(bytes)
+            }
+        }
+        .await;
+        inbox.borrow_mut().push(Arrival { bytes, ..arrival });
+    });
 }
 
 fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
@@ -342,6 +472,17 @@ impl VirtualGeometryPass {
             dirty: false,
             arena: None,
             arena_generation: 0,
+            residency: Residency::default(),
+            layout_generation: 0,
+            bases: Vec::new(),
+            pool_slots: 0,
+            table_words: 0,
+            bits_base: 0,
+            inbox: Rc::new(RefCell::new(Vec::new())),
+            frame: 0,
+            dropped_pages: 0,
+            missing_pages: 0,
+            layout_frame: 0,
             depth: 0,
             uniform: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/virtual-frame"),
@@ -379,6 +520,7 @@ impl VirtualGeometryPass {
                 wgpu::BufferUsages::COPY_SRC,
             ),
             counter_capacity: COUNTERS as u64,
+            feedback_words: 0,
             dispatch: storage(
                 device,
                 "engine/virtual-dispatch",
@@ -446,25 +588,42 @@ impl VirtualGeometryPass {
     }
 
     /// Rebuilds the arena when resident meshes changed: every record
-    /// rebased to absolute indices, every page copied.
-    pub(crate) fn upload(&mut self, device: &wgpu::Device) {
+    /// rebased to absolute indices, and a new page pool holding the pinned
+    /// pages (and, without `budget`, every page the meshes' words hold).
+    pub(crate) fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        budget: Option<u32>,
+    ) {
         if !self.dirty {
             return;
         }
         self.dirty = false;
         self.index.clear();
         self.depth = 0;
-        let (mut meshes, mut nodes, mut groups, mut clusters, mut pages) =
-            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let total_pages: usize = self
+            .resident
+            .iter()
+            .map(|resident| resident.geometry.page_count())
+            .sum();
+        self.table_words = (total_pages as u64).next_multiple_of(4).max(4);
+        let (mut meshes, mut nodes, mut groups, mut clusters) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut links = Vec::new();
+        self.bases.clear();
+        let mut page_base = 0u32;
         for (mesh_index, resident) in self.resident.iter().enumerate() {
             let geometry = &resident.geometry;
             self.index.insert(resident.handle, mesh_index as u32);
             let node_base = (nodes.len() / NODE_WORDS) as u32;
             let group_base = (groups.len() / GROUP_WORDS) as u32;
             let cluster_base = (clusters.len() / CLUSTER_WORDS) as u32;
-            let page_base = pages.len() as u32;
+            self.bases.push((group_base, page_base));
+            links.push(MeshLinks::of(geometry));
             let (position_min, position_step, uv_min, uv_step) = geometry.quantization();
-            meshes.extend([node_base, group_base, cluster_base, page_base]);
+            // The last base is where the pool's slots start.
+            meshes.extend([node_base, group_base, cluster_base, self.table_words as u32]);
             meshes.extend([geometry.levels(), geometry.depth(), 0, 0]);
             meshes.extend(position_min.map(f32::to_bits));
             meshes.push(0);
@@ -485,9 +644,8 @@ impl VirtualGeometryPass {
                 group[5] += cluster_base;
                 groups.extend(group);
             }
-            let table = geometry.page_table();
+            // Offsets within the page, and the global page.
             for words in geometry.cluster_section().as_chunks::<CLUSTER_WORDS>().0 {
-                let page = page_base + table[words[7] as usize * 2];
                 let refined = if words[5] == NONE {
                     NONE
                 } else {
@@ -502,24 +660,252 @@ impl VirtualGeometryPass {
                     refined,
                     words[6] + group_base,
                     mesh_index as u32,
-                    page + words[8],
-                    page + words[9],
+                    words[8],
+                    words[9],
                     words[10],
-                    0,
+                    page_base + words[7],
                 ]);
             }
-            pages.extend_from_slice(geometry.page_section());
+            page_base += geometry.page_count() as u32;
             self.depth = self.depth.max(geometry.depth());
         }
+        // The groups' residency bits follow their records.
+        self.bits_base = groups.len() as u64;
+        groups.resize(groups.len() + (groups.len() / GROUP_WORDS).div_ceil(32), 0);
+        self.residency.rebuild(&links, &self.bases);
+        // Slots for the pinned pages, and every held one without a budget.
+        let preload = if budget.is_some() {
+            self.residency.pinned()
+        } else {
+            self.residency.held()
+        };
+        self.pool_slots = preload.len().max(1);
+        self.residency.add_slots(self.pool_slots);
+        self.layout_generation += 1;
+        self.layout_frame = self.frame + 1;
+        (self.missing_pages, self.dropped_pages) = (0, 0);
         self.arena = Some(ArenaBuffers {
             meshes: storage_init(device, "engine/virtual-meshes", &meshes),
             nodes: storage_init(device, "engine/virtual-nodes", &nodes),
             groups: storage_init(device, "engine/virtual-groups", &groups),
             clusters: storage_init(device, "engine/virtual-clusters", &clusters),
-            pages: storage_init(device, "engine/virtual-pages", &pages),
+            pages: pool(device, self.table_words, self.pool_slots),
         });
         self.arena_generation += 1;
         self.groups = [None, None];
+        for page in preload {
+            if self.residency.begin(page, self.frame) {
+                self.load_held(device, queue, page, usize::MAX);
+            }
+        }
+        self.write_residency(queue);
+    }
+
+    /// The most pages the pool can hold on this device.
+    fn device_slots(&self, device: &wgpu::Device) -> usize {
+        let limits = device.limits();
+        let bytes = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size);
+        ((bytes / 4).saturating_sub(self.table_words) / PAGE_WORDS as u64) as usize
+    }
+
+    /// Loads page `page` (loading) from its mesh's words, or fails it.
+    fn load_held(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, page: u32, limit: usize) {
+        let (mesh, local, _) = self.residency.page(page);
+        let geometry = Arc::clone(&self.resident[mesh as usize].geometry);
+        match geometry.page(local as usize) {
+            Some(words) => self.place(device, queue, page, words, limit),
+            None => self.residency.fail(page, self.frame, 0),
+        }
+    }
+
+    /// Places loading page `page`'s `words` in a slot (growing the pool
+    /// when allowed) and uploads them, or drops the load.
+    fn place(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        page: u32,
+        words: &[u32],
+        limit: usize,
+    ) {
+        let limit = limit.min(self.device_slots(device));
+        loop {
+            match self.residency.place(page, self.frame, limit) {
+                Placement::Slot(slot) => {
+                    let arena = self.arena.as_ref().expect("an arena");
+                    queue.write_buffer(
+                        &arena.pages,
+                        (self.table_words + slot as u64 * PAGE_WORDS as u64) * 4,
+                        bytemuck::cast_slice(words),
+                    );
+                    return;
+                }
+                Placement::Grow => {
+                    let slots = (self.pool_slots * 2).clamp(self.pool_slots + 1, limit.max(1));
+                    if slots <= self.pool_slots {
+                        self.residency.fail(page, self.frame, 0);
+                        self.dropped_pages += 1;
+                        return;
+                    }
+                    self.grow_pool(device, queue, slots);
+                }
+                Placement::Full => {
+                    self.dropped_pages += 1;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Replaces the pool with one of `slots` slots holding the same pages.
+    /// The copy is submitted at once, so later writes land after it.
+    fn grow_pool(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, slots: usize) {
+        let Some(arena) = self.arena.as_mut() else {
+            return;
+        };
+        let grown = pool(device, self.table_words, slots);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/virtual-pool-growth"),
+        });
+        encoder.copy_buffer_to_buffer(&arena.pages, 0, &grown, 0, arena.pages.size());
+        queue.submit([encoder.finish()]);
+        arena.pages = grown;
+        self.residency.add_slots(slots - self.pool_slots);
+        self.pool_slots = slots;
+        self.arena_generation += 1;
+    }
+
+    /// Writes the slot table and the groups' residency bits where they
+    /// changed.
+    fn write_residency(&mut self, queue: &wgpu::Queue) {
+        let Some(arena) = &self.arena else {
+            return;
+        };
+        if let Some(table) = self.residency.take_table() {
+            queue.write_buffer(&arena.pages, 0, bytemuck::cast_slice(&table));
+        }
+        if let Some(bits) = self.residency.take_bits() {
+            queue.write_buffer(
+                &arena.groups,
+                self.bits_base * 4,
+                bytemuck::cast_slice(&bits),
+            );
+        }
+    }
+
+    /// Streams pages for this frame: loads the groups the last read-back
+    /// frame requested (from the meshes' words, or fetched by byte range),
+    /// places fetched pages that arrived, and keeps at most `budget` pages
+    /// resident (the pinned ones always).
+    fn stream(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        budget: Option<u32>,
+        feedback: Option<(Vec<u32>, Vec<u32>, u64)>,
+    ) {
+        self.frame += 1;
+        if self.arena.is_none() {
+            return;
+        }
+        let limit = budget.map_or(usize::MAX, |budget| {
+            (budget as usize).max(self.residency.pinned().len())
+        });
+        if budget.is_some() {
+            self.residency.shrink(limit);
+        }
+        if let Some((used, requested, frame)) = feedback {
+            let requests = self.residency.feedback(
+                &used,
+                &requested,
+                frame,
+                limit.min(self.device_slots(device)),
+            );
+            self.missing_pages = requests.missing as u32;
+            self.dropped_pages = requests.dropped as u32;
+            // Fetched ones coalesce into byte ranges of consecutive pages.
+            let mut ranges: Vec<(u32, u32, u32)> = Vec::new();
+            for page in requests.begun {
+                let (mesh, local, held) = self.residency.page(page);
+                if held {
+                    self.load_held(device, queue, page, limit);
+                    continue;
+                }
+                match ranges.last_mut() {
+                    Some((last_mesh, first, count))
+                        if *last_mesh == mesh && *first + *count == local =>
+                    {
+                        *count += 1;
+                    }
+                    _ => ranges.push((mesh, local, 1)),
+                }
+            }
+            for (mesh, first, count) in ranges {
+                let geometry = &self.resident[mesh as usize].geometry;
+                let (Some(url), Some(start), Some(end)) = (
+                    geometry.source(),
+                    geometry.page_bytes(first as usize),
+                    geometry.page_bytes((first + count - 1) as usize),
+                ) else {
+                    for local in first..first + count {
+                        let page = self.bases[mesh as usize].1 + local;
+                        self.residency.fail(page, self.frame, 0);
+                    }
+                    continue;
+                };
+                fetch(
+                    url,
+                    start.start..end.end,
+                    Arrival {
+                        generation: self.layout_generation,
+                        mesh,
+                        first,
+                        count,
+                        start: start.start,
+                        bytes: Err(()),
+                    },
+                    Rc::clone(&self.inbox),
+                );
+            }
+        }
+        let arrivals = std::mem::take(&mut *self.inbox.borrow_mut());
+        for arrival in arrivals {
+            if arrival.generation != self.layout_generation {
+                continue;
+            }
+            let geometry = Arc::clone(&self.resident[arrival.mesh as usize].geometry);
+            let page_base = self.bases[arrival.mesh as usize].1;
+            for local in arrival.first..arrival.first + arrival.count {
+                let page = page_base + local;
+                if self.residency.state(page) != PageState::Loading {
+                    continue;
+                }
+                let words = arrival.bytes.as_ref().ok().and_then(|bytes| {
+                    let range = geometry.page_bytes(local as usize)?;
+                    let bytes = bytes.get(
+                        (range.start - arrival.start) as usize
+                            ..(range.end - arrival.start) as usize,
+                    )?;
+                    let words: Vec<u32> = bytes
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|chunk| u32::from_le_bytes(*chunk))
+                        .collect();
+                    geometry
+                        .validate_page(local as usize, &words)
+                        .is_ok()
+                        .then_some(words)
+                });
+                match words {
+                    Some(words) => self.place(device, queue, page, &words, limit),
+                    None => self.residency.fail(page, self.frame, 0),
+                }
+            }
+        }
+        self.write_residency(queue);
     }
 
     /// The arena buffers vertex shaders read (meshes, clusters, pages) and
@@ -550,9 +936,11 @@ impl VirtualGeometryPass {
             + self.retest.size()
     }
 
-    /// Uploads this frame's batches of both ID sources, bins, views and the
-    /// camera's tests, growing the queues, bin regions and retest list to
-    /// what frames read back needed.
+    /// Streams pages (keeping at most `budget` resident) and uploads this
+    /// frame's batches of both ID sources, bins, views and the camera's
+    /// tests, growing the queues, bin regions and retest list to what frames
+    /// read back needed.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -561,17 +949,23 @@ impl VirtualGeometryPass {
         bins: usize,
         views: &[VirtualView],
         tests: &CameraTests,
+        budget: Option<u32>,
     ) {
-        if let Some((stats, [queue_drops, work_drops, cluster_drops, overflow])) = self.read.take()
-        {
-            self.last = Some(stats);
+        let mut requests = None;
+        if let Some(feedback) = self.read.take() {
+            let [queue_drops, work_drops, cluster_drops, overflow] = feedback.drops;
+            self.last = Some(feedback.stats);
             self.grow = [
                 queue_drops > 0,
                 work_drops > 0,
                 cluster_drops > 0,
                 overflow > 0,
             ];
+            if feedback.frame >= self.layout_frame {
+                requests = Some((feedback.used, feedback.requested, feedback.frame));
+            }
         }
+        self.stream(device, queue, budget, requests);
         let binding = device.limits().max_storage_buffer_binding_size;
         if self.grow[3] && self.retest_capacity * 32 <= binding {
             self.retest_capacity *= 2;
@@ -632,15 +1026,18 @@ impl VirtualGeometryPass {
             .iter()
             .flat_map(|&(base, capacity)| [base as u32, capacity as u32, 0, 0])
             .collect();
+        let feedback_words = (self.residency.group_count() as u64).div_ceil(32);
         if bins as u64 > self.counter_capacity - COUNTERS as u64
             || bin_words.len() * 4 > self.bins.size() as usize
+            || feedback_words != self.feedback_words
         {
             let capacity = (bins.max(1) as u64).next_power_of_two();
             self.counter_capacity = COUNTERS as u64 + capacity;
+            self.feedback_words = feedback_words;
             self.counters = storage(
                 device,
                 "engine/virtual-counters",
-                self.counter_capacity * 4,
+                (self.counter_capacity + 2 * feedback_words) * 4,
                 wgpu::BufferUsages::COPY_SRC,
             );
             self.bins = storage(
@@ -726,6 +1123,14 @@ impl VirtualGeometryPass {
             flags,
             tests.phase_two.unwrap_or(0),
             self.retest_capacity as u32,
+            0,
+        ]));
+        // Where selection marks used and requested groups, and where the
+        // groups' residency bits start.
+        bytes.extend_from_slice(bytemuck::cast_slice(&[
+            self.counter_capacity as u32,
+            (self.counter_capacity + self.feedback_words) as u32,
+            self.bits_base as u32,
             0,
         ]));
         for view in views.iter().take(MAX_VIEWS) {
@@ -1065,16 +1470,20 @@ impl VirtualGeometryPass {
     /// Records a copy of this frame's counters for read-back, when a
     /// read-back buffer is free.
     fn read_counters(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let frame = self.frame;
+        let feedback = (self.counter_capacity as usize, self.feedback_words as usize);
         if let Some(index) = self.idle_readback(device) {
-            let readback = &self.readbacks[index];
+            let readback = &mut self.readbacks[index];
             encoder.copy_buffer_to_buffer(
                 &self.counters,
                 0,
                 &readback.buffer,
                 0,
-                COUNTERS as u64 * 4,
+                readback.buffer.size(),
             );
             readback.state.set(ReadbackState::Recorded);
+            readback.frame = frame;
+            readback.feedback = feedback;
         }
     }
 
@@ -1152,9 +1561,16 @@ impl VirtualGeometryPass {
         true
     }
 
-    /// Counts the last read-back frame selected.
+    /// Counts the last read-back frame selected (none before the first
+    /// read-back), and this frame's pages.
     pub(crate) fn stats(&self) -> Option<VirtualStats> {
-        self.last
+        self.arena.as_ref().map(|_| VirtualStats {
+            resident_pages: self.residency.resident_pages() as u32,
+            loading_pages: self.residency.loading_pages() as u32,
+            missing_pages: self.missing_pages,
+            dropped_pages: self.dropped_pages,
+            ..self.last.unwrap_or_default()
+        })
     }
 
     fn idle_readback(&mut self, device: &wgpu::Device) -> Option<usize> {
@@ -1168,14 +1584,17 @@ impl VirtualGeometryPass {
         if self.readbacks.len() == READBACKS {
             return None;
         }
+        // Counters, bins and both feedback bitsets.
         self.readbacks.push(Readback {
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/virtual-counters-readback"),
-                size: COUNTERS as u64 * 4,
+                size: self.counters.size(),
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
             state: Rc::new(Cell::new(ReadbackState::Idle)),
+            frame: 0,
+            feedback: (0, 0),
         });
         Some(self.readbacks.len() - 1)
     }
@@ -1192,6 +1611,7 @@ impl VirtualGeometryPass {
             let buffer = readback.buffer.clone();
             // The retest list's capacity during the frame just submitted.
             let capacity = self.retest_capacity as u32;
+            let (frame, (feedback, feedback_words)) = (readback.frame, readback.feedback);
             readback
                 .buffer
                 .slice(..)
@@ -1204,17 +1624,29 @@ impl VirtualGeometryPass {
                                 })
                             };
                             let drops = [word(3), word(4), word(5)];
-                            read.set(Some((
-                                VirtualStats {
+                            let bits = |start: usize| -> Vec<u32> {
+                                (start..start + feedback_words).map(word).collect()
+                            };
+                            read.set(Some(Feedback {
+                                stats: VirtualStats {
                                     clusters: word(6),
                                     triangles: word(7),
                                     shadow_clusters: word(8),
                                     shadow_triangles: word(9),
                                     occluded: word(11),
                                     dropped: drops.iter().sum(),
+                                    ..VirtualStats::default()
                                 },
-                                [drops[0], drops[1], drops[2], u32::from(word(10) > capacity)],
-                            )));
+                                drops: [
+                                    drops[0],
+                                    drops[1],
+                                    drops[2],
+                                    u32::from(word(10) > capacity),
+                                ],
+                                used: bits(feedback),
+                                requested: bits(feedback + feedback_words),
+                                frame,
+                            }));
                         }
                         buffer.unmap();
                     }

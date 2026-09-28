@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { isKtx2 } from "../src/ktx2.ts";
 import { loadSceneSource } from "../src/source.ts";
+import { fetchVirtualPrefix } from "../src/virtual-mesh.ts";
 
 const LIMIT = 64 * 1024 * 1024;
 
@@ -118,4 +119,41 @@ test("KTX2 images are recognized by their identifier alone", () => {
   // KTX 1.1 and PNG files are not KTX2.
   assert.equal(isKtx2(new Uint8Array([0xab, 0x4b, 0x54, 0x58, 0x20, 0x31, 0x31, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a])), false);
   assert.equal(isKtx2(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])), false);
+});
+
+// A virtual mesh file (decision 044) of `length` bytes whose header says its
+// prefix is `prefix` bytes long, served with byte ranges or whole.
+function virtualFile(t, length, prefix, ranges = true) {
+  const file = new Uint8Array(length).map((_, index) => index % 251);
+  const calls = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    calls.push(options.headers.Range);
+    const [, start, end] = /^bytes=(\d+)-(\d+)$/.exec(options.headers.Range);
+    return ranges
+      ? new Response(file.slice(Number(start), Number(end) + 1), { status: 206 })
+      : new Response(file, { status: 200 });
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const prefixBytes = header => (header.length === 128 && header[0] === 0 ? prefix : undefined);
+  return { file, calls, prefixBytes };
+}
+
+test("virtual mesh prefixes load by byte range after the header", async t => {
+  const { file, calls, prefixBytes } = virtualFile(t, 4096, 1000);
+  const prefix = await fetchVirtualPrefix("/meshes/rock.evg", prefixBytes);
+  assert.deepEqual(calls, ["bytes=0-127", "bytes=0-999"]);
+  assert.deepEqual(prefix, file.slice(0, 1000));
+});
+
+test("servers ignoring ranges send whole files, which serve as prefixes", async t => {
+  const { file, calls, prefixBytes } = virtualFile(t, 4096, 1000, false);
+  const prefix = await fetchVirtualPrefix("/meshes/rock.evg", prefixBytes);
+  assert.deepEqual(calls, ["bytes=0-127"]);
+  assert.deepEqual(prefix, file.slice(0, 1000));
+});
+
+test("files that are not virtual meshes of this version are refused", async t => {
+  const { prefixBytes } = virtualFile(t, 4096, 1000);
+  await assert.rejects(fetchVirtualPrefix("/meshes/rock.evg", header => prefixBytes(header.map(() => 7))), /not a virtual mesh file/);
 });

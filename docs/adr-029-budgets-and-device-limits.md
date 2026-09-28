@@ -37,8 +37,11 @@ Constants are sorted into three kinds:
   (`max_texture_array_layers / 6`, the sky's included). Virtual geometry's
   queues and cluster bins (decision 044) double after frames that dropped
   entries, up to the storage binding size, and report the rest
-  (`dropped_virtual`). Textures may be 8,192 texels a side, the size every WebGPU device
-  holds.
+  (`dropped_virtual`). Its page pool doubles as pages stream in, up to the
+  storage binding size or the optional `VirtualGeometry::max_resident_pages`
+  budget, then evicts pages unused lately; wanted pages finding no room are
+  reported (`dropped_virtual_pages`). Textures may be 8,192 texels a side,
+  the size every WebGPU device holds.
 - **Validity guards** stay: they reject invalid data, not large data
   (emission scales, coordinate ranges, hierarchy depth, one emitter's
   particles within 16,777,216), as do development-protocol bounds.

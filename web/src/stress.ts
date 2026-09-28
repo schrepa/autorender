@@ -3,6 +3,7 @@ import { boot, type HostControls, type RuntimeStats } from "./host";
 import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressFiles, StressGame } from "../pkg/stress_lab";
+import { fetchVirtualPrefix } from "./virtual-mesh";
 import "./stress.css";
 
 type Scene = "field" | "city" | "metro" | "dense";
@@ -63,16 +64,19 @@ let wasmMemory: WebAssembly.Memory | undefined;
 // The dense scene's virtual meshes (decision 044), fetched once: the game
 // keeps them for later workloads.
 let filesClass: typeof StressFiles | undefined, denseSupplied = false;
+let prefixBytes: ((header: Uint8Array) => number | undefined) | undefined;
 async function denseFiles(): Promise<StressFiles | undefined> {
-  if (denseSupplied || !filesClass) return undefined;
+  if (denseSupplied || !filesClass || !prefixBytes) return undefined;
   const files = new filesClass();
-  for (const name of JSON.parse(filesClass.dense_names()) as string[]) {
-    const response = await fetch(`${import.meta.env.BASE_URL}stress/dense/${name}`);
-    if (!response.ok) {
-      files.free();
-      throw new Error(`Missing ${name}: run \`cargo run -p engine_vgbuild --release --bin dense_assets\`.`);
+  try {
+    // Each file's prefix: the renderer streams the other pages from its URL.
+    for (const name of JSON.parse(filesClass.dense_names()) as string[]) {
+      const url = new URL(`${import.meta.env.BASE_URL}stress/dense/${name}`, location.href).href;
+      files.add_streamed(name, await fetchVirtualPrefix(url, prefixBytes), url);
     }
-    files.add(name, new Uint8Array(await response.arrayBuffer()));
+  } catch (error) {
+    files.free();
+    throw new Error(`${String(error)} Build the files with \`cargo run -p engine_vgbuild --release --bin dense_assets\`.`);
   }
   denseSupplied = true;
   return files;
@@ -272,8 +276,9 @@ fill(activeConfig);
 
 boot({
   async create(canvas) {
-    const { default: init, StressGame, StressFiles: files } = await stressBindings();
+    const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;
+    prefixBytes = virtual_prefix_bytes;
     const initialized = await init();
     wasmMemory = (initialized as { memory?: WebAssembly.Memory }).memory;
     // One startup fingerprint outside measurement windows. Production filenames

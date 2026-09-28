@@ -32,8 +32,12 @@ and the whole source had to fit 1 MiB, with further caps of 64 textures,
   texture, prefab and tag counts are unbounded (decision 029).
 - The development server serves `.png`, `.jpg`, `.webp`, `.ktx2`, `.bin`
   and `.evg` (virtual meshes, decision 044) files under `/scenes/` as it
-  serves scene sources. KTX2 images
+  serves scene sources, answering single byte ranges. KTX2 images
   transcode to compressed textures at load ([decision 037](adr-037-compressed-textures.md)).
+- Virtual meshes are listed as their own kind (`virtual_mesh`): hosts fetch
+  only a file's prefix by byte range and supply it with the file's URL, and
+  renderers stream the other pages from it
+  ([decision 044](adr-044-virtual-geometry.md)).
 
 ## Observable behavior
 

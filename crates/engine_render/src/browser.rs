@@ -1062,7 +1062,11 @@ impl Renderer {
                 }
             }
         }
-        self.virtual_geometry.upload(&self.device);
+        self.virtual_geometry.upload(
+            &self.device,
+            &self.queue,
+            snapshot.virtual_geometry.max_resident_pages,
+        );
         // New textures' mip levels render from their uploaded base level in
         // a command buffer submitted ahead of this frame's.
         let mut mip_encoder = None;
@@ -2558,6 +2562,10 @@ impl Renderer {
             virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
             virtual_shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
             virtual_occluded_clusters: virtual_stats.map_or(0, |stats| stats.occluded),
+            virtual_resident_pages: virtual_stats.map_or(0, |stats| stats.resident_pages),
+            virtual_loading_pages: virtual_stats.map_or(0, |stats| stats.loading_pages),
+            virtual_missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
+            dropped_virtual_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
             dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
             ..self.residency_stats()
         };
@@ -2629,6 +2637,22 @@ impl Renderer {
                 engine_profile::counter(
                     "render.virtual_occluded_clusters",
                     f64::from(virtual_stats.occluded),
+                );
+                engine_profile::counter(
+                    "render.virtual_resident_pages",
+                    f64::from(virtual_stats.resident_pages),
+                );
+                engine_profile::counter(
+                    "render.virtual_loading_pages",
+                    f64::from(virtual_stats.loading_pages),
+                );
+                engine_profile::counter(
+                    "render.virtual_missing_pages",
+                    f64::from(virtual_stats.missing_pages),
+                );
+                engine_profile::counter(
+                    "render.dropped_virtual_pages",
+                    f64::from(virtual_stats.dropped_pages),
                 );
                 engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
             }
@@ -3196,6 +3220,7 @@ impl Renderer {
             bins,
             &views,
             &tests,
+            snapshot.virtual_geometry.max_resident_pages,
         );
         let poses = if odd {
             self.alternate_poses

@@ -13,7 +13,8 @@ pub use config::{StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;
 pub use metrics::FrameMetrics;
 pub use scene::{
-    create_workload, create_workload_with, lamp_intensity, look, set_view, stress_shafts,
+    StressFile, create_workload, create_workload_with, lamp_intensity, look, set_view,
+    stress_shafts,
 };
 
 use engine::prelude::*;

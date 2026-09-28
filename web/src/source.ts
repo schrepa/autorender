@@ -1,4 +1,5 @@
 import { isKtx2, transcodeKtx2 } from "./ktx2.ts";
+import { fetchVirtualPrefix } from "./virtual-mesh.ts";
 
 /** Read a UTF-8 authoring source with a hard transport budget, including chunked replies. */
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
@@ -37,13 +38,16 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
 /** The generated bindings a scene's file loader needs (decision 030). */
 export interface SceneFileBindings {
   scene_file_list(source: string): string;
+  virtual_prefix_bytes(header: Uint8Array): number | undefined;
   SceneFileSet: new () => {
     add_image(uri: string, width: number, height: number, pixels: Uint8Array): void;
     add_compressed_image(uri: string, format: string, width: number, height: number, data: Uint8Array, levels: Uint32Array): void;
     add_buffer(uri: string, bytes: Uint8Array): void;
+    add_virtual_mesh(uri: string, bytes: Uint8Array, url: string | undefined): void;
     free(): void;
   };
 }
+
 
 /**
  * Fetch the image and buffer files a scene references, relative to its URL,
@@ -52,11 +56,18 @@ export interface SceneFileBindings {
  * (decision 037). Runs at load boundaries only, never per frame.
  */
 export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
-  const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" }[];
+  const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" | "virtual_mesh" }[];
   const files = new bindings.SceneFileSet();
   const base = new URL(sceneUrl, location.href);
   try {
     await Promise.all(list.map(async ({ uri, kind }) => {
+      // Virtual meshes (decision 044) load their prefix; the renderer
+      // streams their other pages from the same URL as views need them.
+      if (kind === "virtual_mesh") {
+        const url = new URL(uri, base).href;
+        files.add_virtual_mesh(uri, await fetchVirtualPrefix(url, bindings.virtual_prefix_bytes, signal), url);
+        return;
+      }
       const response = await fetch(new URL(uri, base), { cache: "no-store", signal });
       if (!response.ok) {
         await response.body?.cancel().catch(() => {});

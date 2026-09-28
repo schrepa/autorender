@@ -36,9 +36,26 @@ export default defineConfig(({ command, mode }) => ({
           if (metadata.size > limit) { response.statusCode = 413; response.end("Scene file exceeds its size bound"); return; }
           response.setHeader("Content-Type", types.get(path.split(".").pop()!.toLowerCase()) ?? "application/octet-stream");
           response.setHeader("Cache-Control", "no-store");
+          response.setHeader("Accept-Ranges", "bytes");
+          // One byte range (virtual meshes stream their pages, decision 044).
+          const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
+          let [start, end] = [0, limit];
+          if (range) {
+            start = Number(range[1]);
+            end = Math.min(range[2] ? Number(range[2]) : metadata.size - 1, metadata.size - 1);
+            if (start > end) {
+              response.statusCode = 416;
+              response.setHeader("Content-Range", `bytes */${metadata.size}`);
+              response.end();
+              return;
+            }
+            response.statusCode = 206;
+            response.setHeader("Content-Range", `bytes ${start}-${end}/${metadata.size}`);
+            response.setHeader("Content-Length", String(end - start + 1));
+          }
           if (request.method === "HEAD") { response.end(); return; }
           // Include at most one overflow byte if the file grows after stat.
-          const stream = createReadStream(file, { start: 0, end: limit });
+          const stream = createReadStream(file, { start, end });
           stream.on("error", () => response.destroy());
           response.on("close", () => stream.destroy());
           stream.pipe(response);

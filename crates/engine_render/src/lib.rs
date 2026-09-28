@@ -83,6 +83,14 @@ pub struct RenderStats {
     pub virtual_shadow_triangles: u32,
     pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
+    /// Streamed pages (decision 044): resident, still loading, wanted and
+    /// lacking in the last read-back frame (0 once its view had all the
+    /// detail it asked for), and those of them (with arrivals since) that
+    /// found no room under the budget or the device's limits.
+    pub virtual_resident_pages: u32,
+    pub virtual_loading_pages: u32,
+    pub virtual_missing_pages: u32,
+    pub dropped_virtual_pages: u32,
 }
 
 /// Local lights of one frame (decision 023).
@@ -136,6 +144,8 @@ mod retained_uploads;
 mod shadow_fit;
 #[cfg(any(target_arch = "wasm32", test))]
 mod uploads;
+#[cfg(any(target_arch = "wasm32", test))]
+mod virtual_streaming;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;

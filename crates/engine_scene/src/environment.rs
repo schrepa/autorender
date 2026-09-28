@@ -647,6 +647,12 @@ pub struct SceneVirtualGeometry {
     /// triangles.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
     pub pixel_error: f32,
+    /// An optional budget of streamed pages (128 KiB each) kept resident;
+    /// beyond it the least recently used make room, and pinned pages always
+    /// stay. Omitted, only the device's limits bound them.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_resident_pages: Option<u32>,
 }
 
 impl Default for SceneVirtualGeometry {
@@ -660,6 +666,7 @@ impl From<&VirtualGeometry> for SceneVirtualGeometry {
         Self {
             enabled: settings.enabled,
             pixel_error: settings.pixel_error,
+            max_resident_pages: settings.max_resident_pages,
         }
     }
 }
@@ -669,9 +676,17 @@ impl SceneVirtualGeometry {
         if !(self.pixel_error.is_finite() && (0.25..=64.0).contains(&self.pixel_error)) {
             return Err(section_error(path, "pixel_error", "must be in [0.25, 64]"));
         }
+        if self.max_resident_pages == Some(0) {
+            return Err(section_error(
+                path,
+                "max_resident_pages",
+                "must be at least 1",
+            ));
+        }
         Ok(VirtualGeometry {
             enabled: self.enabled,
             pixel_error: self.pixel_error,
+            max_resident_pages: self.max_resident_pages,
         })
     }
 }

@@ -72,6 +72,13 @@ impl SceneFileSet {
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.files.add_buffer(uri, bytes);
     }
+
+    /// Adds virtual mesh `uri` (decision 044): its prefix
+    /// ([`virtual_prefix_bytes`] long) and the URL renderers stream its
+    /// other pages from.
+    pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
+        self.files.add_virtual_mesh(uri, bytes, url.as_deref());
+    }
 }
 
 impl SceneFileSet {
@@ -81,8 +88,8 @@ impl SceneFileSet {
 }
 
 /// The files scene `source` references, as JSON `[{"uri", "kind"}]` with
-/// kind `image` or `buffer`, for the page to fetch; an unparsable source
-/// references none (loading reports its error).
+/// kind `image`, `buffer` or `virtual_mesh`, for the page to fetch; an
+/// unparsable source references none (loading reports its error).
 #[wasm_bindgen]
 pub fn scene_file_list(source: &str) -> String {
     let files = engine_scene::SceneDocument::from_json(source)
@@ -95,11 +102,21 @@ pub fn scene_file_list(source: &str) -> String {
             let kind = match file.kind {
                 engine_scene::SceneFileKind::Image => "image",
                 engine_scene::SceneFileKind::Buffer => "buffer",
+                engine_scene::SceneFileKind::VirtualMesh => "virtual_mesh",
             };
             format!(r#"{{"uri":"{}","kind":"{kind}"}}"#, file.uri)
         })
         .collect();
     format!("[{}]", entries.join(","))
+}
+
+/// Bytes of the prefix of the virtual mesh file (decision 044) whose first
+/// 128 bytes are `header`: what hosts fetch before a scene loads; renderers
+/// stream the rest. `None` when it is not a virtual mesh file of this
+/// engine's version.
+#[wasm_bindgen]
+pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
+    engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
 }
 
 /// CPU observations from the last submitted frame. Render time is not GPU time.
@@ -164,6 +181,13 @@ pub struct FrameStats {
     pub virtual_shadow_triangles: u32,
     pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
+    /// Streamed pages resident, still loading, wanted and lacking in the
+    /// last read-back frame, and those of them (with arrivals since) that
+    /// found no room (decision 044).
+    pub virtual_resident_pages: u32,
+    pub virtual_loading_pages: u32,
+    pub virtual_missing_pages: u32,
+    pub dropped_virtual_pages: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; `None` without occlusion culling.
     pub occluded_instances: Option<u32>,
@@ -249,6 +273,13 @@ pub struct BrowserStats {
     pub virtual_shadow_triangles: u32,
     pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
+    /// Streamed pages resident, still loading, wanted and lacking in the
+    /// last read-back frame, and those of them (with arrivals since) that
+    /// found no room (decision 044).
+    pub virtual_resident_pages: u32,
+    pub virtual_loading_pages: u32,
+    pub virtual_missing_pages: u32,
+    pub dropped_virtual_pages: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; undefined without occlusion culling.
     pub occluded_instances: Option<u32>,
@@ -321,6 +352,10 @@ impl From<FrameStats> for BrowserStats {
             virtual_shadow_clusters: stats.virtual_shadow_clusters,
             virtual_shadow_triangles: stats.virtual_shadow_triangles,
             virtual_occluded_clusters: stats.virtual_occluded_clusters,
+            virtual_resident_pages: stats.virtual_resident_pages,
+            virtual_loading_pages: stats.virtual_loading_pages,
+            virtual_missing_pages: stats.virtual_missing_pages,
+            dropped_virtual_pages: stats.dropped_virtual_pages,
             dropped_virtual: stats.dropped_virtual,
             occluded_instances: stats.occluded_instances,
             subpixel_instances: stats.subpixel_instances,
@@ -702,6 +737,10 @@ impl BrowserApp {
             virtual_shadow_clusters: rendered.virtual_shadow_clusters,
             virtual_shadow_triangles: rendered.virtual_shadow_triangles,
             virtual_occluded_clusters: rendered.virtual_occluded_clusters,
+            virtual_resident_pages: rendered.virtual_resident_pages,
+            virtual_loading_pages: rendered.virtual_loading_pages,
+            virtual_missing_pages: rendered.virtual_missing_pages,
+            dropped_virtual_pages: rendered.dropped_virtual_pages,
             dropped_virtual: rendered.dropped_virtual,
             occluded_instances: rendered.occluded_instances,
             subpixel_instances: rendered.subpixel_instances,

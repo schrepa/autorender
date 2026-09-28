@@ -1,7 +1,7 @@
 //! Writes the Stress Lab's dense virtual geometry (decision 044): procedural
 //! high-poly meshes as `EVG1` files and the manifest the web host reads.
 //!
-//! cargo run -p engine_vgbuild --release --bin dense_assets -- [DIRECTORY]
+//! `cargo run -p engine_vgbuild --release --bin dense_assets -- [DIRECTORY]`
 //! (default `web/public/stress/dense`).
 
 use std::path::PathBuf;

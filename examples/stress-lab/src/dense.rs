@@ -9,8 +9,8 @@ use std::sync::Arc;
 use engine::VirtualMesh;
 use engine::prelude::*;
 
-use crate::StressConfig;
 use crate::scene::{Motion, Workload, hash};
+use crate::{StressConfig, StressFile};
 
 /// The files the page fetches for this scene, from `stress/dense/`.
 pub const FILES: [&str; 4] = [
@@ -28,17 +28,22 @@ const AREA_PER_OBJECT: f32 = 36.0;
 pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
-    files: &HashMap<String, Vec<u8>>,
+    files: &HashMap<String, StressFile>,
 ) -> Result<(u32, (Vec3, Vec3)), String> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut mesh = |name: &str| -> Result<MeshHandle, String> {
-        let bytes = files.get(name).ok_or_else(|| {
+        let file = files.get(name).ok_or_else(|| {
             format!(
                 "the dense scene needs {name}: run `cargo run -p engine_vgbuild --release --bin dense_assets`"
             )
         })?;
+        // A prefix streams its other pages from the file's URL.
         let geometry =
-            Arc::new(VirtualMesh::decode(bytes).map_err(|error| format!("{name}: {error}"))?);
+            VirtualMesh::decode(&file.bytes).map_err(|error| format!("{name}: {error}"))?;
+        let geometry = Arc::new(match &file.url {
+            Some(url) => geometry.with_source(url),
+            None => geometry,
+        });
         let mesh = Mesh::from_virtual(geometry, engine::DEFAULT_FALLBACK_TRIANGLES)
             .map_err(|error| format!("{name}: {error}"))?;
         assets.insert_mesh(mesh).map_err(|error| error.to_string())

@@ -2345,6 +2345,15 @@
           "type": "boolean",
           "default": true
         },
+        "max_resident_pages": {
+          "description": "An optional budget of streamed pages (128 KiB each) kept resident;\nbeyond it the least recently used make room, and pinned pages always\nstay. Omitted, only the device's limits bound them.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
         "pixel_error": {
           "description": "The largest simplification error a drawn cluster may show, in pixels\nof the viewport height, from 0.25 to 64: smaller draws more\ntriangles.",
           "type": "number",

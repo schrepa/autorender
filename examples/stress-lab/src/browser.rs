@@ -5,16 +5,16 @@ use wasm_bindgen::prelude::*;
 use std::collections::HashMap;
 
 use crate::{
-    FrameMetrics, StressConfig, StressScene, create_workload_with, lamp_intensity, look, set_view,
-    stress_observation, stress_shafts,
+    FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, lamp_intensity,
+    look, set_view, stress_observation, stress_shafts,
 };
 
 /// Files workloads read, by name: the dense scene's virtual meshes
-/// (decision 044), which the page fetches.
+/// (decision 044), whose prefixes the page fetches.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct StressFiles {
-    files: HashMap<String, Vec<u8>>,
+    files: HashMap<String, StressFile>,
 }
 
 #[wasm_bindgen]
@@ -26,7 +26,20 @@ impl StressFiles {
 
     /// Adds file `name`'s bytes.
     pub fn add(&mut self, name: &str, bytes: Vec<u8>) {
-        self.files.insert(name.to_owned(), bytes);
+        self.files
+            .insert(name.to_owned(), StressFile { bytes, url: None });
+    }
+
+    /// Adds virtual mesh `name`'s prefix and the URL renderers stream its
+    /// other pages from.
+    pub fn add_streamed(&mut self, name: &str, bytes: Vec<u8>, url: String) {
+        self.files.insert(
+            name.to_owned(),
+            StressFile {
+                bytes,
+                url: Some(url),
+            },
+        );
     }
 
     /// The files the dense scene reads, as a JSON array of names.
@@ -40,7 +53,7 @@ pub struct StressGame {
     app: BrowserApp,
     generation: u32,
     // Files the page supplied, kept for later workloads.
-    files: HashMap<String, Vec<u8>>,
+    files: HashMap<String, StressFile>,
     // The lighting preset and effect selection, kept across workload changes.
     look: String,
     effects: String,

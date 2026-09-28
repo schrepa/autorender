@@ -7,6 +7,12 @@
 //! triangles. Renderers upload the sections as they are; decoding only
 //! validates them. Offline tools build the hierarchy (`tools/vgbuild`).
 //!
+//! The first pages are pinned: they hold every group simplified with more
+//! error than the pin error, which covers every surface coarsely. A file's
+//! prefix, its metadata and pinned pages, decodes on its own; renderers
+//! stream the other pages from the file as views need them, each validated
+//! as it arrives ([`VirtualMesh::validate_page`]).
+//!
 //! A cluster holds up to [`CLUSTER_TRIANGLES`] triangles over up to
 //! [`CLUSTER_VERTICES`] vertices. Groups of clusters were simplified together
 //! into the next level's clusters; each cluster records the group it belongs
@@ -22,13 +28,15 @@ use crate::{AssetError, Mesh, MeshVertex, mesh::Aabb};
 /// Magic of virtual mesh files.
 pub const VIRTUAL_MESH_MAGIC: [u8; 4] = *b"EVG1";
 /// Format version this build reads and writes.
-pub const VIRTUAL_MESH_VERSION: u32 = 1;
+pub const VIRTUAL_MESH_VERSION: u32 = 2;
 /// Triangles per cluster at most: vertex shaders draw three vertices of each.
 pub const CLUSTER_TRIANGLES: u32 = 128;
 /// Vertices per cluster at most, addressed by 8-bit local indices.
 pub const CLUSTER_VERTICES: u32 = 255;
 /// Words of the header.
 pub const HEADER_WORDS: usize = 32;
+/// Words a page holds at most: 128 KiB, the unit renderers stream.
+pub const PAGE_WORDS: usize = 32 * 1024;
 /// Words of a hierarchy node: bounding sphere, largest error in its
 /// subtree, and its group or children.
 pub const NODE_WORDS: usize = 8;
@@ -63,6 +71,9 @@ mod header {
     pub const UV_STEP: usize = 20;
     pub const BOUNDS_MIN: usize = 22;
     pub const BOUNDS_MAX: usize = 25;
+    pub const PINNED_PAGES: usize = 28;
+    pub const PIN_ERROR: usize = 29;
+    pub const PREFIX_WORDS: usize = 30;
 }
 
 /// Flag: stored vertices carry texture coordinates.
@@ -94,11 +105,15 @@ struct Layout {
     end: usize,
 }
 
-/// A validated virtual mesh: the file's words and where its sections start.
+/// A validated virtual mesh: the words of the file or of its prefix, where
+/// its sections start, and where to fetch its other pages from.
 pub struct VirtualMesh {
     words: Box<[u32]>,
     layout: Layout,
     bounds: Aabb,
+    // Pages `words` holds: every page, or the pinned ones of a prefix.
+    available_pages: usize,
+    source: Option<String>,
 }
 
 /// A cluster's record, decoded.
@@ -125,6 +140,8 @@ impl std::fmt::Debug for VirtualMesh {
             .field("clusters", &self.cluster_count())
             .field("triangles", &self.triangle_count())
             .field("pages", &self.page_count())
+            .field("available_pages", &self.available_pages)
+            .field("source", &self.source)
             .finish_non_exhaustive()
     }
 }
@@ -142,9 +159,26 @@ fn vec3(words: &[u32]) -> Vec3 {
 }
 
 impl VirtualMesh {
-    /// Validates `bytes` as an `EVG1` file: every section in range, every
-    /// reference to a node, group, cluster, page or vertex in bounds, finite
-    /// geometry and counts within the cluster limits.
+    /// Bytes of the prefix of the file whose first [`HEADER_WORDS`] words
+    /// are `header` (metadata and pinned pages), for hosts fetching it
+    /// first; `None` when it is not an `EVG1` header of this version.
+    pub fn prefix_bytes(header: &[u8]) -> Option<usize> {
+        let word = |index: usize| {
+            header
+                .get(index * 4..index * 4 + 4)
+                .map(|bytes| u32::from_le_bytes(bytes.try_into().expect("four bytes")))
+        };
+        (word(header::MAGIC)? == u32::from_le_bytes(VIRTUAL_MESH_MAGIC)
+            && word(header::VERSION)? == VIRTUAL_MESH_VERSION)
+            .then(|| word(header::PREFIX_WORDS).map(|words| words as usize * 4))
+            .flatten()
+    }
+
+    /// Validates `bytes` as an `EVG1` file or its prefix: every section in
+    /// range, every reference to a node, group, cluster or page in bounds,
+    /// finite geometry, counts within the cluster limits, pinned groups in
+    /// the pinned pages, errors growing toward coarser groups, and the
+    /// triangles of every page held.
     pub fn decode(bytes: &[u8]) -> Result<Self, AssetError> {
         if !bytes.len().is_multiple_of(4) || bytes.len() < HEADER_WORDS * 4 {
             return Err(invalid("length is not a whole header of words"));
@@ -182,6 +216,14 @@ impl VirtualMesh {
         );
         if levels == 0 || nodes < levels || groups == 0 || clusters == 0 || pages == 0 {
             return Err(invalid("empty hierarchy"));
+        }
+        let pinned = count(header::PINNED_PAGES);
+        if pinned == 0 || pinned > pages {
+            return Err(invalid("pinned pages are out of range"));
+        }
+        let pin_error = float(words[header::PIN_ERROR]);
+        if pin_error.is_nan() || pin_error < 0.0 {
+            return Err(invalid("the pin error is negative or not a number"));
         }
         let section = |start: usize, items: usize, size: usize| {
             items
@@ -222,27 +264,116 @@ impl VirtualMesh {
         {
             return Err(invalid("bounds are inverted or beyond 1e6"));
         }
-        // Pages: consecutive, together the rest of the file.
+        // Pages: consecutive and at most PAGE_WORDS each, together the rest
+        // of the file; the pinned ones end the prefix.
         let mut expected = 0usize;
+        let mut pinned_words = 0usize;
         for page in 0..pages {
             let entry = &words[page_table + page * 2..page_table + page * 2 + 2];
             if entry[0] as usize != expected {
                 return Err(invalid("pages are not consecutive"));
             }
-            expected = expected
-                .checked_add(entry[1] as usize)
-                .ok_or_else(|| invalid("page sizes overflow"))?;
+            if entry[1] as usize > PAGE_WORDS {
+                return Err(invalid("a page exceeds its size limit"));
+            }
+            expected += entry[1] as usize;
+            if page + 1 == pinned {
+                pinned_words = expected;
+            }
         }
-        if page_start.checked_add(expected) != Some(words.len()) {
-            return Err(invalid("pages do not end the file"));
+        let prefix = page_start + pinned_words;
+        if count(header::PREFIX_WORDS) != prefix {
+            return Err(invalid("the prefix length does not match the pinned pages"));
         }
+        let available_pages = if words.len() == page_start + expected {
+            pages
+        } else if words.len() == prefix {
+            pinned
+        } else {
+            return Err(invalid("neither a whole file nor its prefix"));
+        };
         let mesh = Self {
             words,
             layout,
             bounds: Aabb::from_min_max(bounds_min, bounds_max),
+            available_pages,
+            source: None,
         };
         mesh.validate_hierarchy()?;
         Ok(mesh)
+    }
+
+    /// This mesh, fetching the pages its prefix lacks from `url` (the whole
+    /// file, by byte ranges: [`Self::page_bytes`]).
+    pub fn with_source(mut self, url: impl Into<String>) -> Self {
+        self.source = Some(url.into());
+        self
+    }
+
+    /// Where the pages this mesh lacks come from.
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+
+    /// Pages whose words this mesh holds: every page, or the pinned ones.
+    pub fn available_pages(&self) -> usize {
+        self.available_pages
+    }
+
+    /// The first pages, holding every group simplified with more error than
+    /// [`Self::pin_error`].
+    pub fn pinned_pages(&self) -> usize {
+        self.words[header::PINNED_PAGES] as usize
+    }
+
+    /// Groups simplified with more error than this lie in the pinned pages.
+    pub fn pin_error(&self) -> f32 {
+        float(self.words[header::PIN_ERROR])
+    }
+
+    /// Byte range of page `page` in the file.
+    pub fn page_bytes(&self, page: usize) -> Option<std::ops::Range<u64>> {
+        (page < self.page_count()).then(|| {
+            let entry = self.layout.page_table + page * 2;
+            let start = (self.layout.pages as u64 + u64::from(self.words[entry])) * 4;
+            start..start + u64::from(self.words[entry + 1]) * 4
+        })
+    }
+
+    /// Validates `words`, fetched separately, as page `page`: its size, and
+    /// the local triangle indices of every cluster it holds.
+    pub fn validate_page(&self, page: usize, words: &[u32]) -> Result<(), AssetError> {
+        let size = self
+            .page_bytes(page)
+            .map(|range| ((range.end - range.start) / 4) as usize)
+            .ok_or_else(|| invalid("a page is out of range"))?;
+        if words.len() != size {
+            return Err(invalid("a page's length does not match its table entry"));
+        }
+        for cluster in 0..self.cluster_count() {
+            let info = self.cluster(cluster);
+            if info.page as usize == page {
+                Self::validate_triangles(&info, words)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every local triangle index of `info` stays within its
+    /// vertices, reading `page`'s words.
+    fn validate_triangles(info: &ClusterInfo, page: &[u32]) -> Result<(), AssetError> {
+        let triangle_words = (info.triangle_count as usize * 3).div_ceil(4);
+        let start = info.triangle_offset as usize;
+        let locals = page[start..start + triangle_words]
+            .iter()
+            .flat_map(|word| word.to_le_bytes());
+        if locals
+            .take(info.triangle_count as usize * 3)
+            .any(|local| u32::from(local) >= info.vertex_count)
+        {
+            return Err(invalid("a triangle index exceeds its cluster's vertices"));
+        }
+        Ok(())
     }
 
     fn validate_hierarchy(&self) -> Result<(), AssetError> {
@@ -322,6 +453,7 @@ impl VirtualMesh {
                 *owned = group as u32;
             }
         }
+        let (pinned, pin_error) = (self.pinned_pages(), self.pin_error());
         let mut triangles = 0u64;
         for (cluster, &owned) in owner.iter().enumerate() {
             let info = self.cluster(cluster);
@@ -337,6 +469,22 @@ impl VirtualMesh {
             {
                 return Err(invalid("a cluster's refined group is out of range"));
             }
+            // Cuts cover each surface once only while errors grow toward
+            // coarser groups; the prefix alone draws every surface.
+            let error = self.group_sphere(info.group as usize).error;
+            if info
+                .refined
+                .is_some_and(|refined| self.group_sphere(refined as usize).error > error)
+            {
+                return Err(invalid(
+                    "a cluster's group has less error than the group it came from",
+                ));
+            }
+            if error > pin_error && info.page as usize >= pinned {
+                return Err(invalid(
+                    "a pinned group's cluster lies beyond the pinned pages",
+                ));
+            }
             if info.vertex_count == 0
                 || info.vertex_count > CLUSTER_VERTICES
                 || info.triangle_count == 0
@@ -344,23 +492,18 @@ impl VirtualMesh {
             {
                 return Err(invalid("cluster sizes exceed the limits"));
             }
-            let page = self
-                .page(info.page as usize)
+            let size = self
+                .page_bytes(info.page as usize)
+                .map(|range| ((range.end - range.start) / 4) as usize)
                 .ok_or_else(|| invalid("a cluster's page is out of range"))?;
-            let vertices = info.vertex_offset as usize
-                ..info.vertex_offset as usize + info.vertex_count as usize * VERTEX_WORDS;
+            let vertices_end =
+                info.vertex_offset as usize + info.vertex_count as usize * VERTEX_WORDS;
             let triangle_words = (info.triangle_count as usize * 3).div_ceil(4);
-            let indices =
-                info.triangle_offset as usize..info.triangle_offset as usize + triangle_words;
-            if vertices.end > page.len() || indices.end > page.len() {
+            if vertices_end > size || info.triangle_offset as usize + triangle_words > size {
                 return Err(invalid("a cluster runs past its page"));
             }
-            let locals = page[indices].iter().flat_map(|word| word.to_le_bytes());
-            if locals
-                .take(info.triangle_count as usize * 3)
-                .any(|local| u32::from(local) >= info.vertex_count)
-            {
-                return Err(invalid("a triangle index exceeds its cluster's vertices"));
+            if let Some(page) = self.page(info.page as usize) {
+                Self::validate_triangles(&info, page)?;
             }
             triangles += u64::from(info.triangle_count);
         }
@@ -424,9 +567,9 @@ impl VirtualMesh {
         }
     }
 
-    /// Words of page `page`.
+    /// Words of page `page`, when this mesh holds them.
     pub fn page(&self, page: usize) -> Option<&[u32]> {
-        (page < self.page_count()).then(|| {
+        (page < self.available_pages).then(|| {
             let entry = self.layout.page_table + page * 2;
             let start = self.layout.pages + self.words[entry] as usize;
             &self.words[start..start + self.words[entry + 1] as usize]
@@ -509,12 +652,12 @@ impl VirtualMesh {
         &self.words[self.layout.page_table..self.layout.pages]
     }
 
-    /// Every page's words, consecutively.
+    /// The words of every page held, consecutively.
     pub fn page_section(&self) -> &[u32] {
         &self.words[self.layout.pages..self.layout.end]
     }
 
-    /// The whole file.
+    /// The words held: the whole file, or its prefix.
     pub fn words(&self) -> &[u32] {
         &self.words
     }
@@ -546,10 +689,11 @@ impl VirtualMesh {
         )
     }
 
-    /// Cluster `cluster`'s vertices and local triangle indices, decoded.
+    /// Cluster `cluster`'s vertices and local triangle indices, decoded; its
+    /// page must be held ([`Self::available_pages`]).
     pub fn cluster_geometry(&self, cluster: usize) -> (Vec<MeshVertex>, Vec<u8>) {
         let info = self.cluster(cluster);
-        let page = self.page(info.page as usize).expect("validated page");
+        let page = self.page(info.page as usize).expect("a held page");
         let (position_min, position_step, uv_min, uv_step) = self.quantization();
         let low = |word: u32| word & 0xffff;
         let high = |word: u32| word >> 16;
@@ -609,15 +753,17 @@ impl VirtualMesh {
             .sum()
     }
 
-    /// The most detailed cut with at most `triangles` triangles (the
-    /// coarsest when none is that small), as an ordinary mesh: what
-    /// renderers draw where they cannot draw clusters.
+    /// The most detailed cut within the pinned pages with at most
+    /// `triangles` triangles (the coarsest when none is that small), as an
+    /// ordinary mesh: what renderers draw where they cannot draw clusters.
     pub fn fallback(&self, triangles: u32) -> Result<Mesh, AssetError> {
+        // Cuts at the pin error or above use pinned groups alone.
+        let pin = self.pin_error();
         let mut errors: Vec<f32> = (0..self.group_count())
             .map(|group| self.group_sphere(group).error)
-            .filter(|error| *error < f32::MAX)
+            .filter(|error| *error < f32::MAX && *error >= pin)
             .collect();
-        errors.push(0.0);
+        errors.push(pin);
         errors.sort_by(f32::total_cmp);
         errors.dedup();
         // Cut sizes shrink as the error grows: the first small enough.

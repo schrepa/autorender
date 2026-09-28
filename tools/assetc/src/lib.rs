@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 /// Largest source container: the GLB length field's range.
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 /// Changes whenever import behavior or supported settings change.
-pub const IMPORTER_VERSION: &str = "gltf-pbr-8";
+pub const IMPORTER_VERSION: &str = "gltf-pbr-9";
 /// Triangles from which an opaque primitive imports as virtual geometry
 /// (decision 044) unless [`ImportOptions`] say otherwise.
 pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;

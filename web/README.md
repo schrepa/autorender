@@ -95,12 +95,16 @@ GPU frame and GPU-presented ordinary frames. Captures go under
 `node web/scripts/virtual-geometry-smoke.mjs` loads the Stress Lab's dense scene
 (build its files first with `cargo run -p engine_vgbuild --release --bin
 dense_assets`) and checks virtual geometry ([decision 044](../docs/adr-044-virtual-geometry.md)):
-the `VirtualGeometry` settings are discoverable and read as their environment
-section; at a street-level and a ground-level camera, GPU-presented captures
-(which cull occluded and sub-pixel clusters) match CPU captures within 0.1% of
-pixels, clusters draw and cast shadows and nothing is dropped; a pixel error of 6
-draws fewer triangles, disabling falls back to the fallback cuts, invalid
-settings are refused, and the page logs no errors. Captures go under
+loading fetches under a quarter of the files' bytes (their prefixes); the
+`VirtualGeometry` settings are discoverable and read as their environment
+section; at a street-level and a ground-level camera, once pages stop loading
+and the views lack none, GPU-presented captures (which cull occluded and
+sub-pixel clusters) match CPU captures within 0.1% of pixels, clusters draw and
+cast shadows and nothing is dropped; pages streamed beyond the pinned ones; a
+budget of 8 pages keeps at most 8 resident, reports the rest missing and dropped,
+and captures still match; a pixel error of 6 draws fewer triangles, disabling
+falls back to the fallback cuts, invalid settings are refused, and the page logs
+no errors. Captures go under
 `artifacts/virtual-geometry-smoke-*/`.
 
 `node web/scripts/taa-smoke.mjs` loads Stress Lab with temporal antialiasing

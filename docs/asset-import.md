@@ -85,5 +85,6 @@ and prefab-template IDs. Removing a generated collider-bearing node is rejected
 with `collider_reimport_conflict`; explicitly migrate or remove its collider in
 source first. Placement-root colliders remain with their placements. Importing
 never infers collider geometry from render meshes. This behavior is recorded by
-importer provenance version `gltf-pbr-8`, which also imports dense primitives as
-virtual meshes.
+importer provenance version `gltf-pbr-9`, which also imports dense primitives as
+virtual meshes whose files hosts load by prefix and stream (format version 2);
+reimport scenes imported by `gltf-pbr-8`, whose version 1 files no longer load.

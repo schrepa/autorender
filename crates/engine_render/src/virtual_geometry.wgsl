@@ -19,6 +19,10 @@
 // test. Clusters whose bounds cover no pixel center are left undrawn
 // (decision 041).
 //
+// Pages stream: a group draws only while it is resident (its pages, and
+// every coarser group made from it); otherwise the clusters it was made
+// into draw in its place and it is requested. Groups drawn are marked used.
+//
 // Every view projects errors as the camera sees them, so shadow maps cast
 // the surfaces the camera draws and nothing shadows itself for want of the
 // same detail. A shadow view projects distances below the nearest of its
@@ -58,6 +62,9 @@ struct Frame {
     previous_view_projection: mat4x4<f32>,
     viewport: vec4<f32>,
     tests: vec4<u32>,
+    // Counter words where used groups' and requested groups' bits start,
+    // and the groups buffer's word where their residency bits start.
+    feedback: vec4<u32>,
     views: array<View, 8>,
 }
 
@@ -106,10 +113,12 @@ struct Rows {
 @group(0) @binding(2) var<storage, read> meshes: array<Mesh>;
 // Two words per node: sphere; error, group (or NONE), first child, children.
 @group(0) @binding(3) var<storage, read> nodes: array<vec4<u32>>;
-// Two words per group: sphere; error, first cluster, clusters, level.
+// Two words per group: sphere; error, first cluster, clusters, level; then
+// a residency bit per group.
 @group(0) @binding(4) var<storage, read> groups: array<vec4<u32>>;
 // Three words per cluster: culling sphere; cone, refined group (or NONE),
-// group, mesh; vertex word, triangle word, vertices | triangles << 16, 0.
+// group, mesh; vertex and triangle words in its page, vertices |
+// triangles << 16, global page.
 @group(0) @binding(5) var<storage, read> clusters: array<vec4<u32>>;
 @group(0) @binding(6) var<storage, read> poses: array<Rows>;
 // The camera's: visible IDs of GPU-presented frames, slot IDs of
@@ -125,7 +134,8 @@ struct Rows {
 @group(0) @binding(11) var<storage, read_write> work: array<vec4<u32>>;
 // Queue A and B counts, the group count, entries dropped from the queues,
 // the group list and the bins, clusters and triangles the camera and the
-// shadow views selected, then each bin's count.
+// shadow views selected, then each bin's count, then the bits of groups
+// used and requested.
 @group(0) @binding(12) var<storage, read_write> counters: array<atomic<u32>>;
 // Visible ID and cluster of each selected cluster, by bin.
 @group(0) @binding(13) var<storage, read_write> visible: array<vec2<u32>>;
@@ -305,6 +315,17 @@ fn hidden(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool
     return projected.high.z < farthest * HIDDEN_SCALE;
 }
 
+// Whether group `group` can draw: its pages and coarser groups resident.
+fn resident(group: u32) -> bool {
+    let word = frame.feedback.z + (group >> 5u);
+    return ((groups[word >> 2u][word & 3u] >> (group & 31u)) & 1u) != 0u;
+}
+
+// Sets group `group`'s bit in the bits at counter word `base`.
+fn mark(base: u32, group: u32) {
+    atomicOr(&counters[base + (group >> 5u)], 1u << (group & 31u));
+}
+
 fn push_node(queue: u32, item: vec4<u32>) {
     let index = atomicAdd(&counters[queue], 1u);
     if index >= frame.counts.x {
@@ -447,6 +468,13 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
     let view = item.w >> VIEW_SHIFT;
     let pose = poses[item.x & ~MOVED_SLOT];
     let scale = largest_scale(pose);
+    // A group not resident draws nothing: the clusters made from it draw
+    // instead. It is wanted.
+    if !resident(item.y) {
+        mark(frame.feedback.y, item.y);
+        return;
+    }
+    mark(frame.feedback.x, item.y);
     let group = groups[item.y * 2u + 1u];
     let bin = bins[item.z];
     // The camera's counts, or the shadow views'.
@@ -454,14 +482,18 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var cluster = group.y; cluster < group.y + group.z; cluster++) {
         let sphere = clusters[cluster * 3u];
         let record = clusters[cluster * 3u + 1u];
-        // Its own error: the group it came from, precise enough here.
+        // Its own error: the group it came from, precise enough here, or
+        // finer detail is not resident (and is requested).
         if record.y != NONE {
             let source_sphere = groups[record.y * 2u];
             let source = groups[record.y * 2u + 1u];
             let source_center = transformed(pose, bitcast<vec3<f32>>(source_sphere.xyz));
             if !precise_enough(view, source_center, bitcast<f32>(source_sphere.w) * scale,
                     bitcast<f32>(source.x) * scale) {
-                continue;
+                if resident(record.y) {
+                    continue;
+                }
+                mark(frame.feedback.y, record.y);
             }
         }
         let center = transformed(pose, bitcast<vec3<f32>>(sphere.xyz));
@@ -554,10 +586,13 @@ fn bin_args(@builtin(global_invocation_id) id: vec3<u32>) {
 // cluster's triangles, posed and projected into the map, casters between the
 // sun and the map's near plane flattened onto it.
 
-// Every page word, and the map's view (a dynamic offset into the shadow
-// maps' views).
+// The page pool (each global page's slot, then the slots), and the map's
+// view (a dynamic offset into the shadow maps' views).
 @group(0) @binding(17) var<storage, read> pages: array<u32>;
 @group(0) @binding(18) var<uniform> shadow_view: mat4x4<f32>;
+
+// Words of a page slot (engine_assets::PAGE_WORDS).
+const PAGE_WORDS: u32 = 32768u;
 
 // Where collapsed corners go: one point outside the map.
 const COLLAPSED = vec4<f32>(2.0, 2.0, 0.5, 1.0);
@@ -569,11 +604,13 @@ fn vs_shadow(@builtin(vertex_index) vertex: u32, @location(0) slot: u32,
     if vertex / 3u >= (words.z >> 16u) {
         return COLLAPSED;
     }
-    let packed = pages[words.y + vertex / 4u];
-    let base = words.x + ((packed >> ((vertex % 4u) * 8u)) & 0xffu) * 4u;
+    let mesh = meshes[clusters[cluster * 3u + 1u].w];
+    // Its page's slot in the pool, whose slots start after the slot table.
+    let page = mesh.bases.w + pages[words.w] * PAGE_WORDS;
+    let packed = pages[page + words.y + vertex / 4u];
+    let base = page + words.x + ((packed >> ((vertex % 4u) * 8u)) & 0xffu) * 4u;
     let w0 = pages[base];
     let w1 = pages[base + 1u];
-    let mesh = meshes[clusters[cluster * 3u + 1u].w];
     let steps = vec3<f32>(f32(w0 & 0xffffu), f32(w0 >> 16u), f32(w1 & 0xffffu));
     let position = mesh.position_min.xyz + steps * mesh.position_step.xyz;
     var clip = shadow_view * vec4<f32>(transformed(poses[slot & ~MOVED_SLOT], position), 1.0);

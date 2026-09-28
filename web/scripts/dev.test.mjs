@@ -81,6 +81,7 @@ function setup(t, options = {}) {
         sun_shafts: false, reflections: true, refraction: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined, subpixel_instances: undefined,
         reflection_probes: 3, reflection_probe_faces: 1, dropped_reflection_probes: 0,
         virtual_clusters: 0, virtual_triangles: 0, virtual_shadow_clusters: 0, virtual_shadow_triangles: 0, virtual_occluded_clusters: 0, dropped_virtual: 0,
+        virtual_resident_pages: 0, virtual_loading_pages: 0, virtual_missing_pages: 0, dropped_virtual_pages: 0,
         free() { statsFreed++; },
       };
     },

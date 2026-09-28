@@ -1,11 +1,12 @@
 # Decision 044: Virtual geometry
 
-Status: four stages adopted. Offline cluster hierarchies, their file
+Status: five stages adopted. Offline cluster hierarchies, their file
 format, GPU cluster selection, forward drawing and cluster shadows work on
 retained frames, both GPU-presented and CPU-prepared; GPU-presented frames
 also cull occluded and sub-pixel clusters. Scenes reference virtual meshes,
-the importer builds them, and agents control and observe them. A visibility
-buffer and streaming come later (see Stages).
+the importer builds them, and agents control and observe them. Hosts load
+each file's coarse prefix, and pages stream in as views need them. A
+visibility buffer comes later (see Stages).
 
 ## Context
 
@@ -64,59 +65,83 @@ Pages hold each cluster's vertices and triangles.
   an octahedral normal (decision 032) and 16-bit texture coordinates over
   the mesh's range.
 - Triangles are 8-bit local indices, four to a word.
-- Pages fill from the coarsest level down, so streaming can keep the coarse
-  levels resident.
+- Groups simplified with more error than the file's pin error are pinned:
+  the pin error is the smallest whose cut holds at most 4,096 triangles
+  (`PINNED_TRIANGLES`). Pinned groups fill the first pages, and the other
+  groups follow from the coarsest level down.
+- The header (format version 2) records the pinned pages, the pin error and
+  the prefix length: the metadata sections and the pinned pages, all a
+  renderer needs before any other page arrives. `VirtualMesh::prefix_bytes`
+  reads that length from a file's first 128 bytes.
 
-`VirtualMesh::decode` validates every section and reference:
+`VirtualMesh::decode` accepts a whole file or its prefix, and validates
+every section and reference:
 
 - the hierarchy is a forest whose depth matches its header;
 - each cluster belongs to exactly one group;
-- page, vertex and local-index references are in bounds;
+- errors grow toward coarser groups, and pinned groups lie in pinned pages;
+- page, vertex and local-index references are in bounds, for the pages it
+  holds;
 - geometry is finite.
 
-Renderers then upload the sections unchanged.
+`VirtualMesh::validate_page` checks a page's words the same way when they
+arrive. Renderers upload the sections unchanged.
 
 `Mesh::from_virtual(geometry, fallback_triangles)` makes an ordinary mesh
-from the most detailed cut with at most `fallback_triangles` triangles
-(`VirtualMesh::cut`, `fallback`). Its bounds hold every level. Every path
-that does not draw clusters draws this fallback: frames rendered from a
-bare snapshot, transparent batches, and reflection probe captures.
+from the most detailed cut within the pinned pages with at most
+`fallback_triangles` triangles (`VirtualMesh::cut`, `fallback`), so a prefix
+suffices. Its bounds hold every level. Every path that does not draw
+clusters draws this fallback: frames rendered from a bare snapshot,
+transparent batches, and reflection probe captures.
 
 ### Settings
 
-The `VirtualGeometry` resource is inserted by default and holds `enabled`
-and `pixel_error`. `pixel_error` is the largest simplification error a drawn
-cluster may show, in pixels of viewport height. It defaults to 1.5 and is
-sanitized into [0.25, 64]. Removing or disabling the resource draws the
-fallback meshes, and snapshots carry its sanitized values.
+The `VirtualGeometry` resource is inserted by default and holds `enabled`,
+`pixel_error` and `max_resident_pages`. `pixel_error` is the largest
+simplification error a drawn cluster may show, in pixels of viewport height.
+It defaults to 1.5 and is sanitized into [0.25, 64]. `max_resident_pages` is
+an optional budget of streamed pages (see Streaming), none by default and at
+least 1. Removing or disabling the resource draws the fallback meshes, and
+snapshots carry its sanitized values.
 
 ### Authoring and agents
 
 - **Scenes.** Version 8 meshes take `virtual` sources:
   `{"kind": "virtual", "uri": "rock.evg", "fallback_triangles": 4096}`
-  (the fallback optional). Documents list the file as a buffer; hosts fetch
-  it like any other and `SceneFiles` decodes and validates it on
-  instantiation. The environment takes a `virtual_geometry` section
-  (`enabled`, `pixel_error` within [0.25, 64]); omitted, a document's
-  environment turns virtual geometry on.
+  (the fallback optional). Documents list the file as a virtual mesh
+  (`SceneFileKind::VirtualMesh`, `virtual_mesh` in the web bindings' file
+  list). Hosts fetch its first 128 bytes and then its prefix by byte range
+  (`virtual_prefix_bytes`), and supply the prefix with the file's URL
+  (`SceneFiles::add_virtual_mesh`, `SceneFileSet::add_virtual_mesh`, as
+  `loadSceneFiles` does); renderers stream the other pages from that URL. A
+  whole file works too, from a server that ignores ranges or as a buffer.
+  `SceneFiles` decodes and validates it on instantiation. The environment
+  takes a `virtual_geometry` section (`enabled`, `pixel_error` within
+  [0.25, 64], an optional `max_resident_pages` of at least 1); omitted, a
+  document's environment turns virtual geometry on.
 - **Import.** `cargo xtask asset import` builds `EVG1` files for opaque
   primitives of at least 512 triangles without vertex colors, second
   texture coordinates or joints (`--virtual-triangles N`,
   `--no-virtual-geometry`). Alpha-tested ones stay mesh buffers because
   virtual shadows cast whole clusters. The development server serves `.evg`
-  files under `/scenes/`.
+  files under `/scenes/`, answering single byte ranges.
 - **Agents.** `describe` lists `VirtualGeometry`, `inspect` reads it as its
   scene section, and the paused `environment` control replaces it for the
-  session. `web/scripts/virtual-geometry-smoke.mjs` checks the dense scene:
-  GPU-presented and CPU captures match, clusters draw and cast shadows,
-  pixel error and disabling take effect, and invalid settings are refused.
+  session. Before capturing a view at full detail, present frames until
+  `rendering.virtual_missing_pages` and `virtual_loading_pages` stay 0 (see
+  Observable behavior). `web/scripts/virtual-geometry-smoke.mjs` checks the
+  dense scene: loading fetches prefixes only, pages stream until views lack
+  none, GPU-presented and CPU captures match, clusters draw and cast
+  shadows, a budget bounds resident pages, pixel error and disabling take
+  effect, and invalid settings are refused.
 
 ### Selection and drawing
 
 `engine_render`'s `virtual_geometry.rs` and `virtual_geometry.wgsl` keep an
 arena of every resident virtual mesh. At upload, its nodes, groups and
-clusters are rebased to absolute indices, and its pages are copied
-unchanged. The arena is rebuilt when meshes become resident or retire.
+clusters are rebased to absolute indices, and its pages load unchanged into
+slots as Streaming describes. The arena is rebuilt when meshes become
+resident or retire.
 
 Each frame, one compute pass selects clusters for every view: the camera's
 and those of the shadow maps drawn every frame (see Shadows below). A view
@@ -216,12 +241,50 @@ Each map's clusters go to a bin of its own, drawn last in the map's pass by
 near plane, with the maps' constant unit of bias. CPU-prepared frames select
 the same way from their listed casters.
 
+### Streaming
+
+Hosts load each virtual mesh's prefix, and renderers load its other pages as
+views need them into a pool of 128 KiB slots (`virtual_streaming.rs` keeps
+the bookkeeping, `virtual_geometry.rs` the pool and the fetches):
+
+- **Arena.** The pages buffer starts with a slot table, one word per page of
+  every resident mesh (its slot, or none), followed by the pool's slots.
+  Vertex shaders find a cluster's words through its page's slot. The groups
+  buffer ends with one residency bit per group.
+- **Residency.** A group can draw when every page holding its clusters is
+  resident and so is every coarser group holding clusters made from it.
+  Selection treats a group that cannot draw as absent: none of its clusters
+  draw, and the coarser cluster made from it draws instead of refining. Pinned pages are always resident, so each surface is drawn
+  exactly once at whatever detail is resident, never with holes.
+- **Requests.** Selection records two bitsets after its counters: the
+  groups it drew from and the groups it wanted but could not draw from.
+  They are read back with the counters, a few frames late, on GPU-presented
+  and CPU-prepared frames alike.
+- **Loads.** The CPU marks the pages of the groups drawn from as used at
+  that frame. From each wanted group it walks up to the coarser groups it
+  also needs, and begins loading their absent pages, coarser first, as many
+  as have room. Pages a whole file holds load from memory; the others are
+  fetched by HTTP byte range from the file's URL, one request for each run
+  of consecutive pages, validated on arrival and written into slots.
+  Failed fetches wait 120 frames before they are requested again.
+- **Room.** The pool doubles when full, up to the budget and the device's
+  storage binding size. Beyond that, the least recently used unpinned page
+  unused for 8 frames (longer than read-backs take) makes room, and loads
+  finding none are dropped until some is. `max_resident_pages` bounds the
+  resident pages; lowering it evicts the least recently used at once, and
+  pinned pages stay even beyond it.
+- **Rebuilds.** When meshes become resident or retire, the arena is rebuilt:
+  the pinned pages load again (every page a whole file holds, without a
+  budget), fetches and read-backs of the older layout are ignored, and the
+  other pages stream again as views ask for them.
+
 ### Capacity
 
 Following decision 029, the node queues, the group list and the bin regions
 start small. They double after a frame whose read-back counts show dropped
 entries, as far as the device's storage binding size allows. A frame with
-dropped entries still draws everything that fit, and reports the drops.
+dropped entries still draws everything that fit, and reports the drops. The
+page pool grows as Streaming describes, with an optional budget.
 
 ## Observable behavior
 
@@ -232,6 +295,18 @@ dropped entries still draws everything that fit, and reports the drops.
   left undrawn, and `rendering.dropped_virtual` entries dropped for want of
   room. All are read back a few frames late. Profiles time `virtual_selection` and
   report the arena and frame buffers as `memory.gpu_virtual_bytes`.
+- `rendering.virtual_resident_pages` and `virtual_loading_pages` count the
+  pages resident and being fetched. `virtual_missing_pages` counts those the
+  last read-back frame wanted and lacked: 0 once that frame's view had all
+  the detail it asked for. `dropped_virtual_pages` counts those of them, and
+  of arrivals since, that found no room. Profiles report all four as
+  `render.*` counters.
+- Loading the dense scene fetches its files' prefixes: 2.0 MB of 50.8 MB,
+  each file's metadata and one pinned page. The smoke check's street-level
+  and ground-level views then stream 73 more pages (9.5 MB), after which
+  their GPU-presented and CPU captures match exactly. A budget of 8 pages
+  keeps 8 resident and leaves 48 of the ground view's pages missing (and
+  dropped); its captures still match.
 - The Stress Lab's dense scene (`scene=dense`, preset "Dense geometry",
   `docs/stress-lab.md`) holds 2,000 objects on 25 terrain tiles:
   - boulders of 327,680 triangles;
@@ -256,10 +331,17 @@ dropped entries still draws everything that fit, and reports the drops.
   vertex work can reach about three times that of an indexed draw of the
   same triangles. Full clusters keep the waste small. Compacting the
   selected triangles into an index buffer could remove it later.
-- Rebuilding the arena uploads every resident mesh again. That is fine at
-  load time; streaming will replace it.
+- Rebuilding the arena uploads every resident mesh's metadata and pinned
+  pages again, and its streamed pages load again as views ask for them:
+  fine when scenes load, wasteful if meshes came and went every few frames.
 - Files hold every level. The boulder takes 9.2 MB, about 28 bytes a
-  source triangle.
+  source triangle, of which hosts load a 410 KB prefix (the dense scene's
+  prefixes run 410 to 633 KB).
+- Metadata (nodes, groups, clusters) stays resident for every resident
+  mesh; only vertices and triangles stream.
+- Detail arrives a few frames after a view first wants it (a read-back, then
+  a fetch). Until then coarser clusters draw, so detail sharpens in place;
+  a view turning quickly shows coarse surfaces for those frames.
 - Selection costs one dispatch per hierarchy level plus four more each
   frame, for every view together.
 - Shadow maps redraw virtual casters every frame, and each cascade redraws
@@ -276,7 +358,7 @@ dropped entries still draws everything that fit, and reports the drops.
    inspector and a smoke check (this record).
 5. A visibility buffer: rasterize instance, cluster and triangle IDs, then
    shade each material in its own pass.
-6. Streaming: coarse pages stay resident, the GPU requests pages through
-   read-back, and a fixed pool evicts the least recently used pages under a
-   byte budget.
+6. Streaming: pinned coarse pages stay resident, views request pages
+   through read-back, and a growing pool evicts the least recently used
+   pages under an optional budget (this record).
 

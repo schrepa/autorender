@@ -16,9 +16,13 @@ use crate::SceneError;
 pub enum SceneFileKind {
     /// An image (PNG, JPEG or WebP), supplied decoded to RGBA8.
     Image,
-    /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`), an
-    /// animation (`EAN1`) or a virtual mesh (`EVG1`, decision 044).
+    /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`) or an
+    /// animation (`EAN1`).
     Buffer,
+    /// A virtual mesh (`EVG1`, decision 044): hosts supply its prefix
+    /// (`VirtualMesh::prefix_bytes` long; the whole file works too) and its
+    /// URL, from which renderers stream the other pages.
+    VirtualMesh,
 }
 
 /// A file a scene references, by its path relative to the scene.
@@ -38,6 +42,8 @@ pub struct SceneFiles {
     images: HashMap<String, (u32, u32, Vec<u8>)>,
     compressed: HashMap<String, CompressedImage>,
     buffers: HashMap<String, Vec<u8>>,
+    // Each virtual mesh's prefix (or whole file) and its URL.
+    virtual_meshes: HashMap<String, (Vec<u8>, Option<String>)>,
 }
 
 impl SceneFiles {
@@ -69,6 +75,13 @@ impl SceneFiles {
     /// Adds buffer `uri`'s bytes.
     pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
         self.buffers.insert(uri.to_owned(), bytes);
+    }
+
+    /// Adds virtual mesh `uri` (decision 044): its prefix or whole file, and
+    /// the URL renderers fetch the pages a prefix lacks from.
+    pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
+        self.virtual_meshes
+            .insert(uri.to_owned(), (bytes, url.map(str::to_owned)));
     }
 
     /// Image `uri` as a texture, validated.
@@ -106,11 +119,22 @@ impl SceneFiles {
         mesh_buffer(bytes, path)
     }
 
-    /// Buffer `uri` decoded as a virtual mesh (decision 044), validated.
+    /// Virtual mesh `uri` (decision 044), validated: supplied as one, or a
+    /// whole file supplied as a buffer.
     pub(crate) fn virtual_mesh(&self, uri: &str, path: &str) -> Result<VirtualMesh, SceneError> {
-        let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
-        VirtualMesh::decode(bytes)
-            .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))
+        let (bytes, url) = match self.virtual_meshes.get(uri) {
+            Some((bytes, url)) => (bytes, url.as_deref()),
+            None => (
+                self.buffers.get(uri).ok_or_else(|| missing(uri, path))?,
+                None,
+            ),
+        };
+        let mesh = VirtualMesh::decode(bytes)
+            .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))?;
+        Ok(match url {
+            Some(url) => mesh.with_source(url),
+            None => mesh,
+        })
     }
 
     /// Buffer `uri` decoded as an animation buffer's channels.

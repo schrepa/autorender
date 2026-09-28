@@ -252,7 +252,9 @@ map drew, read back a few frames late; the kept count only on redraws),
 ([decision 044](adr-044-virtual-geometry.md)) reports `render.virtual_clusters`,
 `render.virtual_triangles`, `render.virtual_shadow_triangles`,
 `render.virtual_occluded_clusters` and `render.dropped_virtual` (read back a
-few frames late) and
+few frames late), its streamed pages as `render.virtual_resident_pages`,
+`render.virtual_loading_pages`, `render.virtual_missing_pages` and
+`render.dropped_virtual_pages`, and
 `memory.gpu_virtual_bytes` (its arena, queues and selected clusters), and times
 `virtual_selection` (every selection dispatch, the camera's and the shadow
 maps' together; the clusters draw within `opaque_meshes` and the shadow maps'

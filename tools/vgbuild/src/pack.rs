@@ -1,16 +1,49 @@
 //! Packs a cluster LOD hierarchy into the `EVG1` virtual mesh format
 //! (`engine_assets::VirtualMesh`): quantized vertices and 8-bit local
-//! triangles in pages of [`PAGE_WORDS`], coarsest levels first.
+//! triangles in pages of [`PAGE_WORDS`], the pinned groups first, then the
+//! coarsest levels first.
 
+pub use engine_assets::PAGE_WORDS;
 use engine_assets::{
-    CLUSTER_WORDS, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS, VERTEX_WORDS,
-    VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VIRTUAL_NONE, octahedral_encode,
+    CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS,
+    NODE_WORDS, VERTEX_WORDS, VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VIRTUAL_NONE,
+    octahedral_encode,
 };
 
 use crate::dag::{Dag, NodeKind, Source, is_closed};
 
-/// Words per page: 128 KiB, the unit renderers stream.
-pub const PAGE_WORDS: usize = 32 * 1024;
+/// Triangles of the cut at the pin error at most: the pinned pages hold it
+/// and every coarser group, which renderers draw before any page streams
+/// in, and fallback meshes of up to this many triangles.
+pub const PINNED_TRIANGLES: u32 = DEFAULT_FALLBACK_TRIANGLES;
+
+/// The smallest error whose cut (every cluster whose group simplifies with
+/// more error and whose own error is at most it) has at most `triangles`
+/// triangles; cuts shrink as the error grows.
+pub fn pin_error(dag: &Dag, triangles: u32) -> f32 {
+    let error = |group: u32| dag.groups[group as usize].simplified.error;
+    let cut_triangles = |at: f32| -> u32 {
+        dag.clusters
+            .iter()
+            .filter(|cluster| {
+                error(cluster.group) > at
+                    && cluster.refined.is_none_or(|refined| error(refined) <= at)
+            })
+            .map(|cluster| (cluster.triangles.len() / 3) as u32)
+            .sum()
+    };
+    let mut errors: Vec<f32> = dag
+        .groups
+        .iter()
+        .map(|group| group.simplified.error)
+        .filter(|error| *error < f32::MAX)
+        .collect();
+    errors.push(0.0);
+    errors.sort_by(f32::total_cmp);
+    errors.dedup();
+    let index = errors.partition_point(|&at| cut_triangles(at) > triangles);
+    errors.get(index).copied().unwrap_or(f32::MAX / 2.0)
+}
 
 /// Quantization of one axis: the value of step zero and the step size over
 /// `low..=high` in 16 bits.
@@ -66,11 +99,20 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
     }
     let uvs: [(f32, f32); 2] = std::array::from_fn(|index| axis(uv_low[index], uv_high[index]));
 
-    // Pages: clusters of the coarsest levels first, whole clusters per page.
+    // Pages: the pinned groups' clusters (every group simplified with more
+    // error than the pin error), then the coarsest levels first, whole
+    // clusters per page.
+    let pin = pin_error(dag, PINNED_TRIANGLES);
+    let pinned_group = |group: usize| dag.groups[group].simplified.error > pin;
     let mut order: Vec<usize> = (0..dag.clusters.len()).collect();
     order.sort_by_key(|&cluster| {
         let group = dag.clusters[cluster].group as usize;
-        (std::cmp::Reverse(dag.groups[group].depth), group, cluster)
+        (
+            !pinned_group(group),
+            std::cmp::Reverse(dag.groups[group].depth),
+            group,
+            cluster,
+        )
     });
     let mut pages: Vec<Vec<u32>> = vec![Vec::new()];
     // Page, vertex offset and triangle offset of each cluster.
@@ -105,6 +147,12 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         }));
         placement[index] = ((pages.len() - 1) as u32, vertex_offset, triangle_offset);
     }
+    let pinned_pages = order
+        .iter()
+        .filter(|&&cluster| pinned_group(dag.clusters[cluster].group as usize))
+        .map(|&cluster| placement[cluster].0 + 1)
+        .max()
+        .unwrap_or(1);
 
     // Depth of the hierarchy: nodes on the longest root-to-leaf path. Roots
     // come first; `clodBuildHierarchy` writes the other nodes bottom-up.
@@ -145,6 +193,8 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         words[18 + axis] = uvs[axis].0.to_bits();
         words[20 + axis] = uvs[axis].1.to_bits();
     }
+    words[28] = pinned_pages;
+    words[29] = pin.to_bits();
     let sphere = |center: [f32; 3], radius: f32, error: f32| {
         [
             center[0].to_bits(),
@@ -204,6 +254,12 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
         words.extend([offset, page.len() as u32]);
         offset += page.len() as u32;
     }
+    // The prefix: metadata and the pinned pages.
+    words[30] = (words.len()
+        + pages[..pinned_pages as usize]
+            .iter()
+            .map(Vec::len)
+            .sum::<usize>()) as u32;
     for page in pages {
         words.extend(page);
     }

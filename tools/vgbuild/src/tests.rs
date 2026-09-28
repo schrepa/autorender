@@ -202,3 +202,48 @@ fn procedural_solids_are_closed() {
         &crate::procedural::terrain(8, 4.0, 5).source()
     ));
 }
+
+#[test]
+fn prefixes_decode_alone_and_later_pages_validate_as_they_arrive() {
+    use engine_assets::VirtualMesh;
+    let (positions, normals, uvs, indices) = bumpy_sphere(96, 192);
+    let bytes = build_virtual_mesh(&Source {
+        positions: &positions,
+        normals: &normals,
+        uvs: Some(&uvs),
+        indices: &indices,
+    })
+    .unwrap();
+    let whole = VirtualMesh::decode(&bytes).unwrap();
+    assert_eq!(whole.available_pages(), whole.page_count());
+    assert!(whole.pinned_pages() < whole.page_count());
+    let prefix_bytes = VirtualMesh::prefix_bytes(&bytes[..128]).unwrap();
+    assert!(prefix_bytes < bytes.len());
+    let prefix = VirtualMesh::decode(&bytes[..prefix_bytes]).unwrap();
+    assert_eq!(prefix.available_pages(), prefix.pinned_pages());
+    // The prefix alone builds the same fallback as the whole file.
+    let (a, b) = (
+        whole.fallback(4096).unwrap(),
+        prefix.fallback(4096).unwrap(),
+    );
+    assert_eq!(a.indices(), b.indices());
+    assert!(a.indices().len() / 3 <= 4096);
+    // Later pages validate on their own; corrupt ones do not.
+    for page in prefix.pinned_pages()..prefix.page_count() {
+        let range = prefix.page_bytes(page).unwrap();
+        let words: Vec<u32> = bytes[range.start as usize..range.end as usize]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| u32::from_le_bytes(*chunk))
+            .collect();
+        prefix.validate_page(page, &words).unwrap();
+        assert!(
+            prefix
+                .validate_page(page, &vec![u32::MAX; words.len()])
+                .is_err()
+        );
+        assert!(prefix.validate_page(page, &words[1..]).is_err());
+    }
+    assert!(VirtualMesh::decode(&bytes[..prefix_bytes - 4]).is_err());
+}

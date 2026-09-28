@@ -1642,7 +1642,7 @@ fn one_triangle_virtual_mesh() -> Vec<u8> {
     let bits = f32::to_bits;
     let mut words = vec![0u32; 32];
     words[0] = u32::from_le_bytes(*b"EVG1");
-    words[1] = 1;
+    words[1] = 2;
     // Levels, nodes, groups, clusters, pages, triangles (and source
     // triangles) and depth.
     words[3..11].copy_from_slice(&[1, 1, 1, 1, 1, 1, 1, 1]);
@@ -1651,6 +1651,11 @@ fn one_triangle_virtual_mesh() -> Vec<u8> {
         words[15 + axis] = bits(1.0 / 65535.0);
         words[25 + axis] = bits(1.0);
     }
+    // One pinned page (the group's error exceeds the pin error 0), ending
+    // the prefix: the header, node, group, cluster, page table and page.
+    words[28] = 1;
+    words[29] = bits(0.0);
+    words[30] = 32 + 8 + 8 + 12 + 2 + 13;
     let sphere = [bits(0.5), bits(0.5), bits(0.0), bits(0.8)];
     // The level's root: a leaf holding group 0, never simplified further.
     words.extend(sphere);
@@ -1681,7 +1686,7 @@ fn version_eight_virtual_meshes_load_from_files_and_earlier_versions_refuse_them
         serde_json::json!({"kind": "virtual", "uri": "meshes/rock.evg"});
     let document = SceneDocument::from_json(&source.to_string()).unwrap();
     // Structure validates without the file, which the document lists as a
-    // buffer.
+    // virtual mesh.
     document.validate().unwrap();
     assert_eq!(
         document
@@ -1689,7 +1694,7 @@ fn version_eight_virtual_meshes_load_from_files_and_earlier_versions_refuse_them
             .iter()
             .map(|file| (file.uri.as_str(), file.kind))
             .collect::<Vec<_>>(),
-        [("meshes/rock.evg", SceneFileKind::Buffer)]
+        [("meshes/rock.evg", SceneFileKind::VirtualMesh)]
     );
     let mut world = world(AssetBudget::default());
     let missing = document.instantiate(&mut world).unwrap_err();
@@ -1697,8 +1702,17 @@ fn version_eight_virtual_meshes_load_from_files_and_earlier_versions_refuse_them
         (missing.code, missing.path.as_str()),
         ("missing_file", "$.meshes[0].source.uri")
     );
+    // Hosts supply the file's prefix and URL; a whole file as a buffer
+    // works too.
+    let mut buffered = SceneFiles::new();
+    buffered.add_buffer("meshes/rock.evg", one_triangle_virtual_mesh());
+    document.validate_with(&buffered).unwrap();
     let mut files = SceneFiles::new();
-    files.add_buffer("meshes/rock.evg", one_triangle_virtual_mesh());
+    files.add_virtual_mesh(
+        "meshes/rock.evg",
+        one_triangle_virtual_mesh(),
+        Some("https://example.test/meshes/rock.evg"),
+    );
     let instance = document.instantiate_with(&mut world, &files).unwrap();
     let player = instance.entity("player").unwrap();
     let handle = world.get::<Mesh3d>(player).unwrap().mesh;
@@ -1708,10 +1722,14 @@ fn version_eight_virtual_meshes_load_from_files_and_earlier_versions_refuse_them
         .virtual_geometry()
         .expect("the mesh keeps its hierarchy");
     assert_eq!((geometry.cluster_count(), mesh.indices().len()), (1, 3));
+    assert_eq!(
+        geometry.source(),
+        Some("https://example.test/meshes/rock.evg")
+    );
     instance.despawn(&mut world);
     // Broken files, empty fallbacks and earlier versions are refused.
     let mut broken = files.clone();
-    broken.add_buffer("meshes/rock.evg", b"EVG1".to_vec());
+    broken.add_virtual_mesh("meshes/rock.evg", b"EVG1".to_vec(), None);
     let error = document.validate_with(&broken).unwrap_err();
     assert_eq!(
         (error.code, error.path.as_str()),
@@ -1738,8 +1756,7 @@ fn version_eight_virtual_geometry_settings_resolve_and_earlier_versions_refuse_t
     use engine_core::VirtualGeometry;
     let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
     source["version"] = 8.into();
-    source["environment"] =
-        serde_json::json!({"virtual_geometry": {"enabled": false, "pixel_error": 3.0}});
+    source["environment"] = serde_json::json!({"virtual_geometry": {"enabled": false, "pixel_error": 3.0, "max_resident_pages": 64}});
     let document = SceneDocument::from_json(&source.to_string()).unwrap();
     let mut world = world(AssetBudget::default());
     let instance = document.instantiate(&mut world).unwrap();
@@ -1747,10 +1764,18 @@ fn version_eight_virtual_geometry_settings_resolve_and_earlier_versions_refuse_t
         *world.resource::<VirtualGeometry>(),
         VirtualGeometry {
             enabled: false,
-            pixel_error: 3.0
+            pixel_error: 3.0,
+            max_resident_pages: Some(64),
         }
     );
     instance.despawn(&mut world);
+    source["environment"]["virtual_geometry"]["max_resident_pages"] = 0.into();
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(
+        error.path.as_str(),
+        "$.environment.virtual_geometry.max_resident_pages"
+    );
+    source["environment"]["virtual_geometry"]["max_resident_pages"] = 64.into();
     source["environment"]["virtual_geometry"]["pixel_error"] = 100.0.into();
     let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
     assert_eq!(

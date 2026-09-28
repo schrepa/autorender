@@ -33,11 +33,19 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
     create_workload_with(config, &HashMap::new())
 }
 
+/// A file a workload reads: its bytes (a virtual mesh's may be the prefix)
+/// and the URL the rest streams from.
+#[derive(Clone, Debug, Default)]
+pub struct StressFile {
+    pub bytes: Vec<u8>,
+    pub url: Option<String>,
+}
+
 /// [`create_workload`] reading the files a scene needs from `files` (the
 /// dense scene's virtual meshes, decision 044).
 pub fn create_workload_with(
     config: StressConfig,
-    files: &HashMap<String, Vec<u8>>,
+    files: &HashMap<String, StressFile>,
 ) -> Result<Engine, String> {
     config.validate()?;
     let mut engine = Engine::new(EngineConfig {
