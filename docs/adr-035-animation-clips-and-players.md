@@ -29,7 +29,14 @@ simulation poses for display (decision 008) and presents them on the GPU
   otherwise, and writes each channel's sample into its target's local
   `Transform` only when it changed, so held poses cost propagation nothing.
   Missing or despawned targets are skipped. Game systems that adjust
-  animated poses order after the set.
+  animated poses order after the set. Players sample through
+  `AnimationClip::sample_channels`: channels keyed at the same times as the
+  channel before them share its key search, and linear rotation channels
+  derive each key pair's arc once (near-side end, angle and its sine's
+  reciprocal), so a sample costs two sines. Values keep the bits of
+  `AnimationChannel::sample` and of glam's scalar and wasm32 `Quat::slerp`,
+  and are the same natively (glam's SSE2 and NEON `slerp` use a SIMD sine
+  of their own, within a few ulp).
 - **Smooth presentation.** Players run at the fixed rate; targets with
   `InterpolateTransform` display blended between ticks on either
   presentation path, so animation needs no presentation code of its own.

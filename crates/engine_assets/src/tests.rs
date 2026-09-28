@@ -720,6 +720,122 @@ fn optional_vertex_colors_and_second_coordinates_validate() {
 }
 
 #[test]
+fn linear_rotations_sample_slerp_bits_and_clips_share_key_searches() {
+    // Deterministic pseudo-random unit quaternions, near and far apart,
+    // including opposite signs and nearly equal keys.
+    let mut seed = 0x9e37_79b9_u32;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / (1 << 24) as f32 * 2.0 - 1.0
+    };
+    let mut rotations = Vec::new();
+    for index in 0..400 {
+        let axis = Vec3::new(next(), next(), next()).normalize_or(Vec3::Y);
+        let angle = next() * std::f32::consts::PI * if index % 4 == 0 { 0.001 } else { 1.0 };
+        let rotation = Quat::from_axis_angle(axis, angle);
+        rotations.push(if index % 3 == 0 { -rotation } else { rotation });
+        if index % 5 == 0 {
+            rotations.push(rotation);
+        }
+    }
+    let times: Vec<f32> = (0..rotations.len()).map(|key| key as f32 * 0.25).collect();
+    let channel = |target, times: Vec<f32>| {
+        AnimationChannel::new(
+            target,
+            AnimatedProperty::Rotation,
+            KeyInterpolation::Linear,
+            times,
+            Keyframes::Rotations(rotations.clone().into_boxed_slice()),
+        )
+        .unwrap()
+    };
+    let rotation = channel(0, times.clone());
+    let normalized: Vec<Quat> = rotations
+        .iter()
+        .map(|rotation| rotation.normalize())
+        .collect();
+    // `Quat::slerp` of glam's scalar and wasm32 (browser) backends with the
+    // engine's sine; its SSE2 and NEON backends use a SIMD sine of their
+    // own, within a few ulp of it.
+    let slerp = |start: Quat, mut end: Quat, s: f32| {
+        let mut dot = start.dot(end);
+        if dot < 0.0 {
+            end = -end;
+            dot = -dot;
+        }
+        if dot > 1.0 - f32::EPSILON {
+            return start.lerp(end, s);
+        }
+        let x = dot.abs();
+        let mut omx = 1.0 - x;
+        if omx < 0.0 {
+            omx = 0.0;
+        }
+        #[allow(clippy::approx_constant)]
+        let mut theta = ((((((-0.001_262_491_1 * x + 0.006_670_09) * x - 0.017_088_126) * x
+            + 0.030_891_88)
+            * x
+            - 0.050_174_303)
+            * x
+            + 0.088_978_99)
+            * x
+            - 0.214_598_8)
+            * x
+            + 1.570_796_3;
+        theta *= omx.sqrt();
+        if dot < 0.0 {
+            theta = std::f32::consts::PI - theta;
+        }
+        let scale1 = engine_math::sin(theta * (1.0 - s));
+        let scale2 = engine_math::sin(theta * s);
+        let theta_sin = engine_math::sin(theta);
+        ((start * scale1) + (end * scale2)) * (1.0 / theta_sin)
+    };
+    for step in 0..(rotations.len() * 7) {
+        let time = step as f32 * 0.25 / 7.0 + 0.01;
+        let key = ((time / 0.25) as usize).min(rotations.len() - 1);
+        let AnimationSample::Rotation(sampled) = rotation.sample(time) else {
+            panic!("rotation channel");
+        };
+        let expected = if key + 1 < rotations.len() {
+            let fraction = (time - times[key]) / (times[key + 1] - times[key]);
+            let glam = normalized[key].slerp(normalized[key + 1], fraction);
+            assert!(sampled.abs_diff_eq(glam, 1.0e-6));
+            slerp(normalized[key], normalized[key + 1], fraction)
+        } else {
+            normalized[key]
+        };
+        assert_eq!(
+            sampled.to_array().map(f32::to_bits),
+            expected.to_array().map(f32::to_bits)
+        );
+    }
+    // Clips sample each channel as it samples alone.
+    let offset: Vec<f32> = times.iter().map(|time| time + 0.1).collect();
+    let clip = AnimationClip::new(vec![
+        channel(0, times.clone()),
+        channel(1, times.clone()),
+        channel(2, offset),
+        channel(3, times),
+    ])
+    .unwrap();
+    for time in [0.0, 0.3, 17.77, 40.0, 500.0] {
+        let mut sampled = Vec::new();
+        clip.sample_channels(time, |channel, sample| {
+            sampled.push((channel.target(), sample))
+        });
+        let alone: Vec<_> = clip
+            .channels()
+            .iter()
+            .map(|channel| (channel.target(), channel.sample(time)))
+            .collect();
+        assert_eq!(sampled, alone);
+    }
+}
+
+#[test]
 fn animation_channels_sample_step_linear_and_cubic_splines_like_gltf() {
     let vectors =
         |values: &[f32]| Keyframes::Vectors(values.iter().map(|x| Vec3::splat(*x)).collect());

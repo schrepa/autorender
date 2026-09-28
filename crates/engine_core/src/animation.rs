@@ -69,17 +69,17 @@ pub(crate) fn animate(
         if player.time != next {
             player.time = next;
         }
-        let at = player.time;
-        for channel in clip.channels() {
-            let Some(Some(target)) = player.targets.get(channel.target() as usize) else {
-                continue;
+        let targets = &player.targets;
+        clip.sample_channels(player.time, |channel, sample| {
+            let Some(Some(target)) = targets.get(channel.target() as usize) else {
+                return;
             };
             let Ok(mut transform) = transforms.get_mut(*target) else {
-                continue;
+                return;
             };
             // Unchanged values leave the transform unchanged: held and
             // paused poses cost propagation nothing.
-            match channel.sample(at) {
+            match sample {
                 AnimationSample::Translation(translation) => {
                     if transform.translation != translation {
                         transform.translation = translation;
@@ -96,6 +96,6 @@ pub(crate) fn animate(
                     }
                 }
             }
-        }
+        });
     }
 }

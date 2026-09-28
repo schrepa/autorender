@@ -8,7 +8,9 @@ for `f32` angles. glam's `f32` rotation constructors (`Quat::from_rotation_x/y/z
 `from_axis_angle`, `from_scaled_axis`, `from_euler`, `Vec2::from_angle`, and the
 `Mat2`/`Mat3`/`Mat4`/affine equivalents) and `Quat::slerp` use the same routine:
 the workspace patches glam 0.30.9 with `vendor/glam`, which changes only its
-`sin`/`sin_cos` (see `vendor/glam/VENDORED.md`). `clippy.toml` disallows
+`sin`/`sin_cos` (see `vendor/glam/VENDORED.md`). Native SSE2 and NEON builds
+of `Quat::slerp` keep glam's SIMD sine; animation samples rotations with the
+engine's routine on every target (decision 035). `clippy.toml` disallows
 `f32::sin`, `f32::cos` and `f32::sin_cos` in workspace code.
 
 ```rust
