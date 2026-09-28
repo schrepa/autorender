@@ -73,11 +73,13 @@ pub struct RenderStats {
     pub reflection_probes: u32,
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
-    /// Clusters and triangles virtual geometry (decision 044) drew, and
-    /// selections dropped while their storage grew, read back a few frames
-    /// late.
+    /// Clusters and triangles virtual geometry (decision 044) drew for the
+    /// camera and into shadow maps, and selections dropped while their
+    /// storage grew, read back a few frames late.
     pub virtual_clusters: u32,
     pub virtual_triangles: u32,
+    pub virtual_shadow_clusters: u32,
+    pub virtual_shadow_triangles: u32,
     pub dropped_virtual: u32,
 }
 

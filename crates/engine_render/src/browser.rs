@@ -29,7 +29,9 @@ use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
-use crate::virtual_geometry::{VirtualBatch, VirtualGeometryPass, VirtualView};
+use crate::virtual_geometry::{
+    Cone, IdBuffers, MAX_VIEWS, VirtualBatch, VirtualGeometryPass, VirtualView,
+};
 use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
@@ -173,9 +175,9 @@ pub struct Renderer {
     // Virtual geometry (decision 044): the arena and cluster selection;
     // pipelines per pass kind and material variant over their layouts
     // (unlit, lit) and pose groups (poses, colors, previous poses and the
-    // arena); this frame's bins (material and variant) and the plan
-    // batches whose clusters draw instead of their fallback meshes; the
-    // generation of which batches those are.
+    // arena); this frame's camera bins (material and variant), the plan
+    // batches whose clusters draw instead of their fallback meshes, and
+    // each shadow map's bin and view offset.
     virtual_geometry: VirtualGeometryPass,
     virtual_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     virtual_pose_layout: wgpu::BindGroupLayout,
@@ -183,7 +185,7 @@ pub struct Renderer {
     virtual_pose_groups: Option<((u64, u64, bool), [wgpu::BindGroup; 4])>,
     virtual_bins: Vec<(Option<MaterialHandle>, Variant)>,
     virtual_drawn: Vec<bool>,
-    virtual_generation: (u64, bool),
+    virtual_shadow_bins: Vec<(usize, usize, u32)>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -702,7 +704,7 @@ impl Renderer {
             virtual_pose_groups: None,
             virtual_bins: Vec::new(),
             virtual_drawn: Vec::new(),
-            virtual_generation: (0, false),
+            virtual_shadow_bins: Vec::new(),
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -1384,9 +1386,6 @@ impl Renderer {
             .virtual_geometry
             .arena()
             .map_or(0, |(_, generation)| generation);
-        if self.virtual_generation != (arena, virtual_enabled) {
-            self.virtual_generation = (arena, virtual_enabled);
-        }
         let virtual_key = arena * 2 + u64::from(virtual_enabled);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
@@ -1811,14 +1810,26 @@ impl Renderer {
         if !affine {
             self.virtual_drawn.clear();
         }
+        if virtual_frame {
+            self.ensure_virtual_pipelines(opaque_kind);
+            self.ensure_virtual_pose_groups();
+        }
         #[cfg(feature = "profiling")]
         let effect_queries = self.profiler.effect_queries(query_slot);
         #[cfg(not(feature = "profiling"))]
         let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let mut _effects_timed = 0_u32;
+        // Shadow casters first: virtual geometry selects the clusters of the
+        // virtual ones (decision 044) with the camera's, then the maps draw.
+        if let Some(shadow_frame) = &shadow_frame {
+            _effects_timed |= u32::from(self.shadows.encode_selection(
+                &self.device,
+                &mut encoder,
+                shadow_frame,
+                effect_queries,
+            ));
+        }
         if virtual_frame {
-            self.ensure_virtual_pipelines(opaque_kind);
-            self.ensure_virtual_pose_groups();
             timestamp_pass(&mut encoder, effect_queries, VIRTUAL_SELECTION, false);
             self.virtual_geometry.encode(&self.device, &mut encoder);
             timestamp_pass(&mut encoder, effect_queries, VIRTUAL_SELECTION, true);
@@ -1835,8 +1846,9 @@ impl Renderer {
         let mut shadow_draws = 0;
         if let Some(shadow_frame) = &shadow_frame {
             let meshes = &self.meshes;
-            let encoded = self.shadows.encode(
-                &self.device,
+            let (virtual_geometry, shadow_bins) =
+                (&self.virtual_geometry, &self.virtual_shadow_bins);
+            let encoded = self.shadows.encode_maps(
                 &mut encoder,
                 shadow_frame,
                 &self.plan,
@@ -1852,6 +1864,16 @@ impl Renderer {
                     })
                 },
                 |material| self.materials.group(material),
+                |pass, map| {
+                    shadow_bins
+                        .iter()
+                        .find(|(bin_map, _, _)| *bin_map == map)
+                        .map_or(0, |&(_, bin, offset)| {
+                            u32::from(
+                                virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset),
+                            )
+                        })
+                },
                 effect_queries,
             );
             _effects_timed |= u32::from(encoded.timed);
@@ -2504,6 +2526,8 @@ impl Renderer {
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
             virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
+            virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
+            virtual_shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
             dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
             ..self.residency_stats()
         };
@@ -2567,6 +2591,10 @@ impl Renderer {
                 engine_profile::counter(
                     "render.virtual_triangles",
                     f64::from(virtual_stats.triangles),
+                );
+                engine_profile::counter(
+                    "render.virtual_shadow_triangles",
+                    f64::from(virtual_stats.shadow_triangles),
                 );
                 engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
             }
@@ -2969,14 +2997,16 @@ impl Renderer {
         drawn
     }
 
-    /// Plans this frame's virtual geometry (decision 044): the batches of
-    /// virtual meshes, their bins, the view, and the bindings selection
-    /// reads (this frame's poses and GPU-compacted visible IDs, or
-    /// CPU-prepared slots). Returns whether any batch draws clusters.
+    /// Plans this frame's virtual geometry (decision 044): the camera's
+    /// batches of virtual meshes and their bins, each shadow map's virtual
+    /// casters and bin, the views, and the bindings selection reads (this
+    /// frame's poses, GPU-compacted visible IDs or CPU-prepared slots, and
+    /// the shadow maps' casters). Returns whether any batch draws clusters.
     fn prepare_virtual(&mut self, snapshot: &RenderSnapshot, gpu_mode: bool, odd: bool) -> bool {
         self.virtual_bins.clear();
         self.virtual_drawn.clear();
         self.virtual_drawn.resize(self.plan.batches.len(), false);
+        self.virtual_shadow_bins.clear();
         if !snapshot.virtual_geometry.enabled {
             return false;
         }
@@ -3010,6 +3040,7 @@ impl Renderer {
                 mesh,
                 bin: bin as u32,
                 double_sided: variant.double_sided(),
+                view: 0,
             });
             self.virtual_drawn[index] = true;
         }
@@ -3017,21 +3048,75 @@ impl Renderer {
             return false;
         }
         let view_projection = snapshot.view_projection;
-        let view = VirtualView {
-            planes: crate::virtual_geometry::planes(view_projection),
+        let mut camera_planes = [[0.0, 0.0, 0.0, 1.0]; crate::shadows::VIRTUAL_SHADOW_PLANES];
+        camera_planes[..6].copy_from_slice(&crate::virtual_geometry::planes(view_projection));
+        let camera = VirtualView {
+            planes: camera_planes,
             eye: snapshot.camera_position,
-            near: 0.05,
+            min_distance: VIRTUAL_NEAREST,
             // The projection's y scale: its second row's length.
             projection: view_projection.row(1).truncate().length() * 0.5,
             threshold: snapshot.virtual_geometry.pixel_error
                 / self.configuration.height.max(1) as f32,
+            unseen_error: 0.0,
+            cone: Cone::Eye,
         };
+        // Shadow maps drawn every frame select their virtual casters'
+        // clusters as the camera sees them (decision 044), from where their
+        // receivers start, and where the camera sees nothing within as many
+        // of the map's texels as pixels, into a bin each. Closed meshes cast
+        // the clusters facing the sun, which hide the rest; others cast both
+        // faces.
+        let mut views = vec![camera];
+        let mut shadow_batches = Vec::new();
+        let mut shadow_instances = 0;
+        let (_, _, id_capacity, _) = self.shadows.caster_buffers();
+        let shadow_groups = self.shadows.groups();
+        let group_count = shadow_groups.len() as u32;
+        for shadow_view in self.shadows.virtual_views() {
+            if views.len() == MAX_VIEWS {
+                break;
+            }
+            let bin = self.virtual_bins.len() + self.virtual_shadow_bins.len();
+            let view = views.len() as u32;
+            let mut any = false;
+            for (index, group) in shadow_groups.iter().enumerate() {
+                if !group.virtual_geometry {
+                    continue;
+                }
+                let Some(mesh) = self.virtual_geometry.mesh_index(group.mesh) else {
+                    continue;
+                };
+                shadow_batches.push(VirtualBatch {
+                    start: shadow_view.map as u32 * id_capacity + group.start,
+                    count: None,
+                    draw: shadow_view.map as u32 * group_count + index as u32,
+                    mesh,
+                    bin: bin as u32,
+                    double_sided: !self.virtual_geometry.closed(mesh),
+                    view,
+                });
+                shadow_instances = shadow_instances.max(group.capacity);
+                any = true;
+            }
+            if any {
+                self.virtual_shadow_bins
+                    .push((shadow_view.map, bin, shadow_view.view_offset));
+                views.push(VirtualView {
+                    planes: shadow_view.planes,
+                    min_distance: shadow_view.min_distance.unwrap_or(VIRTUAL_NEAREST),
+                    unseen_error: snapshot.virtual_geometry.pixel_error * shadow_view.texel,
+                    cone: Cone::Along(shadow_view.direction),
+                    ..camera
+                });
+            }
+        }
         self.virtual_geometry.prepare(
             &self.device,
             &self.queue,
-            &batches,
-            self.virtual_bins.len(),
-            &view,
+            [&batches, &shadow_batches],
+            self.virtual_bins.len() + self.virtual_shadow_bins.len(),
+            &views,
         );
         let poses = if odd {
             self.alternate_poses
@@ -3040,19 +3125,33 @@ impl Renderer {
         } else {
             &self.instance_buffer
         };
-        let (ids, draws, key) = if gpu_mode {
+        let camera_ids = if gpu_mode {
             let (ids, draws, generation) = self.gpu_presentation.visible_sources();
-            (ids, draws, generation * 2)
+            IdBuffers {
+                ids,
+                draws,
+                key: generation * 2,
+            }
         } else {
             let slots = self.slot_buffer.as_ref().expect("retained slot buffer");
-            (slots, slots, self.slot_capacity as u64 * 2 + 1)
+            IdBuffers {
+                ids: slots,
+                draws: slots,
+                key: self.slot_capacity as u64 * 2 + 1,
+            }
         };
+        let (shadow_ids, shadow_args, _, shadow_key) = self.shadows.caster_buffers();
         self.virtual_geometry.bind(
             &self.device,
             (poses, self.pose_generation * 2 + u64::from(odd)),
-            (ids, key),
-            (draws, key),
-            max_instances,
+            camera_ids,
+            (!shadow_batches.is_empty()).then_some(IdBuffers {
+                ids: shadow_ids,
+                draws: shadow_args,
+                key: shadow_key,
+            }),
+            [max_instances, shadow_instances],
+            self.shadows.view_buffer(),
         );
         true
     }
@@ -3431,6 +3530,10 @@ type VirtualStages<'a> = (
     &'a [Option<wgpu::ColorTargetState>],
     &'a [(&'a str, f64)],
 );
+
+/// The smallest distance virtual geometry's errors project from (decision
+/// 044): a guard for the eye's own position.
+const VIRTUAL_NEAREST: f32 = 0.05;
 
 /// Selected clusters of virtual geometry (decision 044): visible ID and
 /// cluster, one entry per instance.

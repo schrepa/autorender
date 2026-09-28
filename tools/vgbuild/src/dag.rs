@@ -223,7 +223,9 @@ pub fn build(source: &Source<'_>) -> Result<Dag, String> {
 /// of one triangle, compared by position so texture seams are not borders.
 /// Borders then stay put at every level, and separately placed meshes that
 /// meet there (terrain tiles) never crack apart.
-fn border_locks(source: &Source<'_>) -> Vec<u8> {
+/// Each vertex's first vertex at the same position, and how many triangles
+/// use each edge between such positions.
+fn edge_uses(source: &Source<'_>) -> (Vec<u32>, std::collections::HashMap<(u32, u32), u32>) {
     let mut first = std::collections::HashMap::new();
     let remap: Vec<u32> = source
         .positions
@@ -242,6 +244,17 @@ fn border_locks(source: &Source<'_>) -> Vec<u8> {
             *edges.entry((a.min(b), a.max(b))).or_insert(0) += 1;
         }
     }
+    (remap, edges)
+}
+
+/// Whether `source` is closed: every edge between positions joins exactly
+/// two triangles, so its surfaces facing a direction hide those facing away.
+pub fn is_closed(source: &Source<'_>) -> bool {
+    edge_uses(source).1.values().all(|&uses| uses == 2)
+}
+
+fn border_locks(source: &Source<'_>) -> Vec<u8> {
+    let (remap, edges) = edge_uses(source);
     let mut border = vec![false; source.positions.len()];
     for ((a, b), uses) in edges {
         if uses == 1 {

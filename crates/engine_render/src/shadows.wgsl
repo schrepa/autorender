@@ -7,7 +7,9 @@
 // kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
 // only when a region of it is dirty, and leave the per-frame map a little
-// later, once the kept map surely holds them.
+// later, once the kept map surely holds them. Casters with virtual geometry
+// (decision 044) go to the maps drawn every frame, whose views select their
+// clusters, and never to the kept map.
 
 struct Cull {
     // World to light space: the sun's right, up and away-from-sun axes.
@@ -225,12 +227,14 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let pose = poses[candidate.slot];
     let batch = batches[candidate.batch];
-    // Batches without a group (transparent ones) cast no shadow; batches
-    // drawing virtual geometry (decision 044, flag 2) cast their clusters,
-    // not their fallback meshes.
-    if batch.group >= cull.groups || batch.bounds_max.w == 2.0 {
+    // Batches without a group (transparent ones) cast no shadow.
+    if batch.group >= cull.groups {
         return;
     }
+    // Batches drawing virtual geometry (decision 044, flag 2) cast the
+    // clusters each map's view selects: never kept, as the camera's detail
+    // changes with it.
+    let clustered = batch.bounds_max.w == 2.0;
     // Joints place meshes with joints (decision 036), wherever their slot
     // is: GPU-presented frames select them by their palette bounds
     // (`select_skinned`); others cast them into every map drawn each frame.
@@ -261,7 +265,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     // Non-finite bounds fail every comparison and cast nothing.
     var moving = true;
     var kept = false;
-    if classify {
+    if classify && !clustered {
         let key = pose_key(pose, batch.group);
         let state = stillness[candidate.slot];
         var count = state.y & 0xffu;

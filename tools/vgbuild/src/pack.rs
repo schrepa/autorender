@@ -3,11 +3,11 @@
 //! triangles in pages of [`PAGE_WORDS`], coarsest levels first.
 
 use engine_assets::{
-    CLUSTER_WORDS, FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS, VERTEX_WORDS,
+    CLUSTER_WORDS, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS, VERTEX_WORDS,
     VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VIRTUAL_NONE, octahedral_encode,
 };
 
-use crate::dag::{Dag, NodeKind, Source};
+use crate::dag::{Dag, NodeKind, Source, is_closed};
 
 /// Words per page: 128 KiB, the unit renderers stream.
 pub const PAGE_WORDS: usize = 32 * 1024;
@@ -125,7 +125,8 @@ pub fn pack(dag: &Dag, source: &Source<'_>) -> Vec<u32> {
     let mut words = vec![0u32; HEADER_WORDS];
     words[0] = u32::from_le_bytes(VIRTUAL_MESH_MAGIC);
     words[1] = VIRTUAL_MESH_VERSION;
-    words[2] = if source.uvs.is_some() { FLAG_UVS } else { 0 };
+    words[2] = if source.uvs.is_some() { FLAG_UVS } else { 0 }
+        | if is_closed(source) { FLAG_CLOSED } else { 0 };
     words[3] = dag.levels;
     words[4] = dag.nodes.len() as u32;
     words[5] = dag.groups.len() as u32;

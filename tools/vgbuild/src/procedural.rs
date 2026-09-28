@@ -24,18 +24,26 @@ impl Geometry {
         }
     }
 
-    /// Area-weighted vertex normals of the triangles.
+    /// Area-weighted vertex normals of the triangles, shared by vertices at
+    /// the same position (seams stay smooth).
     fn smooth_normals(positions: &[[f32; 3]], indices: &[u32]) -> Vec<[f32; 3]> {
+        let mut first = HashMap::new();
+        let welded: Vec<usize> = positions
+            .iter()
+            .enumerate()
+            .map(|(vertex, position)| *first.entry(position.map(f32::to_bits)).or_insert(vertex))
+            .collect();
         let mut sums = vec![Vec3::ZERO; positions.len()];
         for triangle in indices.as_chunks::<3>().0 {
             let [a, b, c] = triangle.map(|index| Vec3::from_array(positions[index as usize]));
             let normal = (b - a).cross(c - a);
             for &index in triangle {
-                sums[index as usize] += normal;
+                sums[welded[index as usize]] += normal;
             }
         }
-        sums.iter()
-            .map(|sum| sum.try_normalize().unwrap_or(Vec3::Y).to_array())
+        welded
+            .iter()
+            .map(|&vertex| sums[vertex].try_normalize().unwrap_or(Vec3::Y).to_array())
             .collect()
     }
 }
@@ -169,20 +177,31 @@ pub fn column(segments: u32, rings: u32) -> Geometry {
         } else {
             0.5 + 0.03 * engine_math::sin(v * std::f32::consts::PI)
         };
+        let seam = positions.len();
         for segment in 0..=segments {
             let u = segment as f32 / segments as f32;
+            uvs.push([u, v]);
+            // The seam's second column of vertices shares the first's
+            // positions: the column stays closed.
+            if segment == segments {
+                positions.push(positions[seam]);
+                continue;
+            }
             let angle = u * std::f32::consts::TAU;
+            let (sin, cos) = engine_math::sin_cos(angle);
+            // Noise sampled around the cylinder repeats with the angle.
+            let around = |circumference: f32, height: f32| {
+                let radius = circumference / std::f32::consts::TAU;
+                Vec3::new(cos * radius, sin * radius, v * height)
+            };
             let fluted = if (0.06..=0.93).contains(&v) {
                 // Twenty-four concave flutes with fine chisel noise.
                 let flute = engine_math::cos(angle * 24.0);
-                profile - 0.018 * (1.0 - flute * flute)
-                    + 0.002 * noise(Vec3::new(u * 180.0, v * 90.0, 3.0), 11)
+                profile - 0.018 * (1.0 - flute * flute) + 0.002 * noise(around(180.0, 90.0), 11)
             } else {
-                profile + 0.004 * noise(Vec3::new(u * 60.0, v * 40.0, 7.0), 13)
+                profile + 0.004 * noise(around(60.0, 40.0), 13)
             };
-            let (sin, cos) = engine_math::sin_cos(angle);
             positions.push([cos * fluted, y, sin * fluted]);
-            uvs.push([u, v]);
         }
     }
     let row = segments + 1;

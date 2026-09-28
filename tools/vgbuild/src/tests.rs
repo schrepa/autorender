@@ -189,3 +189,16 @@ fn terrain_tiles_meet_their_neighbors() {
         }
     }
 }
+
+#[test]
+fn procedural_solids_are_closed() {
+    for geometry in [
+        crate::procedural::boulder(3, 7),
+        crate::procedural::column(48, 24),
+    ] {
+        assert!(crate::dag::is_closed(&geometry.source()));
+    }
+    assert!(!crate::dag::is_closed(
+        &crate::procedural::terrain(8, 4.0, 5).source()
+    ));
+}

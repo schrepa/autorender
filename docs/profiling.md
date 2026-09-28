@@ -250,10 +250,12 @@ map drew, read back a few frames late; the kept count only on redraws),
 `render.particles`, `memory.gpu_light_bytes` and
 `memory.gpu_transparent_bytes`. Virtual geometry
 ([decision 044](adr-044-virtual-geometry.md)) reports `render.virtual_clusters`,
-`render.virtual_triangles` and `render.dropped_virtual` (read back a few frames
-late) and `memory.gpu_virtual_bytes` (its arena, queues and selected clusters),
-and times `virtual_selection` (every selection dispatch; its clusters draw
-within `opaque_meshes`). In a settled scene the moving count equals the
+`render.virtual_triangles`, `render.virtual_shadow_triangles` and
+`render.dropped_virtual` (read back a few frames late) and
+`memory.gpu_virtual_bytes` (its arena, queues and selected clusters), and times
+`virtual_selection` (every selection dispatch, the camera's and the shadow
+maps' together; the clusters draw within `opaque_meshes` and the shadow maps'
+samples). In a settled scene the moving count equals the
 moving renderables and `render.shadow_refresh` stays 0; separate frames whose
 kept map redrew whole, which draw every still caster. The Stress Lab's
 `?effects=` compares effects within one build.

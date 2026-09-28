@@ -67,6 +67,9 @@ mod header {
 
 /// Flag: stored vertices carry texture coordinates.
 pub const FLAG_UVS: u32 = 1;
+/// Flag: the mesh is closed, every edge joining two triangles, so its
+/// surfaces facing a direction hide those facing away.
+pub const FLAG_CLOSED: u32 = 2;
 
 /// A sphere and the mesh-space simplification error it bounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -163,7 +166,7 @@ impl VirtualMesh {
         if words[header::VERSION] != VIRTUAL_MESH_VERSION {
             return Err(invalid("unsupported version"));
         }
-        if words[header::FLAGS] & !FLAG_UVS != 0 {
+        if words[header::FLAGS] & !(FLAG_UVS | FLAG_CLOSED) != 0 {
             return Err(invalid("unknown flags"));
         }
         let count = |index: usize| words[index] as usize;
@@ -465,6 +468,11 @@ impl VirtualMesh {
     /// Whether stored vertices carry texture coordinates.
     pub fn has_uvs(&self) -> bool {
         self.words[header::FLAGS] & FLAG_UVS != 0
+    }
+
+    /// Whether the mesh is closed ([`FLAG_CLOSED`]).
+    pub fn closed(&self) -> bool {
+        self.words[header::FLAGS] & FLAG_CLOSED != 0
     }
 
     /// Bounds of every level's geometry.

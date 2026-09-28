@@ -7,7 +7,7 @@ use engine_core::{
     math,
 };
 
-use crate::gpu_data::{FAR_DEPTH, NEAR_DEPTH};
+use crate::gpu_data::{FAR_DEPTH, NEAR_DEPTH, frustum_uniform};
 
 /// World to light space: x and y across the sun's view, z away from the sun.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -182,10 +182,70 @@ pub(crate) fn view_sphere(view_projection: Mat4, eye: Vec3, reach: f32) -> Optio
     (center.is_finite() && radius.is_finite()).then_some((center, radius))
 }
 
+/// Inward planes, normalized, of the view frustum's slice up to view depth
+/// `reach` that sweeping the slice toward the sun (`toward_sun`) never
+/// crosses. A caster only darkens what lies away from the sun behind it, so
+/// one outside any of these planes darkens nothing the view sees within
+/// `reach`.
+pub(crate) fn caster_planes(
+    view_projection: Mat4,
+    eye: Vec3,
+    reach: f32,
+    toward_sun: Vec3,
+) -> Vec<Vec4> {
+    let (planes, _) = frustum_uniform(view_projection);
+    let inverse = view_projection.inverse();
+    let unproject = |z: f32| {
+        let point = inverse * Vec4::new(0.0, 0.0, z, 1.0);
+        point.truncate() / point.w
+    };
+    // Depth along the view at most `reach`.
+    let slice = (unproject(FAR_DEPTH) - unproject(NEAR_DEPTH))
+        .try_normalize()
+        .map(|direction| (-direction).extend(direction.dot(eye) + reach));
+    planes
+        .iter()
+        .map(|plane| Vec4::from_array(*plane))
+        .chain(slice)
+        .filter_map(|plane| {
+            let length = plane.truncate().length();
+            (length > 0.0 && plane.is_finite()).then(|| plane / length)
+        })
+        .filter(|plane| plane.truncate().dot(toward_sun) >= 0.0)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use engine_core::Camera;
+
+    #[test]
+    fn caster_planes_keep_what_can_shadow_the_view() {
+        let camera = Camera {
+            position: Vec3::new(0.0, 2.0, 0.0),
+            target: Vec3::new(0.0, 2.0, -10.0),
+            ..Camera::default()
+        };
+        let view_projection = camera.view_projection(1.5);
+        let inside = |planes: &[Vec4], point: Vec3| {
+            planes
+                .iter()
+                .all(|plane| plane.truncate().dot(point) + plane.w >= 0.0)
+        };
+        // The sun overhead: anything above the view slice can shadow it,
+        // nothing beside or below it can.
+        let planes = caster_planes(view_projection, camera.position, 30.0, Vec3::Y);
+        assert!(inside(&planes, Vec3::new(0.0, 500.0, -15.0)));
+        assert!(inside(&planes, Vec3::new(0.0, 2.0, -15.0)));
+        assert!(!inside(&planes, Vec3::new(-60.0, 2.0, -15.0)));
+        assert!(!inside(&planes, Vec3::new(0.0, 2.0, -45.0)));
+        assert!(!inside(&planes, Vec3::new(0.0, 2.0, 5.0)));
+        // A low sun on the right: casters to the right still shadow into it.
+        let planes = caster_planes(view_projection, camera.position, 30.0, Vec3::X);
+        assert!(inside(&planes, Vec3::new(200.0, 2.0, -15.0)));
+        assert!(!inside(&planes, Vec3::new(-200.0, 2.0, -15.0)));
+    }
 
     #[test]
     fn light_space_is_orthonormal_and_looks_away_from_the_sun() {

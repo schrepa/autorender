@@ -11,7 +11,11 @@
 //! mesh; on GPU-presented frames it also keeps each slot's stillness and
 //! marks dirty strips, read back a few frames later. CPU-prepared frames draw
 //! every caster into the moving map and leave the kept map unread; public
-//! snapshots draw their instances without selection.
+//! snapshots draw their instances without selection. Casters with virtual
+//! geometry (decision 044) are selected into the maps drawn every frame,
+//! whose clusters virtual geometry selects and draws after its own
+//! selection: [`ShadowPass::encode_selection`], then
+//! [`ShadowPass::encode_maps`].
 
 use std::{
     cell::Cell,
@@ -28,7 +32,7 @@ use crate::gpu_data::{
     BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
     ShadowUniform,
 };
-use crate::shadow_fit::{LightBasis, MapRegion, frustum_footprint, view_sphere};
+use crate::shadow_fit::{LightBasis, MapRegion, caster_planes, frustum_footprint, view_sphere};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 /// Horizontal strips of the kept map; a dirty one is redrawn per frame.
@@ -71,7 +75,32 @@ pub(crate) struct ShadowGroup {
     /// The alpha-masked material (decision 031) whose base color alpha
     /// these casters test; `None` casts the whole mesh.
     pub material: Option<MaterialHandle>,
-    start: u32,
+    /// Whether virtual geometry (decision 044) draws its casters' clusters
+    /// instead of the mesh.
+    pub virtual_geometry: bool,
+    /// Its ID region's start and size in each map.
+    pub start: u32,
+    pub capacity: u32,
+}
+
+/// Planes of a virtual shadow view: its selection region's five, and the
+/// view frustum slice's that the sun's sweep never crosses.
+pub(crate) const VIRTUAL_SHADOW_PLANES: usize = 12;
+
+/// A shadow map drawn this frame whose virtual casters' clusters virtual
+/// geometry selects (decision 044): its planes around where casters can
+/// darken visible receivers (unused ones hold everything), the camera
+/// distance its receivers start at (`None` at the camera), its texel's
+/// world size, the direction it looks along (away from the sun) and the
+/// offset of its view matrix.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct VirtualShadowView {
+    pub map: usize,
+    pub planes: [[f32; 4]; VIRTUAL_SHADOW_PLANES],
+    pub min_distance: Option<f32>,
+    pub texel: f32,
+    pub direction: Vec3,
+    pub view_offset: u32,
 }
 
 /// Where this frame's casters come from.
@@ -241,7 +270,9 @@ fn add_to_group(
                 mesh,
                 source_index,
                 material,
+                virtual_geometry: false,
                 start: 0,
+                capacity: 0,
             });
             counts.push(0);
             let index = groups.len() as u32 - 1;
@@ -684,7 +715,8 @@ pub(crate) struct ShadowPass {
     group_total: u32,
     // Group of each plan batch (GPU-presented frames and public snapshots).
     batch_groups: Vec<u32>,
-    groups_key: Option<(u8, u64, u64)>,
+    // Source kind and stamps, and whether virtual geometry draws.
+    groups_key: Option<(u8, u64, u64, bool)>,
     groups_changed: bool,
     source: Source,
     listed_count: u32,
@@ -695,6 +727,8 @@ pub(crate) struct ShadowPass {
     anchor: Option<Vec3>,
     kept_valid: bool,
     dirty_strips: u32,
+    // Maps drawn this frame that select virtual casters' clusters.
+    virtual_views: Vec<VirtualShadowView>,
 }
 
 impl ShadowPass {
@@ -802,6 +836,7 @@ impl ShadowPass {
             anchor: None,
             kept_valid: false,
             dirty_strips: 0,
+            virtual_views: Vec::new(),
         }
     }
 
@@ -858,6 +893,33 @@ impl ShadowPass {
         self.batch_groups.get(index).copied().unwrap_or(0)
     }
 
+    /// Maps drawn this frame whose virtual casters' clusters virtual
+    /// geometry selects (decision 044); empty without such casters.
+    pub(crate) fn virtual_views(&self) -> &[VirtualShadowView] {
+        &self.virtual_views
+    }
+
+    /// The selected casters' IDs (each map's region `map * capacity`, then
+    /// each group's) and indirect arguments (five words per map and group,
+    /// `map * groups + group`), the ID capacity per map, and a key that
+    /// changes when the buffers do.
+    pub(crate) fn caster_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u32, u64) {
+        (
+            &self.ids,
+            &self.args,
+            self.id_capacity as u32,
+            self.buffers_generation,
+        )
+    }
+
+    /// The view matrices of every map, at each map's view offset, once
+    /// shadows ran.
+    pub(crate) fn view_buffer(&self) -> Option<&wgpu::Buffer> {
+        self.pipelines
+            .as_ref()
+            .map(|pipelines| &pipelines.view_buffer)
+    }
+
     /// The latest caster totals of the near cascades together, the moving
     /// map and the kept map read back from GPU-selected frames, a few frames
     /// old; the kept total counts only frames that redrew part of it.
@@ -901,10 +963,13 @@ impl ShadowPass {
             self.groups_key = None;
             return;
         }
+        // Retained frames draw virtual geometry (decision 044) where it is
+        // enabled.
+        let clustered = frame.is_some() && snapshot.virtual_geometry.enabled;
         let (source, key) = match frame {
             Some(frame) if gpu => (
                 Source::Presented,
-                (0, frame.identity(), frame.source_revision()),
+                (0, frame.identity(), frame.source_revision(), clustered),
             ),
             // Both stamps only grow: a source change (such as a slot turning
             // transparent) regroups casters too.
@@ -914,9 +979,10 @@ impl ShadowPass {
                     1,
                     frame.identity(),
                     frame.caster_revision().max(frame.source_revision()),
+                    clustered,
                 ),
             ),
-            None => (Source::Snapshot, (2, 0, 0)),
+            None => (Source::Snapshot, (2, 0, 0, false)),
         };
         self.source = source;
         // Public snapshots may change their sources between any two frames.
@@ -996,18 +1062,24 @@ impl ShadowPass {
         self.listed_group_staging.clear();
         for (group, count) in self.groups.iter_mut().zip(&counts) {
             group.start = start;
+            group.capacity = *count;
             start += count;
             let mesh = &snapshot.meshes[group.source_index].mesh;
             let bounds = mesh.bounds();
-            // Meshes with joints (decision 036) cast wherever joints move them.
+            // Meshes with joints (decision 036) cast wherever joints move them;
+            // virtual geometry (decision 044, flag 2) casts clusters.
             let skinned = if mesh.joint_count() != 0 { 1.0 } else { 0.0 };
+            group.virtual_geometry = clustered && mesh.virtual_geometry().is_some();
             self.listed_group_staging.push(BatchData {
                 start: group.start,
                 count: *count,
                 index_count: mesh.indices().len() as u32,
                 pad: self.listed_group_staging.len() as u32,
                 bounds_min: bounds.min().extend(skinned).to_array(),
-                bounds_max: bounds.max().extend(0.0).to_array(),
+                bounds_max: bounds
+                    .max()
+                    .extend(if group.virtual_geometry { 2.0 } else { 0.0 })
+                    .to_array(),
             });
         }
         self.group_total = start;
@@ -1032,6 +1104,7 @@ impl ShadowPass {
         index_count: impl Fn(MeshHandle) -> u32,
     ) -> Option<ShadowFrame> {
         self.dirty_strips |= self.read_back.replace(0) & ALL_STRIPS;
+        self.virtual_views.clear();
         let settings = snapshot.shadows.sanitized();
         if !settings.enabled || self.groups.is_empty() {
             if !settings.enabled && self.maps.take().is_some() {
@@ -1299,6 +1372,45 @@ impl ShadowPass {
                 settings.distance
             };
             let (moving_rect, moving_depth) = selection(far_reach, &far, far.texel(resolution));
+            // Maps drawn every frame select virtual casters' clusters within
+            // the same regions (decision 044). A cascade's receivers start
+            // where the previous one hands over to it, across its last
+            // tenth; the far maps' at the last cascade's reach.
+            if self.groups.iter().any(|group| group.virtual_geometry) {
+                // The selection region, tightened by the view slice swept
+                // toward the sun.
+                let planes = |rect: [f32; 4], depth: f32, reach: f32| {
+                    let mut planes = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
+                    let region = region_planes(&basis, rect, depth);
+                    let swept = caster_planes(snapshot.view_projection, eye, reach, -basis.rows[2]);
+                    for (slot, plane) in planes.iter_mut().zip(
+                        region
+                            .into_iter()
+                            .chain(swept.iter().map(|plane| plane.to_array())),
+                    ) {
+                        *slot = plane;
+                    }
+                    planes
+                };
+                for (index, (reach, region)) in near.iter().enumerate() {
+                    self.virtual_views.push(VirtualShadowView {
+                        map: index,
+                        planes: planes(near_rects[index], near_depths[index], *reach),
+                        min_distance: index.checked_sub(1).map(|previous| near[previous].0 * 0.9),
+                        texel: region.texel(near_resolution),
+                        direction: basis.rows[2],
+                        view_offset: (index as u64 * VIEW_STRIDE) as u32,
+                    });
+                }
+                self.virtual_views.push(VirtualShadowView {
+                    map: MOVING_MAP,
+                    planes: planes(moving_rect, moving_depth, far_reach),
+                    min_distance: near.last().map(|(reach, _)| *reach),
+                    texel: far.texel(resolution),
+                    direction: basis.rows[2],
+                    view_offset: FAR_VIEW as u32,
+                });
+            }
             let cull = ShadowCullUniform {
                 light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],
                 near: near_rects,
@@ -1472,36 +1584,20 @@ impl ShadowPass {
         }
     }
 
-    /// Records caster selection and the depth passes of `frame`. `meshes`
-    /// finds each group's uploaded vertex and index buffers and index count;
-    /// public snapshots draw `plan`'s batches from `instances`. With
-    /// `timestamps` (a query set and its first index), the selection pass
-    /// writes queries `first` and `first + 1` and the depth passes `first + 2`
-    /// and `first + 3`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn encode<'m>(
+    /// Records caster selection of `frame`. With `timestamps` (a query set
+    /// and its first index), the selection pass writes queries `first` and
+    /// `first + 1`. Returns the profiler effects it timed.
+    pub(crate) fn encode_selection(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         frame: &ShadowFrame,
-        plan: &BatchPlan,
-        instances: &'m wgpu::Buffer,
-        meshes: impl Fn(
-            MeshHandle,
-        ) -> Option<(
-            &'m wgpu::Buffer,
-            &'m wgpu::Buffer,
-            u32,
-            Option<&'m wgpu::Buffer>,
-        )>,
-        materials: impl Fn(MaterialHandle) -> Option<&'m wgpu::BindGroup>,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
-    ) -> ShadowEncoded {
+    ) -> u16 {
         if self.maps.is_none() || self.pipelines.is_none() {
-            return ShadowEncoded::default();
+            return 0;
         }
-        let mut timed = u16::from(timestamps.is_some()) << 1;
-        let draws = Cell::new(0_u32);
+        let mut timed = 0;
         let groups = self.groups.len() as u64;
         if frame.source != Source::Snapshot {
             // Instance counts start at zero every frame.
@@ -1552,6 +1648,41 @@ impl ShadowPass {
                 encoder.clear_buffer(&dirty, 0, Some(4));
             }
         }
+        timed
+    }
+
+    /// Records the depth passes of `frame`, after [`Self::encode_selection`]
+    /// and virtual geometry's selection. `meshes` finds each group's
+    /// uploaded vertex and index buffers and index count; public snapshots
+    /// draw `plan`'s batches from `instances`; `virtual_draw` draws the
+    /// clusters of a map's virtual casters (decision 044) last in its pass,
+    /// returning its draws. With `timestamps` (a query set and its first
+    /// index), the depth passes write their effects' queries.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_maps<'m>(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        frame: &ShadowFrame,
+        plan: &BatchPlan,
+        instances: &'m wgpu::Buffer,
+        meshes: impl Fn(
+            MeshHandle,
+        ) -> Option<(
+            &'m wgpu::Buffer,
+            &'m wgpu::Buffer,
+            u32,
+            Option<&'m wgpu::Buffer>,
+        )>,
+        materials: impl Fn(MaterialHandle) -> Option<&'m wgpu::BindGroup>,
+        virtual_draw: impl Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
+        timestamps: Option<(&wgpu::QuerySet, u32)>,
+    ) -> ShadowEncoded {
+        if self.maps.is_none() || self.pipelines.is_none() {
+            return ShadowEncoded::default();
+        }
+        let mut timed = u16::from(timestamps.is_some()) << 1;
+        let draws = Cell::new(0_u32);
+        let groups = self.groups.len() as u64;
         let maps = self.maps.as_ref().expect("checked above");
         let pipelines = self.pipelines.as_ref().expect("checked above");
         let pose_group = self
@@ -1589,6 +1720,10 @@ impl ShadowPass {
             pass.set_bind_group(1, pose_group, &[]);
             let mut bound = 0;
             for (index, group) in self.groups.iter().enumerate() {
+                // Virtual geometry draws these casters' clusters below.
+                if group.virtual_geometry {
+                    continue;
+                }
                 let Some((vertices, indices, _, skin)) = meshes(group.mesh) else {
                     continue;
                 };
@@ -1618,6 +1753,7 @@ impl ShadowPass {
                 );
                 draws.set(draws.get() + 1);
             }
+            draws.set(draws.get() + virtual_draw(pass, map));
         };
         let draw_snapshot = |pass: &mut wgpu::RenderPass<'_>| {
             pass.set_pipeline(&pipelines.full);
@@ -1779,6 +1915,20 @@ impl ShadowPass {
                 });
         }
     }
+}
+
+/// Inward world planes of the light-space rectangle `rect` (minimum x and y,
+/// maximum x and y) up to light-space depth `depth` in `basis`: where a
+/// caster can darken receivers of a map's selection region.
+fn region_planes(basis: &LightBasis, rect: [f32; 4], depth: f32) -> [[f32; 4]; 5] {
+    let [x, y, z] = basis.rows;
+    [
+        x.extend(-rect[0]).to_array(),
+        (-x).extend(rect[2]).to_array(),
+        y.extend(-rect[1]).to_array(),
+        (-y).extend(rect[3]).to_array(),
+        (-z).extend(depth).to_array(),
+    ]
 }
 
 /// Steepest receiver plane of `region` with `texels` texels a side, in its

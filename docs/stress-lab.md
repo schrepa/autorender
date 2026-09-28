@@ -99,9 +99,10 @@ them to `web/public/stress/dense/` (generated, not committed); the page
 fetches them when the scene is first chosen. **Objects** are the boulders
 and columns (one in five a column), on as many 64-unit tiles as give each
 about 36 square units; **moving objects** bob and turn in place. The other
-settings do not apply. The Effects control and looks work as elsewhere;
-virtual meshes cast no shadows on GPU-presented frames yet. Frames report
-the clusters and triangles selected (`virtual_clusters`, `virtual_triangles`)
+settings do not apply. The Effects control and looks work as elsewhere, and
+virtual meshes cast their clusters' shadows. Frames report the clusters and
+triangles the camera and the shadow maps selected (`virtual_clusters`,
+`virtual_triangles`, `virtual_shadow_clusters`, `virtual_shadow_triangles`)
 and any entries dropped for want of room (`dropped_virtual`).
 
 ## Measurement

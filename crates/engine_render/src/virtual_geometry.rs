@@ -1,12 +1,15 @@
 //! Virtual geometry (decision 044): resident virtual meshes' hierarchies,
 //! clusters and pages in one arena, and each frame's selection of the
-//! clusters the visible instances of their draw groups draw
-//! (`virtual_geometry.wgsl`), into per-material bins the opaque pass draws
-//! 128 triangles a cluster from (`meshes.wgsl`'s `vs_virtual`).
+//! clusters every view draws (`virtual_geometry.wgsl`). The camera's
+//! clusters go to per-material bins the opaque pass draws 128 triangles a
+//! cluster from (`meshes.wgsl`'s `vs_virtual`); each shadow map drawn every
+//! frame (decision 020) selects its casters' clusters into a bin of its own,
+//! drawn into the map by `vs_shadow`.
 //!
 //! Arena records carry absolute indices, rebased once at upload; pages
-//! upload as the file stores them. Selection runs on the GPU only; each
-//! bin's region and the node and group queues grow to what frames read back.
+//! upload as the file stores them. Selection runs on the GPU only, for all
+//! views in one pass; each bin's region and the node and group queues grow
+//! to what frames read back.
 
 use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc};
 
@@ -14,54 +17,92 @@ use engine_core::glam::Vec3;
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, VirtualMesh};
 
 use crate::gpu_data::VIRTUAL_SHADER;
+use crate::shadows::{SHADOW_FORMAT, VIRTUAL_SHADOW_PLANES as PLANES};
 
 const NONE: u32 = u32::MAX;
 const GROUP: u32 = 64;
 /// Counters before the bins' (`virtual_geometry.wgsl`).
-const COUNTERS: usize = 8;
+const COUNTERS: usize = 10;
+/// Views one frame selects for: the camera's and those of the shadow maps
+/// drawn every frame (up to four cascades and the moving map).
+pub(crate) const MAX_VIEWS: usize = 8;
+/// Floats of a view record: its planes, the eye, the error projection and
+/// a direction.
+const VIEW_FLOATS: usize = PLANES * 4 + 12;
+const UNIFORM_BYTES: u64 = 16 + (MAX_VIEWS * VIEW_FLOATS * 4) as u64;
 const READBACKS: usize = 3;
 /// Starting capacities, grown from read-back counts.
 const START_QUEUE: u64 = 1 << 16;
 const START_BIN: u64 = 1 << 14;
 /// Bytes of an entry of the selected clusters: visible ID and cluster.
 pub(crate) const VISIBLE_BYTES: u64 = 8;
+/// ID sources of batches: the camera's, and the shadow maps' casters.
+const CAMERA: usize = 0;
+const SHADOWS: usize = 1;
 
-/// A batch of instances of a virtual mesh with one material.
+/// A batch of instances of a virtual mesh in one view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct VirtualBatch {
-    /// Start of its visible IDs (GPU-presented frames) or slot IDs
-    /// (CPU-prepared ones).
+    /// Start of its IDs: visible IDs (GPU-presented frames) or slot IDs
+    /// (CPU-prepared ones) for the camera, a map's casters for shadows.
     pub start: u32,
-    /// Instances of CPU-prepared frames; GPU-presented ones read the count
-    /// of plan batch `draw`'s arguments.
+    /// Instances, when known; otherwise the instance count of draw
+    /// arguments `draw` (GPU presentation's, or the shadow maps').
     pub count: Option<u32>,
     pub draw: u32,
     pub mesh: u32,
     pub bin: u32,
     pub double_sided: bool,
+    pub view: u32,
 }
 
-/// The view clusters are selected for.
+/// How a view tests clusters' normal cones.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Cone {
+    /// From the eye (perspective views).
+    Eye,
+    /// Along a direction the view looks (orthographic views).
+    Along(Vec3),
+}
+
+/// A view clusters are selected for.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VirtualView {
-    /// Inward frustum planes, normalized.
-    pub planes: [[f32; 4]; 6],
+    /// Inward planes, normalized; unused ones hold everything.
+    pub planes: [[f32; 4]; PLANES],
+    /// The camera's eye, which errors project from.
     pub eye: Vec3,
-    pub near: f32,
-    /// cot(fovy / 2) / 2.
+    /// The smallest distance errors project from.
+    pub min_distance: f32,
+    /// cot(fovy / 2) / 2 of the camera.
     pub projection: f32,
     /// The largest projected error drawn, as a fraction of the viewport
     /// height.
     pub threshold: f32,
+    /// The world error a shadow view accepts where the camera sees nothing
+    /// (0 for the camera's own view).
+    pub unseen_error: f32,
+    pub cone: Cone,
 }
 
-/// Counts a frame read back: clusters and triangles selected, and entries
-/// dropped for want of room.
+/// Counts a frame read back: clusters and triangles the camera and the
+/// shadow views selected, and entries dropped for want of room.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VirtualStats {
     pub clusters: u32,
     pub triangles: u32,
+    pub shadow_clusters: u32,
+    pub shadow_triangles: u32,
     pub dropped: u32,
+}
+
+/// The buffers one source of batches reads: IDs and draw arguments, with a
+/// key that changes when either does.
+#[derive(Clone, Copy)]
+pub(crate) struct IdBuffers<'a> {
+    pub ids: &'a wgpu::Buffer,
+    pub draws: &'a wgpu::Buffer,
+    pub key: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,7 +140,8 @@ struct Pipelines {
 }
 
 struct Groups {
-    seed: wgpu::BindGroup,
+    // Per ID source; shadows' only while shadow views select.
+    seed: [Option<wgpu::BindGroup>; 2],
     level_args: [wgpu::BindGroup; 2],
     traverse: [wgpu::BindGroup; 2],
     work_args: wgpu::BindGroup,
@@ -107,14 +149,26 @@ struct Groups {
     bin_args: wgpu::BindGroup,
 }
 
-/// Generations of the arena, frame buffers, poses, IDs and draw arguments
-/// bind groups were built for.
-type GroupsKey = (u64, u64, u64, u64, u64);
+/// Depth-only drawing of shadow views' bins and its bindings, one per pose
+/// buffer parity: the arena, the frame's poses and the shadow maps' views.
+struct ShadowDrawing {
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    groups: [Option<(ShadowGroupKey, wgpu::BindGroup)>; 2],
+}
+
+/// Generations of the arena, frame buffers, poses, camera IDs and shadow
+/// IDs bind groups were built for.
+type GroupsKey = (u64, u64, u64, u64, Option<u64>);
+/// The arena generation, the poses' key and the shadow views' buffer a
+/// shadow drawing group binds.
+type ShadowGroupKey = (u64, u64, wgpu::Buffer);
 /// Counts a frame read back and its dropped queue, group and cluster
 /// entries.
 type ReadCounts = (VirtualStats, [u32; 3]);
 
 pub(crate) struct VirtualGeometryPass {
+    module: wgpu::ShaderModule,
     pipelines: Pipelines,
     resident: Vec<Resident>,
     index: HashMap<MeshHandle, u32>,
@@ -125,8 +179,12 @@ pub(crate) struct VirtualGeometryPass {
     // Nodes on the longest root-to-leaf path of any resident mesh.
     depth: u32,
     uniform: wgpu::Buffer,
-    batches: wgpu::Buffer,
-    batch_capacity: u64,
+    // Batches of each ID source, their capacities and counts, and the most
+    // instances any of them has.
+    batches: [wgpu::Buffer; 2],
+    batch_capacity: [u64; 2],
+    batch_counts: [u32; 2],
+    max_instances: [u32; 2],
     bins: wgpu::Buffer,
     // Each bin's base and capacity, as uploaded.
     bin_regions: Vec<(u64, u64)>,
@@ -142,9 +200,13 @@ pub(crate) struct VirtualGeometryPass {
     draw_args: wgpu::Buffer,
     // Advances whenever frame buffers are replaced.
     frame_generation: u64,
-    groups: Option<(GroupsKey, Groups)>,
-    batch_count: u32,
-    max_instances: u32,
+    // Bindings per pose buffer parity (temporal frames alternate them), and
+    // this frame's parity.
+    groups: [Option<(GroupsKey, Groups)>; 2],
+    parity: usize,
+    // This frame's poses and their key, for shadow drawing.
+    poses: Option<(wgpu::Buffer, u64)>,
+    shadow_drawing: Option<ShadowDrawing>,
     readbacks: Vec<Readback>,
     // Counts and dropped queue, group and cluster entries mapped since the
     // last frame took them.
@@ -217,6 +279,7 @@ impl VirtualGeometryPass {
         };
         let none = wgpu::BufferUsages::empty();
         Self {
+            module,
             pipelines,
             resident: Vec::new(),
             index: HashMap::new(),
@@ -226,12 +289,17 @@ impl VirtualGeometryPass {
             depth: 0,
             uniform: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/virtual-frame"),
-                size: 144,
+                size: UNIFORM_BYTES,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            batches: storage(device, "engine/virtual-batches", 32, none),
-            batch_capacity: 1,
+            batches: [
+                storage(device, "engine/virtual-camera-batches", 32, none),
+                storage(device, "engine/virtual-shadow-batches", 32, none),
+            ],
+            batch_capacity: [1, 1],
+            batch_counts: [0, 0],
+            max_instances: [0, 0],
             bins: storage(device, "engine/virtual-bins", 16, none),
             bin_regions: Vec::new(),
             bin_capacity: START_BIN,
@@ -268,9 +336,10 @@ impl VirtualGeometryPass {
                 wgpu::BufferUsages::INDIRECT,
             ),
             frame_generation: 0,
-            groups: None,
-            batch_count: 0,
-            max_instances: 0,
+            groups: [None, None],
+            parity: 0,
+            poses: None,
+            shadow_drawing: None,
             readbacks: Vec::new(),
             read: Rc::new(Cell::new(None)),
             last: None,
@@ -306,6 +375,13 @@ impl VirtualGeometryPass {
     /// The arena index of mesh `handle`'s geometry, once uploaded.
     pub(crate) fn mesh_index(&self, handle: MeshHandle) -> Option<u32> {
         self.index.get(&handle).copied()
+    }
+
+    /// Whether resident mesh `index` is closed (`VirtualMesh::closed`).
+    pub(crate) fn closed(&self, index: u32) -> bool {
+        self.resident
+            .get(index as usize)
+            .is_some_and(|resident| resident.geometry.closed())
     }
 
     /// Rebuilds the arena when resident meshes changed: every record
@@ -382,7 +458,7 @@ impl VirtualGeometryPass {
             pages: storage_init(device, "engine/virtual-pages", &pages),
         });
         self.arena_generation += 1;
-        self.groups = None;
+        self.groups = [None, None];
     }
 
     /// The arena buffers vertex shaders read (meshes, clusters, pages) and
@@ -412,15 +488,15 @@ impl VirtualGeometryPass {
             + self.counters.size()
     }
 
-    /// Uploads this frame's batches, bins and view, growing the queues and
-    /// bin regions to what frames read back needed.
+    /// Uploads this frame's batches of both ID sources, bins and views,
+    /// growing the queues and bin regions to what frames read back needed.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        batches: &[VirtualBatch],
+        batches: [&[VirtualBatch]; 2],
         bins: usize,
-        view: &VirtualView,
+        views: &[VirtualView],
     ) {
         if let Some((stats, [queue_drops, work_drops, cluster_drops])) = self.read.take() {
             self.last = Some(stats);
@@ -505,77 +581,103 @@ impl VirtualGeometryPass {
         if !bin_words.is_empty() {
             queue.write_buffer(&self.bins, 0, bytemuck::cast_slice(&bin_words));
         }
-        if batches.len() as u64 > self.batch_capacity {
-            self.batch_capacity = (batches.len() as u64).next_power_of_two();
-            self.batches = storage(
-                device,
-                "engine/virtual-batches",
-                self.batch_capacity * 32,
-                wgpu::BufferUsages::empty(),
-            );
-            self.frame_generation += 1;
+        for (source, batches) in batches.iter().enumerate() {
+            if batches.len() as u64 > self.batch_capacity[source] {
+                self.batch_capacity[source] = (batches.len() as u64).next_power_of_two();
+                self.batches[source] = storage(
+                    device,
+                    if source == CAMERA {
+                        "engine/virtual-camera-batches"
+                    } else {
+                        "engine/virtual-shadow-batches"
+                    },
+                    self.batch_capacity[source] * 32,
+                    wgpu::BufferUsages::empty(),
+                );
+                self.frame_generation += 1;
+            }
+            let words: Vec<u32> = batches
+                .iter()
+                .flat_map(|batch| {
+                    [
+                        batch.start,
+                        batch.count.unwrap_or(NONE),
+                        batch.draw,
+                        batch.mesh,
+                        batch.bin,
+                        u32::from(batch.double_sided),
+                        batch.view,
+                        0,
+                    ]
+                })
+                .collect();
+            if !words.is_empty() {
+                queue.write_buffer(&self.batches[source], 0, bytemuck::cast_slice(&words));
+            }
+            self.batch_counts[source] = batches.len() as u32;
         }
-        let batch_words: Vec<u32> = batches
-            .iter()
-            .flat_map(|batch| {
-                [
-                    batch.start,
-                    batch.count.unwrap_or(NONE),
-                    batch.draw,
-                    batch.mesh,
-                    batch.bin,
-                    u32::from(batch.double_sided),
-                    0,
-                    0,
-                ]
-            })
-            .collect();
-        if !batch_words.is_empty() {
-            queue.write_buffer(&self.batches, 0, bytemuck::cast_slice(&batch_words));
-        }
-        self.batch_count = batches.len() as u32;
-        let mut uniform = Vec::with_capacity(36);
-        for plane in view.planes {
-            uniform.extend(plane);
-        }
-        uniform.extend([view.eye.x, view.eye.y, view.eye.z, view.near]);
-        uniform.extend([view.projection, view.threshold, 0.0, 0.0]);
         let counts = [
-            batches.len() as u32,
             self.queue_capacity as u32,
             self.queue_capacity as u32,
             bins as u32,
+            views.len() as u32,
         ];
-        let mut bytes: Vec<u8> = bytemuck::cast_slice(&uniform).to_vec();
-        bytes.extend_from_slice(bytemuck::cast_slice(&counts));
+        let mut bytes: Vec<u8> = bytemuck::cast_slice(&counts).to_vec();
+        for view in views.iter().take(MAX_VIEWS) {
+            let mut floats = Vec::with_capacity(VIEW_FLOATS);
+            for plane in view.planes {
+                floats.extend(plane);
+            }
+            floats.extend([view.eye.x, view.eye.y, view.eye.z, view.min_distance]);
+            let (mode, direction) = match view.cone {
+                Cone::Eye => (0.0, Vec3::ZERO),
+                Cone::Along(direction) => (1.0, direction),
+            };
+            floats.extend([view.projection, view.threshold, mode, view.unseen_error]);
+            floats.extend([direction.x, direction.y, direction.z, 0.0]);
+            bytes.extend_from_slice(bytemuck::cast_slice(&floats));
+        }
         queue.write_buffer(&self.uniform, 0, &bytes);
     }
 
-    /// Binds this frame's slot poses, visible IDs (or slot IDs) and draw
-    /// arguments, each with a key that changes when the buffer does, and
-    /// the most instances any batch has.
+    /// Binds this frame's slot poses (their key's lowest bit tells which of
+    /// the two pose buffers they are), and the IDs and draw arguments of the
+    /// camera's batches and of the shadow maps' casters, each with a key
+    /// that changes when the buffers do. `max_instances` is the most
+    /// instances a batch of each source has; `shadow_views`, the shadow
+    /// maps' view matrices shadow bins are drawn with.
     pub(crate) fn bind(
         &mut self,
         device: &wgpu::Device,
         poses: (&wgpu::Buffer, u64),
-        ids: (&wgpu::Buffer, u64),
-        draws: (&wgpu::Buffer, u64),
-        max_instances: u32,
+        camera: IdBuffers<'_>,
+        shadows: Option<IdBuffers<'_>>,
+        max_instances: [u32; 2],
+        shadow_views: Option<&wgpu::Buffer>,
     ) {
         self.max_instances = max_instances;
-        let Some(arena) = &self.arena else {
+        self.poses = Some((poses.0.clone(), poses.1));
+        self.parity = (poses.1 & 1) as usize;
+        if self.arena.is_none() {
             return;
-        };
+        }
+        if let Some(views) = shadow_views {
+            self.bind_shadow_drawing(device, views);
+        }
         let key = (
             self.arena_generation,
             self.frame_generation,
             poses.1,
-            ids.1,
-            draws.1,
+            camera.key,
+            shadows.map(|shadows| shadows.key),
         );
-        if self.groups.as_ref().is_some_and(|(built, _)| *built == key) {
+        if self.groups[self.parity]
+            .as_ref()
+            .is_some_and(|(built, _)| *built == key)
+        {
             return;
         }
+        let arena = self.arena.as_ref().expect("checked above");
         let group = |pipeline: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry<'_>]| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("engine/virtual-group"),
@@ -609,20 +711,26 @@ impl VirtualGeometryPass {
                 ],
             )
         };
-        let groups = Groups {
-            seed: group(
+        let seed = |source: usize, ids: &IdBuffers<'_>| {
+            group(
                 &pipelines.seed,
                 &[
                     entry(0, &self.uniform),
-                    entry(1, &self.batches),
+                    entry(1, &self.batches[source]),
                     entry(2, &arena.meshes),
-                    entry(7, ids.0),
-                    entry(8, draws.0),
+                    entry(7, ids.ids),
+                    entry(8, ids.draws),
                     entry(9, queue_a),
                     entry(10, queue_b),
                     entry(12, &self.counters),
                 ],
-            ),
+            )
+        };
+        let groups = Groups {
+            seed: [
+                Some(seed(CAMERA, &camera)),
+                shadows.as_ref().map(|shadows| seed(SHADOWS, shadows)),
+            ],
             level_args: [
                 level(&pipelines.level_args[0]),
                 level(&pipelines.level_args[1]),
@@ -655,17 +763,128 @@ impl VirtualGeometryPass {
                 ],
             ),
         };
-        self.groups = Some((key, groups));
+        self.groups[self.parity] = Some((key, groups));
     }
 
-    /// Records this frame's selection: seeds, one traversal per hierarchy
-    /// level, the groups' clusters and each bin's draw arguments, then the
-    /// counters' copy for read-back. Nothing without bound batches.
-    pub(crate) fn encode(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        let Some((_, groups)) = &self.groups else {
+    /// The shadow drawing pipeline, once, and its bindings of the arena,
+    /// this frame's poses and the shadow maps' views `views`.
+    fn bind_shadow_drawing(&mut self, device: &wgpu::Device, views: &wgpu::Buffer) {
+        let (Some(arena), Some((poses, poses_key))) = (&self.arena, &self.poses) else {
             return;
         };
-        if self.batch_count == 0 {
+        let module = &self.module;
+        let drawing = self.shadow_drawing.get_or_insert_with(|| {
+            let storage = |binding| wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            };
+            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("engine/virtual-shadow-layout"),
+                entries: &[
+                    storage(2),
+                    storage(5),
+                    storage(6),
+                    storage(17),
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 18,
+                        visibility: wgpu::ShaderStages::VERTEX,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: true,
+                            min_binding_size: wgpu::BufferSize::new(64),
+                        },
+                        count: None,
+                    },
+                ],
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/virtual-shadow-pipeline-layout"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let attributes = wgpu::vertex_attr_array![0 => Uint32, 1 => Uint32];
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("engine/virtual-shadow"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module,
+                    entry_point: Some("vs_shadow"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: VISIBLE_BYTES,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attributes,
+                    })],
+                },
+                // Both faces cast, as the shadow maps' other casters.
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: SHADOW_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    // The shadow maps' constant unit of bias (decision 028).
+                    bias: wgpu::DepthBiasState {
+                        constant: 1,
+                        slope_scale: 0.0,
+                        clamp: 0.0,
+                    },
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: None,
+                multiview_mask: None,
+                cache: None,
+            });
+            ShadowDrawing {
+                layout,
+                pipeline,
+                groups: [None, None],
+            }
+        });
+        let key = (self.arena_generation, *poses_key, views.clone());
+        let parity = (*poses_key & 1) as usize;
+        if drawing.groups[parity]
+            .as_ref()
+            .is_some_and(|(built, _)| *built == key)
+        {
+            return;
+        }
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("engine/virtual-shadow-group"),
+            layout: &drawing.layout,
+            entries: &[
+                entry(2, &arena.meshes),
+                entry(5, &arena.clusters),
+                entry(6, poses),
+                entry(17, &arena.pages),
+                wgpu::BindGroupEntry {
+                    binding: 18,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: views,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(64),
+                    }),
+                },
+            ],
+        });
+        drawing.groups[parity] = Some((key, group));
+    }
+
+    /// Records this frame's selection: seeds of both ID sources, one
+    /// traversal per hierarchy level, the groups' clusters and each bin's
+    /// draw arguments, then the counters' copy for read-back. Nothing
+    /// without bound batches.
+    pub(crate) fn encode(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+        let Some((_, groups)) = &self.groups[self.parity] else {
+            return;
+        };
+        if self.batch_counts == [0, 0] {
             return;
         }
         encoder.clear_buffer(&self.counters, 0, None);
@@ -675,12 +894,19 @@ impl VirtualGeometryPass {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipelines.seed);
-            pass.set_bind_group(0, &groups.seed, &[]);
-            pass.dispatch_workgroups(
-                self.max_instances.div_ceil(GROUP).max(1),
-                self.batch_count,
-                1,
-            );
+            for source in [CAMERA, SHADOWS] {
+                if self.batch_counts[source] == 0 {
+                    continue;
+                }
+                if let Some(group) = &groups.seed[source] {
+                    pass.set_bind_group(0, group, &[]);
+                    pass.dispatch_workgroups(
+                        self.max_instances[source].div_ceil(GROUP).max(1),
+                        self.batch_counts[source],
+                        1,
+                    );
+                }
+            }
             for level in 0..self.depth as usize {
                 let parity = level % 2;
                 pass.set_pipeline(&self.pipelines.level_args[parity]);
@@ -723,6 +949,35 @@ impl VirtualGeometryPass {
             &self.draw_args,
             bin as u64 * 16,
         )
+    }
+
+    /// Draws shadow bin `bin` into the map of view matrix `view_offset`
+    /// (an offset into the shadow maps' views). Returns whether it drew;
+    /// the pass's pipeline and first group are this drawing's afterwards.
+    pub(crate) fn draw_shadow(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        bin: usize,
+        view_offset: u32,
+    ) -> bool {
+        let Some(ShadowDrawing {
+            pipeline, groups, ..
+        }) = &self.shadow_drawing
+        else {
+            return false;
+        };
+        let Some((_, group)) = &groups[self.parity] else {
+            return false;
+        };
+        if bin >= self.bin_regions.len() {
+            return false;
+        }
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[view_offset]);
+        let (stream, args, offset) = self.bin_source(bin);
+        pass.set_vertex_buffer(0, stream);
+        pass.draw_indirect(args, offset);
+        true
     }
 
     /// Counts the last read-back frame selected.
@@ -779,6 +1034,8 @@ impl VirtualGeometryPass {
                                 VirtualStats {
                                     clusters: word(6),
                                     triangles: word(7),
+                                    shadow_clusters: word(8),
+                                    shadow_triangles: word(9),
                                     dropped: drops.iter().sum(),
                                 },
                                 drops,
