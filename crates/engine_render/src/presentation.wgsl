@@ -76,6 +76,12 @@ struct Batch {
     pad: u32,
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
+    // The mesh's first index and base vertex in the mesh arena, and the
+    // first instance of its draws (`start` or 0).
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+    pad2: u32,
 }
 
 struct DrawArgs {
@@ -848,7 +854,7 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
         instances = min(visible, frame.budget - base);
     }
     batch_bases[id.x] = base;
-    draws[id.x] = DrawArgs(batch.index_count, instances, 0u, 0, 0u);
+    draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
 }
 
 // Visible slots keep candidate order within each group's region.

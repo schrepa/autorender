@@ -21,6 +21,7 @@ use crate::gpu_data::{
     frustum_uniform,
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
+use crate::mesh_arena::Ids;
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
 use crate::uploads::UploadRange;
 
@@ -169,6 +170,19 @@ pub(crate) struct GpuPrepared {
     pub timed: u8,
 }
 
+/// What GPU presentation needs of a plan batch: its mesh's index count,
+/// first index and base vertex in the mesh arena, bounds and joint count,
+/// its shadow group, and whether it draws virtual geometry (decision 044).
+pub(crate) struct BatchMeta {
+    pub index_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub bounds: Aabb,
+    pub group: u32,
+    pub joints: u32,
+    pub virtual_geometry: bool,
+}
+
 pub(crate) struct GpuPresentationPass {
     pipelines: Pipelines,
     frame: wgpu::Buffer,
@@ -269,6 +283,9 @@ pub(crate) struct GpuPresentationPass {
     skinned_count: u32,
     skinned_staging: Vec<SkinnedData>,
     batch_joints: Vec<u32>,
+    // Whether draws' arguments name their visible-ID regions as first
+    // instances (`indirect-first-instance`).
+    first_instance: bool,
     readbacks: Vec<VisibleReadback>,
     // Current poses staged between frames for the next gather, with the
     // `GpuPresentation::current_version` they were copied at.
@@ -482,6 +499,9 @@ impl GpuPresentationPass {
             skinned_count: 0,
             skinned_staging: Vec::new(),
             batch_joints: Vec::new(),
+            first_instance: device
+                .features()
+                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
             readbacks: Vec::new(),
             prestaged: None,
             last_visible: Rc::new(Cell::new(None)),
@@ -1018,7 +1038,7 @@ impl GpuPresentationPass {
         frame: &RenderFrame<'_>,
         gpu: &GpuPresentation<'_>,
         plan: &BatchPlan,
-        batch_meta: impl Fn(usize, &DrawBatch) -> (u32, Aabb, u32, u32, bool),
+        batch_meta: impl Fn(usize, &DrawBatch) -> BatchMeta,
         shadow_groups: bool,
         poses: &wgpu::Buffer,
         palette: &wgpu::Buffer,
@@ -1273,8 +1293,15 @@ impl GpuPresentationPass {
             self.batch_staging.reserve_exact(plan.batches.len());
             self.batch_joints.clear();
             for (index, batch) in plan.batches.iter().enumerate() {
-                let (index_count, bounds, group, joints, virtual_geometry) =
-                    batch_meta(index, batch);
+                let BatchMeta {
+                    index_count,
+                    first_index,
+                    base_vertex,
+                    bounds,
+                    group,
+                    joints,
+                    virtual_geometry,
+                } = batch_meta(index, batch);
                 let skinned = joints != 0;
                 self.batch_joints.push(joints);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
@@ -1282,6 +1309,14 @@ impl GpuPresentationPass {
                     start: batch.instances.start,
                     count: batch.instances.end - batch.instances.start,
                     index_count,
+                    first_index,
+                    base_vertex,
+                    first_instance: if self.first_instance {
+                        batch.instances.start
+                    } else {
+                        0
+                    },
+                    pad2: 0,
                     pad: group,
                     bounds_min: bounds
                         .min()
@@ -1962,37 +1997,45 @@ impl GpuPresentationPass {
         (&self.visible_ids, &self.draws, self.buffers_generation)
     }
 
-    /// Visible-ID region and indirect arguments of plan batch `index` in the
+    /// Visible IDs and indirect arguments of plan batch `index` in the
     /// reflection probe face last recorded (decision 043).
     pub(crate) fn probe_draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
         index: usize,
-    ) -> (wgpu::BufferSlice<'a>, &'a wgpu::Buffer, u64) {
-        let start = u64::from(batch.instances.start) * 4;
-        let end = u64::from(batch.instances.end) * 4;
+    ) -> (Ids<'a>, &'a wgpu::Buffer, u64) {
         (
-            self.visible_ids_probe.slice(start..end),
+            self.ids(&self.visible_ids_probe, batch),
             &self.draws_probe,
             index as u64 * DRAW_ARGS_BYTES,
         )
     }
 
-    /// Visible-ID region and indirect arguments of plan batch `index` in
-    /// drawing phase `phase` (1 only after the occlusion test, decision 040).
+    /// Visible IDs and indirect arguments of plan batch `index` in drawing
+    /// phase `phase` (1 only after the occlusion test, decision 040).
     pub(crate) fn draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
         index: usize,
         phase: usize,
-    ) -> (wgpu::BufferSlice<'a>, &'a wgpu::Buffer, u64) {
-        let start = u64::from(batch.instances.start) * 4;
-        let end = u64::from(batch.instances.end) * 4;
+    ) -> (Ids<'a>, &'a wgpu::Buffer, u64) {
         let (ids, draws) = if phase == 0 {
             (&self.visible_ids, &self.draws)
         } else {
             (&self.visible_ids2, &self.draws2)
         };
-        (ids.slice(start..end), draws, index as u64 * DRAW_ARGS_BYTES)
+        (self.ids(ids, batch), draws, index as u64 * DRAW_ARGS_BYTES)
+    }
+
+    /// A batch's visible IDs in `ids`: the whole buffer where its draw
+    /// arguments' first instance names its region, otherwise the region.
+    fn ids<'a>(&self, ids: &'a wgpu::Buffer, batch: &DrawBatch) -> Ids<'a> {
+        if self.first_instance {
+            Ids::Whole(ids)
+        } else {
+            let start = u64::from(batch.instances.start) * 4;
+            let end = u64::from(batch.instances.end) * 4;
+            Ids::Region(ids.slice(start..end))
+        }
     }
 }

@@ -61,6 +61,12 @@ struct Batch {
     group: u32,
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
+    // The mesh's first index and base vertex in the mesh arena, and the
+    // first instance of its draws (unused here).
+    first_index: u32,
+    base_vertex: i32,
+    first_instance: u32,
+    pad2: u32,
 }
 
 struct Rows {

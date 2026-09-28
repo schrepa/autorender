@@ -32,6 +32,7 @@ use crate::gpu_data::{
     BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
     ShadowUniform,
 };
+use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::shadow_fit::{LightBasis, MapRegion, caster_planes, frustum_footprint, view_sphere};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
@@ -146,6 +147,16 @@ pub(crate) struct Poses<'a> {
     pub palettes: [&'a wgpu::Buffer; 2],
     pub index: usize,
     pub generation: u64,
+}
+
+/// A retained caster group as depth passes draw it: its pipeline choice
+/// (masked, skinned), mesh, joints stream, material and group index.
+struct Caster<'m> {
+    choice: usize,
+    draw: MeshDraw<'m>,
+    skin: Option<&'m wgpu::Buffer>,
+    material: Option<&'m wgpu::BindGroup>,
+    index: usize,
 }
 
 /// What [`ShadowPass::encode`] recorded.
@@ -718,6 +729,12 @@ pub(crate) struct ShadowPass {
     // Source kind and stamps, and whether virtual geometry draws.
     groups_key: Option<(u8, u64, u64, bool)>,
     groups_changed: bool,
+    // The mesh arena layout the draw arguments' template was written for.
+    mesh_layout: u64,
+    // Whether the device draws indirectly from nonzero first instances, and
+    // whether the template's first instances name the draws' ID regions.
+    first_instance: bool,
+    regions_in_args: bool,
     source: Source,
     listed_count: u32,
     // The kept map's basis and region, whether it holds the current casters
@@ -829,6 +846,11 @@ impl ShadowPass {
             batch_groups: Vec::new(),
             groups_key: None,
             groups_changed: false,
+            mesh_layout: 0,
+            first_instance: device
+                .features()
+                .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
+            regions_in_args: false,
             source: Source::Snapshot,
             listed_count: 0,
             kept_basis: None,
@@ -1074,6 +1096,10 @@ impl ShadowPass {
                 start: group.start,
                 count: *count,
                 index_count: mesh.indices().len() as u32,
+                first_index: 0,
+                base_vertex: 0,
+                first_instance: 0,
+                pad2: 0,
                 pad: self.listed_group_staging.len() as u32,
                 bounds_min: bounds.min().extend(skinned).to_array(),
                 bounds_max: bounds
@@ -1101,7 +1127,8 @@ impl ShadowPass {
         presented: Option<Presented<'_>>,
         poses: Option<Poses<'_>>,
         slot_capacity: usize,
-        index_count: impl Fn(MeshHandle) -> u32,
+        mesh_layout: u64,
+        placement: impl Fn(MeshHandle) -> (u32, u32, i32),
     ) -> Option<ShadowFrame> {
         self.dirty_strips |= self.read_back.replace(0) & ALL_STRIPS;
         self.virtual_views.clear();
@@ -1212,6 +1239,8 @@ impl ShadowPass {
         let ids = (self.group_total as usize).max(1);
         if ids > self.id_capacity {
             self.id_capacity = ids.next_power_of_two();
+            // Draw arguments name regions of the new capacity.
+            self.groups_changed = true;
             self.ids = storage(
                 device,
                 "engine/shadow-ids",
@@ -1238,6 +1267,9 @@ impl ShadowPass {
             self.buffers_generation += 1;
             self.groups_changed = true;
         }
+        // The draw arguments' template names each group's mesh placement.
+        self.groups_changed |= self.mesh_layout != mesh_layout;
+        self.mesh_layout = mesh_layout;
         if self.groups_changed {
             self.groups_changed = false;
             if groups > self.starts_capacity {
@@ -1257,10 +1289,20 @@ impl ShadowPass {
             if !starts.is_empty() {
                 queue.write_buffer(&self.dirty, READBACK_BYTES, bytemuck::cast_slice(&starts));
             }
+            // Each map's draws name their ID regions as first instances
+            // where the device draws indirectly from them.
+            self.regions_in_args =
+                self.first_instance && u32::try_from(MAPS * self.id_capacity).is_ok();
             let mut template: Vec<u32> = Vec::with_capacity(MAPS * groups * 5);
-            for _ in 0..MAPS {
+            for map in 0..MAPS {
                 for group in &self.groups {
-                    template.extend([index_count(group.mesh), 0, 0, 0, 0]);
+                    let (count, first_index, base_vertex) = placement(group.mesh);
+                    let first_instance = if self.regions_in_args {
+                        (map * self.id_capacity) as u32 + group.start
+                    } else {
+                        0
+                    };
+                    template.extend([count, 0, first_index, base_vertex as u32, first_instance]);
                 }
             }
             if !template.is_empty() {
@@ -1665,14 +1707,7 @@ impl ShadowPass {
         frame: &ShadowFrame,
         plan: &BatchPlan,
         instances: &'m wgpu::Buffer,
-        meshes: impl Fn(
-            MeshHandle,
-        ) -> Option<(
-            &'m wgpu::Buffer,
-            &'m wgpu::Buffer,
-            u32,
-            Option<&'m wgpu::Buffer>,
-        )>,
+        meshes: impl Fn(MeshHandle) -> Option<(MeshDraw<'m>, bool)>,
         materials: impl Fn(MaterialHandle) -> Option<&'m wgpu::BindGroup>,
         virtual_draw: impl Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
@@ -1712,6 +1747,46 @@ impl ShadowPass {
             &pipelines.affine_skinned,
             &pipelines.affine_masked_skinned,
         ];
+        // Retained casters in pipeline, vertex buffer and material order,
+        // which passes switch once per run: depth alone is written, so the
+        // order changes no texel. Virtual geometry draws its casters'
+        // clusters (decision 044), and masked materials without bindings
+        // draw nothing.
+        let mut casters: Vec<Caster<'m>> = if pose_group.is_some() {
+            self.groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| !group.virtual_geometry)
+                .filter_map(|(index, group)| {
+                    let (draw, skinned) = meshes(group.mesh)?;
+                    let material = match group.material.map(&materials) {
+                        Some(None) => return None,
+                        Some(Some(material)) => Some(material),
+                        None => None,
+                    };
+                    let skin = draw.skin.filter(|_| skinned);
+                    Some(Caster {
+                        choice: usize::from(material.is_some()) + 2 * usize::from(skin.is_some()),
+                        draw,
+                        skin,
+                        material,
+                        index,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        casters.sort_unstable_by_key(|caster| {
+            (
+                caster.choice,
+                std::ptr::from_ref(caster.draw.vertices) as usize,
+                caster
+                    .material
+                    .map_or(0, |group| std::ptr::from_ref(group) as usize),
+                caster.index,
+            )
+        });
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             let Some(pose_group) = pose_group else {
                 return;
@@ -1719,37 +1794,30 @@ impl ShadowPass {
             pass.set_pipeline(&pipelines.affine);
             pass.set_bind_group(1, pose_group, &[]);
             let mut bound = 0;
-            for (index, group) in self.groups.iter().enumerate() {
-                // Virtual geometry draws these casters' clusters below.
-                if group.virtual_geometry {
-                    continue;
+            let mut bindings = Bindings::default();
+            for caster in &casters {
+                if caster.choice != bound {
+                    pass.set_pipeline(selected[caster.choice]);
+                    bound = caster.choice;
                 }
-                let Some((vertices, indices, _, skin)) = meshes(group.mesh) else {
-                    continue;
+                if let Some(material) = caster.material {
+                    bindings.group(pass, 2, material);
+                }
+                if let Some(skin) = caster.skin {
+                    bindings.vertex(pass, 2, skin);
+                }
+                bindings.vertex(pass, 0, caster.draw.vertices);
+                bindings.index(pass, caster.draw.indices);
+                let ids = if self.regions_in_args {
+                    Ids::Whole(&self.ids)
+                } else {
+                    let start = map * self.id_capacity + self.groups[caster.index].start as usize;
+                    Ids::Region(self.ids.slice(start as u64 * 4..))
                 };
-                let material = group.material.map(&materials);
-                // A masked material without a binding draws nothing.
-                if matches!(material, Some(None)) {
-                    continue;
-                }
-                let choice = usize::from(material.is_some()) + 2 * usize::from(skin.is_some());
-                if choice != bound {
-                    pass.set_pipeline(selected[choice]);
-                    bound = choice;
-                }
-                if let Some(Some(group)) = material {
-                    pass.set_bind_group(2, group, &[]);
-                }
-                if let Some(skin) = skin {
-                    pass.set_vertex_buffer(2, skin.slice(..));
-                }
-                let start = (map * self.id_capacity + group.start as usize) as u64 * 4;
-                pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(1, self.ids.slice(start..));
+                bindings.ids(pass, 1, ids);
                 pass.draw_indexed_indirect(
                     &self.args,
-                    (map as u64 * groups + index as u64) * DRAW_ARGS_BYTES,
+                    (map as u64 * groups + caster.index as u64) * DRAW_ARGS_BYTES,
                 );
                 draws.set(draws.get() + 1);
             }
@@ -1759,6 +1827,7 @@ impl ShadowPass {
             pass.set_pipeline(&pipelines.full);
             pass.set_vertex_buffer(1, instances.slice(..));
             let mut masked = false;
+            let mut bindings = Bindings::default();
             for (index, batch) in plan.batches.iter().enumerate() {
                 // Transparent surfaces cast no shadow (decision 026).
                 let Some(group) = self
@@ -1768,7 +1837,7 @@ impl ShadowPass {
                 else {
                     continue;
                 };
-                let Some((vertices, indices, index_count, _)) = meshes(batch.mesh) else {
+                let Some((draw, _)) = meshes(batch.mesh) else {
                     continue;
                 };
                 if !bind_material(
@@ -1779,9 +1848,13 @@ impl ShadowPass {
                 ) {
                     continue;
                 }
-                pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..index_count, 0, batch.instances.clone());
+                bindings.vertex(pass, 0, draw.vertices);
+                bindings.index(pass, draw.indices);
+                pass.draw_indexed(
+                    draw.index_range(),
+                    draw.base_vertex,
+                    batch.instances.clone(),
+                );
                 draws.set(draws.get() + 1);
             }
         };

@@ -16,10 +16,11 @@ use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
     SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
 };
-use crate::gpu_presentation::GpuPresentationPass;
+use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
 use crate::lights::{LightFrame, LightPass, LightPoses};
 use crate::materials::MaterialStore;
+use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
 use crate::particles::ParticlePass;
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
 use crate::probes::{FACES, ProbePass, face_view_projection};
@@ -101,15 +102,40 @@ struct DepthTarget {
 }
 
 struct GpuMesh {
-    vertices: wgpu::Buffer,
-    // Vertex colors and second texture coordinates, when the mesh has them
-    // or joints.
-    extras: Option<wgpu::Buffer>,
-    // Joints and weights, when the mesh has them (decision 036).
-    skin: Option<wgpu::Buffer>,
-    indices: wgpu::Buffer,
+    // Where the mesh arena holds it, or the buffers of its own when the
+    // arena had no room.
+    placement: Result<Placement, OwnMesh>,
+    // Whether it has vertex colors or second texture coordinates (or
+    // joints: decision 034), and joints and weights (decision 036).
+    extended: bool,
+    skinned: bool,
     index_count: u32,
     byte_len: u64,
+}
+
+/// A mesh's own buffers: positions, extras, joints and indices.
+struct OwnMesh {
+    vertices: wgpu::Buffer,
+    extras: Option<wgpu::Buffer>,
+    skin: Option<wgpu::Buffer>,
+    indices: wgpu::Buffer,
+}
+
+impl GpuMesh {
+    fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
+        match &self.placement {
+            Ok(placement) => arena.draw(*placement),
+            Err(own) => MeshDraw {
+                vertices: &own.vertices,
+                extras: own.extras.as_ref(),
+                skin: own.skin.as_ref(),
+                indices: &own.indices,
+                first_index: 0,
+                base_vertex: 0,
+                index_count: self.index_count,
+            },
+        }
+    }
 }
 
 /// The pipelines a material variant (decision 031) rebuilds: opaque meshes
@@ -196,6 +222,9 @@ pub struct Renderer {
     virtual_pose_groups: Option<((u64, u64, bool), [wgpu::BindGroup; 4])>,
     virtual_bins: Vec<(Option<MaterialHandle>, Variant)>,
     virtual_drawn: Vec<bool>,
+    // Plan batches in opaque drawing order and its sort keys.
+    draw_order: Vec<u32>,
+    draw_keys: Vec<(Variant, Option<MaterialHandle>, u8, u32)>,
     virtual_shadow_bins: Vec<(usize, usize, u32)>,
     virtual_phase_two: Option<usize>,
     virtual_previous: Option<(u64, engine_core::glam::Mat4)>,
@@ -255,6 +284,10 @@ pub struct Renderer {
     // of pose storage generation `.0`.
     alternate_pose_group: Option<(u64, wgpu::BindGroup)>,
     meshes: BTreeMap<MeshHandle, GpuMesh>,
+    // Shared vertex and index buffers of resident meshes, and a generation
+    // that advances whenever a mesh is placed or retired.
+    mesh_arena: MeshArena,
+    mesh_layout: u64,
     // Material textures, samplers and bind groups (decision 031), and the
     // pipelines of material variants, created with their first draw.
     materials: MaterialStore,
@@ -345,11 +378,13 @@ impl Renderer {
             & (wgpu::Features::TEXTURE_COMPRESSION_BC
                 | wgpu::Features::TEXTURE_COMPRESSION_ETC2
                 | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
+        // Indirect draws name their visible-ID regions as first instances
+        // where the adapter allows it, so passes bind each ID buffer once.
+        let features = compression | (adapter.features() & wgpu::Features::INDIRECT_FIRST_INSTANCE);
         #[cfg(not(feature = "profiling"))]
-        let required_features = compression;
+        let required_features = features;
         #[cfg(feature = "profiling")]
-        let required_features =
-            compression | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY);
+        let required_features = features | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("engine/device"),
@@ -755,6 +790,15 @@ impl Renderer {
             required_features.contains(wgpu::Features::TIMESTAMP_QUERY),
             f64::from(queue.get_timestamp_period()),
         );
+        let mesh_arena = MeshArena::new(
+            &device,
+            [
+                size_of::<Vertex>(),
+                size_of::<ExtraVertex>(),
+                size_of::<SkinVertex>(),
+            ]
+            .map(|bytes| bytes as u64),
+        );
         Ok(Self {
             instance,
             surface,
@@ -791,6 +835,8 @@ impl Renderer {
             virtual_pose_groups: None,
             virtual_bins: Vec::new(),
             virtual_drawn: Vec::new(),
+            draw_order: Vec::new(),
+            draw_keys: Vec::new(),
             virtual_shadow_bins: Vec::new(),
             virtual_phase_two: None,
             virtual_previous: None,
@@ -823,6 +869,8 @@ impl Renderer {
             palette_capacity: 1,
             palette_staging: Vec::new(),
             meshes: BTreeMap::new(),
+            mesh_arena,
+            mesh_layout: 0,
             materials,
             variant_pipelines: HashMap::new(),
             plan: BatchPlan::with_instance_limit(instance_limit),
@@ -1037,8 +1085,18 @@ impl Renderer {
             .collect();
         // Supplied sources keep residency across culling; uploads below follow
         // only emitted draw batches, shadow casters and referenced textures.
-        self.meshes
-            .retain(|handle, _| self.plan.contains_mesh(*handle) || shadow_meshes.contains(handle));
+        let (plan, arena) = (&self.plan, &mut self.mesh_arena);
+        let resident = self.meshes.len();
+        self.meshes.retain(|handle, mesh| {
+            let keep = plan.contains_mesh(*handle) || shadow_meshes.contains(handle);
+            if !keep && let Ok(placement) = mesh.placement {
+                arena.remove(placement);
+            }
+            keep
+        });
+        if self.meshes.len() != resident {
+            self.mesh_layout += 1;
+        }
         let meshes = &self.meshes;
         self.virtual_geometry
             .retain(|handle| meshes.contains_key(&handle));
@@ -1108,42 +1166,57 @@ impl Renderer {
                 self.vertex_staging.reserve_exact(source.vertices().len());
                 self.vertex_staging
                     .extend(source.vertices().iter().map(Vertex::from));
-                let vertices = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("engine/mesh-vertices"),
-                        contents: bytemuck::cast_slice(&self.vertex_staging),
-                        usage: wgpu::BufferUsages::VERTEX,
+                // The arena holds the mesh in its streams' class; the device's
+                // limits alone leave a mesh buffers of its own.
+                let extras = ExtraVertex::stream(source);
+                let skin = SkinVertex::stream(source);
+                let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.vertex_staging)];
+                if let Some(extras) = &extras {
+                    streams.push(bytemuck::cast_slice(extras));
+                }
+                if let Some(skin) = &skin {
+                    streams.push(bytemuck::cast_slice(skin));
+                }
+                let placement = self
+                    .mesh_arena
+                    .insert(
+                        &self.device,
+                        &self.queue,
+                        &streams,
+                        self.vertex_staging.len() as u32,
+                        source.indices(),
+                    )
+                    .ok_or_else(|| {
+                        let buffer = |label, contents: &[u8], usage| {
+                            self.device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some(label),
+                                    contents,
+                                    usage,
+                                })
+                        };
+                        let vertex = wgpu::BufferUsages::VERTEX;
+                        OwnMesh {
+                            vertices: buffer("engine/mesh-vertices", streams[0], vertex),
+                            extras: extras.as_ref().map(|stream| {
+                                buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
+                            }),
+                            skin: skin.as_ref().map(|stream| {
+                                buffer("engine/mesh-skin", bytemuck::cast_slice(stream), vertex)
+                            }),
+                            indices: buffer(
+                                "engine/mesh-indices",
+                                bytemuck::cast_slice(source.indices()),
+                                wgpu::BufferUsages::INDEX,
+                            ),
+                        }
                     });
-                let indices = self
-                    .device
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("engine/mesh-indices"),
-                        contents: bytemuck::cast_slice(source.indices()),
-                        usage: wgpu::BufferUsages::INDEX,
-                    });
-                let extras = ExtraVertex::stream(source).map(|stream| {
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("engine/mesh-extras"),
-                            contents: bytemuck::cast_slice(&stream),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        })
-                });
-                let skin = SkinVertex::stream(source).map(|stream| {
-                    self.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("engine/mesh-skin"),
-                            contents: bytemuck::cast_slice(&stream),
-                            usage: wgpu::BufferUsages::VERTEX,
-                        })
-                });
+                self.mesh_layout += 1;
                 let byte_len = source.byte_len() as u64;
                 entry.insert(GpuMesh {
-                    vertices,
-                    extras,
-                    skin,
-                    indices,
+                    placement,
+                    extended: extras.is_some(),
+                    skinned: skin.is_some(),
                     index_count: source.indices().len() as u32,
                     byte_len,
                 });
@@ -1176,6 +1249,7 @@ impl Renderer {
             &mut mip_encoder,
         );
         drop(profile_upload);
+        self.order_draws();
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
         let affine = retained.is_some();
         let payload_count = if affine {
@@ -1490,6 +1564,7 @@ impl Renderer {
         let virtual_key = arena * 2 + u64::from(virtual_enabled);
         let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu.as_ref()) {
             let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
             let shadows = &self.shadows;
             let virtual_meshes = &self.virtual_geometry;
             // Temporal frames alternate pose buffers; the other keeps the
@@ -1515,15 +1590,18 @@ impl Renderer {
                     &self.plan,
                     |index, batch| {
                         let mesh = &snapshot.meshes[batch.source_index].mesh;
-                        (
-                            meshes[&batch.mesh].index_count,
-                            mesh.bounds(),
-                            shadows.batch_group(index),
-                            mesh.joint_count(),
-                            virtual_enabled
+                        let draw = meshes[&batch.mesh].draw(arena);
+                        BatchMeta {
+                            index_count: draw.index_count,
+                            first_index: draw.first_index,
+                            base_vertex: draw.base_vertex,
+                            bounds: mesh.bounds(),
+                            group: shadows.batch_group(index),
+                            joints: mesh.joint_count(),
+                            virtual_geometry: virtual_enabled
                                 && !batch.transparent
                                 && virtual_meshes.mesh_index(batch.mesh).is_some(),
-                        )
+                        }
                     },
                     !shadows.groups().is_empty(),
                     poses,
@@ -1544,7 +1622,7 @@ impl Renderer {
                     (snapshot.reflection_probe_settings.enabled
                         && !snapshot.reflection_probes.is_empty())
                     .then(|| self.probes.slots.waiting()),
-                    virtual_key,
+                    virtual_key ^ (self.mesh_layout << 32),
                     (self.configuration.width, self.configuration.height),
                     stamps,
                 ),
@@ -1566,6 +1644,7 @@ impl Renderer {
                 generation: self.pose_generation,
             });
             let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
             self.shadows.prepare(
                 &self.device,
                 &self.queue,
@@ -1573,7 +1652,13 @@ impl Renderer {
                 gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
                 poses,
                 self.instance_capacity,
-                |mesh| meshes.get(&mesh).map_or(0, |mesh| mesh.index_count),
+                self.mesh_layout,
+                |mesh| {
+                    meshes.get(&mesh).map_or((0, 0, 0), |mesh| {
+                        let draw = mesh.draw(arena);
+                        (draw.index_count, draw.first_index, draw.base_vertex)
+                    })
+                },
             )
         };
         // Environment maps (decision 043): as many cubes as the reflection
@@ -1964,6 +2049,7 @@ impl Renderer {
         let mut shadow_draws = 0;
         if let Some(shadow_frame) = &shadow_frame {
             let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
             let (virtual_geometry, shadow_bins) =
                 (&self.virtual_geometry, &self.virtual_shadow_bins);
             let encoded = self.shadows.encode_maps(
@@ -1972,14 +2058,9 @@ impl Renderer {
                 &self.plan,
                 &self.instance_buffer,
                 |mesh| {
-                    meshes.get(&mesh).map(|mesh| {
-                        (
-                            &mesh.vertices,
-                            &mesh.indices,
-                            mesh.index_count,
-                            mesh.skin.as_ref(),
-                        )
-                    })
+                    meshes
+                        .get(&mesh)
+                        .map(|mesh| (mesh.draw(arena), mesh.skinned))
                 },
                 |material| self.materials.group(material),
                 |pass, map| {
@@ -2241,20 +2322,20 @@ impl Renderer {
                     pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                 }
                 let mut bound = Variant::BASIC;
-                for (index, batch) in self.plan.batches.iter().enumerate() {
-                    // Transparent batches draw after the opaque pass; batches
-                    // drawing virtual geometry (decision 044) draw its clusters
-                    // below.
-                    if batch.transparent || self.virtual_drawn.get(index) == Some(&true) {
+                let mut bindings = Bindings::default();
+                for &index in &self.draw_order {
+                    let index = index as usize;
+                    let batch = &self.plan.batches[index];
+                    // Batches drawing virtual geometry (decision 044) draw its
+                    // clusters below.
+                    if self.virtual_drawn.get(index) == Some(&true) {
                         continue;
                     }
                     // Every planned source was validated and uploaded above.
                     let mesh = &self.meshes[&batch.mesh];
                     let (group, variant) = self.materials.binding(batch.material);
-                    let skin = mesh.skin.as_ref().filter(|_| affine);
-                    let variant = variant
-                        .with_extended(mesh.extras.is_some())
-                        .with_skinned(skin.is_some());
+                    let skinned = mesh.skinned && affine;
+                    let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
                     if variant != bound {
                         pass.set_pipeline(if variant == Variant::BASIC {
                             opaque_base
@@ -2263,23 +2344,28 @@ impl Renderer {
                         });
                         bound = variant;
                     }
-                    pass.set_bind_group(1, group, &[]);
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    if let Some(extras) = &mesh.extras {
-                        pass.set_vertex_buffer(2, extras.slice(..));
+                    bindings.group(&mut pass, 1, group);
+                    let draw = mesh.draw(&self.mesh_arena);
+                    bindings.vertex(&mut pass, 0, draw.vertices);
+                    if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+                        bindings.vertex(&mut pass, 2, extras);
                     }
-                    if let Some(skin) = skin {
-                        pass.set_vertex_buffer(3, skin.slice(..));
+                    if let Some(skin) = draw.skin.filter(|_| skinned) {
+                        bindings.vertex(&mut pass, 3, skin);
                     }
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    bindings.index(&mut pass, draw.indices);
                     if gpu_mode {
                         // Visible slots of this group, compacted and counted on the GPU.
                         let (ids, draws, offset) =
                             self.gpu_presentation.draw_source(batch, index, phase);
-                        pass.set_vertex_buffer(1, ids);
+                        bindings.ids(&mut pass, 1, ids);
                         pass.draw_indexed_indirect(draws, offset);
                     } else {
-                        pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
+                        pass.draw_indexed(
+                            draw.index_range(),
+                            draw.base_vertex,
+                            batch.instances.clone(),
+                        );
                     }
                 }
                 // Virtual geometry (decision 044): each bin's selected
@@ -2538,16 +2624,15 @@ impl Renderer {
                         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     }
                     let mut bound = Variant::BASIC;
+                    let mut bindings = Bindings::default();
                     for (index, batch) in self.plan.batches.iter().enumerate() {
                         if !batch.transparent {
                             continue;
                         }
                         let mesh = &self.meshes[&batch.mesh];
                         let (group, variant) = self.materials.binding(batch.material);
-                        let skin = mesh.skin.as_ref().filter(|_| affine);
-                        let variant = variant
-                            .with_extended(mesh.extras.is_some())
-                            .with_skinned(skin.is_some());
+                        let skinned = mesh.skinned && affine;
+                        let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
                         if variant != bound {
                             pass.set_pipeline(if variant == Variant::BASIC {
                                 transparent_base
@@ -2556,22 +2641,27 @@ impl Renderer {
                             });
                             bound = variant;
                         }
-                        pass.set_bind_group(1, group, &[]);
-                        pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                        if let Some(extras) = &mesh.extras {
-                            pass.set_vertex_buffer(2, extras.slice(..));
+                        bindings.group(&mut pass, 1, group);
+                        let draw = mesh.draw(&self.mesh_arena);
+                        bindings.vertex(&mut pass, 0, draw.vertices);
+                        if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+                            bindings.vertex(&mut pass, 2, extras);
                         }
-                        if let Some(skin) = skin {
-                            pass.set_vertex_buffer(3, skin.slice(..));
+                        if let Some(skin) = draw.skin.filter(|_| skinned) {
+                            bindings.vertex(&mut pass, 3, skin);
                         }
-                        pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        bindings.index(&mut pass, draw.indices);
                         if gpu_mode {
                             let (ids, draws, offset) =
                                 self.gpu_presentation.draw_source(batch, index, 0);
-                            pass.set_vertex_buffer(1, ids);
+                            bindings.ids(&mut pass, 1, ids);
                             pass.draw_indexed_indirect(draws, offset);
                         } else {
-                            pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
+                            pass.draw_indexed(
+                                draw.index_range(),
+                                draw.base_vertex,
+                                batch.instances.clone(),
+                            );
                         }
                     }
                 }
@@ -3043,6 +3133,10 @@ impl Renderer {
                 stats.resident_mesh_bytes as f64,
             );
             engine_profile::counter(
+                "memory.gpu_mesh_arena_bytes",
+                self.mesh_arena.capacity_bytes() as f64,
+            );
+            engine_profile::counter(
                 "memory.gpu_texture_payload_bytes",
                 stats.resident_texture_bytes as f64,
             );
@@ -3098,8 +3192,8 @@ impl Renderer {
             };
             let mesh = self.meshes.get(&batch.mesh);
             let variant = variant
-                .with_extended(mesh.is_some_and(|mesh| mesh.extras.is_some()))
-                .with_skinned(affine && mesh.is_some_and(|mesh| mesh.skin.is_some()));
+                .with_extended(mesh.is_some_and(|mesh| mesh.extended))
+                .with_skinned(affine && mesh.is_some_and(|mesh| mesh.skinned));
             if variant != Variant::BASIC
                 && !self.variant_pipelines.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
@@ -3258,27 +3352,31 @@ impl Renderer {
                     pass.set_bind_group(3, lights.probe_fragment_group(face), &[]);
                 }
                 let mut bound = None;
-                for (index, batch) in self.plan.batches.iter().enumerate() {
+                let mut bindings = Bindings::default();
+                for &index in &self.draw_order {
+                    let index = index as usize;
+                    let batch = &self.plan.batches[index];
                     // Only still opaque meshes without joints are captured.
                     let mesh = &self.meshes[&batch.mesh];
-                    if batch.transparent || mesh.skin.is_some() {
+                    if mesh.skinned {
                         continue;
                     }
                     let (group, variant) = self.materials.binding(batch.material);
-                    let variant = variant.with_extended(mesh.extras.is_some());
+                    let variant = variant.with_extended(mesh.extended);
                     if bound != Some(variant) {
                         pass.set_pipeline(&self.variant_pipelines[&(kind, variant)]);
                         bound = Some(variant);
                     }
-                    pass.set_bind_group(1, group, &[]);
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    if let Some(extras) = &mesh.extras {
-                        pass.set_vertex_buffer(2, extras.slice(..));
+                    bindings.group(&mut pass, 1, group);
+                    let draw = mesh.draw(&self.mesh_arena);
+                    bindings.vertex(&mut pass, 0, draw.vertices);
+                    if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+                        bindings.vertex(&mut pass, 2, extras);
                     }
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    bindings.index(&mut pass, draw.indices);
                     let (ids, draws, offset) =
                         self.gpu_presentation.probe_draw_source(batch, index);
-                    pass.set_vertex_buffer(1, ids);
+                    bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
                 pass.set_pipeline(self.probe_sky_pipeline.as_ref().expect("created above"));
@@ -3290,6 +3388,39 @@ impl Renderer {
             }
         }
         drawn
+    }
+
+    /// Orders the plan's opaque batches for drawing: by pipeline variant,
+    /// then material and vertex buffers. Meshes share the arena's buffers,
+    /// so passes then switch pipelines and bind groups once per run rather
+    /// than per batch.
+    fn order_draws(&mut self) {
+        let (plan, meshes, materials) = (&self.plan, &self.meshes, &self.materials);
+        self.draw_keys.clear();
+        self.draw_keys.extend(
+            plan.batches
+                .iter()
+                .enumerate()
+                .filter_map(|(index, batch)| {
+                    if batch.transparent {
+                        return None;
+                    }
+                    let mesh = &meshes[&batch.mesh];
+                    let (_, variant) = materials.binding(batch.material);
+                    let variant = variant
+                        .with_extended(mesh.extended)
+                        .with_skinned(mesh.skinned);
+                    let buffers = match &mesh.placement {
+                        Ok(placement) => placement.streams as u8,
+                        Err(_) => u8::MAX,
+                    };
+                    Some((variant, batch.material, buffers, index as u32))
+                }),
+        );
+        self.draw_keys.sort_unstable();
+        self.draw_order.clear();
+        self.draw_order
+            .extend(self.draw_keys.iter().map(|&(.., index)| index));
     }
 
     /// Plans this frame's virtual geometry (decision 044): the camera's
@@ -4019,11 +4150,11 @@ impl Renderer {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
-            if batch.transparent || mesh.skin.is_some() {
+            if batch.transparent || mesh.skinned {
                 continue;
             }
             let (_, variant) = self.materials.binding(batch.material);
-            let variant = variant.with_extended(mesh.extras.is_some());
+            let variant = variant.with_extended(mesh.extended);
             if !self.variant_pipelines.contains_key(&(kind, variant)) && !missing.contains(&variant)
             {
                 missing.push(variant);

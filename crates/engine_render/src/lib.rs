@@ -158,6 +158,8 @@ mod environment;
 mod gpu_presentation;
 #[cfg(target_arch = "wasm32")]
 mod materials;
+#[cfg(any(target_arch = "wasm32", test))]
+mod mesh_arena;
 #[cfg(target_arch = "wasm32")]
 mod mipmaps;
 #[cfg(target_arch = "wasm32")]

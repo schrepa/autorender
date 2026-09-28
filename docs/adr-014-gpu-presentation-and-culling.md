@@ -135,9 +135,10 @@ pass; see `docs/profiling.md`):
 5. `scatter` compacts visible slot IDs into each group's region in candidate
    order.
 
-Each group draws with `draw_indexed_indirect`, binding its region of the visible
-ID buffer as the instance vertex stream, so no `indirect-first-instance` feature
-is required. The render pipeline, pose storage and color storage are shared with
+Each group draws with `draw_indexed_indirect`, reading its region of the visible
+ID buffer as the instance vertex stream. Devices with `indirect-first-instance`
+bind the buffer once and the arguments name the region as the first instance;
+others bind each group's region (decision 046). The render pipeline, pose storage and color storage are shared with
 CPU frames. A four-byte total is copied to one of three readback buffers and
 mapped asynchronously; nothing waits on the GPU.
 
@@ -193,8 +194,9 @@ subset can be dropped.
 Per-node buffers hold 40-byte current and previous locals, 8-byte info and
 48-byte authority rows,
 plus 112 bytes per node for composed parents only when active parents exist.
-Candidates use 16 bytes each, plus scan and visible-ID words; groups use 48-byte
-records, base offsets and 20-byte indirect arguments. Buffers grow to powers of
+Candidates use 16 bytes each, plus scan and visible-ID words; groups use 64-byte
+records (with their mesh's place in the mesh arena, decision 046), base offsets
+and 20-byte indirect arguments. Buffers grow to powers of
 two (at least 1,024 nodes or candidates and 64 draw groups) and never shrink;
 `memory.gpu_presentation_bytes` reports them and `memory.gpu_input_bytes` the
 CPU-side inputs. Depth levels use one 16-byte

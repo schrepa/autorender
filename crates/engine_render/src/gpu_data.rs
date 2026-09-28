@@ -531,7 +531,7 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
 /// constants it sets and whether back faces draw. Materials without maps and
 /// plain opaque base color textures use [`Variant::BASIC`], the shading of
 /// every material before glTF maps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub(crate) struct Variant(u8);
 
 impl Variant {
@@ -859,6 +859,14 @@ pub(crate) struct BatchData {
     pub pad: u32,
     pub bounds_min: [f32; 4],
     pub bounds_max: [f32; 4],
+    // Where the batch's mesh lies in the mesh arena: its first index and
+    // base vertex, which its draw arguments carry, with its first instance:
+    // `start` where devices draw indirectly from nonzero first instances,
+    // otherwise 0.
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub first_instance: u32,
+    pub pad2: u32,
 }
 
 /// A skinned slot of GPU-presented frames (decision 036): its slot, its
@@ -1692,7 +1700,7 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PresentationFrame, skinned), 288);
         assert_eq!(size_of::<CandidateData>(), 16);
         assert_eq!(size_of::<SkinnedData>(), 16);
-        assert_eq!(size_of::<BatchData>(), 48);
+        assert_eq!(size_of::<BatchData>(), 64);
         // Ten floats per pose, matching POSE_FLOATS in the shader.
         assert_eq!(size_of::<engine_core::NodePose>(), 40);
         assert_eq!(size_of::<engine_core::NodeInfo>(), 8);
@@ -1726,7 +1734,7 @@ mod tests {
         assert_eq!(size("Rows"), 48);
         assert_eq!(size("Composed") as u64, COMPOSED_BYTES);
         assert_eq!(size("Candidate"), 16);
-        assert_eq!(size("Batch"), 48);
+        assert_eq!(size("Batch") as usize, size_of::<BatchData>());
         assert_eq!(size("DrawArgs") as u64, DRAW_ARGS_BYTES);
     }
 
