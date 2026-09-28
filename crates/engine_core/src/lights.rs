@@ -242,6 +242,8 @@ pub(crate) struct LightExtraction {
     world_lights: Vec<usize>,
     // Distance-sorted selection scratch when lights exceed the budget.
     ranked: Vec<(f32, usize)>,
+    // Advances whenever an extraction rewrites the snapshot's lights.
+    pub(crate) revision: u64,
 }
 
 impl LightExtraction {
@@ -255,6 +257,7 @@ impl LightExtraction {
             lights: Vec::new(),
             world_lights: Vec::new(),
             ranked: Vec::new(),
+            revision: 0,
         }
     }
 
@@ -299,6 +302,7 @@ impl LightExtraction {
         if !settings.active() {
             snapshot.lights.clear();
             self.last_scan = None;
+            self.revision += 1;
             return;
         }
         let this_run = world.read_change_tick();
@@ -341,6 +345,7 @@ impl LightExtraction {
             // Unchanged lights that all follow slots: the records stand.
             return;
         }
+        self.revision += 1;
         let globals = world.resource::<GlobalTransforms>();
         let presented = world.resource::<PresentedTransforms>();
         let world_model = |entity: Entity| {

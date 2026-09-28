@@ -1669,11 +1669,19 @@ fn gpu_joints_stand_until_skins_or_joint_validity_change() {
             .map(|joint| joint.node)
             .collect()
     };
+    let revision = |engine: &mut Engine| {
+        engine
+            .extract_gpu_frame(1.0, 1.0)
+            .unwrap()
+            .joints_revision()
+    };
     let initial = nodes(&mut engine);
     assert_eq!(initial.len(), 2);
     assert!(initial.iter().all(|&node| node != u32::MAX));
-    // Unchanged skins keep their joints.
+    // Unchanged skins keep their joints and their revision.
     assert_eq!(nodes(&mut engine), initial);
+    let kept = revision(&mut engine);
+    assert_eq!(revision(&mut engine), kept);
     // A changed skin lists its joints again.
     engine
         .app
@@ -1683,6 +1691,7 @@ fn gpu_joints_stand_until_skins_or_joint_validity_change() {
         .joints
         .reverse();
     assert_eq!(nodes(&mut engine), [initial[1], initial[0]]);
+    assert_ne!(revision(&mut engine), kept);
     // A joint whose transform turns invalid, then valid, names no node
     // meanwhile.
     let mut transform = *engine.app.world().get::<Transform>(first).unwrap();
@@ -1700,6 +1709,41 @@ fn gpu_joints_stand_until_skins_or_joint_validity_change() {
     engine.app.world_mut().entity_mut(skinned).remove::<Skin>();
     assert!(nodes(&mut engine).is_empty());
     let _ = second;
+}
+
+#[test]
+fn gpu_frames_list_decal_joints_once_after_standing_skins() {
+    let (mut engine, _) = skinned_world(2);
+    let world = engine.app.world_mut();
+    let material = world
+        .resource_mut::<AssetLibrary>()
+        .insert_material(Material::new([1.0; 4]).unwrap())
+        .unwrap();
+    let decal = world
+        .spawn((
+            Transform {
+                translation: Vec3::new(0.0, 0.0, -5.0),
+                ..Default::default()
+            },
+            Decal::new(material),
+        ))
+        .id();
+    let joints = |engine: &mut Engine| {
+        let frame = engine.extract_gpu_frame(1.0, 1.0).unwrap();
+        (frame.snapshot().joints.len(), frame.joints_revision())
+    };
+    // Two skin joints, then the decal's, every frame.
+    let (count, revision) = joints(&mut engine);
+    assert_eq!(count, 3);
+    for _ in 0..3 {
+        assert_eq!(joints(&mut engine), (3, revision));
+    }
+    // A decal's joint changing changes the revision.
+    engine.app.world_mut().despawn(decal);
+    let (count, changed) = joints(&mut engine);
+    assert_eq!(count, 2);
+    assert_ne!(changed, revision);
+    assert_eq!(joints(&mut engine), (2, changed));
 }
 
 #[test]

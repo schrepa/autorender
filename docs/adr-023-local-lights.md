@@ -25,7 +25,9 @@ values skip the light.
   meshes and costs no CPU work while unchanged. Lights on other entities use
   their world pose (presented on CPU frames, authoritative on GPU frames).
   Extraction rebuilds only when a light, the settings or slot ownership
-  change.
+  change, and retained frames name the rebuild (`RenderFrame::lights_revision`)
+  so renderers restage and upload light inputs only then; owned snapshots
+  compare their inputs' bytes.
 - **Clusters.** A compute pass bins each light's bounding sphere (a spot's
   tighter cone sphere) into 16×9 screen tiles by 24 exponential depth
   slices, testing each candidate cluster's view-space box. Each workgroup

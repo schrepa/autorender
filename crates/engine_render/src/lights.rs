@@ -208,6 +208,9 @@ mod gpu {
         no_poses: wgpu::Buffer,
         staged: Vec<LightInput>,
         uploaded: Vec<LightInput>,
+        // The retained stream and light revision the inputs hold, when a
+        // retained frame uploaded them.
+        uploaded_revision: Option<(u64, u64)>,
         // Binning groups over (pose generation, pose buffer) and the storage
         // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
@@ -346,6 +349,7 @@ mod gpu {
                 no_poses: storage(device, "engine/light-no-poses", 48, none),
                 staged: Vec::new(),
                 uploaded: Vec::new(),
+                uploaded_revision: None,
                 compute_groups: Vec::new(),
                 fragment_group: None,
                 probe_uniforms: Vec::new(),
@@ -396,14 +400,12 @@ mod gpu {
             snapshot: &RenderSnapshot,
             size: (u32, u32),
             poses: Option<LightPoses<'_>>,
+            revision: Option<(u64, u64)>,
         ) -> Option<LightFrame> {
             if !snapshot.local_lights.active() || snapshot.lights.is_empty() {
                 return None;
             }
-            self.staged.clear();
-            self.staged
-                .extend(snapshot.lights.iter().map(LightInput::from));
-            let count = self.staged.len();
+            let count = snapshot.lights.len();
             if count > self.capacity {
                 self.capacity = count.next_power_of_two();
                 self.inputs = storage(
@@ -419,11 +421,25 @@ mod gpu {
                     wgpu::BufferUsages::empty(),
                 );
                 self.uploaded.clear();
+                self.uploaded_revision = None;
                 self.buffers_generation += 1;
             }
-            if self.staged != self.uploaded {
-                queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
-                self.uploaded.clone_from(&self.staged);
+            // Retained frames name their lights' revision: unchanged lights
+            // skip staging. Owned snapshots compare their inputs' bytes.
+            if revision.is_none() || revision != self.uploaded_revision {
+                self.staged.clear();
+                self.staged
+                    .extend(snapshot.lights.iter().map(LightInput::from));
+                let bytes: &[u8] = bytemuck::cast_slice(&self.staged);
+                if revision.is_some() || bytes != bytemuck::cast_slice::<_, u8>(&self.uploaded) {
+                    queue.write_buffer(&self.inputs, 0, bytes);
+                    if revision.is_some() {
+                        self.uploaded.clear();
+                    } else {
+                        self.uploaded.clone_from(&self.staged);
+                    }
+                }
+                self.uploaded_revision = revision;
             }
             // List storage grows to what the lists needed when last read
             // back, and to a first guess of a few dozen clusters per light,

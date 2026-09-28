@@ -1767,6 +1767,7 @@ impl Renderer {
                 snapshot,
                 (self.configuration.width, self.configuration.height),
                 poses,
+                retained.map(|frame| (frame.identity(), frame.lights_revision())),
             )
         } else {
             None

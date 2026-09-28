@@ -119,6 +119,16 @@ impl<'a> RenderFrame<'a> {
     pub fn color_revision(self) -> u64 {
         self.owner.color_revision
     }
+    /// Advances whenever the snapshot's lights are rewritten; frames that
+    /// keep it keep every light record.
+    pub fn lights_revision(self) -> u64 {
+        self.owner.lights_revision
+    }
+    /// Advances whenever the snapshot's joints change; frames that keep it
+    /// keep every joint record.
+    pub fn joints_revision(self) -> u64 {
+        self.owner.joints_revision
+    }
     pub fn visible_indices(self) -> &'a [usize] {
         &self.owner.visible
     }
@@ -414,6 +424,12 @@ pub(crate) struct RetainedRender {
     pose_revision: u64,
     color_revision: u64,
     caster_revision: u64,
+    lights_revision: u64,
+    joints_revision: u64,
+    // Joints the skins listed, which decals' joints follow, and the decals'
+    // joints of the last frame.
+    skin_joints: usize,
+    decal_joints: Vec<RenderJoint>,
     snapshot: RenderSnapshot,
     // Owner of each slot; None for free slots. Parallel to `frames`.
     owners: Vec<Option<Entity>>,
@@ -474,6 +490,10 @@ impl Default for RetainedRender {
             pose_revision: 0,
             color_revision: 0,
             caster_revision: 0,
+            lights_revision: 0,
+            joints_revision: 0,
+            skin_joints: 0,
+            decal_joints: Vec::new(),
             snapshot: RenderSnapshot::default(),
             owners: Vec::new(),
             frames: Vec::new(),
@@ -639,6 +659,7 @@ impl RetainedRender {
             self.source_revision,
             gpu,
         );
+        self.lights_revision = lights.revision;
         particles.extract(world, &mut self.snapshot, gpu);
     }
 
@@ -685,6 +706,9 @@ impl RetainedRender {
             self.skin_inputs = inputs;
             self.skin_tick = this_run;
             if !changed {
+                // Last frame's decals follow the skins' joints: they list
+                // theirs again.
+                self.snapshot.joints.truncate(self.skin_joints);
                 engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
                 engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
                 return;
@@ -743,6 +767,8 @@ impl RetainedRender {
             next.push((slot, base as u32));
         }
         next.sort_unstable_by_key(|&(slot, _)| slot);
+        self.skin_joints = joints.len();
+        self.joints_revision += 1;
         let sequence = self.sequence;
         let mut changed = false;
         for &slot in &self.skinned {
@@ -781,6 +807,12 @@ impl RetainedRender {
         gpu: bool,
     ) {
         decals.extract(world, &mut self.snapshot, DecalPoses::Retained { gpu });
+        let listed = &self.snapshot.joints[self.skin_joints.min(self.snapshot.joints.len())..];
+        if listed != self.decal_joints.as_slice() {
+            self.decal_joints.clear();
+            self.decal_joints.extend_from_slice(listed);
+            self.joints_revision += 1;
+        }
     }
 
     /// Lists the frame's reflection probes (decision 043).

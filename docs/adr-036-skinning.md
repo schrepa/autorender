@@ -32,9 +32,12 @@ GPU and keep no complete per-node pose buffer.
   each joint's matrix from `PresentedTransforms`. GPU-presented frames give
   each joint's node instead, and a compute pass (`skin_palette`) composes
   the joint's displayed pose exactly as culling composes slots', so joints
-  and rigid objects attached to them present alike. Renderers upload the
-  offset with the slot's color (one more than it in the color record's
-  flags), so an offset change is a color change.
+  and rigid objects attached to them present alike; their joint lists stand
+  while skins, slots, meshes, assets and hierarchy validity stand, and
+  `RenderFrame::joints_revision` advances when the joints (decals' included,
+  decision 039) change, so renderers upload nodes and inverse binds only
+  then. Renderers upload the offset with the slot's color (one more than it
+  in the color record's flags), so an offset change is a color change.
 - **Drawing.** Skinned meshes upload a skin stream (four 16-bit joint
   indices and weights) and always the second stream (decision 034). Their
   draws through retained slots use skinned pipeline variants: entry points

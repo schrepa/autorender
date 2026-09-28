@@ -283,6 +283,8 @@ pub(crate) struct GpuPresentationPass {
     skinned_count: u32,
     skinned_staging: Vec<SkinnedData>,
     batch_joints: Vec<u32>,
+    // The retained stream and joints revision the joint buffers hold.
+    joints_revision: Option<(u64, u64)>,
     // Whether draws' arguments name their visible-ID regions as first
     // instances (`indirect-first-instance`).
     first_instance: bool,
@@ -499,6 +501,7 @@ impl GpuPresentationPass {
             skinned_count: 0,
             skinned_staging: Vec::new(),
             batch_joints: Vec::new(),
+            joints_revision: None,
             first_instance: device
                 .features()
                 .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
@@ -958,8 +961,13 @@ impl GpuPresentationPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         joints: &[RenderJoint],
+        revision: (u64, u64),
     ) {
         self.joint_count = joints.len() as u32;
+        // The frame's retained stream and joints revision name its joints.
+        if self.joints_revision == Some(revision) && joints.len() <= self.joint_capacity {
+            return;
+        }
         if joints.len() > self.joint_capacity {
             self.joint_capacity = grow(joints.len());
             let capacity = self.joint_capacity as u64;
@@ -979,6 +987,7 @@ impl GpuPresentationPass {
             self.uploaded_binds.clear();
             self.bind_groups = None;
         }
+        self.joints_revision = Some(revision);
         let unchanged = self.uploaded_nodes.len() == joints.len()
             && joints
                 .iter()
@@ -1066,7 +1075,12 @@ impl GpuPresentationPass {
         self.ensure_nodes(device, nodes, if held { 0 } else { gpu.parents.len() });
         let candidates = plan.ordered_instances.len();
         self.ensure_groups(device, candidates, plan.batches.len());
-        self.prepare_joints(device, queue, &frame.snapshot().joints);
+        self.prepare_joints(
+            device,
+            queue,
+            &frame.snapshot().joints,
+            (frame.identity(), frame.joints_revision()),
+        );
         if self.poses_generation != Some(poses_generation) {
             self.poses_generation = Some(poses_generation);
             self.bind_groups = None;
