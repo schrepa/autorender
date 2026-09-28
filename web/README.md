@@ -104,7 +104,8 @@ through the visibility buffer and match forward shading within 0.1% of pixels
 ([decision 045](../docs/adr-045-visibility-buffer.md)), clusters draw and
 cast shadows and nothing is dropped; pages streamed beyond the pinned ones; a
 budget of 8 pages keeps at most 8 resident, reports the rest missing and dropped,
-and captures still match; a pixel error of 6 draws fewer triangles, disabling
+and captures still match; CPU-prepared frames looking at bare ground retire the
+other meshes and rebuild the arena, and the view looks the same afterwards; a pixel error of 6 draws fewer triangles, disabling
 falls back to the fallback cuts, invalid settings are refused, and the page logs
 no errors. Captures go under
 `artifacts/virtual-geometry-smoke-*/`.

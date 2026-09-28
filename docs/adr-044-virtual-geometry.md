@@ -278,10 +278,12 @@ the bookkeeping, `virtual_geometry.rs` the pool and the fetches):
   finding none are dropped until some is. `max_resident_pages` bounds the
   resident pages; lowering it evicts the least recently used at once, and
   pinned pages stay even beyond it.
-- **Rebuilds.** When meshes become resident or retire, the arena is rebuilt:
-  the pinned pages load again (every page a whole file holds, without a
-  budget), fetches and read-backs of the older layout are ignored, and the
-  other pages stream again as views ask for them.
+- **Rebuilds.** When meshes become resident or retire (a frame's plan no
+  longer draws or casts them, or a new world replaces the old one), the
+  arena is rebuilt with a new pool. Meshes that stay keep their resident
+  pages in the same slots, whose words copy to the new pool; new meshes'
+  pinned pages load (every page a whole file holds, without a budget), and
+  fetches and read-backs of the older layout are ignored.
 
 ### Capacity
 
@@ -336,9 +338,10 @@ page pool grows as Streaming describes, with an optional budget.
   vertex work can reach about three times that of an indexed draw of the
   same triangles. Full clusters keep the waste small. Compacting the
   selected triangles into an index buffer could remove it later.
-- Rebuilding the arena uploads every resident mesh's metadata and pinned
-  pages again, and its streamed pages load again as views ask for them:
-  fine when scenes load, wasteful if meshes came and went every few frames.
+- Rebuilding the arena uploads every resident mesh's metadata again and
+  copies the kept pages into a new pool: fine when scenes load, wasteful if
+  meshes came and went every few frames. A retired mesh's pages go with it,
+  and return by streaming.
 - Files hold every level. The boulder takes 9.2 MB, about 28 bytes a
   source triangle, of which hosts load a 410 KB prefix (the dense scene's
   prefixes run 410 to 633 KB).

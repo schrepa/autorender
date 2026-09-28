@@ -171,8 +171,9 @@ impl Residency {
                 }
             }
         }
-        self.free = (0..self.slots.len() as u32).rev().collect();
-        self.slots.fill(NONE);
+        // The rebuilt pool's slots follow (`add_slots`).
+        self.slots.clear();
+        self.free.clear();
         self.resident = 0;
         self.loading = 0;
         self.bits_dirty = true;
@@ -214,6 +215,47 @@ impl Residency {
 
     pub(crate) fn loading_pages(&self) -> usize {
         self.loading
+    }
+
+    /// Each resident page and its slot.
+    pub(crate) fn resident_slots(&self) -> Vec<(u32, u32)> {
+        self.slots
+            .iter()
+            .enumerate()
+            .filter(|&(_, &page)| page != NONE)
+            .map(|(slot, &page)| (page, slot as u32))
+            .collect()
+    }
+
+    /// Marks each absent page of `pages` resident in its free slot, whose
+    /// words a rebuilt pool kept, as used at `frame`.
+    pub(crate) fn restore(&mut self, pages: &[(u32, u32)], frame: u64) {
+        let mut groups = Vec::new();
+        for &(page, slot) in pages {
+            let (Some(entry), Some(held)) = (
+                self.pages.get_mut(page as usize),
+                self.slots.get_mut(slot as usize),
+            ) else {
+                continue;
+            };
+            if entry.state != PageState::Absent || *held != NONE {
+                continue;
+            }
+            entry.state = PageState::Resident(slot);
+            entry.last_used = frame;
+            *held = page;
+            self.resident += 1;
+            groups.extend_from_slice(&entry.groups);
+        }
+        if groups.is_empty() {
+            return;
+        }
+        self.free = (0..self.slots.len() as u32)
+            .rev()
+            .filter(|&slot| self.slots[slot as usize] == NONE)
+            .collect();
+        self.table_dirty = true;
+        self.refresh(groups);
     }
 
     /// Adds `count` free slots (the pool grew).
@@ -474,8 +516,8 @@ mod tests {
     /// Three levels over one surface: fine groups 0 and 1 (errors 1 and 2,
     /// pages 2 and 3), made into group 2 (error 5, page 1), made into group
     /// 3 (error MAX, pinned page 0).
-    fn chain() -> Residency {
-        let mesh = MeshLinks {
+    fn chain_links() -> MeshLinks {
+        MeshLinks {
             pages: 4,
             pinned: 1,
             held: 1,
@@ -487,9 +529,12 @@ mod tests {
                 (2, Some(1), 1),
                 (3, Some(2), 0),
             ],
-        };
+        }
+    }
+
+    fn chain() -> Residency {
         let mut residency = Residency::default();
-        residency.rebuild(&[mesh], &[(0, 0)]);
+        residency.rebuild(&[chain_links()], &[(0, 0)]);
         residency
     }
 
@@ -538,6 +583,46 @@ mod tests {
         assert_eq!(residency.take_bits(), Some(vec![0b1101]));
         assert_eq!(residency.take_table().unwrap(), [0, 2, 1, NONE]);
         assert_eq!(residency.take_table(), None);
+    }
+
+    #[test]
+    fn rebuilds_start_a_new_pool_and_restore_kept_pages() {
+        let mut residency = chain();
+        residency.add_slots(4);
+        for page in [0, 1, 2] {
+            assert!(residency.begin(page, 0));
+            assert!(matches!(residency.place(page, 0, 4), Placement::Slot(_)));
+        }
+        let kept = residency.resident_slots();
+        assert_eq!(kept.len(), 3);
+        // A rebuilt layout has only the slots its pool adds: no slot of the
+        // old pool is free for placing pages.
+        residency.rebuild(&[chain_links()], &[(0, 0)]);
+        assert_eq!(
+            (residency.resident_pages(), residency.resident_slots()),
+            (0, vec![])
+        );
+        residency.add_slots(1);
+        assert!(residency.begin(0, 1));
+        assert_eq!(residency.place(0, 1, usize::MAX), Placement::Slot(0));
+        assert!(residency.begin(3, 1));
+        assert_eq!(residency.place(3, 1, usize::MAX), Placement::Grow);
+        // Pages whose words the new pool kept return to their slots, and
+        // their groups draw again.
+        residency.rebuild(&[chain_links()], &[(0, 0)]);
+        residency.add_slots(4);
+        residency.restore(&kept, 2);
+        assert_eq!(residency.resident_pages(), 3);
+        for (page, slot) in kept {
+            assert_eq!(residency.state(page), PageState::Resident(slot));
+        }
+        assert!(residency.group_resident(3) && residency.group_resident(2));
+        assert!(residency.group_resident(0) && !residency.group_resident(1));
+        assert!(residency.begin(3, 2));
+        assert!(matches!(
+            residency.place(3, 2, usize::MAX),
+            Placement::Slot(3)
+        ));
     }
 
     #[test]

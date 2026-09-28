@@ -169,6 +169,22 @@ try {
   const streamed = { resident_pages: cases.at(-1).resident_pages, fetched_bytes: await fetched() - loadedBytes };
   assert.ok(streamed.resident_pages > 4 && streamed.fetched_bytes > 0, JSON.stringify(streamed));
 
+  // CPU-prepared frames plan only what they see: looking down at bare
+  // ground retires the other meshes and rebuilds the arena, and looking back
+  // rebuilds it again. Meshes that stayed keep their streamed pages, the
+  // pool never overruns, and the view looks as it did.
+  const last = cameras.at(-1);
+  const reference = await capture(`${last.label}-reference`, false);
+  await command("camera", { position: [0.5, 0.6, 0.5], target: [0.5, -10, 0.52], vertical_fov_radians: 0.3, near: 0.05, far: 5000 });
+  let ground;
+  for (let frame = 0; frame < 12; frame++) ground = (await command("present", { alpha: 0, gpu: false })).result.rendering;
+  assert.ok(ground.draw_calls < reference.rendering.draw_calls, `meshes retired: ${JSON.stringify(ground)}`);
+  await command("camera", { position: last.position, target: last.target, vertical_fov_radians: 0.96, near: 0.1, far: 5000 });
+  const rebuilt = await capture(`${last.label}-rebuilt`, false);
+  const rebuiltPixels = await differentPixels([reference.png, rebuilt.png], 8);
+  assert.ok(rebuiltPixels.changed <= rebuiltPixels.total * 0.001, `rebuilt arena: ${rebuiltPixels.changed} pixels differ`);
+  streamed.rebuilt = { resident_pages: rebuilt.rendering.virtual_resident_pages, changed_pixels: rebuiltPixels.changed };
+
   // A budget keeps that many pages resident (the pinned ones always) and
   // drops loads beyond it; captures of both paths still match.
   await command("environment", { virtual_geometry: { max_resident_pages: 8 } });
@@ -208,7 +224,7 @@ try {
   console.log(JSON.stringify({
     ok: true, url: url.href, artifact: output, cases, loaded_bytes: loadedBytes, file_bytes: fileBytes, streamed,
     pixel_error: { fine: fine.virtual_triangles, coarse: coarseRendering.virtual_triangles },
-    checks: ["prefixes_load", "settings_discoverable", "gpu_cpu_pixel_equivalence", "visibility_buffer_matches_forward", "clusters_drawn", "cluster_shadows", "nothing_dropped", "pages_stream", "budget_bounds_pages", "pixel_error_control", "fallback_when_disabled", "invalid_settings_refused", "clean_browser_diagnostics"],
+    checks: ["prefixes_load", "settings_discoverable", "gpu_cpu_pixel_equivalence", "visibility_buffer_matches_forward", "arena_rebuilds_keep_pages", "clusters_drawn", "cluster_shadows", "nothing_dropped", "pages_stream", "budget_bounds_pages", "pixel_error_control", "fallback_when_disabled", "invalid_settings_refused", "clean_browser_diagnostics"],
   }));
 } finally {
   await browser.close();

@@ -258,6 +258,8 @@ pub(crate) struct VirtualGeometryPass {
     // earlier one are ignored.
     layout_generation: u64,
     bases: Vec<(u32, u32)>,
+    // Each arena mesh's handle, in arena order.
+    layout: Vec<MeshHandle>,
     pool_slots: usize,
     table_words: u64,
     bits_base: u64,
@@ -475,6 +477,7 @@ impl VirtualGeometryPass {
             residency: Residency::default(),
             layout_generation: 0,
             bases: Vec::new(),
+            layout: Vec::new(),
             pool_slots: 0,
             table_words: 0,
             bits_base: 0,
@@ -600,6 +603,22 @@ impl VirtualGeometryPass {
             return;
         }
         self.dirty = false;
+        // The resident pages of the layout being replaced, by mesh and page
+        // in it: meshes that stay keep them in the same slots.
+        let kept: Vec<(MeshHandle, u32, u32)> = self
+            .residency
+            .resident_slots()
+            .into_iter()
+            .filter_map(|(page, slot)| {
+                let (mesh, local, _) = self.residency.page(page);
+                let handle = *self.layout.get(mesh as usize)?;
+                Some((handle, local, slot))
+            })
+            .collect();
+        let previous = self
+            .arena
+            .take()
+            .map(|arena| (arena.pages, self.table_words, self.pool_slots));
         self.index.clear();
         self.depth = 0;
         let total_pages: usize = self
@@ -673,14 +692,61 @@ impl VirtualGeometryPass {
         self.bits_base = groups.len() as u64;
         groups.resize(groups.len() + (groups.len() / GROUP_WORDS).div_ceil(32), 0);
         self.residency.rebuild(&links, &self.bases);
-        // Slots for the pinned pages, and every held one without a budget.
+        self.layout = self
+            .resident
+            .iter()
+            .map(|resident| resident.handle)
+            .collect();
+        // The kept pages of meshes that stay, as pages of the new layout.
+        let kept: Vec<(u32, u32)> = kept
+            .into_iter()
+            .filter_map(|(handle, local, slot)| {
+                let mesh = *self.index.get(&handle)?;
+                Some((self.bases[mesh as usize].1 + local, slot))
+            })
+            .collect();
+        // Slots for the pinned pages (every held one without a budget) and
+        // the kept pages where they are, as the device allows.
         let preload = if budget.is_some() {
             self.residency.pinned()
         } else {
             self.residency.held()
         };
-        self.pool_slots = preload.len().max(1);
+        let kept_slots = kept
+            .iter()
+            .map(|&(_, slot)| slot as usize + 1)
+            .max()
+            .unwrap_or(0);
+        self.pool_slots = preload
+            .len()
+            .max(kept_slots)
+            .min(self.device_slots(device))
+            .max(1);
         self.residency.add_slots(self.pool_slots);
+        let pages = pool(device, self.table_words, self.pool_slots);
+        // The kept pages' words move to the new pool's slots, submitted at
+        // once so later writes land after them.
+        if let Some((old, old_table_words, old_slots)) = previous {
+            let slots = old_slots.min(self.pool_slots) as u64;
+            if slots > 0 {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/virtual-pool-rebuild"),
+                });
+                encoder.copy_buffer_to_buffer(
+                    &old,
+                    old_table_words * 4,
+                    &pages,
+                    self.table_words * 4,
+                    slots * PAGE_WORDS as u64 * 4,
+                );
+                queue.submit([encoder.finish()]);
+            }
+        }
+        let restored: Vec<(u32, u32)> = kept
+            .into_iter()
+            .filter(|&(_, slot)| (slot as usize) < self.pool_slots)
+            .collect();
+        self.residency.restore(&restored, self.frame);
         self.layout_generation += 1;
         self.layout_frame = self.frame + 1;
         (self.missing_pages, self.dropped_pages) = (0, 0);
@@ -689,7 +755,7 @@ impl VirtualGeometryPass {
             nodes: storage_init(device, "engine/virtual-nodes", &nodes),
             groups: storage_init(device, "engine/virtual-groups", &groups),
             clusters: storage_init(device, "engine/virtual-clusters", &clusters),
-            pages: pool(device, self.table_words, self.pool_slots),
+            pages,
         });
         self.arena_generation += 1;
         self.groups = [None, None];
