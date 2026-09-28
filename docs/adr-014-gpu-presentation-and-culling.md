@@ -69,7 +69,8 @@ interpolation record's node (blend decisions follow the tick), the listed
 nodes, and the children of every visited node whose snap or active decision
 changed. Any other node was inactive, has no record and an unchanged parent,
 so it stays inactive with unchanged authority rows. A new node space, an
-overflowed list, or more than a third of the nodes to visit walks every node
+overflowed list, or more than a third of the nodes to visit (counted once
+each: active, listed and recorded nodes largely coincide) walks every node
 in parent-first order instead; so do the two gathers after a rebuild (the first
 activates every node, the second settles them). Test builds check every sparse
 gather against a full walk of the same state (`interpolation.gpu_visited`

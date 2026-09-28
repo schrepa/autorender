@@ -558,13 +558,17 @@ impl InterpolationState {
             previous: &self.previous,
             indices: &self.indices,
         };
-        // Sparse when the nodes it must visit are a small share of all nodes;
-        // a new node space, an overflowed log or an unlisted active set walks
-        // every node.
+        // Sparse when the nodes it must visit are a small share of all nodes
+        // (the walk counts them: the active, changed and recorded nodes
+        // largely coincide); a new node space, an overflowed log or an
+        // unlisted active set walks every node.
         let sparse = changes.filter(|changes| {
             !reindexed
                 && self.gpu.active_listed
-                && changes.len() + self.gpu.active.len() + records.history_nodes.len()
+                && changes
+                    .len()
+                    .max(self.gpu.active.len())
+                    .max(records.history_nodes.len())
                     <= nodes / SPARSE_SHARE
         });
         #[cfg(test)]
@@ -577,10 +581,7 @@ impl InterpolationState {
             assert_eq!(changed, expected, "stamped records per stream");
             reference.assert_same_outputs(&self.gpu, expected);
         }
-        engine_profile::counter(
-            "interpolation.gpu_visited",
-            sparse.map_or(nodes, |_| self.gpu.visited) as f64,
-        );
+        engine_profile::counter("interpolation.gpu_visited", self.gpu.visited as f64);
         let gpu = &mut self.gpu;
         gpu.last_epoch = Some(epoch);
         gpu.last_revision = hierarchy.revision;
@@ -821,7 +822,9 @@ impl Walk<'_> {
 /// changed nodes, and the children of every visited node whose snap or active
 /// bit changed. Any other node has unchanged inputs and outputs: it was not
 /// active, has no record, and its parent's bits are unchanged, so it stays
-/// inactive with unchanged authority rows. Returns the stamps per stream.
+/// inactive with unchanged authority rows. A sparse gather whose distinct
+/// seeds exceed its bound walks every node instead. Returns the stamps per
+/// stream.
 fn walk(
     gpu: &mut GpuInputs,
     records: &Records<'_>,
@@ -884,25 +887,16 @@ fn walk(
         lists: stamped_lists,
         list_limit: nodes / 4,
     };
+    let limit = nodes / SPARSE_SHARE;
     let Some(changes) = sparse else {
-        // A later sparse gather needs the complete active set; beyond its
-        // bound none can be sparse, so stop listing.
-        let limit = nodes / SPARSE_SHARE;
-        let mut listed = true;
-        for &index in &hierarchy.order {
-            let (_, after) = gather.node(index);
-            if after & ACTIVE != 0 {
-                if next_active.len() < limit {
-                    next_active.push(index as u32);
-                } else {
-                    listed = false;
-                }
-            }
-        }
-        std::mem::swap(active, next_active);
-        *active_listed = listed;
-        *visited = nodes;
-        return gather.changed;
+        return walk_all(
+            &mut gather,
+            hierarchy,
+            active,
+            next_active,
+            active_listed,
+            visited,
+        );
     };
     *queue_generation = queue_generation.wrapping_add(1);
     if *queue_generation == 0 {
@@ -918,16 +912,33 @@ fn walk(
         if queued[index] != generation {
             queued[index] = generation;
             buckets[usize::from(links[index].depth())].push(index as u32);
+            true
+        } else {
+            false
         }
     };
+    let mut seeds = 0;
     for &index in active.iter().chain(changes) {
-        enqueue(&mut buckets[..], index as usize);
+        seeds += usize::from(enqueue(&mut buckets[..], index as usize));
     }
     for &index in records.history_nodes {
         // Records beyond the node budget have no node.
         if (index as usize) < nodes {
-            enqueue(&mut buckets[..], index as usize);
+            seeds += usize::from(enqueue(&mut buckets[..], index as usize));
         }
+    }
+    if seeds > limit {
+        for bucket in buckets.iter_mut() {
+            bucket.clear();
+        }
+        return walk_all(
+            &mut gather,
+            hierarchy,
+            active,
+            next_active,
+            active_listed,
+            visited,
+        );
     }
     let mut count = 0;
     for depth in 0..buckets.len() {
@@ -952,6 +963,36 @@ fn walk(
     std::mem::swap(active, next_active);
     *active_listed = true;
     *visited = count;
+    gather.changed
+}
+
+/// Gathers every node in parent-first order, listing the active ones.
+fn walk_all(
+    gather: &mut Walk<'_>,
+    hierarchy: &HierarchyScratch,
+    active: &mut Vec<u32>,
+    next_active: &mut Vec<u32>,
+    active_listed: &mut bool,
+    visited: &mut usize,
+) -> [usize; 4] {
+    // A later sparse gather needs the complete active set; beyond its bound
+    // none can be sparse, so stop listing.
+    let nodes = hierarchy.links.len();
+    let limit = nodes / SPARSE_SHARE;
+    let mut listed = true;
+    for &index in &hierarchy.order {
+        let (_, after) = gather.node(index);
+        if after & ACTIVE != 0 {
+            if next_active.len() < limit {
+                next_active.push(index as u32);
+            } else {
+                listed = false;
+            }
+        }
+    }
+    std::mem::swap(active, next_active);
+    *active_listed = listed;
+    *visited = nodes;
     gather.changed
 }
 
