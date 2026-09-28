@@ -33,8 +33,16 @@ glow target holding each pixel's exposed brightness above the threshold as
   nearer depth neighbors. The noise stays fixed from frame to frame: turned
   per frame, the temporal resolve's neighborhood clamp chased the changing
   darkness and still views flickered past the TAA smoke check's limit.
-  Applying it, four bilinear taps blur the samples over three texels and
-  darken only the pixel's ambient share.
+  A filter then averages each half-resolution texel with its 5x5 neighbors
+  on its surface, by a Gaussian: inverse distance from the eye changes
+  linearly across a plane on screen, so a neighbor counts while its inverse
+  distance stays within about 1% of the center's, extrapolated by the
+  center's slope toward its nearer neighbor on each axis. Applying it, four
+  bilinear taps smooth it over three texels and darken only the pixel's
+  ambient share. Without the filter, the eight turned samples left a
+  mottled, screen-fixed pattern wherever something partly occluded a
+  surface within the radius, strongest where ambient light is most of a
+  pixel's light: metal in shadow, which only reflects.
 - Bloom decodes the glowing light (color times its glow weight) into a
   half-resolution level, weighting taps by `1 / (1 + luminance)` so single
   pixels cannot flicker, filters it down five more levels and back up (a
@@ -50,8 +58,11 @@ glow target holding each pixel's exposed brightness above the threshold as
 
 ## Measurements
 
-None yet: to be measured with decisions 019 and 020, in particular the
-composite pass frames without temporal antialiasing now add.
+Firefox on the laptop's integrated GPU, Stress Lab Metro at 1512x792: the
+`ambient_occlusion` sample (the samples and their filter) takes 0.31 ms in
+the overview and 0.50 ms in the street-level view, of which the filter is
+0.14 and 0.20 ms; `bloom` takes 0.57 ms and `post_composite`, on frames
+without temporal antialiasing, 0.46 ms.
 
 ## Consequences
 

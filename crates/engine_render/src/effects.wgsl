@@ -31,8 +31,8 @@ struct Post {
 }
 
 // The factor darkening a pixel whose light has an ambient share of
-// `ambient` (the scene target's alpha) by the half-resolution occlusion at
-// `uv`. Four bilinear taps around the pixel blur the samples' noise over
+// `ambient` (the scene target's alpha) by the filtered half-resolution
+// occlusion at `uv`. Four bilinear taps around the pixel smooth it over
 // three texels.
 fn occlusion_factor(ambient: f32, occlusion: texture_2d<f32>, linear: sampler,
         uv: vec2<f32>, settings: Post) -> f32 {

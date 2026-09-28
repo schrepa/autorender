@@ -233,7 +233,8 @@ pyramid, the test and the second compaction), with `opaque_meshes` spanning
 both drawing phases and `render.occluded_instances` counting what it left
 undrawn; `render.subpixel_instances` counts the visible instances sub-pixel
 culling ([decision 041](adr-041-subpixel-culling.md)) left undrawn. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
-add `ambient_occlusion`, `bloom` (every level down and up) and, on frames
+add `ambient_occlusion` (the samples and their filter), `bloom` (every
+level down and up) and, on frames
 without temporal antialiasing, `post_composite`. Counters report
 `render.shadow_refresh` (0 no kept-map redraw, 1 a strip, 2 the whole map),
 `render.shadow_groups`, `render.shadow_draws` (indexed shadow draws, beside

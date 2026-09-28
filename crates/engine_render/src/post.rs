@@ -4,10 +4,10 @@
 //! Frames with an effect draw the scene into a color target whose alpha is the
 //! ambient share of each pixel's light, and a glow target of each pixel's
 //! exposed brightness above the bloom threshold and its reflectivity. Ambient
-//! occlusion samples the depth buffer at half resolution; reflections walk a
-//! pyramid of its nearest depths at half resolution and filter the result;
-//! sun shafts march the far shadow maps
-//! at half resolution; bloom filters the glowing light down a chain of
+//! occlusion samples the depth buffer at half resolution and filters the
+//! result on each surface; reflections walk a pyramid of its nearest depths
+//! at half resolution and filter the result; sun shafts march the far shadow
+//! maps at half resolution; bloom filters the glowing light down a chain of
 //! half-resolution levels and back up. Temporally antialiased frames
 //! (decision 017) apply them in their resolve, other frames in a composite
 //! that writes the canvas.
@@ -22,6 +22,8 @@ pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8U
 /// Glow weight (decision 021) and reflectivity (decision 025).
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// Occlusion before its filter, and each texel's distance from the eye.
+const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Reflected color and weight (decision 025).
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -41,12 +43,16 @@ pub(crate) struct PostFrame {
 
 struct Targets {
     size: (u32, u32),
-    // Scene, glow, occlusion, bloom, reflections, shafts and traced
-    // reflections, destroyed with the targets.
-    textures: [wgpu::Texture; 7],
+    // Scene, glow, occlusion, bloom, reflections, shafts, traced
+    // reflections and raw occlusion, destroyed with the targets.
+    textures: [wgpu::Texture; 8],
     scene: wgpu::TextureView,
     glow: wgpu::TextureView,
+    // Filtered occlusion, which the composite and resolve read, and the raw
+    // occlusion the filter reads through its group.
     occlusion: wgpu::TextureView,
+    raw_occlusion: wgpu::TextureView,
+    occlusion_filter: wgpu::BindGroup,
     // Filtered reflections, which the composite and resolve read, and the
     // traced ones the filter reads.
     reflections: wgpu::TextureView,
@@ -72,6 +78,7 @@ impl Drop for Targets {
 
 pub(crate) struct PostPass {
     occlusion: wgpu::RenderPipeline,
+    occlusion_filter: wgpu::RenderPipeline,
     reflections: wgpu::RenderPipeline,
     reflections_filter: wgpu::RenderPipeline,
     // Nearest depths the reflection rays walk, created with the first frame
@@ -228,6 +235,13 @@ impl PostPass {
             occlusion: pipeline(
                 "engine/post-occlusion",
                 "fs_occlusion",
+                RAW_OCCLUSION_FORMAT,
+                None,
+                None,
+            ),
+            occlusion_filter: pipeline(
+                "engine/post-occlusion-filter",
+                "fs_occlusion_filter",
                 OCCLUSION_FORMAT,
                 None,
                 None,
@@ -306,13 +320,13 @@ impl PostPass {
     }
 
     /// Target bytes: scene (4) and glow (2) per pixel, at half resolution
-    /// occlusion (1), traced and filtered reflections (8 each), shafts (2)
-    /// and the bloom chain (8 bytes per texel of its first level), and the
-    /// reflections' depth pyramid.
+    /// raw and filtered occlusion (4 and 1), traced and filtered reflections
+    /// (8 each), shafts (2) and the bloom chain (8 bytes per texel of its
+    /// first level), and the reflections' depth pyramid.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.targets.as_ref().map_or(0, |targets| {
             let pixels = u64::from(targets.size.0) * u64::from(targets.size.1);
-            pixels * 6 + pixels / 4 * 19 + pixels / 4 * 8 * 4 / 3
+            pixels * 6 + pixels / 4 * 23 + pixels / 4 * 8 * 4 / 3
         }) + self.nearest.capacity_bytes()
     }
 
@@ -541,10 +555,10 @@ impl PostPass {
     /// Records ambient occlusion, reflections, sun shafts (over the camera
     /// group `camera` of the main passes) and bloom after the opaque and
     /// transparent passes. With `timestamps` (a query set and its first
-    /// index), occlusion writes queries `first` and `first + 1`, bloom
-    /// `first + 2` and `first + 3`, reflections (their depth pyramid, trace
-    /// and filter) `first + 6` and `first + 7` and shafts `first + 8` and
-    /// `first + 9`.
+    /// index), occlusion (its samples and filter) writes queries `first` and
+    /// `first + 1`, bloom `first + 2` and `first + 3`, reflections (their
+    /// depth pyramid, trace and filter) `first + 6` and `first + 7` and
+    /// shafts `first + 8` and `first + 9`.
     pub(crate) fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -556,15 +570,27 @@ impl PostPass {
         if frame.occlusion
             && let Some((_, _, group)) = &self.occlusion_group
         {
+            {
+                let mut pass = fullscreen_pass(
+                    encoder,
+                    "engine/post-occlusion",
+                    &targets.raw_occlusion,
+                    wgpu::LoadOp::Clear(wgpu::Color::RED),
+                    timestamps.map(|(set, first)| (set, Some(first), None)),
+                );
+                pass.set_pipeline(&self.occlusion);
+                pass.set_bind_group(0, group, &[]);
+                pass.draw(0..3, 0..1);
+            }
             let mut pass = fullscreen_pass(
                 encoder,
-                "engine/post-occlusion",
+                "engine/post-occlusion-filter",
                 &targets.occlusion,
                 wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                timestamps.map(|(set, first)| (set, Some(first), Some(first + 1))),
+                timestamps.map(|(set, first)| (set, None, Some(first + 1))),
             );
-            pass.set_pipeline(&self.occlusion);
-            pass.set_bind_group(0, group, &[]);
+            pass.set_pipeline(&self.occlusion_filter);
+            pass.set_bind_group(0, &targets.occlusion_filter, &[]);
             pass.draw(0..3, 0..1);
         }
         if frame.reflections
@@ -706,8 +732,18 @@ impl PostPass {
             texture("engine/post-reflections", half, REFLECTION_FORMAT, 1),
             texture("engine/post-shafts", half, SHAFT_FORMAT, 1),
             texture("engine/post-reflections-traced", half, REFLECTION_FORMAT, 1),
+            texture("engine/post-occlusion-raw", half, RAW_OCCLUSION_FORMAT, 1),
         ];
-        let [scene, glow, occlusion, _, reflections, shafts, traced] = textures
+        let [
+            scene,
+            glow,
+            occlusion,
+            _,
+            reflections,
+            shafts,
+            traced,
+            raw_occlusion,
+        ] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         let bloom: Vec<wgpu::TextureView> = (0..levels)
@@ -734,6 +770,7 @@ impl PostPass {
                 entries,
             })
         };
+        let occlusion_filter = group(&self.occlusion_filter, &[texture_entry(12, &raw_occlusion)]);
         let bloom_first = group(
             &self.bloom_first,
             &[
@@ -777,6 +814,8 @@ impl PostPass {
             scene,
             glow,
             occlusion,
+            raw_occlusion,
+            occlusion_filter,
             reflections,
             traced,
             shafts,

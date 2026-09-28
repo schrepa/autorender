@@ -1,5 +1,6 @@
 // Screen effects (decisions 021 and 025), prepended with effects.wgsl.
-// Ambient occlusion samples the depth buffer at half resolution;
+// Ambient occlusion samples the depth buffer at half resolution and filters
+// the result;
 // screen-space reflections trace reflected rays through it at half
 // resolution; bloom filters the scene's glowing light down a chain of
 // half-resolution levels and back up; the composite applies them and sun
@@ -26,6 +27,9 @@
 // across; and the traced reflections the filter smooths.
 @group(0) @binding(10) var nearest_depth: texture_2d<f32>;
 @group(0) @binding(11) var traced: texture_2d<f32>;
+// Ambient occlusion before its filter: visibility, and the distance from
+// the eye (0 where only sky is).
+@group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -56,14 +60,15 @@ fn world_at(pixel: vec2<i32>) -> vec4<f32> {
 
 // Scalable ambient obscurance (McGuire et al.) over eight samples: each
 // sample closer to the surface's tangent plane than the radius occludes by
-// how far above that plane, and how close, it is.
+// how far above that plane, and how close, it is. Writes the visibility and
+// the distance from the eye, which the filter compares.
 @fragment
-fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
+fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
     let pixel = min(vec2<i32>(position.xy) * 2, last);
     let center = world_at(pixel);
     if center.w == 0.0 {
-        return 1.0;
+        return vec2<f32>(1.0, 0.0);
     }
     let p = center.xyz;
     // The normal from the nearer neighbor on each axis keeps silhouettes
@@ -75,20 +80,20 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
     let across = select(right, left, dot(left, left) < dot(right, right));
     let along = select(down, up, dot(up, up) < dot(down, down));
     let to_eye = post.eye.xyz - p;
+    let distance = length(to_eye);
     var normal = cross(along, across);
     let length_squared = dot(normal, normal);
     if !(length_squared > 0.0) {
-        return 1.0;
+        return vec2<f32>(1.0, distance);
     }
     normal = normal * inverseSqrt(length_squared);
     if dot(normal, to_eye) < 0.0 {
         normal = -normal;
     }
-    let distance = length(to_eye);
     let radius = post.occlusion.x;
     let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
     if pixels < 1.0 {
-        return 1.0;
+        return vec2<f32>(1.0, distance);
     }
     // Interleaved gradient noise turns the spiral per pixel. It stays the
     // same every frame: turning it would let the temporal resolve's clamp
@@ -113,7 +118,60 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
     }
     let radius6 = radius2 * radius2 * radius2;
     let obscurance = clamp(sum * (5.0 / f32(SAMPLES)) / radius6, 0.0, 1.0);
-    return 1.0 - post.occlusion.y * obscurance;
+    return vec2<f32>(1.0 - post.occlusion.y * obscurance, distance);
+}
+
+// How far, relative to its own, a neighbor's inverse distance may lie from
+// the center's plane before the filter stops counting it.
+const OCCLUSION_PLANE: f32 = 0.01;
+
+// The inverse distance of a raw occlusion texel: 0 for sky, which lies
+// infinitely far.
+fn inverse_distance(texel: vec2<i32>) -> f32 {
+    let distance = textureLoad(raw_occlusion, texel, 0).y;
+    return select(0.0, 1.0 / distance, distance > 0.0);
+}
+
+// The occlusion over each half-resolution texel's 5x5 neighbors on its
+// surface, weighted by a Gaussian: the eight samples' per-pixel turns average
+// out instead of mottling what the ambient light mostly shades (metal in
+// shadow). Inverse distance changes linearly across a plane on screen, so a
+// neighbor counts while its inverse distance lies near the center's
+// extrapolated by the center's slope toward its nearer neighbor on each axis.
+@fragment
+fn fs_occlusion_filter(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
+    let texel = vec2<i32>(position.xy);
+    let last = vec2<i32>(textureDimensions(raw_occlusion)) - 1;
+    let center = textureLoad(raw_occlusion, texel, 0);
+    if !(center.y > 0.0) {
+        return center.x;
+    }
+    let inverse = 1.0 / center.y;
+    let right = inverse_distance(min(texel + vec2<i32>(1, 0), last)) - inverse;
+    let left = inverse - inverse_distance(max(texel - vec2<i32>(1, 0), vec2<i32>(0)));
+    let down = inverse_distance(min(texel + vec2<i32>(0, 1), last)) - inverse;
+    let up = inverse - inverse_distance(max(texel - vec2<i32>(0, 1), vec2<i32>(0)));
+    let slope = vec2<f32>(
+        select(right, left, abs(left) < abs(right)),
+        select(down, up, abs(up) < abs(down)),
+    );
+    let tolerance = OCCLUSION_PLANE * inverse;
+    var sum = 0.0;
+    var total = 0.0;
+    for (var y = -2; y <= 2; y++) {
+        for (var x = -2; x <= 2; x++) {
+            let offset = vec2<i32>(x, y);
+            let neighbor = clamp(texel + offset, vec2<i32>(0), last);
+            let sample = textureLoad(raw_occlusion, neighbor, 0);
+            let sample_inverse = select(0.0, 1.0 / sample.y, sample.y > 0.0);
+            let expected = inverse + dot(slope, vec2<f32>(offset));
+            let plane = saturate(1.25 - abs(sample_inverse - expected) / tolerance);
+            let weight = exp(-f32(x * x + y * y) / 8.0) * plane;
+            sum += sample.x * weight;
+            total += weight;
+        }
+    }
+    return sum / total;
 }
 
 // Reflection rays walk at most this many cells of the depth pyramid.
