@@ -156,6 +156,9 @@ pub struct FrameStats {
     pub reflections: bool,
     /// Glass refracted the opaque scene (decision 038).
     pub refraction: bool,
+    /// Whether the visibility buffer resolved the camera's virtual geometry
+    /// (decision 045).
+    pub visibility_buffer: bool,
     /// Transparent draws, particles drawn and particles a budget or the
     /// GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
@@ -248,6 +251,9 @@ pub struct BrowserStats {
     pub reflections: bool,
     /// Whether glass refracted the opaque scene (decision 038).
     pub refraction: bool,
+    /// Whether the visibility buffer resolved the camera's virtual geometry
+    /// (decision 045).
+    pub visibility_buffer: bool,
     /// Transparent draws, included in `draw_calls`, particles drawn and
     /// particles a budget or the GPU's bindings left out (decision 026).
     pub transparent_draws: u32,
@@ -339,6 +345,7 @@ impl From<FrameStats> for BrowserStats {
             sun_shafts: stats.sun_shafts,
             reflections: stats.reflections,
             refraction: stats.refraction,
+            visibility_buffer: stats.visibility_buffer,
             transparent_draws: stats.transparent_draws,
             particles: stats.particles,
             dropped_particles: stats.dropped_particles,
@@ -724,6 +731,7 @@ impl BrowserApp {
             sun_shafts: rendered.sun_shafts,
             reflections: rendered.reflections,
             refraction: rendered.refraction,
+            visibility_buffer: rendered.visibility_buffer,
             transparent_draws: rendered.transparent_draws,
             particles: rendered.particles,
             dropped_particles: rendered.dropped_particles,

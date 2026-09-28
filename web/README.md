@@ -99,7 +99,9 @@ loading fetches under a quarter of the files' bytes (their prefixes); the
 `VirtualGeometry` settings are discoverable and read as their environment
 section; at a street-level and a ground-level camera, once pages stop loading
 and the views lack none, GPU-presented captures (which cull occluded and
-sub-pixel clusters) match CPU captures within 0.1% of pixels, clusters draw and
+sub-pixel clusters) match CPU captures within 0.1% of pixels, both resolve
+through the visibility buffer and match forward shading within 0.1% of pixels
+([decision 045](../docs/adr-045-visibility-buffer.md)), clusters draw and
 cast shadows and nothing is dropped; pages streamed beyond the pinned ones; a
 budget of 8 pages keeps at most 8 resident, reports the rest missing and dropped,
 and captures still match; a pixel error of 6 draws fewer triangles, disabling

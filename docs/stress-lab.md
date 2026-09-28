@@ -110,6 +110,9 @@ the camera's clusters occlusion culling left undrawn
 entries dropped for want of room (`dropped_virtual`), and the pages resident,
 loading, wanted and lacking, and finding no room (`virtual_resident_pages`,
 `virtual_loading_pages`, `virtual_missing_pages`, `dropped_virtual_pages`).
+Clusters shade through the visibility buffer
+([decision 045](adr-045-visibility-buffer.md), `visibility_buffer`);
+`?visibility=off` shades them as they draw, for comparison.
 
 ## Measurement
 

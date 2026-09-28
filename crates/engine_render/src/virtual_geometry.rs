@@ -1520,6 +1520,19 @@ impl VirtualGeometryPass {
         self.read_counters(device, encoder);
     }
 
+    /// Every bin's selected clusters (visible ID and cluster), and a
+    /// generation that advances when the buffer is replaced.
+    pub(crate) fn visible(&self) -> (&wgpu::Buffer, u64) {
+        (&self.visible, self.frame_generation)
+    }
+
+    /// Bin `bin`'s first entry of [`Self::visible`].
+    pub(crate) fn bin_base(&self, bin: usize) -> u32 {
+        self.bin_regions
+            .get(bin)
+            .map_or(0, |&(base, _)| base as u32)
+    }
+
     /// The selected clusters of bin `bin` (an instance-stepped vertex stream
     /// of visible ID and cluster) and its indirect draw arguments.
     pub(crate) fn bin_source(&self, bin: usize) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {

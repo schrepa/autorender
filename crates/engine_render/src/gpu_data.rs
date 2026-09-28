@@ -408,6 +408,8 @@ pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
 pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
 /// Cluster selection of virtual geometry (decision 044).
 pub(crate) const VIRTUAL_SHADER: &str = include_str!("virtual_geometry.wgsl");
+/// Tile classification of the visibility buffer (decision 045).
+pub(crate) const VISIBILITY_SHADER: &str = include_str!("visibility.wgsl");
 /// Temporal antialiasing resolve (decision 017), after the shared effects.
 pub(crate) const TEMPORAL_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
@@ -596,6 +598,10 @@ impl Variant {
 
     pub(crate) fn double_sided(self) -> bool {
         self.0 & Self::DOUBLE_SIDED != 0
+    }
+
+    pub(crate) fn alpha_mask(self) -> bool {
+        self.0 & Self::ALPHA_MASK != 0
     }
 
     /// This variant drawing a mesh with a second vertex stream, or not.
@@ -1420,6 +1426,9 @@ mod tests {
             .with_double_sided(true);
         assert_eq!(constants(Variant::of(&masked)), [1.0, 0.0, 1.0, 1.0, 0.0]);
         assert!(Variant::of(&masked).double_sided());
+        // The visibility buffer (decision 045) leaves masked materials to
+        // forward drawing.
+        assert!(Variant::of(&masked).alpha_mask() && !Variant::of(&plain).alpha_mask());
         // Blending reads texture alpha as coverage.
         let glass = plain
             .with_opacity(0.5)
@@ -1577,6 +1586,7 @@ mod tests {
             DEPTH_PYRAMID_SHADER,
             ENVIRONMENT_SHADER,
             VIRTUAL_SHADER,
+            VISIBILITY_SHADER,
         ] {
             let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
             // Cube arrays (the environment maps, decision 043) are core

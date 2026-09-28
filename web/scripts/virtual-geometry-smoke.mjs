@@ -142,6 +142,16 @@ try {
     const gpu = await capture(`${camera.label}-gpu`, true);
     const pixels = await differentPixels([cpu.png, gpu.png], 8);
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
+    // Both resolve through the visibility buffer (decision 045); shading as
+    // clusters draw instead shows the same surfaces.
+    assert.ok(cpu.rendering.visibility_buffer && gpu.rendering.visibility_buffer, `${camera.label}: visibility buffer`);
+    await command("environment", { virtual_geometry: { visibility_buffer: false } });
+    const forward = await capture(`${camera.label}-forward`, true);
+    await command("environment", { virtual_geometry: { visibility_buffer: true } });
+    assert.equal(forward.rendering.visibility_buffer, false);
+    const forwardPixels = await differentPixels([gpu.png, forward.png], 8);
+    assert.ok(forwardPixels.changed <= forwardPixels.total * 0.001,
+      `${camera.label}: ${forwardPixels.changed} of ${forwardPixels.total} pixels differ from forward shading`);
     const rendering = gpu.rendering;
     assert.ok(rendering.virtual_clusters > 0 && rendering.virtual_triangles > 0, `${camera.label}: clusters drawn`);
     assert.ok(rendering.virtual_shadow_clusters > 0 && rendering.virtual_shadow_triangles > 0, `${camera.label}: clusters cast shadows`);
@@ -149,7 +159,8 @@ try {
     assert.equal(rendering.virtual_loading_pages, 0, `${camera.label}: streaming settled`);
     assert.equal(rendering.virtual_missing_pages, 0, `${camera.label}: every page the view wants is resident`);
     cases.push({
-      label: camera.label, changed_pixels: pixels.changed, clusters: rendering.virtual_clusters,
+      label: camera.label, changed_pixels: pixels.changed, forward_changed_pixels: forwardPixels.changed,
+      clusters: rendering.virtual_clusters,
       triangles: rendering.virtual_triangles, shadow_triangles: rendering.virtual_shadow_triangles,
       occluded_clusters: rendering.virtual_occluded_clusters, resident_pages: rendering.virtual_resident_pages,
     });
@@ -197,7 +208,7 @@ try {
   console.log(JSON.stringify({
     ok: true, url: url.href, artifact: output, cases, loaded_bytes: loadedBytes, file_bytes: fileBytes, streamed,
     pixel_error: { fine: fine.virtual_triangles, coarse: coarseRendering.virtual_triangles },
-    checks: ["prefixes_load", "settings_discoverable", "gpu_cpu_pixel_equivalence", "clusters_drawn", "cluster_shadows", "nothing_dropped", "pages_stream", "budget_bounds_pages", "pixel_error_control", "fallback_when_disabled", "invalid_settings_refused", "clean_browser_diagnostics"],
+    checks: ["prefixes_load", "settings_discoverable", "gpu_cpu_pixel_equivalence", "visibility_buffer_matches_forward", "clusters_drawn", "cluster_shadows", "nothing_dropped", "pages_stream", "budget_bounds_pages", "pixel_error_control", "fallback_when_disabled", "invalid_settings_refused", "clean_browser_diagnostics"],
   }));
 } finally {
   await browser.close();

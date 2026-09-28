@@ -78,7 +78,7 @@ function setup(t, options = {}) {
         shadow_near_casters: undefined, shadow_moving_casters: 5, shadow_kept_casters: 0,
         ambient_occlusion: true, bloom: false,
         local_lights: 3, dropped_lights: 0, lights_visible: undefined, light_cluster_overflow: 0,
-        sun_shafts: false, reflections: true, refraction: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined, subpixel_instances: undefined,
+        sun_shafts: false, reflections: true, refraction: false, visibility_buffer: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined, subpixel_instances: undefined,
         reflection_probes: 3, reflection_probe_faces: 1, dropped_reflection_probes: 0,
         virtual_clusters: 0, virtual_triangles: 0, virtual_shadow_clusters: 0, virtual_shadow_triangles: 0, virtual_occluded_clusters: 0, dropped_virtual: 0,
         virtual_resident_pages: 0, virtual_loading_pages: 0, virtual_missing_pages: 0, dropped_virtual_pages: 0,

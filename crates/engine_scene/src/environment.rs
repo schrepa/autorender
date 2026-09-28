@@ -653,6 +653,15 @@ pub struct SceneVirtualGeometry {
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_resident_pages: Option<u32>,
+    /// Whether the camera's clusters shade through the visibility buffer
+    /// (decision 045), each pixel once; false shades them as they draw.
+    /// Omitted, true.
+    #[serde(skip_serializing_if = "is_yes")]
+    pub visibility_buffer: bool,
+}
+
+fn is_yes(value: &bool) -> bool {
+    *value
 }
 
 impl Default for SceneVirtualGeometry {
@@ -667,6 +676,7 @@ impl From<&VirtualGeometry> for SceneVirtualGeometry {
             enabled: settings.enabled,
             pixel_error: settings.pixel_error,
             max_resident_pages: settings.max_resident_pages,
+            visibility_buffer: settings.visibility_buffer,
         }
     }
 }
@@ -687,6 +697,7 @@ impl SceneVirtualGeometry {
             enabled: self.enabled,
             pixel_error: self.pixel_error,
             max_resident_pages: self.max_resident_pages,
+            visibility_buffer: self.visibility_buffer,
         })
     }
 }

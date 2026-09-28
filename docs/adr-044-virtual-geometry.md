@@ -1,12 +1,13 @@
 # Decision 044: Virtual geometry
 
-Status: five stages adopted. Offline cluster hierarchies, their file
+Status: all six stages adopted. Offline cluster hierarchies, their file
 format, GPU cluster selection, forward drawing and cluster shadows work on
 retained frames, both GPU-presented and CPU-prepared; GPU-presented frames
 also cull occluded and sub-pixel clusters. Scenes reference virtual meshes,
 the importer builds them, and agents control and observe them. Hosts load
-each file's coarse prefix, and pages stream in as views need them. A
-visibility buffer comes later (see Stages).
+each file's coarse prefix, and pages stream in as views need them. The
+camera's clusters shade through a visibility buffer
+([decision 045](adr-045-visibility-buffer.md)).
 
 ## Context
 
@@ -97,7 +98,7 @@ transparent batches, and reflection probe captures.
 ### Settings
 
 The `VirtualGeometry` resource is inserted by default and holds `enabled`,
-`pixel_error` and `max_resident_pages`. `pixel_error` is the largest
+`pixel_error`, `max_resident_pages` and `visibility_buffer` (decision 045). `pixel_error` is the largest
 simplification error a drawn cluster may show, in pixels of viewport height.
 It defaults to 1.5 and is sanitized into [0.25, 64]. `max_resident_pages` is
 an optional budget of streamed pages (see Streaming), none by default and at
@@ -184,7 +185,11 @@ corners past a cluster's own triangles outside the view. Fragment stages
 are those of ordinary meshes. Received shadows, local lights, reflections,
 ambient occlusion and temporal antialiasing all apply unchanged. On
 temporally antialiased frames, moving instances read their previous poses
-for motion.
+for motion. By default the bins instead draw into a visibility buffer and
+shade each pixel once afterwards
+([decision 045](adr-045-visibility-buffer.md)); this forward drawing remains
+for alpha-masked materials, with `VirtualGeometry::visibility_buffer` off, and
+where the device binds too few storage buffers.
 
 Occlusion culling (decision 040) never tests batches of virtual meshes per
 instance; their clusters are tested instead (see Occlusion below).
@@ -356,8 +361,8 @@ page pool grows as Streaming describes, with an optional budget.
    (this record).
 4. Authoring: scene sources, import, the environment section, the
    inspector and a smoke check (this record).
-5. A visibility buffer: rasterize instance, cluster and triangle IDs, then
-   shade each material in its own pass.
+5. A visibility buffer: rasterize which triangle covers each pixel, then
+   shade each material's pixels in its own pass (decision 045).
 6. Streaming: pinned coarse pages stay resident, views request pages
    through read-back, and a growing pool evicts the least recently used
    pages under an optional budget (this record).

@@ -16,6 +16,11 @@ pub struct VirtualGeometry {
     /// beyond it the least recently used make room, and pinned pages always
     /// stay. Without one, only the device's limits bound them.
     pub max_resident_pages: Option<u32>,
+    /// Whether the camera's clusters shade through the visibility buffer
+    /// (decision 045): each pixel once, after all of them are drawn. Off,
+    /// or where the device binds too few storage buffers, they shade as
+    /// they draw.
+    pub visibility_buffer: bool,
 }
 
 impl Default for VirtualGeometry {
@@ -24,6 +29,7 @@ impl Default for VirtualGeometry {
             enabled: true,
             pixel_error: 1.5,
             max_resident_pages: None,
+            visibility_buffer: true,
         }
     }
 }
@@ -41,6 +47,7 @@ impl VirtualGeometry {
             enabled: self.enabled,
             pixel_error,
             max_resident_pages: self.max_resident_pages.map(|pages| pages.max(1)),
+            visibility_buffer: self.visibility_buffer,
         }
     }
 }

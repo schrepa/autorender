@@ -258,7 +258,10 @@ few frames late), its streamed pages as `render.virtual_resident_pages`,
 `memory.gpu_virtual_bytes` (its arena, queues and selected clusters), and times
 `virtual_selection` (every selection dispatch, the camera's and the shadow
 maps' together; the clusters draw within `opaque_meshes` and the shadow maps'
-samples, and the retest after phase one runs within `occlusion`). In a settled scene the moving count equals the
+samples, and the retest after phase one runs within `occlusion`). The
+visibility buffer's passes ([decision 045](adr-045-visibility-buffer.md)),
+its tile classification and its resolves run within `opaque_meshes`, and its
+target and tile lists count in `memory.gpu_virtual_bytes`. In a settled scene the moving count equals the
 moving renderables and `render.shadow_refresh` stays 0; separate frames whose
 kept map redrew whole, which draw every still caster. The Stress Lab's
 `?effects=` compares effects within one build.

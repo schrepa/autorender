@@ -105,6 +105,24 @@ struct VirtualMeshRecord {
 @group(2) @binding(7) var<storage, read> virtual_pages: array<u32>;
 const VIRTUAL_PAGE_WORDS: u32 = 32768u;
 
+// The visibility buffer (decision 045): each pixel of virtual geometry
+// holds its selected cluster's entry in `visible_clusters` plus one (0: no
+// cluster) and its triangle | bin << 7; each material bin's resolve then
+// shades the pixels of its 8x8 tiles. A draw's uniform: the bin's first
+// entry this phase, the bin, where its tile list starts and the tiles
+// across the viewport.
+struct VisibilityDraw {
+    visible_base: u32,
+    bin: u32,
+    tile_base: u32,
+    tiles_across: u32,
+}
+@group(2) @binding(8) var<uniform> visibility_draw: VisibilityDraw;
+// Visible ID and cluster of each selected cluster, by bin.
+@group(2) @binding(9) var<storage, read> visible_clusters: array<vec2<u32>>;
+@group(2) @binding(10) var visibility_ids: texture_2d<u32>;
+@group(2) @binding(11) var<storage, read> resolve_tiles: array<u32>;
+
 // Local lights (decision 023), binned into view clusters by lights.wgsl.
 struct Clusters {
     view_projection: mat4x4<f32>,
@@ -319,6 +337,32 @@ fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
     output.material = vertex.material;
     output.previous = previous.xyw;
     return output;
+}
+
+// The visibility pass (decision 045): a selected cluster's triangles, posed
+// and projected as `vs_virtual` does, write which triangle covers each
+// pixel. Its entry is the bin's first this phase plus the instance.
+struct VisibilityOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) @interpolate(flat) ids: vec2<u32>,
+}
+
+@vertex
+fn vs_visibility(input: VirtualInput, @builtin(instance_index) instance: u32)
+        -> VisibilityOutput {
+    let corner = virtual_corner(input.cluster, input.vertex);
+    let model = pose_matrix(poses[input.slot & ~MOVED_SLOT]);
+    var output: VisibilityOutput;
+    output.clip_position = select(COLLAPSED,
+        camera.view_projection * (model * vec4<f32>(corner.position, 1.0)), corner.valid);
+    output.ids = vec2<u32>(visibility_draw.visible_base + instance + 1u,
+        (input.vertex / 3u) | (visibility_draw.bin << 7u));
+    return output;
+}
+
+@fragment
+fn fs_visibility(input: VisibilityOutput) -> @location(0) vec2<u32> {
+    return input.ids;
 }
 
 @vertex
@@ -607,82 +651,168 @@ fn mapped_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: v
     return stable_normalize(tangent * deflection.x - bitangent * deflection.y + normal * sampled.z);
 }
 
-// Sampling uses implicit derivatives, so callers build the point in uniform
-// control flow; what follows may not be. `color` is linear color and
-// opacity; `front` whether the surface faces the camera.
-fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
-        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
+// What a surface point reads from its material's maps: the base color
+// texel, the roughness and metalness factors, the occlusion and emissive
+// texels, and the normal map's normal with its coordinates' screen
+// derivatives. Materials without maps read the base color alone.
+struct MaterialTexels {
+    base: vec4<f32>,
+    factors: vec2<f32>,
+    occlusion: f32,
+    emissive: vec3<f32>,
+    normal: vec3<f32>,
+    normal_dx: vec2<f32>,
+    normal_dy: vec2<f32>,
+}
+
+fn untextured() -> MaterialTexels {
+    var texels: MaterialTexels;
+    texels.factors = vec2<f32>(1.0);
+    texels.occlusion = 1.0;
+    texels.normal = vec3<f32>(0.0, 0.0, 1.0);
+    return texels;
+}
+
+// The texels of texture coordinates `uv` and `uv1` with implicit
+// derivatives, so callers sample in uniform control flow.
+fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
+    var texels = untextured();
     // RGBA8UnormSrgb sampling decodes source RGB; alpha masks emission and,
     // with maps, is coverage.
     var base_uv = uv;
     if MATERIAL_MAPS {
         base_uv = map_uv(0u, uv, uv1);
     }
-    let texel = textureSample(base_color_texture, base_color_sampler, base_uv);
-    let world_dx = dpdx(world);
-    let world_dy = dpdy(world);
+    texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
+    if MATERIAL_MAPS {
+        // glTF: green is roughness and blue metalness.
+        texels.factors = textureSample(metallic_roughness_texture, metallic_roughness_sampler,
+            map_uv(1u, uv, uv1)).gb;
+        texels.occlusion = textureSample(occlusion_texture, occlusion_sampler,
+            map_uv(3u, uv, uv1)).r;
+        texels.emissive = textureSample(emissive_texture, emissive_sampler,
+            map_uv(4u, uv, uv1)).rgb;
+    }
+    if NORMAL_MAP {
+        let normal_uv = map_uv(2u, uv, uv1);
+        texels.normal = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
+        texels.normal_dx = dpdx(normal_uv);
+        texels.normal_dy = dpdy(normal_uv);
+    }
+    return texels;
+}
+
+// How the texture coordinates of both sets change per pixel across and
+// down.
+struct UvGradients {
+    dx: vec2<f32>,
+    dy: vec2<f32>,
+    dx1: vec2<f32>,
+    dy1: vec2<f32>,
+}
+
+// How map `index`'s coordinates change for changes `d` and `d1` of the first
+// and second sets: its transform's linear part.
+fn map_gradient(index: u32, d: vec2<f32>, d1: vec2<f32>) -> vec2<f32> {
+    let second = ((u32(material_maps.params.w) >> index) & 1u) == 1u;
+    let change = vec3<f32>(select(d, d1, second), 0.0);
+    return vec2<f32>(dot(material_maps.transforms[index * 2u].xyz, change),
+        dot(material_maps.transforms[index * 2u + 1u].xyz, change));
+}
+
+// `material_texels` with explicit derivatives, for pixels shading triangles
+// their neighbors may not share (decision 045).
+fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
+        -> MaterialTexels {
+    var texels = untextured();
+    var base_uv = uv;
+    var base_dx = gradients.dx;
+    var base_dy = gradients.dy;
+    if MATERIAL_MAPS {
+        base_uv = map_uv(0u, uv, uv1);
+        base_dx = map_gradient(0u, gradients.dx, gradients.dx1);
+        base_dy = map_gradient(0u, gradients.dy, gradients.dy1);
+    }
+    texels.base = textureSampleGrad(base_color_texture, base_color_sampler, base_uv, base_dx,
+        base_dy);
+    if MATERIAL_MAPS {
+        texels.factors = textureSampleGrad(metallic_roughness_texture,
+            metallic_roughness_sampler, map_uv(1u, uv, uv1),
+            map_gradient(1u, gradients.dx, gradients.dx1),
+            map_gradient(1u, gradients.dy, gradients.dy1)).gb;
+        texels.occlusion = textureSampleGrad(occlusion_texture, occlusion_sampler,
+            map_uv(3u, uv, uv1), map_gradient(3u, gradients.dx, gradients.dx1),
+            map_gradient(3u, gradients.dy, gradients.dy1)).r;
+        texels.emissive = textureSampleGrad(emissive_texture, emissive_sampler,
+            map_uv(4u, uv, uv1), map_gradient(4u, gradients.dx, gradients.dx1),
+            map_gradient(4u, gradients.dy, gradients.dy1)).rgb;
+    }
+    if NORMAL_MAP {
+        texels.normal_dx = map_gradient(2u, gradients.dx, gradients.dx1);
+        texels.normal_dy = map_gradient(2u, gradients.dy, gradients.dy1);
+        texels.normal = textureSampleGrad(normal_texture, normal_sampler, map_uv(2u, uv, uv1),
+            texels.normal_dx, texels.normal_dy).xyz * 2.0 - 1.0;
+    }
+    return texels;
+}
+
+// The shading normal of a point whose geometric normal is `geometric`: bent
+// by the normal map's `sampled` normal along the tangent frame of the world
+// position's and the map's coordinates' screen derivatives, then by
+// `ripples`.
+fn shading_normal(geometric: vec3<f32>, world: vec3<f32>, world_dx: vec3<f32>,
+        world_dy: vec3<f32>, sampled: vec3<f32>, normal_dx: vec2<f32>, normal_dy: vec2<f32>,
+        ripples: f32) -> vec3<f32> {
+    var normal = geometric;
+    if NORMAL_MAP {
+        normal = mapped_normal(geometric, world_dx, world_dy, normal_dx, normal_dy, sampled,
+            material_maps.params.x);
+    }
+    if ripples > 0.0 {
+        normal = rippled(normal, world, ripples);
+    }
+    return normal;
+}
+
+// The geometric normal of interpolated normal `surface_normal`: back faces
+// of double-sided materials are lit from their own side.
+fn geometric_normal(surface_normal: vec3<f32>, front: bool) -> vec3<f32> {
+    let geometric = stable_normalize(surface_normal);
+    if DOUBLE_SIDED && !front {
+        return -geometric;
+    }
+    return geometric;
+}
+
+// The point of `texels` sampled there, before specular antialiasing. `color`
+// is linear color and opacity; `front` whether the surface faces the camera.
+fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
+        world_dx: vec3<f32>, world_dy: vec3<f32>, texels: MaterialTexels, packed: u32,
+        front: bool) -> SurfacePoint {
     // Roughness, metalness, emission over 16 and ripples.
     let surface = unpack4x8unorm(packed);
     var point: SurfacePoint;
-    point.albedo = texel.rgb * color.rgb;
+    point.albedo = texels.base.rgb * color.rgb;
     point.opacity = color.a;
-    point.emission = surface.z * 16.0 * texel.a;
+    point.emission = surface.z * 16.0 * texels.base.a;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
     var roughness = surface.x;
     var metalness = surface.y;
     if MATERIAL_MAPS {
-        point.opacity *= texel.a;
-        // glTF: green is roughness and blue metalness.
-        let packed_map = textureSample(metallic_roughness_texture, metallic_roughness_sampler,
-            map_uv(1u, uv, uv1));
-        roughness *= packed_map.g;
-        metalness *= packed_map.b;
-        let occluded = textureSample(occlusion_texture, occlusion_sampler,
-            map_uv(3u, uv, uv1)).r;
-        point.occlusion = 1.0 + material_maps.params.y * (occluded - 1.0);
-        point.emissive = material_maps.emissive.rgb
-            * textureSample(emissive_texture, emissive_sampler, map_uv(4u, uv, uv1)).rgb;
-    }
-    var sampled = vec3<f32>(0.0, 0.0, 1.0);
-    var normal_dx = vec2<f32>(0.0);
-    var normal_dy = vec2<f32>(0.0);
-    if NORMAL_MAP {
-        let normal_uv = map_uv(2u, uv, uv1);
-        sampled = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
-        normal_dx = dpdx(normal_uv);
-        normal_dy = dpdy(normal_uv);
+        point.opacity *= texels.base.a;
+        roughness *= texels.factors.x;
+        metalness *= texels.factors.y;
+        point.occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
+        point.emissive = material_maps.emissive.rgb * texels.emissive;
     }
     point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
     point.diffuse_color = point.albedo * (1.0 - metalness);
-    point.geometric = stable_normalize(surface_normal);
-    // Back faces of double-sided materials are lit from their own side.
-    if DOUBLE_SIDED && !front {
-        point.geometric = -point.geometric;
-    }
-    point.normal = point.geometric;
-    if NORMAL_MAP {
-        point.normal = mapped_normal(point.geometric, world_dx, world_dy, normal_dx, normal_dy,
-            sampled, material_maps.params.x);
-    }
-    if surface.w > 0.0 {
-        point.normal = rippled(point.normal, world, surface.w);
-    }
-    // Specular antialiasing (Kaplanyan et al.'s kernel, with Filament's
-    // variance and limit): normals turning within a pixel, over fine bumps
-    // or across facet edges, widen the highlight lobe, so they shade as the
-    // rougher surface they average to instead of sparkling or streaking.
-    let turn_dx = dpdx(point.normal);
-    let turn_dy = dpdy(point.normal);
-    let widened = min(2.0 * SPECULAR_VARIANCE * (dot(turn_dx, turn_dx) + dot(turn_dy, turn_dy)),
-        SPECULAR_LIMIT);
-    point.alpha = sqrt(saturate(point.alpha * point.alpha + widened));
-    point.roughness = sqrt(point.alpha);
-    if ALPHA_MASK && point.opacity < material_maps.params.z {
-        discard;
-    }
+    point.geometric = geometric_normal(surface_normal, front);
+    point.normal = shading_normal(point.geometric, world, world_dx, world_dy, texels.normal,
+        texels.normal_dx, texels.normal_dy, surface.w);
     let to_eye = camera.position.xyz - world;
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
@@ -691,6 +821,37 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     return point;
+}
+
+// Specular antialiasing (Kaplanyan et al.'s kernel, with Filament's variance
+// and limit): normals turning within a pixel (by `turn_dx` across and
+// `turn_dy` down), over fine bumps or across facet edges, widen the
+// highlight lobe, so they shade as the rougher surface they average to
+// instead of sparkling or streaking.
+fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint {
+    var result = point;
+    let widening = min(2.0 * SPECULAR_VARIANCE * (dot(turn_dx, turn_dx) + dot(turn_dy, turn_dy)),
+        SPECULAR_LIMIT);
+    result.alpha = sqrt(saturate(point.alpha * point.alpha + widening));
+    result.roughness = sqrt(result.alpha);
+    return result;
+}
+
+// Sampling uses implicit derivatives, so callers build the point in uniform
+// control flow; what follows may not be. `color` is linear color and
+// opacity; `front` whether the surface faces the camera.
+fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
+        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
+    let texels = material_texels(uv, uv1);
+    let world_dx = dpdx(world);
+    let world_dy = dpdy(world);
+    let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
+        front);
+    let result = widened(point, dpdx(point.normal), dpdy(point.normal));
+    if ALPHA_MASK && result.opacity < material_maps.params.z {
+        discard;
+    }
+    return result;
 }
 
 // Where the ray from `position` along `direction` leaves the box `extent`
@@ -1065,6 +1226,212 @@ fn fs_temporal_lit(input: TemporalOutput, @builtin(front_facing) front: bool)
         -> TemporalTargets {
     return temporal_targets(shade_lit(fragment(temporal_output(input)), front),
         input.clip_position, input.previous);
+}
+
+// The resolve of the visibility buffer (decision 045): each material bin
+// draws its tiles, and each of their pixels that bin's triangle covers
+// shades as a forward-drawn fragment of that triangle would. The triangle's
+// corners are posed as `vs_virtual` poses them, and its attributes
+// interpolated at the pixel center with perspective-correct barycentric
+// weights. Neighboring pixels may show other triangles, so derivatives come
+// from the same triangle's weights at the pixel's partner in its 2x2 quad,
+// across and down, as fine derivatives of forward fragments take them.
+
+struct ResolveOutput {
+    @builtin(position) clip_position: vec4<f32>,
+}
+
+// Corner `vertex` of two triangles over tile `instance` of the bin.
+@vertex
+fn vs_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
+        -> ResolveOutput {
+    let tile = resolve_tiles[visibility_draw.tile_base + instance];
+    let size = vec2<f32>(textureDimensions(visibility_ids));
+    let corner = vec2<f32>(f32((0x32u >> vertex) & 1u), f32((0x2cu >> vertex) & 1u));
+    let origin = vec2<f32>(f32(tile % visibility_draw.tiles_across),
+        f32(tile / visibility_draw.tiles_across));
+    let pixel = min((origin + corner) * 8.0, size);
+    var output: ResolveOutput;
+    output.clip_position = vec4<f32>(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0,
+        0.0, 1.0);
+    return output;
+}
+
+// Perspective-correct barycentric weights at normalized device point
+// `point` (x, y, 1) of the triangle whose edge functions are `a`, `b` and
+// `c` (Olano and Greer's homogeneous rasterization: corners stay in clip
+// space, so triangles crossing the eye plane resolve too).
+fn barycentric(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, point: vec3<f32>) -> vec3<f32> {
+    let edges = vec3<f32>(dot(a, point), dot(b, point), dot(c, point));
+    return edges / (edges.x + edges.y + edges.z);
+}
+
+// A pixel's triangle: its fragment, how its world position, texture
+// coordinates and interpolated normal change per pixel across and down,
+// which way its quad partners lie (1 or -1, across and down), whether it
+// faces the camera, and the point's previous clip x, y and w.
+struct Resolved {
+    fragment: Fragment,
+    world_dx: vec3<f32>,
+    world_dy: vec3<f32>,
+    uv_dx: vec2<f32>,
+    uv_dy: vec2<f32>,
+    normal_dx: vec3<f32>,
+    normal_dy: vec3<f32>,
+    partner: vec2<f32>,
+    front: bool,
+    previous: vec3<f32>,
+}
+
+// The triangle of this draw's bin covering the pixel at `position`;
+// discards pixels of other bins and of nothing.
+fn resolve_pixel(position: vec4<f32>) -> Resolved {
+    let ids = textureLoad(visibility_ids, vec2<i32>(position.xy), 0).xy;
+    if ids.x == 0u || (ids.y >> 7u) != visibility_draw.bin {
+        discard;
+    }
+    let entry = visible_clusters[ids.x - 1u];
+    let slot = entry.x & ~MOVED_SLOT;
+    let model = pose_matrix(poses[slot]);
+    let material = colors[slot];
+    let first = (ids.y & 127u) * 3u;
+    let a = virtual_corner(entry.y, first);
+    let b = virtual_corner(entry.y, first + 1u);
+    let c = virtual_corner(entry.y, first + 2u);
+    let va = transform_vertex(a.position, a.normal, material.color, material.surface, a.uv,
+        model);
+    let vb = transform_vertex(b.position, b.normal, material.color, material.surface, b.uv,
+        model);
+    let vc = transform_vertex(c.position, c.normal, material.color, material.surface, c.uv,
+        model);
+    let pa = va.clip_position.xyw;
+    let pb = vb.clip_position.xyw;
+    let pc = vc.clip_position.xyw;
+    let ea = cross(pb, pc);
+    let eb = cross(pc, pa);
+    let ec = cross(pa, pb);
+    let size = vec2<f32>(textureDimensions(visibility_ids));
+    let point = vec3<f32>(position.x / size.x * 2.0 - 1.0, 1.0 - position.y / size.y * 2.0, 1.0);
+    let weights = barycentric(ea, eb, ec, point);
+    // Even pixels' partners follow them, odd ones' precede them.
+    let partner = select(vec2<f32>(1.0), vec2<f32>(-1.0),
+        (vec2<u32>(position.xy) & vec2<u32>(1u)) == vec2<u32>(1u));
+    let across = (barycentric(ea, eb, ec, point + vec3<f32>(partner.x * 2.0 / size.x, 0.0, 0.0))
+        - weights) * partner.x;
+    let down = (barycentric(ea, eb, ec, point - vec3<f32>(0.0, partner.y * 2.0 / size.y, 0.0))
+        - weights) * partner.y;
+    let normal_u = weights.x * va.normal_u + weights.y * vb.normal_u + weights.z * vc.normal_u;
+    let world_v = weights.x * va.world_v + weights.y * vb.world_v + weights.z * vc.world_v;
+    var resolved: Resolved;
+    resolved.fragment.color = output_color(va.material);
+    resolved.fragment.normal = normal_u.xyz;
+    resolved.fragment.world = world_v.xyz;
+    resolved.fragment.uv = vec2<f32>(normal_u.w, world_v.w);
+    resolved.fragment.uv1 = resolved.fragment.uv;
+    resolved.fragment.surface = va.material.z;
+    resolved.fragment.pixel = position.xy;
+    let normal_across = across.x * va.normal_u + across.y * vb.normal_u + across.z * vc.normal_u;
+    let normal_down = down.x * va.normal_u + down.y * vb.normal_u + down.z * vc.normal_u;
+    let world_across = across.x * va.world_v + across.y * vb.world_v + across.z * vc.world_v;
+    let world_down = down.x * va.world_v + down.y * vb.world_v + down.z * vc.world_v;
+    resolved.world_dx = world_across.xyz;
+    resolved.world_dy = world_down.xyz;
+    resolved.uv_dx = vec2<f32>(normal_across.w, world_across.w);
+    resolved.uv_dy = vec2<f32>(normal_down.w, world_down.w);
+    resolved.normal_dx = normal_across.xyz;
+    resolved.normal_dy = normal_down.xyz;
+    resolved.partner = partner;
+    // Counterclockwise in normalized device coordinates faces the camera.
+    resolved.front = dot(pa, ea) > 0.0;
+    // Only moving slots read their previous pose, as `vs_virtual_temporal`.
+    var previous_world = resolved.fragment.world;
+    if (entry.x & MOVED_SLOT) != 0u {
+        let pose = previous_poses[slot];
+        let mesh_point = vec4<f32>(weights.x * a.position + weights.y * b.position
+            + weights.z * c.position, 1.0);
+        previous_world = vec3<f32>(dot(pose.row_0, mesh_point), dot(pose.row_1, mesh_point),
+            dot(pose.row_2, mesh_point));
+    }
+    resolved.previous = (camera.previous_view_projection * vec4<f32>(previous_world, 1.0)).xyw;
+    return resolved;
+}
+
+// The shading normal at a quad partner: the interpolated normal changed by
+// `normal_step`, the world position by `world_step` and the texture
+// coordinates by `uv_step`, sampling the normal map there.
+fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<f32>,
+        world_step: vec3<f32>, uv_step: vec2<f32>, ripples: f32) -> vec3<f32> {
+    let input = resolved.fragment;
+    var sampled = texels.normal;
+    if NORMAL_MAP {
+        let step = map_gradient(2u, uv_step, uv_step);
+        sampled = textureSampleGrad(normal_texture, normal_sampler,
+            map_uv(2u, input.uv, input.uv1) + step, texels.normal_dx,
+            texels.normal_dy).xyz * 2.0 - 1.0;
+    }
+    return shading_normal(geometric_normal(input.normal + normal_step, resolved.front),
+        input.world + world_step, resolved.world_dx, resolved.world_dy, sampled,
+        texels.normal_dx, texels.normal_dy, ripples);
+}
+
+// `surface_point` of a resolved pixel: explicit derivatives, and the shading
+// normal's turn toward its quad partners across and down, as forward
+// fragments' derivatives take it.
+fn resolved_point(resolved: Resolved) -> SurfacePoint {
+    let input = resolved.fragment;
+    let gradients = UvGradients(resolved.uv_dx, resolved.uv_dy, resolved.uv_dx, resolved.uv_dy);
+    let texels = material_texels_grad(input.uv, input.uv1, gradients);
+    let point = textured_point(input.color, input.normal, input.world, resolved.world_dx,
+        resolved.world_dy, texels, input.surface, resolved.front);
+    let ripples = unpack4x8unorm(input.surface).w;
+    let x = resolved.partner.x;
+    let y = resolved.partner.y;
+    let across = stepped_normal(resolved, texels, resolved.normal_dx * x, resolved.world_dx * x,
+        resolved.uv_dx * x, ripples);
+    let down = stepped_normal(resolved, texels, resolved.normal_dy * y, resolved.world_dy * y,
+        resolved.uv_dy * y, ripples);
+    return widened(point, across - point.normal, down - point.normal);
+}
+
+fn shade_resolved(resolved: Resolved) -> Shaded {
+    return finish(resolved_point(resolved), vec3<f32>(0.0));
+}
+
+fn shade_resolved_lit(resolved: Resolved) -> Shaded {
+    let point = resolved_point(resolved);
+    return finish(point, local_light(point, resolved.fragment.pixel));
+}
+
+@fragment
+fn fs_resolve(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(encoded(shade_resolved(resolve_pixel(position)).color), 1.0);
+}
+
+@fragment
+fn fs_resolve_lit(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(encoded(shade_resolved_lit(resolve_pixel(position)).color), 1.0);
+}
+
+@fragment
+fn fs_resolve_post(@builtin(position) position: vec4<f32>) -> SceneTargets {
+    return scene_targets(shade_resolved(resolve_pixel(position)));
+}
+
+@fragment
+fn fs_resolve_post_lit(@builtin(position) position: vec4<f32>) -> SceneTargets {
+    return scene_targets(shade_resolved_lit(resolve_pixel(position)));
+}
+
+@fragment
+fn fs_resolve_temporal(@builtin(position) position: vec4<f32>) -> TemporalTargets {
+    let resolved = resolve_pixel(position);
+    return temporal_targets(shade_resolved(resolved), position, resolved.previous);
+}
+
+@fragment
+fn fs_resolve_temporal_lit(@builtin(position) position: vec4<f32>) -> TemporalTargets {
+    let resolved = resolve_pixel(position);
+    return temporal_targets(shade_resolved_lit(resolved), position, resolved.previous);
 }
 
 @fragment

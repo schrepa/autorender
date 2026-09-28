@@ -2361,6 +2361,10 @@
           "default": 1.5,
           "maximum": 64.0,
           "minimum": 0.25
+        },
+        "visibility_buffer": {
+          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw.\nOmitted, true.",
+          "type": "boolean"
         }
       },
       "additionalProperties": false

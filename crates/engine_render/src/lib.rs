@@ -57,6 +57,9 @@ pub struct RenderStats {
     pub reflections: bool,
     /// Whether this frame's glass refracted the opaque scene (decision 038).
     pub refraction: bool,
+    /// Whether the visibility buffer resolved the camera's virtual geometry
+    /// (decision 045) rather than drawing it forward.
+    pub visibility_buffer: bool,
     /// Transparent draws (decision 026), also counted in `draw_calls`, and
     /// the particles this frame drew; dropped particles are those a budget
     /// or the GPU's bindings left out.
@@ -171,5 +174,7 @@ mod temporal;
 mod transparent;
 #[cfg(target_arch = "wasm32")]
 mod virtual_geometry;
+#[cfg(target_arch = "wasm32")]
+mod visibility;
 #[cfg(target_arch = "wasm32")]
 pub use browser::Renderer;

@@ -15,7 +15,7 @@ export interface RuntimeStats {
   ambient_occlusion: boolean; bloom: boolean;
   local_lights: number; dropped_lights: number;
   lights_visible: number | undefined; light_cluster_overflow: number | undefined;
-  sun_shafts: boolean; reflections: boolean; refraction: boolean; transparent_draws: number; particles: number; dropped_particles: number;
+  sun_shafts: boolean; reflections: boolean; refraction: boolean; visibility_buffer: boolean; transparent_draws: number; particles: number; dropped_particles: number;
   decals: number; dropped_decals: number; occluded_instances: number | undefined;
   reflection_probes: number; reflection_probe_faces: number; dropped_reflection_probes: number;
   virtual_clusters: number; virtual_triangles: number; virtual_shadow_clusters: number; virtual_shadow_triangles: number;

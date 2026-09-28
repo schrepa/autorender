@@ -1766,6 +1766,7 @@ fn version_eight_virtual_geometry_settings_resolve_and_earlier_versions_refuse_t
             enabled: false,
             pixel_error: 3.0,
             max_resident_pages: Some(64),
+            visibility_buffer: true,
         }
     );
     instance.despawn(&mut world);

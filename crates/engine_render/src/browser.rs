@@ -32,6 +32,9 @@ use crate::uploads::UploadCache;
 use crate::virtual_geometry::{
     CameraTests, Cone, IdBuffers, MAX_VIEWS, VirtualBatch, VirtualGeometryPass, VirtualView,
 };
+use crate::visibility::{
+    ID_FORMAT, RESOLVE_LIT_STORAGE_BUFFERS, RESOLVE_STORAGE_BUFFERS, VisibilityBuffer,
+};
 use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
@@ -126,6 +129,12 @@ enum PassKind {
 /// grid (decision 043) the camera groups bind.
 type CameraGroupsKey = (u64, u64, u64);
 
+/// What the visibility buffer's groups (decision 045) bind: the pose
+/// buffers' generation and whether alternate poses exist, and the
+/// generations of the virtual arena, the selected clusters and the
+/// visibility buffer's target and buffers.
+type VisibilityGroupsKey = (u64, bool, u64, u64, u64);
+
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
 ///
 /// Opaque instances are sorted by mesh/material into reusable CPU upload storage.
@@ -190,6 +199,24 @@ pub struct Renderer {
     virtual_shadow_bins: Vec<(usize, usize, u32)>,
     virtual_phase_two: Option<usize>,
     virtual_previous: Option<(u64, engine_core::glam::Mat4)>,
+    // The visibility buffer (decision 045), created with the first frame
+    // resolving through it: its passes' group layouts, pipelines (the
+    // visibility pass's single- and double-sided; resolves per pass kind and
+    // material variant over their layouts, unlit and lit) and groups (the
+    // visibility pass's per current pose buffer, the resolves' per current
+    // and previous one); and which of this frame's camera bins it resolves.
+    visibility: Option<VisibilityBuffer>,
+    visibility_layout: wgpu::BindGroupLayout,
+    resolve_layout: wgpu::BindGroupLayout,
+    visibility_pipelines: Option<[wgpu::RenderPipeline; 2]>,
+    resolve_layouts: [Option<wgpu::PipelineLayout>; 2],
+    resolve_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
+    visibility_groups: Option<(
+        VisibilityGroupsKey,
+        [wgpu::BindGroup; 2],
+        [wgpu::BindGroup; 4],
+    )>,
+    visibility_bins: Vec<bool>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -304,8 +331,12 @@ impl Renderer {
             max_buffer_size: adapter_limits.max_buffer_size,
             max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
-            // GPU presentation's cull pass binds eight; the WebGPU default.
-            max_storage_buffers_per_shader_stage: 8,
+            // GPU presentation's cull pass binds eight, the WebGPU default;
+            // the visibility buffer's resolve (decision 045) up to eleven
+            // where the adapter allows them.
+            max_storage_buffers_per_shader_stage: adapter_limits
+                .max_storage_buffers_per_shader_stage
+                .max(8),
             ..wgpu::Limits::downlevel_defaults()
         };
         // Block-compressed textures (decision 037) in every format the
@@ -592,6 +623,58 @@ impl Renderer {
                     storage_entry(7, 16),
                 ],
             });
+        // The visibility buffer (decision 045): its pass poses clusters from
+        // the arena, and its resolves read them, the selected clusters and
+        // the target in fragments, the tile lists in vertices, and each
+        // draw's bin through a dynamic offset.
+        let draw_entry = |visibility| wgpu::BindGroupLayoutEntry {
+            binding: 8,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: wgpu::BufferSize::new(16),
+            },
+            count: None,
+        };
+        let visibility_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/visibility-layout"),
+            entries: &[
+                storage_entry(0, size_of::<PoseData>() as u64),
+                storage_entry(5, 80),
+                storage_entry(6, 48),
+                storage_entry(7, 16),
+                draw_entry(wgpu::ShaderStages::VERTEX),
+            ],
+        });
+        let fragment_storage = |binding, stride| wgpu::BindGroupLayoutEntry {
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ..storage_entry(binding, stride)
+        };
+        let resolve_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/visibility-resolve-layout"),
+            entries: &[
+                fragment_storage(0, size_of::<PoseData>() as u64),
+                fragment_storage(1, size_of::<ColorData>() as u64),
+                fragment_storage(2, size_of::<PoseData>() as u64),
+                fragment_storage(5, 80),
+                fragment_storage(6, 48),
+                fragment_storage(7, 16),
+                draw_entry(wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
+                fragment_storage(9, 8),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Uint,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                storage_entry(11, 4),
+            ],
+        });
         let affine_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/retained-mesh-pipeline-layout"),
@@ -711,6 +794,14 @@ impl Renderer {
             virtual_shadow_bins: Vec::new(),
             virtual_phase_two: None,
             virtual_previous: None,
+            visibility: None,
+            visibility_layout,
+            resolve_layout,
+            visibility_pipelines: None,
+            resolve_layouts: [None, None],
+            resolve_pipelines: HashMap::new(),
+            visibility_groups: None,
+            visibility_bins: Vec::new(),
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -1833,6 +1924,14 @@ impl Renderer {
             self.ensure_virtual_pipelines(opaque_kind);
             self.ensure_virtual_pose_groups();
         }
+        // The visibility buffer (decision 045) resolves the camera's bins it
+        // can shade; the others draw forward.
+        let resolving =
+            virtual_frame && instance_count > 0 && self.prepare_visibility(snapshot, opaque_kind);
+        if resolving {
+            self.ensure_visibility_pipelines(opaque_kind);
+            self.ensure_visibility_groups();
+        }
         #[cfg(feature = "profiling")]
         let effect_queries = self.profiler.effect_queries(query_slot);
         #[cfg(not(feature = "profiling"))]
@@ -1995,6 +2094,14 @@ impl Renderer {
                 }
                 _effects_timed |= u32::from(effect_queries.is_some()) << 14;
             }
+            // The first of this phase's camera bins (decision 044), and
+            // whether the visibility buffer resolves them (decision 045).
+            let virtual_first = match phase {
+                0 => Some(0),
+                _ => self.virtual_phase_two,
+            }
+            .filter(|_| virtual_frame);
+            let resolve_phase = resolving && virtual_first.is_some();
             let load = |clear| {
                 if phase == 0 {
                     wgpu::LoadOp::Clear(clear)
@@ -2047,14 +2154,15 @@ impl Renderer {
                 .is_some_and(|frame| frame.occlusion || frame.reflections || frame.shafts)
                 || transparency
                 || decal_frame.is_some()
-                || phase + 1 < phases;
+                || phase + 1 < phases
+                || resolve_phase;
             // Profiled frames time both phases as one opaque span.
             #[cfg(feature = "profiling")]
             let timestamp_writes = self.profiler.writes(query_slot).map(|mut writes| {
                 if phase != 0 {
                     writes.beginning_of_pass_write_index = None;
                 }
-                if phase + 1 != phases {
+                if phase + 1 != phases || resolve_phase {
                     writes.end_of_pass_write_index = None;
                 }
                 writes
@@ -2176,12 +2284,9 @@ impl Renderer {
                 }
                 // Virtual geometry (decision 044): each bin's selected
                 // clusters, in phase one, then each bin's twin of clusters
-                // the retest found visible in phase two.
-                let first_bin = match phase {
-                    0 => Some(0),
-                    _ => self.virtual_phase_two,
-                };
-                if let Some(first_bin) = first_bin.filter(|_| virtual_frame) {
+                // the retest found visible in phase two; bins the visibility
+                // buffer resolves draw below.
+                if let Some(first_bin) = virtual_first {
                     let groups = &self.virtual_pose_groups.as_ref().expect("built above").1;
                     let group = match temporal_pass {
                         Some((frame, _)) => {
@@ -2196,6 +2301,9 @@ impl Renderer {
                     };
                     pass.set_bind_group(2, group, &[]);
                     for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
+                        if self.visibility_bins.get(bin) == Some(&true) {
+                            continue;
+                        }
                         pass.set_pipeline(&self.virtual_pipelines[&(opaque_kind, *variant)]);
                         pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
                         let (stream, args, offset) =
@@ -2206,11 +2314,135 @@ impl Renderer {
                 }
             }
             // Last, so depth testing leaves the sky only uncovered pixels.
-            if phase + 1 == phases {
-                pass.set_pipeline(match temporal_pass {
-                    Some((_, temporal)) => temporal.sky_pipeline(),
-                    None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
+            let sky = match temporal_pass {
+                Some((_, temporal)) => temporal.sky_pipeline(),
+                None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
+            };
+            if phase + 1 == phases && !resolve_phase {
+                pass.set_pipeline(sky);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            drop(pass);
+            // The visibility buffer (decision 045): this phase's resolved
+            // bins write which triangle covers each pixel, compute lists each
+            // bin's tiles, and each bin's resolve shades its pixels; the sky
+            // follows the last phase's.
+            let Some(first_bin) = virtual_first.filter(|_| resolve_phase) else {
+                continue;
+            };
+            let visibility = self.visibility.as_ref().expect("prepared above");
+            let pipelines = self.visibility_pipelines.as_ref().expect("created above");
+            let (_, pass_groups, resolve_groups) =
+                self.visibility_groups.as_ref().expect("built above");
+            let bins = self.virtual_bins.len();
+            // Pose buffers as the virtual pose groups pick them.
+            let (current, previous) = match temporal_pass {
+                Some((frame, _)) if frame.motion_valid => (frame.parity, 1 - frame.parity),
+                Some((frame, _)) => (frame.parity, frame.parity),
+                None => (0, 0),
+            };
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/visibility"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: visibility.ids_view(),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
                 });
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(1, &self.empty_group, &[]);
+                for (bin, (_, variant)) in self.virtual_bins.iter().enumerate() {
+                    if !self.visibility_bins[bin] {
+                        continue;
+                    }
+                    pass.set_pipeline(&pipelines[usize::from(variant.double_sided())]);
+                    pass.set_bind_group(
+                        2,
+                        &pass_groups[current],
+                        &[VisibilityBuffer::draw_offset(phase, bins, bin)],
+                    );
+                    let (stream, args, offset) = self.virtual_geometry.bin_source(first_bin + bin);
+                    pass.set_vertex_buffer(0, stream);
+                    pass.draw_indirect(args, offset);
+                }
+            }
+            visibility.encode_classify(&mut encoder, bins);
+            let resolve_targets: Vec<_> = targets[..count]
+                .iter()
+                .map(|target| {
+                    target
+                        .as_ref()
+                        .map(|target| wgpu::RenderPassColorAttachment {
+                            view: target.view,
+                            depth_slice: target.depth_slice,
+                            resolve_target: target.resolve_target,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })
+                })
+                .collect();
+            #[cfg(feature = "profiling")]
+            let timestamp_writes = self.profiler.writes(query_slot).map(|mut writes| {
+                writes.beginning_of_pass_write_index = None;
+                if phase + 1 != phases {
+                    writes.end_of_pass_write_index = None;
+                }
+                writes
+            });
+            #[cfg(not(feature = "profiling"))]
+            let timestamp_writes = None;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/visibility-resolve"),
+                color_attachments: &resolve_targets,
+                // Read-only: the resolves test no depth and the sky tests it.
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                timestamp_writes,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            if let Some((_, lights)) = lit {
+                pass.set_bind_group(3, lights.fragment_group(), &[]);
+            }
+            let (_, _, resolve_args) = visibility.buffers();
+            for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
+                if !self.visibility_bins[bin] {
+                    continue;
+                }
+                pass.set_pipeline(&self.resolve_pipelines[&(opaque_kind, *variant)]);
+                pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
+                pass.set_bind_group(
+                    2,
+                    &resolve_groups[2 * current + previous],
+                    &[VisibilityBuffer::draw_offset(phase, bins, bin)],
+                );
+                pass.draw_indirect(resolve_args, bin as u64 * 16);
+            }
+            if phase + 1 == phases {
+                pass.set_pipeline(sky);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -2548,6 +2780,7 @@ impl Renderer {
             sun_shafts: post_frame.is_some_and(|frame| frame.shafts),
             reflections: post_frame.is_some_and(|frame| frame.reflections),
             refraction: refraction && post_frame.is_some(),
+            visibility_buffer: resolving,
             decals: decal_frame.as_ref().map_or(0, |frame| frame.drawn),
             dropped_decals: (snapshot.dropped_decals as u64
                 + decal_frame
@@ -2619,7 +2852,11 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_virtual_bytes",
-                self.virtual_geometry.capacity_bytes() as f64,
+                (self.virtual_geometry.capacity_bytes()
+                    + self
+                        .visibility
+                        .as_ref()
+                        .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
             );
             if let Some(virtual_stats) = virtual_stats {
                 engine_profile::counter(
@@ -3362,61 +3599,13 @@ impl Renderer {
         let layout = self.virtual_layouts[usize::from(lit)]
             .as_ref()
             .expect("created above");
-        let canvas_target = [Some(wgpu::ColorTargetState {
-            format: self.configuration.format,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let canvas_constants = [(
-            "SURFACE_IS_SRGB",
-            if self.configuration.format.is_srgb() {
-                1.0
-            } else {
-                0.0
-            },
-        )];
-        let post_targets = [
-            Some(SCENE_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let temporal_targets = [
-            Some(SCENE_FORMAT.into()),
-            Some(crate::temporal::MOTION_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let (vertex, fragment, targets, constants): VirtualStages<'_> = match kind {
-            PassKind::Opaque { post, lit, .. } => (
-                "vs_virtual",
-                match (post, lit) {
-                    (false, false) => "fs_main",
-                    (false, true) => "fs_main_lit",
-                    (true, false) => "fs_post",
-                    (true, true) => "fs_post_lit",
-                },
-                if post { &post_targets } else { &canvas_target },
-                if post { &[] } else { &canvas_constants },
-            ),
-            PassKind::Temporal { lit } => (
-                "vs_virtual_temporal",
-                if lit {
-                    "fs_temporal_lit"
-                } else {
-                    "fs_temporal"
-                },
-                &temporal_targets,
-                &[],
-            ),
-            PassKind::Transparent { .. } | PassKind::Probe { .. } => {
-                unreachable!("virtual geometry draws in opaque passes")
-            }
-        };
-        let constants: Vec<(&str, f64)> = constants
-            .iter()
-            .copied()
-            .chain(variant.constants())
-            .collect();
+        let VirtualStages {
+            vertex,
+            fragment,
+            targets,
+            constants,
+        } = self.virtual_stages(kind, variant, false);
+        let targets = &targets[..];
         self.device
             .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("engine/virtual-meshes"),
@@ -3456,6 +3645,360 @@ impl Renderer {
                 multiview_mask: None,
                 cache: None,
             })
+    }
+
+    /// The stages of `kind`'s virtual geometry pipelines for material
+    /// `variant`: forward (decision 044) or resolving the visibility buffer
+    /// (decision 045), with the targets and constants of `kind`.
+    fn virtual_stages(&self, kind: PassKind, variant: Variant, resolve: bool) -> VirtualStages {
+        let canvas = vec![Some(wgpu::ColorTargetState {
+            format: self.configuration.format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+        let canvas_constants = vec![(
+            "SURFACE_IS_SRGB",
+            if self.configuration.format.is_srgb() {
+                1.0
+            } else {
+                0.0
+            },
+        )];
+        let post = vec![
+            Some(SCENE_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
+        let temporal = vec![
+            Some(SCENE_FORMAT.into()),
+            Some(crate::temporal::MOTION_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
+        let (vertex, fragment, targets, constants) = match kind {
+            PassKind::Opaque {
+                post: false, lit, ..
+            } => (
+                "vs_virtual",
+                match (lit, resolve) {
+                    (false, false) => "fs_main",
+                    (true, false) => "fs_main_lit",
+                    (false, true) => "fs_resolve",
+                    (true, true) => "fs_resolve_lit",
+                },
+                canvas,
+                canvas_constants,
+            ),
+            PassKind::Opaque {
+                post: true, lit, ..
+            } => (
+                "vs_virtual",
+                match (lit, resolve) {
+                    (false, false) => "fs_post",
+                    (true, false) => "fs_post_lit",
+                    (false, true) => "fs_resolve_post",
+                    (true, true) => "fs_resolve_post_lit",
+                },
+                post,
+                Vec::new(),
+            ),
+            PassKind::Temporal { lit } => (
+                "vs_virtual_temporal",
+                match (lit, resolve) {
+                    (false, false) => "fs_temporal",
+                    (true, false) => "fs_temporal_lit",
+                    (false, true) => "fs_resolve_temporal",
+                    (true, true) => "fs_resolve_temporal_lit",
+                },
+                temporal,
+                Vec::new(),
+            ),
+            PassKind::Transparent { .. } | PassKind::Probe { .. } => {
+                unreachable!("virtual geometry draws in opaque passes")
+            }
+        };
+        VirtualStages {
+            vertex: if resolve { "vs_resolve" } else { vertex },
+            fragment,
+            targets,
+            constants: constants.into_iter().chain(variant.constants()).collect(),
+        }
+    }
+
+    /// Readies the visibility buffer (decision 045) for this frame's camera
+    /// bins and marks those it resolves: every bin but those of alpha-masked
+    /// materials, whose coverage its pass does not test. False when it is
+    /// off, resolves no bin, or the device binds too few storage buffers or
+    /// too small ones for `kind`'s resolves; the bins then draw forward.
+    fn prepare_visibility(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
+        self.visibility_bins.clear();
+        let lit = matches!(
+            kind,
+            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
+        );
+        let needed = if lit {
+            RESOLVE_LIT_STORAGE_BUFFERS
+        } else {
+            RESOLVE_STORAGE_BUFFERS
+        };
+        if !snapshot.virtual_geometry.visibility_buffer
+            || self.device.limits().max_storage_buffers_per_shader_stage < needed
+            || self
+                .virtual_bins
+                .iter()
+                .all(|(_, variant)| variant.alpha_mask())
+        {
+            return false;
+        }
+        let bins = self.virtual_bins.len();
+        let bases = [Some(0), self.virtual_phase_two].map(|first| {
+            (0..bins)
+                .map(|bin| first.map_or(0, |first| self.virtual_geometry.bin_base(first + bin)))
+                .collect::<Vec<u32>>()
+        });
+        let size = (self.configuration.width, self.configuration.height);
+        let visibility = self
+            .visibility
+            .get_or_insert_with(|| VisibilityBuffer::new(&self.device));
+        if !visibility.prepare(&self.device, &self.queue, size, [&bases[0], &bases[1]]) {
+            return false;
+        }
+        self.visibility_bins.extend(
+            self.virtual_bins
+                .iter()
+                .map(|(_, variant)| !variant.alpha_mask()),
+        );
+        true
+    }
+
+    /// The visibility pass's pipelines and `kind`'s resolves (decision 045)
+    /// for this frame's resolved bins' material variants.
+    fn ensure_visibility_pipelines(&mut self, kind: PassKind) {
+        if self.visibility_pipelines.is_none() {
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("engine/visibility-pipeline-layout"),
+                    bind_group_layouts: &[
+                        Some(&self.camera_layout),
+                        Some(&self.empty_layout),
+                        Some(&self.visibility_layout),
+                    ],
+                    immediate_size: 0,
+                });
+            let pipeline = |double_sided: bool| {
+                self.device
+                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                        label: Some("engine/visibility"),
+                        layout: Some(&layout),
+                        vertex: wgpu::VertexState {
+                            module: &self.mesh_shader,
+                            entry_point: Some("vs_visibility"),
+                            compilation_options: Default::default(),
+                            buffers: &[Some(wgpu::VertexBufferLayout {
+                                array_stride: crate::virtual_geometry::VISIBLE_BYTES,
+                                step_mode: wgpu::VertexStepMode::Instance,
+                                attributes: &VIRTUAL_ATTRIBUTES,
+                            })],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleList,
+                            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
+                            ..Default::default()
+                        },
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: DEPTH_FORMAT,
+                            depth_write_enabled: Some(true),
+                            depth_compare: Some(wgpu::CompareFunction::Greater),
+                            stencil: Default::default(),
+                            bias: Default::default(),
+                        }),
+                        multisample: wgpu::MultisampleState::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &self.mesh_shader,
+                            entry_point: Some("fs_visibility"),
+                            compilation_options: Default::default(),
+                            targets: &[Some(ID_FORMAT.into())],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    })
+            };
+            self.visibility_pipelines = Some([pipeline(false), pipeline(true)]);
+        }
+        let lit = matches!(
+            kind,
+            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
+        );
+        if self.resolve_layouts[usize::from(lit)].is_none() {
+            let lights = self.lights.as_ref().filter(|_| lit);
+            let mut layouts = vec![
+                Some(&self.camera_layout),
+                Some(self.materials.layout()),
+                Some(&self.resolve_layout),
+            ];
+            if let Some(lights) = lights {
+                layouts.push(Some(lights.fragment_layout()));
+            }
+            self.resolve_layouts[usize::from(lit)] = Some(self.device.create_pipeline_layout(
+                &wgpu::PipelineLayoutDescriptor {
+                    label: Some("engine/visibility-resolve-pipeline-layout"),
+                    bind_group_layouts: &layouts,
+                    immediate_size: 0,
+                },
+            ));
+        }
+        let missing: Vec<Variant> = self
+            .virtual_bins
+            .iter()
+            .zip(&self.visibility_bins)
+            .filter(|&(_, &resolved)| resolved)
+            .map(|((_, variant), _)| *variant)
+            .filter(|variant| !self.resolve_pipelines.contains_key(&(kind, *variant)))
+            .collect();
+        for variant in missing {
+            let pipeline = self.create_resolve(kind, variant, lit);
+            self.resolve_pipelines.insert((kind, variant), pipeline);
+        }
+    }
+
+    /// A resolve of the visibility buffer (decision 045): `vs_resolve`'s
+    /// tiles with `kind`'s resolving fragment stage and targets, testing no
+    /// depth.
+    fn create_resolve(&self, kind: PassKind, variant: Variant, lit: bool) -> wgpu::RenderPipeline {
+        let layout = self.resolve_layouts[usize::from(lit)]
+            .as_ref()
+            .expect("created above");
+        let VirtualStages {
+            vertex,
+            fragment,
+            targets,
+            constants,
+        } = self.virtual_stages(kind, variant, true);
+        self.device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("engine/visibility-resolve"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: &self.mesh_shader,
+                    entry_point: Some(vertex),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.mesh_shader,
+                    entry_point: Some(fragment),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    targets: &targets,
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+    }
+
+    /// The visibility buffer's groups (decision 045): its pass's per current
+    /// pose buffer, and the resolves' per current and previous one, as
+    /// `virtual_pose_groups`.
+    fn ensure_visibility_groups(&mut self) {
+        let (Some(([meshes, clusters, pages], arena)), Some(visibility)) =
+            (self.virtual_geometry.arena(), self.visibility.as_ref())
+        else {
+            return;
+        };
+        let (visible, selection) = self.virtual_geometry.visible();
+        let key = (
+            self.pose_generation,
+            self.alternate_poses.is_some(),
+            arena,
+            selection,
+            visibility.generation(),
+        );
+        if self
+            .visibility_groups
+            .as_ref()
+            .is_some_and(|(built, ..)| *built == key)
+        {
+            return;
+        }
+        let buffers = [
+            &self.instance_buffer,
+            self.alternate_poses
+                .as_ref()
+                .unwrap_or(&self.instance_buffer),
+        ];
+        let colors = self.color_buffer.as_ref().expect("affine color buffer");
+        let (draws, tiles, _) = visibility.buffers();
+        let draw = wgpu::BindGroupEntry {
+            binding: 8,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: draws,
+                offset: 0,
+                size: wgpu::BufferSize::new(16),
+            }),
+        };
+        let arena = [meshes, clusters, pages];
+        let pass_group = |current: usize| {
+            let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/visibility-group"),
+                layout: &self.visibility_layout,
+                entries: &[poses, meshes, clusters, pages, draw.clone()],
+            })
+        };
+        let resolve_group = |current: usize, previous: usize| {
+            let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/visibility-resolve-group"),
+                layout: &self.resolve_layout,
+                entries: &[
+                    poses,
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: colors.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: buffers[previous].as_entire_binding(),
+                    },
+                    meshes,
+                    clusters,
+                    pages,
+                    draw.clone(),
+                    wgpu::BindGroupEntry {
+                        binding: 9,
+                        resource: visible.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::TextureView(visibility.ids_view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: tiles.as_entire_binding(),
+                    },
+                ],
+            })
+        };
+        let pass_groups = [pass_group(0), pass_group(1)];
+        let resolve_groups = [
+            resolve_group(0, 0),
+            resolve_group(0, 1),
+            resolve_group(1, 0),
+            resolve_group(1, 1),
+        ];
+        self.visibility_groups = Some((key, pass_groups, resolve_groups));
     }
 
     /// The reflection probe captures' pipelines (decision 043): the sky's,
@@ -3628,13 +4171,13 @@ fn create_instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize)
 }
 
 /// A virtual geometry pipeline's entry points, color targets and constants
-/// (decision 044).
-type VirtualStages<'a> = (
-    &'a str,
-    &'a str,
-    &'a [Option<wgpu::ColorTargetState>],
-    &'a [(&'a str, f64)],
-);
+/// (decisions 044 and 045).
+struct VirtualStages {
+    vertex: &'static str,
+    fragment: &'static str,
+    targets: Vec<Option<wgpu::ColorTargetState>>,
+    constants: Vec<(&'static str, f64)>,
+}
 
 /// The smallest distance virtual geometry's errors project from (decision
 /// 044): a guard for the eye's own position.
@@ -3644,6 +4187,32 @@ const VIRTUAL_NEAREST: f32 = 0.05;
 /// cluster, one entry per instance.
 const VIRTUAL_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![2 => Uint32, 13 => Uint32];
+
+/// Group entries of slot poses and the virtual arena's meshes, clusters and
+/// pages (decision 044), at the bindings `meshes.wgsl` declares.
+fn arena_entries<'a>(
+    poses: &'a wgpu::Buffer,
+    [meshes, clusters, pages]: [&'a wgpu::Buffer; 3],
+) -> [wgpu::BindGroupEntry<'a>; 4] {
+    [
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: poses.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 5,
+            resource: meshes.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 6,
+            resource: clusters.as_entire_binding(),
+        },
+        wgpu::BindGroupEntry {
+            binding: 7,
+            resource: pages.as_entire_binding(),
+        },
+    ]
+}
 
 /// Group 2 of retained mesh pipelines: slot poses, colors and the joint
 /// palettes of skinned slots (decision 036).
