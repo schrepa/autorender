@@ -23,13 +23,15 @@ pass in two phases around an occlusion test, entirely on the GPU:
    draw groups (which draw in the transparent pass).
 2. A **depth pyramid** of phase one's depths: level 0 holds the farthest depth
    of each 2x2 block of the depth buffer, each further level the farthest of
-   each 2x2 block of the level below. Levels have power-of-two sizes, so each
-   halves the last exactly.
+   each 2x2 block of the level below (the smallest values: depth is reversed,
+   [decision 042](adr-042-reversed-depth.md)). Levels have power-of-two
+   sizes, so each halves the last exactly.
 3. The **test** projects every other frustum-visible instance's posed mesh
    bounds and compares their nearest depth with the farthest depth of the
    pyramid texels (at most 2x2, at the finest level that small) its screen
    rectangle touches. A box is hidden only beyond that depth by more than
-   depth-buffer steps and projection rounding; boxes reaching the eye plane or
+   depth-buffer steps and projection rounding (a relative margin of 2^-16 of
+   the depth); boxes reaching the eye plane or
    too large for the pyramid are not. The result marks each tested instance
    for the next frame's phase one.
 4. **Phase two** draws the instances phase one skipped that the test does not

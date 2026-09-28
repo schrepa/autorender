@@ -928,14 +928,15 @@ struct SkyOutput {
 fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     let ndc = vec2<f32>(f32((index << 1u) & 2u) * 2.0 - 1.0, f32(index & 2u) * 2.0 - 1.0);
     var output: SkyOutput;
-    output.clip_position = vec4<f32>(ndc, 1.0, 1.0);
+    // The far plane: depth 0 with reversed depth (decision 042).
+    output.clip_position = vec4<f32>(ndc, 0.0, 1.0);
     output.ndc = ndc;
     return output;
 }
 
 // The view ray through unjittered `ndc`.
 fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
-    let far = camera.inverse_view_projection * vec4<f32>(ndc, 1.0, 1.0);
+    let far = camera.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
     return stable_normalize(far.xyz / far.w - camera.position.xyz);
 }
 
@@ -1096,8 +1097,9 @@ fn decal_step(pixel: vec2<i32>, depth: f32, world: vec3<f32>, axis: vec2<i32>) -
 fn decal_point(input: DecalOutput) -> SurfacePoint {
     let pixel = vec2<i32>(input.clip_position.xy);
     let depth = textureLoad(decal_depth, pixel, 0);
-    // The sky has no surface to cover.
-    if !(depth < 1.0) {
+    // The sky has no surface to cover: it keeps the cleared depth, 0 with
+    // reversed depth (decision 042).
+    if !(depth > 0.0) {
         discard;
     }
     let world = decal_surface(pixel, depth);

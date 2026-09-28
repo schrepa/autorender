@@ -137,7 +137,9 @@ impl Camera {
         }
     }
 
-    /// Builds a WebGPU-compatible projection (depth in [0, 1]).
+    /// Builds a WebGPU-compatible projection with reversed depth (decision
+    /// 042): the near plane maps to depth 1 and the far plane to 0, which a
+    /// floating-point depth buffer resolves about evenly at every distance.
     /// Invalid aspect/lens values fall back to sensible defaults; a coincident
     /// target looks down -Z and a vertical direction uses Z as the up axis.
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
@@ -179,7 +181,8 @@ impl Camera {
         } else {
             Vec3::Y
         };
-        Mat4::perspective_rh(fov, aspect, near, far) * Mat4::look_to_rh(position, direction, up)
+        // Swapping the planes reverses depth.
+        Mat4::perspective_rh(fov, aspect, far, near) * Mat4::look_to_rh(position, direction, up)
     }
 }
 

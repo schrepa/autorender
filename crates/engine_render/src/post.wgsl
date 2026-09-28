@@ -39,13 +39,14 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 // keep their samples in cache.
 const MAX_PIXELS: f32 = 96.0;
 
-// World position of a depth-buffer pixel; w is 0 where only sky is.
+// World position of a depth-buffer pixel; w is 0 where only sky is (the
+// cleared depth, 0 with reversed depth, decision 042).
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);
     let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
     let clip = vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let world = post.inverse_view_projection * clip;
-    return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth < 1.0));
+    return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth > 0.0));
 }
 
 // Scalable ambient obscurance (McGuire et al.) over eight samples: each
@@ -168,7 +169,8 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         let sample_pixel = min(vec2<i32>(uv * post.size.xy), last);
         let depth = textureLoad(depth_texture, sample_pixel, 0);
-        if ndc.z > depth && depth < 1.0 {
+        // Reversed depth (decision 042): farther is smaller.
+        if ndc.z < depth && depth > 0.0 {
             // Behind a surface: bisect between the last two steps, then keep
             // it only if the ray passed close behind that surface.
             var low = previous;
@@ -181,7 +183,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
                 let probe_uv = vec2<f32>(probe_ndc.x * 0.5 + 0.5, 0.5 - probe_ndc.y * 0.5);
                 let probe_depth = textureLoad(depth_texture,
                     min(vec2<i32>(probe_uv * post.size.xy), last), 0);
-                if probe_ndc.z > probe_depth {
+                if probe_ndc.z < probe_depth {
                     high = middle;
                     hit = probe_uv;
                 } else {

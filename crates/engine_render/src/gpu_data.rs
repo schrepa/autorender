@@ -846,6 +846,11 @@ pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
 /// Composed active-parent record of `presentation.wgsl` (112 bytes).
 pub(crate) const COMPOSED_BYTES: u64 = 112;
 
+/// Clip-space depth of the near and far planes: depth is reversed (decision
+/// 042), so nearer is larger and the depth buffer clears to the far plane.
+pub(crate) const NEAR_DEPTH: f32 = 1.0;
+pub(crate) const FAR_DEPTH: f32 = 0.0;
+
 /// Inward clip planes (WebGPU depth range) of a view-projection matrix and its
 /// absolute value, as the CPU culling test derives them.
 pub(crate) fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[f32; 4]; 4]) {

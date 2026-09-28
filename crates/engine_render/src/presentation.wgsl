@@ -168,11 +168,13 @@ const SUBPIXEL: u32 = 64u;
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
 const SUBPIXEL_MARGIN: f32 = 0.0625;
-// Depth a box must lie beyond the pyramid to count as hidden: more than
-// depth-buffer steps and the projection's rounding, so boxes touching what
-// is in front of them (a sign on a wall) keep drawing in phase one, in the
-// same order as without occlusion culling.
-const HIDDEN_MARGIN: f32 = 1.0e-6;
+// With reversed depth (decision 042) nearer is larger. A box counts as
+// hidden when its nearest depth lies below the pyramid's farthest times this
+// scale: a relative margin (2^-16) well beyond float depth steps and the
+// projection's rounding at every distance, so boxes touching what is in
+// front of them (a sign on a wall) keep drawing in phase one, in the same
+// order as without occlusion culling.
+const HIDDEN_SCALE: f32 = 0.9999847412109375;
 const LINEAR_ROTATION_DOT: f32 = 0.9995;
 const GROUP: u32 = 256u;
 // Exact hex literals: browsers reject decimal spellings above f32::MAX.
@@ -496,8 +498,9 @@ fn covers_no_pixel(clip_from_local: mat4x4<f32>, bounds_min: vec3<f32>,
 // Boxes reaching the eye plane, or too large for the pyramid, are not hidden.
 fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
     let clip_from_local = frame.view_projection * rows_matrix(pose);
-    var low = vec3<f32>(F32_MAX);
-    var high = vec2<f32>(-F32_MAX);
+    var low = vec2<f32>(F32_MAX);
+    // Largest x, y and (reversed, decision 042) nearest depth.
+    var high = vec3<f32>(-F32_MAX);
     for (var corner = 0u; corner < 8u; corner++) {
         let local = vec3<f32>(
             select(bounds_min.x, bounds_max.x, (corner & 1u) != 0u),
@@ -508,12 +511,12 @@ fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
             return false;
         }
         let ndc = clip.xyz / clip.w;
-        low = min(low, ndc);
-        high = max(high, ndc.xy);
+        low = min(low, ndc.xy);
+        high = max(high, ndc);
     }
     // Non-finite corners fail these comparisons and are not hidden.
-    if !(low.z >= 0.0 && low.z <= 1.0 && all(low.xy >= vec2<f32>(-F32_MAX))
-            && all(high <= vec2<f32>(F32_MAX))) {
+    if !(high.z >= 0.0 && high.z <= 1.0 && all(low >= vec2<f32>(-F32_MAX))
+            && all(high.xy <= vec2<f32>(F32_MAX))) {
         return false;
     }
     // Pixels the rectangle touches, rows downward, within the viewport.
@@ -539,10 +542,10 @@ fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
     if b.x - a.x > 1u || b.y - a.y > 1u {
         return false;
     }
-    let farthest = max(
-        max(textureLoad(depth_pyramid, a, mip).r, textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
-        max(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r, textureLoad(depth_pyramid, b, mip).r));
-    return low.z > farthest + HIDDEN_MARGIN;
+    let farthest = min(
+        min(textureLoad(depth_pyramid, a, mip).r, textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
+        min(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r, textureLoad(depth_pyramid, b, mip).r));
+    return high.z < farthest * HIDDEN_SCALE;
 }
 
 // Occlusion culling (decision 040) after phase one drew and the depth

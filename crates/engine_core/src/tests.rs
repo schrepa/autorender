@@ -308,7 +308,7 @@ fn zero_render_budget_counts_overflow_without_allocating() {
 }
 
 #[test]
-fn camera_maps_near_and_far_planes_to_webgpu_depth() {
+fn camera_maps_near_and_far_planes_to_reversed_webgpu_depth() {
     let camera = Camera {
         position: Vec3::ZERO,
         target: Vec3::NEG_Z,
@@ -317,8 +317,18 @@ fn camera_maps_near_and_far_planes_to_webgpu_depth() {
         ..Camera::default()
     };
     let projection = camera.view_projection(1.0);
-    assert!(projection.project_point3(Vec3::new(0.0, 0.0, -0.5)).z.abs() < 1.0e-6);
-    assert!((projection.project_point3(Vec3::new(0.0, 0.0, -10.0)).z - 1.0).abs() < 1.0e-6);
+    // Decision 042: the near plane at depth 1, the far plane at 0, and
+    // nearer points deeper in between.
+    assert!((projection.project_point3(Vec3::new(0.0, 0.0, -0.5)).z - 1.0).abs() < 1.0e-6);
+    assert!(
+        projection
+            .project_point3(Vec3::new(0.0, 0.0, -10.0))
+            .z
+            .abs()
+            < 1.0e-6
+    );
+    let depth = |distance: f32| projection.project_point3(Vec3::new(0.0, 0.0, -distance)).z;
+    assert!(depth(1.0) > depth(2.0) && depth(2.0) > depth(9.0));
 }
 
 #[test]

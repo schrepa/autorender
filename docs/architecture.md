@@ -92,7 +92,10 @@ shadow maps through the fog at half resolution for sun shafts;
 at half resolution for screen-space reflections; and
 [decision 026](adr-026-transparency-and-particles.md) blends transparent
 materials and stateless GPU particles order-independently after the opaque
-pass. Every pass shades captures, previews and GPU frames alike.
+pass. Every pass shades captures, previews and GPU frames alike. Depth is
+reversed on a floating-point buffer ([decision 042](adr-042-reversed-depth.md)):
+the near plane at 1, the far plane and the sky at 0, so resolution stays about
+proportional to distance.
 [Decision 027](adr-027-stylized-grading.md) grades every shaded color with a
 hue-keeping filmic curve, contrast, split toning and vibrance.
 [Decision 028](adr-028-shadow-cascades-and-receiver-planes.md) splits the near

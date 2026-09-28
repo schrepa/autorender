@@ -14,7 +14,8 @@ outside the reported vertex/index payload bytes. No per-frame vertex scan occurs
 Frustum culling is enabled by default in `EngineConfig.frustum_culling`.
 `Engine::set_frustum_culling` allows controlled comparisons and custom clients to
 disable it. Extraction derives six inward planes from exactly the camera matrix
-sent to rendering, including WebGPU's near plane at clip depth zero. It transforms
+sent to rendering, including both WebGPU depth planes (clip depth from zero to w;
+reversed, decision 042, so the near plane is at w). It transforms
 each plane into mesh-local space and evaluates a support point of the local box.
 The full world matrix preserves hierarchy shear, rotation, nonuniform scale and
 reflection. Intersection and numerical uncertainty keep the object visible.

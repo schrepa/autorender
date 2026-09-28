@@ -53,7 +53,8 @@ pub(crate) struct ClusterUniform {
 
 impl ClusterUniform {
     /// Clusters of a `width` x `height` frame seen through the unjittered
-    /// perspective `view_projection` (WebGPU depth), up to view depth
+    /// perspective `view_projection` (reversed WebGPU depth, decision 042:
+    /// near 1, far 0), up to view depth
     /// `distance` where local light fades out, with an optional per-cluster
     /// `budget` and list storage of `capacity` entries. Its fourth row gives
     /// view depth, its first two rows' lengths the projection scales, and
@@ -73,12 +74,21 @@ impl ClusterUniform {
         let depth = view_projection.row(3);
         let scale_x = view_projection.row(0).truncate().length();
         let scale_y = view_projection.row(1).truncate().length();
-        // Row 2 is P22 times the view's z row plus P23: P22 = far / (near -
-        // far) < 0 and the view's z row has unit length.
-        let p22 = -view_projection.row(2).truncate().length();
+        // Row 2 is P22 times the view's z row plus P23, and row 3 is minus
+        // the view's z row (of unit length): with reversed depth P22 =
+        // near / (far - near) > 0, depth -P22 + P23 / d is 1 at the near
+        // plane and 0 at the far one.
+        let perspective = (depth.truncate().length_squared() - 1.0).abs() < 1.0e-3;
+        let p22 = -view_projection.row(2).truncate().dot(depth.truncate());
         let p23 = view_projection.row(2).w + p22 * depth.w;
-        let (mut near, mut far) = (p23 / p22, p23 / (p22 + 1.0));
-        if !(near.is_finite() && far.is_finite() && near > 0.0 && far > near) {
+        let (mut near, mut far) = (p23 / (p22 + 1.0), p23 / p22);
+        if !(perspective
+            && p22 > 0.0
+            && near.is_finite()
+            && far.is_finite()
+            && near > 0.0
+            && far > near)
+        {
             (near, far) = (0.1, 1000.0);
         }
         // Light ends at the fade distance.

@@ -12,8 +12,8 @@ use crate::batches::BatchPlan;
 use crate::decals::DecalPass;
 use crate::depth_pyramid::DepthPyramid;
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, InstanceData, LightingUniform, PoseData, SHADER,
-    ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
+    SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
@@ -30,7 +30,10 @@ use crate::uploads::UploadCache;
 use crate::{LightStats, RenderStats, ShadowStats};
 
 const INITIAL_CAPACITY: usize = 1_024;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+// Reversed depth (decision 042): nearer surfaces keep larger values, which
+// floating-point depth resolves about evenly at every distance. The buffer
+// clears to the far plane's 0 and depth tests keep the greater value.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 // Position, octahedral normal and texture coordinates.
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Snorm16x2, 7 => Float32x2];
@@ -1818,7 +1821,7 @@ impl Renderer {
                     view: &self.depth.view,
                     depth_ops: Some(wgpu::Operations {
                         load: if phase == 0 {
-                            wgpu::LoadOp::Clear(1.0)
+                            wgpu::LoadOp::Clear(FAR_DEPTH)
                         } else {
                             wgpu::LoadOp::Load
                         },
@@ -2677,10 +2680,11 @@ pub(crate) fn sky_pipeline(
             buffers: &[],
         },
         primitive: wgpu::PrimitiveState::default(),
+        // On the far plane: it shows where nothing was drawn.
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+            depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
             stencil: Default::default(),
             bias: Default::default(),
         }),
@@ -2775,7 +2779,7 @@ fn mesh_pipeline(
         depth_stencil: Some(wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
             depth_write_enabled: Some(fragment.depth_write),
-            depth_compare: Some(wgpu::CompareFunction::Less),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
             stencil: Default::default(),
             bias: Default::default(),
         }),

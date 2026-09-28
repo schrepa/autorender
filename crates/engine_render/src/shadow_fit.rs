@@ -7,6 +7,8 @@ use engine_core::{
     math,
 };
 
+use crate::gpu_data::{FAR_DEPTH, NEAR_DEPTH};
+
 /// World to light space: x and y across the sun's view, z away from the sun.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LightBasis {
@@ -131,8 +133,8 @@ pub(crate) fn frustum_footprint(
         let point = inverse * Vec4::new(x, y, z, 1.0);
         point.truncate() / point.w
     };
-    let far_center = unproject(0.0, 0.0, 1.0);
-    let direction = (far_center - unproject(0.0, 0.0, 0.0)).try_normalize()?;
+    let far_center = unproject(0.0, 0.0, FAR_DEPTH);
+    let direction = (far_center - unproject(0.0, 0.0, NEAR_DEPTH)).try_normalize()?;
     let far_depth = (far_center - eye).dot(direction);
     if !(far_depth.is_finite() && far_depth > 0.0 && depth > 0.0) {
         return None;
@@ -142,8 +144,8 @@ pub(crate) fn frustum_footprint(
     let mut low = Vec3::splat(f32::MAX);
     let mut high = Vec3::splat(f32::MIN);
     for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-        let far = eye + (unproject(x, y, 1.0) - eye) * scale;
-        for point in [unproject(x, y, 0.0), far] {
+        let far = eye + (unproject(x, y, FAR_DEPTH) - eye) * scale;
+        for point in [unproject(x, y, NEAR_DEPTH), far] {
             let light = basis.apply(point);
             low = low.min(light);
             high = high.max(light);
@@ -161,13 +163,13 @@ pub(crate) fn view_sphere(view_projection: Mat4, eye: Vec3, reach: f32) -> Optio
         let point = inverse * Vec4::new(x, y, z, 1.0);
         point.truncate() / point.w
     };
-    let near_center = unproject(0.0, 0.0, 0.0);
-    let far_center = unproject(0.0, 0.0, 1.0);
+    let near_center = unproject(0.0, 0.0, NEAR_DEPTH);
+    let far_center = unproject(0.0, 0.0, FAR_DEPTH);
     let direction = (far_center - near_center).try_normalize()?;
     let far_depth = (far_center - eye).dot(direction);
     let near_depth = math::max((near_center - eye).dot(direction), 0.0);
     // Tangent of the half-diagonal angle of the view.
-    let slope = (unproject(1.0, 1.0, 1.0) - far_center).length() / far_depth;
+    let slope = (unproject(1.0, 1.0, FAR_DEPTH) - far_center).length() / far_depth;
     let far = math::min(reach, far_depth);
     if !(slope.is_finite() && far > near_depth) {
         return None;
@@ -263,7 +265,7 @@ mod tests {
         for corner in 0..4 {
             let x = if corner & 1 == 0 { -1.0 } else { 1.0 };
             let y = if corner & 2 == 0 { -1.0 } else { 1.0 };
-            let far = inverse * Vec4::new(x, y, 1.0, 1.0);
+            let far = inverse * Vec4::new(x, y, FAR_DEPTH, 1.0);
             let ray = (far.truncate() / far.w - camera.position).normalize();
             for depth in [camera.near, 100.0] {
                 let point = camera.position + ray * (depth / ray.dot(direction));
@@ -296,7 +298,7 @@ mod tests {
         for step in 0..=24 {
             let x = step as f32 / 12.0 - 1.0;
             for y in [-1.0, -0.3, 0.4, 1.0] {
-                let far = inverse * Vec4::new(x, y, 1.0, 1.0);
+                let far = inverse * Vec4::new(x, y, FAR_DEPTH, 1.0);
                 let ray = (far.truncate() / far.w - camera.position).normalize();
                 for depth in [camera.near, 20.0, 60.0, 100.0] {
                     let point = basis.apply(camera.position + ray * (depth / ray.dot(direction)));
