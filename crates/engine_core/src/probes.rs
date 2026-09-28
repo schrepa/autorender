@@ -112,6 +112,9 @@ pub(crate) struct ProbeExtraction {
     // This frame's usable probes and their squared distances from the eye to
     // their boxes.
     candidates: Vec<(f32, RenderReflectionProbe)>,
+    // Candidates by distance: each distance's total order in the high bits,
+    // its candidate's position in the low ones.
+    order: Vec<u64>,
 }
 
 impl ProbeExtraction {
@@ -120,6 +123,7 @@ impl ProbeExtraction {
             query: world.query::<(Entity, &ReflectionProbe)>(),
             hints: Vec::new(),
             candidates: Vec::new(),
+            order: Vec::new(),
         }
     }
 
@@ -168,16 +172,37 @@ impl ProbeExtraction {
                 },
             ));
         }
-        // Stable: equally near probes keep their order.
-        self.candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some(budget) = settings.max_probes
-            && self.candidates.len() > budget as usize
-        {
-            snapshot.dropped_reflection_probes = self.candidates.len() - budget as usize;
-            self.candidates.truncate(budget as usize);
-        }
-        snapshot
-            .reflection_probes
-            .extend(self.candidates.iter().map(|(_, probe)| *probe));
+        // Nearest first; equally near probes keep their order (sorting
+        // eight-byte keys, not the records).
+        self.order.clear();
+        self.order.extend(
+            self.candidates
+                .iter()
+                .enumerate()
+                .map(|(position, (distance, _))| {
+                    u64::from(total_order(*distance)) << 32 | position as u64
+                }),
+        );
+        self.order.sort_unstable();
+        let kept = settings.max_probes.map_or(self.order.len(), |budget| {
+            self.order.len().min(budget as usize)
+        });
+        snapshot.dropped_reflection_probes = self.order.len() - kept;
+        let candidates = &self.candidates;
+        snapshot.reflection_probes.extend(
+            self.order[..kept]
+                .iter()
+                .map(|key| candidates[(key & u64::from(u32::MAX)) as usize].1),
+        );
+    }
+}
+
+/// `value`'s bits ordered as [`f32::total_cmp`] orders values.
+fn total_order(value: f32) -> u32 {
+    let bits = value.to_bits();
+    if bits >> 31 == 1 {
+        !bits
+    } else {
+        bits | 1 << 31
     }
 }
