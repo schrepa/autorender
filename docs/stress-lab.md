@@ -101,9 +101,11 @@ and columns (one in five a column), on as many 64-unit tiles as give each
 about 36 square units; **moving objects** bob and turn in place. The other
 settings do not apply. The Effects control and looks work as elsewhere, and
 virtual meshes cast their clusters' shadows. Frames report the clusters and
-triangles the camera and the shadow maps selected (`virtual_clusters`,
-`virtual_triangles`, `virtual_shadow_clusters`, `virtual_shadow_triangles`)
-and any entries dropped for want of room (`dropped_virtual`).
+triangles the camera and the shadow maps drew (`virtual_clusters`,
+`virtual_triangles`, `virtual_shadow_clusters`, `virtual_shadow_triangles`),
+the camera's clusters occlusion culling left undrawn
+(`virtual_occluded_clusters`, with `?occlusion=off` to compare) and any
+entries dropped for want of room (`dropped_virtual`).
 
 ## Measurement
 

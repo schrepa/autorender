@@ -30,7 +30,7 @@ use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
 use crate::virtual_geometry::{
-    Cone, IdBuffers, MAX_VIEWS, VirtualBatch, VirtualGeometryPass, VirtualView,
+    CameraTests, Cone, IdBuffers, MAX_VIEWS, VirtualBatch, VirtualGeometryPass, VirtualView,
 };
 use crate::{LightStats, RenderStats, ShadowStats};
 
@@ -176,8 +176,10 @@ pub struct Renderer {
     // pipelines per pass kind and material variant over their layouts
     // (unlit, lit) and pose groups (poses, colors, previous poses and the
     // arena); this frame's camera bins (material and variant), the plan
-    // batches whose clusters draw instead of their fallback meshes, and
-    // each shadow map's bin and view offset.
+    // batches whose clusters draw instead of their fallback meshes, each
+    // shadow map's bin and view offset, and the first of the camera bins'
+    // phase-two twins; the depth pyramid generation and projection of the
+    // last frame that drew two phases.
     virtual_geometry: VirtualGeometryPass,
     virtual_pipelines: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     virtual_pose_layout: wgpu::BindGroupLayout,
@@ -186,6 +188,8 @@ pub struct Renderer {
     virtual_bins: Vec<(Option<MaterialHandle>, Variant)>,
     virtual_drawn: Vec<bool>,
     virtual_shadow_bins: Vec<(usize, usize, u32)>,
+    virtual_phase_two: Option<usize>,
+    virtual_previous: Option<(u64, engine_core::glam::Mat4)>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -705,6 +709,8 @@ impl Renderer {
             virtual_bins: Vec::new(),
             virtual_drawn: Vec::new(),
             virtual_shadow_bins: Vec::new(),
+            virtual_phase_two: None,
+            virtual_previous: None,
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -1806,7 +1812,16 @@ impl Renderer {
         let odd = temporal_frame
             .as_ref()
             .is_some_and(|frame| frame.parity == 1);
-        let virtual_frame = affine && self.prepare_virtual(snapshot, gpu_mode, odd);
+        let rasterized = temporal_frame
+            .as_ref()
+            .map_or(snapshot.view_projection, |temporal| temporal.rasterized);
+        let virtual_frame = affine
+            && self.prepare_virtual(
+                snapshot,
+                gpu_mode,
+                odd,
+                (rasterized, occlusion.map(|(_, _, levels)| levels)),
+            );
         if !affine {
             self.virtual_drawn.clear();
         }
@@ -1959,13 +1974,21 @@ impl Renderer {
                     .as_ref()
                     .expect("viewed above")
                     .encode(&mut encoder, timed(14, true));
+                // The camera's clusters the last frame's pyramid hid
+                // (decision 044) are retested against this frame's within
+                // the same span.
                 self.gpu_presentation.encode_occlusion(
                     &self.device,
                     &mut encoder,
                     (pyramid, generation),
                     poses,
-                    timed(14, false),
+                    timed(14, false).filter(|_| !virtual_frame),
                 );
+                if virtual_frame {
+                    self.virtual_geometry
+                        .encode_retest(&self.device, &mut encoder);
+                    timestamp_pass(&mut encoder, effect_queries, 14, true);
+                }
                 _effects_timed |= u32::from(effect_queries.is_some()) << 14;
             }
             let load = |clear| {
@@ -2148,8 +2171,13 @@ impl Renderer {
                     }
                 }
                 // Virtual geometry (decision 044): each bin's selected
-                // clusters, in phase one (its instances are never occluded).
-                if phase == 0 && virtual_frame {
+                // clusters, in phase one, then each bin's twin of clusters
+                // the retest found visible in phase two.
+                let first_bin = match phase {
+                    0 => Some(0),
+                    _ => self.virtual_phase_two,
+                };
+                if let Some(first_bin) = first_bin.filter(|_| virtual_frame) {
                     let groups = &self.virtual_pose_groups.as_ref().expect("built above").1;
                     let group = match temporal_pass {
                         Some((frame, _)) => {
@@ -2166,7 +2194,8 @@ impl Renderer {
                     for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
                         pass.set_pipeline(&self.virtual_pipelines[&(opaque_kind, *variant)]);
                         pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
-                        let (stream, args, offset) = self.virtual_geometry.bin_source(bin);
+                        let (stream, args, offset) =
+                            self.virtual_geometry.bin_source(first_bin + bin);
                         pass.set_vertex_buffer(0, stream);
                         pass.draw_indirect(args, offset);
                     }
@@ -2528,6 +2557,7 @@ impl Renderer {
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
             virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
             virtual_shadow_triangles: virtual_stats.map_or(0, |stats| stats.shadow_triangles),
+            virtual_occluded_clusters: virtual_stats.map_or(0, |stats| stats.occluded),
             dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
             ..self.residency_stats()
         };
@@ -2595,6 +2625,10 @@ impl Renderer {
                 engine_profile::counter(
                     "render.virtual_shadow_triangles",
                     f64::from(virtual_stats.shadow_triangles),
+                );
+                engine_profile::counter(
+                    "render.virtual_occluded_clusters",
+                    f64::from(virtual_stats.occluded),
                 );
                 engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
             }
@@ -2999,14 +3033,41 @@ impl Renderer {
 
     /// Plans this frame's virtual geometry (decision 044): the camera's
     /// batches of virtual meshes and their bins, each shadow map's virtual
-    /// casters and bin, the views, and the bindings selection reads (this
-    /// frame's poses, GPU-compacted visible IDs or CPU-prepared slots, and
-    /// the shadow maps' casters). Returns whether any batch draws clusters.
-    fn prepare_virtual(&mut self, snapshot: &RenderSnapshot, gpu_mode: bool, odd: bool) -> bool {
+    /// casters and bin, the views, the camera's occlusion and sub-pixel
+    /// tests (with `rasterized`, the projection the frame rasterizes, and
+    /// the depth pyramid's levels when occlusion culling runs), and the
+    /// bindings selection reads (this frame's poses, GPU-compacted visible
+    /// IDs or CPU-prepared slots, the shadow maps' casters and the depth
+    /// pyramid). Returns whether any batch draws clusters.
+    fn prepare_virtual(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        gpu_mode: bool,
+        odd: bool,
+        (rasterized, pyramid_levels): (engine_core::glam::Mat4, Option<u32>),
+    ) -> bool {
         self.virtual_bins.clear();
         self.virtual_drawn.clear();
         self.virtual_drawn.resize(self.plan.batches.len(), false);
         self.virtual_shadow_bins.clear();
+        self.virtual_phase_two = None;
+        // Frames drawing two phases (decision 040) retest the camera's
+        // clusters the last such frame's pyramid hid, if it is this one's.
+        let two_phases = gpu_mode && self.gpu_presentation.occlusion();
+        let pyramid = self
+            .depth_pyramid
+            .as_ref()
+            .and_then(DepthPyramid::view)
+            .filter(|_| two_phases);
+        let previous = self
+            .virtual_previous
+            .take()
+            .and_then(|(generation, projection)| {
+                pyramid
+                    .is_some_and(|(_, current)| current == generation)
+                    .then_some(projection)
+            });
+        self.virtual_previous = pyramid.map(|(_, generation)| (generation, rasterized));
         if !snapshot.virtual_geometry.enabled {
             return false;
         }
@@ -3111,12 +3172,30 @@ impl Renderer {
                 });
             }
         }
+        // Phase two's twins of the camera's bins follow the shadow maps'.
+        let mut bins = self.virtual_bins.len() + self.virtual_shadow_bins.len();
+        if pyramid.is_some() {
+            self.virtual_phase_two = Some(bins);
+            bins += self.virtual_bins.len();
+        }
+        let tests = CameraTests {
+            view_projection: rasterized,
+            viewport: (
+                self.configuration.width,
+                self.configuration.height,
+                pyramid_levels.unwrap_or(0),
+            ),
+            previous,
+            phase_two: self.virtual_phase_two.map(|bin| bin as u32),
+            subpixel: gpu_mode && self.gpu_presentation.culls_subpixel(),
+        };
         self.virtual_geometry.prepare(
             &self.device,
             &self.queue,
             [&batches, &shadow_batches],
-            self.virtual_bins.len() + self.virtual_shadow_bins.len(),
+            bins,
             &views,
+            &tests,
         );
         let poses = if odd {
             self.alternate_poses
@@ -3152,6 +3231,7 @@ impl Renderer {
             }),
             [max_instances, shadow_instances],
             self.shadows.view_buffer(),
+            pyramid,
         );
         true
     }

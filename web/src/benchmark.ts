@@ -15,7 +15,7 @@ const numericFields = [
   "shadow_draws", "shadow_kept_redraw", "local_lights", "dropped_lights", "transparent_draws", "particles",
   "dropped_particles", "decals", "dropped_decals", "reflection_probes", "reflection_probe_faces",
   "dropped_reflection_probes", "virtual_clusters", "virtual_triangles", "virtual_shadow_clusters",
-  "virtual_shadow_triangles", "dropped_virtual",
+  "virtual_shadow_triangles", "virtual_occluded_clusters", "dropped_virtual",
 ] as const;
 
 export class BenchmarkError extends Error {

@@ -6,14 +6,18 @@
 //! frame (decision 020) selects its casters' clusters into a bin of its own,
 //! drawn into the map by `vs_shadow`.
 //!
+//! Frames culling occluded instances (decision 040) retest the camera's
+//! clusters the last frame's depth pyramid hid against this frame's, after
+//! phase one, and draw those it does not hide in phase two from twin bins.
+//!
 //! Arena records carry absolute indices, rebased once at upload; pages
 //! upload as the file stores them. Selection runs on the GPU only, for all
-//! views in one pass; each bin's region and the node and group queues grow
-//! to what frames read back.
+//! views in one pass; each bin's region, the retest list and the node and
+//! group queues grow to what frames read back.
 
 use std::{cell::Cell, collections::HashMap, rc::Rc, sync::Arc};
 
-use engine_core::glam::Vec3;
+use engine_core::glam::{Mat4, Vec3};
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, VirtualMesh};
 
 use crate::gpu_data::VIRTUAL_SHADER;
@@ -22,18 +26,25 @@ use crate::shadows::{SHADOW_FORMAT, VIRTUAL_SHADOW_PLANES as PLANES};
 const NONE: u32 = u32::MAX;
 const GROUP: u32 = 64;
 /// Counters before the bins' (`virtual_geometry.wgsl`).
-const COUNTERS: usize = 10;
+const COUNTERS: usize = 12;
 /// Views one frame selects for: the camera's and those of the shadow maps
 /// drawn every frame (up to four cascades and the moving map).
 pub(crate) const MAX_VIEWS: usize = 8;
 /// Floats of a view record: its planes, the eye, the error projection and
 /// a direction.
 const VIEW_FLOATS: usize = PLANES * 4 + 12;
-const UNIFORM_BYTES: u64 = 16 + (MAX_VIEWS * VIEW_FLOATS * 4) as u64;
+/// Bytes of the uniform before its views: counts, two projections, the
+/// viewport and the camera's tests.
+const FRAME_BYTES: usize = 176;
+const UNIFORM_BYTES: u64 = (FRAME_BYTES + MAX_VIEWS * VIEW_FLOATS * 4) as u64;
 const READBACKS: usize = 3;
 /// Starting capacities, grown from read-back counts.
 const START_QUEUE: u64 = 1 << 16;
 const START_BIN: u64 = 1 << 14;
+const START_RETEST: u64 = 1 << 14;
+/// Camera tests (`virtual_geometry.wgsl`).
+const TEST_PREVIOUS: u32 = 1;
+const TEST_SUBPIXEL: u32 = 2;
 /// Bytes of an entry of the selected clusters: visible ID and cluster.
 pub(crate) const VISIBLE_BYTES: u64 = 8;
 /// ID sources of batches: the camera's, and the shadow maps' casters.
@@ -86,14 +97,30 @@ pub(crate) struct VirtualView {
 }
 
 /// Counts a frame read back: clusters and triangles the camera and the
-/// shadow views selected, and entries dropped for want of room.
+/// shadow views selected, the camera's clusters occlusion culling left
+/// undrawn, and entries dropped for want of room.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct VirtualStats {
     pub clusters: u32,
     pub triangles: u32,
     pub shadow_clusters: u32,
     pub shadow_triangles: u32,
+    pub occluded: u32,
     pub dropped: u32,
+}
+
+/// The camera's cluster tests of a frame (decisions 040 and 041): the
+/// projection it rasterizes, the viewport and depth pyramid levels, the
+/// projection the last frame rasterized when its pyramid is this frame's
+/// to reuse, the first phase-two bin when occlusion culling draws two
+/// phases, and whether clusters covering no pixel center stay undrawn.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CameraTests {
+    pub view_projection: Mat4,
+    pub viewport: (u32, u32, u32),
+    pub previous: Option<Mat4>,
+    pub phase_two: Option<u32>,
+    pub subpixel: bool,
 }
 
 /// The buffers one source of batches reads: IDs and draw arguments, with a
@@ -137,6 +164,8 @@ struct Pipelines {
     work_args: wgpu::ComputePipeline,
     select: wgpu::ComputePipeline,
     bin_args: wgpu::ComputePipeline,
+    retest_args: wgpu::ComputePipeline,
+    retest: wgpu::ComputePipeline,
 }
 
 struct Groups {
@@ -147,6 +176,8 @@ struct Groups {
     work_args: wgpu::BindGroup,
     select: wgpu::BindGroup,
     bin_args: wgpu::BindGroup,
+    retest_args: wgpu::BindGroup,
+    retest: wgpu::BindGroup,
 }
 
 /// Depth-only drawing of shadow views' bins and its bindings, one per pose
@@ -157,15 +188,15 @@ struct ShadowDrawing {
     groups: [Option<(ShadowGroupKey, wgpu::BindGroup)>; 2],
 }
 
-/// Generations of the arena, frame buffers, poses, camera IDs and shadow
-/// IDs bind groups were built for.
-type GroupsKey = (u64, u64, u64, u64, Option<u64>);
+/// Generations of the arena, frame buffers, poses, camera IDs, shadow IDs
+/// and the depth pyramid bind groups were built for.
+type GroupsKey = (u64, u64, u64, u64, Option<u64>, Option<u64>);
 /// The arena generation, the poses' key and the shadow views' buffer a
 /// shadow drawing group binds.
 type ShadowGroupKey = (u64, u64, wgpu::Buffer);
-/// Counts a frame read back and its dropped queue, group and cluster
-/// entries.
-type ReadCounts = (VirtualStats, [u32; 3]);
+/// Counts a frame read back, its dropped queue, group and cluster entries,
+/// and whether its retest list overflowed.
+type ReadCounts = (VirtualStats, [u32; 4]);
 
 pub(crate) struct VirtualGeometryPass {
     module: wgpu::ShaderModule,
@@ -198,6 +229,14 @@ pub(crate) struct VirtualGeometryPass {
     counter_capacity: u64,
     dispatch: wgpu::Buffer,
     draw_args: wgpu::Buffer,
+    // Clusters waiting for this frame's depth pyramid, and whether this
+    // frame retests them.
+    retest: wgpu::Buffer,
+    retest_capacity: u64,
+    retesting: bool,
+    // Stands in for the depth pyramid on frames without one.
+    _no_pyramid: wgpu::Texture,
+    no_pyramid: wgpu::TextureView,
     // Advances whenever frame buffers are replaced.
     frame_generation: u64,
     // Bindings per pose buffer parity (temporal frames alternate them), and
@@ -212,7 +251,7 @@ pub(crate) struct VirtualGeometryPass {
     // last frame took them.
     read: Rc<Cell<Option<ReadCounts>>>,
     last: Option<VirtualStats>,
-    grow: [bool; 3],
+    grow: [bool; 4],
 }
 
 fn storage(
@@ -276,8 +315,25 @@ impl VirtualGeometryPass {
             work_args: pipeline("work_args"),
             select: pipeline("select_clusters"),
             bin_args: pipeline("bin_args"),
+            retest_args: pipeline("retest_args"),
+            retest: pipeline("retest_clusters"),
         };
         let none = wgpu::BufferUsages::empty();
+        let no_pyramid = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/virtual-no-pyramid"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let no_pyramid_view = no_pyramid.create_view(&Default::default());
         Self {
             module,
             pipelines,
@@ -335,6 +391,11 @@ impl VirtualGeometryPass {
                 16,
                 wgpu::BufferUsages::INDIRECT,
             ),
+            retest: storage(device, "engine/virtual-retest", START_RETEST * 16, none),
+            retest_capacity: START_RETEST,
+            retesting: false,
+            _no_pyramid: no_pyramid,
+            no_pyramid: no_pyramid_view,
             frame_generation: 0,
             groups: [None, None],
             parity: 0,
@@ -343,7 +404,7 @@ impl VirtualGeometryPass {
             readbacks: Vec::new(),
             read: Rc::new(Cell::new(None)),
             last: None,
-            grow: [false; 3],
+            grow: [false; 4],
         }
     }
 
@@ -486,10 +547,12 @@ impl VirtualGeometryPass {
             + self.work.size()
             + self.visible.size()
             + self.counters.size()
+            + self.retest.size()
     }
 
-    /// Uploads this frame's batches of both ID sources, bins and views,
-    /// growing the queues and bin regions to what frames read back needed.
+    /// Uploads this frame's batches of both ID sources, bins, views and the
+    /// camera's tests, growing the queues, bin regions and retest list to
+    /// what frames read back needed.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -497,12 +560,29 @@ impl VirtualGeometryPass {
         batches: [&[VirtualBatch]; 2],
         bins: usize,
         views: &[VirtualView],
+        tests: &CameraTests,
     ) {
-        if let Some((stats, [queue_drops, work_drops, cluster_drops])) = self.read.take() {
+        if let Some((stats, [queue_drops, work_drops, cluster_drops, overflow])) = self.read.take()
+        {
             self.last = Some(stats);
-            self.grow = [queue_drops > 0, work_drops > 0, cluster_drops > 0];
+            self.grow = [
+                queue_drops > 0,
+                work_drops > 0,
+                cluster_drops > 0,
+                overflow > 0,
+            ];
         }
         let binding = device.limits().max_storage_buffer_binding_size;
+        if self.grow[3] && self.retest_capacity * 32 <= binding {
+            self.retest_capacity *= 2;
+            self.retest = storage(
+                device,
+                "engine/virtual-retest",
+                self.retest_capacity * 16,
+                wgpu::BufferUsages::empty(),
+            );
+            self.frame_generation += 1;
+        }
         if (self.grow[0] || self.grow[1]) && self.queue_capacity * 32 <= binding {
             self.queue_capacity *= 2;
             let none = wgpu::BufferUsages::empty();
@@ -531,7 +611,7 @@ impl VirtualGeometryPass {
         if self.grow[2] && self.bin_capacity * VISIBLE_BYTES * 2 * bins as u64 <= binding {
             self.bin_capacity *= 2;
         }
-        self.grow = [false; 3];
+        self.grow = [false; 4];
         // Bins' regions: equal shares of the visible storage.
         let wanted = self.bin_capacity * bins.max(1) as u64;
         if wanted > self.visible_capacity {
@@ -623,6 +703,31 @@ impl VirtualGeometryPass {
             views.len() as u32,
         ];
         let mut bytes: Vec<u8> = bytemuck::cast_slice(&counts).to_vec();
+        self.retesting = tests.phase_two.is_some();
+        let (width, height, levels) = tests.viewport;
+        let flags = match (tests.previous, tests.phase_two) {
+            (Some(_), Some(_)) => TEST_PREVIOUS,
+            _ => 0,
+        } | if tests.subpixel { TEST_SUBPIXEL } else { 0 };
+        bytes.extend_from_slice(bytemuck::cast_slice(&tests.view_projection.to_cols_array()));
+        bytes.extend_from_slice(bytemuck::cast_slice(
+            &tests
+                .previous
+                .unwrap_or(tests.view_projection)
+                .to_cols_array(),
+        ));
+        bytes.extend_from_slice(bytemuck::cast_slice(&[
+            width as f32,
+            height as f32,
+            levels as f32,
+            0.0,
+        ]));
+        bytes.extend_from_slice(bytemuck::cast_slice(&[
+            flags,
+            tests.phase_two.unwrap_or(0),
+            self.retest_capacity as u32,
+            0,
+        ]));
         for view in views.iter().take(MAX_VIEWS) {
             let mut floats = Vec::with_capacity(VIEW_FLOATS);
             for plane in view.planes {
@@ -645,7 +750,9 @@ impl VirtualGeometryPass {
     /// camera's batches and of the shadow maps' casters, each with a key
     /// that changes when the buffers do. `max_instances` is the most
     /// instances a batch of each source has; `shadow_views`, the shadow
-    /// maps' view matrices shadow bins are drawn with.
+    /// maps' view matrices shadow bins are drawn with; `pyramid`, occlusion
+    /// culling's depth pyramid and its generation.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn bind(
         &mut self,
         device: &wgpu::Device,
@@ -654,6 +761,7 @@ impl VirtualGeometryPass {
         shadows: Option<IdBuffers<'_>>,
         max_instances: [u32; 2],
         shadow_views: Option<&wgpu::Buffer>,
+        pyramid: Option<(&wgpu::TextureView, u64)>,
     ) {
         self.max_instances = max_instances;
         self.poses = Some((poses.0.clone(), poses.1));
@@ -670,7 +778,13 @@ impl VirtualGeometryPass {
             poses.1,
             camera.key,
             shadows.map(|shadows| shadows.key),
+            pyramid.map(|(_, generation)| generation),
         );
+        let pyramid_view = pyramid.map_or(&self.no_pyramid, |(view, _)| view);
+        let texture = |binding| wgpu::BindGroupEntry {
+            binding,
+            resource: wgpu::BindingResource::TextureView(pyramid_view),
+        };
         if self.groups[self.parity]
             .as_ref()
             .is_some_and(|(built, _)| *built == key)
@@ -751,6 +865,8 @@ impl VirtualGeometryPass {
                     entry(12, &self.counters),
                     entry(13, &self.visible),
                     entry(14, &self.bins),
+                    texture(19),
+                    entry(20, &self.retest),
                 ],
             ),
             bin_args: group(
@@ -760,6 +876,20 @@ impl VirtualGeometryPass {
                     entry(12, &self.counters),
                     entry(14, &self.bins),
                     entry(16, &self.draw_args),
+                ],
+            ),
+            retest_args: level(&pipelines.retest_args),
+            retest: group(
+                &pipelines.retest,
+                &[
+                    entry(0, &self.uniform),
+                    entry(5, &arena.clusters),
+                    entry(6, poses.0),
+                    entry(12, &self.counters),
+                    entry(13, &self.visible),
+                    entry(14, &self.bins),
+                    texture(19),
+                    entry(20, &self.retest),
                 ],
             ),
         };
@@ -926,6 +1056,15 @@ impl VirtualGeometryPass {
             pass.set_bind_group(0, &groups.bin_args, &[]);
             pass.dispatch_workgroups((self.bin_regions.len() as u32).div_ceil(GROUP).max(1), 1, 1);
         }
+        // Frames retesting read their counters back after the retest.
+        if !self.retesting {
+            self.read_counters(device, encoder);
+        }
+    }
+
+    /// Records a copy of this frame's counters for read-back, when a
+    /// read-back buffer is free.
+    fn read_counters(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         if let Some(index) = self.idle_readback(device) {
             let readback = &self.readbacks[index];
             encoder.copy_buffer_to_buffer(
@@ -937,6 +1076,39 @@ impl VirtualGeometryPass {
             );
             readback.state.set(ReadbackState::Recorded);
         }
+    }
+
+    /// Records the retest after phase one and this frame's depth pyramid
+    /// (decision 040): the waiting clusters it does not hide go to phase
+    /// two's bins, whose draw arguments follow. Nothing on frames drawing
+    /// one phase.
+    pub(crate) fn encode_retest(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let Some((_, groups)) = &self.groups[self.parity] else {
+            return;
+        };
+        if !self.retesting || self.batch_counts == [0, 0] {
+            return;
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/virtual-retest"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipelines.retest_args);
+            pass.set_bind_group(0, &groups.retest_args, &[]);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&self.pipelines.retest);
+            pass.set_bind_group(0, &groups.retest, &[]);
+            pass.dispatch_workgroups_indirect(&self.dispatch, 12);
+            pass.set_pipeline(&self.pipelines.bin_args);
+            pass.set_bind_group(0, &groups.bin_args, &[]);
+            pass.dispatch_workgroups((self.bin_regions.len() as u32).div_ceil(GROUP).max(1), 1, 1);
+        }
+        self.read_counters(device, encoder);
     }
 
     /// The selected clusters of bin `bin` (an instance-stepped vertex stream
@@ -1018,6 +1190,8 @@ impl VirtualGeometryPass {
             let state = Rc::clone(&readback.state);
             let read = Rc::clone(&self.read);
             let buffer = readback.buffer.clone();
+            // The retest list's capacity during the frame just submitted.
+            let capacity = self.retest_capacity as u32;
             readback
                 .buffer
                 .slice(..)
@@ -1036,9 +1210,10 @@ impl VirtualGeometryPass {
                                     triangles: word(7),
                                     shadow_clusters: word(8),
                                     shadow_triangles: word(9),
+                                    occluded: word(11),
                                     dropped: drops.iter().sum(),
                                 },
-                                drops,
+                                [drops[0], drops[1], drops[2], u32::from(word(10) > capacity)],
                             )));
                         }
                         buffer.unmap();

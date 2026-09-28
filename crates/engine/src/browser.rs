@@ -155,12 +155,14 @@ pub struct FrameStats {
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
     /// Clusters and triangles virtual geometry drew for the camera and into
-    /// shadow maps, and selections dropped while its storage grew (decision
-    /// 044), read back a few frames late.
+    /// shadow maps, the camera's clusters occlusion culling left undrawn,
+    /// and selections dropped while its storage grew (decision 044), read
+    /// back a few frames late.
     pub virtual_clusters: u32,
     pub virtual_triangles: u32,
     pub virtual_shadow_clusters: u32,
     pub virtual_shadow_triangles: u32,
+    pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; `None` without occlusion culling.
@@ -238,12 +240,14 @@ pub struct BrowserStats {
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
     /// Clusters and triangles virtual geometry drew for the camera and into
-    /// shadow maps, and selections dropped while its storage grew (decision
-    /// 044), read back a few frames late.
+    /// shadow maps, the camera's clusters occlusion culling left undrawn,
+    /// and selections dropped while its storage grew (decision 044), read
+    /// back a few frames late.
     pub virtual_clusters: u32,
     pub virtual_triangles: u32,
     pub virtual_shadow_clusters: u32,
     pub virtual_shadow_triangles: u32,
+    pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; undefined without occlusion culling.
@@ -316,6 +320,7 @@ impl From<FrameStats> for BrowserStats {
             virtual_triangles: stats.virtual_triangles,
             virtual_shadow_clusters: stats.virtual_shadow_clusters,
             virtual_shadow_triangles: stats.virtual_shadow_triangles,
+            virtual_occluded_clusters: stats.virtual_occluded_clusters,
             dropped_virtual: stats.dropped_virtual,
             occluded_instances: stats.occluded_instances,
             subpixel_instances: stats.subpixel_instances,
@@ -696,6 +701,7 @@ impl BrowserApp {
             virtual_triangles: rendered.virtual_triangles,
             virtual_shadow_clusters: rendered.virtual_shadow_clusters,
             virtual_shadow_triangles: rendered.virtual_shadow_triangles,
+            virtual_occluded_clusters: rendered.virtual_occluded_clusters,
             dropped_virtual: rendered.dropped_virtual,
             occluded_instances: rendered.occluded_instances,
             subpixel_instances: rendered.subpixel_instances,

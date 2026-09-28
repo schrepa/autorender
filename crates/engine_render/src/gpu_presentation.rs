@@ -538,6 +538,12 @@ impl GpuPresentationPass {
         self.occlusion
     }
 
+    /// Whether this frame leaves candidates covering no pixel center
+    /// undrawn (decision 041).
+    pub(crate) fn culls_subpixel(&self) -> bool {
+        self.subpixel
+    }
+
     fn ensure_nodes(&mut self, device: &wgpu::Device, nodes: usize, parents: usize) {
         if nodes > self.node_capacity {
             self.node_capacity = grow(nodes);

@@ -1,9 +1,10 @@
 # Decision 044: Virtual geometry
 
-Status: first two stages adopted. Offline cluster hierarchies, their file
+Status: first three stages adopted. Offline cluster hierarchies, their file
 format, GPU cluster selection, forward drawing and cluster shadows work on
-retained frames, both GPU-presented and CPU-prepared. Cluster occlusion, a
-visibility buffer, streaming and scene authoring come later (see Stages).
+retained frames, both GPU-presented and CPU-prepared; GPU-presented frames
+also cull occluded and sub-pixel clusters. A visibility buffer, streaming
+and scene authoring come later (see Stages).
 
 ## Context
 
@@ -139,7 +140,31 @@ temporally antialiased frames, moving instances read their previous poses
 for motion.
 
 Occlusion culling (decision 040) never tests batches of virtual meshes per
-instance: they draw in the first phase and fill the depth pyramid.
+instance; their clusters are tested instead (see Occlusion below).
+
+### Occlusion and sub-pixel clusters
+
+GPU-presented frames that draw two phases (decision 040) test the camera's
+clusters, once they pass the other tests, against the depth pyramid:
+
+1. **Selection** compares each cluster's bounds with the last two-phase
+   frame's pyramid under the projection that frame rasterized, while that
+   pyramid is this one's (the same size, rebuilt no later than the last
+   frame). Clusters it hides go to a retest list instead of their bins,
+   except when the list is full; the rest draw in phase one and fill this
+   frame's pyramid.
+2. **The retest**, after phase one and this frame's pyramid, compares each
+   waiting cluster with it, as presentation's test compares instances. Those
+   it does not hide go to phase-two twins of their bins, drawn after phase
+   two's instances.
+
+A cluster is only left undrawn behind what this frame drew, so output
+matches frames without the test pixel for pixel: CPU-prepared and
+GPU-presented captures of the dense scene match exactly at street level and
+from above. Whether a cluster waits depends on the last frame only, so a
+wrong guess costs time, never pixels. The same frames leave clusters whose
+bounds cover no pixel center undrawn (decision 041's test on their bounding
+box). Shadow views skip both tests.
 
 ### Shadows
 
@@ -179,10 +204,11 @@ dropped entries still draws everything that fit, and reports the drops.
 ## Observable behavior
 
 - `rendering.virtual_clusters` and `rendering.virtual_triangles` count what
-  the camera selected, `rendering.virtual_shadow_clusters` and
-  `virtual_shadow_triangles` what the shadow maps selected, and
-  `rendering.dropped_virtual` counts entries dropped for want of room. All
-  are read back a few frames late. Profiles time `virtual_selection` and
+  the camera drew, `rendering.virtual_shadow_clusters` and
+  `virtual_shadow_triangles` what the shadow maps drew,
+  `rendering.virtual_occluded_clusters` the camera's clusters the retest
+  left undrawn, and `rendering.dropped_virtual` entries dropped for want of
+  room. All are read back a few frames late. Profiles time `virtual_selection` and
   report the arena and frame buffers as `memory.gpu_virtual_bytes`.
 - The Stress Lab's dense scene (`scene=dense`, preset "Dense geometry",
   `docs/stress-lab.md`) holds 2,000 objects on 25 terrain tiles:
@@ -196,8 +222,10 @@ dropped entries still draws everything that fit, and reports the drops.
   4,440 (428,054); street level draws 3,832 (432,418), and its shadow maps
   9,190 (1.02 million) by day and about 8,700 at golden hour. Nothing is
   dropped. Without the tightened regions and the unseen texel error, the
-  street-level maps selected 1.6 million triangles. Frame rates have not
-  yet been benchmarked.
+  street-level maps selected 1.6 million triangles. Occlusion leaves 176 to
+  354 of about 3,000 camera clusters undrawn at street level and 4 from
+  above: the boulders stand apart on open ground. Frame rates have not yet
+  been benchmarked.
 
 ## Consequences
 
@@ -220,8 +248,8 @@ dropped entries still draws everything that fit, and reports the drops.
 1. Offline hierarchies, the format, GPU selection, forward drawing and the
    dense scene (this record).
 2. Cluster shadows in the cascades and the moving map (this record).
-3. Cluster occlusion: two phases against the depth pyramid of decision 040,
-   plus a sub-pixel cluster test.
+3. Cluster occlusion against decision 040's pyramids and sub-pixel clusters
+   (this record).
 4. A visibility buffer: rasterize instance, cluster and triangle IDs, then
    shade each material in its own pass.
 5. Streaming: coarse pages stay resident, the GPU requests pages through

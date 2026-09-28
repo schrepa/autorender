@@ -12,6 +12,13 @@
 // per material, are drawn 128 triangles a cluster by the vertex shaders of
 // `meshes.wgsl`, and each shadow view's bin by `vs_shadow` below.
 //
+// Frames culling occluded instances (decision 040) draw in two phases. The
+// camera's clusters that the last frame's depth pyramid hides wait in a
+// retest list; after phase one and this frame's pyramid, those it does not
+// hide go to phase two's bins, so output stays what it would be without the
+// test. Clusters whose bounds cover no pixel center are left undrawn
+// (decision 041).
+//
 // Every view projects errors as the camera sees them, so shadow maps cast
 // the surfaces the camera draws and nothing shadows itself for want of the
 // same detail. A shadow view projects distances below the nearest of its
@@ -44,6 +51,13 @@ struct View {
 struct Frame {
     // Node queue capacity, group list capacity, bins, views.
     counts: vec4<u32>,
+    // The projections this frame and the last one rasterized, the viewport
+    // (width, height, depth pyramid levels, 0), and the camera's tests
+    // (TEST_*), its first phase-two bin and the retest list's capacity.
+    view_projection: mat4x4<f32>,
+    previous_view_projection: mat4x4<f32>,
+    viewport: vec4<f32>,
+    tests: vec4<u32>,
     views: array<View, 8>,
 }
 
@@ -116,10 +130,17 @@ struct Rows {
 // Visible ID and cluster of each selected cluster, by bin.
 @group(0) @binding(13) var<storage, read_write> visible: array<vec2<u32>>;
 @group(0) @binding(14) var<storage, read> bins: array<Bin>;
-// Indirect dispatches: the next traversal level's, then the group list's.
+// Indirect dispatches: the next traversal level's, then the group list's
+// (and after phase one the retest list's).
 @group(0) @binding(15) var<storage, read_write> dispatch: array<u32>;
 // Per bin: vertices, instances, first vertex, first instance.
 @group(0) @binding(16) var<storage, read_write> draw_args: array<u32>;
+// The depth pyramid of occlusion culling (decision 040): the last frame's
+// during selection, this frame's when retesting.
+@group(0) @binding(19) var depth_pyramid: texture_2d<f32>;
+// Clusters waiting for this frame's pyramid: visible ID, cluster, phase-two
+// bin, 0.
+@group(0) @binding(20) var<storage, read_write> retest: array<vec4<u32>>;
 
 const NONE: u32 = 0xffffffffu;
 const MOVED_SLOT: u32 = 0x80000000u;
@@ -133,7 +154,21 @@ const SELECTED_CLUSTERS: u32 = 6u;
 const SELECTED_TRIANGLES: u32 = 7u;
 const SHADOW_CLUSTERS: u32 = 8u;
 const SHADOW_TRIANGLES: u32 = 9u;
-const BINS: u32 = 10u;
+// Clusters sent to the retest list, and those its test hid.
+const RETESTED: u32 = 10u;
+const HIDDEN_CLUSTERS: u32 = 11u;
+const BINS: u32 = 12u;
+// Camera tests: send clusters the last frame's pyramid hides to the retest
+// list; leave clusters covering no pixel center undrawn.
+const TEST_PREVIOUS: u32 = 1u;
+const TEST_SUBPIXEL: u32 = 2u;
+// Pixels the projected bounds are widened by before looking for pixel
+// centers, and the relative depth margin of a hidden box: presentation's
+// (decisions 040 and 041).
+const SUBPIXEL_MARGIN: f32 = 0.0625;
+const HIDDEN_SCALE: f32 = 0.9999847412109375;
+// Exact hex literal: browsers reject decimal spellings above f32::MAX.
+const F32_MAX: f32 = 0x1.fffffep+127f;
 // Batch flags; the view follows from bit 8.
 const DOUBLE_SIDED: u32 = 1u;
 const VIEW_SHIFT: u32 = 8u;
@@ -182,6 +217,92 @@ fn precise_enough(view: u32, center: vec3<f32>, radius: f32, error: f32) -> bool
         return true;
     }
     return error <= frame.views[view].lod.w && outside(0u, center, radius);
+}
+
+// The screen rectangle (normalized device x and y, lowest then highest) and
+// nearest reversed depth of the world box `low` to `high` under
+// `clip_from_world`; `valid` is false for boxes reaching the eye plane or
+// not finite.
+struct Projected {
+    low: vec2<f32>,
+    high: vec3<f32>,
+    valid: bool,
+}
+
+fn project_box(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> Projected {
+    var projected: Projected;
+    projected.low = vec2<f32>(F32_MAX);
+    projected.high = vec3<f32>(-F32_MAX);
+    for (var corner = 0u; corner < 8u; corner++) {
+        let world = vec3<f32>(select(low.x, high.x, (corner & 1u) != 0u),
+            select(low.y, high.y, (corner & 2u) != 0u),
+            select(low.z, high.z, (corner & 4u) != 0u));
+        let clip = clip_from_world * vec4<f32>(world, 1.0);
+        if !(clip.w > 1.0e-6) {
+            return projected;
+        }
+        let ndc = clip.xyz / clip.w;
+        projected.low = min(projected.low, ndc.xy);
+        projected.high = max(projected.high, ndc);
+    }
+    projected.valid = all(projected.low >= vec2<f32>(-F32_MAX))
+        && all(projected.high <= vec3<f32>(F32_MAX));
+    return projected;
+}
+
+// Whether the box `low` to `high` covers no pixel center (decision 041):
+// its screen rectangle, widened by SUBPIXEL_MARGIN, holds none on some axis.
+// Boxes reaching the eye plane or far outside the viewport cover some.
+fn covers_no_pixel(low: vec3<f32>, high: vec3<f32>) -> bool {
+    let projected = project_box(frame.view_projection, low, high);
+    if !projected.valid || !(all(projected.low >= vec2<f32>(-4.0))
+            && all(projected.high.xy <= vec2<f32>(4.0))) {
+        return false;
+    }
+    let size = frame.viewport.xy;
+    let first = vec2<f32>(projected.low.x * 0.5 + 0.5, 0.5 - projected.high.y * 0.5) * size
+        - SUBPIXEL_MARGIN;
+    let last = vec2<f32>(projected.high.x * 0.5 + 0.5, 0.5 - projected.low.y * 0.5) * size
+        + SUBPIXEL_MARGIN;
+    let centers = floor(last - 0.5) - ceil(first - 0.5);
+    return centers.x < 0.0 || centers.y < 0.0;
+}
+
+// Whether the depth pyramid hides the box `low` to `high` projected by
+// `clip_from_world` (presentation's test, decision 040): its nearest depth
+// lies beyond the farthest depth of every pyramid texel its rectangle
+// touches. Boxes reaching the eye plane, or too large, are not hidden.
+fn hidden(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
+    let projected = project_box(clip_from_world, low, high);
+    if !projected.valid || !(projected.high.z >= 0.0 && projected.high.z <= 1.0) {
+        return false;
+    }
+    let size = frame.viewport.xy;
+    let first = clamp(floor(vec2<f32>(projected.low.x * 0.5 + 0.5,
+        0.5 - projected.high.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
+    let last = clamp(floor(vec2<f32>(projected.high.x * 0.5 + 0.5,
+        0.5 - projected.low.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
+    var a = vec2<u32>(first) / 2u;
+    var b = vec2<u32>(last) / 2u;
+    let levels = u32(frame.viewport.z);
+    var mip = 0u;
+    loop {
+        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || mip + 1u >= levels {
+            break;
+        }
+        a = a / 2u;
+        b = b / 2u;
+        mip += 1u;
+    }
+    if b.x - a.x > 1u || b.y - a.y > 1u {
+        return false;
+    }
+    let farthest = min(
+        min(textureLoad(depth_pyramid, a, mip).r,
+            textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
+        min(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r,
+            textureLoad(depth_pyramid, b, mip).r));
+    return projected.high.z < farthest * HIDDEN_SCALE;
 }
 
 fn push_node(queue: u32, item: vec4<u32>) {
@@ -351,6 +472,23 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
         if (item.w & DOUBLE_SIDED) == 0u && backfacing(view, pose, record.x, center, radius) {
             continue;
         }
+        if view == 0u && frame.tests.x != 0u {
+            let low = center - vec3<f32>(radius);
+            let high = center + vec3<f32>(radius);
+            if (frame.tests.x & TEST_SUBPIXEL) != 0u && covers_no_pixel(low, high) {
+                continue;
+            }
+            // Hidden last frame: wait for this frame's pyramid (or, without
+            // room, draw in phase one).
+            if (frame.tests.x & TEST_PREVIOUS) != 0u
+                    && hidden(frame.previous_view_projection, low, high) {
+                let slot = atomicAdd(&counters[RETESTED], 1u);
+                if slot < frame.tests.z {
+                    retest[slot] = vec4<u32>(item.x, cluster, frame.tests.y + item.z, 0u);
+                    continue;
+                }
+            }
+        }
         let index = atomicAdd(&counters[BINS + item.z], 1u);
         if index >= bin.capacity {
             atomicAdd(&counters[DROPPED_CLUSTERS], 1u);
@@ -360,6 +498,42 @@ fn select_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
         atomicAdd(&counters[counts], 1u);
         atomicAdd(&counters[counts + 1u], clusters[cluster * 3u + 2u].z >> 16u);
     }
+}
+
+// Dispatch arguments of the retest list, after phase one.
+@compute @workgroup_size(1)
+fn retest_args() {
+    let count = min(atomicLoad(&counters[RETESTED]), frame.tests.z);
+    dispatch[3] = (count + GROUP - 1u) / GROUP;
+    dispatch[4] = 1u;
+    dispatch[5] = 1u;
+}
+
+// Each waiting cluster this frame's pyramid does not hide draws in phase
+// two, from its bin.
+@compute @workgroup_size(64)
+fn retest_clusters(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= min(atomicLoad(&counters[RETESTED]), frame.tests.z) {
+        return;
+    }
+    let entry = retest[id.x];
+    let pose = poses[entry.x & ~MOVED_SLOT];
+    let sphere = clusters[entry.y * 3u];
+    let center = transformed(pose, bitcast<vec3<f32>>(sphere.xyz));
+    let radius = bitcast<f32>(sphere.w) * largest_scale(pose);
+    if hidden(frame.view_projection, center - vec3<f32>(radius), center + vec3<f32>(radius)) {
+        atomicAdd(&counters[HIDDEN_CLUSTERS], 1u);
+        return;
+    }
+    let bin = bins[entry.z];
+    let index = atomicAdd(&counters[BINS + entry.z], 1u);
+    if index >= bin.capacity {
+        atomicAdd(&counters[DROPPED_CLUSTERS], 1u);
+        return;
+    }
+    visible[bin.base + index] = vec2<u32>(entry.x, entry.y);
+    atomicAdd(&counters[SELECTED_CLUSTERS], 1u);
+    atomicAdd(&counters[SELECTED_TRIANGLES], clusters[entry.y * 3u + 2u].z >> 16u);
 }
 
 // Each bin draws its selected clusters (within its capacity), 128

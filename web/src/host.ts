@@ -19,7 +19,7 @@ export interface RuntimeStats {
   decals: number; dropped_decals: number; occluded_instances: number | undefined;
   reflection_probes: number; reflection_probe_faces: number; dropped_reflection_probes: number;
   virtual_clusters: number; virtual_triangles: number; virtual_shadow_clusters: number; virtual_shadow_triangles: number;
-  dropped_virtual: number;
+  virtual_occluded_clusters: number; dropped_virtual: number;
   subpixel_instances: number | undefined;
   free(): void;
 }
