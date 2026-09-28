@@ -1043,8 +1043,9 @@ fn foliage(set: Set, width: u32, height: u32) -> Vec<Texel> {
             }
         }
     }
-    // Bark below the leaves, for trunks drawn with the same material.
-    for y in height * 4 / 5..height {
+    // Bark below the leaves (which end above 0.78), for trunks drawn with
+    // the same material, after a transparent gap (see the models' CANOPY).
+    for y in height * 27 / 32..height {
         for x in 0..width {
             let (u, v) = (x as f32 / w, y as f32 / h);
             let ridge = noise(u, v, 24, 3, 101);

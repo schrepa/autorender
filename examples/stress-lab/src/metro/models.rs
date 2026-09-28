@@ -61,10 +61,13 @@ const SIREN_RED: Map = cell(1, 2);
 const INTERIOR: Map = cell(2, 2);
 const TAXI_SIGN: Map = cell(3, 2);
 
-// Foliage textures: leaves above, bark in the bottom fifth.
-const CANOPY: Map = Map::Rect(0.0, 0.0, 1.0, 0.8);
+// Foliage textures: leaves above, bark below a transparent gap. Cards stop
+// short of the bark and trunks start inside it: filtering and coarser mip
+// levels would otherwise draw an opaque bark line along every card's lower
+// edge (and its shadow).
+const CANOPY: Map = Map::Rect(0.0, 0.0, 1.0, 0.78);
 const DENSE: Map = Map::Rect(0.3, 0.25, 0.7, 0.55);
-const TRUNK: Map = Map::Rect(0.0, 0.82, 1.0, 1.0);
+const TRUNK: Map = Map::Rect(0.0, 0.86, 1.0, 1.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Style {
