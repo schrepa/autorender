@@ -690,7 +690,8 @@ pub(crate) struct PostUniform {
     pub occlusion: [f32; 4],
     /// Strength and 1 when bloom runs; half-resolution texel size.
     pub bloom: [f32; 4],
-    /// Ray distance, strength and 1 when reflections run; w unused.
+    /// Ray distance, strength, 1 when reflections run, and which pixel of
+    /// each 2x2 block the half-resolution reflections trace this frame.
     pub reflections: [f32; 4],
     /// Strength, forward scattering, distance and 1 when sun shafts run.
     pub shafts: [f32; 4],

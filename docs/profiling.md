@@ -225,7 +225,8 @@ Shadows ([decision 020](adr-020-sun-shadows.md)) add `shadow_select`, the
 caster selection pass, `shadow_maps`, from the first to the last depth pass,
 and per map `shadow_near` (every near cascade), `shadow_moving` and
 `shadow_kept` (on frames that redraw it). Reflections and sun shafts add
-`reflections` and `sun_shafts`, local lights `light_bins`, decals `decals`,
+`reflections` (their depth pyramid, march and filter) and `sun_shafts`,
+local lights `light_bins`, decals `decals`,
 transparency `transparent` and `transparent_composite`, and occlusion culling
 ([decision 040](adr-040-occlusion-culling.md)) `occlusion` (the depth
 pyramid, the test and the second compaction), with `opaque_meshes` spanning

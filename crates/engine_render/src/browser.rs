@@ -10,7 +10,7 @@ use wgpu::util::DeviceExt;
 
 use crate::batches::BatchPlan;
 use crate::decals::DecalPass;
-use crate::depth_pyramid::DepthPyramid;
+use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
     SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
@@ -1257,7 +1257,7 @@ impl Renderer {
             let device = &self.device;
             let pyramid = self
                 .depth_pyramid
-                .get_or_insert_with(|| DepthPyramid::new(device));
+                .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
             let (width, height) = (self.configuration.width, self.configuration.height);
             let levels = pyramid.prepare(
                 device,
@@ -1444,6 +1444,7 @@ impl Renderer {
                 (self.configuration.width, self.configuration.height),
                 &self.depth.view,
                 self.depth_generation,
+                temporal_frame.is_some(),
             ))
         } else {
             // Frames without effects release their targets.

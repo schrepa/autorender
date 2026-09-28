@@ -1,7 +1,8 @@
-//! Depth pyramid of occlusion culling (decision 040): after phase one draws,
-//! the farthest depth of each 2x2 block of the depth buffer, then of each
-//! 2x2 block of the level below, which GPU presentation's occlusion test
-//! compares candidates' projected bounds with.
+//! Depth pyramids: the farthest depth of each 2x2 block of the depth buffer,
+//! then of each 2x2 block of the level below, which GPU presentation's
+//! occlusion test (decision 040) compares candidates' projected bounds with
+//! after phase one draws; or the nearest depths, which screen-space
+//! reflections (decision 025) walk after the opaque pass.
 
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 
@@ -16,6 +17,15 @@ struct Levels {
     passes: Vec<(wgpu::BindGroup, (u32, u32))>,
 }
 
+/// Which depth each pyramid texel keeps of the block it covers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reduction {
+    /// The farthest, for occlusion culling.
+    Farthest,
+    /// The nearest, for reflection rays.
+    Nearest,
+}
+
 pub(crate) struct DepthPyramid {
     first: wgpu::ComputePipeline,
     down: wgpu::ComputePipeline,
@@ -25,7 +35,7 @@ pub(crate) struct DepthPyramid {
 }
 
 impl DepthPyramid {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, reduction: Reduction) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/depth-pyramid.wgsl"),
             source: wgpu::ShaderSource::Wgsl(DEPTH_PYRAMID_SHADER.into()),
@@ -40,12 +50,21 @@ impl DepthPyramid {
                 cache: None,
             })
         };
+        let (first, down) = match reduction {
+            Reduction::Farthest => ("pyramid_first", "pyramid_down"),
+            Reduction::Nearest => ("pyramid_first_nearest", "pyramid_down_nearest"),
+        };
         Self {
-            first: pipeline("pyramid_first"),
-            down: pipeline("pyramid_down"),
+            first: pipeline(first),
+            down: pipeline(down),
             levels: None,
             generation: 0,
         }
+    }
+
+    /// Releases the levels; the next `prepare` recreates them.
+    pub(crate) fn release(&mut self) {
+        self.levels = None;
     }
 
     /// Prepares the pyramid of the `size` depth buffer `depth` of generation
@@ -64,8 +83,8 @@ impl DepthPyramid {
         }
         // Power-of-two levels halve exactly: an odd level's last row or
         // column would otherwise fall outside every texel of the next.
-        // Texels beyond the depth buffer repeat its edge, which only raises
-        // maxima.
+        // Texels beyond the depth buffer repeat its edge, which cannot
+        // change a block's farthest or nearest depth.
         let base = (
             width.div_ceil(2).max(1).next_power_of_two(),
             height.div_ceil(2).max(1).next_power_of_two(),
@@ -175,7 +194,7 @@ impl DepthPyramid {
         }
     }
 
-    /// Every level, for the occlusion test, and its generation.
+    /// Every level, and its generation.
     pub(crate) fn view(&self) -> Option<(&wgpu::TextureView, u64)> {
         self.levels
             .as_ref()

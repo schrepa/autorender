@@ -19,7 +19,9 @@ struct Post {
     // Strength and 1 when bloom runs; zw: size of a half-resolution texel in
     // texture coordinates.
     bloom: vec4<f32>,
-    // Ray distance, strength, 1 when screen-space reflections run, unused.
+    // Ray distance, strength, 1 when screen-space reflections run, and which
+    // pixel of each 2x2 block the half-resolution reflections trace (0 to 3,
+    // changing every frame with temporal antialiasing).
     reflections: vec4<f32>,
     // Strength, forward scattering, gathering distance, and 1 when sun
     // shafts run.

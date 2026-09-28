@@ -21,6 +21,11 @@
 // Reflected color and its weight, and scattered sunlight, at half resolution.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
 @group(0) @binding(9) var shafts: texture_2d<f32>;
+// Reflections (decision 025): the nearest depth of each 2x2 block of the
+// depth buffer, then of each block of the level below, which rays skip
+// across; and the traced reflections the filter smooths.
+@group(0) @binding(10) var nearest_depth: texture_2d<f32>;
+@group(0) @binding(11) var traced: texture_2d<f32>;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -111,19 +116,70 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
     return 1.0 - post.occlusion.y * obscurance;
 }
 
-// Reflection rays take this many steps, spaced closer near the surface.
-const REFLECTION_STEPS: u32 = 24u;
+// Reflection rays walk at most this many cells of the depth pyramid.
+const REFLECTION_STEPS: u32 = 96u;
+// A reflected surface counts where the ray passes within this distance of
+// it, in world units, plus this share of the ray's length.
+const REFLECTION_THICKNESS: f32 = 0.3;
+const REFLECTION_THICKNESS_SHARE: f32 = 0.05;
+const FLOAT_MAX: f32 = 0x1.fffffep+127f;
+// The pixel of each 2x2 block the half-resolution reflection passes trace:
+// the first without temporal antialiasing; with it, another each frame
+// (`post.reflections.w`), so the resolve's history gathers every block.
+const BLOCK_PIXELS = array<vec2<i32>, 4>(
+    vec2<i32>(0, 0), vec2<i32>(1, 1), vec2<i32>(1, 0), vec2<i32>(0, 1),
+);
+
+// The full-resolution pixel half-resolution texel `texel` traces.
+fn traced_pixel(texel: vec2<i32>) -> vec2<i32> {
+    let last = vec2<i32>(post.size.xy) - 1;
+    return min(texel * 2 + BLOCK_PIXELS[u32(post.reflections.w) & 3u], last);
+}
+
+// The nearest depth (the largest, reversed) of cell `cell` of mip `mip`:
+// mip 0 is the depth buffer, mip m > 0 the pyramid's level m - 1, whose
+// texels cover 2^m pixels a side (the pyramid repeats the buffer's edge).
+fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
+    if mip == 0 {
+        let last = vec2<i32>(post.size.xy) - 1;
+        return textureLoad(depth_texture, clamp(cell, vec2<i32>(0), last), 0);
+    }
+    let last = vec2<i32>(textureDimensions(nearest_depth, mip - 1)) - 1;
+    return textureLoad(nearest_depth, clamp(cell, vec2<i32>(0), last), mip - 1).r;
+}
+
+// Pixel position (rows downward) and depth of world point `world`, and its
+// clip w.
+fn screen_point(world: vec3<f32>) -> vec4<f32> {
+    let clip = post.view_projection * vec4<f32>(world, 1.0);
+    let ndc = clip.xyz / clip.w;
+    return vec4<f32>((ndc.x * 0.5 + 0.5) * post.size.x, (0.5 - ndc.y * 0.5) * post.size.y,
+        ndc.z, clip.w);
+}
+
+// The world point at pixel position `pixel` (continuous) and depth `depth`.
+fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
+    let uv = pixel * post.size.zw;
+    let world = post.inverse_view_projection
+        * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    return world.xyz / world.w;
+}
 
 // Screen-space reflections (decision 025) at half resolution: from each
 // reflective pixel (the glow target's second channel), a ray along the
-// mirror direction of its depth normal steps across the depth buffer; the
-// first step behind a surface, refined by bisection, is the reflected point.
-// The result is its scene color and the pixel's reflectivity faded toward
-// the screen edges and the ray's end; misses weigh nothing.
+// mirror direction of its depth normal crosses the screen as a straight
+// line in pixels and depth. It walks the pyramid of nearest depths: a cell
+// the ray crosses in front of everything is skipped and the next one is
+// coarser; a cell it may meet is refined, down to single pixels (FidelityFX
+// SSSR's hierarchical march), so every pixel along the ray near a surface is
+// visited and thin objects are found alike from pixel to pixel. The first
+// pixel the ray passes behind is its hit, reflected where the ray passes
+// close to that surface, fading toward the screen edges, the ray's end and
+// the surface's thickness; misses weigh nothing.
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let last = vec2<i32>(post.size.xy) - 1;
-    let pixel = min(vec2<i32>(position.xy) * 2, last);
+    let pixel = traced_pixel(vec2<i32>(position.xy));
     let reflectivity = textureLoad(glow, pixel, 0).g;
     if reflectivity < 0.01 {
         return vec4<f32>(0.0);
@@ -150,60 +206,124 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         normal = -normal;
     }
     let direction = reflect(-to_eye, normal);
-    let distance = post.reflections.x;
-    let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
-    // Start a little off the surface so it does not hit itself.
-    let origin = p + normal * (0.002 * length(post.eye.xyz - p) + 0.02);
-    var previous = 0.0;
-    for (var i = 0u; i < REFLECTION_STEPS; i++) {
-        let fraction = (f32(i) + noise) / f32(REFLECTION_STEPS);
-        let t = distance * fraction * fraction;
-        let clip = post.view_projection * vec4<f32>(origin + direction * t, 1.0);
-        if clip.w <= 0.0 {
-            break;
-        }
-        let ndc = clip.xyz / clip.w;
-        if any(abs(ndc.xy) >= vec2<f32>(1.0)) {
-            break;
-        }
-        let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-        let sample_pixel = min(vec2<i32>(uv * post.size.xy), last);
-        let depth = textureLoad(depth_texture, sample_pixel, 0);
-        // Reversed depth (decision 042): farther is smaller.
-        if ndc.z < depth && depth > 0.0 {
-            // Behind a surface: bisect between the last two steps, then keep
-            // it only if the ray passed close behind that surface.
-            var low = previous;
-            var high = t;
-            var hit = uv;
-            for (var j = 0u; j < 4u; j++) {
-                let middle = (low + high) * 0.5;
-                let probe = post.view_projection * vec4<f32>(origin + direction * middle, 1.0);
-                let probe_ndc = probe.xyz / probe.w;
-                let probe_uv = vec2<f32>(probe_ndc.x * 0.5 + 0.5, 0.5 - probe_ndc.y * 0.5);
-                let probe_depth = textureLoad(depth_texture,
-                    min(vec2<i32>(probe_uv * post.size.xy), last), 0);
-                if probe_ndc.z < probe_depth {
-                    high = middle;
-                    hit = probe_uv;
-                } else {
-                    low = middle;
-                }
-            }
-            let surface = world_at(min(vec2<i32>(hit * post.size.xy), last)).xyz;
-            let ray_point = origin + direction * high;
-            let behind = length(ray_point - post.eye.xyz) - length(surface - post.eye.xyz);
-            if behind > 0.3 + 0.05 * high {
-                return vec4<f32>(0.0);
-            }
-            let edge = min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y));
-            let fade = saturate(edge * 10.0) * (1.0 - fraction * fraction);
-            let color = textureSampleLevel(scene, linear, hit, 0.0).rgb;
-            return vec4<f32>(color, reflectivity * fade);
-        }
-        previous = t;
+    // The ray's segment: `distance` long, ending nine tenths of the way to
+    // the eye plane when it heads toward the camera.
+    let start = screen_point(p);
+    let rows = transpose(post.view_projection);
+    let w_rate = dot(rows[3].xyz, direction);
+    var reach = post.reflections.x;
+    if w_rate < 0.0 {
+        reach = min(reach, 0.9 * start.w / -w_rate);
     }
-    return vec4<f32>(0.0);
+    let end = screen_point(p + direction * reach);
+    if !(start.w > 0.0 && end.w > 0.0) {
+        return vec4<f32>(0.0);
+    }
+    let origin = start.xyz;
+    let ray = end.xyz - start.xyz;
+    let moving = abs(ray.xy) > vec2<f32>(1.0e-9);
+    let forward = ray.xy >= vec2<f32>(0.0);
+    // Cell edges ahead of the ray, and a little past them so the next cell
+    // starts inside.
+    let ahead = select(vec2<f32>(0.0), vec2<f32>(1.0), forward);
+    let past = select(vec2<f32>(-0.005), vec2<f32>(0.005), forward);
+    let top = i32(textureNumLevels(nearest_depth));
+    // Leave the starting pixel first: a surface does not reflect itself.
+    var t = FLOAT_MAX;
+    let exits = select(vec2<f32>(FLOAT_MAX),
+        (floor(origin.xy) + ahead + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
+        moving);
+    t = min(exits.x, exits.y);
+    var point = origin + ray * t;
+    var mip = 0;
+    for (var step = 0u; step < REFLECTION_STEPS; step++) {
+        if mip < 0 || t > 1.0 || any(point.xy < vec2<f32>(0.0))
+                || any(point.xy >= post.size.xy) {
+            break;
+        }
+        let size = exp2(f32(mip));
+        let cell = floor(point.xy / size);
+        let surface = nearest_depth_at(vec2<i32>(cell), mip);
+        let edges = select(vec2<f32>(FLOAT_MAX),
+            ((cell + ahead) * size + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
+            moving);
+        let leave = min(edges.x, edges.y);
+        // Reversed depth: the ray meets the cell's nearest depth only while
+        // it heads away from the eye.
+        var meet = FLOAT_MAX;
+        if ray.z < 0.0 {
+            meet = (surface - origin.z) / ray.z;
+        }
+        // In front of everything in the cell: advance to where it leaves the
+        // cell (coarser next) or meets its nearest depth (finer next).
+        let above = surface < point.z;
+        let skipped = above && leave < meet;
+        if above {
+            t = min(leave, meet);
+            point = origin + ray * t;
+        }
+        if skipped {
+            mip = min(mip + 1, top);
+        } else {
+            mip -= 1;
+        }
+    }
+    if mip >= 0 || t > 1.0 {
+        return vec4<f32>(0.0);
+    }
+    let hit = vec2<i32>(floor(point.xy));
+    if any(hit < vec2<i32>(0)) || any(hit > last) || all(abs(point.xy - origin.xy) < vec2<f32>(2.0)) {
+        return vec4<f32>(0.0);
+    }
+    let surface = world_at(hit);
+    if surface.w == 0.0 {
+        return vec4<f32>(0.0);
+    }
+    // How far behind that surface the ray passes, against a thickness that
+    // grows with the ray's length.
+    let ray_point = world_point(point.xy, point.z);
+    let travelled = distance(ray_point, p);
+    let behind = distance(ray_point, surface.xyz);
+    let thickness = REFLECTION_THICKNESS + REFLECTION_THICKNESS_SHARE * travelled;
+    var confidence = 1.0 - smoothstep(0.0, thickness, behind);
+    confidence *= confidence;
+    let uv = point.xy * post.size.zw;
+    let edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let fraction = min(travelled / max(post.reflections.x, 1.0e-6), 1.0);
+    let fade = saturate(edge * 10.0) * (1.0 - fraction * fraction) * confidence;
+    let color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
+    return vec4<f32>(color, reflectivity * fade);
+}
+
+// The traced reflections over each half-resolution texel's 3x3 neighbors
+// on the same surface (depth within 2% of its own), weighted by a tent and
+// by each sample's reflection weight: neighboring rays' hits and misses
+// blend instead of speckling. Frames with temporal antialiasing then also
+// gather each block's four pixels over frames.
+@fragment
+fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let texel = vec2<i32>(position.xy);
+    let last = vec2<i32>(textureDimensions(traced)) - 1;
+    let depth = textureLoad(depth_texture, traced_pixel(texel), 0);
+    var sum = vec4<f32>(0.0);
+    var total = 0.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let neighbor = clamp(texel + vec2<i32>(x, y), vec2<i32>(0), last);
+            let neighbor_depth = textureLoad(depth_texture, traced_pixel(neighbor), 0);
+            // Reversed depth is about inversely proportional to distance:
+            // relative differences of the two agree.
+            let same = abs(neighbor_depth - depth) <= 0.02 * max(depth, neighbor_depth);
+            let weight = f32((2 - abs(x)) * (2 - abs(y))) * select(0.0, 1.0, same);
+            let sample = textureLoad(traced, neighbor, 0);
+            sum += vec4<f32>(sample.rgb * sample.a, sample.a) * weight;
+            total += weight;
+        }
+    }
+    if !(sum.a > 0.0) {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(sum.rgb / sum.a, sum.a / total);
 }
 
 // A pixel's glowing light: its color times its decoded glow.
