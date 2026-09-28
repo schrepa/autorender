@@ -1,3 +1,4 @@
+use crate::entity_indices::EntityIndices;
 use crate::interpolation::{InterpolateTransform, InterpolationState, Observer};
 use crate::{NodePose, Transform};
 use bevy_ecs::change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick};
@@ -522,8 +523,11 @@ pub struct GlobalTransforms {
     // leaves instead of composing theirs (decision 016).
     certificates: Vec<Certificate>,
     revisions: Vec<u64>,
-    pub(crate) indices: HashMap<Entity, usize>,
+    pub(crate) indices: EntityIndices,
     pub(crate) order: Vec<usize>,
+    // Advances whenever any node's validity may have changed: a node turned
+    // valid or invalid, or topology rebuilt.
+    validity_epoch: u64,
     path: Vec<usize>,
     dirty: Dirty,
     // Nodes whose local or output revision changed since GPU presentation
@@ -556,8 +560,9 @@ impl FromWorld for GlobalTransforms {
             globals: Vec::new(),
             certificates: Vec::new(),
             revisions: Vec::new(),
-            indices: HashMap::new(),
+            indices: EntityIndices::default(),
             order: Vec::new(),
+            validity_epoch: 0,
             path: Vec::new(),
             dirty: Dirty::default(),
             changes: ChangeLog::default(),
@@ -706,6 +711,7 @@ struct Nodes<'a> {
     revisions: &'a mut [u64],
     flags: &'a mut [bool],
     invalid_transforms: &'a mut usize,
+    validity_epoch: &'a mut u64,
     changes: &'a mut ChangeLog,
 }
 
@@ -713,7 +719,7 @@ struct Nodes<'a> {
 /// and by value, so the common sequential match keeps its Entity in registers.
 #[cold]
 #[inline(never)]
-fn find_index(indices: &HashMap<Entity, usize>, entity: Entity) -> Option<usize> {
+fn find_index(indices: &EntityIndices, entity: Entity) -> Option<usize> {
     indices.get(&entity).copied()
 }
 
@@ -744,6 +750,7 @@ impl Nodes<'_> {
             revisions,
             flags,
             invalid_transforms,
+            validity_epoch,
             changes,
         } = self;
         Self {
@@ -755,6 +762,7 @@ impl Nodes<'_> {
             revisions: &mut revisions[..len],
             flags: &mut flags[..len],
             invalid_transforms,
+            validity_epoch,
             changes,
         }
     }
@@ -862,6 +870,7 @@ impl Nodes<'_> {
         let was_invalid = link.global == Global::Invalid;
         if was_invalid {
             *self.invalid_transforms -= 1;
+            *self.validity_epoch += 1;
         }
         if link.global != Global::Deferred {
             link.global = Global::Deferred;
@@ -907,6 +916,7 @@ impl Nodes<'_> {
             } else {
                 *self.invalid_transforms += 1;
             }
+            *self.validity_epoch += 1;
         }
         let after = if valid {
             Global::Stored
@@ -978,6 +988,28 @@ impl GlobalTransforms {
         };
         hint.0 = index;
         Some((self.value_at(index), self.revisions[index]))
+    }
+
+    /// The admitted index of `entity` (checked against `hint` first, then
+    /// stored in it) when its global is valid: validity without composing a
+    /// deferred global.
+    pub(crate) fn valid_index(&self, entity: Entity, hint: &mut TransformIndex) -> Option<usize> {
+        let index = if self
+            .sources
+            .get(hint.0)
+            .is_some_and(|source| source.entity == entity)
+        {
+            hint.0
+        } else {
+            *self.indices.get(&entity)?
+        };
+        hint.0 = index;
+        (self.links[index].global != Global::Invalid).then_some(index)
+    }
+
+    /// Advances whenever a node's validity may have changed.
+    pub(crate) fn validity_epoch(&self) -> u64 {
+        self.validity_epoch
     }
 
     pub fn len(&self) -> usize {
@@ -1091,6 +1123,7 @@ impl GlobalTransforms {
             dirty,
             report,
             changes,
+            validity_epoch,
             ..
         } = self;
         let Dirty {
@@ -1113,6 +1146,7 @@ impl GlobalTransforms {
             revisions,
             flags,
             invalid_transforms: &mut report.invalid_transforms,
+            validity_epoch,
             changes,
         }
         .trimmed(len);
@@ -1449,6 +1483,7 @@ impl GlobalTransforms {
         // duplicate full-pose buffer is retained solely to preserve those stamps.
         report.invalid_transforms = report.transforms;
         self.report = report;
+        self.validity_epoch += 1;
         self.topology_revision = work.value_ids.next();
     }
 
@@ -1471,6 +1506,7 @@ impl GlobalTransforms {
             dirty,
             report,
             changes,
+            validity_epoch,
             ..
         } = self;
         let len = links.len();
@@ -1483,6 +1519,7 @@ impl GlobalTransforms {
             revisions,
             flags: &mut dirty.flags,
             invalid_transforms: &mut report.invalid_transforms,
+            validity_epoch,
             changes,
         }
         .trimmed(len);

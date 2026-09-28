@@ -10,6 +10,7 @@ mod clock;
 mod culling;
 mod decals;
 mod effects;
+mod entity_indices;
 mod hierarchy;
 mod input;
 mod interpolation;

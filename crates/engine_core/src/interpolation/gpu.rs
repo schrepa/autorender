@@ -640,7 +640,7 @@ struct Records<'a> {
     history_nodes: &'a [u32],
     intervals: &'a [Interval],
     previous: &'a [NodePose],
-    indices: &'a HashMap<Entity, usize>,
+    indices: &'a EntityIndices,
 }
 
 /// Split borrow of the per-node arrays a gather reads and writes, each viewed
@@ -655,7 +655,7 @@ struct Walk<'a> {
     history_nodes: &'a [u32],
     intervals: &'a [Interval],
     record_previous: &'a [NodePose],
-    indices: &'a HashMap<Entity, usize>,
+    indices: &'a EntityIndices,
     current_stamps: &'a mut [u64],
     previous: &'a mut [NodePose],
     previous_stamps: &'a mut [u64],

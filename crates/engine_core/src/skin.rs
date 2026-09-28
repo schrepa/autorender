@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use bevy_ecs::{
+    change_detection::Ref,
     prelude::{Component, Entity, World},
     query::QueryState,
 };
@@ -65,14 +66,14 @@ pub struct RenderJoint {
 
 /// Skinned entities' query and per-joint transform store hints.
 pub(crate) struct SkinExtraction {
-    pub(crate) query: QueryState<(Entity, &'static Skin)>,
+    pub(crate) query: QueryState<(Entity, Ref<'static, Skin>)>,
     pub(crate) hints: Vec<TransformIndex>,
 }
 
 impl SkinExtraction {
     pub(crate) fn new(world: &mut World) -> Self {
         Self {
-            query: world.query::<(Entity, &Skin)>(),
+            query: world.query::<(Entity, Ref<Skin>)>(),
             hints: Vec::new(),
         }
     }

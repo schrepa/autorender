@@ -1658,6 +1658,51 @@ fn skinned_slots_get_joint_palettes_on_cpu_and_gpu_frames() {
 }
 
 #[test]
+fn gpu_joints_stand_until_skins_or_joint_validity_change() {
+    let (mut engine, [first, second, skinned]) = skinned_world(2);
+    let nodes = |engine: &mut Engine| -> Vec<u32> {
+        let frame = engine.extract_gpu_frame(1.0, 1.0).unwrap();
+        frame
+            .snapshot()
+            .joints
+            .iter()
+            .map(|joint| joint.node)
+            .collect()
+    };
+    let initial = nodes(&mut engine);
+    assert_eq!(initial.len(), 2);
+    assert!(initial.iter().all(|&node| node != u32::MAX));
+    // Unchanged skins keep their joints.
+    assert_eq!(nodes(&mut engine), initial);
+    // A changed skin lists its joints again.
+    engine
+        .app
+        .world_mut()
+        .get_mut::<Skin>(skinned)
+        .unwrap()
+        .joints
+        .reverse();
+    assert_eq!(nodes(&mut engine), [initial[1], initial[0]]);
+    // A joint whose transform turns invalid, then valid, names no node
+    // meanwhile.
+    let mut transform = *engine.app.world().get::<Transform>(first).unwrap();
+    engine
+        .app
+        .world_mut()
+        .get_mut::<Transform>(first)
+        .unwrap()
+        .translation = Vec3::NAN;
+    assert_eq!(nodes(&mut engine), [initial[1], u32::MAX]);
+    transform.translation.x += 1.0;
+    *engine.app.world_mut().get_mut::<Transform>(first).unwrap() = transform;
+    assert_eq!(nodes(&mut engine), [initial[1], initial[0]]);
+    // Without the skin nothing is listed.
+    engine.app.world_mut().entity_mut(skinned).remove::<Skin>();
+    assert!(nodes(&mut engine).is_empty());
+    let _ = second;
+}
+
+#[test]
 fn skins_with_too_few_joints_draw_rigidly_and_skinned_meshes_never_cull() {
     let (mut engine, [_, _, skinned]) = skinned_world(1);
     let frame = engine

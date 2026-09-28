@@ -452,6 +452,13 @@ pub(crate) struct RetainedRender {
     // for the next one's (slot, offset) pairs.
     skinned: Vec<usize>,
     skin_scratch: Vec<(usize, u32)>,
+    // What the last GPU-presented skin extraction read (each skinned
+    // entity's slot and mesh, in query order; the asset, topology and
+    // validity revisions) and the change tick it saw: while all match and no
+    // skin changed, its joints stand.
+    skin_inputs: Vec<(Entity, usize, Option<MeshHandle>)>,
+    skin_key: Option<((u64, u64), u64, u64)>,
+    skin_tick: Tick,
 }
 
 impl Default for RetainedRender {
@@ -493,6 +500,9 @@ impl Default for RetainedRender {
             tint_count: None,
             skinned: Vec::new(),
             skin_scratch: Vec::new(),
+            skin_inputs: Vec::new(),
+            skin_key: None,
+            skin_tick: Tick::new(0),
         }
     }
 }
@@ -641,6 +651,49 @@ impl RetainedRender {
         let assets = world.resource::<AssetLibrary>();
         let globals = world.resource::<GlobalTransforms>();
         let presented = world.resource::<PresentedTransforms>();
+        // GPU-presented joints hold nodes and inverse binds, not poses: they
+        // stand while the skins, their slots and meshes, the assets and the
+        // hierarchy's topology and validity stand.
+        let this_run = world.read_change_tick();
+        if gpu {
+            let key = (
+                assets.revision(),
+                globals.topology_revision,
+                globals.validity_epoch(),
+            );
+            let mut inputs = std::mem::take(&mut self.skin_inputs);
+            let previous = inputs.len();
+            let mut changed = self.skin_key != Some(key);
+            let mut count = 0;
+            for (entity, skin) in skins.query.iter(world) {
+                changed |= skin.last_changed().is_newer_than(self.skin_tick, this_run);
+                let input = match self.entities.get(&entity) {
+                    Some(&slot) => (entity, slot, Some(self.snapshot.instances[slot].mesh)),
+                    None => (entity, usize::MAX, None),
+                };
+                if !changed && inputs.get(count) != Some(&input) {
+                    changed = true;
+                }
+                if changed {
+                    inputs.truncate(count);
+                    inputs.push(input);
+                }
+                count += 1;
+            }
+            changed |= count != previous;
+            inputs.truncate(count);
+            self.skin_inputs = inputs;
+            self.skin_tick = this_run;
+            if !changed {
+                engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
+                engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
+                return;
+            }
+            self.skin_key = Some(key);
+        } else {
+            // CPU-prepared joints carry this frame's poses.
+            self.skin_key = None;
+        }
         let joints = &mut self.snapshot.joints;
         joints.clear();
         let mut next = std::mem::take(&mut self.skin_scratch);
@@ -671,9 +724,8 @@ impl RetainedRender {
                 let hint = &mut skins.hints[base + index];
                 let (node, matrix) = if gpu {
                     let node = globals
-                        .get_indexed_with_revision(joint, hint)
-                        .filter(|(global, _)| global.matrix().is_some())
-                        .map_or(u32::MAX, |_| hint.0 as u32);
+                        .valid_index(joint, hint)
+                        .map_or(u32::MAX, |index| index as u32);
                     (node, IDENTITY_ROWS)
                 } else {
                     let world = presented

@@ -8,10 +8,12 @@ pub use gpu::{
 };
 
 use presentation::Display;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use bevy_ecs::prelude::*;
 use glam::{Mat4, Quat};
+
+use crate::entity_indices::EntityIndices;
 
 use crate::{
     FixedTime, FrameTime, GlobalTransform, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Parent,
@@ -275,7 +277,7 @@ pub struct PresentedTransforms {
     next_intervals: Vec<Interval>,
     next_previous: Vec<NodePose>,
     next_history_nodes: Vec<u32>,
-    indices: HashMap<Entity, usize>,
+    indices: EntityIndices,
     epoch: u64,
     active: bool,
     // Invalidity is consumed at the same observation boundary as presentation.
@@ -294,7 +296,7 @@ pub struct PresentedTransforms {
     blended_roots: Vec<usize>,
     display_work: Vec<usize>,
     presented_entities: Vec<Entity>,
-    presented_map: HashMap<Entity, usize>,
+    presented_map: EntityIndices,
     prepared_topology: u64,
     value_ids: ValueIds,
     written_presented: usize,
@@ -320,7 +322,7 @@ impl FromWorld for PresentedTransforms {
             next_intervals: Vec::new(),
             next_previous: Vec::new(),
             next_history_nodes: Vec::new(),
-            indices: HashMap::new(),
+            indices: EntityIndices::default(),
             epoch: 0,
             active: false,
             invalidated: Vec::new(),
@@ -333,7 +335,7 @@ impl FromWorld for PresentedTransforms {
             blended_roots: Vec::new(),
             display_work: Vec::new(),
             presented_entities: Vec::new(),
-            presented_map: HashMap::new(),
+            presented_map: EntityIndices::default(),
             prepared_topology: 0,
             value_ids: ValueIds::default(),
             written_presented: 0,
@@ -761,7 +763,7 @@ pub(crate) struct Observer<'a> {
     intervals: &'a mut [Interval],
     previous: &'a mut [NodePose],
     history_nodes: &'a mut [u32],
-    indices: &'a HashMap<Entity, usize>,
+    indices: &'a EntityIndices,
     invalidated: &'a mut Vec<usize>,
     revision: &'a mut u64,
     observed: bool,
@@ -921,7 +923,7 @@ impl Observer<'_> {
 #[cold]
 fn resolve_record(
     history_nodes: &mut [u32],
-    indices: &HashMap<Entity, usize>,
+    indices: &EntityIndices,
     node: usize,
     entity: Entity,
 ) -> Option<usize> {
