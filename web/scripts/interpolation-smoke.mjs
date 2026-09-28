@@ -160,14 +160,15 @@ try {
   await mkdir(output, { recursive: true });
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
   const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture }) => {
-    const { PlaygroundGame } = await import(moduleUrl);
+    const { PlaygroundGame, SceneFileSet } = await import(moduleUrl);
     const canvas = document.createElement("canvas");
     canvas.width = 320; canvas.height = 240;
     canvas.style.cssText = "position:fixed;left:-10000px;top:0;width:320px;height:240px";
     document.body.append(canvas);
     let game;
     try {
-      game = await PlaygroundGame.create(canvas, JSON.stringify(fixture));
+      // The fixture references no files (decision 030).
+      game = await PlaygroundGame.create(canvas, JSON.stringify(fixture), new SceneFileSet());
       // Development commands between these frames would complete a pipelined
       // tick early (decision 015); this check covers interpolation alone.
       game.set_tick_pipelining(false);
