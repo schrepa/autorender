@@ -30,8 +30,9 @@ and the whole source had to fit 1 MiB, with further caps of 64 textures,
 - **No count budget.** Scene sources may be 64 MiB (a parsing sanity
   bound); textures up to 8,192 texels a side; entity, mesh, material,
   texture, prefab and tag counts are unbounded (decision 029).
-- The development server serves `.png`, `.jpg`, `.webp`, `.ktx2` and
-  `.bin` files under `/scenes/` as it serves scene sources. KTX2 images
+- The development server serves `.png`, `.jpg`, `.webp`, `.ktx2`, `.bin`
+  and `.evg` (virtual meshes, decision 044) files under `/scenes/` as it
+  serves scene sources. KTX2 images
   transcode to compressed textures at load ([decision 037](adr-037-compressed-textures.md)).
 
 ## Observable behavior

@@ -1635,3 +1635,136 @@ fn version_eight_reflection_probes_instantiate_validate_and_earlier_versions_ref
         ("version_required", "$.environment.reflection_probes".into())
     );
 }
+
+/// The smallest valid virtual mesh file (`EVG1`, decision 044): one level
+/// of one group holding one cluster of one triangle.
+fn one_triangle_virtual_mesh() -> Vec<u8> {
+    let bits = f32::to_bits;
+    let mut words = vec![0u32; 32];
+    words[0] = u32::from_le_bytes(*b"EVG1");
+    words[1] = 1;
+    // Levels, nodes, groups, clusters, pages, triangles (and source
+    // triangles) and depth.
+    words[3..11].copy_from_slice(&[1, 1, 1, 1, 1, 1, 1, 1]);
+    // Positions quantized over the unit cube; bounds.
+    for axis in 0..3 {
+        words[15 + axis] = bits(1.0 / 65535.0);
+        words[25 + axis] = bits(1.0);
+    }
+    let sphere = [bits(0.5), bits(0.5), bits(0.0), bits(0.8)];
+    // The level's root: a leaf holding group 0, never simplified further.
+    words.extend(sphere);
+    words.extend([bits(f32::MAX), 0, 0, 0]);
+    // Group 0: cluster 0, level 0.
+    words.extend(sphere);
+    words.extend([bits(f32::MAX), 0, 1, 0]);
+    // Cluster 0: no cone, original geometry, group 0, page 0, vertices at
+    // word 0 and triangles at word 12, 3 vertices and 1 triangle.
+    words.extend(sphere);
+    words.extend([u32::from_le_bytes([0, 0, 0, 127]), u32::MAX, 0, 0, 0, 12]);
+    words.extend([3 | (1 << 16), 0]);
+    // The page table, then the page.
+    words.extend([0, 13]);
+    for [x, y] in [[0u32, 0], [65535, 0], [0, 65535]] {
+        words.extend([x | (y << 16), 0, 0, 0]);
+    }
+    words.push(u32::from_le_bytes([0, 1, 2, 0]));
+    words.iter().flat_map(|word| word.to_le_bytes()).collect()
+}
+
+#[test]
+fn version_eight_virtual_meshes_load_from_files_and_earlier_versions_refuse_them() {
+    use crate::{SceneFileKind, SceneFiles};
+    let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
+    source["version"] = 8.into();
+    source["meshes"][0]["source"] =
+        serde_json::json!({"kind": "virtual", "uri": "meshes/rock.evg"});
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    // Structure validates without the file, which the document lists as a
+    // buffer.
+    document.validate().unwrap();
+    assert_eq!(
+        document
+            .files()
+            .iter()
+            .map(|file| (file.uri.as_str(), file.kind))
+            .collect::<Vec<_>>(),
+        [("meshes/rock.evg", SceneFileKind::Buffer)]
+    );
+    let mut world = world(AssetBudget::default());
+    let missing = document.instantiate(&mut world).unwrap_err();
+    assert_eq!(
+        (missing.code, missing.path.as_str()),
+        ("missing_file", "$.meshes[0].source.uri")
+    );
+    let mut files = SceneFiles::new();
+    files.add_buffer("meshes/rock.evg", one_triangle_virtual_mesh());
+    let instance = document.instantiate_with(&mut world, &files).unwrap();
+    let player = instance.entity("player").unwrap();
+    let handle = world.get::<Mesh3d>(player).unwrap().mesh;
+    let assets = world.resource::<AssetLibrary>();
+    let mesh = assets.mesh(handle).unwrap();
+    let geometry = mesh
+        .virtual_geometry()
+        .expect("the mesh keeps its hierarchy");
+    assert_eq!((geometry.cluster_count(), mesh.indices().len()), (1, 3));
+    instance.despawn(&mut world);
+    // Broken files, empty fallbacks and earlier versions are refused.
+    let mut broken = files.clone();
+    broken.add_buffer("meshes/rock.evg", b"EVG1".to_vec());
+    let error = document.validate_with(&broken).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("invalid_mesh", "$.meshes[0].source.uri")
+    );
+    let mut empty = source.clone();
+    empty["meshes"][0]["source"]["fallback_triangles"] = 0.into();
+    let error = SceneDocument::from_json(&empty.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("invalid_mesh", "$.meshes[0].source.fallback_triangles")
+    );
+    let mut old = source.clone();
+    old["version"] = 7.into();
+    let error = SceneDocument::from_json(&old.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("version_required", "$.meshes[0].source")
+    );
+}
+
+#[test]
+fn version_eight_virtual_geometry_settings_resolve_and_earlier_versions_refuse_them() {
+    use engine_core::VirtualGeometry;
+    let mut source: serde_json::Value = serde_json::from_str(SOURCE).unwrap();
+    source["version"] = 8.into();
+    source["environment"] =
+        serde_json::json!({"virtual_geometry": {"enabled": false, "pixel_error": 3.0}});
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    assert_eq!(
+        *world.resource::<VirtualGeometry>(),
+        VirtualGeometry {
+            enabled: false,
+            pixel_error: 3.0
+        }
+    );
+    instance.despawn(&mut world);
+    source["environment"]["virtual_geometry"]["pixel_error"] = 100.0.into();
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        (
+            "invalid_environment",
+            "$.environment.virtual_geometry.pixel_error"
+        )
+    );
+    source["environment"]["virtual_geometry"]["pixel_error"] = 3.0.into();
+    source["version"] = 7.into();
+    let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+    assert_eq!(
+        (error.code, error.path.as_str()),
+        ("version_required", "$.environment.virtual_geometry")
+    );
+}

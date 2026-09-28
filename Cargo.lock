@@ -577,6 +577,7 @@ dependencies = [
  "base64",
  "engine_core",
  "engine_scene",
+ "engine_vgbuild",
  "glam 0.30.9",
  "gltf",
  "png",

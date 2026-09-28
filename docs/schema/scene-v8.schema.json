@@ -211,6 +211,35 @@
             "kind",
             "uri"
           ]
+        },
+        {
+          "description": "A virtual mesh file (`EVG1`, decision 044) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
+          "type": "object",
+          "properties": {
+            "fallback_triangles": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 1
+            },
+            "kind": {
+              "type": "string",
+              "const": "virtual"
+            },
+            "uri": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "uri"
+          ]
         }
       ]
     },
@@ -1028,7 +1057,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decisions 038, 039 and 043).",
+          "description": "Version 8 sections (decisions 038, 039, 043 and 044).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -1052,6 +1081,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSunShafts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "virtual_geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneVirtualGeometry"
             },
             {
               "type": "null"
@@ -2297,6 +2336,25 @@
         "position",
         "normal"
       ]
+    },
+    "SceneVirtualGeometry": {
+      "description": "Virtual geometry settings (decision 044): whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "pixel_error": {
+          "description": "The largest simplification error a drawn cluster may show, in pixels\nof the viewport height, from 0.25 to 64: smaller draws more\ntriangles.",
+          "type": "number",
+          "format": "float",
+          "default": 1.5,
+          "maximum": 64.0,
+          "minimum": 0.25
+        }
+      },
+      "additionalProperties": false
     },
     "SceneWrap": {
       "type": "string",

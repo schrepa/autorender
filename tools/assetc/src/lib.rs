@@ -17,7 +17,27 @@ use sha2::{Digest, Sha256};
 /// Largest source container: the GLB length field's range.
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 /// Changes whenever import behavior or supported settings change.
-pub const IMPORTER_VERSION: &str = "gltf-pbr-7";
+pub const IMPORTER_VERSION: &str = "gltf-pbr-8";
+/// Triangles from which an opaque primitive imports as virtual geometry
+/// (decision 044) unless [`ImportOptions`] say otherwise.
+pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;
+
+/// How a model imports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportOptions {
+    /// Primitives of at least this many triangles, opaque and without vertex
+    /// colors, second texture coordinates or joints, import as virtual
+    /// meshes (`EVG1` files, decision 044); `None` imports none.
+    pub virtual_triangles: Option<u32>,
+}
+
+impl Default for ImportOptions {
+    fn default() -> Self {
+        Self {
+            virtual_triangles: Some(DEFAULT_VIRTUAL_TRIANGLES),
+        }
+    }
+}
 
 /// A file the imported scene references, at `uri` relative to the scene.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,9 +115,19 @@ pub fn source_sha256(bytes: &[u8]) -> String {
 /// (`ID.root`) that plays the first animation (`ID.anim<N>`), with skins
 /// `ID.skin<N>`. IDs derive from source indices and the caller's namespace;
 /// files are named `ID/image<N>.<HASH>.png|jpg`, `ID/node<N>.p<M>.<HASH>.bin`
-/// and `ID/anim<N>.<HASH>.bin`. The resulting document is validated with the
-/// runtime's scene validation before being returned. Nothing is written.
+/// (`.evg` for virtual meshes) and `ID/anim<N>.<HASH>.bin`. The resulting
+/// document is validated with the runtime's scene validation before being
+/// returned. Nothing is written. Imports with the default [`ImportOptions`].
 pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
+    import_glb_with(bytes, id, &ImportOptions::default())
+}
+
+/// [`import_glb`] with `options`.
+pub fn import_glb_with(
+    bytes: &[u8],
+    id: &str,
+    options: &ImportOptions,
+) -> Result<Imported, ImportError> {
     if id.is_empty()
         || id.len() > 40
         || !id
@@ -135,7 +165,7 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     };
     let mut files = Vec::new();
     materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;
-    geometry::import(&gltf.document, binary, id, &mut scene, &mut files)?;
+    geometry::import(&gltf.document, binary, id, options, &mut scene, &mut files)?;
     // These cooked artifacts use the exact authoring representation games load.
     scene.to_json()?;
     Ok(Imported {
@@ -151,7 +181,16 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
 /// joints naming them, omit the namespace, so placement roots can qualify
 /// them independently without duplicating mesh, texture or clip data.
 pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
-    let mut imported = import_glb(bytes, id)?;
+    import_glb_prefab_with(bytes, id, &ImportOptions::default())
+}
+
+/// [`import_glb_prefab`] with `options`.
+pub fn import_glb_prefab_with(
+    bytes: &[u8],
+    id: &str,
+    options: &ImportOptions,
+) -> Result<Imported, ImportError> {
+    let mut imported = import_glb_with(bytes, id, options)?;
     let scene = &mut imported.document;
     let prefix = format!("{id}.");
     let local = |value: &mut String| {

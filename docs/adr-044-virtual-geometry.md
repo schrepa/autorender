@@ -1,10 +1,11 @@
 # Decision 044: Virtual geometry
 
-Status: first three stages adopted. Offline cluster hierarchies, their file
+Status: four stages adopted. Offline cluster hierarchies, their file
 format, GPU cluster selection, forward drawing and cluster shadows work on
 retained frames, both GPU-presented and CPU-prepared; GPU-presented frames
-also cull occluded and sub-pixel clusters. A visibility buffer, streaming
-and scene authoring come later (see Stages).
+also cull occluded and sub-pixel clusters. Scenes reference virtual meshes,
+the importer builds them, and agents control and observe them. A visibility
+buffer and streaming come later (see Stages).
 
 ## Context
 
@@ -88,6 +89,27 @@ and `pixel_error`. `pixel_error` is the largest simplification error a drawn
 cluster may show, in pixels of viewport height. It defaults to 1.5 and is
 sanitized into [0.25, 64]. Removing or disabling the resource draws the
 fallback meshes, and snapshots carry its sanitized values.
+
+### Authoring and agents
+
+- **Scenes.** Version 8 meshes take `virtual` sources:
+  `{"kind": "virtual", "uri": "rock.evg", "fallback_triangles": 4096}`
+  (the fallback optional). Documents list the file as a buffer; hosts fetch
+  it like any other and `SceneFiles` decodes and validates it on
+  instantiation. The environment takes a `virtual_geometry` section
+  (`enabled`, `pixel_error` within [0.25, 64]); omitted, a document's
+  environment turns virtual geometry on.
+- **Import.** `cargo xtask asset import` builds `EVG1` files for opaque
+  primitives of at least 512 triangles without vertex colors, second
+  texture coordinates or joints (`--virtual-triangles N`,
+  `--no-virtual-geometry`). Alpha-tested ones stay mesh buffers because
+  virtual shadows cast whole clusters. The development server serves `.evg`
+  files under `/scenes/`.
+- **Agents.** `describe` lists `VirtualGeometry`, `inspect` reads it as its
+  scene section, and the paused `environment` control replaces it for the
+  session. `web/scripts/virtual-geometry-smoke.mjs` checks the dense scene:
+  GPU-presented and CPU captures match, clusters draw and cast shadows,
+  pixel error and disabling take effect, and invalid settings are refused.
 
 ### Selection and drawing
 
@@ -250,11 +272,11 @@ dropped entries still draws everything that fit, and reports the drops.
 2. Cluster shadows in the cascades and the moving map (this record).
 3. Cluster occlusion against decision 040's pyramids and sub-pixel clusters
    (this record).
-4. A visibility buffer: rasterize instance, cluster and triangle IDs, then
+4. Authoring: scene sources, import, the environment section, the
+   inspector and a smoke check (this record).
+5. A visibility buffer: rasterize instance, cluster and triangle IDs, then
    shade each material in its own pass.
-5. Streaming: coarse pages stay resident, the GPU requests pages through
+6. Streaming: coarse pages stay resident, the GPU requests pages through
    read-back, and a fixed pool evicts the least recently used pages under a
    byte budget.
-6. Authoring: `cargo xtask asset import` builds `EVG1` files for meshes over
-   about 500 triangles, a scene section references them, and agents get a
-   control, observations and a smoke check.
+

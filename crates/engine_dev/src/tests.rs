@@ -1374,3 +1374,79 @@ fn reflection_probes_are_discoverable_inspectable_and_controllable() {
         .is_err()
     );
 }
+
+#[test]
+fn virtual_geometry_settings_are_discoverable_inspectable_and_controllable() {
+    use engine_core::VirtualGeometry;
+    let tools = DevTools::default();
+    let mut engine = Engine::default();
+    let listing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe"}),
+    );
+    assert!(
+        listing["result"]["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == "VirtualGeometry")
+    );
+    // The engine inserts the settings; they read as their scene section.
+    let settings = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"VirtualGeometry"}),
+    );
+    let section: engine_scene::SceneVirtualGeometry =
+        serde_json::from_value(settings["result"]["value"].clone()).unwrap();
+    assert_eq!(section.resolve("$").unwrap(), VirtualGeometry::default());
+    let look = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Environment"}),
+    );
+    assert_eq!(
+        look["result"]["value"]["virtual_geometry"],
+        settings["result"]["value"]
+    );
+    // The environment control takes the section; out-of-range errors and
+    // typos are refused.
+    let control: crate::BrowserControl = serde_json::from_value(json!({
+        "version":1,"op":"environment","virtual_geometry":{"pixel_error":3.0}
+    }))
+    .unwrap();
+    let crate::BrowserControl::Environment {
+        virtual_geometry: Some(section),
+        ..
+    } = control
+    else {
+        panic!("expected virtual geometry settings");
+    };
+    assert_eq!(
+        section.resolve("$").unwrap(),
+        VirtualGeometry {
+            pixel_error: 3.0,
+            ..VirtualGeometry::default()
+        }
+    );
+    assert_eq!(
+        engine_scene::SceneVirtualGeometry {
+            pixel_error: 0.1,
+            ..Default::default()
+        }
+        .resolve("$")
+        .unwrap_err()
+        .path,
+        "$.pixel_error"
+    );
+    assert!(
+        serde_json::from_value::<crate::BrowserControl>(
+            json!({"version":1,"op":"environment","virtual_geometry":{"error":2}})
+        )
+        .is_err()
+    );
+}

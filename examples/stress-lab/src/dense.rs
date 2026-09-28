@@ -19,8 +19,6 @@ pub const FILES: [&str; 4] = [
     "column.evg",
     "terrain.evg",
 ];
-/// Triangles of each mesh's fallback, drawn where clusters are not.
-const FALLBACK_TRIANGLES: u32 = 4096;
 /// Units each terrain tile spans.
 const TILE: f32 = 64.0;
 /// Ground each object stands on, on average.
@@ -41,7 +39,7 @@ pub(crate) fn populate(
         })?;
         let geometry =
             Arc::new(VirtualMesh::decode(bytes).map_err(|error| format!("{name}: {error}"))?);
-        let mesh = Mesh::from_virtual(geometry, FALLBACK_TRIANGLES)
+        let mesh = Mesh::from_virtual(geometry, engine::DEFAULT_FALLBACK_TRIANGLES)
             .map_err(|error| format!("{name}: {error}"))?;
         assets.insert_mesh(mesh).map_err(|error| error.to_string())
     };

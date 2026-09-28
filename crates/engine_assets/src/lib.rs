@@ -26,9 +26,10 @@ pub use material::{
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};
 pub use virtual_mesh::{
-    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, ClusterInfo, ErrorSphere, FLAG_CLOSED,
-    FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS, NONE as VIRTUAL_NONE, VERTEX_WORDS,
-    VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VirtualMesh, octahedral_encode, octahedral_normal,
+    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, ClusterInfo, DEFAULT_FALLBACK_TRIANGLES,
+    ErrorSphere, FLAG_CLOSED, FLAG_UVS, GROUP_WORDS, HEADER_WORDS, NODE_WORDS,
+    NONE as VIRTUAL_NONE, VERTEX_WORDS, VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION, VirtualMesh,
+    octahedral_encode, octahedral_normal,
 };
 
 #[cfg(test)]

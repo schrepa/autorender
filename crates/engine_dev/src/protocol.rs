@@ -1,7 +1,7 @@
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneLocalLights,
     SceneParticles, SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows,
-    SceneSunShafts,
+    SceneSunShafts, SceneVirtualGeometry,
 };
 use serde::{Deserialize, Serialize};
 
@@ -223,6 +223,8 @@ pub enum BrowserControl {
         decals: Option<SceneDecals>,
         #[serde(default)]
         reflection_probes: Option<SceneReflectionProbes>,
+        #[serde(default)]
+        virtual_geometry: Option<SceneVirtualGeometry>,
     },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {

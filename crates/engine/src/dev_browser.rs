@@ -192,6 +192,7 @@ impl DevBrowser {
                 refraction,
                 decals,
                 reflection_probes,
+                virtual_geometry,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -208,6 +209,7 @@ impl DevBrowser {
                     refraction,
                     decals,
                     reflection_probes,
+                    virtual_geometry,
                 };
                 let settings = match environment.resolve("$") {
                     Ok(settings) => settings,
@@ -228,6 +230,7 @@ impl DevBrowser {
                     ("refraction", settings.refraction.is_some()),
                     ("decals", settings.decals.is_some()),
                     ("reflection_probes", settings.reflection_probes.is_some()),
+                    ("virtual_geometry", settings.virtual_geometry.is_some()),
                 ]
                 .into_iter()
                 .filter_map(|(name, set)| set.then_some(name))

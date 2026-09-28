@@ -67,7 +67,7 @@ impl SceneDocument {
             }
         }
         for mesh in &self.meshes {
-            if let MeshSource::Buffer { uri } = &mesh.source {
+            if let MeshSource::Buffer { uri } | MeshSource::Virtual { uri, .. } = &mesh.source {
                 add(uri, SceneFileKind::Buffer);
             }
         }

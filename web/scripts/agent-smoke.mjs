@@ -112,7 +112,7 @@ try {
   }
   const look = await cli("inspect", { component: "Environment" });
   assert.deepEqual(Object.keys(look.result.value).sort(),
-    ["ambient_occlusion", "atmosphere", "bloom", "decals", "local_lights", "particles", "reflection_probes", "reflections", "refraction", "shadows", "sun_shafts"]);
+    ["ambient_occlusion", "atmosphere", "bloom", "decals", "local_lights", "particles", "reflection_probes", "reflections", "refraction", "shadows", "sun_shafts", "virtual_geometry"]);
   const mesh = await cli("inspect", { entity: playerId, component: "Mesh3d" });
   assert.equal(typeof mesh.result.entity.components.Mesh3d.surface.roughness, "number");
   const invalidLook = await cli("environment", { shadows: { resolution: 3000 } }, false);

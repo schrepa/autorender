@@ -37,7 +37,10 @@ section ([decision 038](../adr-038-glass-and-refraction.md)). Entities take a
 `decal` and the environment a `decals` section
 ([decision 039](../adr-039-decals.md)). Entities take a `reflection_probe`
 and the environment a `reflection_probes` section
-([decision 043](../adr-043-environment-maps.md)).
+([decision 043](../adr-043-environment-maps.md)). Meshes take `virtual`
+sources (`EVG1` cluster hierarchy files, with an optional
+`fallback_triangles`) and the environment a `virtual_geometry` section
+([decision 044](../adr-044-virtual-geometry.md)).
 
 Version 7 lets textures set `uri` to an image file beside the scene and
 meshes use `buffer` sources (`EMB1` files), and removes count limits

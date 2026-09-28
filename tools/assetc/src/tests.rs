@@ -738,3 +738,73 @@ fn transmission_ior_and_volume_import_as_glass() {
     .materials[0];
     assert_eq!((opaque.transmission, opaque.ior), (None, None));
 }
+
+#[test]
+fn dense_opaque_primitives_import_as_virtual_meshes() {
+    use crate::{ImportOptions, import_glb_with};
+    let every = ImportOptions {
+        virtual_triangles: Some(1),
+    };
+    let imported = import_glb_with(FIXTURE, "garden", &every).unwrap();
+    let virtual_files: Vec<&str> = imported
+        .document
+        .meshes
+        .iter()
+        .filter_map(|mesh| match &mesh.source {
+            MeshSource::Virtual {
+                uri,
+                fallback_triangles: None,
+            } => Some(uri.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(!virtual_files.is_empty());
+    let mut files = engine_scene::SceneFiles::new();
+    for file in &imported.files {
+        if virtual_files.contains(&file.uri.as_str()) {
+            assert!(file.uri.ends_with(".evg"), "{}", file.uri);
+            assert_eq!(&file.bytes[..4], b"EVG1");
+        }
+        if file.uri.ends_with(".bin") || file.uri.ends_with(".evg") {
+            files.add_buffer(&file.uri, file.bytes.clone());
+        } else {
+            files.add_image(&file.uri, 1, 1, vec![255; 4]);
+        }
+    }
+    imported.document.validate_with(&files).unwrap();
+    // The fixture's primitives are below the default threshold, and no
+    // threshold imports none as virtual.
+    for options in [
+        ImportOptions::default(),
+        ImportOptions {
+            virtual_triangles: None,
+        },
+    ] {
+        let plain = import_glb_with(FIXTURE, "garden", &options).unwrap();
+        assert!(
+            plain
+                .document
+                .meshes
+                .iter()
+                .all(|mesh| matches!(mesh.source, MeshSource::Buffer { .. }))
+        );
+    }
+    // Alpha-tested materials keep mesh buffers: their shadows test texels.
+    let masked = import_glb_with(
+        &changed(|json| {
+            for material in json["materials"].as_array_mut().unwrap() {
+                material["alphaMode"] = json!("MASK");
+            }
+        }),
+        "garden",
+        &every,
+    )
+    .unwrap();
+    assert!(
+        masked
+            .document
+            .meshes
+            .iter()
+            .all(|mesh| matches!(mesh.source, MeshSource::Buffer { .. }))
+    );
+}

@@ -1,6 +1,6 @@
 use engine_scene::{
-    MeshSource, MeshStreams, SceneDocument, SceneMesh, SceneObject, ScenePlayer, SceneTransform,
-    SceneVertex, encode_mesh_buffer_with,
+    MeshSource, MeshStreams, SceneAlphaMode, SceneDocument, SceneMaterial, SceneMesh, SceneObject,
+    ScenePlayer, SceneTransform, SceneVertex, encode_mesh_buffer_with,
 };
 use glam::{EulerRot, Mat3, Mat4, Quat, Vec3};
 use gltf::{
@@ -8,7 +8,7 @@ use gltf::{
     mesh::Semantic,
 };
 
-use crate::{ImportError, ImportedFile, unsupported};
+use crate::{ImportError, ImportOptions, ImportedFile, unsupported};
 
 /// Static models bake node transforms into their vertices; models with
 /// animations or skins keep their nodes (decisions 035 and 036).
@@ -16,11 +16,12 @@ pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],
     id: &str,
+    options: &ImportOptions,
     output: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
 ) -> Result<(), ImportError> {
     if document.animations().next().is_some() || document.skins().next().is_some() {
-        return hierarchy(document, binary, id, output, files);
+        return hierarchy(document, binary, id, options, output, files);
     }
     let source = document.scenes().next().expect("validated single scene");
     let mut stack: Vec<_> = source.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
@@ -52,6 +53,7 @@ pub(crate) fn import(
                     output,
                     binary,
                     id,
+                    options,
                     &node,
                     &primitive,
                     matrix,
@@ -77,13 +79,16 @@ pub(crate) fn import(
     Ok(())
 }
 
-/// A primitive's entity, mesh and mesh buffer file, its vertices transformed
-/// by `matrix`; with `skinned`, carrying the primitive's joints and weights.
+/// A primitive's entity, mesh and mesh file, its vertices transformed by
+/// `matrix`; with `skinned`, carrying the primitive's joints and weights.
+/// Dense opaque primitives without extra streams become virtual meshes
+/// (decision 044) as `options` say.
 #[allow(clippy::too_many_arguments)]
 fn import_primitive(
     output: &SceneDocument,
     binary: &[u8],
     id: &str,
+    options: &ImportOptions,
     node: &gltf::Node<'_>,
     primitive: &gltf::Primitive<'_>,
     matrix: Mat4,
@@ -130,21 +135,53 @@ fn import_primitive(
     let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
     let joints: Option<Vec<[u16; 4]>> = vertices.iter().map(|vertex| vertex.joints).collect();
     let weights: Option<Vec<[f32; 4]>> = vertices.iter().map(|vertex| vertex.weights).collect();
-    let file = ImportedFile::named(
-        id,
-        &format!("node{}.p{}", node.index(), primitive.index()),
-        "bin",
-        encode_mesh_buffer_with(
-            &vertices,
-            &indices,
-            MeshStreams {
-                colors: colors.as_deref(),
-                uv1: uv1.as_deref(),
-                joints: joints.as_deref(),
-                weights: weights.as_deref(),
-            },
-        ),
-    );
+    let name = format!("node{}.p{}", node.index(), primitive.index());
+    let clustered = options
+        .virtual_triangles
+        .is_some_and(|triangles| indices.len() / 3 >= triangles as usize)
+        && colors.is_none()
+        && uv1.is_none()
+        && joints.is_none()
+        && opaque(material);
+    let (file, source) = if clustered {
+        let positions: Vec<[f32; 3]> = vertices.iter().map(|vertex| vertex.position).collect();
+        let normals: Vec<[f32; 3]> = vertices.iter().map(|vertex| vertex.normal).collect();
+        let uvs: Option<Vec<[f32; 2]>> =
+            textured.then(|| vertices.iter().map(|vertex| vertex.uv).collect());
+        let bytes = engine_vgbuild::build_virtual_mesh(&engine_vgbuild::Source {
+            positions: &positions,
+            normals: &normals,
+            uvs: uvs.as_deref(),
+            indices: &indices,
+        })
+        .map_err(|message| ImportError::new("invalid_mesh", &primitive_path, message))?;
+        let file = ImportedFile::named(id, &name, "evg", bytes);
+        let source = MeshSource::Virtual {
+            uri: file.uri.clone(),
+            fallback_triangles: None,
+        };
+        (file, source)
+    } else {
+        let file = ImportedFile::named(
+            id,
+            &name,
+            "bin",
+            encode_mesh_buffer_with(
+                &vertices,
+                &indices,
+                MeshStreams {
+                    colors: colors.as_deref(),
+                    uv1: uv1.as_deref(),
+                    joints: joints.as_deref(),
+                    weights: weights.as_deref(),
+                },
+            ),
+        );
+        let source = MeshSource::Buffer {
+            uri: file.uri.clone(),
+        };
+        (file, source)
+    };
     let skin = node
         .skin()
         .filter(|_| joints.is_some())
@@ -169,11 +206,21 @@ fn import_primitive(
     };
     let mesh = SceneMesh {
         id: mesh_id,
-        source: MeshSource::Buffer {
-            uri: file.uri.clone(),
-        },
+        source,
     };
     Ok((object, mesh, file))
+}
+
+/// Whether `material` draws opaque: neither alpha-tested (virtual shadows
+/// cast whole clusters) nor blended, see-through or transmissive.
+fn opaque(material: &SceneMaterial) -> bool {
+    material
+        .alpha_mode
+        .is_none_or(|mode| mode == SceneAlphaMode::Opaque)
+        && material.opacity.is_none_or(|opacity| opacity >= 1.0)
+        && material
+            .transmission
+            .is_none_or(|transmission| transmission <= 0.0)
 }
 
 fn node_name(node: &gltf::Node<'_>, fallback: &str) -> String {
@@ -190,6 +237,7 @@ fn hierarchy(
     document: &gltf::Document,
     binary: &[u8],
     id: &str,
+    options: &ImportOptions,
     output: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
 ) -> Result<(), ImportError> {
@@ -244,6 +292,7 @@ fn hierarchy(
                     output,
                     binary,
                     id,
+                    options,
                     &node,
                     &primitive,
                     Mat4::IDENTITY,

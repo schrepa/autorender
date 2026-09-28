@@ -67,6 +67,9 @@ mod header {
 
 /// Flag: stored vertices carry texture coordinates.
 pub const FLAG_UVS: u32 = 1;
+/// Triangles of a virtual mesh's fallback cut ([`Mesh::from_virtual`]) when
+/// its source names none.
+pub const DEFAULT_FALLBACK_TRIANGLES: u32 = 4096;
 /// Flag: the mesh is closed, every edge joining two triangles, so its
 /// surfaces facing a direction hide those facing away.
 pub const FLAG_CLOSED: u32 = 2;

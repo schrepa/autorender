@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use engine_core::{MeshVertex, Texture, TextureFormat};
+use engine_core::{MeshVertex, Texture, TextureFormat, VirtualMesh};
 
 use crate::SceneError;
 
@@ -16,7 +16,8 @@ use crate::SceneError;
 pub enum SceneFileKind {
     /// An image (PNG, JPEG or WebP), supplied decoded to RGBA8.
     Image,
-    /// An engine mesh buffer (`EMB1`), supplied as bytes.
+    /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`), an
+    /// animation (`EAN1`) or a virtual mesh (`EVG1`, decision 044).
     Buffer,
 }
 
@@ -103,6 +104,13 @@ impl SceneFiles {
     pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, SceneError> {
         let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
         mesh_buffer(bytes, path)
+    }
+
+    /// Buffer `uri` decoded as a virtual mesh (decision 044), validated.
+    pub(crate) fn virtual_mesh(&self, uri: &str, path: &str) -> Result<VirtualMesh, SceneError> {
+        let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
+        VirtualMesh::decode(bytes)
+            .map_err(|error| SceneError::new("invalid_mesh", path, error.to_string()))
     }
 
     /// Buffer `uri` decoded as an animation buffer's channels.

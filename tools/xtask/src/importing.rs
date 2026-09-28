@@ -8,11 +8,11 @@ use std::{
 };
 
 use engine_assetc::{
-    IMPORTER_VERSION, ImportError, ImportedFile, MAX_INPUT_BYTES, import_glb, import_glb_prefab,
-    source_sha256,
+    DEFAULT_VIRTUAL_TRIANGLES, IMPORTER_VERSION, ImportError, ImportOptions, ImportedFile,
+    MAX_INPUT_BYTES, import_glb_prefab_with, import_glb_with, source_sha256,
 };
 use engine_dev::authoring;
-use engine_scene::SceneDocument;
+use engine_scene::{MeshSource, SceneDocument};
 use serde_json::{Value, json};
 
 pub fn asset(arguments: &[String]) -> Result<(), String> {
@@ -35,14 +35,22 @@ pub fn asset(arguments: &[String]) -> Result<(), String> {
 fn command(arguments: &[String]) -> Result<Value, ImportError> {
     let options = Options::parse(arguments)?;
     let bytes = read_source(&options.file)?;
+    let import_options = ImportOptions {
+        virtual_triangles: options.virtual_triangles,
+    };
     let result = if options.as_prefab {
-        import_glb_prefab(&bytes, &options.id)?
+        import_glb_prefab_with(&bytes, &options.id, &import_options)?
     } else {
-        import_glb(&bytes, &options.id)?
+        import_glb_with(&bytes, &options.id, &import_options)?
     };
     let imported = result.document;
     let file_bytes: usize = result.files.iter().map(|file| file.bytes.len()).sum();
-    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
+    let virtual_meshes = imported
+        .meshes
+        .iter()
+        .filter(|mesh| matches!(mesh.source, MeshSource::Virtual { .. }))
+        .count();
+    let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"virtual_meshes":virtual_meshes,"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
     // Animated and skinned models keep their nodes (decisions 035, 036).
     let node_transforms = if imported.animations.is_empty() && imported.skins.is_empty() {
         "baked"
@@ -85,11 +93,10 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
     Ok(json!({
         "save":report,"scene":document.id,"imported":counts,
         "ignored_extensions":result.ignored_extensions,
-        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":node_transforms,"materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb-files","animations":"ean1-files"}}
+        "provenance":{"source":options.file,"source_sha256":source_sha256(&bytes),"importer_version":IMPORTER_VERSION,"namespace":options.id,"settings":{"format":"glb2","authoring":if options.as_prefab {"prefab"} else {"flat"},"coordinates":"right-handed-y-up","node_transforms":node_transforms,"materials":"gltf-metallic-roughness","images":"files-unchanged","meshes":"emb-files","virtual_meshes":{"format":"evg1-files","min_triangles":options.virtual_triangles},"animations":"ean1-files"}}
     }))
 }
 
-#[derive(Default)]
 struct Options {
     file: PathBuf,
     id: String,
@@ -98,6 +105,24 @@ struct Options {
     revision: Option<u64>,
     replace: bool,
     as_prefab: bool,
+    // Triangles from which primitives import as virtual meshes (decision
+    // 044); `None` imports none.
+    virtual_triangles: Option<u32>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            file: PathBuf::new(),
+            id: String::new(),
+            output: None,
+            into: None,
+            revision: None,
+            replace: false,
+            as_prefab: false,
+            virtual_triangles: Some(DEFAULT_VIRTUAL_TRIANGLES),
+        }
+    }
 }
 
 impl Options {
@@ -106,7 +131,7 @@ impl Options {
             ImportError::new(
                 "invalid_arguments",
                 "$",
-                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
+                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] [--virtual-triangles N | --no-virtual-geometry] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
             )
         };
         if arguments.first().is_none_or(|command| command != "import") {
@@ -116,12 +141,13 @@ impl Options {
         let mut arguments = arguments[1..].iter();
         let mut replace = false;
         let mut as_prefab = false;
+        let mut no_virtual = false;
         while let Some(flag) = arguments.next() {
-            if flag == "--replace" || flag == "--as-prefab" {
-                let present = if flag == "--replace" {
-                    &mut replace
-                } else {
-                    &mut as_prefab
+            if flag == "--replace" || flag == "--as-prefab" || flag == "--no-virtual-geometry" {
+                let present = match flag.as_str() {
+                    "--replace" => &mut replace,
+                    "--as-prefab" => &mut as_prefab,
+                    _ => &mut no_virtual,
                 };
                 if *present {
                     return Err(invalid());
@@ -131,7 +157,12 @@ impl Options {
             }
             if !matches!(
                 flag.as_str(),
-                "--file" | "--id" | "--output" | "--into" | "--expected-revision"
+                "--file"
+                    | "--id"
+                    | "--output"
+                    | "--into"
+                    | "--expected-revision"
+                    | "--virtual-triangles"
             ) {
                 return Err(invalid());
             }
@@ -159,12 +190,34 @@ impl Options {
                 })
             })
             .transpose()?;
+        let virtual_triangles = values
+            .get("--virtual-triangles")
+            .map(|triangles| {
+                triangles
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|triangles| *triangles >= 1)
+                    .ok_or_else(|| {
+                        ImportError::new(
+                            "invalid_arguments",
+                            "--virtual-triangles",
+                            "expected a triangle count of at least 1",
+                        )
+                    })
+            })
+            .transpose()?;
         if output.is_some() == into.is_some()
             || (into.is_some() != revision.is_some())
             || (replace && into.is_none())
+            || (no_virtual && virtual_triangles.is_some())
         {
             return Err(invalid());
         }
+        let virtual_triangles = if no_virtual {
+            None
+        } else {
+            Some(virtual_triangles.unwrap_or(DEFAULT_VIRTUAL_TRIANGLES))
+        };
         Ok(Self {
             file,
             id,
@@ -173,6 +226,7 @@ impl Options {
             revision,
             replace,
             as_prefab,
+            virtual_triangles,
         })
     }
 }
@@ -472,6 +526,7 @@ fn dev_error(error: engine_dev::DevError) -> ImportError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use engine_assetc::{import_glb, import_glb_prefab};
 
     fn prefab_fixture() -> SceneDocument {
         import_glb_prefab(
@@ -676,6 +731,40 @@ mod tests {
             Options::parse(&arguments).err().unwrap().code,
             "invalid_arguments"
         );
+    }
+
+    #[test]
+    fn virtual_geometry_thresholds_are_explicit_and_exclusive() {
+        let parse = |extra: &[&str]| {
+            let mut arguments: Vec<String> = [
+                "import",
+                "--file",
+                "model.glb",
+                "--id",
+                "garden",
+                "--output",
+                "new.scene.json",
+            ]
+            .map(str::to_owned)
+            .into();
+            arguments.extend(extra.iter().map(|argument| argument.to_string()));
+            Options::parse(&arguments).map(|options| options.virtual_triangles)
+        };
+        assert_eq!(parse(&[]).unwrap(), Some(DEFAULT_VIRTUAL_TRIANGLES));
+        assert_eq!(parse(&["--virtual-triangles", "2000"]).unwrap(), Some(2000));
+        assert_eq!(parse(&["--no-virtual-geometry"]).unwrap(), None);
+        for refused in [
+            &["--virtual-triangles", "0"][..],
+            &["--virtual-triangles", "many"],
+            &["--no-virtual-geometry", "--virtual-triangles", "2000"],
+            &["--no-virtual-geometry", "--no-virtual-geometry"],
+        ] {
+            assert_eq!(
+                parse(refused).err().unwrap().code,
+                "invalid_arguments",
+                "{refused:?}"
+            );
+        }
     }
 
     #[test]

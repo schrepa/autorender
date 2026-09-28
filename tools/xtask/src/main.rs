@@ -86,7 +86,9 @@ fn execute() -> Result<(), String> {
                    agent  Browser session commands and development build status\n\
                    scene  Validate or save revision-checked scene sources as JSON\n\
                    asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]\n\
-                          Import a static textured GLB with structured results\n\
+                          [--virtual-triangles N | --no-virtual-geometry]\n\
+                          Import a static textured GLB with structured results; dense opaque primitives\n\
+                          (512 triangles and up by default) become virtual meshes\n\
                    assets Validate authored scene sources without changing them\n\
                    benchmark [--url URL] [--samples N] [--warmup N] [--repeats N] [--mode step|render|present] [--setup-ticks N]\n\
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\

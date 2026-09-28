@@ -33,6 +33,7 @@ pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
     SceneBounds, SceneDecals, SceneEnvironment, SceneLocalLights, SceneParticles,
     SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
+    SceneVirtualGeometry,
 };
 pub use error::SceneError;
 pub use files::{

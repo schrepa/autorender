@@ -6,14 +6,14 @@ use engine_core::{
     Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LocalLight,
     LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode, PresentationState,
     PresentedTransforms, ReflectionProbe, ReflectionProbes, Reflections, Refraction, Shadows, Skin,
-    SunShafts, Tint, Transform,
+    SunShafts, Tint, Transform, VirtualGeometry,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneEmitter, SceneEntity,
     SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
     SceneReflectionProbe, SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows,
-    SceneSunShafts,
+    SceneSunShafts, SceneVirtualGeometry,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -261,6 +261,11 @@ impl Default for DevTools {
             InspectorDescriptor::new("ReflectionProbes", "Reflection probe settings (decision 043): whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped.", schemas["ReflectionProbes"].clone())
                 .with_default(json!(SceneReflectionProbes::default())),
             |probes| json!(SceneReflectionProbes::from(probes)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<VirtualGeometry>(
+            InspectorDescriptor::new("VirtualGeometry", "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections.", schemas["VirtualGeometry"].clone())
+                .with_default(json!(SceneVirtualGeometry::default())),
+            |settings| json!(SceneVirtualGeometry::from(settings)),
         ).expect("built-in descriptor is bounded");
         tools.register_component::<LocalLight>(
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
@@ -574,7 +579,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals and reflection probes on); material transmission, ior and thickness, entity decals and reflection probes and the refraction, decals and reflection_probes sections require version 8."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals and reflection probes on); material transmission, ior and thickness, entity decals and reflection probes, virtual mesh sources and the refraction, decals, reflection_probes and virtual_geometry sections require version 8."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

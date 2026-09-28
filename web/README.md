@@ -92,6 +92,17 @@ GPU frame and GPU-presented ordinary frames. Captures go under
 `artifacts/gpu-presentation-smoke-*/`. See
 [GPU presentation](../docs/adr-014-gpu-presentation-and-culling.md).
 
+`node web/scripts/virtual-geometry-smoke.mjs` loads the Stress Lab's dense scene
+(build its files first with `cargo run -p engine_vgbuild --release --bin
+dense_assets`) and checks virtual geometry ([decision 044](../docs/adr-044-virtual-geometry.md)):
+the `VirtualGeometry` settings are discoverable and read as their environment
+section; at a street-level and a ground-level camera, GPU-presented captures
+(which cull occluded and sub-pixel clusters) match CPU captures within 0.1% of
+pixels, clusters draw and cast shadows and nothing is dropped; a pixel error of 6
+draws fewer triangles, disabling falls back to the fallback cuts, invalid
+settings are refused, and the page logs no errors. Captures go under
+`artifacts/virtual-geometry-smoke-*/`.
+
 `node web/scripts/taa-smoke.mjs` loads Stress Lab with temporal antialiasing
 (`?taa=on`) and checks that captures are identical with the setting on and off
 and after temporal frames, that converged still frames are smoother (lower total

@@ -8,8 +8,8 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, LocalLights, MAX_SHADOW_CASCADES, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, bevy_ecs::prelude::World,
-    glam::Vec3,
+    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
+    bevy_ecs::prelude::World, glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -634,6 +634,48 @@ impl SceneReflectionProbes {
     }
 }
 
+/// Virtual geometry settings (decision 044): whether meshes built as cluster
+/// hierarchies draw the clusters each view needs, and how coarse those may
+/// be. Requires version 8.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneVirtualGeometry {
+    pub enabled: bool,
+    /// The largest simplification error a drawn cluster may show, in pixels
+    /// of the viewport height, from 0.25 to 64: smaller draws more
+    /// triangles.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
+    pub pixel_error: f32,
+}
+
+impl Default for SceneVirtualGeometry {
+    fn default() -> Self {
+        Self::from(&VirtualGeometry::default())
+    }
+}
+
+impl From<&VirtualGeometry> for SceneVirtualGeometry {
+    fn from(settings: &VirtualGeometry) -> Self {
+        Self {
+            enabled: settings.enabled,
+            pixel_error: settings.pixel_error,
+        }
+    }
+}
+
+impl SceneVirtualGeometry {
+    pub fn resolve(&self, path: &str) -> Result<VirtualGeometry, SceneError> {
+        if !(self.pixel_error.is_finite() && (0.25..=64.0).contains(&self.pixel_error)) {
+            return Err(section_error(path, "pixel_error", "must be in [0.25, 64]"));
+        }
+        Ok(VirtualGeometry {
+            enabled: self.enabled,
+            pixel_error: self.pixel_error,
+        })
+    }
+}
+
 /// Sun shafts (decision 024): sunlight scattered by the fog between shadow
 /// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -820,13 +862,15 @@ pub struct SceneEnvironment {
     pub reflections: Option<SceneReflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneParticles>,
-    /// Version 8 sections (decisions 038, 039 and 043).
+    /// Version 8 sections (decisions 038, 039, 043 and 044).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refraction: Option<SceneRefraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decals: Option<SceneDecals>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reflection_probes: Option<SceneReflectionProbes>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_geometry: Option<SceneVirtualGeometry>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -843,6 +887,7 @@ pub struct EnvironmentSettings {
     pub refraction: Option<Refraction>,
     pub decals: Option<Decals>,
     pub reflection_probes: Option<ReflectionProbes>,
+    pub virtual_geometry: Option<VirtualGeometry>,
 }
 
 impl SceneEnvironment {
@@ -916,6 +961,14 @@ impl SceneEnvironment {
                     enabled: false,
                     ..ReflectionProbes::default()
                 });
+        let virtual_geometry =
+            world
+                .get_resource::<VirtualGeometry>()
+                .copied()
+                .unwrap_or(VirtualGeometry {
+                    enabled: false,
+                    ..VirtualGeometry::default()
+                });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
@@ -928,15 +981,18 @@ impl SceneEnvironment {
             refraction: Some(SceneRefraction::from(&refraction)),
             decals: Some(SceneDecals::from(&decals)),
             reflection_probes: Some(SceneReflectionProbes::from(&probes)),
+            virtual_geometry: Some(SceneVirtualGeometry::from(&virtual_geometry)),
         }
     }
 
-    /// The first version 8 section present (decisions 038, 039 and 043).
+    /// The first version 8 section present (decisions 038, 039, 043 and
+    /// 044).
     pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
         [
             ("refraction", self.refraction.is_some()),
             ("decals", self.decals.is_some()),
             ("reflection_probes", self.reflection_probes.is_some()),
+            ("virtual_geometry", self.virtual_geometry.is_some()),
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
@@ -1016,6 +1072,10 @@ impl SceneEnvironment {
                 .reflection_probes
                 .map(|section| section.resolve(&format!("{path}.reflection_probes")))
                 .transpose()?,
+            virtual_geometry: self
+                .virtual_geometry
+                .map(|section| section.resolve(&format!("{path}.virtual_geometry")))
+                .transpose()?,
         })
     }
 }
@@ -1056,6 +1116,9 @@ impl EnvironmentSettings {
         if let Some(probes) = self.reflection_probes {
             world.insert_resource(probes);
         }
+        if let Some(settings) = self.virtual_geometry {
+            world.insert_resource(settings);
+        }
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
@@ -1070,6 +1133,7 @@ impl EnvironmentSettings {
         world.insert_resource(self.particles.unwrap_or_default());
         world.insert_resource(self.decals.unwrap_or_default());
         world.insert_resource(self.reflection_probes.unwrap_or_default());
+        world.insert_resource(self.virtual_geometry.unwrap_or_default());
         match self.sun_shafts {
             Some(shafts) => world.insert_resource(shafts),
             None => {

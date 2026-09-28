@@ -287,6 +287,24 @@ pub enum MeshSource {
         )]
         uri: String,
     },
+    /// A virtual mesh file (`EVG1`, decision 044) beside the scene: a
+    /// cluster hierarchy renderers draw as the clusters each view needs, and
+    /// elsewhere as its most detailed cut of at most `fallback_triangles`
+    /// triangles (4096 when omitted). Built by `cargo xtask asset import`
+    /// for dense meshes. Version 8.
+    Virtual {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                length(min = 1, max = 256),
+                regex(pattern = r"^[A-Za-z0-9_-][A-Za-z0-9_./-]*$")
+            )
+        )]
+        uri: String,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fallback_triangles: Option<u32>,
+    },
 }
 
 impl MeshSource {
@@ -326,6 +344,36 @@ impl MeshSource {
                     buffer.skin,
                     path,
                 )
+            }
+            Self::Virtual {
+                uri,
+                fallback_triangles,
+            } => {
+                if version < 8 {
+                    return Err(SceneError::new(
+                        "version_required",
+                        path,
+                        "virtual meshes require scene version 8; set version to 8 and increment revision",
+                    ));
+                }
+                let uri_path = format!("{path}.uri");
+                valid_uri(uri, &uri_path)?;
+                if *fallback_triangles == Some(0) {
+                    return Err(SceneError::new(
+                        "invalid_mesh",
+                        format!("{path}.fallback_triangles"),
+                        "must be at least 1",
+                    ));
+                }
+                let Some(files) = files else {
+                    return Ok(Mesh::cube());
+                };
+                let geometry = files.virtual_mesh(uri, &uri_path)?;
+                Mesh::from_virtual(
+                    std::sync::Arc::new(geometry),
+                    fallback_triangles.unwrap_or(engine_core::DEFAULT_FALLBACK_TRIANGLES),
+                )
+                .map_err(|error| SceneError::new("invalid_mesh", uri_path, error.to_string()))
             }
             Self::Inline { vertices, indices } => {
                 // Vertices carry colors and second coordinates all or none.

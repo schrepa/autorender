@@ -26,7 +26,11 @@ Importing the same namespace again fails on duplicate IDs unless `--replace` is 
 cargo xtask asset import --file assets/source/garden-prop.glb --id scenery --into web/public/scenes/playground.scene.json --expected-revision N --replace
 ```
 
-Replacement owns the generated IDs in that namespace: `NAMESPACE.imageN`, `.materialN`, `.nodeN.pN`, and `.nodeN.pN.mesh`. Reserve these names for the importer. Files are written to the folder `NAMESPACE/` beside the scene, named by their content (`imageN.HASH.jpg`, `nodeN.pM.HASH.bin`), so a reimport never overwrites a file the saved scene reads; files a replacement no longer references stay until removed. Unrelated IDs are retained. Matching flat entity IDs retain authored placement, parent, names, game tags, and authored colliders. Source node reordering changes identity; review the result when editing model structure. References broken by removal are rejected before saving, leaving the previous source untouched. A stale revision or malformed import also leaves the previous source intact.
+Replacement owns the generated IDs in that namespace: `NAMESPACE.imageN`, `.materialN`, `.nodeN.pN`, and `.nodeN.pN.mesh`. Reserve these names for the importer. Files are written to the folder `NAMESPACE/` beside the scene, named by their content (`imageN.HASH.jpg`, `nodeN.pM.HASH.bin`, `nodeN.pM.HASH.evg`), so a reimport never overwrites a file the saved scene reads; files a replacement no longer references stay until removed. Unrelated IDs are retained. Matching flat entity IDs retain authored placement, parent, names, game tags, and authored colliders. Source node reordering changes identity; review the result when editing model structure. References broken by removal are rejected before saving, leaving the previous source untouched. A stale revision or malformed import also leaves the previous source intact.
+
+## Dense meshes as virtual geometry
+
+Primitives of at least 512 triangles whose material is opaque (not alpha-tested, blended, see-through or transmissive), without vertex colors, second texture coordinates or joints, import as virtual meshes ([decision 044](adr-044-virtual-geometry.md)): the importer builds their cluster hierarchies with the vendored meshoptimizer and writes `EVG1` files (`nodeN.pM.HASH.evg`) that `virtual` mesh sources reference (scene version 8). Renderers draw the clusters each view needs and elsewhere a fallback cut of 4,096 triangles. Set the threshold with `--virtual-triangles N`, or keep every primitive a mesh buffer with `--no-virtual-geometry`. The result's `virtual_meshes` count and the provenance's `virtual_meshes` setting report what was built.
 
 ## Reusable prefab import
 
@@ -70,7 +74,7 @@ Rendering observations include `resident_textures`, `resident_texture_bytes`, an
 
 The input is bounded only by the GLB format's 4 GiB length field; there is no count, vertex or decoded-size budget (decision 029). PNG and JPEG textures upload as RGBA8 with mips generated on the GPU; KTX2 textures (Basis Universal ETC1S or UASTC, as `gltf-transform` with KTX-Software writes them) upload their own levels block-compressed (decision 037).
 
-Textures are at most 8192×8192. The asset library and renderer set no texture count or byte budget by default (decision 029); a game may set an asset budget. Reload admission needs room for both old and new CPU assets until replacement commits. GPU objects remain renderer-owned; old snapshots can temporarily retain CPU pixels. Neither import libraries nor image decoders are browser runtime dependencies.
+Textures are at most 8192×8192. The asset library and renderer set no texture count or byte budget by default (decision 029); a game may set an asset budget. Reload admission needs room for both old and new CPU assets until replacement commits. GPU objects remain renderer-owned; old snapshots can temporarily retain CPU pixels. Neither import libraries nor image decoders are browser runtime dependencies. Cluster hierarchies are built natively too; the browser only decodes their validated words.
 
 ## Verification
 
@@ -81,4 +85,5 @@ and prefab-template IDs. Removing a generated collider-bearing node is rejected
 with `collider_reimport_conflict`; explicitly migrate or remove its collider in
 source first. Placement-root colliders remain with their placements. Importing
 never infers collider geometry from render meshes. This behavior is recorded by
-importer provenance version `gltf-pbr-7`.
+importer provenance version `gltf-pbr-8`, which also imports dense primitives as
+virtual meshes.

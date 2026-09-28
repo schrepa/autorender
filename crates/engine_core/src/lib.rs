@@ -44,8 +44,8 @@ pub use engine_assets::{
     KeyInterpolation, Keyframes,
 };
 pub use engine_assets::{
-    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, GROUP_WORDS, NODE_WORDS,
-    VIRTUAL_MESH_MAGIC, VirtualMesh,
+    CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, GROUP_WORDS,
+    NODE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
 pub use glam;
 pub use hierarchy::{
