@@ -5,13 +5,15 @@ use engine_core::{
     AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Decal, DecalBlend,
     Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LocalLight,
     LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode, PresentationState,
-    PresentedTransforms, Reflections, Refraction, Shadows, Skin, SunShafts, Tint, Transform,
+    PresentedTransforms, ReflectionProbe, ReflectionProbes, Reflections, Refraction, Shadows, Skin,
+    SunShafts, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneEmitter, SceneEntity,
     SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
-    SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
+    SceneReflectionProbe, SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows,
+    SceneSunShafts,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -255,6 +257,11 @@ impl Default for DevTools {
                 .with_default(json!(SceneDecals::default())),
             |decals| json!(SceneDecals::from(decals)),
         ).expect("built-in descriptor is bounded");
+        tools.register_resource::<ReflectionProbes>(
+            InspectorDescriptor::new("ReflectionProbes", "Reflection probe settings (decision 043): whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped.", schemas["ReflectionProbes"].clone())
+                .with_default(json!(SceneReflectionProbes::default())),
+            |probes| json!(SceneReflectionProbes::from(probes)),
+        ).expect("built-in descriptor is bounded");
         tools.register_component::<LocalLight>(
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
                 .with_default(json!(SceneLight::default())),
@@ -320,6 +327,10 @@ impl Default for DevTools {
                 }))
             }),
         }).expect("built-in descriptor is bounded");
+        tools.register_component::<ReflectionProbe>(
+            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity (decision 043) as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
+            |probe| json!(SceneReflectionProbe::from(probe)),
+        ).expect("built-in descriptor is bounded");
         tools.register_component::<ParticleEmitter>(
             InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
                 .with_default(json!(SceneEmitter::default())),
@@ -563,7 +574,7 @@ impl DevTools {
         };
         match name {
             "SceneDocument" => Ok(
-                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals on); material transmission, ior and thickness, entity decals and the refraction and decals sections require version 8."}),
+                json!({"name": name, "kind": "authoring", "source": "docs/schema/scene-v6.schema.json", "schema": serde_json::from_str::<Value>(include_str!(concat!(env!("OUT_DIR"), "/scene.schema.json"))).expect("generated scene schema is JSON"), "constraints": "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Entity lights and particles, material opacity and the local_lights, sun_shafts, reflections and particles environment sections require version 6; material surfaces and the environment require version 5; colliders require version 4; hierarchies, transform-only nodes and prefabs require version 3; textures/UVs require version 2 or later. Legacy versions 1 through 5 remain accepted without the newer fields. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state (sun shafts, reflections and refraction off; decals and reflection probes on); material transmission, ior and thickness, entity decals and reflection probes and the refraction, decals and reflection_probes sections require version 8."}),
             ),
             "protocol" | "BrowserControl" => {
                 let schemas: Value = serde_json::from_str(include_str!(concat!(

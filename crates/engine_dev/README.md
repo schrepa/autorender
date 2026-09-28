@@ -88,11 +88,14 @@ PresentedTransform, PresentationState, Hierarchy, Camera, Mesh3d, Collider,
 CollisionWorld, and protocol schemas are
 generated from their actual serialized DTO definitions during compilation.
 `Atmosphere`, `Shadows`, `AmbientOcclusion`, `Bloom`, `LocalLights`,
-`SunShafts`, `Reflections`, `Particles` and the combined `Environment` use
+`SunShafts`, `Reflections`, `Particles`, `Refraction`, `Decals`,
+`ReflectionProbes` and the combined `Environment` use
 the scene `environment` section types from `engine_scene`
 ([decision 022](../../docs/adr-022-scene-environments-and-agent-controls.md)),
 and the `LocalLight` and `ParticleEmitter` entity projections use the scene
-version 6 `light` and `particles` fields (decisions 023 and 026),
+version 6 `light` and `particles` fields (decisions 023 and 026) and the
+`ReflectionProbe` projection the version 8 `reflection_probe` field
+(decision 043),
 so an inspected value can be sent to the `environment` control or saved in a
 scene unchanged. `Environment` reads missing effect resources as off; the
 individual projections report them as missing.

@@ -497,6 +497,7 @@ mod tests {
             animation: None,
             skin: None,
             decal: None,
+            reflection_probe: None,
             transform: engine_scene::SceneTransform::default(),
             tags: Vec::new(),
         }

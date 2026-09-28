@@ -335,6 +335,14 @@ pub struct RenderSnapshot {
     pub decal_textures: Vec<RenderTexture>,
     /// Usable decals beyond the budget.
     pub dropped_decals: usize,
+    /// Reflection probe settings (decision 043), sanitized; disabled when
+    /// the resource is missing.
+    pub reflection_probe_settings: crate::ReflectionProbes,
+    /// This frame's usable reflection probes, nearest the camera first,
+    /// within the settings' budget.
+    pub reflection_probes: Vec<crate::RenderReflectionProbe>,
+    /// Usable probes beyond the budget.
+    pub dropped_reflection_probes: usize,
     /// Every instance's `color[3]` is its opacity (decision 026); see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,

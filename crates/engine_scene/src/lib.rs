@@ -16,6 +16,7 @@ mod hierarchy;
 mod instance;
 mod lighting;
 mod material;
+mod probe;
 mod texture;
 mod validation;
 
@@ -30,8 +31,8 @@ pub use document::{
 };
 pub use environment::{
     AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
-    SceneBounds, SceneDecals, SceneEnvironment, SceneLocalLights, SceneParticles, SceneReflections,
-    SceneRefraction, SceneShadows, SceneSunShafts,
+    SceneBounds, SceneDecals, SceneEnvironment, SceneLocalLights, SceneParticles,
+    SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows, SceneSunShafts,
 };
 pub use error::SceneError;
 pub use files::{
@@ -45,6 +46,7 @@ pub use material::{
     SceneAlphaMode, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter, SceneTextureMap,
     SceneWrap,
 };
+pub use probe::SceneReflectionProbe;
 pub use texture::SceneTexture;
 
 #[cfg(test)]

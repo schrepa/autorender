@@ -46,8 +46,9 @@ pub(crate) struct ClusterUniform {
     /// Tiles across and down, depth slices, and the per-cluster budget
     /// ([`NO_BUDGET`] without one).
     pub counts: [u32; 4],
-    /// Lights, 1 when slot poses are bound, and the entries the cluster
-    /// lists' storage holds.
+    /// Lights, 1 when slot poses are bound, the entries the cluster lists'
+    /// storage holds, and 1 when only lights without a slot or on still
+    /// slots are binned (reflection probe faces, decision 043).
     pub lights: [u32; 4],
 }
 
@@ -170,6 +171,14 @@ mod gpu {
         group: usize,
     }
 
+    // Binning and shading groups of each reflection probe face, and the
+    // (pose generation, pose buffer, storage generation, still-frame
+    // generation) they were built for.
+    type ProbeLightGroups = (
+        (u64, usize, u64, u64),
+        Vec<(wgpu::BindGroup, wgpu::BindGroup)>,
+    );
+
     /// Pose storage a frame's slot lights read: a buffer, its storage
     /// generation and which of the frame's pose buffers it is.
     pub(crate) struct LightPoses<'a> {
@@ -203,6 +212,14 @@ mod gpu {
         // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
         fragment_group: Option<(u64, wgpu::BindGroup)>,
+        // Reflection probe faces (decision 043): each face's clusters, their
+        // binning and shading groups over the pose, still-frame and list
+        // storage they were built for (the last used current), and the
+        // still frames main binning leaves unread.
+        probe_uniforms: Vec<wgpu::Buffer>,
+        probe_groups: Vec<ProbeLightGroups>,
+        probe_current: usize,
+        no_still: wgpu::Buffer,
         buffers_generation: u64,
         readbacks: Vec<Readback>,
         // Lights that reached a cluster, cluster entries lost to the budget
@@ -266,6 +283,7 @@ mod gpu {
                         layout_entry(5, compute, write),
                         layout_entry(6, compute, write),
                         layout_entry(7, compute, write),
+                        layout_entry(8, compute, read),
                     ],
                 });
             let fragment = wgpu::ShaderStages::FRAGMENT;
@@ -330,6 +348,10 @@ mod gpu {
                 uploaded: Vec::new(),
                 compute_groups: Vec::new(),
                 fragment_group: None,
+                probe_uniforms: Vec::new(),
+                probe_groups: Vec::new(),
+                probe_current: 0,
+                no_still: storage(device, "engine/light-no-still", 16, none),
                 buffers_generation: 0,
                 readbacks: Vec::new(),
                 totals_read: Rc::new(Cell::new(None)),
@@ -466,6 +488,7 @@ mod gpu {
                             entry(5, &self.indices),
                             entry(6, &self.totals),
                             entry(7, &self.ranges),
+                            entry(8, &self.no_still),
                         ],
                     });
                     self.compute_groups.push((key, group));
@@ -543,6 +566,126 @@ mod gpu {
             }
         }
 
+        /// Records the binning of reflection probe cube face `face` (decision
+        /// 043), `size` texels across, seen through `view_projection`: the
+        /// lights of `frame` without a slot or on slots `still` (storage and
+        /// generation) counts still, into the lists the frame's own shading
+        /// read before; [`Self::probe_fragment_group`] shades with them.
+        #[allow(clippy::too_many_arguments)]
+        pub(crate) fn encode_probe_face(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            encoder: &mut wgpu::CommandEncoder,
+            face: usize,
+            view_projection: Mat4,
+            size: u32,
+            settings: &engine_core::LocalLights,
+            frame: &LightFrame,
+            poses: LightPoses<'_>,
+            still: (&wgpu::Buffer, u64),
+        ) {
+            if self.probe_uniforms.is_empty() {
+                self.probe_uniforms = (0..6)
+                    .map(|_| {
+                        device.create_buffer(&wgpu::BufferDescriptor {
+                            label: Some("engine/light-clusters-probe"),
+                            size: size_of::<ClusterUniform>() as u64,
+                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                            mapped_at_creation: false,
+                        })
+                    })
+                    .collect();
+            }
+            let mut uniform = ClusterUniform::new(
+                view_projection,
+                size,
+                size,
+                settings.distance,
+                frame.count,
+                true,
+                settings.lights_per_cluster,
+                self.index_capacity.min(u64::from(u32::MAX)) as u32,
+            );
+            uniform.lights[3] = 1;
+            queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));
+            let key = (
+                poses.generation,
+                poses.index,
+                self.buffers_generation,
+                still.1,
+            );
+            if let Some(index) = self
+                .probe_groups
+                .iter()
+                .position(|(built, _)| *built == key)
+            {
+                self.probe_current = index;
+            } else {
+                // Stale generations never come back.
+                self.probe_groups
+                    .retain(|((generation, _, buffers, still), _)| {
+                        (*generation, *buffers, *still) == (key.0, key.2, key.3)
+                    });
+                let groups = self
+                    .probe_uniforms
+                    .iter()
+                    .map(|uniform| {
+                        let compute = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("engine/light-binning-probe-group"),
+                            layout: &self.compute_layout,
+                            entries: &[
+                                entry(0, uniform),
+                                entry(1, &self.inputs),
+                                entry(2, poses.buffer),
+                                entry(3, &self.lights),
+                                entry(4, &self.counts),
+                                entry(5, &self.indices),
+                                entry(6, &self.totals),
+                                entry(7, &self.ranges),
+                                entry(8, still.0),
+                            ],
+                        });
+                        let fragment = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("engine/light-shading-probe-group"),
+                            layout: &self.fragment_layout,
+                            entries: &[
+                                entry(0, uniform),
+                                entry(1, &self.lights),
+                                entry(2, &self.ranges),
+                                entry(3, &self.indices),
+                            ],
+                        });
+                        (compute, fragment)
+                    })
+                    .collect();
+                self.probe_groups.push((key, groups));
+                self.probe_current = self.probe_groups.len() - 1;
+            }
+            let group = &self.probe_groups[self.probe_current].1[face].0;
+            encoder.clear_buffer(&self.counts, 0, None);
+            encoder.clear_buffer(&self.totals, 0, None);
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/light-binning-probe"),
+                timestamp_writes: None,
+            });
+            let workgroups = frame.count.div_ceil(LIGHTS);
+            let (columns, rows) = (workgroups.min(65_535), workgroups.div_ceil(65_535));
+            pass.set_bind_group(0, group, &[]);
+            pass.set_pipeline(&self.count);
+            pass.dispatch_workgroups(columns, rows, 1);
+            pass.set_pipeline(&self.scan);
+            pass.dispatch_workgroups(1, 1, 1);
+            pass.set_pipeline(&self.fill);
+            pass.dispatch_workgroups(columns, rows, 1);
+        }
+
+        /// The bindings lit probe pipelines read at group 3 for face `face`,
+        /// after [`Self::encode_probe_face`] recorded its binning.
+        pub(crate) fn probe_fragment_group(&self, face: usize) -> &wgpu::BindGroup {
+            &self.probe_groups[self.probe_current].1[face].1
+        }
+
         fn idle_readback(&mut self, device: &wgpu::Device) -> Option<usize> {
             if let Some(index) = self
                 .readbacks
@@ -599,7 +742,7 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::{LightPass, LightPoses};
+pub(crate) use gpu::{LightFrame, LightPass, LightPoses};
 
 #[cfg(test)]
 mod tests {

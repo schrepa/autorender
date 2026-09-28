@@ -1007,6 +1007,16 @@
             }
           ]
         },
+        "reflection_probes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reflections": {
           "anyOf": [
             {
@@ -1018,7 +1028,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decisions 038 and 039).",
+          "description": "Version 8 sections (decisions 038, 039 and 043).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -1510,6 +1520,17 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
+        "reflection_probe": {
+          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect (decision 043). Requires\nversion 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "skin": {
           "description": "The skin deforming this object's mesh (decision 036). Requires\nversion 8 and a mesh with joints and weights.",
           "type": [
@@ -1661,6 +1682,68 @@
         "rotation",
         "scale"
       ]
+    },
+    "SceneReflectionProbe": {
+      "description": "A reflection probe on this entity (decision 043). Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "description": "World distance inside the box's faces over which the probe fades out;\nfinite and nonnegative.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "minimum": 0.0
+        },
+        "extent": {
+          "description": "Half the box's size along each world axis in world units, each\nfinite and positive.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "extent"
+      ]
+    },
+    "SceneReflectionProbes": {
+      "description": "Reflection probe settings (decision 043). Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "faces_per_frame": {
+          "description": "Cube faces captured per frame while probes wait: more fill new places\nsooner, fewer keep those frames lighter.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 1
+        },
+        "max_probes": {
+          "description": "An optional budget of probes kept captured; beyond it the probes\nnearest the camera win. Omitted, as many as the GPU's texture arrays\nhold.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "resolution": {
+          "description": "Texels across each face of every environment map, the sky's\nincluded: a power of two from 16 to 1024.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 128,
+          "maximum": 1024,
+          "minimum": 16
+        }
+      },
+      "additionalProperties": false
     },
     "SceneReflections": {
       "description": "Screen-space reflections (decision 025). Requires version 6; an intensity\nof 0 turns them off.",

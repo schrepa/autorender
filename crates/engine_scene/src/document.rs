@@ -561,6 +561,11 @@ pub struct SceneObject {
     /// box (decision 039). Requires version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decal: Option<crate::SceneDecal>,
+    /// Captures this entity's surroundings into an environment map that
+    /// surfaces inside its world box reflect (decision 043). Requires
+    /// version 8.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflection_probe: Option<crate::SceneReflectionProbe>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

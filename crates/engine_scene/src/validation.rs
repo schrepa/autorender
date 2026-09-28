@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use engine_core::{
-    AnimationClip, LocalLight, Mesh, ParticleEmitter, Texture, Tint, Transform, glam::Mat4,
+    AnimationClip, LocalLight, Mesh, ParticleEmitter, ReflectionProbe, Texture, Tint, Transform,
+    glam::Mat4,
 };
 
 use crate::{
@@ -21,6 +22,7 @@ pub(crate) struct PreparedScene {
     pub emitters: Vec<Option<ParticleEmitter>>,
     pub tints: Vec<Option<Tint>>,
     pub decals: Vec<Option<PreparedDecal>>,
+    pub probes: Vec<Option<ReflectionProbe>>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
@@ -128,6 +130,26 @@ impl SceneDocument {
                     "decals require scene version 8; set version to 8 and increment revision",
                 ));
             }
+            let probe = |entity: &crate::SceneObject| entity.reflection_probe.is_some();
+            let path = if let Some(index) = self.entities.iter().position(probe) {
+                Some(format!("$.entities[{index}].reflection_probe"))
+            } else {
+                self.prefabs
+                    .iter()
+                    .enumerate()
+                    .find_map(|(prefab, definition)| {
+                        definition.entities.iter().position(probe).map(|index| {
+                            format!("$.prefabs[{prefab}].entities[{index}].reflection_probe")
+                        })
+                    })
+            };
+            if let Some(path) = path {
+                return Err(SceneError::new(
+                    "version_required",
+                    path,
+                    "reflection probes require scene version 8; set version to 8 and increment revision",
+                ));
+            }
             let tinted = |entity: &crate::SceneObject| entity.tint.is_some();
             let path = if let Some(index) = self.entities.iter().position(tinted) {
                 Some(format!("$.entities[{index}].tint"))
@@ -169,7 +191,7 @@ impl SceneDocument {
                 return Err(SceneError::new(
                     "version_required",
                     format!("$.environment.{section}"),
-                    "refraction and decal settings require scene version 8; set version to 8 and increment revision",
+                    "refraction, decal and reflection probe settings require scene version 8; set version to 8 and increment revision",
                 ));
             }
             let animated =
@@ -570,6 +592,18 @@ impl SceneDocument {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        let probes = expanded
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .reflection_probe
+                    .map(|probe| probe.runtime(&format!("{}.reflection_probe", entity.path)))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         // Build every CPU asset before acquiring a mutable world resource.
         // Invalid late assets cannot leave earlier ones resident.
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
@@ -649,6 +683,7 @@ impl SceneDocument {
             emitters,
             tints,
             decals,
+            probes,
             meshes,
             materials,
             textures,

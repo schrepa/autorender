@@ -19,11 +19,13 @@ pub(crate) const STAGES: [&str; STAGE_COUNT] = [
     "presentation_scatter",
 ];
 /// Passes of shadows (decision 020), screen effects (decisions 021, 024 and
-/// 025), local light binning (decision 023), decals (decision 039) and
-/// transparency (decision 026), each timed from its begin to its end query.
-/// `shadow_maps` spans the near cascades' begin (or the moving map's) to the
-/// kept map's end (or the moving map's), from the per-map queries.
-pub(crate) const EFFECTS: [&str; 15] = [
+/// 025), local light binning (decision 023), decals (decision 039),
+/// transparency (decision 026) and reflection probe captures (decision 043),
+/// each timed from its begin to its end query. `shadow_maps` spans the near
+/// cascades' begin (or the moving map's) to the kept map's end (or the moving
+/// map's), from the per-map queries; `probe_captures` every face captured in
+/// a frame, with its culling, light binning and blurring.
+pub(crate) const EFFECTS: [&str; 16] = [
     "shadow_select",
     "shadow_maps",
     "ambient_occlusion",
@@ -41,6 +43,7 @@ pub(crate) const EFFECTS: [&str; 15] = [
     // Occlusion culling (decision 040): the depth pyramid, the test and
     // phase two's compaction.
     "occlusion",
+    "probe_captures",
 ];
 const SHADOW_MAPS: usize = 1;
 const SHADOW_NEAR: usize = 11;

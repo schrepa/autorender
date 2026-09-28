@@ -51,10 +51,10 @@ impl StressGame {
     }
 
     /// Rendering effects: `all`, `none`, or comma-separated `no-<effect>`
-    /// exclusions (decisions 020 to 026 and 038).
+    /// exclusions (decisions 020 to 026, 038 and 043).
     pub fn set_effects(&mut self, name: &str) -> Result<(), JsValue> {
         // `all`, `none`, or comma-separated `no-<effect>` exclusions.
-        const EFFECTS: [&str; 8] = [
+        const EFFECTS: [&str; 9] = [
             "shadows",
             "occlusion",
             "bloom",
@@ -63,6 +63,7 @@ impl StressGame {
             "reflections",
             "particles",
             "refraction",
+            "probes",
         ];
         let mut on = [true; EFFECTS.len()];
         match name {
@@ -94,6 +95,7 @@ impl StressGame {
             reflections,
             particles,
             refraction,
+            probes,
         ] = on;
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
         let lamps = lamp_intensity(scene, &self.look).map_err(js_error)?;
@@ -131,6 +133,12 @@ impl StressGame {
             world.insert_resource(Refraction::default());
         } else {
             world.remove_resource::<Refraction>();
+        }
+        // Reflection probes (decision 043) capture nothing where none stand.
+        if probes {
+            world.insert_resource(ReflectionProbes::default());
+        } else {
+            world.remove_resource::<ReflectionProbes>();
         }
         self.effects = name.into();
         Ok(())

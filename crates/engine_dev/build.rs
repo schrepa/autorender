@@ -31,6 +31,8 @@ fn main() {
         "Particles": schemars::schema_for!(engine_scene::SceneParticles),
         "Decals": schemars::schema_for!(engine_scene::SceneDecals),
         "Decal": schemars::schema_for!(views::DecalView),
+        "ReflectionProbes": schemars::schema_for!(engine_scene::SceneReflectionProbes),
+        "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!([f32; 4]),

@@ -67,6 +67,12 @@ pub struct RenderStats {
     /// budget or the GPU's binding left out.
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Reflection probes (decision 043) surfaces could reflect this frame,
+    /// the cube faces it captured, and probes a budget or the GPU's texture
+    /// array layers left out.
+    pub reflection_probes: u32,
+    pub reflection_probe_faces: u32,
+    pub dropped_reflection_probes: u32,
 }
 
 /// Local lights of one frame (decision 023).
@@ -112,6 +118,8 @@ mod gpu_uploads;
 mod lights;
 #[cfg(any(target_arch = "wasm32", test))]
 mod particles;
+#[cfg(any(target_arch = "wasm32", test))]
+mod probes;
 #[cfg(any(target_arch = "wasm32", test))]
 mod retained_uploads;
 #[cfg(any(target_arch = "wasm32", test))]

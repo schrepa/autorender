@@ -27,6 +27,7 @@ use crate::{
     culling::{Classification, Frustum},
     decals::{DecalExtraction, DecalPoses},
     hierarchy::ChangeWindow,
+    probes::ProbeExtraction,
     skin::SkinExtraction,
 };
 
@@ -728,6 +729,11 @@ impl RetainedRender {
         gpu: bool,
     ) {
         decals.extract(world, &mut self.snapshot, DecalPoses::Retained { gpu });
+    }
+
+    /// Lists the frame's reflection probes (decision 043).
+    pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {
+        probes.extract(world, &mut self.snapshot);
     }
 
     /// Creates the source stamp window used by GPU-presented frames.

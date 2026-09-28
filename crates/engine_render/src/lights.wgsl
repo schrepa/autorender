@@ -20,7 +20,9 @@ struct Clusters {
     // Tiles across and down, depth slices, and the per-cluster budget
     // (0xffffffff without one).
     counts: vec4<u32>,
-    // Lights, 1 when slot poses are bound, and the entries `indices` holds.
+    // Lights, 1 when slot poses are bound, the entries `indices` holds, and
+    // 1 when only lights without a slot or on still slots are binned
+    // (reflection probe faces, decision 043).
     lights: vec4<u32>,
 }
 
@@ -68,6 +70,12 @@ const NO_SLOT: u32 = 0xffffffffu;
 @group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 3>;
 // Per cluster: the first entry of its list in `indices` and its length.
 @group(0) @binding(7) var<storage, read_write> ranges: array<vec2<u32>>;
+// Reflection probe faces (decision 043): per slot, its pose fingerprint and
+// the frames in a row it displayed that pose (`presentation.wgsl`).
+@group(0) @binding(8) var<storage, read> still_frames: array<vec2<u32>>;
+
+// Frames in a row a slot must display the same pose to count as still.
+const STILL_FRAMES: u32 = 16u;
 
 fn transformed(rows: Rows, point: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(rows.r0, point), dot(rows.r1, point), dot(rows.r2, point));
@@ -140,6 +148,10 @@ fn place(index: u32, fill: bool) -> LightBox {
         light.direction = direction;
         light.cos_inner = input.cos_inner;
         lights[index] = light;
+    }
+    if clusters.lights.w != 0u && input.slot != NO_SLOT
+            && still_frames[input.slot].y < STILL_FRAMES {
+        return none;
     }
     if !all(abs(position) < vec3<f32>(1.0e30)) {
         return none;

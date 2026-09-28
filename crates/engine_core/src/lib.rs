@@ -17,6 +17,7 @@ mod lights;
 pub mod math;
 mod packed;
 mod particles;
+mod probes;
 mod retained_render;
 mod scene;
 mod skin;
@@ -58,6 +59,7 @@ pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
+pub use probes::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
     Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
@@ -178,6 +180,7 @@ pub struct Engine {
     particles: particles::ParticleExtraction,
     skins: skin::SkinExtraction,
     decals: decals::DecalExtraction,
+    probes: probes::ProbeExtraction,
     plugins_finalized: bool,
     // A fixed tick whose first stage ran ahead of its due frame (see
     // `Self::run_ahead`), and completed ticks the clock has not yet counted.
@@ -242,6 +245,7 @@ impl Engine {
             .init_resource::<LocalLights>()
             .init_resource::<Particles>()
             .init_resource::<Decals>()
+            .init_resource::<ReflectionProbes>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -260,6 +264,7 @@ impl Engine {
         let particles = particles::ParticleExtraction::new(app.world_mut());
         let skins = skin::SkinExtraction::new(app.world_mut());
         let decals = decals::DecalExtraction::new(app.world_mut());
+        let probes = probes::ProbeExtraction::new(app.world_mut());
         Self {
             app,
             clock,
@@ -276,6 +281,7 @@ impl Engine {
             particles,
             skins,
             decals,
+            probes,
             plugins_finalized: false,
             tick_in_flight: false,
             ticks_ahead: 0,
@@ -743,6 +749,9 @@ impl Engine {
         // Decals (decision 039) draw their prepared matrices.
         self.decals
             .extract(world, snapshot, decals::DecalPoses::Owned);
+        // Reflection probes (decision 043) capture from their authoritative
+        // poses.
+        self.probes.extract(world, snapshot);
         engine_profile::counter("extraction.candidates", total as f64);
         engine_profile::counter("extraction.instances", snapshot.instances.len() as f64);
         engine_profile::counter("extraction.culled", snapshot.culled_instances as f64);
@@ -787,6 +796,8 @@ impl Engine {
             .extract_skins(self.app.world(), &mut self.skins, false);
         self.retained
             .extract_decals(self.app.world(), &mut self.decals, false);
+        self.retained
+            .extract_probes(self.app.world(), &mut self.probes);
         Ok(self.retained.frame(
             self.app.world().resource::<PresentedTransforms>(),
             self.app.world().resource::<GlobalTransforms>(),
@@ -840,6 +851,8 @@ impl Engine {
             .extract_skins(self.app.world(), &mut self.skins, true);
         self.retained
             .extract_decals(self.app.world(), &mut self.decals, true);
+        self.retained
+            .extract_probes(self.app.world(), &mut self.probes);
         // Later source edits must be newer than the stamp window just consumed.
         self.app.world_mut().increment_change_tick();
         Ok(self.retained.frame(
@@ -916,6 +929,7 @@ pub mod prelude {
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
+    pub use crate::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.
     pub use bevy_ecs::{self, prelude::*};

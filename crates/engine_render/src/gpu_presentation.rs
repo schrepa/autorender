@@ -17,7 +17,8 @@ use engine_core::{
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::gpu_data::{
     BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, FLAG_PHASE1, FLAG_PHASE2,
-    FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, SkinnedData, frustum_uniform,
+    FLAG_PROBE, FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, STILL_FRAMES, SkinnedData,
+    frustum_uniform,
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
@@ -82,6 +83,8 @@ struct Pipelines {
     batch_args: wgpu::ComputePipeline,
     scatter: wgpu::ComputePipeline,
     occlusion_test: wgpu::ComputePipeline,
+    count_still: wgpu::ComputePipeline,
+    probe_cull: wgpu::ComputePipeline,
 }
 
 struct BindGroups {
@@ -103,6 +106,22 @@ struct BindGroups {
     scan_groups2: wgpu::BindGroup,
     batch_args2: wgpu::BindGroup,
     scatter2: wgpu::BindGroup,
+    // Slots' still frames for reflection probes (decision 043) while they
+    // are counted, per pose buffer.
+    count_still: [Option<wgpu::BindGroup>; 2],
+}
+
+// Candidate, batch and scan storage generation, pose storage generation and
+// pose buffer index that reflection probe faces' groups bind (decision 043).
+type ProbeGroupsKey = (u64, Option<u64>, usize);
+
+// One reflection probe cube face's cull and compaction (decision 043).
+struct ProbeGroups {
+    cull: wgpu::BindGroup,
+    sum_groups: wgpu::BindGroup,
+    scan_groups: wgpu::BindGroup,
+    batch_args: wgpu::BindGroup,
+    scatter: wgpu::BindGroup,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -187,6 +206,26 @@ pub(crate) struct GpuPresentationPass {
     occlusion_counts: wgpu::Buffer,
     totals: wgpu::Buffer,
     occlusion_group: Option<(OcclusionKey, wgpu::BindGroup)>,
+    // Reflection probe captures (decision 043): a uniform per cube face, the
+    // draw arguments and visible IDs faces draw from in turn, each face's
+    // cull and compaction groups over the buffer and pose storage
+    // generations and pose buffer index they bind, and this frame's uniform
+    // they start from.
+    frame_probes: [wgpu::Buffer; 6],
+    draws_probe: wgpu::Buffer,
+    visible_ids_probe: wgpu::Buffer,
+    probe_groups: Vec<(ProbeGroupsKey, Vec<ProbeGroups>)>,
+    probe_current: usize,
+    frame_uniform: Option<PresentationFrame>,
+    // Each slot's still frames while probes need them, the slots they
+    // cover (0 without probes), whether this frame counts them (only while
+    // captures wait), and the frames counted in a row, up to STILL_FRAMES.
+    still_frames: wgpu::Buffer,
+    still_slots: u64,
+    still_counting: bool,
+    still_counted: u32,
+    // Advances when `still_frames` is replaced.
+    still_generation: u64,
     // This frame draws in two phases.
     occlusion: bool,
     // This frame leaves candidates covering no pixel center undrawn
@@ -291,6 +330,8 @@ impl GpuPresentationPass {
             batch_args: pipeline("batch_args"),
             scatter: pipeline("scatter"),
             occlusion_test: pipeline("occlusion_test"),
+            count_still: pipeline("count_still"),
+            probe_cull: pipeline("probe_cull"),
         };
         let uniform = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -302,6 +343,7 @@ impl GpuPresentationPass {
         };
         let frame = uniform("engine/presentation-frame");
         let frame_phase2 = uniform("engine/presentation-frame-phase2");
+        let frame_probes = std::array::from_fn(|_| uniform("engine/presentation-frame-probe"));
         let levels = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/presentation-levels"),
             size: LEVELS as u64 * LEVEL_STRIDE,
@@ -385,6 +427,32 @@ impl GpuPresentationPass {
                 mapped_at_creation: false,
             }),
             occlusion_group: None,
+            frame_probes,
+            draws_probe: storage(
+                device,
+                "engine/presentation-draws-probe",
+                0,
+                wgpu::BufferUsages::INDIRECT,
+            ),
+            visible_ids_probe: storage(
+                device,
+                "engine/presentation-visible-ids-probe",
+                0,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            probe_groups: Vec::new(),
+            probe_current: 0,
+            frame_uniform: None,
+            still_frames: storage(
+                device,
+                "engine/presentation-still-frames",
+                0,
+                wgpu::BufferUsages::empty(),
+            ),
+            still_slots: 0,
+            still_counting: false,
+            still_counted: 0,
+            still_generation: 0,
             occlusion: false,
             subpixel: false,
             bind_groups: None,
@@ -438,6 +506,8 @@ impl GpuPresentationPass {
             &self.draws,
             &self.draws2,
             &self.visible_ids2,
+            &self.draws_probe,
+            &self.visible_ids_probe,
             &self.joint_nodes,
             &self.inverse_binds,
         ]
@@ -553,6 +623,12 @@ impl GpuPresentationPass {
                 capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
+            self.visible_ids_probe = storage(
+                device,
+                "engine/presentation-visible-ids-probe",
+                capacity * 4,
+                wgpu::BufferUsages::VERTEX,
+            );
             self.groups_key = None;
             self.bind_groups = None;
             self.buffers_generation += 1;
@@ -581,6 +657,12 @@ impl GpuPresentationPass {
             self.draws2 = storage(
                 device,
                 "engine/presentation-draws2",
+                capacity * DRAW_ARGS_BYTES,
+                wgpu::BufferUsages::INDIRECT,
+            );
+            self.draws_probe = storage(
+                device,
+                "engine/presentation-draws-probe",
                 capacity * DRAW_ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             );
@@ -618,6 +700,19 @@ impl GpuPresentationPass {
                 let cull = self.cull_group(device, poses);
                 self.bind_groups.as_mut().expect("checked above").cull[index] = Some(cull);
             }
+            if self
+                .bind_groups
+                .as_ref()
+                .expect("checked above")
+                .count_still[index]
+                .is_none()
+            {
+                let group = self.count_still_group(device, poses);
+                self.bind_groups
+                    .as_mut()
+                    .expect("checked above")
+                    .count_still[index] = group;
+            }
             if self.bind_groups.as_ref().expect("checked above").skin[index].is_none() {
                 let skin = self.skin_group(device, palette);
                 self.bind_groups.as_mut().expect("checked above").skin[index] = Some(skin);
@@ -651,6 +746,8 @@ impl GpuPresentationPass {
         skin[index] = Some(self.skin_group(device, palette));
         let mut skin_bounds = [None, None];
         skin_bounds[index] = Some(self.skin_bounds_group(device, poses, palette, colors));
+        let mut count_still = [None, None];
+        count_still[index] = self.count_still_group(device, poses);
         self.bind_groups = Some(BindGroups {
             shift_previous: group(
                 &pipelines.shift_previous,
@@ -746,7 +843,29 @@ impl GpuPresentationPass {
                     entry(11, &self.visible_ids2),
                 ],
             ),
+            count_still,
         });
+    }
+
+    // Counting slots' still frames over `poses` while probes need them.
+    fn count_still_group(
+        &self,
+        device: &wgpu::Device,
+        poses: &wgpu::Buffer,
+    ) -> Option<wgpu::BindGroup> {
+        (self.still_slots != 0).then(|| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/presentation-count-still-group"),
+                layout: &self.pipelines.count_still.get_bind_group_layout(0),
+                entries: &[
+                    entry(0, &self.frame),
+                    entry(8, poses),
+                    entry(9, &self.scan),
+                    entry(14, &self.slot_candidates),
+                    entry(23, &self.still_frames),
+                ],
+            })
+        })
     }
 
     fn cull_group(&self, device: &wgpu::Device, poses: &wgpu::Buffer) -> wgpu::BindGroup {
@@ -904,6 +1023,7 @@ impl GpuPresentationPass {
         motion: bool,
         occlusion: Option<(u32, u32, u32)>,
         subpixel: bool,
+        stillness: Option<bool>,
         viewport: (u32, u32),
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
@@ -924,6 +1044,7 @@ impl GpuPresentationPass {
             self.poses_generation = Some(poses_generation);
             self.bind_groups = None;
         }
+        self.ensure_still_frames(device, stillness, poses);
         self.bind_groups(device, poses, palette, colors, poses_index);
         self.poses_index = poses_index;
 
@@ -1309,6 +1430,7 @@ impl GpuPresentationPass {
             pad: [0; 2],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
+        self.frame_uniform = Some(uniform);
         if self.occlusion {
             uniform.mask = FLAG_PHASE2;
             queue.write_buffer(&self.frame_phase2, 0, bytemuck::bytes_of(&uniform));
@@ -1370,6 +1492,15 @@ impl GpuPresentationPass {
                     &[],
                 );
                 pass.dispatch_workgroups(workgroups, 1, 1);
+                // Still frames for reflection probes (decision 043).
+                if let Some(group) = groups.count_still[self.poses_index]
+                    .as_ref()
+                    .filter(|_| self.still_counting)
+                {
+                    pass.set_pipeline(&self.pipelines.count_still);
+                    pass.set_bind_group(0, group, &[]);
+                    pass.dispatch_workgroups(workgroups, 1, 1);
+                }
                 // Skinned slots' bounds from their palettes, culled.
                 if self.skinned_count != 0 {
                     pass.set_pipeline(&self.pipelines.skin_bounds);
@@ -1609,6 +1740,216 @@ impl GpuPresentationPass {
                     state.set(Readback::Idle);
                 });
         }
+    }
+
+    /// Keeps slots' still frames for reflection probes (decision 043) over
+    /// every slot of `poses` while `stillness` is some, counting them this
+    /// frame when it holds true (captures wait): storage replaced or
+    /// released, and counting resumed, start the count over.
+    fn ensure_still_frames(
+        &mut self,
+        device: &wgpu::Device,
+        stillness: Option<bool>,
+        poses: &wgpu::Buffer,
+    ) {
+        let slots = if stillness.is_some() {
+            poses.size() / size_of::<PoseRows>() as u64
+        } else {
+            0
+        };
+        if slots > self.still_slots || (slots == 0 && self.still_slots != 0) {
+            self.still_frames = storage(
+                device,
+                "engine/presentation-still-frames",
+                slots * 8,
+                wgpu::BufferUsages::empty(),
+            );
+            self.still_slots = slots;
+            self.still_counted = 0;
+            self.still_generation += 1;
+            self.bind_groups = None;
+            self.probe_groups.clear();
+        }
+        let counting = stillness == Some(true);
+        if counting && !self.still_counting {
+            self.still_counted = 0;
+        }
+        self.still_counting = counting;
+        if counting {
+            self.still_counted = (self.still_counted + 1).min(STILL_FRAMES);
+        }
+    }
+
+    /// Each slot's pose fingerprint and still frames (decision 043), and the
+    /// generation of their storage.
+    pub(crate) fn still_frames(&self) -> (&wgpu::Buffer, u64) {
+        (&self.still_frames, self.still_generation)
+    }
+
+    /// Whether culling has counted still frames long enough for reflection
+    /// probe captures to find every still slot (decision 043).
+    pub(crate) fn stillness_settled(&self) -> bool {
+        self.still_counting && self.still_counted >= STILL_FRAMES
+    }
+
+    /// Records the cull and compaction of reflection probe cube face `face`
+    /// (decision 043), `size` texels across, seen through `view_projection`,
+    /// over `poses` (this frame's culling wrote them), after the frame's own
+    /// drawing; returns whether [`Self::probe_draw_source`] can draw it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_probe_face(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        face: usize,
+        size: u32,
+        view_projection: glam::Mat4,
+        poses: &wgpu::Buffer,
+    ) -> bool {
+        let Some(mut uniform) = self.frame_uniform else {
+            return false;
+        };
+        if self.bind_groups.is_none() || self.candidate_count == 0 {
+            return false;
+        }
+        let (planes, absolute) = frustum_uniform(view_projection);
+        uniform.planes = planes;
+        uniform.absolute_view_projection = absolute;
+        uniform.view_projection = view_projection.to_cols_array_2d();
+        uniform.culling = 1;
+        uniform.mask = FLAG_PROBE;
+        uniform.occlusion = 0;
+        // Candidates covering no texel center draw nothing (decision 041).
+        uniform.subpixel = 1;
+        uniform.viewport = [size as f32, size as f32, 0.0, 0.0];
+        uniform.motion = 0;
+        uniform.budget = u32::MAX;
+        queue.write_buffer(&self.frame_probes[face], 0, bytemuck::bytes_of(&uniform));
+        let key = (
+            self.buffers_generation,
+            self.poses_generation,
+            self.poses_index,
+        );
+        // Groups per pose buffer: temporally antialiased frames alternate
+        // two.
+        if let Some(index) = self
+            .probe_groups
+            .iter()
+            .position(|(built, _)| *built == key)
+        {
+            self.probe_current = index;
+        } else {
+            // Stale generations never come back.
+            self.probe_groups
+                .retain(|((buffers, poses, _), _)| (*buffers, *poses) == (key.0, key.1));
+            let groups = (0..6)
+                .map(|face| self.probe_face_groups(device, face, poses))
+                .collect();
+            self.probe_groups.push((key, groups));
+            self.probe_current = self.probe_groups.len() - 1;
+        }
+        let groups = &self.probe_groups[self.probe_current].1[face];
+        let workgroups = self.candidate_count.div_ceil(GROUP);
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("engine/presentation-probe"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.pipelines.probe_cull);
+        pass.set_bind_group(0, &groups.cull, &[]);
+        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.set_pipeline(&self.pipelines.sum_groups);
+        pass.set_bind_group(0, &groups.sum_groups, &[]);
+        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.set_pipeline(&self.pipelines.scan_groups);
+        pass.set_bind_group(0, &groups.scan_groups, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+        pass.set_pipeline(&self.pipelines.batch_args);
+        pass.set_bind_group(0, &groups.batch_args, &[]);
+        pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
+        pass.set_pipeline(&self.pipelines.scatter);
+        pass.set_bind_group(0, &groups.scatter, &[]);
+        pass.dispatch_workgroups(workgroups, 1, 1);
+        true
+    }
+
+    fn probe_face_groups(
+        &self,
+        device: &wgpu::Device,
+        face: usize,
+        poses: &wgpu::Buffer,
+    ) -> ProbeGroups {
+        let frame = &self.frame_probes[face];
+        let group = |pipeline: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry]| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("engine/presentation-probe-group"),
+                layout: &pipeline.get_bind_group_layout(0),
+                entries,
+            })
+        };
+        let pipelines = &self.pipelines;
+        ProbeGroups {
+            cull: group(
+                &pipelines.probe_cull,
+                &[
+                    entry(0, frame),
+                    entry(7, &self.batches),
+                    entry(8, poses),
+                    entry(9, &self.scan),
+                    entry(14, &self.slot_candidates),
+                    entry(23, &self.still_frames),
+                ],
+            ),
+            sum_groups: group(
+                &pipelines.sum_groups,
+                &[
+                    entry(0, frame),
+                    entry(9, &self.scan),
+                    entry(19, &self.occlusion_counts),
+                ],
+            ),
+            scan_groups: group(
+                &pipelines.scan_groups,
+                &[entry(0, frame), entry(9, &self.scan)],
+            ),
+            batch_args: group(
+                &pipelines.batch_args,
+                &[
+                    entry(0, frame),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(12, &self.draws_probe),
+                ],
+            ),
+            scatter: group(
+                &pipelines.scatter,
+                &[
+                    entry(0, frame),
+                    entry(6, &self.candidates),
+                    entry(7, &self.batches),
+                    entry(9, &self.scan),
+                    entry(10, &self.batch_bases),
+                    entry(11, &self.visible_ids_probe),
+                ],
+            ),
+        }
+    }
+
+    /// Visible-ID region and indirect arguments of plan batch `index` in the
+    /// reflection probe face last recorded (decision 043).
+    pub(crate) fn probe_draw_source<'a>(
+        &'a self,
+        batch: &DrawBatch,
+        index: usize,
+    ) -> (wgpu::BufferSlice<'a>, &'a wgpu::Buffer, u64) {
+        let start = u64::from(batch.instances.start) * 4;
+        let end = u64::from(batch.instances.end) * 4;
+        (
+            self.visible_ids_probe.slice(start..end),
+            &self.draws_probe,
+            index as u64 * DRAW_ARGS_BYTES,
+        )
     }
 
     /// Visible-ID region and indirect arguments of plan batch `index` in

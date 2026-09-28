@@ -220,9 +220,9 @@ const subpixel = params.get("subpixel") === "off" ? "off" : "on";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
-// no-lights, no-shafts, no-reflections, no-particles and no-refraction,
-// turns effects off.
-const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles", "refraction"];
+// no-lights, no-shafts, no-reflections, no-particles, no-refraction and
+// no-probes, turns effects off.
+const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles", "refraction", "probes"];
 const requestedEffects = params.get("effects") ?? "all";
 const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectNames.some(name => token === `no-${name}`))
   ? requestedEffects : "all";

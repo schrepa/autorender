@@ -1280,3 +1280,97 @@ fn lights_particles_and_opt_in_effects_are_discoverable_and_controllable() {
         }
     ));
 }
+
+#[test]
+fn reflection_probes_are_discoverable_inspectable_and_controllable() {
+    use engine_core::{ReflectionProbe, ReflectionProbes, glam::Vec3};
+    let tools = DevTools::default();
+    let mut engine = Engine::default();
+    let listing = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"describe"}),
+    );
+    let names: Vec<&str> = listing["result"]["types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["name"].as_str())
+        .collect();
+    for name in ["ReflectionProbe", "ReflectionProbes"] {
+        assert!(names.contains(&name), "{name}");
+    }
+    // The engine inserts the settings; they read as their scene section.
+    let settings = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"ReflectionProbes"}),
+    );
+    let section: engine_scene::SceneReflectionProbes =
+        serde_json::from_value(settings["result"]["value"].clone()).unwrap();
+    assert_eq!(section.resolve("$").unwrap(), ReflectionProbes::default());
+    let look = execute(
+        &tools,
+        &mut engine,
+        None,
+        json!({"version":1,"op":"inspect","component":"Environment"}),
+    );
+    assert_eq!(
+        look["result"]["value"]["reflection_probes"],
+        settings["result"]["value"]
+    );
+
+    // An entity's probe reads as its scene field.
+    let mut source: Value = serde_json::from_str(SOURCE).unwrap();
+    source["version"] = json!(8);
+    source["entities"][0]["reflection_probe"] = json!({"extent": [6.0, 3.0, 4.0], "blend": 0.5});
+    let scene = SceneDocument::from_json(&source.to_string())
+        .unwrap()
+        .instantiate(engine.app.world_mut())
+        .unwrap();
+    let probe = execute(
+        &tools,
+        &mut engine,
+        Some(&scene),
+        json!({"version":1,"op":"inspect","entity":"player","component":"ReflectionProbe"}),
+    );
+    let view = &probe["result"]["entity"]["components"]["ReflectionProbe"];
+    assert_eq!(view, &source["entities"][0]["reflection_probe"]);
+    let restored: engine_scene::SceneReflectionProbe =
+        serde_json::from_value(view.clone()).unwrap();
+    let player = scene.entity("player").unwrap();
+    let component = *engine.app.world().get::<ReflectionProbe>(player).unwrap();
+    assert_eq!(restored.runtime("$").unwrap(), component);
+    assert_eq!(component.extent, Vec3::new(6.0, 3.0, 4.0));
+    scene.despawn(engine.app.world_mut());
+
+    // The environment control takes the section; omitted fields take the
+    // defaults and typos are refused.
+    let control: crate::BrowserControl = serde_json::from_value(json!({
+        "version":1,"op":"environment","reflection_probes":{"max_probes":8,"faces_per_frame":2}
+    }))
+    .unwrap();
+    let crate::BrowserControl::Environment {
+        reflection_probes: Some(section),
+        ..
+    } = control
+    else {
+        panic!("expected reflection probe settings");
+    };
+    assert_eq!(
+        section.resolve("$").unwrap(),
+        ReflectionProbes {
+            max_probes: Some(8),
+            faces_per_frame: 2,
+            ..ReflectionProbes::default()
+        }
+    );
+    assert!(
+        serde_json::from_value::<crate::BrowserControl>(
+            json!({"version":1,"op":"environment","reflection_probes":{"faces":2}})
+        )
+        .is_err()
+    );
+}

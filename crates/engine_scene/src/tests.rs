@@ -1445,3 +1445,193 @@ fn version_eight_decals_instantiate_validate_and_earlier_versions_refuse_them() 
         ("version_required", "$.environment.decals".into())
     );
 }
+
+#[test]
+fn version_eight_reflection_probes_instantiate_validate_and_earlier_versions_refuse_them() {
+    use crate::{SceneEnvironment, SceneReflectionProbe};
+    use engine_core::{ReflectionProbe, ReflectionProbes, glam::Vec3};
+    let source = serde_json::json!({
+        "version": 8,
+        "id": "probe-scene",
+        "revision": 1,
+        "materials": [{"id": "teal", "color": [0.1, 0.8, 0.6, 1.0]}],
+        "meshes": [{"id": "box", "source": {"kind": "cube"}}],
+        "prefabs": [{"id": "kiosk", "entities": [
+            {"id": "booth", "reflection_probe": {"extent": [1.0, 1.5, 1.0]}}
+        ]}],
+        "entities": [
+            {"id": "floor", "mesh": "box", "material": "teal"},
+            {"id": "hall", "reflection_probe": {"extent": [8.0, 3.0, 6.0], "blend": 2.0},
+                "transform": {"translation": [0.0, 3.0, 0.0], "scale": [2.0, 1.0, 1.0]}},
+            {"id": "corner", "prefab": "kiosk", "transform": {"translation": [5.0, 0.0, 5.0]}}
+        ],
+        "environment": {"reflection_probes": {"enabled": true, "resolution": 256,
+            "max_probes": 4, "faces_per_frame": 2}}
+    });
+    let document = SceneDocument::from_json(&source.to_string()).unwrap();
+    let mut world = world(AssetBudget::default());
+    let instance = document.instantiate(&mut world).unwrap();
+    // The box keeps world axes: the entity's scale leaves its extent.
+    let hall = *world
+        .get::<ReflectionProbe>(instance.entity("hall").unwrap())
+        .unwrap();
+    assert_eq!(
+        hall,
+        ReflectionProbe::new(Vec3::new(8.0, 3.0, 6.0)).with_blend(2.0)
+    );
+    // Placements carry their prefab's probes; an omitted blend takes 1.
+    let booth = *world
+        .get::<ReflectionProbe>(instance.entity("corner.booth").unwrap())
+        .unwrap();
+    assert_eq!(booth, ReflectionProbe::new(Vec3::new(1.0, 1.5, 1.0)));
+    assert_eq!(booth.blend, 1.0);
+    assert!(
+        world
+            .get::<ReflectionProbe>(instance.entity("floor").unwrap())
+            .is_none()
+    );
+    assert_eq!(
+        *world.resource::<ReflectionProbes>(),
+        ReflectionProbes {
+            enabled: true,
+            resolution: 256,
+            max_probes: Some(4),
+            faces_per_frame: 2
+        }
+    );
+    // Probes and their settings round-trip as authored, and inspection
+    // reproduces them.
+    let saved = serde_json::to_value(&document).unwrap();
+    assert_eq!(
+        saved["entities"][1]["reflection_probe"],
+        source["entities"][1]["reflection_probe"]
+    );
+    assert_eq!(saved["environment"], source["environment"]);
+    assert_eq!(
+        SceneReflectionProbe::from(&hall).runtime("$").unwrap(),
+        hall
+    );
+    assert_eq!(
+        SceneEnvironment::current(&world)
+            .resolve("$")
+            .unwrap()
+            .reflection_probes,
+        Some(*world.resource::<ReflectionProbes>())
+    );
+    // An environment without the section restores the engine's default.
+    let mut bare = source.clone();
+    bare["environment"] = serde_json::json!({});
+    let mut world = self::world(AssetBudget::default());
+    world.insert_resource(ReflectionProbes {
+        enabled: false,
+        ..ReflectionProbes::default()
+    });
+    let _ = SceneDocument::from_json(&bare.to_string())
+        .unwrap()
+        .instantiate(&mut world)
+        .unwrap();
+    assert_eq!(
+        *world.resource::<ReflectionProbes>(),
+        ReflectionProbes::default()
+    );
+    // A missing resource reads as off.
+    world.remove_resource::<ReflectionProbes>();
+    assert!(
+        !SceneEnvironment::current(&world)
+            .reflection_probes
+            .unwrap()
+            .enabled
+    );
+    let refused = |edit: &dyn Fn(&mut serde_json::Value)| {
+        let mut source = source.clone();
+        edit(&mut source);
+        let error = SceneDocument::from_json(&source.to_string()).unwrap_err();
+        (error.code, error.path)
+    };
+    for extent in [[0.0, 3.0, 6.0], [8.0, -1.0, 6.0]] {
+        assert_eq!(
+            refused(&|source| {
+                source["entities"][1]["reflection_probe"]["extent"] = serde_json::json!(extent)
+            }),
+            (
+                "invalid_reflection_probe",
+                "$.entities[1].reflection_probe.extent".into()
+            )
+        );
+    }
+    assert_eq!(
+        refused(&|source| {
+            source["prefabs"][0]["entities"][0]["reflection_probe"]["blend"] =
+                serde_json::json!(-0.5)
+        }),
+        (
+            "invalid_reflection_probe",
+            "$.prefabs[0].entities[0].reflection_probe.blend".into()
+        )
+    );
+    assert_eq!(
+        refused(&|source| source["entities"][1]["reflection_probe"]["radius"] = 2.into()).0,
+        "invalid_json"
+    );
+    // Values JSON cannot carry are refused alike.
+    for (probe, field) in [
+        (
+            SceneReflectionProbe::new([f32::INFINITY, 1.0, 1.0]),
+            "extent",
+        ),
+        (
+            SceneReflectionProbe {
+                blend: f32::NAN,
+                ..SceneReflectionProbe::new([1.0; 3])
+            },
+            "blend",
+        ),
+    ] {
+        let mut invalid = document.clone();
+        invalid.entities[1].reflection_probe = Some(probe);
+        assert_eq!(
+            invalid.validate().unwrap_err().path,
+            format!("$.entities[1].reflection_probe.{field}")
+        );
+    }
+    for (field, value) in [
+        ("resolution", 100),
+        ("resolution", 8),
+        ("resolution", 2048),
+        ("max_probes", 0),
+        ("faces_per_frame", 0),
+    ] {
+        assert_eq!(
+            refused(&|source| source["environment"]["reflection_probes"][field] = value.into()),
+            (
+                "invalid_environment",
+                format!("$.environment.reflection_probes.{field}")
+            ),
+            "{field} {value}"
+        );
+    }
+    // Earlier versions refuse probes, in placements and definitions alike,
+    // and their settings.
+    assert_eq!(
+        refused(&|source| source["version"] = 7.into()),
+        ("version_required", "$.entities[1].reflection_probe".into())
+    );
+    assert_eq!(
+        refused(&|source| {
+            source["version"] = 7.into();
+            source["entities"].as_array_mut().unwrap().truncate(1);
+        }),
+        (
+            "version_required",
+            "$.prefabs[0].entities[0].reflection_probe".into()
+        )
+    );
+    assert_eq!(
+        refused(&|source| {
+            source["version"] = 7.into();
+            source["entities"].as_array_mut().unwrap().truncate(1);
+            source.as_object_mut().unwrap().remove("prefabs");
+        }),
+        ("version_required", "$.environment.reflection_probes".into())
+    );
+}

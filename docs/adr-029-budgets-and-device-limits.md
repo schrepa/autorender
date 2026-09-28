@@ -22,6 +22,7 @@ Constants are sorted into three kinds:
 - **Capacity** becomes a setting whose default sets no budget:
   `Particles::max_particles` and `LocalLights::max_lights` (`Option`, as
   scene version 6 fields), `Decals::max_decals` (decision 039),
+  `ReflectionProbes::max_probes` (decision 043),
   `EngineConfig::max_render_instances`,
   `EngineConfig::asset_budget` (`AssetLibrary::set_budget` at run time) and
   `EngineConfig::max_transform_nodes` (`TransformNodeLimit`). Over a budget
@@ -32,7 +33,8 @@ Constants are sorted into three kinds:
 - **Device limits** bound what remains. The renderer requests the adapter's
   buffer and storage-binding sizes, grows buffers to the content, derives
   its instance limit from them, and drops particles that do not fit a
-  binding. Textures may be 8,192 texels a side, the size every WebGPU device
+  binding and reflection probes beyond the cubes its texture arrays hold
+  (`max_texture_array_layers / 6`, the sky's included). Textures may be 8,192 texels a side, the size every WebGPU device
   holds.
 - **Validity guards** stay: they reject invalid data, not large data
   (emission scales, coordinate ranges, hierarchy depth, one emitter's

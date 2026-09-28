@@ -13,7 +13,8 @@ const numericFields = [
   "draw_calls", "upload_bytes", "fixed_steps", "dropped_seconds", "resident_meshes", "resident_mesh_bytes", "mesh_upload_bytes",
   "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms",
   "shadow_draws", "shadow_kept_redraw", "local_lights", "dropped_lights", "transparent_draws", "particles",
-  "dropped_particles", "decals", "dropped_decals",
+  "dropped_particles", "decals", "dropped_decals", "reflection_probes", "reflection_probe_faces",
+  "dropped_reflection_probes",
 ] as const;
 
 export class BenchmarkError extends Error {

@@ -6,8 +6,9 @@ use engine_core::{
     UvTransform, glam::Mat4,
 };
 
-/// WGSL `Camera` uniform: three column-major mat4x4<f32> and two vec4<f32>,
-/// alignment 16, size 224. `view_projection` is the rasterized projection.
+/// WGSL `Camera` uniform: three column-major mat4x4<f32> and three
+/// vec4<f32>, alignment 16, size 240. `view_projection` is the rasterized
+/// projection.
 /// Temporally antialiased frames (decision 017) jitter it by `jitter.xy` clip
 /// units per w, and their motion vectors use the previous frame's unjittered
 /// `previous_view_projection` and `jitter.zw`, two over the viewport size in
@@ -15,8 +16,10 @@ use engine_core::{
 /// The unjittered `inverse_view_projection` turns pixels into sky rays and
 /// `position` (xyz) is the eye, for view-dependent lighting (decision 018);
 /// its w is presentation time in seconds, for animated surfaces (decision
-/// 019). The GPU buffer starts at offset zero; only these 224 initialized
-/// bytes are copied into it.
+/// 019). `options.x` is 1 while a reflection probe captures a cube face
+/// (decision 043): its surfaces read shadows from the far maps alone, which
+/// hold every caster whatever the main camera sees. The GPU buffer starts at
+/// offset zero; only these 240 initialized bytes are copied into it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CameraUniform {
@@ -25,6 +28,7 @@ pub(crate) struct CameraUniform {
     pub inverse_view_projection: [[f32; 4]; 4],
     pub position: [f32; 4],
     pub jitter: [f32; 4],
+    pub options: [f32; 4],
 }
 
 impl CameraUniform {
@@ -38,6 +42,16 @@ impl CameraUniform {
             inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
             position: position.extend(seconds).to_array(),
             jitter: [0.0; 4],
+            options: [0.0; 4],
+        }
+    }
+
+    /// A reflection probe's cube face seen from `position` through
+    /// `view_projection` (decision 043), at presentation time `seconds`.
+    pub(crate) fn probe(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
+        Self {
+            options: [1.0, 0.0, 0.0, 0.0],
+            ..Self::exact(view_projection, position, seconds)
         }
     }
 
@@ -801,6 +815,12 @@ pub(crate) struct PresentationFrame {
 pub(crate) const FLAG_VISIBLE: u32 = 1;
 pub(crate) const FLAG_PHASE1: u32 = 8;
 pub(crate) const FLAG_PHASE2: u32 = 16;
+/// Reflection probe captures (decision 043): candidates of the cube face
+/// being captured.
+pub(crate) const FLAG_PROBE: u32 = 128;
+/// Frames in a row a slot must display an unchanged pose before reflection
+/// probes capture it (decision 043).
+pub(crate) const STILL_FRAMES: u32 = 16;
 
 /// Bit of a visible slot ID marking a slot whose displayed pose can differ
 /// from the previous frame's (decision 017); slot indices stay below it.
@@ -908,7 +928,7 @@ mod tests {
 
     #[test]
     fn gpu_records_have_documented_offsets_and_column_order() {
-        assert_eq!(size_of::<CameraUniform>(), 224);
+        assert_eq!(size_of::<CameraUniform>(), 240);
         assert_eq!(
             std::mem::offset_of!(CameraUniform, previous_view_projection),
             64
@@ -1534,6 +1554,9 @@ mod tests {
         assert_eq!(bits(PRESENTATION_SHADER, "VISIBLE"), FLAG_VISIBLE);
         assert_eq!(bits(PRESENTATION_SHADER, "PHASE1"), FLAG_PHASE1);
         assert_eq!(bits(PRESENTATION_SHADER, "PHASE2"), FLAG_PHASE2);
+        assert_eq!(bits(PRESENTATION_SHADER, "PROBE"), FLAG_PROBE);
+        assert_eq!(bits(PRESENTATION_SHADER, "STILL_FRAMES"), STILL_FRAMES);
+        assert_eq!(bits(LIGHT_SHADER, "STILL_FRAMES"), STILL_FRAMES);
     }
 
     #[test]
@@ -1739,6 +1762,16 @@ mod tests {
             Mat4::from_cols_array_2d(&exact.inverse_view_projection),
             Mat4::from_scale(glam::Vec3::splat(0.5))
         );
+        assert_eq!(exact.options, [0.0; 4]);
+        // Reflection probe faces (decision 043) are exact cameras that shade
+        // with the far shadow maps only.
+        let probe =
+            CameraUniform::probe(Mat4::from_scale(glam::Vec3::splat(2.0)), glam::Vec3::X, 7.5);
+        assert_eq!(probe.view_projection, exact.view_projection);
+        assert_eq!(probe.previous_view_projection, exact.view_projection);
+        assert_eq!(probe.position, exact.position);
+        assert_eq!(probe.jitter, [0.0; 4]);
+        assert_eq!(probe.options, [1.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]

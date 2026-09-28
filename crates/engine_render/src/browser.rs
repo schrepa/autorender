@@ -11,17 +11,18 @@ use wgpu::util::DeviceExt;
 use crate::batches::BatchPlan;
 use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
-use crate::environment::Environment;
+use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
     SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
-use crate::lights::{LightPass, LightPoses};
+use crate::lights::{LightFrame, LightPass, LightPoses};
 use crate::materials::MaterialStore;
 use crate::particles::ParticlePass;
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
+use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
@@ -113,7 +114,14 @@ enum PassKind {
     Opaque { post: bool, lit: bool, affine: bool },
     Temporal { lit: bool },
     Transparent { lit: bool, affine: bool },
+    // Reflection probe captures (decision 043): linear light into a cube
+    // face, drawn mirrored.
+    Probe { lit: bool },
 }
+
+/// Generations of the shadow maps, environment maps and reflection probe
+/// grid (decision 043) the camera groups bind.
+type CameraGroupsKey = (u64, u64, u64);
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
 ///
@@ -146,16 +154,21 @@ pub struct Renderer {
     mesh_shader: wgpu::ShaderModule,
     camera_layout: wgpu::BindGroupLayout,
     camera_buffer: wgpu::Buffer,
-    // Camera, lighting and shadow lookups, for the shadow maps of
-    // `shadow_generation`.
+    // Camera, lighting, shadow lookups, environment maps and probe grid, for
+    // the shadow maps, maps and grid of these generations.
     camera_bind_group: wgpu::BindGroup,
-    shadow_generation: u64,
+    camera_groups_key: CameraGroupsKey,
     // The scene's atmosphere (decision 018), written when it changes.
     lighting_buffer: wgpu::Buffer,
     lighting: Option<LightingUniform>,
     // The environment maps surfaces reflect (decision 043), redrawn when the
-    // sky changes.
+    // sky changes, and the reflection probes holding their cubes after the
+    // sky's: each face's camera group (built with the main group's key) and
+    // the captures' sky pipeline.
     environment: Environment,
+    probes: ProbePass,
+    probe_camera_groups: Vec<wgpu::BindGroup>,
+    probe_sky_pipeline: Option<wgpu::RenderPipeline>,
     // The sky behind all geometry, drawn last in the opaque pass.
     sky_pipeline: wgpu::RenderPipeline,
     // Refraction through glass (decision 038): the white texel group 0 binds
@@ -164,7 +177,7 @@ pub struct Renderer {
     // shadow generation `.1`.
     refraction_fallback: wgpu::TextureView,
     refraction_sampler: wgpu::Sampler,
-    refraction_group: Option<((u64, u64), wgpu::BindGroup)>,
+    refraction_group: Option<((u64, CameraGroupsKey), wgpu::BindGroup)>,
     // Sun shadows (decision 020).
     shadows: ShadowPass,
     // Local lights (decision 023): binning and the lit mesh pipelines,
@@ -444,6 +457,17 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The grid of reflection probes each cell's surfaces read.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
         let refraction_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -492,7 +516,12 @@ impl Renderer {
             ),
             materials.layout(),
         );
-        let environment = Environment::new(&device, &lighting_buffer);
+        let environment = Environment::new(
+            &device,
+            &lighting_buffer,
+            engine_core::ReflectionProbes::default().resolution,
+        );
+        let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
         let camera_bind_group = camera_bind_group(
             &device,
             &camera_layout,
@@ -500,7 +529,7 @@ impl Renderer {
             &lighting_buffer,
             &shadows,
             (&refraction_fallback, &refraction_sampler),
-            environment.binding(),
+            (environment.binding(), probes.words().0),
         );
         let texture_layout = materials.layout();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -559,6 +588,7 @@ impl Renderer {
             targets: &canvas_target,
             constants: &canvas_constants,
             depth_write: true,
+            mirrored: false,
         };
         let pipeline = mesh_pipeline(
             &device,
@@ -627,11 +657,14 @@ impl Renderer {
             mesh_shader: shader,
             camera_layout,
             camera_buffer,
-            shadow_generation: shadows.generation(),
+            camera_groups_key: (shadows.generation(), 0, 0),
             camera_bind_group,
             lighting_buffer,
             lighting: None,
             environment,
+            probes,
+            probe_camera_groups: Vec::new(),
+            probe_sky_pipeline: None,
             sky_pipeline,
             refraction_fallback,
             refraction_sampler,
@@ -1341,6 +1374,11 @@ impl Renderer {
                         .is_some_and(|temporal| temporal.motion_valid),
                     occlusion,
                     self.subpixel_culling,
+                    // Reflection probes (decision 043) capture still slots,
+                    // counted while captures wait.
+                    (snapshot.reflection_probe_settings.enabled
+                        && !snapshot.reflection_probes.is_empty())
+                    .then(|| self.probes.slots.waiting()),
                     (self.configuration.width, self.configuration.height),
                     stamps,
                 ),
@@ -1372,8 +1410,52 @@ impl Renderer {
                 |mesh| meshes.get(&mesh).map_or(0, |mesh| mesh.index_count),
             )
         };
-        if self.shadows.generation() != self.shadow_generation {
-            self.shadow_generation = self.shadows.generation();
+        // Environment maps (decision 043): as many cubes as the reflection
+        // probes kept need (the nearest first, as many as the GPU's texture
+        // arrays hold), the sky's redrawn when it changes, then the probes'
+        // cubes assigned and their grid uploaded.
+        let probe_settings = snapshot.reflection_probe_settings;
+        let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
+            &snapshot.reflection_probes
+        } else {
+            &[]
+        };
+        let most_cubes = (self.device.limits().max_texture_array_layers / FACES as u32).max(1);
+        let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
+        let cubes = if wanted_cubes == 1 {
+            1
+        } else if wanted_cubes > self.environment.cubes() {
+            wanted_cubes.next_power_of_two().min(most_cubes)
+        } else {
+            self.environment.cubes()
+        };
+        let mut environment_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/environment-encoder"),
+                });
+        let lost = self.environment.ensure(
+            &self.device,
+            &mut environment_encoder,
+            probe_settings.resolution,
+            cubes,
+        );
+        let sky_changed = self
+            .environment
+            .encode_sky(&mut environment_encoder, &lighting);
+        self.probes
+            .slots
+            .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
+        self.probes.upload(&self.device, &self.queue);
+        let dropped_probes = snapshot.dropped_reflection_probes as u64
+            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1));
+        let camera_key = (
+            self.shadows.generation(),
+            self.environment.generation(),
+            self.probes.words().1,
+        );
+        if camera_key != self.camera_groups_key {
+            self.camera_groups_key = camera_key;
             self.camera_bind_group = camera_bind_group(
                 &self.device,
                 &self.camera_layout,
@@ -1381,8 +1463,9 @@ impl Renderer {
                 &self.lighting_buffer,
                 &self.shadows,
                 (&self.refraction_fallback, &self.refraction_sampler),
-                self.environment.binding(),
+                (self.environment.binding(), self.probes.words().0),
             );
+            self.probe_camera_groups.clear();
         }
         // Local lights (decision 023): binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
@@ -1553,6 +1636,7 @@ impl Renderer {
                             targets: &targets,
                             constants: &[],
                             depth_write: false,
+                            mirrored: false,
                         },
                         Variant::BASIC,
                     ));
@@ -1641,8 +1725,6 @@ impl Renderer {
             affine,
         };
         self.ensure_variants(opaque_kind, transparent_kind);
-        // The sky's environment map, whenever the sky changes (decision 043).
-        self.environment.encode(&mut encoder, &lighting);
         if gpu_mode {
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
@@ -1714,7 +1796,7 @@ impl Renderer {
             );
         }
         if refraction && let Some(post) = self.post.as_ref() {
-            let key = (post.generation(), self.shadow_generation);
+            let key = (post.generation(), self.camera_groups_key);
             if self
                 .refraction_group
                 .as_ref()
@@ -1728,7 +1810,7 @@ impl Renderer {
                     &self.lighting_buffer,
                     &self.shadows,
                     (scene, &self.refraction_sampler),
-                    self.environment.binding(),
+                    (self.environment.binding(), self.probes.words().0),
                 );
                 self.refraction_group = Some((key, group));
             }
@@ -2162,6 +2244,43 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             self.profiler.timed_resolve(query_slot);
         }
+        // Reflection probe captures (decision 043), after the frame's own
+        // drawing, from this frame's poses, once culling has counted still
+        // slots long enough.
+        let probe_faces = if gpu_mode && affine && !probe_list.is_empty() {
+            self.probes.slots.tick();
+            if self.gpu_presentation.stillness_settled() {
+                let odd = temporal_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.parity == 1);
+                #[cfg(feature = "profiling")]
+                let effect_queries = self.profiler.effect_queries(query_slot);
+                timestamp_pass(&mut encoder, effect_queries, PROBE_CAPTURES, false);
+                let faces = self.encode_probe_captures(
+                    &mut encoder,
+                    probe_list,
+                    probe_settings.faces_per_frame,
+                    odd,
+                    snapshot.elapsed_seconds,
+                    light_frame
+                        .as_ref()
+                        .map(|frame| (frame, &snapshot.local_lights)),
+                );
+                #[cfg(feature = "profiling")]
+                {
+                    let queries = self.profiler.effect_queries(query_slot);
+                    timestamp_pass(&mut encoder, queries, PROBE_CAPTURES, true);
+                    if faces != 0 && queries.is_some() {
+                        self.profiler.timed_effects(query_slot, 1 << PROBE_CAPTURES);
+                    }
+                }
+                faces
+            } else {
+                0
+            }
+        } else {
+            0
+        };
         #[cfg(feature = "profiling")]
         self.profiler.resolve(query_slot, &mut encoder);
         drop(profile_encoding);
@@ -2173,7 +2292,7 @@ impl Renderer {
                 .into_iter()
                 .chain(staged_poses)
                 .chain(input_copies.map(wgpu::CommandEncoder::finish))
-                .chain([encoder.finish()]),
+                .chain([environment_encoder.finish(), encoder.finish()]),
         );
         self.pose_uploads.after_submit();
         if gpu_mode {
@@ -2264,6 +2383,9 @@ impl Renderer {
                     .as_ref()
                     .map_or(0, |frame| u64::from(frame.dropped)))
             .min(u64::from(u32::MAX)) as u32,
+            reflection_probes: self.probes.slots.ready(),
+            reflection_probe_faces: probe_faces,
+            dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
             ..self.residency_stats()
         };
         if engine_profile::active() {
@@ -2312,7 +2434,7 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_environment_bytes",
-                self.environment.capacity_bytes() as f64,
+                (self.environment.capacity_bytes() + self.probes.capacity_bytes()) as f64,
             );
             if let Some(lights) = &stats.lights {
                 engine_profile::counter("render.local_lights", f64::from(lights.lights));
@@ -2515,7 +2637,7 @@ impl Renderer {
             // Only retained slots skin (decision 036).
             let affine = match kind {
                 PassKind::Opaque { affine, .. } | PassKind::Transparent { affine, .. } => affine,
-                PassKind::Temporal { .. } => true,
+                PassKind::Temporal { .. } | PassKind::Probe { .. } => true,
             };
             let mesh = self.meshes.get(&batch.mesh);
             let variant = variant
@@ -2529,6 +2651,219 @@ impl Renderer {
             }
         }
         for (kind, variant) in missing {
+            let pipeline = self.create_variant(kind, variant);
+            self.variant_pipelines.insert((kind, variant), pipeline);
+        }
+    }
+
+    /// Records up to `faces` reflection probe cube faces (decision 043), the
+    /// nearest probes waiting first and each face at most once a frame (each
+    /// has one camera): this frame's still opaque instances (drawn from the
+    /// alternate pose buffer when `odd`) and the sky's haze, in linear light,
+    /// then a probe's blurred cube once its last face is drawn. Returns the
+    /// faces drawn.
+    fn encode_probe_captures(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        probes: &[engine_core::RenderReflectionProbe],
+        faces: u32,
+        odd: bool,
+        seconds: f32,
+        lights: Option<(&LightFrame, &engine_core::LocalLights)>,
+    ) -> u32 {
+        let lights = lights.filter(|_| self.lit.is_some() && self.lights.is_some());
+        let kind = PassKind::Probe {
+            lit: lights.is_some(),
+        };
+        self.ensure_probe_pipelines(kind);
+        if self.probe_camera_groups.is_empty() {
+            self.probe_camera_groups = (0..FACES)
+                .map(|face| {
+                    camera_bind_group(
+                        &self.device,
+                        &self.camera_layout,
+                        self.probes.camera(face),
+                        &self.lighting_buffer,
+                        &self.shadows,
+                        (&self.refraction_fallback, &self.refraction_sampler),
+                        (self.environment.binding(), self.probes.words().0),
+                    )
+                })
+                .collect();
+        }
+        if odd
+            && self
+                .alternate_pose_group
+                .as_ref()
+                .is_none_or(|(built, _)| *built != self.pose_generation)
+        {
+            let group = pose_group(
+                &self.device,
+                &self.pose_layout,
+                self.alternate_poses
+                    .as_ref()
+                    .expect("temporal frames create it"),
+                self.color_buffer.as_ref().expect("affine color buffer"),
+                &self.palettes[1],
+            );
+            self.alternate_pose_group = Some((self.pose_generation, group));
+        }
+        let mut used = [false; FACES];
+        let mut drawn = 0;
+        while drawn < faces {
+            let Some((cube, face, probe)) = self.probes.slots.next_face(probes) else {
+                break;
+            };
+            if used[face] {
+                break;
+            }
+            used[face] = true;
+            let view_projection = face_view_projection(probe.center, face);
+            let camera = CameraUniform::probe(view_projection, probe.center, seconds);
+            self.queue
+                .write_buffer(self.probes.camera(face), 0, bytemuck::bytes_of(&camera));
+            let poses = if odd {
+                self.alternate_poses
+                    .as_ref()
+                    .expect("temporal frames create it")
+            } else {
+                &self.instance_buffer
+            };
+            if !self.gpu_presentation.encode_probe_face(
+                &self.device,
+                &self.queue,
+                encoder,
+                face,
+                self.environment.size(),
+                view_projection,
+                poses,
+            ) {
+                break;
+            }
+            // Still lamps light the capture: lights binned for this face.
+            if let (Some((frame, settings)), Some(pass)) = (lights, self.lights.as_mut()) {
+                pass.encode_probe_face(
+                    &self.device,
+                    &self.queue,
+                    encoder,
+                    face,
+                    view_projection,
+                    self.environment.size(),
+                    settings,
+                    frame,
+                    LightPoses {
+                        buffer: poses,
+                        generation: self.pose_generation,
+                        index: usize::from(odd),
+                    },
+                    self.gpu_presentation.still_frames(),
+                );
+            }
+            let depth = self
+                .probes
+                .depth(&self.device, self.environment.size(), DEPTH_FORMAT)
+                .clone();
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/probe-face"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: self.environment.radiance_face(face),
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(FAR_DEPTH),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_bind_group(0, &self.probe_camera_groups[face], &[]);
+                let poses_group = if odd {
+                    &self.alternate_pose_group.as_ref().expect("built above").1
+                } else {
+                    self.pose_bind_group
+                        .as_ref()
+                        .expect("retained pose bindings")
+                };
+                pass.set_bind_group(2, poses_group, &[]);
+                if lights.is_some() {
+                    let lights = self.lights.as_ref().expect("checked above");
+                    pass.set_bind_group(3, lights.probe_fragment_group(face), &[]);
+                }
+                let mut bound = None;
+                for (index, batch) in self.plan.batches.iter().enumerate() {
+                    // Only still opaque meshes without joints are captured.
+                    let mesh = &self.meshes[&batch.mesh];
+                    if batch.transparent || mesh.skin.is_some() {
+                        continue;
+                    }
+                    let (group, variant) = self.materials.binding(batch.material);
+                    let variant = variant.with_extended(mesh.extras.is_some());
+                    if bound != Some(variant) {
+                        pass.set_pipeline(&self.variant_pipelines[&(kind, variant)]);
+                        bound = Some(variant);
+                    }
+                    pass.set_bind_group(1, group, &[]);
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    if let Some(extras) = &mesh.extras {
+                        pass.set_vertex_buffer(2, extras.slice(..));
+                    }
+                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    let (ids, draws, offset) =
+                        self.gpu_presentation.probe_draw_source(batch, index);
+                    pass.set_vertex_buffer(1, ids);
+                    pass.draw_indexed_indirect(draws, offset);
+                }
+                pass.set_pipeline(self.probe_sky_pipeline.as_ref().expect("created above"));
+                pass.draw(0..3, 0..1);
+            }
+            drawn += 1;
+            if self.probes.slots.face_drawn() {
+                self.environment.finish(encoder, cube);
+            }
+        }
+        drawn
+    }
+
+    /// The reflection probe captures' pipelines (decision 043): the sky's,
+    /// and `kind`'s for the variants of this frame's still opaque meshes.
+    fn ensure_probe_pipelines(&mut self, kind: PassKind) {
+        if self.probe_sky_pipeline.is_none() {
+            self.probe_sky_pipeline = Some(sky_pipeline(
+                &self.device,
+                &self.mesh_shader,
+                &self.camera_layout,
+                "fs_probe_sky",
+                &[Some(ENVIRONMENT_FORMAT.into())],
+                None,
+            ));
+        }
+        let mut missing = Vec::new();
+        for batch in &self.plan.batches {
+            let Some(mesh) = self.meshes.get(&batch.mesh) else {
+                continue;
+            };
+            if batch.transparent || mesh.skin.is_some() {
+                continue;
+            }
+            let (_, variant) = self.materials.binding(batch.material);
+            let variant = variant.with_extended(mesh.extras.is_some());
+            if !self.variant_pipelines.contains_key(&(kind, variant)) && !missing.contains(&variant)
+            {
+                missing.push(variant);
+            }
+        }
+        for variant in missing {
             let pipeline = self.create_variant(kind, variant);
             self.variant_pipelines.insert((kind, variant), pipeline);
         }
@@ -2576,6 +2911,7 @@ impl Renderer {
                     targets: if post { &post_targets } else { &canvas_target },
                     constants: if post { &[] } else { &canvas_constants },
                     depth_write: true,
+                    mirrored: false,
                 };
                 mesh_pipeline(
                     device,
@@ -2597,6 +2933,7 @@ impl Renderer {
                     targets: &targets,
                     constants: &[],
                     depth_write: false,
+                    mirrored: false,
                 };
                 mesh_pipeline(
                     device,
@@ -2606,6 +2943,17 @@ impl Renderer {
                     &targets,
                     variant,
                 )
+            }
+            PassKind::Probe { lit } => {
+                let targets = [Some(ENVIRONMENT_FORMAT.into())];
+                let targets = MeshTargets {
+                    fragment: if lit { "fs_probe_lit" } else { "fs_probe" },
+                    targets: &targets,
+                    constants: &[],
+                    depth_write: true,
+                    mirrored: true,
+                };
+                mesh_pipeline(device, shader, layout(lit, true), true, &targets, variant)
             }
             PassKind::Temporal { lit } => self
                 .temporal
@@ -2694,6 +3042,31 @@ fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) 
     })
 }
 
+/// Reflection probe captures' entry in the profiler's effects (decision 043).
+const PROBE_CAPTURES: u32 = 15;
+
+/// Writes query `first + 2 * effect` (or the next one at its `end`) of
+/// `queries`, the profiler's effect queries, from an empty pass: effects of
+/// many passes are timed from one before them to one after.
+fn timestamp_pass(
+    encoder: &mut wgpu::CommandEncoder,
+    queries: Option<(&wgpu::QuerySet, u32)>,
+    effect: u32,
+    end: bool,
+) {
+    if let Some((query_set, first)) = queries {
+        let query = first + 2 * effect;
+        drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("engine/effect-timestamp"),
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: (!end).then_some(query),
+                end_of_pass_write_index: end.then_some(query + 1),
+            }),
+        }));
+    }
+}
+
 /// The sky pass of `fragment` into `targets`: one triangle at the far
 /// plane, tested but not written against depth, over the camera bindings.
 /// `surface_srgb` tells a pass into the canvas whether it is sRGB.
@@ -2752,6 +3125,9 @@ struct MeshTargets<'a> {
     targets: &'a [Option<wgpu::ColorTargetState>],
     constants: &'a [(&'a str, f64)],
     depth_write: bool,
+    // Drawn through a mirroring view (reflection probe faces): triangles
+    // wind the other way.
+    mirrored: bool,
 }
 
 /// A mesh pipeline over `layout`: affine slot-stream inputs or public
@@ -2814,6 +3190,11 @@ fn mesh_pipeline(
         },
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: if fragment.mirrored {
+                wgpu::FrontFace::Cw
+            } else {
+                wgpu::FrontFace::Ccw
+            },
             cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
             ..Default::default()
         },
@@ -2880,6 +3261,7 @@ impl LitPipelines {
             targets: &canvas_target,
             constants: &canvas_constants,
             depth_write: true,
+            mirrored: false,
         };
         let post_targets = [
             Some(SCENE_FORMAT.into()),
@@ -2891,6 +3273,7 @@ impl LitPipelines {
             targets: &post_targets,
             constants: &[],
             depth_write: true,
+            mirrored: false,
         };
         let basic = Variant::BASIC;
         let variants = [
@@ -2936,6 +3319,7 @@ impl PostPipelines {
             targets: &targets,
             constants: &[],
             depth_write: true,
+            mirrored: false,
         };
         Self {
             full: mesh_pipeline(device, shader, layouts[0], false, &post, Variant::BASIC),
@@ -2945,8 +3329,10 @@ impl PostPipelines {
     }
 }
 
-/// The main passes' first group: camera, lighting, shadow lookups and what
-/// glass refracts (decision 038) with its sampler.
+/// The main passes' first group: camera, lighting, shadow lookups, what
+/// glass refracts (decision 038) with its sampler, and what surfaces reflect
+/// (decision 043): the environment maps with their sampler and the
+/// reflection probes' grid.
 fn camera_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -2954,7 +3340,10 @@ fn camera_bind_group(
     lighting: &wgpu::Buffer,
     shadows: &ShadowPass,
     (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
-    (environment, environment_sampler): (&wgpu::TextureView, &wgpu::Sampler),
+    ((environment, environment_sampler), probe_words): (
+        (&wgpu::TextureView, &wgpu::Sampler),
+        &wgpu::Buffer,
+    ),
 ) -> wgpu::BindGroup {
     let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
     device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -2990,6 +3379,10 @@ fn camera_bind_group(
             wgpu::BindGroupEntry {
                 binding: 11,
                 resource: wgpu::BindingResource::Sampler(environment_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: probe_words.as_entire_binding(),
             },
         ],
     })

@@ -68,7 +68,8 @@ both scenes opt into sun shafts ([decision 024](adr-024-sun-shafts.md)) and
 screen-space reflections ([decision 025](adr-025-screen-space-reflections.md)).
 The Effects control turns shadows, ambient occlusion and bloom
 ([decision 021](adr-021-ambient-occlusion-and-bloom.md)), local lights, sun
-shafts, reflections or particles off, or all of them; `effects=none` or a
+shafts, reflections, particles, refraction or reflection probes
+([decision 043](adr-043-environment-maps.md)) off, or all of them; `effects=none` or a
 comma-separated list such as `effects=no-shadows,no-shafts` sets it at
 startup, it survives workload changes, and recordings and profiles report
 `effects`. The measurements below predate these effects.

@@ -49,6 +49,10 @@ const DECK_TOP: f32 = 10.4;
 const WATER_TOP: f32 = -0.2;
 /// Static renderables of an average block, for sizing districts.
 const PER_BLOCK: f32 = 42.0;
+/// Reflection probes (decision 043): the height they capture from, and the
+/// world distance inside their boxes' faces over which they fade out.
+const PROBE_HEIGHT: f32 = 2.5;
+const PROBE_BLEND: f32 = 2.0;
 /// Scales of people (built in meters) and small street furniture.
 const PERSON: f32 = 0.47;
 const FURNITURE: f32 = 0.5;
@@ -3547,6 +3551,26 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         slots: pictures,
         shown: u64::MAX,
     });
+    // Reflection probes (decision 043) at every street crossing (blocks'
+    // corners lie on multiples of the period), at the
+    // height of cars and people: their boxes overlap their neighbors' by
+    // twice the blend so one fades out as the next is fully in, and surfaces
+    // reflect the crossing nearest them.
+    let crossings: std::collections::BTreeSet<(i32, i32)> = city
+        .blocks
+        .iter()
+        .flat_map(|&(bx, bz, _)| [(bx, bz), (bx + 1, bz), (bx, bz + 1), (bx + 1, bz + 1)])
+        .collect();
+    for (cx, cz) in crossings {
+        world.spawn((
+            Transform {
+                translation: v(cx as f32 * PERIOD, PROBE_HEIGHT, cz as f32 * PERIOD),
+                ..Transform::default()
+            },
+            ReflectionProbe::new(Vec3::splat(PERIOD * 0.5 + 2.0 * PROBE_BLEND))
+                .with_blend(PROBE_BLEND),
+        ));
+    }
     let ring = city
         .blocks
         .iter()

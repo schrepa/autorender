@@ -1,5 +1,5 @@
 //! A scene's environment (decision 022): its atmosphere (decision 018) and
-//! rendering effects (decisions 020, 021, 023 to 026, 038 and 039) as
+//! rendering effects (decisions 020, 021, 023 to 026, 038, 039 and 043) as
 //! authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
 //! (local lights, particles, sun shafts and reflections need version 6);
@@ -8,7 +8,8 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, LocalLights, MAX_SHADOW_CASCADES, Particles,
-    Reflections, Refraction, Shadows, SunShafts, bevy_ecs::prelude::World, glam::Vec3,
+    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, bevy_ecs::prelude::World,
+    glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -570,6 +571,69 @@ impl SceneDecals {
     }
 }
 
+/// Reflection probe settings (decision 043). Requires version 8.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneReflectionProbes {
+    pub enabled: bool,
+    /// Texels across each face of every environment map, the sky's
+    /// included: a power of two from 16 to 1024.
+    #[cfg_attr(feature = "schema", schemars(range(min = 16, max = 1024)))]
+    pub resolution: u32,
+    /// An optional budget of probes kept captured; beyond it the probes
+    /// nearest the camera win. Omitted, as many as the GPU's texture arrays
+    /// hold.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_probes: Option<u32>,
+    /// Cube faces captured per frame while probes wait: more fill new places
+    /// sooner, fewer keep those frames lighter.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub faces_per_frame: u32,
+}
+
+impl Default for SceneReflectionProbes {
+    fn default() -> Self {
+        Self::from(&ReflectionProbes::default())
+    }
+}
+
+impl From<&ReflectionProbes> for SceneReflectionProbes {
+    fn from(probes: &ReflectionProbes) -> Self {
+        Self {
+            enabled: probes.enabled,
+            resolution: probes.resolution,
+            max_probes: probes.max_probes,
+            faces_per_frame: probes.faces_per_frame,
+        }
+    }
+}
+
+impl SceneReflectionProbes {
+    pub fn resolve(&self, path: &str) -> Result<ReflectionProbes, SceneError> {
+        if !(self.resolution.is_power_of_two() && (16..=1024).contains(&self.resolution)) {
+            return Err(section_error(
+                path,
+                "resolution",
+                "must be a power of two from 16 to 1024",
+            ));
+        }
+        if self.max_probes == Some(0) {
+            return Err(section_error(path, "max_probes", "must be at least 1"));
+        }
+        if self.faces_per_frame == 0 {
+            return Err(section_error(path, "faces_per_frame", "must be at least 1"));
+        }
+        Ok(ReflectionProbes {
+            enabled: self.enabled,
+            resolution: self.resolution,
+            max_probes: self.max_probes,
+            faces_per_frame: self.faces_per_frame,
+        })
+    }
+}
+
 /// Sun shafts (decision 024): sunlight scattered by the fog between shadow
 /// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -756,11 +820,13 @@ pub struct SceneEnvironment {
     pub reflections: Option<SceneReflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneParticles>,
-    /// Version 8 sections (decisions 038 and 039).
+    /// Version 8 sections (decisions 038, 039 and 043).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refraction: Option<SceneRefraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decals: Option<SceneDecals>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reflection_probes: Option<SceneReflectionProbes>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -776,6 +842,7 @@ pub struct EnvironmentSettings {
     pub particles: Option<Particles>,
     pub refraction: Option<Refraction>,
     pub decals: Option<Decals>,
+    pub reflection_probes: Option<ReflectionProbes>,
 }
 
 impl SceneEnvironment {
@@ -841,6 +908,14 @@ impl SceneEnvironment {
             enabled: false,
             ..Decals::default()
         });
+        let probes =
+            world
+                .get_resource::<ReflectionProbes>()
+                .copied()
+                .unwrap_or(ReflectionProbes {
+                    enabled: false,
+                    ..ReflectionProbes::default()
+                });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
@@ -852,14 +927,16 @@ impl SceneEnvironment {
             particles: Some(SceneParticles::from(&particles)),
             refraction: Some(SceneRefraction::from(&refraction)),
             decals: Some(SceneDecals::from(&decals)),
+            reflection_probes: Some(SceneReflectionProbes::from(&probes)),
         }
     }
 
-    /// The first version 8 section present (decisions 038 and 039).
+    /// The first version 8 section present (decisions 038, 039 and 043).
     pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
         [
             ("refraction", self.refraction.is_some()),
             ("decals", self.decals.is_some()),
+            ("reflection_probes", self.reflection_probes.is_some()),
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
@@ -935,6 +1012,10 @@ impl SceneEnvironment {
                 .decals
                 .map(|section| section.resolve(&format!("{path}.decals")))
                 .transpose()?,
+            reflection_probes: self
+                .reflection_probes
+                .map(|section| section.resolve(&format!("{path}.reflection_probes")))
+                .transpose()?,
         })
     }
 }
@@ -972,6 +1053,9 @@ impl EnvironmentSettings {
         if let Some(decals) = self.decals {
             world.insert_resource(decals);
         }
+        if let Some(probes) = self.reflection_probes {
+            world.insert_resource(probes);
+        }
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
@@ -985,6 +1069,7 @@ impl EnvironmentSettings {
         world.insert_resource(self.local_lights.unwrap_or_default());
         world.insert_resource(self.particles.unwrap_or_default());
         world.insert_resource(self.decals.unwrap_or_default());
+        world.insert_resource(self.reflection_probes.unwrap_or_default());
         match self.sun_shafts {
             Some(shafts) => world.insert_resource(shafts),
             None => {

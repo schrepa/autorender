@@ -49,6 +49,16 @@ override TRANSMISSION: bool = false;
 // their levels by roughness; the first holds the sky.
 @group(0) @binding(10) var environment_maps: texture_cube_array<f32>;
 @group(0) @binding(11) var environment_sampler: sampler;
+// Reflection probes (decision 043) whose environment maps surfaces reflect,
+// found through a grid of cells over the ground plane listing the probes
+// whose boxes reach each cell. In vec4 words: [0] the grid's first corner
+// (world x and z) and cell size (bits of f32) and the probe count; [1] the
+// cells across x and z and where the cells and their lists start; then a
+// word per cell (the first entry and the length of its list); then the
+// lists, smallest boxes first, two words an entry: the probe's center and
+// blend distance (bits of f32), and its extent (bits of f32) and cube in the
+// environment maps.
+@group(0) @binding(12) var<storage, read> probe_words: array<vec4<u32>>;
 
 // Stable engine-owned slots; three aligned rows give an exact 48-byte affine pose.
 struct AffinePose {
@@ -446,11 +456,13 @@ struct SurfacePoint {
     distance: f32,
 }
 
-// Shaded light of a surface: graded color, the ambient share of its light
+// Shaded light of a surface: graded color (and its linear light before the
+// grade, which reflection probes capture), the ambient share of its light
 // (for ambient occlusion), its glow weight, its reflectivity, shading normal
 // and roughness for screen-space reflections, and its coverage.
 struct Shaded {
     color: vec3<f32>,
+    linear: vec3<f32>,
     ambient: f32,
     glow: f32,
     reflect: f32,
@@ -574,17 +586,63 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     return point;
 }
 
+// Where the ray from `position` along `direction` leaves the box `extent`
+// around `center`, seen from `center`: the direction to read a probe's map
+// along so reflections land on its walls (parallax correction).
+fn box_projected(position: vec3<f32>, direction: vec3<f32>, center: vec3<f32>,
+        extent: vec3<f32>) -> vec3<f32> {
+    let safe = select(direction, vec3<f32>(1.0e-6), abs(direction) < vec3<f32>(1.0e-6));
+    let exits = max((center - extent - position) / safe, (center + extent - position) / safe);
+    return position + direction * min(exits.x, min(exits.y, exits.z)) - center;
+}
+
 // The environment's light reflected toward `reflected` off a surface of
-// `normal` and `roughness`: the environment map's level blurred by that
-// roughness, read along the lobe's dominant direction, which leans toward
-// the normal as the surface roughens (Lagarde and de Rousiers).
-fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
+// `normal` and `roughness` at `world`: the reflection probes whose boxes
+// hold it (decision 043), smallest first, each fading out toward its faces
+// over its blend distance, and the sky's map for what they leave; each map
+// at the level blurred by that roughness, read along the lobe's dominant
+// direction, which leans toward the normal as the surface roughens (Lagarde
+// and de Rousiers).
+fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
+        world: vec3<f32>) -> vec3<f32> {
     let smoothness = 1.0 - roughness;
     let lean = smoothness * (sqrt(smoothness) + roughness);
     let direction = normalize(mix(normal, reflected, lean));
-    let deepest = f32(textureNumLevels(environment_maps) - 1u);
-    return textureSampleLevel(environment_maps, environment_sampler, direction, 0,
-        roughness * deepest).rgb;
+    let level = roughness * f32(textureNumLevels(environment_maps) - 1u);
+    var light = vec3<f32>(0.0);
+    var covered = 0.0;
+    let header = probe_words[0];
+    if header.w != 0u {
+        let grid = probe_words[1];
+        let cell = vec2<i32>(floor((world.xz - bitcast<vec2<f32>>(header.xy))
+            / bitcast<f32>(header.z)));
+        if all(cell >= vec2<i32>(0)) && all(vec2<u32>(cell) < grid.xy) {
+            let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
+            for (var n = 0u; n < list.y && covered < 0.999; n++) {
+                let entry = grid.w + (list.x + n) * 2u;
+                let first = probe_words[entry];
+                let second = probe_words[entry + 1u];
+                let center = bitcast<vec3<f32>>(first.xyz);
+                let blend = bitcast<f32>(first.w);
+                let extent = bitcast<vec3<f32>>(second.xyz);
+                let inside = extent - abs(world - center);
+                let depth = min(inside.x, min(inside.y, inside.z));
+                if depth <= 0.0 {
+                    continue;
+                }
+                let weight = select(1.0, saturate(depth / blend), blend > 0.0) * (1.0 - covered);
+                let along = box_projected(world, direction, center, extent);
+                light += weight * textureSampleLevel(environment_maps, environment_sampler, along,
+                    second.w, level).rgb;
+                covered += weight;
+            }
+        }
+    }
+    if covered < 0.999 {
+        light += (1.0 - covered)
+            * textureSampleLevel(environment_maps, environment_sampler, direction, 0, level).rgb;
+    }
+    return light;
 }
 
 // Lit, fogged and graded color of `point` with `local` light added.
@@ -605,7 +663,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     }
     // The environment mirrored in the surface, blurred by its roughness,
     // weighted by the environment BRDF.
-    let mirrored = environment_light(reflect(-view, normal), normal, point.roughness);
+    let mirrored = environment_light(reflect(-view, normal), normal, point.roughness,
+        point.world);
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
     let reflection = mirrored * brdf * specular;
     // Rim light outlines walls against the sky; level surfaces seen at
@@ -627,6 +686,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     shaded.opacity = point.opacity;
     shaded.normal = normal;
     shaded.roughness = point.roughness;
+    shaded.linear = fogged;
     shaded.color = grade(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered);
     shaded.glow = glow_weight(fogged);
@@ -916,6 +976,19 @@ fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
     return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }
 
+// Reflection probe captures (decision 043): the linear light before the
+// grade, which the environment maps hold.
+@fragment
+fn fs_probe(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    return vec4<f32>(shade(fragment(input), front).linear, 1.0);
+}
+
+@fragment
+fn fs_probe_lit(input: VertexOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(shade_lit(fragment(input), front).linear, 1.0);
+}
+
 // The same passes for meshes with a second vertex stream (decision 034).
 @fragment
 fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
@@ -927,6 +1000,18 @@ fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
 fn fs_main_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
     return vec4<f32>(encoded(shade_lit(extended_fragment(input), front).color), 1.0);
+}
+
+@fragment
+fn fs_probe_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(shade(extended_fragment(input), front).linear, 1.0);
+}
+
+@fragment
+fn fs_probe_lit_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
+        -> @location(0) vec4<f32> {
+    return vec4<f32>(shade_lit(extended_fragment(input), front).linear, 1.0);
 }
 
 @fragment
@@ -997,6 +1082,14 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 @fragment
 fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(encoded(grade(sky(sky_ray(input.ndc)))), 1.0);
+}
+
+// Reflection probe captures (decision 043): the sky's haze without the sun's
+// disc, as the sky's environment map holds it (surfaces shade the sun's
+// highlights themselves).
+@fragment
+fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
+    return vec4<f32>(haze(sky_ray(input.ndc)), 1.0);
 }
 
 // The sky's surface texel: facing up, fully rough (it reflects nothing).

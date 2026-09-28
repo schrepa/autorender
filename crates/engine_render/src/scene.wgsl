@@ -2,19 +2,21 @@
 // shaders: the first bind group's camera, atmosphere (decision 018) and sun
 // shadows (decision 020), and the lighting functions every path shades with.
 
-// Uniform: three column-major mat4 and two vec4, 16-byte alignment, exactly
-// 224 bytes. `view_projection` is the rasterized projection; temporally
+// Uniform: three column-major mat4 and three vec4, 16-byte alignment,
+// exactly 240 bytes. `view_projection` is the rasterized projection; temporally
 // antialiased frames (decision 017) jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
 // and `jitter.zw`, two over the viewport size in pixels. The unjittered
 // inverse turns pixels into sky rays; `position.xyz` is the eye and
-// `position.w` presentation time in seconds (decision 019).
+// `position.w` presentation time in seconds (decision 019). `options.x` is 1
+// while a reflection probe captures a cube face (decision 043).
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
     inverse_view_projection: mat4x4<f32>,
     position: vec4<f32>,
     jitter: vec4<f32>,
+    options: vec4<f32>,
 }
 // The scene's atmosphere (decision 018) in linear color; scalars ride in w.
 struct Lighting {
@@ -321,10 +323,12 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     if shadow.state.x == 0.0 {
         return 1.0;
     }
-    // The first cascade reaching the fragment.
+    // The first cascade reaching the fragment. Reflection probe captures
+    // (decision 043) look from elsewhere than the cascades cover and select
+    // for: they read the far maps alone.
     let beyond = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(distance) >= shadow.reach);
     let cascade = u32(dot(beyond, vec4<f32>(1.0)));
-    let cascades = u32(shadow.state.z);
+    let cascades = select(u32(shadow.state.z), 0u, camera.options.x != 0.0);
     if cascade < cascades {
         let visible = cascade_visibility(cascade, world, normal, dx, dy);
         if visible >= 0.0 {

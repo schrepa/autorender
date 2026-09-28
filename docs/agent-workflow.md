@@ -55,8 +55,9 @@ Submit these objects through `agent request`, or use `agent <op> --json ...`:
 | `{"op":"inspect","parent":"west-lantern","component":"Hierarchy","limit":20}` | Page direct children and their prefab identities |
 | `{"op":"inspect","component":"Camera"}` | Read the shared camera resource |
 | `{"op":"inspect","component":"Environment"}` | Read the whole look as a scene `environment` |
-| `{"op":"inspect","component":"Shadows"}` | Read one look section; also `Atmosphere`, `AmbientOcclusion`, `Bloom`, `LocalLights`, `SunShafts`, `Reflections`, `Particles` |
+| `{"op":"inspect","component":"Shadows"}` | Read one look section; also `Atmosphere`, `AmbientOcclusion`, `Bloom`, `LocalLights`, `SunShafts`, `Reflections`, `Particles`, `Refraction`, `Decals`, `ReflectionProbes` |
 | `{"op":"inspect","entity":"lamp","component":"LocalLight"}` | Read an entity's light or `ParticleEmitter` as its scene version 6 field |
+| `{"op":"inspect","entity":"hall","component":"ReflectionProbe"}` | Read an entity's reflection probe as its scene version 8 field |
 | `{"op":"inspect","component":"GameProgress"}` | Read the sample's score/jump resource |
 | `{"op":"assets"}` | CPU residency; GPU residency accompanies results |
 | `{"op":"culling","enabled":false}` | Temporarily toggle frustum culling and render while paused |
@@ -126,9 +127,9 @@ changing nothing), replaces only the sections it names, renders, and lists
 them in `environment_changed`. It never changes source. To keep a look, put
 the sections in the scene's `environment` (version 5; version 6 for the
 local light, shaft, reflection and particle sections and the atmosphere's
-grade fields; version 8 for refraction and decals), save and reload: the
+grade fields; version 8 for refraction, decals and reflection probes), save and reload: the
 scene then sets every section, omitted ones taking the engine's default state
-(sun shafts, reflections and refraction off; decals on), and replaces any temporary look. Scenes
+(sun shafts, reflections and refraction off; decals and reflection probes on), and replaces any temporary look. Scenes
 without an environment leave the look to the game's code. Compare looks in
 captures at identical canvas sizes.
 
@@ -143,7 +144,16 @@ acceleration, size and color at birth and death, `blend` `alpha` or
 the entity's unit box, scaled and turned by its transform, projects the
 material down its local y onto the opaque surfaces inside it; the
 environment's `decals` section sets whether they draw and an optional
-`max_decals` budget. A light on an entity with a mesh
+`max_decals` budget. Version 8 entities also author a `reflection_probe`
+([decision 043](adr-043-environment-maps.md)): `extent`, the half size along
+each world axis of a box centered on the entity's world position (its
+rotation and scale leave the box unchanged), and `blend`, the world distance
+inside the box's faces over which it fades. Surfaces inside the box reflect
+the still objects and lights the probe captured from its center. The
+environment's `reflection_probes` section sets whether probes capture, the
+`resolution` of every environment map face (the sky's too), an optional
+`max_probes` budget and the `faces_per_frame` captured while probes wait.
+A light on an entity with a mesh
 follows its displayed pose. Particles are a function of presentation time,
 so paused captures are exact and repeatable.
 
@@ -155,7 +165,10 @@ shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_c
 `bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and
 `light_cluster_overflow` read back late (overflow means shorter light ranges
 are needed); `sun_shafts`, `reflections` and `refraction`; `transparent_draws` and
-`particles`; `decals` and `dropped_decals`; `occluded_instances`, the visible instances occlusion culling left undrawn (read back late,
+`particles`; `decals` and `dropped_decals`; `reflection_probes`,
+`reflection_probe_faces` and `dropped_reflection_probes`, the probes surfaces
+could reflect, the cube faces captured, and the probes a budget or the GPU's
+texture array layers left out; `occluded_instances`, the visible instances occlusion culling left undrawn (read back late,
 null without it); `subpixel_instances`, the visible instances covering no
 pixel center left undrawn (read back late, null without sub-pixel culling). `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).

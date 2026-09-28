@@ -79,6 +79,7 @@ function setup(t, options = {}) {
         ambient_occlusion: true, bloom: false,
         local_lights: 3, dropped_lights: 0, lights_visible: undefined, light_cluster_overflow: 0,
         sun_shafts: false, reflections: true, refraction: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, occluded_instances: undefined, subpixel_instances: undefined,
+        reflection_probes: 3, reflection_probe_faces: 1, dropped_reflection_probes: 0,
         free() { statsFreed++; },
       };
     },

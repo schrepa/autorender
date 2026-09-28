@@ -255,15 +255,17 @@ impl SceneDocument {
             .collect();
         let mut entities = BTreeMap::new();
         let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for ((((((expanded, transform), collider), light), emitter), tint), decal) in prepared
-            .entities
-            .iter()
-            .zip(prepared.transforms)
-            .zip(prepared.colliders)
-            .zip(prepared.lights)
-            .zip(prepared.emitters)
-            .zip(prepared.tints)
-            .zip(prepared.decals)
+        for (((((((expanded, transform), collider), light), emitter), tint), decal), probe) in
+            prepared
+                .entities
+                .iter()
+                .zip(prepared.transforms)
+                .zip(prepared.colliders)
+                .zip(prepared.lights)
+                .zip(prepared.emitters)
+                .zip(prepared.tints)
+                .zip(prepared.decals)
+                .zip(prepared.probes)
         {
             let source = &expanded.source;
             let mut entity = world.spawn((
@@ -299,6 +301,9 @@ impl SceneDocument {
             }
             if let Some(decal) = decal {
                 entity.insert(decal.runtime(materials[decal.material]));
+            }
+            if let Some(probe) = probe {
+                entity.insert(probe);
             }
             spawned.push(entity.id());
             entities.insert(source.id.clone(), entity.id());

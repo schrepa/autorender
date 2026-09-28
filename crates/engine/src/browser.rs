@@ -148,6 +148,12 @@ pub struct FrameStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Reflection probes surfaces could reflect, cube faces captured, and
+    /// probes a budget or the GPU's texture array layers left out (decision
+    /// 043).
+    pub reflection_probes: u32,
+    pub reflection_probe_faces: u32,
+    pub dropped_reflection_probes: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; `None` without occlusion culling.
     pub occluded_instances: Option<u32>,
@@ -217,6 +223,12 @@ pub struct BrowserStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Reflection probes surfaces could reflect, cube faces captured, and
+    /// probes a budget or the GPU's texture array layers left out (decision
+    /// 043).
+    pub reflection_probes: u32,
+    pub reflection_probe_faces: u32,
+    pub dropped_reflection_probes: u32,
     /// Visible instances occlusion culling left undrawn (decision 040), read
     /// back a few frames late; undefined without occlusion culling.
     pub occluded_instances: Option<u32>,
@@ -281,6 +293,9 @@ impl From<FrameStats> for BrowserStats {
             dropped_particles: stats.dropped_particles,
             decals: stats.decals,
             dropped_decals: stats.dropped_decals,
+            reflection_probes: stats.reflection_probes,
+            reflection_probe_faces: stats.reflection_probe_faces,
+            dropped_reflection_probes: stats.dropped_reflection_probes,
             occluded_instances: stats.occluded_instances,
             subpixel_instances: stats.subpixel_instances,
         }
@@ -653,6 +668,9 @@ impl BrowserApp {
             dropped_particles: rendered.dropped_particles,
             decals: rendered.decals,
             dropped_decals: rendered.dropped_decals,
+            reflection_probes: rendered.reflection_probes,
+            reflection_probe_faces: rendered.reflection_probe_faces,
+            dropped_reflection_probes: rendered.dropped_reflection_probes,
             occluded_instances: rendered.occluded_instances,
             subpixel_instances: rendered.subpixel_instances,
         };

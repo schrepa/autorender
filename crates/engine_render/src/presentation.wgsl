@@ -143,6 +143,10 @@ struct Skinned {
 @group(0) @binding(20) var<storage, read> slot_colors: array<SlotColor>;
 @group(0) @binding(21) var<storage, read> skinned: array<Skinned>;
 @group(0) @binding(22) var<storage, read_write> skin_bounds: array<vec4<f32>>;
+// Reflection probes (decision 043): per slot, a fingerprint of the pose it
+// last displayed and the frames in a row it displayed it, up to
+// STILL_FRAMES.
+@group(0) @binding(23) var<storage, read_write> still_frames: array<vec2<u32>>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -164,6 +168,12 @@ const OCCLUDED: u32 = 32u;
 // Sub-pixel culling (decision 041): a frustum-visible candidate whose
 // projected bounds cover no pixel center, counted visible and never drawn.
 const SUBPIXEL: u32 = 64u;
+// Reflection probes (decision 043): a still, opaque candidate inside the
+// cube face being captured, marked afresh for each face.
+const PROBE: u32 = 128u;
+// Frames in a row a slot must display the same pose before probes capture
+// it.
+const STILL_FRAMES: u32 = 16u;
 // Pixels the projected bounds are widened by before looking for pixel
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
@@ -579,6 +589,70 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     scan[candidate.position] = flags;
 }
 
+fn mix_key(key: u32, value: u32) -> u32 {
+    let x = (key ^ value) * 0x9e3779b1u;
+    return x ^ (x >> 15u);
+}
+
+fn mix_row(key: u32, row: vec4<f32>) -> u32 {
+    let bits = bitcast<vec4<u32>>(row);
+    return mix_key(mix_key(mix_key(mix_key(key, bits.x), bits.y), bits.z), bits.w);
+}
+
+// A 32-bit fingerprint of a pose's bits.
+fn pose_key(pose: Rows) -> u32 {
+    return mix_row(mix_row(mix_row(0x2545f491u, pose.r0), pose.r1), pose.r2);
+}
+
+// Reflection probes (decision 043), on frames that have them, after
+// culling: each candidate's slot counts the frames in a row it displayed
+// the same pose, this one included, starting over after any change; an
+// invalid pose counts none.
+@compute @workgroup_size(256)
+fn count_still(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.candidates {
+        return;
+    }
+    let candidate = slot_candidates[id.x];
+    let state = still_frames[candidate.slot];
+    var key = 0u;
+    var count = 0u;
+    if (scan[candidate.position] & VALID) != 0u {
+        key = pose_key(poses[candidate.slot]);
+        count = select(1u, min(state.y + 1u, STILL_FRAMES), key == state.x && state.y != 0u);
+    }
+    if key != state.x || count != state.y {
+        still_frames[candidate.slot] = vec2<u32>(key, count);
+    }
+}
+
+// Reflection probe captures (decision 043), after the frame's own drawing:
+// each valid candidate of an opaque draw group without joints whose slot
+// displayed the same pose for STILL_FRAMES frames, and whose bounds meet the
+// frustum of the cube face being captured (this pass's uniform) and cover a
+// texel center of it (decision 041), is marked PROBE for the compaction that
+// follows; every other candidate loses the mark.
+@compute @workgroup_size(256)
+fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.candidates {
+        return;
+    }
+    let candidate = slot_candidates[id.x];
+    var flags = scan[candidate.position] & ~PROBE;
+    let batch = batches[candidate.batch];
+    let still = still_frames[candidate.slot].y >= STILL_FRAMES;
+    if (flags & VALID) != 0u && still && batch.bounds_min.w == 0.0
+            && batch.bounds_max.w == 0.0 {
+        let model = rows_matrix(poses[candidate.slot]);
+        if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
+                && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
+                    batch.bounds_min.xyz, batch.bounds_max.xyz)) {
+            flags |= PROBE;
+        }
+    }
+    scan[candidate.position] = flags;
+}
+
 // Skinned slots' palettes (decision 036): each joint's displayed pose,
 // composed as culling composes slots', times its inverse bind matrix. A
 // joint without a valid pose counts as the identity.
@@ -680,7 +754,7 @@ fn sum_groups(
     if id.x < frame.candidates {
         let flags = scan[id.x];
         visible = select(0u, 1u, (flags & frame.mask) != 0u);
-        if (flags & SUBPIXEL) != 0u && frame.mask != PHASE2 {
+        if (flags & SUBPIXEL) != 0u && (frame.mask & (PHASE2 | PROBE)) == 0u {
             visible += 0x10000u;
         }
     }

@@ -163,6 +163,7 @@ fn import_primitive(
         animation: None,
         skin,
         decal: None,
+        reflection_probe: None,
         transform: SceneTransform::default(),
         tags: vec!["imported".into()],
     };
@@ -207,6 +208,7 @@ fn hierarchy(
         animation: None,
         skin: None,
         decal: None,
+        reflection_probe: None,
         transform: SceneTransform::default(),
         tags: vec!["imported".into()],
     });
@@ -231,6 +233,7 @@ fn hierarchy(
             animation: None,
             skin: None,
             decal: None,
+            reflection_probe: None,
             transform: local_transform(&node, &path)?,
             tags: vec!["imported".into()],
         });

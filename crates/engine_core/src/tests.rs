@@ -1684,6 +1684,87 @@ fn skins_with_too_few_joints_draw_rigidly_and_skinned_meshes_never_cull() {
 }
 
 #[test]
+fn reflection_probes_list_nearest_first_within_their_budget() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    world.insert_resource(Camera {
+        position: Vec3::ZERO,
+        target: Vec3::NEG_Z,
+        ..Camera::default()
+    });
+    let at = |x: f32| Transform {
+        translation: Vec3::new(x, 2.0, 0.0),
+        ..Default::default()
+    };
+    let far = world
+        .spawn((at(60.0), ReflectionProbe::new(Vec3::splat(10.0))))
+        .id();
+    // The camera stands inside this one's box: nearest of all.
+    let around = world
+        .spawn((
+            at(-5.0),
+            ReflectionProbe::new(Vec3::splat(8.0)).with_blend(2.0),
+        ))
+        .id();
+    let near = world
+        .spawn((at(25.0), ReflectionProbe::new(Vec3::splat(10.0))))
+        .id();
+    // Unusable probes are skipped.
+    world.spawn((at(1.0), ReflectionProbe::new(Vec3::new(1.0, 0.0, 1.0))));
+    let mut snapshot = RenderSnapshot::default();
+    engine.extract(1.5, &mut snapshot);
+    assert!(snapshot.reflection_probe_settings.enabled);
+    let keys: Vec<u64> = snapshot
+        .reflection_probes
+        .iter()
+        .map(|probe| probe.key)
+        .collect();
+    assert_eq!(keys, [around, near, far].map(Entity::to_bits));
+    let first = snapshot.reflection_probes[0];
+    assert_eq!(first.center, Vec3::new(-5.0, 2.0, 0.0));
+    assert_eq!(first.extent, Vec3::splat(8.0));
+    assert_eq!(first.blend, 2.0);
+    // Over budget, the nearest stay.
+    engine
+        .app
+        .world_mut()
+        .resource_mut::<ReflectionProbes>()
+        .max_probes = Some(2);
+    engine.extract(1.5, &mut snapshot);
+    assert_eq!(snapshot.reflection_probes.len(), 2);
+    assert_eq!(snapshot.dropped_reflection_probes, 1);
+    // Without the resource, frames list none.
+    engine.app.world_mut().remove_resource::<ReflectionProbes>();
+    engine.extract(1.5, &mut snapshot);
+    assert!(!snapshot.reflection_probe_settings.enabled);
+    assert!(snapshot.reflection_probes.is_empty());
+}
+
+#[test]
+fn reflection_probe_settings_sanitize_into_their_ranges() {
+    let settings = ReflectionProbes {
+        enabled: true,
+        resolution: 100,
+        max_probes: Some(0),
+        faces_per_frame: 0,
+    }
+    .sanitized();
+    assert_eq!(settings.resolution, 128);
+    assert_eq!(settings.max_probes, Some(1));
+    assert_eq!(settings.faces_per_frame, 1);
+    let tiny = ReflectionProbes {
+        resolution: 2,
+        ..ReflectionProbes::default()
+    };
+    assert_eq!(tiny.sanitized().resolution, 16);
+    let huge = ReflectionProbes {
+        resolution: 5000,
+        ..ReflectionProbes::default()
+    };
+    assert_eq!(huge.sanitized().resolution, 1024);
+}
+
+#[test]
 fn decals_extract_their_materials_poses_and_the_nearest_win_the_budget() {
     let mut engine = Engine::default();
     let world = engine.app.world_mut();
