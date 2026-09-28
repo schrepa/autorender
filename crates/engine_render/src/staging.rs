@@ -19,7 +19,11 @@ use crate::uploads::UploadRange;
 
 /// Smaller uploads keep `write_buffer`; they are cheap on every browser.
 pub(crate) const MIN_STAGED_BYTES: usize = 256 * 1024;
-const MAX_BUFFERS: usize = 3;
+/// A buffer maps again only once the GPU finished the frame that copied from
+/// it, a few frames later when the GPU limits the frame rate: with three,
+/// half of Metro's frames found none mapped (Firefox, Xe-LPG). The ring adds
+/// buffers only while none is mapped.
+const MAX_BUFFERS: usize = 6;
 /// Staging sizes grow in 256 KiB steps to avoid reallocating per frame.
 const SIZE_STEP: u64 = 256 * 1024;
 

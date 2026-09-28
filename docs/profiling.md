@@ -171,7 +171,9 @@ records. Pose uploads of at least 256 KiB go through persistently mapped staging
 buffers: `render.pose_staged` is 1 when one was used, and
 `render.pose_staging_unavailable` is 1 when none was mapped yet and the upload
 fell back to `writeBuffer`. `memory.gpu_pose_staging_bytes` reports the staging
-ring's capacity (at most three buffers). Queue-write time moves between browsers
+ring's capacity (at most six buffers: a buffer maps again only after the GPU
+finished the frame that copied from it, a few frames later when the GPU limits
+the frame rate). Queue-write time moves between browsers
 with this path: Firefox copies large `writeBuffer` calls through new shared
 memory, while Chrome's `writeBuffer` is already cheap.
 `render.retained_frame` distinguishes this path from public snapshots' validated
