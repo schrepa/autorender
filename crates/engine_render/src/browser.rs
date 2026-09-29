@@ -2984,6 +2984,29 @@ impl Renderer {
             } else {
                 None
             },
+            triangles: if gpu_mode {
+                self.gpu_presentation.triangles()
+            } else {
+                // CPU-prepared frames draw every planned instance as its
+                // mesh, but virtual geometry as its clusters.
+                let triangles: u64 = self
+                    .plan
+                    .batches
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| self.virtual_drawn.get(*index) != Some(&true))
+                    .map(|(_, batch)| {
+                        u64::from(batch.instances.end - batch.instances.start)
+                            * u64::from(
+                                self.meshes
+                                    .get(&batch.mesh)
+                                    .map_or(0, |mesh| mesh.index_count)
+                                    / 3,
+                            )
+                    })
+                    .sum();
+                Some(triangles.min(u64::from(u32::MAX)) as u32)
+            },
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
@@ -3166,6 +3189,9 @@ impl Renderer {
             }
             if let Some(subpixel) = stats.subpixel_instances {
                 engine_profile::counter("render.subpixel_instances", f64::from(subpixel));
+            }
+            if let Some(triangles) = stats.triangles {
+                engine_profile::counter("render.triangles", f64::from(triangles));
             }
             if let Some(levels) = stats.lod_instances {
                 for (name, count) in [

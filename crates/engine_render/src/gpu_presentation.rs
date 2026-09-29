@@ -139,6 +139,7 @@ struct VisibleReadback {
     occluded: Rc<Cell<Option<u32>>>,
     subpixel: Rc<Cell<Option<u32>>>,
     levels: Rc<Cell<Option<[u32; 4]>>>,
+    triangles: Rc<Cell<Option<u32>>>,
 }
 
 // The occlusion test group's pose buffer index, pyramid generation, buffer
@@ -148,8 +149,8 @@ type OcclusionKey = (usize, u64, u64, Option<u64>);
 // Totals read back: phase one's (or the only) visible count, phase two's,
 // the candidates phase two found hidden, and those covering no pixel center
 // (decision 041); then phase one's and phase two's drawn counts per level of
-// detail (decision 047).
-const TOTALS_BYTES: u64 = 48;
+// detail (decision 047); then the triangles both phases' draws submit.
+const TOTALS_BYTES: u64 = 52;
 
 /// Per-frame outcome for profiling counters and stats.
 #[derive(Default)]
@@ -309,6 +310,7 @@ pub(crate) struct GpuPresentationPass {
     last_occluded: Rc<Cell<Option<u32>>>,
     last_subpixel: Rc<Cell<Option<u32>>>,
     last_levels: Rc<Cell<Option<[u32; 4]>>>,
+    last_triangles: Rc<Cell<Option<u32>>>,
 }
 
 fn storage(
@@ -537,6 +539,7 @@ impl GpuPresentationPass {
             last_occluded: Rc::new(Cell::new(None)),
             last_subpixel: Rc::new(Cell::new(None)),
             last_levels: Rc::new(Cell::new(None)),
+            last_triangles: Rc::new(Cell::new(None)),
         }
     }
 
@@ -588,6 +591,12 @@ impl GpuPresentationPass {
     /// Instances drawn at each level of detail (decision 047), read back
     /// with [`Self::visible`]: the mesh, its two simplifications, then
     /// impostors.
+    /// Triangles the camera's mesh draws submitted, levels of detail and
+    /// impostors included, read back with `visible`.
+    pub(crate) fn triangles(&self) -> Option<u32> {
+        self.last_triangles.get()
+    }
+
     pub(crate) fn lod_instances(&self) -> Option<[u32; 4]> {
         self.last_levels.get()
     }
@@ -877,6 +886,7 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(12, &self.draws),
+                    entry(19, &self.occlusion_counts),
                 ],
             ),
             scatter: group(
@@ -915,6 +925,7 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(12, &self.draws2),
+                    entry(19, &self.occlusion_counts),
                 ],
             ),
             scatter2: group(
@@ -1717,6 +1728,7 @@ impl GpuPresentationPass {
             // Phase one's group sums counted sub-pixel candidates.
             encoder.copy_buffer_to_buffer(&self.occlusion_counts, 4, &self.totals, 12, 4);
             if !self.occlusion {
+                encoder.copy_buffer_to_buffer(&self.occlusion_counts, 8, &self.totals, 48, 4);
                 self.read_back_totals(device, encoder);
             }
         }
@@ -1828,6 +1840,7 @@ impl GpuPresentationPass {
         encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 4, 4);
         encoder.copy_buffer_to_buffer(&self.scan, self.level_offset(), &self.totals, 32, 16);
         encoder.copy_buffer_to_buffer(&self.occlusion_counts, 0, &self.totals, 8, 4);
+        encoder.copy_buffer_to_buffer(&self.occlusion_counts, 8, &self.totals, 48, 4);
         self.read_back_totals(device, encoder);
     }
 
@@ -1854,6 +1867,7 @@ impl GpuPresentationPass {
             occluded: Rc::clone(&self.last_occluded),
             subpixel: Rc::clone(&self.last_subpixel),
             levels: Rc::clone(&self.last_levels),
+            triangles: Rc::clone(&self.last_triangles),
         });
         self.readbacks.last()
     }
@@ -1870,6 +1884,7 @@ impl GpuPresentationPass {
             let occluded = Rc::clone(&readback.occluded);
             let subpixel = Rc::clone(&readback.subpixel);
             let levels = Rc::clone(&readback.levels);
+            let triangles = Rc::clone(&readback.triangles);
             let buffer = readback.buffer.clone();
             readback
                 .buffer
@@ -1897,6 +1912,7 @@ impl GpuPresentationPass {
                             levels.set(Some(std::array::from_fn(|level| {
                                 word(4 + level).saturating_add(word(8 + level))
                             })));
+                            triangles.set(Some(word(12)));
                         }
                         buffer.unmap();
                     }
@@ -2085,6 +2101,8 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(12, &self.draws_probe),
+                    // Probe faces count no triangles.
+                    entry(19, &self.occlusion_counts),
                 ],
             ),
             scatter: group(

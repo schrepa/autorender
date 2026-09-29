@@ -135,7 +135,10 @@ Measurements:
   capture differs from the exact frame in 5,425 pixels (0.5%). A 4x crop
   shows no visible difference, and the close view is identical.
 - The overview draws 47,595 instances at level 0, 9,512 at level 1 and 1,504
-  at level 2.
+  at level 2. Its camera draws submit 3.25 million triangles at full detail,
+  1.84 million with levels and 1.13 million with impostors too
+  (`rendering.triangles`, 1920x1080 window); the CPU path, which culls by
+  frustum alone, submits 4.98 million.
 - Firefox on the laptop's integrated GPU, one build without impostors
   (decision 048), three alternating runs each:
   - opaque pass 9.60 ms off, 7.45 ms on;

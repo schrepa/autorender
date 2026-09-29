@@ -176,7 +176,9 @@ as their mesh and its two simplifications ([decision 047](adr-047-levels-of-deta
 read back late, null on CPU-presented frames), and `impostor_instances`, those
 drawn as impostors ([decision 048](adr-048-impostors.md)), with `impostors`
 baked and `dropped_impostors`, the draw groups a budget or the GPU left
-drawing their meshes. `Mesh3d` reports each material's `surface`, `opacity` and
+drawing their meshes; `triangles`, those the camera's mesh draws submitted at
+their levels, impostors two each (exact on CPU-prepared frames, read back late
+on GPU-culled ones; virtual geometry's are `virtual_triangles`). `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

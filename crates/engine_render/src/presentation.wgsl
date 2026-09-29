@@ -142,7 +142,8 @@ struct Level {
 @group(0) @binding(17) var<storage, read_write> palette: array<Rows>;
 // Occlusion culling (decision 040): the farthest depth of each 2x2 block of
 // the depth buffer, then of each 2x2 block of the level below, after phase
-// one; and the count of candidates phase two finds hidden.
+// one; and counts: candidates phase two finds hidden, sub-pixel candidates,
+// and the triangles the camera's draws submit.
 @group(0) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(0) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
 // Skinned slots (decision 036): each slot's palette offset plus one (in
@@ -937,6 +938,14 @@ fn scan_groups(@builtin(local_invocation_index) lane: u32) {
     }
 }
 
+fn saturating_mul(a: u32, b: u32) -> u32 {
+    return select(a * b, 0xffffffffu, b != 0u && a > 0xffffffffu / b);
+}
+
+fn saturating_add(a: u32, b: u32) -> u32 {
+    return select(a + b, 0xffffffffu, a > 0xffffffffu - b);
+}
+
 fn visible_before(position: u32) -> vec4<u32> {
     if position >= frame.candidates {
         return load_sums(frame.groups);
@@ -969,11 +978,25 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
         batch_bases[4u * id.x + level] = base[level];
     }
     draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
+    // Triangles the camera's draws submit at every level: not reflection
+    // probe faces', nor virtual geometry's, whose clusters count their own.
+    if (frame.mask & PROBE) == 0u && batch.bounds_max.w != 2.0 {
+        let triangles = saturating_add(saturating_add(
+            saturating_mul(batch.index_count / 3u, instances),
+            saturating_mul(batch.lod_ranges.y / 3u, visible.y)),
+            saturating_mul(batch.lod_ranges.w / 3u, visible.z));
+        if triangles != 0u {
+            atomicAdd(&occlusion_counts[2], triangles);
+        }
+    }
     // Every group's impostors (decision 048) draw as one card list, whose
     // arguments a non-indexed draw reads: vertices, instances and zeros.
     if id.x == 0u {
-        draws[LOD_LEVELS * frame.batches] = DrawArgs(IMPOSTOR_VERTICES,
-            load_sums(frame.groups)[IMPOSTOR], 0u, 0, 0u);
+        let impostors = load_sums(frame.groups)[IMPOSTOR];
+        draws[LOD_LEVELS * frame.batches] = DrawArgs(IMPOSTOR_VERTICES, impostors, 0u, 0, 0u);
+        if impostors != 0u {
+            atomicAdd(&occlusion_counts[2], saturating_mul(IMPOSTOR_VERTICES / 3u, impostors));
+        }
     }
     let levels = u32(batch.lod_errors.z);
     if levels > 1u {

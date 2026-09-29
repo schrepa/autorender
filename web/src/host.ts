@@ -26,6 +26,7 @@ export interface RuntimeStats {
   subpixel_instances: number | undefined;
   lod0_instances: number | undefined; lod1_instances: number | undefined;
   lod2_instances: number | undefined; impostor_instances: number | undefined;
+  triangles: number | undefined;
   free(): void;
 }
 export interface Runtime {
@@ -192,7 +193,8 @@ function frame(timestamp: number) {
         metric("extraction", (extraction / samples).toFixed(2), "ms");
         metric("draws", String(stats.draw_calls));
         element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
-        element("render-time").textContent = `${stats.instances} drawn · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
+        const triangles = stats.triangles === undefined ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
+        element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
         canvas.dataset.frames = String(frameCount);
         canvas.dataset.instances = String(stats.instances);
         canvas.dataset.renderCandidates = String(stats.render_candidates);

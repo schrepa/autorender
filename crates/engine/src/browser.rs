@@ -209,6 +209,10 @@ pub struct FrameStats {
     pub lod1_instances: Option<u32>,
     pub lod2_instances: Option<u32>,
     pub impostor_instances: Option<u32>,
+    /// Triangles the camera's mesh draws submitted, levels of detail and
+    /// impostors included (virtual geometry's are `virtual_triangles`);
+    /// read back a few frames late on GPU-culled frames.
+    pub triangles: Option<u32>,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -316,6 +320,10 @@ pub struct BrowserStats {
     pub lod1_instances: Option<u32>,
     pub lod2_instances: Option<u32>,
     pub impostor_instances: Option<u32>,
+    /// Triangles the camera's mesh draws submitted, levels of detail and
+    /// impostors included (virtual geometry's are `virtual_triangles`);
+    /// read back a few frames late on GPU-culled frames.
+    pub triangles: Option<u32>,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -395,6 +403,7 @@ impl From<FrameStats> for BrowserStats {
             lod1_instances: stats.lod1_instances,
             lod2_instances: stats.lod2_instances,
             impostor_instances: stats.impostor_instances,
+            triangles: stats.triangles,
         }
     }
 }
@@ -787,6 +796,7 @@ impl BrowserApp {
             lod1_instances: rendered.lod_instances.map(|levels| levels[1]),
             lod2_instances: rendered.lod_instances.map(|levels| levels[2]),
             impostor_instances: rendered.lod_instances.map(|levels| levels[3]),
+            triangles: rendered.triangles,
         };
         Ok(())
     }

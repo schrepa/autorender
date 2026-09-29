@@ -33,6 +33,11 @@ pub struct RenderStats {
     /// drawn as their mesh, its two simplifications and impostors, read
     /// back with `gpu_visible`; `None` otherwise.
     pub lod_instances: Option<[u32; 4]>,
+    /// Triangles the camera's mesh draws submitted, at their levels of
+    /// detail and impostors' two each: exact on CPU-prepared frames, read
+    /// back with `gpu_visible` on GPU-culled ones. Virtual geometry counts
+    /// its own in `virtual_triangles`.
+    pub triangles: Option<u32>,
     /// Number of distinct meshes retained on the GPU.
     pub resident_meshes: u32,
     /// Vertex/index bytes initialized for meshes first seen this frame.
