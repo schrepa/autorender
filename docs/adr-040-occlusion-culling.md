@@ -25,17 +25,8 @@ pass in two phases around an occlusion test, entirely on the GPU:
    of each 2x2 block of the depth buffer, each further level the farthest of
    each 2x2 block of the level below (the smallest values: depth is reversed,
    [decision 042](adr-042-reversed-depth.md)). Levels have power-of-two
-   sizes, so each halves the last exactly. One dispatch reduces up to six
-   levels, as AMD's single-pass downsampler does: each workgroup reduces a
-   32x32 tile of the dispatch's first level, two levels in registers and the
-   rest in workgroup memory, so a 1512x792 canvas's eleven levels take two
-   dispatches instead of eleven. (Tiles of 64x64 left too few threads
-   reading the depth buffer: each pyramid took 0.2 ms longer on the laptop's
-   integrated GPU; 32x32 tiles cost what one dispatch per level did.) Each
-   level binds as a storage texture, so the device requests the adapter's
-   limit and devices binding fewer than six (WebGPU guarantees four) reduce
-   shorter chunks. Screen-space reflections reduce their nearest-depth
-   pyramid alike.
+   sizes, so each halves the last exactly. One dispatch writes each level,
+   a texel per thread.
 3. The **test** projects every other frustum-visible instance's posed mesh
    bounds and compares their nearest depth with the farthest depth of the
    pyramid texels (at most 2x2, at the finest level that small) its screen
@@ -74,3 +65,18 @@ frame, and the second phase repeats the opaque pass's draw commands, most of
 them empty. An instance that becomes visible draws in phase two for one
 frame, after the others: where it exactly overlaps another surface at equal
 depth, that frame may show the other. Views that hide little gain little.
+
+## Alternatives and evidence
+
+Single-pass downsampling (tried 28 September 2026), as AMD's FidelityFX
+SPD does: one dispatch writing up to six levels, each workgroup reducing a
+tile of its first level, the first levels in registers and the rest in
+workgroup memory, so a 1512x792 canvas's eleven levels take two or three
+dispatches instead of eleven. Output was identical. In Firefox on the
+laptop's integrated GPU every variant cost more than a dispatch per level,
+for both this pyramid and the nearest-depth pyramid of screen-space
+reflections (decision 025): 64x64 tiles about 0.2 ms more per pyramid (too
+few threads read the depth buffer), 32x32 tiles and chunks of two levels
+without workgroup memory about 0.04 ms more, and 16x16 tiles of a texel a
+thread 0.02 to 0.03 ms more. Dispatches within one compute pass cost less
+there than the workgroup barriers and idle threads of the reduction.

@@ -131,7 +131,7 @@ mod gpu_data;
 mod batches;
 #[cfg(any(target_arch = "wasm32", test))]
 mod decals;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod depth_pyramid;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;

@@ -370,11 +370,6 @@ impl Renderer {
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
                 .max(8),
-            // Depth pyramids write up to six levels per dispatch, one
-            // storage texture each, where the adapter allows them.
-            max_storage_textures_per_shader_stage: adapter_limits
-                .max_storage_textures_per_shader_stage
-                .max(4),
             ..wgpu::Limits::downlevel_defaults()
         };
         // Block-compressed textures (decision 037) in every format the
