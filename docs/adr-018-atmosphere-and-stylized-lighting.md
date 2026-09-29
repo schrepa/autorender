@@ -74,3 +74,15 @@ shadows, emissive materials or bloom: lit windows are bright texture texels,
 not light sources. Shadow maps would add a depth pass over all geometry, the
 cost that already bounds large scenes; material emission and a bloom pass are
 the natural next steps for night scenes.
+
+## Alternatives and evidence
+
+Half-precision shading (tried 28 September 2026). Firefox and Chrome expose
+`shader-f16` on the laptop's integrated GPU. Shading surface colors and
+light sums in f16, and in a second variant the grade, environment light
+and local lights too, while positions, directions, roughness and the
+highlight's microfacet terms stayed f32, changed at most 2 of 255 levels in
+6% of Metro's pixels. Metro's opaque pass measured 8.91 ms against 8.99 ms
+with colors in f16, and 8.97 against 8.92 ms (overview) and 6.57 against
+6.35 ms (close view) with the wider variant, in Firefox: the conversions
+cost what narrower arithmetic saves there. Not adopted.

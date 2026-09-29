@@ -74,3 +74,16 @@ and shadow maps 3.0-3.1 ms before and 2.7-2.8 ms after.
 
 Meshes placed together are retired separately, so ranges fragment; first
 fit reuses them, and nothing compacts the arena.
+
+## Alternatives and evidence
+
+Render bundles (tried 28 September 2026). GPU presentation writes every
+indirect draw's arguments, so the opaque phases and the shadow maps record
+the same commands from frame to frame. Recording them into a list compared
+by resource identity (wgpu never reuses one) and replaying a cached bundle
+drew identical pixels, but once draws are state-sorted browsers charge
+little per call: 1,400 indexed indirect draws with 350 bind group changes
+cost about 0.08 ms of script time per pass in Firefox and 0.05 ms in Chrome
+(0.13 ms with the discrete GPU), against 0.01 ms for a bundle. Metro's
+command encoding, about 0.6 ms a frame, did not fall: recording and
+comparing the commands cost what the calls saved. Bundles were not adopted.

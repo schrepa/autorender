@@ -48,3 +48,19 @@ The test projects eight corners per frustum-visible instance in the culling
 pass, a small part of its cost. Instances just at the size of a pixel may
 cover a center on one frame and none on the next; either way they draw what
 they would have drawn.
+
+## Alternatives and evidence
+
+Culling back faces before the rasterizer (tried 28 September 2026). On
+Metro 67% of instance triangles lie in groups facing along one of their
+mesh's axes, about half of which face away from any view. WebGPU has no
+multi-draw indirect and an empty indirect draw costs about 0.3 µs on the
+laptop's integrated GPU, so drawing each face group on its own would add
+six draws per draw group and phase. The variant without extra draws was
+measured: each mesh's downward faces (all three vertices at one height,
+winding facing down) last in its indices, a pass testing the eye's height
+in every visible instance's mesh space, and indirect draws shortened past
+those faces for draw groups the eye sees only from above. Output was
+identical and the draws shortened, but the opaque pass measured 9.39 ms
+with it and 9.31 ms without (one build, Firefox) while the test added
+0.23 ms: the rasterizer rejects back faces cheaply. Not adopted.
