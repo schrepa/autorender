@@ -2240,15 +2240,19 @@ impl Renderer {
                 || resolve_phase;
             // Profiled frames time both phases as one opaque span.
             #[cfg(feature = "profiling")]
-            let timestamp_writes = self.profiler.writes(query_slot).map(|mut writes| {
-                if phase != 0 {
-                    writes.beginning_of_pass_write_index = None;
-                }
-                if phase + 1 != phases || resolve_phase {
-                    writes.end_of_pass_write_index = None;
-                }
-                writes
-            });
+            let timestamp_writes = self
+                .profiler
+                .writes(query_slot)
+                .map(|mut writes| {
+                    if phase != 0 {
+                        writes.beginning_of_pass_write_index = None;
+                    }
+                    if phase + 1 != phases || resolve_phase {
+                        writes.end_of_pass_write_index = None;
+                    }
+                    writes
+                })
+                .filter(timestamps_written);
             #[cfg(not(feature = "profiling"))]
             let timestamp_writes = None;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2488,13 +2492,17 @@ impl Renderer {
                 })
                 .collect();
             #[cfg(feature = "profiling")]
-            let timestamp_writes = self.profiler.writes(query_slot).map(|mut writes| {
-                writes.beginning_of_pass_write_index = None;
-                if phase + 1 != phases {
-                    writes.end_of_pass_write_index = None;
-                }
-                writes
-            });
+            let timestamp_writes = self
+                .profiler
+                .writes(query_slot)
+                .map(|mut writes| {
+                    writes.beginning_of_pass_write_index = None;
+                    if phase + 1 != phases {
+                        writes.end_of_pass_write_index = None;
+                    }
+                    writes
+                })
+                .filter(timestamps_written);
             #[cfg(not(feature = "profiling"))]
             let timestamp_writes = None;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -4304,6 +4312,14 @@ fn create_instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize)
 
 /// A virtual geometry pipeline's entry points, color targets and constants
 /// (decisions 044 and 045).
+/// Whether a pass's timestamp writes write any query: passes of a span
+/// between its first and last write none, and WebGPU refuses writes naming
+/// neither.
+#[cfg(feature = "profiling")]
+fn timestamps_written(writes: &wgpu::RenderPassTimestampWrites<'_>) -> bool {
+    writes.beginning_of_pass_write_index.is_some() || writes.end_of_pass_write_index.is_some()
+}
+
 struct VirtualStages {
     vertex: &'static str,
     fragment: &'static str,
