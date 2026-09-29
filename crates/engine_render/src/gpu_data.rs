@@ -404,8 +404,6 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
 pub(crate) const SHADER: &str = concat!(include_str!("scene.wgsl"), include_str!("meshes.wgsl"));
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
-/// The depth pyramid of occlusion culling (decision 040).
-pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
 /// Cluster selection of virtual geometry (decision 044).
 pub(crate) const VIRTUAL_SHADER: &str = include_str!("virtual_geometry.wgsl");
 /// Tile classification of the visibility buffer (decision 045).
@@ -1591,7 +1589,6 @@ mod tests {
             PARTICLE_SHADER,
             TRANSPARENT_SHADER,
             SHAFTS_SHADER,
-            DEPTH_PYRAMID_SHADER,
             ENVIRONMENT_SHADER,
             VIRTUAL_SHADER,
             VISIBILITY_SHADER,

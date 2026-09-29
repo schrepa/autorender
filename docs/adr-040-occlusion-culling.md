@@ -25,7 +25,14 @@ pass in two phases around an occlusion test, entirely on the GPU:
    of each 2x2 block of the depth buffer, each further level the farthest of
    each 2x2 block of the level below (the smallest values: depth is reversed,
    [decision 042](adr-042-reversed-depth.md)). Levels have power-of-two
-   sizes, so each halves the last exactly.
+   sizes, so each halves the last exactly. One dispatch reduces up to six
+   levels, as AMD's single-pass downsampler does: each workgroup reduces a
+   64x64 tile of the dispatch's first level, three levels in registers and
+   the rest in workgroup memory, so a 1512x792 canvas's eleven levels take
+   two dispatches instead of eleven. Each level binds as a storage texture,
+   so the device requests the adapter's limit and devices binding fewer
+   than six (WebGPU guarantees four) reduce shorter chunks. Screen-space
+   reflections reduce their nearest-depth pyramid alike.
 3. The **test** projects every other frustum-visible instance's posed mesh
    bounds and compares their nearest depth with the farthest depth of the
    pyramid texels (at most 2x2, at the finest level that small) its screen
