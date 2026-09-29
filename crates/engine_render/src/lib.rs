@@ -115,8 +115,8 @@ pub struct LightStats {
 pub struct ShadowStats {
     /// Indexed draws into the shadow maps, in addition to `draw_calls`.
     pub draws: u32,
-    /// Kept-map redraw: 0 none, 1 one strip, 2 the whole map (every still
-    /// caster).
+    /// Kept-map redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole
+    /// map (every still caster).
     pub kept_redraw: u8,
     /// Casters the near, moving and kept maps drew, read back a few frames
     /// late; `None` before the first read-back. In a settled scene the moving

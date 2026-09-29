@@ -34,10 +34,12 @@ flattening casters in front of a map onto its near plane:
   every frame;
 - the kept far map covers the region and holds casters whose pose has not
   changed for 8 frames (180 once a kept caster moved again: casters that
-  pause stay in the moving map instead of redrawing kept strips at every
+  pause stay in the moving map instead of redrawing kept tiles at every
   pause). It is redrawn whole when the sun, the region or the
-  resolution changes, and otherwise only where it is dirty: one of 16
-  horizontal strips per frame, cleared under a scissor;
+  resolution changes, and otherwise only where it is dirty, in tiles of a
+  16x16 grid: each frame one rectangle of them, cleared under a scissor,
+  the dirty tiles of the lowest row holding any and of the rows above it
+  while the rectangle stays within 16 tiles;
 - the moving far map covers the region too and holds every other caster
   (and kept ones for 64 frames, until the kept map surely holds them). It is
   redrawn every frame.
@@ -52,12 +54,13 @@ receivers can be, the light-space bounds of the view frustum up to the
 cascade's reach (or the shadow distance, or the sun shafts' when longer),
 widened by the lookups' normal offset and texel gathers. Maps keep their
 regions, so selection changes no texel; the kept map selects from its whole
-region, which every view reuses. On
-GPU-presented frames it also keeps, per slot, a 32-bit key of the pose and
-mesh, a stillness count and the kept strips the slot was last drawn into; a
-kept slot that moves, or one that becomes still, marks strips dirty in a
-buffer read back a few frames later without waiting. Removing candidates
-marks every strip dirty. Fragments look up the near map within its distance
+region, which every view reuses, and its redrawn tiles from their
+rectangle. On GPU-presented frames it also keeps, per slot, a 32-bit key of
+the pose and mesh, a stillness count and the kept-map tiles the slot was
+last drawn into (their first and last column and row); a kept slot that
+moves, or one that becomes still, marks the tiles under it dirty in a buffer
+read back a few frames later without waiting. Removing candidates marks
+every tile dirty. Fragments look up the near map within its distance
 and otherwise the far maps (the kept one only on GPU-presented frames), with
 filtered comparisons, a slope-scaled depth bias and a normal offset of 1.5
 texels. Shadows darken the sun's diffuse light and highlight only; sky light
@@ -74,13 +77,19 @@ Public snapshots draw their own instances, which are visible ones.
 - GPU and CPU captures of the same state match: the GPU-presentation smoke
   check compares both with every renderable moving and with none.
 - A kept caster that moves or disappears leaves a stale shadow until its
-  strips are redrawn, a few frames later.
+  tiles are redrawn, a few frames later.
 - The Stress Lab bounds each scene and uses 4096 texels; its Effects control
   (and `?effects=`) turns shadows off.
 
 ## Measurements
 
-None yet: to be measured with decisions 019 and 021. Memory at the default
+The kept map first redrew one of 16 full-width strips per frame: in the
+Stress Lab Metro overview (Firefox, the laptop's integrated GPU) a strip
+was dirty on 55 to 95% of frames and each redraw drew about 11,200 casters,
+0.75 ms of GPU time per frame. Tiles redraw about 1,100 casters per refresh
+(the median) and cost 0.38 ms per frame, with identical captures.
+
+Otherwise none yet: to be measured with decisions 019 and 021. Memory at the default
 2048 texels is 18 MiB of maps; at 4096, 72 MiB.
 
 ## Consequences

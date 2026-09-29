@@ -240,7 +240,7 @@ culling ([decision 041](adr-041-subpixel-culling.md)) left undrawn. Ambient occl
 add `ambient_occlusion` (the samples and their filter), `bloom` (every
 level down and up) and, on frames
 without temporal antialiasing, `post_composite`. Counters report
-`render.shadow_refresh` (0 no kept-map redraw, 1 a strip, 2 the whole map),
+`render.shadow_refresh` (0 no kept-map redraw, 1 dirty tiles, 2 the whole map),
 `render.shadow_groups`, `render.shadow_draws` (indexed shadow draws, beside
 the camera pass's `render.draw_calls`), `render.shadow_near_casters`,
 `render.shadow_moving_casters` and `render.shadow_kept_casters` (casters each

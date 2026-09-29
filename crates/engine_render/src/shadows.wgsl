@@ -3,7 +3,7 @@
 // `select_casters` visits every candidate once. It transforms the candidate's
 // mesh bounds into light space and appends its slot to the instance IDs of
 // each shadow map it can darken: the near cascades that follow the camera
-// (decision 028), the far map redrawn every frame, and the region of the
+// (decision 028), the far map redrawn every frame, and the tiles of the
 // kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
 // only when a region of it is dirty, and leave the per-frame map a little
@@ -34,9 +34,9 @@ struct Cull {
     capacity: u32,
     // STILLNESS | REFRESH.
     mode: u32,
-    // Kept-map strips: light-space y of the first, the strip height and the
-    // strip count.
-    strips: vec4<f32>,
+    // Kept-map tiles (TILES a side): light-space x and y of the first
+    // tile's corner, and the tile width and height.
+    tiles: vec4<f32>,
     // Near cascades drawn this frame, and skinned slots of GPU-presented
     // frames.
     cascades: u32,
@@ -91,16 +91,16 @@ struct DrawArgs {
 // candidate whose pose this frame's culling wrote).
 @group(0) @binding(4) var<storage, read> flags: array<u32>;
 // Per slot: its pose key, and its still-frame count with the kept-map
-// strips it was last drawn into.
+// tiles it was last drawn into.
 @group(0) @binding(5) var<storage, read_write> stillness: array<vec2<u32>>;
 @group(0) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(0) @binding(7) var<storage, read_write> args: array<DrawArgs>;
-// Counters read back ([0]: kept-map strips to redraw, one bit each; [1..4]:
-// this frame's casters of the near cascades, moving and kept maps), then the
-// start of each draw group's ID region within a map. Sharing one binding
-// keeps the selection within eight storage buffers.
+// Counters read back ([0..8]: kept-map tiles to redraw, two rows of 16
+// each; [8..11]: this frame's casters of the near cascades, moving and kept
+// maps), then the start of each draw group's ID region within a map.
+// Sharing one binding keeps the selection within eight storage buffers.
 struct Counters {
-    dirty: array<atomic<u32>, 4>,
+    dirty: array<atomic<u32>, 12>,
     starts: array<u32>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
@@ -123,19 +123,25 @@ const REFRESH: u32 = 2u;
 // Presentation's candidate flag of a valid pose.
 const VALID: u32 = 4u;
 // Frames a pose must stay unchanged before its slot is kept, and until it
-// leaves the per-frame map: long enough for the dirty strips to be read
-// back and redrawn one per frame.
+// leaves the per-frame map: long enough for the dirty tiles to be read
+// back and redrawn.
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
 // A kept slot that moves again becomes restless: it waits this much longer
 // before it is kept again, so props that pause and vehicles that stop stay
-// in the per-frame map instead of redrawing kept strips at every pause.
+// in the per-frame map instead of redrawing kept tiles at every pause.
 const KEEP_AFTER_RESTLESS: u32 = 180u;
 const MOVING_UNTIL_RESTLESS: u32 = 236u;
-// Stillness state bits: the count in the low byte, then the kept strips,
-// then this flag.
+// Stillness state bits: the count in the low byte; the kept-map tiles the
+// slot was last drawn into (first and last column, first and last row, four
+// bits each) and DRAWN when it was; and RESTLESS.
+const FOOTPRINT: u32 = 0x1ffff00u;
+const DRAWN: u32 = 0x1000000u;
 const RESTLESS: u32 = 0x80000000u;
-const STRIP_MASK: u32 = 0xffffu;
+// Tiles across each side of the kept map, and the counter words marking
+// them dirty, before the caster totals.
+const TILES: u32 = 16u;
+const TILE_WORDS: u32 = 8u;
 // Near cascades are maps 0 to 3; the far maps follow.
 const MOVING_MAP: u32 = 4u;
 const KEPT_MAP: u32 = 5u;
@@ -213,12 +219,25 @@ fn select_skinned(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Kept-map strips covering light-space heights `low` to `high`, one bit each.
-fn strip_bits(low: f32, high: f32) -> u32 {
-    let count = cull.strips.z;
-    let first = u32(clamp(floor((low - cull.strips.x) / cull.strips.y), 0.0, count - 1.0));
-    let last = u32(clamp(floor((high - cull.strips.x) / cull.strips.y), 0.0, count - 1.0));
-    return (0xffffffffu >> (31u - last)) & (0xffffffffu << first);
+// The kept-map tiles under light-space `low` to `high`, packed as the
+// stillness state keeps them, with DRAWN.
+fn footprint(low: vec2<f32>, high: vec2<f32>) -> u32 {
+    let last = vec2<f32>(f32(TILES - 1u));
+    let first_tile = vec2<u32>(clamp(floor((low - cull.tiles.xy) / cull.tiles.zw),
+        vec2<f32>(0.0), last));
+    let last_tile = vec2<u32>(clamp(floor((high - cull.tiles.xy) / cull.tiles.zw),
+        vec2<f32>(0.0), last));
+    return DRAWN | (first_tile.x << 8u) | (last_tile.x << 12u) | (first_tile.y << 16u)
+        | (last_tile.y << 20u);
+}
+
+// Marks the kept-map tiles of `packed` (a footprint) dirty.
+fn mark_dirty(packed: u32) {
+    let columns = (0xffffu >> (15u - ((packed >> 12u) & 15u)))
+        & (0xffffu << ((packed >> 8u) & 15u));
+    for (var row = (packed >> 16u) & 15u; row <= ((packed >> 20u) & 15u); row++) {
+        atomicOr(&counters.dirty[row / 2u], columns << (row % 2u * 16u));
+    }
 }
 
 @compute @workgroup_size(256)
@@ -275,33 +294,33 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         let key = pose_key(pose, batch.group);
         let state = stillness[candidate.slot];
         var count = state.y & 0xffu;
-        var strips = (state.y >> 8u) & STRIP_MASK;
+        var drawn = state.y & FOOTPRINT;
         var restless = state.y & RESTLESS;
         var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
         if state.x == key {
             count = min(count + 1u, 255u);
         } else {
-            // A kept slot that moved leaves its shadow in the strips it was
+            // A kept slot that moved leaves its shadow in the tiles it was
             // drawn into: redraw them, and keep it moving longer next time.
-            if count >= keep_after && strips != 0u {
-                atomicOr(&counters.dirty[0], strips);
+            if count >= keep_after && drawn != 0u {
+                mark_dirty(drawn);
                 restless = RESTLESS;
                 keep_after = KEEP_AFTER_RESTLESS;
             }
             count = 0u;
-            strips = 0u;
+            drawn = 0u;
         }
         if count == keep_after && overlaps(cull.far, low, high, cull.depths.y) {
-            // Newly still: its strips must be drawn with it.
-            atomicOr(&counters.dirty[0], strip_bits(low.y, high.y));
+            // Newly still: its tiles must be drawn with it.
+            mark_dirty(footprint(low.xy, high.xy));
         }
         moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
         kept = count >= keep_after;
         if kept && (cull.mode & REFRESH) != 0u && overlaps(cull.refresh, low, high, cull.depths.z) {
             append(KEPT_MAP, batch.group, candidate.slot);
-            strips = strip_bits(low.y, high.y);
+            drawn = footprint(low.xy, high.xy);
         }
-        let packed = count | (strips << 8u) | restless;
+        let packed = count | drawn | restless;
         if state.x != key || state.y != packed {
             stillness[candidate.slot] = vec2<u32>(key, packed);
         }
@@ -319,7 +338,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Totals of this frame's casters of the near cascades together, the moving
-// map and the kept map, read back with the dirty strips for profiling
+// map and the kept map, read back with the dirty tiles for profiling
 // counters.
 @compute @workgroup_size(1)
 fn count_casters() {
@@ -332,7 +351,7 @@ fn count_casters() {
         totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)] += total;
     }
     for (var index = 0u; index < 3u; index++) {
-        atomicStore(&counters.dirty[1u + index], totals[index]);
+        atomicStore(&counters.dirty[TILE_WORDS + index], totals[index]);
     }
 }
 

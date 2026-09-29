@@ -4,12 +4,12 @@
 //! each reaching a third as far as the next (decision 028), and are redrawn
 //! every frame. Two far maps share one projection over the shadow region: the kept
 //! map holds casters whose pose stayed the same for a few frames and is
-//! redrawn only where that changes, one horizontal strip per frame, or whole
-//! after its projection or the sun moved; the moving map holds every other
-//! caster and is redrawn every frame. One compute pass selects each map's
-//! casters from every candidate, visible or culled, into indirect draws per
-//! mesh; on GPU-presented frames it also keeps each slot's stillness and
-//! marks dirty strips, read back a few frames later. CPU-prepared frames draw
+//! redrawn only where that changes, a rectangle of its 16x16 tiles per
+//! frame, or whole after its projection or the sun moved; the moving map
+//! holds every other caster and is redrawn every frame. One compute pass
+//! selects each map's casters from every candidate, visible or culled, into
+//! indirect draws per mesh; on GPU-presented frames it also keeps each
+//! slot's stillness and marks dirty tiles, read back a few frames later. CPU-prepared frames draw
 //! every caster into the moving map and leave the kept map unread; public
 //! snapshots draw their instances without selection. Casters with virtual
 //! geometry (decision 044) are selected into the maps drawn every frame,
@@ -33,12 +33,12 @@ use crate::gpu_data::{
     ShadowUniform,
 };
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
-use crate::shadow_fit::{LightBasis, MapRegion, caster_planes, frustum_footprint, view_sphere};
+use crate::shadow_fit::{
+    DirtyTiles, LightBasis, MapRegion, TILE_WORDS, TILES, TileRegion, caster_planes,
+    frustum_footprint, view_sphere,
+};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
-/// Horizontal strips of the kept map; a dirty one is redrawn per frame.
-const STRIPS: u32 = 16;
-const ALL_STRIPS: u32 = u32::MAX >> (32 - STRIPS);
 // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow.
 const MOVING_MAP: usize = MAX_CASCADES;
 const KEPT_MAP: usize = MAX_CASCADES + 1;
@@ -118,7 +118,7 @@ enum Source {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Refresh {
     Whole,
-    Strip(u32),
+    Tiles(TileRegion),
 }
 
 /// Inputs of GPU-presented frames' selection, from GPU presentation.
@@ -182,12 +182,12 @@ pub(crate) struct ShadowFrame {
 }
 
 impl ShadowFrame {
-    /// Kept-map redraw of this frame, for profiling counters: 0 none, 1 a
-    /// strip, 2 the whole map.
+    /// Kept-map redraw of this frame, for profiling counters: 0 none, 1
+    /// tiles, 2 the whole map.
     pub(crate) fn refresh_kind(&self) -> u8 {
         match self.refresh {
             None => 0,
-            Some(Refresh::Strip(_)) => 1,
+            Some(Refresh::Tiles(_)) => 1,
             Some(Refresh::Whole) => 2,
         }
     }
@@ -228,8 +228,9 @@ struct DirtyReadback {
     state: Rc<Cell<ReadbackState>>,
 }
 
-// Dirty strips and the three caster totals, read back together.
-const READBACK_BYTES: u64 = 16;
+// Dirty tiles, then the three caster totals and a pad word, read back
+// together.
+const READBACK_BYTES: u64 = (TILE_WORDS as u64 + 4) * 4;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SelectKey {
@@ -690,7 +691,7 @@ pub(crate) struct ShadowPass {
     maps: Option<Maps>,
     // Advances when map views change: bindings of the main passes follow.
     generation: u64,
-    // Per slot: pose key, stillness count and kept strips.
+    // Per slot: pose key, stillness count and kept-map tiles.
     stillness: wgpu::Buffer,
     stillness_capacity: usize,
     ids: wgpu::Buffer,
@@ -702,8 +703,8 @@ pub(crate) struct ShadowPass {
     // Stands in for presentation flags where frames have none.
     no_flags: wgpu::Buffer,
     readbacks: Vec<DirtyReadback>,
-    // Dirty strips read back and not yet taken.
-    read_back: Rc<Cell<u32>>,
+    // Dirty tiles read back and not yet taken.
+    read_back: Rc<Cell<[u32; TILE_WORDS]>>,
     // The latest caster totals read back: near, moving and kept maps.
     casters: Rc<Cell<Option<[u32; 3]>>>,
     // Casters of CPU-prepared frames and one group record per mesh.
@@ -738,12 +739,12 @@ pub(crate) struct ShadowPass {
     source: Source,
     listed_count: u32,
     // The kept map's basis and region, whether it holds the current casters
-    // there, and its dirty strips.
+    // there, and its dirty tiles.
     kept_basis: Option<LightBasis>,
     kept_region: Option<MapRegion>,
     anchor: Option<Vec3>,
     kept_valid: bool,
-    dirty_strips: u32,
+    dirty_tiles: DirtyTiles,
     // Maps drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
 }
@@ -831,7 +832,7 @@ impl ShadowPass {
             no_flags: empty("engine/shadow-no-flags", wgpu::BufferUsages::empty()),
             starts_capacity: 0,
             readbacks: Vec::new(),
-            read_back: Rc::new(Cell::new(0)),
+            read_back: Rc::new(Cell::new([0; TILE_WORDS])),
             casters: Rc::new(Cell::new(None)),
             listed: empty("engine/shadow-casters", wgpu::BufferUsages::empty()),
             listed_groups: empty("engine/shadow-caster-groups", wgpu::BufferUsages::empty()),
@@ -857,7 +858,7 @@ impl ShadowPass {
             kept_region: None,
             anchor: None,
             kept_valid: false,
-            dirty_strips: 0,
+            dirty_tiles: DirtyTiles::default(),
             virtual_views: Vec::new(),
         }
     }
@@ -1110,8 +1111,8 @@ impl ShadowPass {
         }
         self.group_total = start;
         if source == Source::Presented {
-            // Removed casters leave their kept shadows: redraw every strip.
-            self.dirty_strips = ALL_STRIPS;
+            // Removed casters leave their kept shadows: redraw every tile.
+            self.dirty_tiles = DirtyTiles::ALL;
         }
     }
 
@@ -1130,7 +1131,8 @@ impl ShadowPass {
         mesh_layout: u64,
         placement: impl Fn(MeshHandle) -> (u32, u32, i32),
     ) -> Option<ShadowFrame> {
-        self.dirty_strips |= self.read_back.replace(0) & ALL_STRIPS;
+        self.dirty_tiles
+            .merge(self.read_back.replace([0; TILE_WORDS]));
         self.virtual_views.clear();
         let settings = snapshot.shadows.sanitized();
         if !settings.enabled || self.groups.is_empty() {
@@ -1225,14 +1227,10 @@ impl ShadowPass {
             None
         } else if !self.kept_valid {
             self.kept_valid = true;
-            self.dirty_strips = 0;
+            self.dirty_tiles = DirtyTiles::default();
             Some(Refresh::Whole)
-        } else if self.dirty_strips != 0 {
-            let strip = self.dirty_strips.trailing_zeros();
-            self.dirty_strips &= !(1 << strip);
-            Some(Refresh::Strip(strip))
         } else {
-            None
+            self.dirty_tiles.take_region().map(Refresh::Tiles)
         };
         // Selection outputs: IDs and indirect arguments of every map.
         let groups = self.groups.len();
@@ -1274,7 +1272,7 @@ impl ShadowPass {
             self.groups_changed = false;
             if groups > self.starts_capacity {
                 // Counters first, then every group's region start; a new
-                // buffer drops unread counters, which only delays strips.
+                // buffer drops unread counters, which only delays tiles.
                 self.starts_capacity = groups.next_power_of_two();
                 self.dirty = storage(
                     device,
@@ -1282,7 +1280,7 @@ impl ShadowPass {
                     READBACK_BYTES + (self.starts_capacity * 4) as u64,
                     wgpu::BufferUsages::COPY_SRC,
                 );
-                self.dirty_strips = ALL_STRIPS;
+                self.dirty_tiles = DirtyTiles::ALL;
                 self.buffers_generation += 1;
             }
             let starts: Vec<u32> = self.groups.iter().map(|group| group.start).collect();
@@ -1363,20 +1361,10 @@ impl ShadowPass {
             _ => 0,
         };
         if self.source != Source::Snapshot {
-            let strip_height = (far.rect[3] - far.rect[1]) / STRIPS as f32;
             let refresh_rect = match refresh {
                 Some(Refresh::Whole) => far.rect,
-                Some(Refresh::Strip(strip)) => {
-                    // A texel of margin keeps casters at the strip's edges.
-                    let texel = far.texel(resolution);
-                    let low = far.rect[1] + strip as f32 * strip_height;
-                    [
-                        far.rect[0],
-                        low - texel,
-                        far.rect[2],
-                        low + strip_height + texel,
-                    ]
-                }
+                // A texel of margin keeps casters at the tiles' edges.
+                Some(Refresh::Tiles(region)) => region.rect(far.rect, far.texel(resolution)),
                 None => [0.0; 4],
             };
             let row = |axis: Vec3| axis.extend(0.0).to_array();
@@ -1468,7 +1456,12 @@ impl ShadowPass {
                     .iter()
                     .filter(|(set, _)| *set)
                     .fold(0, |mode, (_, bit)| mode | bit),
-                strips: [far.rect[1], strip_height, STRIPS as f32, 0.0],
+                tiles: [
+                    far.rect[0],
+                    far.rect[1],
+                    (far.rect[2] - far.rect[0]) / TILES as f32,
+                    (far.rect[3] - far.rect[1]) / TILES as f32,
+                ],
                 cascades: near.len() as u32,
                 skinned,
                 pad: [0; 2],
@@ -1686,8 +1679,8 @@ impl ShadowPass {
             if let Some(readback) = self.idle_readback(device) {
                 encoder.copy_buffer_to_buffer(&dirty, 0, &readback.buffer, 0, READBACK_BYTES);
                 readback.state.set(ReadbackState::Recorded);
-                // Unread strips stay until a readback copies them.
-                encoder.clear_buffer(&dirty, 0, Some(4));
+                // Unread tiles stay until a readback copies them.
+                encoder.clear_buffer(&dirty, 0, Some(TILE_WORDS as u64 * 4));
             }
         }
         timed
@@ -1911,16 +1904,9 @@ impl ShadowPass {
                 },
                 writes(KEPT_MAP),
             );
-            if let Refresh::Strip(strip) = refresh {
-                // Strips count up from the map's light-space bottom, which
-                // is its last texel row.
-                let rows = maps.resolution / STRIPS;
-                pass.set_scissor_rect(
-                    0,
-                    maps.resolution - (strip + 1) * rows,
-                    maps.resolution,
-                    rows,
-                );
+            if let Refresh::Tiles(region) = refresh {
+                let [x, y, width, height] = region.scissor(maps.resolution);
+                pass.set_scissor_rect(x, y, width, height);
                 pass.set_pipeline(&pipelines.clear);
                 pass.draw(0..3, 0..1);
             }
@@ -1956,7 +1942,7 @@ impl ShadowPass {
         self.readbacks.last()
     }
 
-    /// Requests maps of dirty strips recorded in the frame just submitted.
+    /// Requests maps of dirty tiles recorded in the frame just submitted.
     pub(crate) fn after_submit(&mut self) {
         for readback in &self.readbacks {
             if readback.state.get() != ReadbackState::Recorded {
@@ -1979,8 +1965,16 @@ impl ShadowPass {
                                     u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
                                 })
                             };
-                            read_back.set(read_back.get() | word(0));
-                            casters.set(Some([word(1), word(2), word(3)]));
+                            let mut tiles = read_back.get();
+                            for (index, tile) in tiles.iter_mut().enumerate() {
+                                *tile |= word(index);
+                            }
+                            read_back.set(tiles);
+                            casters.set(Some([
+                                word(TILE_WORDS),
+                                word(TILE_WORDS + 1),
+                                word(TILE_WORDS + 2),
+                            ]));
                         }
                         buffer.unmap();
                     }

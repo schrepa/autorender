@@ -215,10 +215,156 @@ pub(crate) fn caster_planes(
         .collect()
 }
 
+/// Tiles across each side of the kept far map (decision 020): kept casters
+/// that move mark the tiles under them dirty, and frames redraw them.
+pub(crate) const TILES: u32 = 16;
+/// Words of the dirty-tile mask, each holding two rows of tiles, as the
+/// selection pass marks them.
+pub(crate) const TILE_WORDS: usize = (TILES * TILES / 32) as usize;
+/// Tiles one refresh of the kept map redraws at most: a row's worth.
+const REFRESH_TILES: u32 = TILES;
+
+/// Dirty tiles of the kept far map: bit `column` of row `row`, rows counting
+/// up from the map's light-space bottom, 16 bits a row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DirtyTiles(pub [u32; TILE_WORDS]);
+
+/// A rectangle of kept-map tiles: its first and last column and row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TileRegion {
+    pub columns: [u32; 2],
+    pub rows: [u32; 2],
+}
+
+impl DirtyTiles {
+    pub(crate) const ALL: Self = Self([u32::MAX; TILE_WORDS]);
+
+    fn row(&self, row: u32) -> u32 {
+        (self.0[(row / 2) as usize] >> (row % 2 * TILES)) & 0xffff
+    }
+
+    pub(crate) fn merge(&mut self, words: [u32; TILE_WORDS]) {
+        for (word, dirty) in self.0.iter_mut().zip(words) {
+            *word |= dirty;
+        }
+    }
+
+    /// Takes the next region to redraw: the dirty tiles of the first row
+    /// holding any, and those of the rows after it while the region's
+    /// rectangle stays within [`REFRESH_TILES`] tiles.
+    pub(crate) fn take_region(&mut self) -> Option<TileRegion> {
+        let first = (0..TILES).find(|&row| self.row(row) != 0)?;
+        let span = |bits: u32| [bits.trailing_zeros(), 31 - bits.leading_zeros()];
+        let mut columns = span(self.row(first));
+        let mut last = first;
+        while last + 1 < TILES && self.row(last + 1) != 0 {
+            let [low, high] = span(self.row(last + 1));
+            let widened = [columns[0].min(low), columns[1].max(high)];
+            if (widened[1] - widened[0] + 1) * (last + 2 - first) > REFRESH_TILES {
+                break;
+            }
+            columns = widened;
+            last += 1;
+        }
+        let mask = (0xffff >> (15 - columns[1])) & (0xffff << columns[0]);
+        for row in first..=last {
+            self.0[(row / 2) as usize] &= !(mask << (row % 2 * TILES));
+        }
+        Some(TileRegion {
+            columns,
+            rows: [first, last],
+        })
+    }
+}
+
+impl TileRegion {
+    /// The region's light-space rectangle in the kept map's rectangle
+    /// `rect`, widened by `margin`.
+    pub(crate) fn rect(&self, rect: [f32; 4], margin: f32) -> [f32; 4] {
+        let width = (rect[2] - rect[0]) / TILES as f32;
+        let height = (rect[3] - rect[1]) / TILES as f32;
+        [
+            rect[0] + self.columns[0] as f32 * width - margin,
+            rect[1] + self.rows[0] as f32 * height - margin,
+            rect[0] + (self.columns[1] + 1) as f32 * width + margin,
+            rect[1] + (self.rows[1] + 1) as f32 * height + margin,
+        ]
+    }
+
+    /// The region's texels in a map `resolution` texels a side, whose rows
+    /// run downward from its light-space top: x, y, width and height.
+    pub(crate) fn scissor(&self, resolution: u32) -> [u32; 4] {
+        let size = resolution / TILES;
+        [
+            self.columns[0] * size,
+            resolution - (self.rows[1] + 1) * size,
+            (self.columns[1] - self.columns[0] + 1) * size,
+            (self.rows[1] - self.rows[0] + 1) * size,
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use engine_core::Camera;
+
+    // Tiles as the selection pass marks them, read back.
+    fn tiles(marked: &[(u32, u32)]) -> DirtyTiles {
+        let mut words = [0; TILE_WORDS];
+        for &(column, row) in marked {
+            words[(row / 2) as usize] |= 1 << (column + row % 2 * TILES);
+        }
+        let mut dirty = DirtyTiles::default();
+        dirty.merge(words);
+        dirty
+    }
+
+    #[test]
+    fn refreshes_take_dirty_tiles_a_bounded_rectangle_at_a_time() {
+        // One dirty tile: that tile alone, then nothing.
+        let mut dirty = tiles(&[(5, 3)]);
+        let region = dirty.take_region().unwrap();
+        assert_eq!((region.columns, region.rows), ([5, 5], [3, 3]));
+        assert_eq!(dirty.take_region(), None);
+        // A caster over tiles of three rows: one rectangle.
+        let mut dirty = tiles(&[(4, 7), (5, 7), (4, 8), (5, 8), (4, 9), (5, 9)]);
+        let region = dirty.take_region().unwrap();
+        assert_eq!((region.columns, region.rows), ([4, 5], [7, 9]));
+        assert_eq!(dirty, DirtyTiles::default());
+        // Rows too wide together are redrawn a frame apart, and the tiles
+        // between a row's dirty ones with them.
+        let mut dirty = tiles(&[(0, 2), (9, 2), (15, 3)]);
+        let region = dirty.take_region().unwrap();
+        assert_eq!((region.columns, region.rows), ([0, 9], [2, 2]));
+        let region = dirty.take_region().unwrap();
+        assert_eq!((region.columns, region.rows), ([15, 15], [3, 3]));
+        assert_eq!(dirty.take_region(), None);
+        // Everything dirty: a row per refresh, bottom to top.
+        let mut dirty = DirtyTiles::ALL;
+        for row in 0..TILES {
+            let region = dirty.take_region().unwrap();
+            assert_eq!((region.columns, region.rows), ([0, TILES - 1], [row, row]));
+        }
+        assert_eq!(dirty.take_region(), None);
+    }
+
+    #[test]
+    fn tile_regions_cover_their_rectangle_and_texels() {
+        let region = TileRegion {
+            columns: [2, 3],
+            rows: [0, 1],
+        };
+        let rect = region.rect([-8.0, 0.0, 8.0, 32.0], 0.25);
+        assert_eq!(rect, [-6.25, -0.25, -3.75, 4.25]);
+        // Rows count up from the bottom texel row.
+        assert_eq!(region.scissor(4096), [512, 3584, 512, 512]);
+        let whole = TileRegion {
+            columns: [0, TILES - 1],
+            rows: [0, TILES - 1],
+        };
+        assert_eq!(whole.scissor(2048), [0, 0, 2048, 2048]);
+    }
 
     #[test]
     fn caster_planes_keep_what_can_shadow_the_view() {

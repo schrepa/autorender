@@ -40,8 +40,8 @@ maximum is at most 1, and every other value is finite and nonnegative.
   instantiated scene with an environment, or a replaced runtime.
 - **Observation.** `rendering` in every reply reports `shadows_enabled`,
   `shadow_draws` (beside `draw_calls`, which stays the camera pass's count
-  that baselines and checks compare), `shadow_kept_redraw` (0 none, 1 one
-  strip, 2 the whole kept map), the casters each shadow map drew
+  that baselines and checks compare), `shadow_kept_redraw` (0 none, 1 dirty
+  tiles, 2 the whole kept map), the casters each shadow map drew
   (`shadow_near_casters`, `shadow_moving_casters`, `shadow_kept_casters`,
   read back a few frames late and null until then), `ambient_occlusion` and
   `bloom`. `Mesh3d` reports the material `surface` and whether its texture

@@ -229,7 +229,8 @@ pub struct BrowserStats {
     pub shadows_enabled: bool,
     /// Indexed shadow-map draws, in addition to the camera pass's `draw_calls`.
     pub shadow_draws: u32,
-    /// Kept-map redraw: 0 none, 1 one strip, 2 the whole map.
+    /// Kept-map redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole
+    /// map.
     pub shadow_kept_redraw: u32,
     /// Casters the near, moving and kept shadow maps drew, read back a few
     /// frames late; undefined before the first read-back.

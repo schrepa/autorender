@@ -686,9 +686,9 @@ pub(crate) struct ShadowCullUniform {
     pub capacity: u32,
     /// `STILLNESS | REFRESH` of the shader.
     pub mode: u32,
-    /// Light-space y of the first kept-map strip, the strip height and the
-    /// strip count; w unused.
-    pub strips: [f32; 4],
+    /// Kept-map tiles: light-space x and y of the first tile's corner, and
+    /// the tile width and height.
+    pub tiles: [f32; 4],
     /// Near cascades drawn this frame.
     pub cascades: u32,
     /// Skinned slots `select_skinned` visits on GPU-presented frames.
@@ -1574,6 +1574,12 @@ mod tests {
         assert_eq!(bits(PRESENTATION_SHADER, "PROBE"), FLAG_PROBE);
         assert_eq!(bits(PRESENTATION_SHADER, "STILL_FRAMES"), STILL_FRAMES);
         assert_eq!(bits(LIGHT_SHADER, "STILL_FRAMES"), STILL_FRAMES);
+        // The kept map's dirty tiles the selection marks and the pass reads.
+        assert_eq!(bits(SHADOW_SHADER, "TILES"), crate::shadow_fit::TILES);
+        assert_eq!(
+            bits(SHADOW_SHADER, "TILE_WORDS") as usize,
+            crate::shadow_fit::TILE_WORDS
+        );
     }
 
     #[test]

@@ -159,7 +159,7 @@ so paused captures are exact and repeatable.
 
 Every reply's `rendering` reports the effects the last frame ran and its
 shadow work: `shadows_enabled`, `shadow_draws` (beside the camera pass's `draw_calls`),
-`shadow_kept_redraw` (0 none, 1 one strip, 2 every still caster),
+`shadow_kept_redraw` (0 none, 1 dirty tiles, 2 every still caster),
 `shadow_near_casters`, `shadow_moving_casters` and `shadow_kept_casters`
 (read back a few frames late, null until then), `ambient_occlusion` and
 `bloom`; `local_lights` and `dropped_lights`, with `lights_visible` and

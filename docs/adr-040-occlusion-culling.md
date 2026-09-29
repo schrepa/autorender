@@ -31,10 +31,11 @@ pass in two phases around an occlusion test, entirely on the GPU:
    rest in workgroup memory, so a 1512x792 canvas's eleven levels take two
    dispatches instead of eleven. (Tiles of 64x64 left too few threads
    reading the depth buffer: each pyramid took 0.2 ms longer on the laptop's
-   integrated GPU; 32x32 tiles cost what one dispatch per level did.) Each level binds as a storage texture,
-   so the device requests the adapter's limit and devices binding fewer
-   than six (WebGPU guarantees four) reduce shorter chunks. Screen-space
-   reflections reduce their nearest-depth pyramid alike.
+   integrated GPU; 32x32 tiles cost what one dispatch per level did.) Each
+   level binds as a storage texture, so the device requests the adapter's
+   limit and devices binding fewer than six (WebGPU guarantees four) reduce
+   shorter chunks. Screen-space reflections reduce their nearest-depth
+   pyramid alike.
 3. The **test** projects every other frustum-visible instance's posed mesh
    bounds and compares their nearest depth with the farthest depth of the
    pyramid texels (at most 2x2, at the finest level that small) its screen
