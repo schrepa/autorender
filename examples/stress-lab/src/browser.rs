@@ -57,6 +57,12 @@ pub struct StressGame {
     // The lighting preset and effect selection, kept across workload changes.
     look: String,
     effects: String,
+    // Settings of the world's resources, kept across workload changes, which
+    // replace the world: levels of detail and impostors (decisions 047 and
+    // 048) and the visibility buffer (decision 045).
+    level_of_detail: bool,
+    impostors: bool,
+    visibility_buffer: bool,
     #[cfg(feature = "dev")]
     development: engine::dev_browser::DevBrowser,
 }
@@ -81,6 +87,9 @@ impl StressGame {
             files,
             look: "scene".into(),
             effects: "all".into(),
+            level_of_detail: true,
+            impostors: true,
+            visibility_buffer: true,
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -105,6 +114,7 @@ impl StressGame {
         self.generation = self.generation.saturating_add(1);
         self.set_look(&self.look.clone())?;
         self.set_effects(&self.effects.clone())?;
+        self.apply_world_settings();
         self.suspend();
         Ok(())
     }
@@ -309,43 +319,24 @@ impl StressGame {
         self.app.set_subpixel_culling(enabled);
     }
     /// Whether instances draw at levels of detail (decision 047, on by
-    /// default) or always as their mesh.
+    /// default) or always as their mesh, in this and later workloads.
     pub fn set_level_of_detail(&mut self, enabled: bool) {
-        if let Some(mut settings) = self
-            .app
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<LevelOfDetail>()
-        {
-            settings.enabled = enabled;
-        }
+        self.level_of_detail = enabled;
+        self.apply_world_settings();
     }
     /// Whether draw groups draw impostors where they fit (decision 048, on
-    /// by default) or only their meshes' levels.
+    /// by default) or only their meshes' levels, in this and later
+    /// workloads.
     pub fn set_impostors(&mut self, enabled: bool) {
-        if let Some(mut settings) = self
-            .app
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<LevelOfDetail>()
-        {
-            settings.impostors = enabled;
-        }
+        self.impostors = enabled;
+        self.apply_world_settings();
     }
     /// Whether virtual geometry shades through the visibility buffer
-    /// (decision 045, on by default) or as it draws.
+    /// (decision 045, on by default) or as it draws, in this and later
+    /// workloads.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {
-        if let Some(mut settings) = self
-            .app
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<VirtualGeometry>()
-        {
-            settings.visibility_buffer = enabled;
-        }
+        self.visibility_buffer = enabled;
+        self.apply_world_settings();
     }
     pub fn subpixel_culling(&self) -> bool {
         self.app.subpixel_culling()
@@ -494,4 +485,19 @@ fn development_tools() -> engine::dev_browser::DevBrowser {
         }),
     ).expect("stress metrics registration is valid");
     development
+}
+
+impl StressGame {
+    /// Writes the kept settings into the current world's resources: each
+    /// workload builds a new world with their defaults.
+    fn apply_world_settings(&mut self) {
+        let world = self.app.engine.app.world_mut();
+        if let Some(mut settings) = world.get_resource_mut::<LevelOfDetail>() {
+            settings.enabled = self.level_of_detail;
+            settings.impostors = self.impostors;
+        }
+        if let Some(mut settings) = world.get_resource_mut::<VirtualGeometry>() {
+            settings.visibility_buffer = self.visibility_buffer;
+        }
+    }
 }
