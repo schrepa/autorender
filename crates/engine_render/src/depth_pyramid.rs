@@ -5,11 +5,11 @@
 //! reflections (decision 025) walk after the opaque pass.
 //!
 //! Levels reduce in chunks, as AMD's single-pass downsampler does: one
-//! dispatch writes up to six levels, each workgroup reducing a 64x64 tile of
-//! the chunk's first level, the first three levels in registers and the
-//! rest in workgroup memory. Devices binding fewer storage textures write
-//! shorter chunks. Every texel keeps the extreme of the same block, so the
-//! levels hold the same values as reducing one level at a time.
+//! dispatch writes up to six levels, each workgroup reducing a 32x32 tile of
+//! the chunk's first level, the first two levels in registers and the rest
+//! in workgroup memory. Devices binding fewer storage textures write shorter
+//! chunks. Every texel keeps the extreme of the same block, so the levels
+//! hold the same values as reducing one level at a time.
 
 use std::fmt::Write;
 
@@ -22,13 +22,13 @@ pub(crate) enum Reduction {
     Nearest,
 }
 
-/// Levels one chunk writes at most: a 64x64 tile of its first level down
-/// to a 2x2 block.
+/// Levels one chunk writes at most: a 32x32 tile of its first level down
+/// to one texel.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 const CHUNK_LEVELS: u32 = 6;
 /// First-level texels across a workgroup's tile.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-const TILE: u32 = 64;
+const TILE: u32 = 32;
 
 /// The shader of a chunk writing `outputs` levels (1 to 6) of `reduction`
 /// from the depth buffer (`from_depth`) or the level before them.
@@ -81,52 +81,42 @@ fn first(p: vec2<u32>) -> f32 {{
 fn reduce(@builtin(workgroup_id) group: vec3<u32>,
         @builtin(local_invocation_id) local: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {{
-    // Each thread's 4x4 texels of the first level, 2x2 of the second and
-    // one of the third.
-    let origin = group.xy * 64u + local.xy * 4u;
-    var third = {identity};
-    for (var by = 0u; by < 2u; by++) {{
-        for (var bx = 0u; bx < 2u; bx++) {{
-            var second = {identity};
-            for (var sy = 0u; sy < 2u; sy++) {{
-                for (var sx = 0u; sx < 2u; sx++) {{
-                    let p = origin + vec2<u32>(bx * 2u + sx, by * 2u + sy);
-                    let value = first(p);
-                    if all(p < textureDimensions(level0)) {{
-                        textureStore(level0, p, vec4<f32>(value, 0.0, 0.0, 0.0));
-                    }}
-                    second = pick(second, value);
-                }}
+    // Each thread's 2x2 texels of the first level and one of the second.
+    let origin = group.xy * 32u + local.xy * 2u;
+    var second = {identity};
+    for (var y = 0u; y < 2u; y++) {{
+        for (var x = 0u; x < 2u; x++) {{
+            let p = origin + vec2<u32>(x, y);
+            let value = first(p);
+            if all(p < textureDimensions(level0)) {{
+                textureStore(level0, p, vec4<f32>(value, 0.0, 0.0, 0.0));
             }}
+            second = pick(second, value);
+        }}
+    }}
 "
     );
     if outputs >= 2 {
-        s += "            let q = origin / 2u + vec2<u32>(bx, by);
-            if all(q < textureDimensions(level1)) {
-                textureStore(level1, q, vec4<f32>(second, 0.0, 0.0, 0.0));
-            }
-";
-    }
-    s += "            third = pick(third, second);
-        }
-    }
-";
-    if outputs >= 3 {
-        s += "    let r = group.xy * 16u + local.xy;
-    if all(r < textureDimensions(level2)) {
-        textureStore(level2, r, vec4<f32>(third, 0.0, 0.0, 0.0));
+        s += "    let q = group.xy * 16u + local.xy;
+    if all(q < textureDimensions(level1)) {
+        textureStore(level1, q, vec4<f32>(second, 0.0, 0.0, 0.0));
     }
 ";
     }
     // Further levels halve the workgroup's tile in workgroup memory: a
     // level's texel (x, y) is the extreme of the tile's (2x, 2y) block.
-    let mut values = "third";
-    for (level, (name, across)) in [(3, ("fourth", 8u32)), (4, ("fifth", 4)), (5, ("sixth", 2))] {
+    let mut values = "second";
+    for (level, (name, across)) in [
+        (2, ("third", 8u32)),
+        (3, ("fourth", 4)),
+        (4, ("fifth", 2)),
+        (5, ("sixth", 1)),
+    ] {
         if outputs <= level {
             break;
         }
         let stored = across * across * 4;
-        if level > 3 {
+        if level > 2 {
             s += "    workgroupBarrier();\n";
         }
         let _ = write!(

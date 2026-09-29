@@ -27,9 +27,11 @@ pass in two phases around an occlusion test, entirely on the GPU:
    [decision 042](adr-042-reversed-depth.md)). Levels have power-of-two
    sizes, so each halves the last exactly. One dispatch reduces up to six
    levels, as AMD's single-pass downsampler does: each workgroup reduces a
-   64x64 tile of the dispatch's first level, three levels in registers and
-   the rest in workgroup memory, so a 1512x792 canvas's eleven levels take
-   two dispatches instead of eleven. Each level binds as a storage texture,
+   32x32 tile of the dispatch's first level, two levels in registers and the
+   rest in workgroup memory, so a 1512x792 canvas's eleven levels take two
+   dispatches instead of eleven. (Tiles of 64x64 left too few threads
+   reading the depth buffer: each pyramid took 0.2 ms longer on the laptop's
+   integrated GPU; 32x32 tiles cost what one dispatch per level did.) Each level binds as a storage texture,
    so the device requests the adapter's limit and devices binding fewer
    than six (WebGPU guarantees four) reduce shorter chunks. Screen-space
    reflections reduce their nearest-depth pyramid alike.
