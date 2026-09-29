@@ -21,4 +21,6 @@ pub fn build_virtual_mesh(source: &Source<'_>) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
+mod simplify_parity;
+#[cfg(test)]
 mod tests;

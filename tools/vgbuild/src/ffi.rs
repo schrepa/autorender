@@ -322,3 +322,154 @@ pub(crate) fn build_hierarchy(
     nodes.truncate(written);
     nodes
 }
+
+/// meshoptimizer's simplifier, which only the parity tests of the engine's
+/// Rust port (`engine_assets::simplify`) call.
+#[cfg(test)]
+pub(crate) mod simplifier {
+    use std::ffi::c_uint;
+
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn meshopt_simplifyWithAttributes(
+            destination: *mut c_uint,
+            indices: *const c_uint,
+            index_count: usize,
+            vertex_positions: *const f32,
+            vertex_count: usize,
+            vertex_positions_stride: usize,
+            vertex_attributes: *const f32,
+            vertex_attributes_stride: usize,
+            attribute_weights: *const f32,
+            attribute_count: usize,
+            vertex_lock: *const u8,
+            target_index_count: usize,
+            target_error: f32,
+            options: c_uint,
+            result_error: *mut f32,
+        ) -> usize;
+        fn meshopt_simplifyScale(
+            vertex_positions: *const f32,
+            vertex_count: usize,
+            vertex_positions_stride: usize,
+        ) -> f32;
+    }
+
+    /// meshoptimizer's `meshopt_Simplify*` option bits.
+    pub(crate) mod options {
+        pub const LOCK_BORDER: u32 = 1 << 0;
+        pub const ERROR_ABSOLUTE: u32 = 1 << 2;
+        pub const PRUNE: u32 = 1 << 3;
+        pub const REGULARIZE: u32 = 1 << 4;
+        pub const PERMISSIVE: u32 = 1 << 5;
+        pub const REGULARIZE_LIGHT: u32 = 1 << 6;
+        pub const PRESERVE_FOLDS: u32 = 1 << 7;
+        pub const ERROR_CLAMPED: u32 = 1 << 8;
+        /// Every public option above; not the sparse one.
+        pub const ALL: u32 = LOCK_BORDER
+            | ERROR_ABSOLUTE
+            | PRUNE
+            | REGULARIZE
+            | PERMISSIVE
+            | REGULARIZE_LIGHT
+            | PRESERVE_FOLDS
+            | ERROR_CLAMPED;
+    }
+
+    /// What `meshopt_simplifyWithAttributes` reads: triangles over positions,
+    /// `attribute_stride` attribute values per vertex (the first
+    /// `weights.len()` weighted) and `meshopt_SimplifyVertex_*` flags per
+    /// vertex (or none when empty).
+    pub(crate) struct Input<'a> {
+        pub indices: &'a [u32],
+        pub positions: &'a [[f32; 3]],
+        pub attributes: &'a [f32],
+        pub attribute_stride: usize,
+        pub weights: &'a [f32],
+        pub locks: &'a [u8],
+    }
+
+    /// `meshopt_simplifyWithAttributes`: the simplified indices and the
+    /// result error.
+    pub(crate) fn simplify_with_attributes(
+        input: &Input<'_>,
+        target_index_count: usize,
+        target_error: f32,
+        options: u32,
+    ) -> (Vec<u32>, f32) {
+        let vertex_count = input.positions.len();
+        // The library asserts these (or reads out of bounds without them).
+        assert!(input.indices.len().is_multiple_of(3));
+        assert!(
+            input
+                .indices
+                .iter()
+                .all(|&index| (index as usize) < vertex_count)
+        );
+        assert!(target_index_count <= input.indices.len());
+        assert!(target_error >= 0.0);
+        assert!(input.weights.len() <= input.attribute_stride.min(32));
+        assert!(input.weights.iter().all(|&weight| weight >= 0.0));
+        assert!(input.attribute_stride <= 64);
+        assert_eq!(
+            input.attributes.len(),
+            vertex_count * input.attribute_stride
+        );
+        assert!(input.locks.is_empty() || input.locks.len() == vertex_count);
+        assert_eq!(options & !options::ALL, 0);
+        let attributes = !input.weights.is_empty();
+        let mut destination = vec![0; input.indices.len()];
+        let mut error = 0.0;
+        // SAFETY: the destination holds every input index, the checks above
+        // keep every read in bounds, and null pointers stand for absent
+        // attributes and locks as the library documents.
+        #[allow(unsafe_code)]
+        let count = unsafe {
+            meshopt_simplifyWithAttributes(
+                destination.as_mut_ptr(),
+                input.indices.as_ptr(),
+                input.indices.len(),
+                input.positions.as_ptr().cast(),
+                vertex_count,
+                12,
+                if attributes {
+                    input.attributes.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                if attributes {
+                    input.attribute_stride * 4
+                } else {
+                    0
+                },
+                if attributes {
+                    input.weights.as_ptr()
+                } else {
+                    std::ptr::null()
+                },
+                input.weights.len(),
+                if input.locks.is_empty() {
+                    std::ptr::null()
+                } else {
+                    input.locks.as_ptr()
+                },
+                target_index_count,
+                target_error,
+                options,
+                &raw mut error,
+            )
+        };
+        destination.truncate(count);
+        (destination, error)
+    }
+
+    /// `meshopt_simplifyScale`.
+    pub(crate) fn scale(positions: &[[f32; 3]]) -> f32 {
+        // SAFETY: the library reads `positions.len()` tightly packed
+        // positions.
+        #[allow(unsafe_code)]
+        unsafe {
+            meshopt_simplifyScale(positions.as_ptr().cast(), positions.len(), 12)
+        }
+    }
+}

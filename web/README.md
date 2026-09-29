@@ -110,6 +110,15 @@ falls back to the fallback cuts, invalid settings are refused, and the page logs
 no errors. Captures go under
 `artifacts/virtual-geometry-smoke-*/`.
 
+`node web/scripts/lod-smoke.mjs` loads the Stress Lab's metro (20,000 objects)
+and checks levels of detail ([decision 047](../docs/adr-047-levels-of-detail.md)):
+the `LevelOfDetail` settings are discoverable and read as their environment
+section; from the overview, GPU-presented captures draw coarser levels
+(`rendering.lod1_instances`, `lod2_instances`) and differ from the exact CPU
+capture in at most 1% of pixels; disabled, they match within 0.1% and draw
+none; a pixel error of 4 draws more coarsely; invalid settings are refused,
+and the page logs no errors. Captures go under `artifacts/lod-smoke-*/`.
+
 `node web/scripts/taa-smoke.mjs` loads Stress Lab with temporal antialiasing
 (`?taa=on`) and checks that captures are identical with the setting on and off
 and after temporal frames, that converged still frames are smoother (lower total

@@ -33,6 +33,7 @@ fn main() {
         "Decal": schemars::schema_for!(views::DecalView),
         "ReflectionProbes": schemars::schema_for!(engine_scene::SceneReflectionProbes),
         "VirtualGeometry": schemars::schema_for!(engine_scene::SceneVirtualGeometry),
+        "LevelOfDetail": schemars::schema_for!(engine_scene::SceneLevelOfDetail),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),

@@ -38,8 +38,14 @@ struct Frame {
     // Nonzero when frustum-visible candidates whose bounds cover no pixel
     // center are left undrawn (decision 041).
     subpixel: u32,
-    pad1: u32,
-    pad2: u32,
+    // Candidates per visible-ID plane: each level of detail's IDs start this
+    // many entries after the last's (decision 047).
+    plane: u32,
+    // The screen error in pixels levels of detail keep within; 0 draws every
+    // candidate at full detail.
+    lod_error: f32,
+    // The eye the frame rasterizes from (w unused).
+    eye: vec4<f32>,
 }
 
 // One local pose per node in 10 floats: [t.xyz, s.x, r.xyzw, s.yz]. Current
@@ -77,11 +83,16 @@ struct Batch {
     bounds_min: vec4<f32>,
     bounds_max: vec4<f32>,
     // The mesh's first index and base vertex in the mesh arena, and the
-    // first instance of its draws (`start` or 0).
+    // first instance of its draws (`start` or 0), which each coarser level
+    // of detail adds `first_plane` to (decision 047).
     first_index: u32,
     base_vertex: i32,
     first_instance: u32,
-    pad2: u32,
+    first_plane: u32,
+    // Levels 1 and 2 (decision 047): first index and index count each; their
+    // geometric errors in mesh units, and the level count.
+    lod_ranges: vec4<u32>,
+    lod_errors: vec4<f32>,
 }
 
 struct DrawArgs {
@@ -180,6 +191,10 @@ const PROBE: u32 = 128u;
 // Frames in a row a slot must display the same pose before probes capture
 // it.
 const STILL_FRAMES: u32 = 16u;
+// Levels of detail (decision 047): the level a camera candidate draws at, in
+// two flag bits from this one; draw groups have at most LOD_LEVELS.
+const LOD_SHIFT: u32 = 8u;
+const LOD_LEVELS: u32 = 3u;
 // Pixels the projected bounds are widened by before looking for pixel
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
@@ -206,6 +221,8 @@ const COEFFICIENT_LIMIT: f32 = 0x1p+20f;
 const COMMON_DETERMINANT_MARGIN: f32 = 0x1p-9f;
 
 var<workgroup> shared_values: array<u32, 256>;
+// Per-level counts of the compaction passes (decision 047).
+var<workgroup> shared_counts: array<vec4<u32>, 256>;
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
@@ -468,9 +485,49 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
             if !occludable || previous == 0u {
                 visible |= PHASE1;
             }
+            visible |= lod_level(batch, model) << LOD_SHIFT;
         }
     }
     scan[candidate.position] = visible;
+}
+
+// The coarsest level of detail of `batch` (decision 047) whose geometric
+// error, scaled by `model`'s largest axis, projects within the frame's pixel
+// error at the posed bounding sphere's nearest distance from the eye (not its
+// depth, so turning the camera never changes a level); 0 for groups without
+// levels, frames without them and spheres around the eye.
+fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
+    let levels = u32(batch.lod_errors.z);
+    if levels <= 1u || !(frame.lod_error > 0.0) {
+        return 0u;
+    }
+    let center = (model * vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    let scale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+    let radius = length(batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5 * scale;
+    let projection = frame.view_projection;
+    // Pixels per world unit at unit distance: the projection's y row spans
+    // half the viewport height per unit of clip w.
+    let y_row = vec3<f32>(projection[0].y, projection[1].y, projection[2].y);
+    let w_row = vec3<f32>(projection[0].w, projection[1].w, projection[2].w);
+    let pixels = length(y_row) * frame.viewport.y * 0.5 / frame.lod_error;
+    // Level l draws where error_l * scale * pixels <= distance - radius
+    // (perspective); orthographic views keep the same scale everywhere.
+    let perspective = length(w_row) > 0.5;
+    let to_eye = center - frame.eye.xyz;
+    let distance_squared = dot(to_eye, to_eye);
+    var level = 0u;
+    for (var l = 1u; l < min(levels, LOD_LEVELS); l++) {
+        let error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u) * scale * pixels;
+        var fits = error <= 1.0;
+        if perspective {
+            let reach = error + radius;
+            fits = reach * reach <= distance_squared;
+        }
+        if fits {
+            level = l;
+        }
+    }
+    return level;
 }
 
 // Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
@@ -749,98 +806,135 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Visible count of every group of 256 candidates in draw-group order.
+// The level bucket a candidate's flags put it in (decision 047): its level
+// of detail on frames with levels, otherwise 0; one-hot when the frame's
+// mask gathers it.
+fn bucket(flags: u32) -> u32 {
+    return select(0u, (flags >> LOD_SHIFT) & 3u, frame.lod_error > 0.0);
+}
+
+fn gathered(flags: u32) -> vec4<u32> {
+    if (flags & frame.mask) == 0u {
+        return vec4<u32>(0u);
+    }
+    var hot = vec4<u32>(0u);
+    hot[bucket(flags)] = 1u;
+    return hot;
+}
+
+// Per-level sums after the candidates' flags: one vec4 per group of 256,
+// then the totals, then the total over levels.
+fn load_sums(index: u32) -> vec4<u32> {
+    let at = frame.candidates + 4u * index;
+    return vec4<u32>(scan[at], scan[at + 1u], scan[at + 2u], scan[at + 3u]);
+}
+
+fn store_sums(index: u32, value: vec4<u32>) {
+    let at = frame.candidates + 4u * index;
+    scan[at] = value.x;
+    scan[at + 1u] = value.y;
+    scan[at + 2u] = value.z;
+    scan[at + 3u] = value.w;
+}
+
+// Visible count of every group of 256 candidates in draw-group order, per
+// level of detail.
 @compute @workgroup_size(256)
 fn sum_groups(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
     @builtin(workgroup_id) group: vec3<u32>,
 ) {
-    // Gathered candidates in the low half, sub-pixel ones (counted once,
-    // before phase two) in the high half.
-    var visible = 0u;
+    // Gathered candidates per level, and sub-pixel ones (counted once,
+    // before phase two).
+    var counts = vec4<u32>(0u);
+    var subpixel = 0u;
     if id.x < frame.candidates {
         let flags = scan[id.x];
-        visible = select(0u, 1u, (flags & frame.mask) != 0u);
+        counts = gathered(flags);
         if (flags & SUBPIXEL) != 0u && (frame.mask & (PHASE2 | PROBE)) == 0u {
-            visible += 0x10000u;
+            subpixel = 1u;
         }
     }
-    shared_values[lane] = visible;
+    shared_counts[lane] = counts;
+    shared_values[lane] = subpixel;
     workgroupBarrier();
     for (var stride = GROUP / 2u; stride > 0u; stride = stride >> 1u) {
         if lane < stride {
+            shared_counts[lane] += shared_counts[lane + stride];
             shared_values[lane] += shared_values[lane + stride];
         }
         workgroupBarrier();
     }
     if lane == 0u {
-        let sums = shared_values[0];
-        scan[frame.candidates + group.x] = sums & 0xffffu;
-        if (sums >> 16u) != 0u {
-            atomicAdd(&occlusion_counts[1], sums >> 16u);
+        store_sums(group.x, shared_counts[0]);
+        if shared_values[0] != 0u {
+            atomicAdd(&occlusion_counts[1], shared_values[0]);
         }
     }
 }
 
-// Exclusive prefix of the group sums and the total: one workgroup scans 512
-// groups per chunk and carries the running sum across chunks.
+// Exclusive prefix of the group sums per level and the totals: one workgroup
+// scans 512 groups per chunk and carries the running sums across chunks.
+// The total over levels follows the per-level totals.
 @compute @workgroup_size(256)
 fn scan_groups(@builtin(local_invocation_index) lane: u32) {
-    let base = frame.candidates;
-    var carry = 0u;
+    var carry = vec4<u32>(0u);
     for (var chunk = 0u; chunk < frame.groups; chunk += 2u * GROUP) {
         let first = chunk + lane * 2u;
-        var left = 0u;
-        var right = 0u;
+        var left = vec4<u32>(0u);
+        var right = vec4<u32>(0u);
         if first < frame.groups {
-            left = scan[base + first];
+            left = load_sums(first);
         }
         if first + 1u < frame.groups {
-            right = scan[base + first + 1u];
+            right = load_sums(first + 1u);
         }
         let pair = left + right;
-        shared_values[lane] = pair;
+        shared_counts[lane] = pair;
         workgroupBarrier();
         for (var offset = 1u; offset < GROUP; offset = offset << 1u) {
-            var addend = 0u;
+            var addend = vec4<u32>(0u);
             if lane >= offset {
-                addend = shared_values[lane - offset];
+                addend = shared_counts[lane - offset];
             }
             workgroupBarrier();
-            shared_values[lane] += addend;
+            shared_counts[lane] += addend;
             workgroupBarrier();
         }
-        let exclusive = carry + shared_values[lane] - pair;
+        let exclusive = carry + shared_counts[lane] - pair;
         if first < frame.groups {
-            scan[base + first] = exclusive;
+            store_sums(first, exclusive);
         }
         if first + 1u < frame.groups {
-            scan[base + first + 1u] = exclusive + left;
+            store_sums(first + 1u, exclusive + left);
         }
-        carry += shared_values[GROUP - 1u];
+        carry += shared_counts[GROUP - 1u];
         // Every lane read this chunk's total before the next chunk overwrites it.
         workgroupBarrier();
     }
     if lane == 0u {
-        scan[base + frame.groups] = carry;
+        store_sums(frame.groups, carry);
+        scan[frame.candidates + 4u * frame.groups + 4u] = carry.x + carry.y + carry.z + carry.w;
     }
 }
 
-fn visible_before(position: u32) -> u32 {
+fn visible_before(position: u32) -> vec4<u32> {
     if position >= frame.candidates {
-        return scan[frame.candidates + frame.groups];
+        return load_sums(frame.groups);
     }
     let group = position / GROUP;
-    var value = scan[frame.candidates + group];
+    var value = load_sums(group);
     for (var index = group * GROUP; index < position; index++) {
-        value += select(0u, 1u, (scan[index] & frame.mask) != 0u);
+        value += gathered(scan[index]);
     }
     return value;
 }
 
-// Visible counts become indirect instance counts; the budget keeps the first
-// visible instances in submission order.
+// Visible counts become indirect instance counts, per level of detail: level
+// l of batch b draws from `draws[l * batches + b]` and its IDs lie in plane
+// l of the visible IDs. The budget keeps the first visible instances in
+// submission order; frames with a budget draw no coarser levels.
 @compute @workgroup_size(64)
 fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.batches {
@@ -850,14 +944,26 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
     let base = visible_before(batch.start);
     let visible = visible_before(batch.start + batch.count) - base;
     var instances = 0u;
-    if base < frame.budget {
-        instances = min(visible, frame.budget - base);
+    if base.x < frame.budget {
+        instances = min(visible.x, frame.budget - base.x);
     }
-    batch_bases[id.x] = base;
+    for (var level = 0u; level < 4u; level++) {
+        batch_bases[4u * id.x + level] = base[level];
+    }
     draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
+    let levels = u32(batch.lod_errors.z);
+    if levels > 1u {
+        draws[frame.batches + id.x] = DrawArgs(batch.lod_ranges.y, visible.y,
+            batch.lod_ranges.x, batch.base_vertex, batch.first_instance + batch.first_plane);
+    }
+    if levels > 2u {
+        draws[2u * frame.batches + id.x] = DrawArgs(batch.lod_ranges.w, visible.z,
+            batch.lod_ranges.z, batch.base_vertex, batch.first_instance + 2u * batch.first_plane);
+    }
 }
 
-// Visible slots keep candidate order within each group's region.
+// Visible slots keep candidate order within each group's region of their
+// level's plane.
 @compute @workgroup_size(256)
 fn scatter(
     @builtin(global_invocation_id) id: vec3<u32>,
@@ -868,24 +974,26 @@ fn scatter(
     if id.x < frame.candidates {
         stored = scan[id.x];
     }
-    let flag = select(0u, 1u, (stored & frame.mask) != 0u);
-    shared_values[lane] = flag;
+    let hot = gathered(stored);
+    shared_counts[lane] = hot;
     workgroupBarrier();
     for (var offset = 1u; offset < GROUP; offset = offset << 1u) {
-        var addend = 0u;
+        var addend = vec4<u32>(0u);
         if lane >= offset {
-            addend = shared_values[lane - offset];
+            addend = shared_counts[lane - offset];
         }
         workgroupBarrier();
-        shared_values[lane] += addend;
+        shared_counts[lane] += addend;
         workgroupBarrier();
     }
-    if flag != 0u {
-        let global = scan[frame.candidates + group.x] + shared_values[lane] - flag;
-        if global < frame.budget {
+    if any(hot != vec4<u32>(0u)) {
+        let level = bucket(stored);
+        let global = (load_sums(group.x) + shared_counts[lane] - hot)[level];
+        if level != 0u || global < frame.budget {
             let candidate = candidates[id.x];
             let batch = candidate.batch;
-            visible_ids[batches[batch].start + (global - batch_bases[batch])] =
+            visible_ids[level * frame.plane + batches[batch].start
+                + (global - batch_bases[4u * batch + level])] =
                 candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u);
         }
     }

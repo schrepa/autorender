@@ -308,6 +308,19 @@ impl StressGame {
     pub fn set_subpixel_culling(&mut self, enabled: bool) {
         self.app.set_subpixel_culling(enabled);
     }
+    /// Whether instances draw at levels of detail (decision 047, on by
+    /// default) or always as their mesh.
+    pub fn set_level_of_detail(&mut self, enabled: bool) {
+        if let Some(mut settings) = self
+            .app
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<LevelOfDetail>()
+        {
+            settings.enabled = enabled;
+        }
+    }
     /// Whether virtual geometry shades through the visibility buffer
     /// (decision 045, on by default) or as it draws.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {

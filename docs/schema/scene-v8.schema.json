@@ -1015,6 +1015,16 @@
             }
           ]
         },
+        "level_of_detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLevelOfDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "local_lights": {
           "description": "Version 6 sections (decisions 023 to 026).",
           "anyOf": [
@@ -1057,7 +1067,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decisions 038, 039, 043 and 044).",
+          "description": "Version 8 sections (decisions 038, 039, 043, 044 and 047).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -1114,6 +1124,25 @@
         "linear",
         "cubic_spline"
       ]
+    },
+    "SceneLevelOfDetail": {
+      "description": "Level of detail settings (decision 047): whether instances draw simplified\nlevels of their meshes where the simplification stays within a pixel\nerror. Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "pixel_error": {
+          "description": "The largest simplification error a drawn level may show, in pixels of\nthe viewport height, from 0.25 to 64: smaller draws finer levels\nfarther away.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 64.0,
+          "minimum": 0.25
+        }
+      },
+      "additionalProperties": false
     },
     "SceneLight": {
       "description": "A point or spot light on this entity (decision 023). Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",

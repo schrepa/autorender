@@ -17,8 +17,8 @@ use engine_core::{
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::gpu_data::{
     BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, FLAG_PHASE1, FLAG_PHASE2,
-    FLAG_PROBE, FLAG_VISIBLE, PRESENTATION_SHADER, PresentationFrame, STILL_FRAMES, SkinnedData,
-    frustum_uniform,
+    FLAG_PROBE, FLAG_VISIBLE, LOD_LEVELS, PRESENTATION_SHADER, PresentationFrame, STILL_FRAMES,
+    SkinnedData, frustum_uniform,
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::mesh_arena::Ids;
@@ -138,6 +138,7 @@ struct VisibleReadback {
     value: Rc<Cell<Option<u32>>>,
     occluded: Rc<Cell<Option<u32>>>,
     subpixel: Rc<Cell<Option<u32>>>,
+    levels: Rc<Cell<Option<[u32; 4]>>>,
 }
 
 // The occlusion test group's pose buffer index, pyramid generation, buffer
@@ -146,8 +147,9 @@ type OcclusionKey = (usize, u64, u64, Option<u64>);
 
 // Totals read back: phase one's (or the only) visible count, phase two's,
 // the candidates phase two found hidden, and those covering no pixel center
-// (decision 041).
-const TOTALS_BYTES: u64 = 16;
+// (decision 041); then phase one's and phase two's drawn counts per level of
+// detail (decision 047).
+const TOTALS_BYTES: u64 = 48;
 
 /// Per-frame outcome for profiling counters and stats.
 #[derive(Default)]
@@ -181,6 +183,10 @@ pub(crate) struct BatchMeta {
     pub group: u32,
     pub joints: u32,
     pub virtual_geometry: bool,
+    /// Coarser levels of detail the camera may draw instead (decision
+    /// 047): each one's first index, index count and geometric error in
+    /// mesh units, finest first.
+    pub lods: Vec<(u32, u32, f32)>,
 }
 
 pub(crate) struct GpuPresentationPass {
@@ -295,6 +301,7 @@ pub(crate) struct GpuPresentationPass {
     last_visible: Rc<Cell<Option<u32>>>,
     last_occluded: Rc<Cell<Option<u32>>>,
     last_subpixel: Rc<Cell<Option<u32>>>,
+    last_levels: Rc<Cell<Option<[u32; 4]>>>,
 }
 
 fn storage(
@@ -441,7 +448,7 @@ impl GpuPresentationPass {
             ),
             totals: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/presentation-totals"),
-                size: 16,
+                size: TOTALS_BYTES,
                 usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -510,6 +517,7 @@ impl GpuPresentationPass {
             last_visible: Rc::new(Cell::new(None)),
             last_occluded: Rc::new(Cell::new(None)),
             last_subpixel: Rc::new(Cell::new(None)),
+            last_levels: Rc::new(Cell::new(None)),
         }
     }
 
@@ -554,6 +562,13 @@ impl GpuPresentationPass {
     /// center (decision 041), read back with [`Self::visible`].
     pub(crate) fn subpixel(&self) -> Option<u32> {
         self.last_subpixel.get()
+    }
+
+    /// Instances drawn at each level of detail (decision 047), read back
+    /// with [`Self::visible`]: the mesh, its two simplifications, then
+    /// impostors.
+    pub(crate) fn lod_instances(&self) -> Option<[u32; 4]> {
+        self.last_levels.get()
     }
 
     /// Whether this frame draws in two phases around the occlusion test.
@@ -633,29 +648,32 @@ impl GpuPresentationPass {
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
-            // Flags, one sum per group, and the total.
+            // Flags, four sums per group (one per level of detail, decision
+            // 047), four totals and their sum.
             self.scan = storage(
                 device,
                 "engine/presentation-scan",
-                (capacity + groups + 1) * 4,
+                (capacity + 4 * (groups + 1) + 1) * 4,
                 wgpu::BufferUsages::COPY_SRC,
             );
+            // A plane of visible IDs per level of detail.
+            let planes = LOD_LEVELS as u64;
             self.visible_ids = storage(
                 device,
                 "engine/presentation-visible-ids",
-                capacity * 4,
+                planes * capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
             self.visible_ids2 = storage(
                 device,
                 "engine/presentation-visible-ids2",
-                capacity * 4,
+                planes * capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
             self.visible_ids_probe = storage(
                 device,
                 "engine/presentation-visible-ids-probe",
-                capacity * 4,
+                planes * capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
             self.groups_key = None;
@@ -671,28 +689,31 @@ impl GpuPresentationPass {
                 capacity * size_of::<BatchData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            // Each batch's visible count before it, per level of detail.
             self.batch_bases = storage(
                 device,
                 "engine/presentation-batch-bases",
-                capacity * 4,
+                capacity * 16,
                 wgpu::BufferUsages::empty(),
             );
+            // Draw arguments per level of detail and batch.
+            let planes = LOD_LEVELS as u64;
             self.draws = storage(
                 device,
                 "engine/presentation-draws",
-                capacity * DRAW_ARGS_BYTES,
+                planes * capacity * DRAW_ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.draws2 = storage(
                 device,
                 "engine/presentation-draws2",
-                capacity * DRAW_ARGS_BYTES,
+                planes * capacity * DRAW_ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.draws_probe = storage(
                 device,
                 "engine/presentation-draws-probe",
-                capacity * DRAW_ARGS_BYTES,
+                planes * capacity * DRAW_ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.groups_key = None;
@@ -1055,9 +1076,11 @@ impl GpuPresentationPass {
         poses_index: usize,
         poses_generation: u64,
         view_projection: glam::Mat4,
+        eye: glam::Vec3,
         motion: bool,
         occlusion: Option<(u32, u32, u32)>,
         subpixel: bool,
+        lod_error: f32,
         stillness: Option<bool>,
         virtual_generation: u64,
         viewport: (u32, u32),
@@ -1315,7 +1338,9 @@ impl GpuPresentationPass {
                     group,
                     joints,
                     virtual_geometry,
+                    lods,
                 } = batch_meta(index, batch);
+                let lod = |level: usize| lods.get(level).copied().unwrap_or((0, 0, 0.0));
                 let skinned = joints != 0;
                 self.batch_joints.push(joints);
                 let range = batch.instances.start as usize..batch.instances.end as usize;
@@ -1330,7 +1355,13 @@ impl GpuPresentationPass {
                     } else {
                         0
                     },
-                    pad2: 0,
+                    first_plane: if self.first_instance {
+                        self.candidate_capacity as u32
+                    } else {
+                        0
+                    },
+                    lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
+                    lod_errors: [lod(0).2, lod(1).2, (1 + lods.len()) as f32, 0.0],
                     pad: group,
                     bounds_min: bounds
                         .min()
@@ -1495,7 +1526,15 @@ impl GpuPresentationPass {
             viewport: [width as f32, height as f32, levels as f32, 0.0],
             skinned: self.skinned_count,
             subpixel: u32::from(self.subpixel),
-            pad: [0; 2],
+            plane: self.candidate_capacity as u32,
+            // Levels of detail need culling and no instance budget, which
+            // keeps the first visible instances of one level.
+            lod_error: if culling && frame.instance_budget() >= self.candidate_count as usize {
+                lod_error
+            } else {
+                0.0
+            },
+            eye: eye.extend(0.0).to_array(),
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         self.frame_uniform = Some(uniform);
@@ -1633,6 +1672,7 @@ impl GpuPresentationPass {
             // culling read it back now, without waiting for it.
             encoder.clear_buffer(&self.totals, 0, None);
             encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 0, 4);
+            encoder.copy_buffer_to_buffer(&self.scan, self.level_offset(), &self.totals, 16, 16);
             // Phase one's group sums counted sub-pixel candidates.
             encoder.copy_buffer_to_buffer(&self.occlusion_counts, 4, &self.totals, 12, 4);
             if !self.occlusion {
@@ -1643,8 +1683,16 @@ impl GpuPresentationPass {
     }
 
     // Byte offset of the compaction's total in the scan buffer.
+    // The visible total over every level of detail, after the per-level
+    // group sums and totals.
     fn total_offset(&self) -> u64 {
-        u64::from(self.candidate_count + self.candidate_count.div_ceil(GROUP)) * 4
+        self.level_offset() + 16
+    }
+
+    // The compaction's totals per level of detail, after the per-level
+    // group sums.
+    fn level_offset(&self) -> u64 {
+        u64::from(self.candidate_count + 4 * self.candidate_count.div_ceil(GROUP)) * 4
     }
 
     fn read_back_totals(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
@@ -1737,6 +1785,7 @@ impl GpuPresentationPass {
             pass.dispatch_workgroups(workgroups, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 4, 4);
+        encoder.copy_buffer_to_buffer(&self.scan, self.level_offset(), &self.totals, 32, 16);
         encoder.copy_buffer_to_buffer(&self.occlusion_counts, 0, &self.totals, 8, 4);
         self.read_back_totals(device, encoder);
     }
@@ -1755,7 +1804,7 @@ impl GpuPresentationPass {
         self.readbacks.push(VisibleReadback {
             buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("engine/presentation-visible-readback"),
-                size: 16,
+                size: TOTALS_BYTES,
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
@@ -1763,6 +1812,7 @@ impl GpuPresentationPass {
             value: Rc::clone(&self.last_visible),
             occluded: Rc::clone(&self.last_occluded),
             subpixel: Rc::clone(&self.last_subpixel),
+            levels: Rc::clone(&self.last_levels),
         });
         self.readbacks.last()
     }
@@ -1778,6 +1828,7 @@ impl GpuPresentationPass {
             let value = Rc::clone(&readback.value);
             let occluded = Rc::clone(&readback.occluded);
             let subpixel = Rc::clone(&readback.subpixel);
+            let levels = Rc::clone(&readback.levels);
             let buffer = readback.buffer.clone();
             readback
                 .buffer
@@ -1802,6 +1853,9 @@ impl GpuPresentationPass {
                             ));
                             occluded.set(Some(hidden));
                             subpixel.set(Some(tiny));
+                            levels.set(Some(std::array::from_fn(|level| {
+                                word(4 + level).saturating_add(word(8 + level))
+                            })));
                         }
                         buffer.unmap();
                     }
@@ -1893,6 +1947,8 @@ impl GpuPresentationPass {
         uniform.viewport = [size as f32, size as f32, 0.0, 0.0];
         uniform.motion = 0;
         uniform.budget = u32::MAX;
+        // Probe faces draw every candidate at full detail.
+        uniform.lod_error = 0.0;
         queue.write_buffer(&self.frame_probes[face], 0, bytemuck::bytes_of(&uniform));
         let key = (
             self.buffers_generation,
@@ -2019,7 +2075,7 @@ impl GpuPresentationPass {
         index: usize,
     ) -> (Ids<'a>, &'a wgpu::Buffer, u64) {
         (
-            self.ids(&self.visible_ids_probe, batch),
+            self.ids(&self.visible_ids_probe, batch, 0),
             &self.draws_probe,
             index as u64 * DRAW_ARGS_BYTES,
         )
@@ -2032,23 +2088,27 @@ impl GpuPresentationPass {
         batch: &DrawBatch,
         index: usize,
         phase: usize,
+        level: usize,
     ) -> (Ids<'a>, &'a wgpu::Buffer, u64) {
         let (ids, draws) = if phase == 0 {
             (&self.visible_ids, &self.draws)
         } else {
             (&self.visible_ids2, &self.draws2)
         };
-        (self.ids(ids, batch), draws, index as u64 * DRAW_ARGS_BYTES)
+        let args = (level * self.batch_count as usize + index) as u64;
+        (self.ids(ids, batch, level), draws, args * DRAW_ARGS_BYTES)
     }
 
-    /// A batch's visible IDs in `ids`: the whole buffer where its draw
-    /// arguments' first instance names its region, otherwise the region.
-    fn ids<'a>(&self, ids: &'a wgpu::Buffer, batch: &DrawBatch) -> Ids<'a> {
+    /// A batch's visible IDs at level of detail `level` in `ids`: the whole
+    /// buffer where its draw arguments' first instance names its region,
+    /// otherwise the region in the level's plane.
+    fn ids<'a>(&self, ids: &'a wgpu::Buffer, batch: &DrawBatch, level: usize) -> Ids<'a> {
         if self.first_instance {
             Ids::Whole(ids)
         } else {
-            let start = u64::from(batch.instances.start) * 4;
-            let end = u64::from(batch.instances.end) * 4;
+            let plane = (level * self.candidate_capacity) as u64;
+            let start = (plane + u64::from(batch.instances.start)) * 4;
+            let end = (plane + u64::from(batch.instances.end)) * 4;
             Ids::Region(ids.slice(start..end))
         }
     }

@@ -75,6 +75,13 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
         },
         |value| value.sanitized(),
     );
+    snapshot.level_of_detail = world.get_resource::<crate::LevelOfDetail>().map_or(
+        crate::LevelOfDetail {
+            enabled: false,
+            ..crate::LevelOfDetail::default()
+        },
+        |value| value.sanitized(),
+    );
 }
 
 /// Most near shadow cascades ([`Shadows::cascades`]).

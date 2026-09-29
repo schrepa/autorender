@@ -141,8 +141,10 @@ frames also pipeline fixed ticks ([decision 015](adr-015-pipelined-fixed-ticks.m
 report `taa`. `occlusion=off` draws every frustum-visible object without the
 occlusion test ([decision 040](adr-040-occlusion-culling.md)), and
 `subpixel=off` also every instance covering no pixel center
-([decision 041](adr-041-subpixel-culling.md)), for same-build comparisons;
-recordings report `occlusion` and `subpixel`. Spatial
+([decision 041](adr-041-subpixel-culling.md)), and `lod=off` draws every
+instance as its mesh instead of at its level of detail
+([decision 047](adr-047-levels-of-detail.md)), for same-build comparisons;
+recordings report `occlusion`, `subpixel` and `lod`. Spatial
 queries require the collision-enabled presets. No automated suite starts when
 opening the page. Runtime code lives in `examples/stress-lab`, independent of
 engine implementations.

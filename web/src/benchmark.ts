@@ -5,7 +5,8 @@ export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: nu
 const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom", "sun_shafts", "reflections", "refraction",
   "visibility_buffer"] as const;
 // Read back a few frames late: null until then.
-const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances", "subpixel_instances"] as const;
+const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances", "subpixel_instances",
+  "lod0_instances", "lod1_instances", "lod2_instances", "impostor_instances"] as const;
 export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number]> & Record<typeof casterFields[number], number | null>;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };

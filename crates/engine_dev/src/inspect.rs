@@ -3,17 +3,17 @@ use std::{collections::BTreeMap, io::Write};
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
     AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Decal, DecalBlend,
-    Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LocalLight,
-    LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode, PresentationState,
-    PresentedTransforms, ReflectionProbe, ReflectionProbes, Reflections, Refraction, Shadows, Skin,
-    SunShafts, Tint, Transform, VirtualGeometry,
+    Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LevelOfDetail,
+    LocalLight, LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode,
+    PresentationState, PresentedTransforms, ReflectionProbe, ReflectionProbes, Reflections,
+    Refraction, Shadows, Skin, SunShafts, Tint, Transform, VirtualGeometry,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
     SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneEmitter, SceneEntity,
-    SceneEnvironment, SceneInstance, SceneLight, SceneLocalLights, SceneParticles,
-    SceneReflectionProbe, SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows,
-    SceneSunShafts, SceneVirtualGeometry,
+    SceneEnvironment, SceneInstance, SceneLevelOfDetail, SceneLight, SceneLocalLights,
+    SceneParticles, SceneReflectionProbe, SceneReflectionProbes, SceneReflections, SceneRefraction,
+    SceneShadows, SceneSunShafts, SceneVirtualGeometry,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -266,6 +266,11 @@ impl Default for DevTools {
             InspectorDescriptor::new("VirtualGeometry", "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections.", schemas["VirtualGeometry"].clone())
                 .with_default(json!(SceneVirtualGeometry::default())),
             |settings| json!(SceneVirtualGeometry::from(settings)),
+        ).expect("built-in descriptor is bounded");
+        tools.register_resource::<LevelOfDetail>(
+            InspectorDescriptor::new("LevelOfDetail", "Level of detail settings (decision 047): whether GPU-presented frames draw each instance at the coarsest simplified level of its mesh whose error stays within the pixel error of the viewport height. Missing means every instance draws its mesh. The rendering observation reports instances drawn at each level.", schemas["LevelOfDetail"].clone())
+                .with_default(json!(SceneLevelOfDetail::default())),
+            |settings| json!(SceneLevelOfDetail::from(settings)),
         ).expect("built-in descriptor is bounded");
         tools.register_component::<LocalLight>(
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())

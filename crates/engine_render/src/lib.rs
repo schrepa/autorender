@@ -29,6 +29,10 @@ pub struct RenderStats {
     /// instances whose bounds cover no pixel center, left undrawn, read back
     /// with `gpu_visible`; `None` otherwise.
     pub subpixel_instances: Option<u32>,
+    /// GPU-culled frames with levels of detail (decision 047): instances
+    /// drawn as their mesh, its two simplifications and impostors, read
+    /// back with `gpu_visible`; `None` otherwise.
+    pub lod_instances: Option<[u32; 4]>,
     /// Number of distinct meshes retained on the GPU.
     pub resident_meshes: u32,
     /// Vertex/index bytes initialized for meshes first seen this frame.

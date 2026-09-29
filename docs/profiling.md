@@ -236,7 +236,9 @@ transparency `transparent` and `transparent_composite`, and occlusion culling
 pyramid, the test and the second compaction), with `opaque_meshes` spanning
 both drawing phases and `render.occluded_instances` counting what it left
 undrawn; `render.subpixel_instances` counts the visible instances sub-pixel
-culling ([decision 041](adr-041-subpixel-culling.md)) left undrawn. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
+culling ([decision 041](adr-041-subpixel-culling.md)) left undrawn, and
+`render.lod0_instances` to `render.lod2_instances` the instances drawn at each
+level of detail ([decision 047](adr-047-levels-of-detail.md)). Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
 add `ambient_occlusion` (the samples and their filter), `bloom` (every
 level down and up) and, on frames
 without temporal antialiasing, `post_composite`. Counters report

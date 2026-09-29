@@ -149,6 +149,38 @@ pub(crate) struct Poses<'a> {
     pub generation: u64,
 }
 
+/// How a caster group's mesh draws (decision 047): its index count, first
+/// index and base vertex, and its coarser levels of detail (first index,
+/// index count and geometric error in mesh units, finest first).
+pub(crate) struct CasterDraw {
+    pub index_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub lods: Vec<(u32, u32, f32)>,
+}
+
+impl CasterDraw {
+    /// The coarsest level whose error is at most `error` world units at unit
+    /// scale; 0 for the mesh itself.
+    fn level_within(&self, error: f32) -> u8 {
+        self.lods
+            .iter()
+            .take_while(|&&(_, _, lod_error)| lod_error <= error)
+            .count() as u8
+    }
+
+    /// Index count, first index and base vertex of level `level`.
+    fn range(&self, level: u8) -> (u32, u32, i32) {
+        match level.checked_sub(1) {
+            Some(lod) => {
+                let (first_index, index_count, _) = self.lods[lod as usize];
+                (index_count, first_index, self.base_vertex)
+            }
+            None => (self.index_count, self.first_index, self.base_vertex),
+        }
+    }
+}
+
 /// A retained caster group as depth passes draw it: its pipeline choice
 /// (masked, skinned), mesh, joints stream, material and group index.
 struct Caster<'m> {
@@ -730,6 +762,9 @@ pub(crate) struct ShadowPass {
     // Source kind and stamps, and whether virtual geometry draws.
     groups_key: Option<(u8, u64, u64, bool)>,
     groups_changed: bool,
+    // The level of detail each map draws each group at (decision 047), as
+    // the draw arguments' template holds them.
+    template_levels: Vec<u8>,
     // The mesh arena layout the draw arguments' template was written for.
     mesh_layout: u64,
     // Whether the device draws indirectly from nonzero first instances, and
@@ -847,6 +882,7 @@ impl ShadowPass {
             batch_groups: Vec::new(),
             groups_key: None,
             groups_changed: false,
+            template_levels: Vec::new(),
             mesh_layout: 0,
             first_instance: device
                 .features()
@@ -1100,7 +1136,9 @@ impl ShadowPass {
                 first_index: 0,
                 base_vertex: 0,
                 first_instance: 0,
-                pad2: 0,
+                first_plane: 0,
+                lod_ranges: [0; 4],
+                lod_errors: [0.0, 0.0, 1.0, 0.0],
                 pad: self.listed_group_staging.len() as u32,
                 bounds_min: bounds.min().extend(skinned).to_array(),
                 bounds_max: bounds
@@ -1129,7 +1167,7 @@ impl ShadowPass {
         poses: Option<Poses<'_>>,
         slot_capacity: usize,
         mesh_layout: u64,
-        placement: impl Fn(MeshHandle) -> (u32, u32, i32),
+        placement: impl Fn(MeshHandle) -> CasterDraw,
     ) -> Option<ShadowFrame> {
         self.dirty_tiles
             .merge(self.read_back.replace([0; TILE_WORDS]));
@@ -1265,10 +1303,30 @@ impl ShadowPass {
             self.buffers_generation += 1;
             self.groups_changed = true;
         }
-        // The draw arguments' template names each group's mesh placement.
+        // The draw arguments' template names each group's mesh placement,
+        // at the coarsest level of detail whose error stays within half a
+        // texel of each map (decision 047): the rasterized depths then
+        // differ from the mesh's by less than rounding.
         self.groups_changed |= self.mesh_layout != mesh_layout;
         self.mesh_layout = mesh_layout;
+        let draws: Vec<CasterDraw> = self
+            .groups
+            .iter()
+            .map(|group| placement(group.mesh))
+            .collect();
+        let texels: [f32; MAPS] = std::array::from_fn(|map| match map {
+            MOVING_MAP | KEPT_MAP => far.texel(resolution),
+            cascade => near
+                .get(cascade)
+                .map_or(0.0, |(_, region)| region.texel(near_resolution)),
+        });
+        let levels: Vec<u8> = texels
+            .iter()
+            .flat_map(|&texel| draws.iter().map(move |draw| draw.level_within(texel * 0.5)))
+            .collect();
+        self.groups_changed |= levels != self.template_levels;
         if self.groups_changed {
+            self.template_levels = levels;
             self.groups_changed = false;
             if groups > self.starts_capacity {
                 // Counters first, then every group's region start; a new
@@ -1293,8 +1351,9 @@ impl ShadowPass {
                 self.first_instance && u32::try_from(MAPS * self.id_capacity).is_ok();
             let mut template: Vec<u32> = Vec::with_capacity(MAPS * groups * 5);
             for map in 0..MAPS {
-                for group in &self.groups {
-                    let (count, first_index, base_vertex) = placement(group.mesh);
+                for (index, group) in self.groups.iter().enumerate() {
+                    let (count, first_index, base_vertex) =
+                        draws[index].range(self.template_levels[map * groups + index]);
                     let first_instance = if self.regions_in_args {
                         (map * self.id_capacity) as u32 + group.start
                     } else {

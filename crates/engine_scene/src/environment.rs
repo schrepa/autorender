@@ -1,14 +1,14 @@
 //! A scene's environment (decision 022): its atmosphere (decision 018) and
-//! rendering effects (decisions 020, 021, 023 to 026, 038, 039 and 043) as
-//! authored data.
+//! rendering effects (decisions 020, 021, 023 to 026, 038, 039, 043, 044 and
+//! 047) as authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
 //! (local lights, particles, sun shafts and reflections need version 6);
 //! development controls apply the same sections temporarily, and inspection
 //! reports the current resources in the same shape.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, Decals, LocalLights, MAX_SHADOW_CASCADES, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
+    AmbientOcclusion, Atmosphere, Bloom, Decals, LevelOfDetail, LocalLights, MAX_SHADOW_CASCADES,
+    Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
     bevy_ecs::prelude::World, glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
@@ -702,6 +702,48 @@ impl SceneVirtualGeometry {
     }
 }
 
+/// Level of detail settings (decision 047): whether instances draw simplified
+/// levels of their meshes where the simplification stays within a pixel
+/// error. Requires version 8.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct SceneLevelOfDetail {
+    pub enabled: bool,
+    /// The largest simplification error a drawn level may show, in pixels of
+    /// the viewport height, from 0.25 to 64: smaller draws finer levels
+    /// farther away.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
+    pub pixel_error: f32,
+}
+
+impl Default for SceneLevelOfDetail {
+    fn default() -> Self {
+        Self::from(&LevelOfDetail::default())
+    }
+}
+
+impl From<&LevelOfDetail> for SceneLevelOfDetail {
+    fn from(settings: &LevelOfDetail) -> Self {
+        Self {
+            enabled: settings.enabled,
+            pixel_error: settings.pixel_error,
+        }
+    }
+}
+
+impl SceneLevelOfDetail {
+    pub fn resolve(&self, path: &str) -> Result<LevelOfDetail, SceneError> {
+        if !(self.pixel_error.is_finite() && (0.25..=64.0).contains(&self.pixel_error)) {
+            return Err(section_error(path, "pixel_error", "must be in [0.25, 64]"));
+        }
+        Ok(LevelOfDetail {
+            enabled: self.enabled,
+            pixel_error: self.pixel_error,
+        })
+    }
+}
+
 /// Sun shafts (decision 024): sunlight scattered by the fog between shadow
 /// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -888,7 +930,7 @@ pub struct SceneEnvironment {
     pub reflections: Option<SceneReflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneParticles>,
-    /// Version 8 sections (decisions 038, 039, 043 and 044).
+    /// Version 8 sections (decisions 038, 039, 043, 044 and 047).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refraction: Option<SceneRefraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -897,6 +939,8 @@ pub struct SceneEnvironment {
     pub reflection_probes: Option<SceneReflectionProbes>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub virtual_geometry: Option<SceneVirtualGeometry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_of_detail: Option<SceneLevelOfDetail>,
 }
 
 /// Resolved sections of an environment; `None` where a section is omitted.
@@ -914,6 +958,7 @@ pub struct EnvironmentSettings {
     pub decals: Option<Decals>,
     pub reflection_probes: Option<ReflectionProbes>,
     pub virtual_geometry: Option<VirtualGeometry>,
+    pub level_of_detail: Option<LevelOfDetail>,
 }
 
 impl SceneEnvironment {
@@ -995,6 +1040,14 @@ impl SceneEnvironment {
                     enabled: false,
                     ..VirtualGeometry::default()
                 });
+        let level_of_detail =
+            world
+                .get_resource::<LevelOfDetail>()
+                .copied()
+                .unwrap_or(LevelOfDetail {
+                    enabled: false,
+                    ..LevelOfDetail::default()
+                });
         Self {
             atmosphere: Some(SceneAtmosphere::from(&atmosphere)),
             shadows: Some(SceneShadows::from(&shadows)),
@@ -1008,17 +1061,19 @@ impl SceneEnvironment {
             decals: Some(SceneDecals::from(&decals)),
             reflection_probes: Some(SceneReflectionProbes::from(&probes)),
             virtual_geometry: Some(SceneVirtualGeometry::from(&virtual_geometry)),
+            level_of_detail: Some(SceneLevelOfDetail::from(&level_of_detail)),
         }
     }
 
-    /// The first version 8 section present (decisions 038, 039, 043 and
-    /// 044).
+    /// The first version 8 section present (decisions 038, 039, 043, 044
+    /// and 047).
     pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
         [
             ("refraction", self.refraction.is_some()),
             ("decals", self.decals.is_some()),
             ("reflection_probes", self.reflection_probes.is_some()),
             ("virtual_geometry", self.virtual_geometry.is_some()),
+            ("level_of_detail", self.level_of_detail.is_some()),
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
@@ -1102,6 +1157,10 @@ impl SceneEnvironment {
                 .virtual_geometry
                 .map(|section| section.resolve(&format!("{path}.virtual_geometry")))
                 .transpose()?,
+            level_of_detail: self
+                .level_of_detail
+                .map(|section| section.resolve(&format!("{path}.level_of_detail")))
+                .transpose()?,
         })
     }
 }
@@ -1145,6 +1204,9 @@ impl EnvironmentSettings {
         if let Some(settings) = self.virtual_geometry {
             world.insert_resource(settings);
         }
+        if let Some(settings) = self.level_of_detail {
+            world.insert_resource(settings);
+        }
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
@@ -1160,6 +1222,7 @@ impl EnvironmentSettings {
         world.insert_resource(self.decals.unwrap_or_default());
         world.insert_resource(self.reflection_probes.unwrap_or_default());
         world.insert_resource(self.virtual_geometry.unwrap_or_default());
+        world.insert_resource(self.level_of_detail.unwrap_or_default());
         match self.sun_shafts {
             Some(shafts) => world.insert_resource(shafts),
             None => {

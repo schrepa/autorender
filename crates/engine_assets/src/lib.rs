@@ -7,8 +7,10 @@
 mod animation;
 mod error;
 mod library;
+mod lod;
 mod material;
 mod mesh;
+pub mod simplify;
 mod texture;
 mod virtual_mesh;
 
@@ -19,6 +21,7 @@ pub use error::AssetError;
 pub use library::{
     AssetBudget, AssetLibrary, ClipHandle, MaterialHandle, MeshHandle, TextureHandle,
 };
+pub use lod::{LOD_MIN_TRIANGLES, LodLevel, MeshLods, mesh_lods};
 pub use material::{
     AlphaMode, Filter, Material, MaterialBinding, Sampler, Surface, TextureRef, Transmission,
     UvTransform, Wrap,

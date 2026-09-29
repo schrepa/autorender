@@ -23,6 +23,8 @@ export interface RuntimeStats {
   virtual_resident_pages: number; virtual_loading_pages: number; virtual_missing_pages: number;
   dropped_virtual_pages: number;
   subpixel_instances: number | undefined;
+  lod0_instances: number | undefined; lod1_instances: number | undefined;
+  lod2_instances: number | undefined; impostor_instances: number | undefined;
   free(): void;
 }
 export interface Runtime {

@@ -8,13 +8,13 @@ use wasm_bindgen::JsValue;
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
 
-use crate::batches::BatchPlan;
+use crate::batches::{BatchPlan, DrawBatch};
 use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LightingUniform, PoseData,
-    SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LOD_LEVELS, LightingUniform,
+    PoseData, SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -25,7 +25,7 @@ use crate::particles::ParticlePass;
 use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
 use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::retained_uploads::RetainedUploads;
-use crate::shadows::{Poses, ShadowPass};
+use crate::shadows::{CasterDraw, Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
@@ -111,6 +111,10 @@ struct GpuMesh {
     skinned: bool,
     index_count: u32,
     byte_len: u64,
+    // Coarser levels of detail (decision 047), after the mesh's own indices
+    // in its range: each one's first index there, index count and geometric
+    // error in mesh units, finest first.
+    lods: Vec<(u32, u32, f32)>,
 }
 
 /// A mesh's own buffers: positions, extras, joints and indices.
@@ -124,7 +128,11 @@ struct OwnMesh {
 impl GpuMesh {
     fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
         match &self.placement {
-            Ok(placement) => arena.draw(*placement),
+            // The range holds the coarser levels after the mesh's indices.
+            Ok(placement) => MeshDraw {
+                index_count: self.index_count,
+                ..arena.draw(*placement)
+            },
             Err(own) => MeshDraw {
                 vertices: &own.vertices,
                 extras: own.extras.as_ref(),
@@ -136,6 +144,29 @@ impl GpuMesh {
             },
         }
     }
+}
+
+/// The levels of detail `batch` draws at on GPU-presented frames (decision
+/// 047): its mesh's where it draws the mesh opaquely, otherwise only the
+/// mesh itself. Batch records and draw loops both follow this.
+fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usize {
+    if batch.transparent || virtual_geometry || mesh.skinned {
+        1
+    } else {
+        1 + mesh.lods.len().min(LOD_LEVELS - 1)
+    }
+}
+
+/// `source`'s indices followed by its levels of detail (decision 047), and
+/// each level's first index in them, index count and error.
+fn lod_chain(source: &engine_core::Mesh) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
+    let lods = engine_core::mesh_lods(source, LOD_LEVELS - 1);
+    let levels = lods
+        .levels
+        .iter()
+        .map(|level| (level.first_index, level.index_count, level.error))
+        .collect();
+    (lods.indices, levels)
 }
 
 /// The pipelines a material variant (decision 031) rebuilds: opaque meshes
@@ -1177,6 +1208,9 @@ impl Renderer {
                 if let Some(skin) = &skin {
                     streams.push(bytemuck::cast_slice(skin));
                 }
+                // Levels of detail (decision 047) follow the mesh's own
+                // indices in its range.
+                let (indices, lods) = lod_chain(source);
                 let placement = self
                     .mesh_arena
                     .insert(
@@ -1184,7 +1218,7 @@ impl Renderer {
                         &self.queue,
                         &streams,
                         self.vertex_staging.len() as u32,
-                        source.indices(),
+                        &indices,
                     )
                     .ok_or_else(|| {
                         let buffer = |label, contents: &[u8], usage| {
@@ -1206,7 +1240,7 @@ impl Renderer {
                             }),
                             indices: buffer(
                                 "engine/mesh-indices",
-                                bytemuck::cast_slice(source.indices()),
+                                bytemuck::cast_slice(&indices),
                                 wgpu::BufferUsages::INDEX,
                             ),
                         }
@@ -1219,6 +1253,7 @@ impl Renderer {
                     skinned: skin.is_some(),
                     index_count: source.indices().len() as u32,
                     byte_len,
+                    lods,
                 });
                 mesh_upload_bytes += byte_len;
                 if let Some(geometry) = source.virtual_geometry() {
@@ -1590,7 +1625,12 @@ impl Renderer {
                     &self.plan,
                     |index, batch| {
                         let mesh = &snapshot.meshes[batch.source_index].mesh;
-                        let draw = meshes[&batch.mesh].draw(arena);
+                        let gpu_mesh = &meshes[&batch.mesh];
+                        let draw = gpu_mesh.draw(arena);
+                        let virtual_geometry = virtual_enabled
+                            && !batch.transparent
+                            && virtual_meshes.mesh_index(batch.mesh).is_some();
+                        let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
                         BatchMeta {
                             index_count: draw.index_count,
                             first_index: draw.first_index,
@@ -1598,9 +1638,13 @@ impl Renderer {
                             bounds: mesh.bounds(),
                             group: shadows.batch_group(index),
                             joints: mesh.joint_count(),
-                            virtual_geometry: virtual_enabled
-                                && !batch.transparent
-                                && virtual_meshes.mesh_index(batch.mesh).is_some(),
+                            virtual_geometry,
+                            lods: gpu_mesh.lods[..levels - 1]
+                                .iter()
+                                .map(|&(offset, count, error)| {
+                                    (draw.first_index + offset, count, error)
+                                })
+                                .collect(),
                         }
                     },
                     !shadows.groups().is_empty(),
@@ -1612,11 +1656,17 @@ impl Renderer {
                     temporal_frame
                         .as_ref()
                         .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
+                    snapshot.camera_position,
                     temporal_frame
                         .as_ref()
                         .is_some_and(|temporal| temporal.motion_valid),
                     occlusion,
                     self.subpixel_culling,
+                    if snapshot.level_of_detail.enabled {
+                        snapshot.level_of_detail.pixel_error
+                    } else {
+                        0.0
+                    },
                     // Reflection probes (decision 043) capture still slots,
                     // counted while captures wait.
                     (snapshot.reflection_probe_settings.enabled
@@ -1654,10 +1704,35 @@ impl Renderer {
                 self.instance_capacity,
                 self.mesh_layout,
                 |mesh| {
-                    meshes.get(&mesh).map_or((0, 0, 0), |mesh| {
-                        let draw = mesh.draw(arena);
-                        (draw.index_count, draw.first_index, draw.base_vertex)
-                    })
+                    meshes.get(&mesh).map_or(
+                        CasterDraw {
+                            index_count: 0,
+                            first_index: 0,
+                            base_vertex: 0,
+                            lods: Vec::new(),
+                        },
+                        |mesh| {
+                            let draw = mesh.draw(arena);
+                            // Levels of detail (decision 047) of meshes
+                            // without joints, which move their vertices.
+                            let lods = if mesh.skinned || !snapshot.level_of_detail.enabled {
+                                Vec::new()
+                            } else {
+                                mesh.lods
+                                    .iter()
+                                    .map(|&(offset, count, error)| {
+                                        (draw.first_index + offset, count, error)
+                                    })
+                                    .collect()
+                            };
+                            CasterDraw {
+                                index_count: draw.index_count,
+                                first_index: draw.first_index,
+                                base_vertex: draw.base_vertex,
+                                lods,
+                            }
+                        },
+                    )
                 },
             )
         };
@@ -2360,11 +2435,17 @@ impl Renderer {
                     }
                     bindings.index(&mut pass, draw.indices);
                     if gpu_mode {
-                        // Visible slots of this group, compacted and counted on the GPU.
-                        let (ids, draws, offset) =
-                            self.gpu_presentation.draw_source(batch, index, phase);
-                        bindings.ids(&mut pass, 1, ids);
-                        pass.draw_indexed_indirect(draws, offset);
+                        // Visible slots of this group, compacted and counted
+                        // on the GPU, each level of detail (decision 047)
+                        // with its own.
+                        let virtual_geometry = self.virtual_drawn.get(index) == Some(&true);
+                        for level in 0..lod_levels(batch, mesh, virtual_geometry) {
+                            let (ids, draws, offset) = self
+                                .gpu_presentation
+                                .draw_source(batch, index, phase, level);
+                            bindings.ids(&mut pass, 1, ids);
+                            pass.draw_indexed_indirect(draws, offset);
+                        }
                     } else {
                         pass.draw_indexed(
                             draw.index_range(),
@@ -2662,7 +2743,7 @@ impl Renderer {
                         bindings.index(&mut pass, draw.indices);
                         if gpu_mode {
                             let (ids, draws, offset) =
-                                self.gpu_presentation.draw_source(batch, index, 0);
+                                self.gpu_presentation.draw_source(batch, index, 0, 0);
                             bindings.ids(&mut pass, 1, ids);
                             pass.draw_indexed_indirect(draws, offset);
                         } else {
@@ -2844,6 +2925,11 @@ impl Renderer {
             } else {
                 None
             },
+            lod_instances: if gpu_mode && snapshot.level_of_detail.enabled {
+                self.gpu_presentation.lod_instances()
+            } else {
+                None
+            },
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
@@ -3015,6 +3101,19 @@ impl Renderer {
             }
             if let Some(subpixel) = stats.subpixel_instances {
                 engine_profile::counter("render.subpixel_instances", f64::from(subpixel));
+            }
+            if let Some(levels) = stats.lod_instances {
+                for (name, count) in [
+                    "render.lod0_instances",
+                    "render.lod1_instances",
+                    "render.lod2_instances",
+                    "render.impostor_instances",
+                ]
+                .into_iter()
+                .zip(levels)
+                {
+                    engine_profile::counter(name, f64::from(count));
+                }
             }
             engine_profile::counter(
                 "memory.gpu_transparent_bytes",

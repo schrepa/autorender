@@ -170,7 +170,10 @@ are needed); `sun_shafts`, `reflections` and `refraction`; `transparent_draws` a
 could reflect, the cube faces captured, and the probes a budget or the GPU's
 texture array layers left out; `occluded_instances`, the visible instances occlusion culling left undrawn (read back late,
 null without it); `subpixel_instances`, the visible instances covering no
-pixel center left undrawn (read back late, null without sub-pixel culling). `Mesh3d` reports each material's `surface`, `opacity` and
+pixel center left undrawn (read back late, null without sub-pixel culling);
+`lod0_instances`, `lod1_instances` and `lod2_instances`, the instances drawn
+as their mesh and its two simplifications ([decision 047](adr-047-levels-of-detail.md),
+read back late, null on CPU-presented frames). `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

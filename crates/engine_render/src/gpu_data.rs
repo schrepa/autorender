@@ -779,7 +779,7 @@ pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2]
     ]
 }
 
-/// `Frame` uniform of `presentation.wgsl`: 304 bytes, WGSL uniform layout.
+/// `Frame` uniform of `presentation.wgsl`: 320 bytes, WGSL uniform layout.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct PresentationFrame {
@@ -816,7 +816,15 @@ pub(crate) struct PresentationFrame {
     /// Nonzero when candidates covering no pixel center are left undrawn
     /// (decision 041).
     pub subpixel: u32,
-    pub pad: [u32; 2],
+    /// Candidates per visible-ID plane: each level of detail's IDs start
+    /// this many entries after the last's (decision 047).
+    pub plane: u32,
+    /// The screen error in pixels levels of detail keep within; 0 draws
+    /// every instance at full detail (decision 047).
+    pub lod_error: f32,
+    /// The eye the frame rasterizes from (w unused): levels of detail
+    /// follow the distance to it (decision 047).
+    pub eye: [f32; 4],
 }
 
 /// Candidate flags of `presentation.wgsl` the compaction passes gather.
@@ -846,10 +854,11 @@ pub(crate) struct CandidateData {
 }
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
-/// mesh index count, shadow draw group (decision 020) and local bounds (48
-/// bytes). `bounds_min[3]` is 1 for meshes with joints (decision 036), whose
-/// joints place them: GPU-presented frames bound their slots by their
-/// palettes ([`SkinnedData`]), and they never cast kept shadows.
+/// mesh index count, shadow draw group (decision 020), local bounds and
+/// levels of detail (96 bytes). `bounds_min[3]` is 1 for meshes with joints
+/// (decision 036), whose joints place them: GPU-presented frames bound their
+/// slots by their palettes ([`SkinnedData`]), and they never cast kept
+/// shadows.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct BatchData {
@@ -866,8 +875,21 @@ pub(crate) struct BatchData {
     pub first_index: u32,
     pub base_vertex: i32,
     pub first_instance: u32,
-    pub pad2: u32,
+    /// What each coarser level's first instance adds per level (decision
+    /// 047): the visible-ID plane stride where first instances name
+    /// regions, otherwise 0.
+    pub first_plane: u32,
+    /// Levels of detail 1 and 2 (decision 047): each one's first index and
+    /// index count in the mesh arena.
+    pub lod_ranges: [u32; 4],
+    /// Levels 1 and 2's geometric errors in mesh units, then the level
+    /// count (1 to [`LOD_LEVELS`]); w unused.
+    pub lod_errors: [f32; 4],
 }
+
+/// Levels of detail a draw group has at most (decision 047): the mesh and two
+/// simplifications, each with its own plane of visible IDs and draws.
+pub(crate) const LOD_LEVELS: usize = 3;
 
 /// A skinned slot of GPU-presented frames (decision 036): its slot, its
 /// candidate's draw-group position, its draw group and its mesh's joint count
@@ -1689,8 +1711,22 @@ mod tests {
     const _: () = assert!(engine_core::MAX_NORMAL_INVERSE_NORM >= 6200.0);
 
     #[test]
+    fn levels_of_detail_match_wgsl() {
+        let module = naga::front::wgsl::parse_str(PRESENTATION_SHADER).unwrap();
+        let (_, constant) = module
+            .constants
+            .iter()
+            .find(|(_, constant)| constant.name.as_deref() == Some("LOD_LEVELS"))
+            .unwrap();
+        assert!(matches!(
+            module.global_expressions[constant.init],
+            naga::Expression::Literal(naga::Literal::U32(levels)) if levels as usize == LOD_LEVELS
+        ));
+    }
+
+    #[test]
     fn presentation_layouts_match_wgsl() {
-        assert_eq!(size_of::<PresentationFrame>(), 304);
+        assert_eq!(size_of::<PresentationFrame>(), 320);
         assert_eq!(std::mem::offset_of!(PresentationFrame, planes), 32);
         assert_eq!(
             std::mem::offset_of!(PresentationFrame, absolute_view_projection),
@@ -1706,7 +1742,8 @@ mod tests {
         assert_eq!(std::mem::offset_of!(PresentationFrame, skinned), 288);
         assert_eq!(size_of::<CandidateData>(), 16);
         assert_eq!(size_of::<SkinnedData>(), 16);
-        assert_eq!(size_of::<BatchData>(), 64);
+        assert_eq!(size_of::<BatchData>(), 96);
+        assert_eq!(std::mem::offset_of!(PresentationFrame, plane), 296);
         // Ten floats per pose, matching POSE_FLOATS in the shader.
         assert_eq!(size_of::<engine_core::NodePose>(), 40);
         assert_eq!(size_of::<engine_core::NodeInfo>(), 8);
@@ -1725,7 +1762,8 @@ mod tests {
                 .unwrap();
             ty.inner.size(module.to_ctx())
         };
-        assert_eq!(size("Frame"), 304);
+        assert_eq!(size("Frame"), 320);
+        assert_eq!(std::mem::offset_of!(PresentationFrame, eye), 304);
         assert_eq!(size("Skinned"), size_of::<SkinnedData>() as u32);
         let (_, pose_floats) = module
             .constants

@@ -341,6 +341,9 @@ pub struct RenderSnapshot {
     /// Virtual geometry settings (decision 044), sanitized; disabled when
     /// the resource is missing.
     pub virtual_geometry: crate::VirtualGeometry,
+    /// Level of detail settings (decision 047), sanitized; disabled when the
+    /// resource is missing.
+    pub level_of_detail: crate::LevelOfDetail,
     /// This frame's usable reflection probes, nearest the camera first,
     /// within the settings' budget.
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,

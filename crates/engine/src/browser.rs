@@ -198,6 +198,13 @@ pub struct FrameStats {
     /// center (decision 041), read back a few frames late; `None` without
     /// sub-pixel culling.
     pub subpixel_instances: Option<u32>,
+    /// Instances drawn as their mesh, its two simplifications and impostors
+    /// (decision 047), read back a few frames late; `None` without levels
+    /// of detail.
+    pub lod0_instances: Option<u32>,
+    pub lod1_instances: Option<u32>,
+    pub lod2_instances: Option<u32>,
+    pub impostor_instances: Option<u32>,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -294,6 +301,13 @@ pub struct BrowserStats {
     /// center (decision 041), read back a few frames late; undefined without
     /// sub-pixel culling.
     pub subpixel_instances: Option<u32>,
+    /// Instances drawn as their mesh, its two simplifications and impostors
+    /// (decision 047), read back a few frames late; undefined without levels
+    /// of detail.
+    pub lod0_instances: Option<u32>,
+    pub lod1_instances: Option<u32>,
+    pub lod2_instances: Option<u32>,
+    pub impostor_instances: Option<u32>,
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -367,6 +381,10 @@ impl From<FrameStats> for BrowserStats {
             dropped_virtual: stats.dropped_virtual,
             occluded_instances: stats.occluded_instances,
             subpixel_instances: stats.subpixel_instances,
+            lod0_instances: stats.lod0_instances,
+            lod1_instances: stats.lod1_instances,
+            lod2_instances: stats.lod2_instances,
+            impostor_instances: stats.impostor_instances,
         }
     }
 }
@@ -753,6 +771,10 @@ impl BrowserApp {
             dropped_virtual: rendered.dropped_virtual,
             occluded_instances: rendered.occluded_instances,
             subpixel_instances: rendered.subpixel_instances,
+            lod0_instances: rendered.lod_instances.map(|levels| levels[0]),
+            lod1_instances: rendered.lod_instances.map(|levels| levels[1]),
+            lod2_instances: rendered.lod_instances.map(|levels| levels[2]),
+            impostor_instances: rendered.lod_instances.map(|levels| levels[3]),
         };
         Ok(())
     }

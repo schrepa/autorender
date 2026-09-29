@@ -122,19 +122,20 @@ pass; see `docs/profiling.md`):
    parent-first order into a per-node buffer of displayed and current matrices.
 2. `cull`, one thread per candidate in slot order, composes its node over that
    parent (or over authority rows), validates it, writes the slot's pose rows
-   into the retained pose buffer, tests visibility, and writes the flag at the
-   candidate's draw-group position. Slot order follows node order closely, so
+   into the retained pose buffer, tests visibility, picks its level of detail
+   (decision 047), and writes the flags at the candidate's draw-group
+   position. Slot order follows node order closely, so
    pose, node and authority records stream; in draw-group order each group's
    candidates sit far apart. At 250,000 objects in eight meshes and textures
    this halved the stage (2.19-2.41 ms to 1.18-1.23 ms, Firefox, Intel Xe-LPG),
    about the cost of a single draw group.
    `sum_groups` then reduces the flags of every 256 candidates in draw-group
-   order.
-3. `scan_groups` turns group sums into exclusive offsets and a total.
-4. `batch_args` writes one indirect draw per draw group, applying the instance
-   budget, and each group's first visible offset.
-5. `scatter` compacts visible slot IDs into each group's region in candidate
-   order.
+   order, counting each level of detail in its own lane.
+3. `scan_groups` turns group sums into exclusive offsets and totals.
+4. `batch_args` writes one indirect draw per draw group and level, applying the
+   instance budget, and each group's first visible offset per level.
+5. `scatter` compacts visible slot IDs into each group's region of its level's
+   plane in candidate order.
 
 Each group draws with `draw_indexed_indirect`, reading its region of the visible
 ID buffer as the instance vertex stream. Devices with `indirect-first-instance`
@@ -195,9 +196,10 @@ subset can be dropped.
 Per-node buffers hold 40-byte current and previous locals, 8-byte info and
 48-byte authority rows,
 plus 112 bytes per node for composed parents only when active parents exist.
-Candidates use 16 bytes each, plus scan and visible-ID words; groups use 64-byte
-records (with their mesh's place in the mesh arena, decision 046), base offsets
-and 20-byte indirect arguments. Buffers grow to powers of
+Candidates use 16 bytes each, plus scan words and a visible-ID word per level
+of detail; groups use 96-byte records (with their mesh's place in the mesh
+arena, decision 046, and levels, decision 047), base offsets and 20-byte
+indirect arguments per level. Buffers grow to powers of
 two (at least 1,024 nodes or candidates and 64 draw groups) and never shrink;
 `memory.gpu_presentation_bytes` reports them and `memory.gpu_input_bytes` the
 CPU-side inputs. Depth levels use one 16-byte

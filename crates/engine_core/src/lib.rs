@@ -14,6 +14,7 @@ mod entity_indices;
 mod hierarchy;
 mod input;
 mod interpolation;
+mod level_of_detail;
 mod lights;
 pub mod math;
 mod packed;
@@ -36,9 +37,10 @@ pub use effects::{
     AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
 };
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, MAX_TEXTURE_DIMENSION,
-    Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface,
-    Texture, TextureFormat, TextureHandle, TextureRef, Transmission, UvTransform, Wrap,
+    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LOD_MIN_TRIANGLES, LodLevel,
+    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
+    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, Transmission,
+    UvTransform, Wrap, mesh_lods,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
@@ -61,6 +63,7 @@ pub use interpolation::{
     PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
     reset_interpolation,
 };
+pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
@@ -254,6 +257,7 @@ impl Engine {
             .init_resource::<Decals>()
             .init_resource::<ReflectionProbes>()
             .init_resource::<VirtualGeometry>()
+            .init_resource::<LevelOfDetail>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -933,11 +937,13 @@ pub mod prelude {
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
+        LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe, VirtualGeometry,
+    };
+    pub use crate::{
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
     pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
-    pub use crate::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe, VirtualGeometry};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.
     pub use bevy_ecs::{self, prelude::*};
