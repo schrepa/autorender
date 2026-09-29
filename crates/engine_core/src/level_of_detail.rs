@@ -1,7 +1,9 @@
 //! Level of detail settings (decision 047): meshes carry simplified levels
 //! the renderer builds when they are first uploaded, and GPU-presented frames
 //! draw each instance at the coarsest level whose simplification error stays
-//! within `pixel_error` of the viewport height.
+//! within `pixel_error` of the viewport height. Impostors (decision 048) are
+//! the coarsest level: cards showing a draw group's mesh baked from many
+//! directions, for instances too small to show more.
 
 use bevy_ecs::prelude::Resource;
 
@@ -13,6 +15,12 @@ pub struct LevelOfDetail {
     /// The largest simplification error a drawn level may show, in pixels
     /// of the viewport height: smaller draws finer levels farther away.
     pub pixel_error: f32,
+    /// Whether opaque draw groups whose meshes have enough triangles draw
+    /// their impostors where those stay within `pixel_error` (decision 048).
+    pub impostors: bool,
+    /// The most impostors kept baked, `None` for no budget beyond the GPU's
+    /// texture array layers; draw groups beyond it draw their meshes.
+    pub max_impostors: Option<u32>,
 }
 
 impl Default for LevelOfDetail {
@@ -20,6 +28,8 @@ impl Default for LevelOfDetail {
         Self {
             enabled: true,
             pixel_error: 1.0,
+            impostors: true,
+            max_impostors: None,
         }
     }
 }
@@ -33,8 +43,8 @@ impl LevelOfDetail {
             1.0
         };
         Self {
-            enabled: self.enabled,
             pixel_error,
+            ..self
         }
     }
 }

@@ -111,13 +111,16 @@ no errors. Captures go under
 `artifacts/virtual-geometry-smoke-*/`.
 
 `node web/scripts/lod-smoke.mjs` loads the Stress Lab's metro (20,000 objects)
-and checks levels of detail ([decision 047](../docs/adr-047-levels-of-detail.md)):
-the `LevelOfDetail` settings are discoverable and read as their environment
-section; from the overview, GPU-presented captures draw coarser levels
-(`rendering.lod1_instances`, `lod2_instances`) and differ from the exact CPU
-capture in at most 1% of pixels; disabled, they match within 0.1% and draw
-none; a pixel error of 4 draws more coarsely; invalid settings are refused,
-and the page logs no errors. Captures go under `artifacts/lod-smoke-*/`.
+and checks levels of detail and impostors ([decisions 047](../docs/adr-047-levels-of-detail.md)
+and [048](../docs/adr-048-impostors.md)): the `LevelOfDetail` settings are
+discoverable and read as their environment section; from the overview,
+GPU-presented captures bake and draw impostors (`rendering.impostors`,
+`impostor_instances`) and coarser levels and differ from the exact CPU
+capture in at most 5% of pixels, and without impostors in at most 1%;
+disabled, they match within 0.1% and draw none; a budget of 2 impostors keeps
+2 and reports the rest dropped; a pixel error of 4 draws more coarsely;
+invalid settings are refused, and the page logs no errors. Captures go under
+`artifacts/lod-smoke-*/`.
 
 `node web/scripts/taa-smoke.mjs` loads Stress Lab with temporal antialiasing
 (`?taa=on`) and checks that captures are identical with the setting on and off

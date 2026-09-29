@@ -18,6 +18,9 @@ use crate::gpu_data::{
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
+use crate::impostors::{
+    BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorRecord, ImpostorTargets,
+};
 use crate::lights::{LightFrame, LightPass, LightPoses};
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
@@ -75,7 +78,7 @@ pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     })
 }
 
-fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+pub(crate) fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     Some(wgpu::VertexBufferLayout {
         array_stride: size_of::<Vertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -304,6 +307,12 @@ pub struct Renderer {
     // Decals (decision 039): records and pipelines, created with the first
     // frame that draws them.
     decals: Option<DecalPass>,
+    // Impostors (decision 048): the baked layers and their draw pipelines,
+    // this frame's record per plan batch (zeroed without an impostor), and
+    // the draw groups a budget or the GPU left without one.
+    impostors: ImpostorAtlas,
+    impostor_records: Vec<ImpostorRecord>,
+    dropped_impostors: u32,
     // Occlusion culling of GPU-presented frames (decision 040), on unless
     // turned off, and its depth pyramid.
     occlusion_culling: bool,
@@ -811,6 +820,7 @@ impl Renderer {
             layout: &empty_layout,
             entries: &[],
         });
+        let impostors = ImpostorAtlas::new(&device, materials.layout(), &empty_layout);
         if let Some(error) = scope.pop().await {
             return Err(js_error("WebGPU pipeline initialization failed", error));
         }
@@ -892,6 +902,9 @@ impl Renderer {
             transparent_pipelines: Default::default(),
             particles: None,
             decals: None,
+            impostors,
+            impostor_records: Vec::new(),
+            dropped_impostors: 0,
             occlusion_culling: true,
             subpixel_culling: true,
             depth_pyramid: None,
@@ -1283,6 +1296,8 @@ impl Renderer {
             shadow_materials,
             &mut mip_encoder,
         );
+        // Impostors (decision 048) bake after their materials' levels.
+        self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
         drop(profile_upload);
         self.order_draws();
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
@@ -1602,6 +1617,14 @@ impl Renderer {
             let arena = &self.mesh_arena;
             let shadows = &self.shadows;
             let virtual_meshes = &self.virtual_geometry;
+            let impostor_records = &self.impostor_records;
+            // Batch records carry impostor errors: rebuilt with the
+            // impostors, and when turning them on or off.
+            let impostor_key = if snapshot.level_of_detail.impostors {
+                self.impostors.generation() + 1
+            } else {
+                0
+            };
             // Temporal frames alternate pose buffers; the other keeps the
             // previous frame's poses.
             let (poses, poses_index) = match &temporal_frame {
@@ -1645,6 +1668,9 @@ impl Renderer {
                                     (draw.first_index + offset, count, error)
                                 })
                                 .collect(),
+                            impostor: impostor_records
+                                .get(index)
+                                .map_or(0.0, ImpostorRecord::error),
                         }
                     },
                     !shadows.groups().is_empty(),
@@ -1667,12 +1693,14 @@ impl Renderer {
                     } else {
                         0.0
                     },
+                    snapshot.level_of_detail.impostors,
                     // Reflection probes (decision 043) capture still slots,
                     // counted while captures wait.
                     (snapshot.reflection_probe_settings.enabled
                         && !snapshot.reflection_probes.is_empty())
                     .then(|| self.probes.slots.waiting()),
                     virtual_key ^ (self.mesh_layout << 32),
+                    impostor_key,
                     (self.configuration.width, self.configuration.height),
                     stamps,
                 ),
@@ -2052,6 +2080,17 @@ impl Renderer {
             affine,
         };
         self.ensure_variants(opaque_kind, transparent_kind);
+        // Impostors (decision 048): this frame's records, group and pipeline.
+        let impostor_pass = if gpu_mode
+            && self
+                .impostor_records
+                .iter()
+                .any(|record| record.sphere[3] > 0.0)
+        {
+            self.prepare_impostor_draws(opaque_kind)
+        } else {
+            None
+        };
         if gpu_mode {
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
@@ -2453,6 +2492,21 @@ impl Renderer {
                             batch.instances.clone(),
                         );
                     }
+                }
+                // Impostors (decision 048): every draw group's cards in one
+                // draw, over the pose and light groups the meshes bound.
+                if gpu_mode
+                    && let Some((targets, lit)) = impostor_pass
+                    && let (Some(pipeline), Some(group)) = (
+                        self.impostors.pipeline(targets, lit),
+                        self.impostors.group(),
+                    )
+                {
+                    let (ids, args, offset) = self.gpu_presentation.impostor_source(phase);
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(1, group, &[]);
+                    pass.set_vertex_buffer(0, ids.slice(..));
+                    pass.draw_indirect(args, offset);
                 }
                 // Virtual geometry (decision 044): each bin's selected
                 // clusters, in phase one, then each bin's twin of clusters
@@ -2972,6 +3026,8 @@ impl Renderer {
                     .as_ref()
                     .map_or(0, |frame| u64::from(frame.dropped)))
             .min(u64::from(u32::MAX)) as u32,
+            impostors: self.impostors.live(),
+            dropped_impostors: self.dropped_impostors,
             reflection_probes: self.probes.slots.ready(),
             reflection_probe_faces: probe_faces,
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
@@ -3096,6 +3152,15 @@ impl Renderer {
             );
             engine_profile::counter("render.particles", f64::from(stats.particles));
             engine_profile::counter("render.decals", f64::from(stats.decals));
+            engine_profile::counter("render.impostors", f64::from(stats.impostors));
+            engine_profile::counter(
+                "render.dropped_impostors",
+                f64::from(stats.dropped_impostors),
+            );
+            engine_profile::counter(
+                "memory.gpu_impostor_bytes",
+                self.impostors.capacity_bytes() as f64,
+            );
             if let Some(occluded) = stats.occluded_instances {
                 engine_profile::counter("render.occluded_instances", f64::from(occluded));
             }
@@ -3284,6 +3349,150 @@ impl Renderer {
 
     /// Creates the pipelines of the plan's material variants for this frame's
     /// opaque and transparent passes.
+    /// Impostors (decision 048) of this frame: drops those of retired or
+    /// replaced meshes and materials, bakes the missing ones of opaque draw
+    /// groups whose meshes have enough triangles into `encoder` (after the
+    /// materials' levels) on GPU-presented frames with them, and fills the
+    /// record of every plan batch, zeroed without one.
+    fn prepare_impostors(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        gpu_mode: bool,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) {
+        self.impostor_records.clear();
+        self.dropped_impostors = 0;
+        let (meshes, materials, plan) = (&self.meshes, &self.materials, &self.plan);
+        self.impostors.retain(
+            |(mesh, material)| {
+                meshes.contains_key(mesh)
+                    && material.is_none_or(|handle| materials.group(handle).is_some())
+            },
+            |handle| plan.material(snapshot, handle).copied(),
+        );
+        let settings = snapshot.level_of_detail;
+        if !(gpu_mode && settings.enabled && settings.impostors) {
+            return;
+        }
+        self.impostors.enforce_budget(settings.max_impostors);
+        let device = &self.device;
+        for batch in &self.plan.batches {
+            let mesh = &self.meshes[&batch.mesh];
+            let source = &snapshot.meshes[batch.source_index].mesh;
+            let (group, variant) = self.materials.binding(batch.material);
+            // Virtual geometry (decision 044) bakes its fallback cut: its
+            // camera clusters select only instances not drawn as impostors.
+            let eligible = !batch.transparent
+                && !mesh.skinned
+                && !variant.transmission()
+                && source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
+            let mut record = ImpostorRecord::default();
+            if eligible {
+                let material = batch
+                    .material
+                    .and_then(|handle| self.plan.material(snapshot, handle))
+                    .copied();
+                let key = (batch.mesh, batch.material);
+                if let Some(baked) = self.impostors.record(key, material.as_ref()) {
+                    record = baked;
+                } else {
+                    let encoder = encoder.get_or_insert_with(|| {
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("engine/texture-mips"),
+                        })
+                    });
+                    let bounds = source.bounds();
+                    let source = BakeSource {
+                        draw: mesh.draw(&self.mesh_arena),
+                        extended: mesh.extended,
+                        group,
+                        variant,
+                        bounds: (bounds.min(), bounds.max()),
+                        material,
+                    };
+                    if self.impostors.bake(
+                        device,
+                        encoder,
+                        self.materials.mips(),
+                        &self.mesh_shader,
+                        key,
+                        &source,
+                        settings.max_impostors,
+                    ) {
+                        record = self
+                            .impostors
+                            .record(key, material.as_ref())
+                            .unwrap_or_default();
+                    } else {
+                        self.dropped_impostors += 1;
+                    }
+                }
+            }
+            self.impostor_records.push(record);
+        }
+    }
+
+    /// Uploads this frame's impostor records (decision 048) and creates the
+    /// pipeline drawing them in the opaque pass of `kind`; returns its key,
+    /// `None` when impostors cannot draw.
+    fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(ImpostorTargets, bool)> {
+        let (targets, lit) = match kind {
+            PassKind::Opaque {
+                post,
+                lit,
+                affine: true,
+            } => (
+                if post {
+                    ImpostorTargets::Post
+                } else {
+                    ImpostorTargets::Canvas
+                },
+                lit,
+            ),
+            PassKind::Temporal { lit } => (ImpostorTargets::Temporal, lit),
+            _ => return None,
+        };
+        if !self
+            .impostors
+            .prepare(&self.device, &self.queue, &self.impostor_records)
+        {
+            return None;
+        }
+        if self.impostors.pipeline(targets, lit).is_none() {
+            let pose_layout = if targets == ImpostorTargets::Temporal {
+                self.temporal.as_ref()?.pose_layout()
+            } else {
+                &self.pose_layout
+            };
+            let mut layouts = vec![
+                Some(&self.camera_layout),
+                Some(self.impostors.draw_layout()),
+                Some(pose_layout),
+            ];
+            if lit {
+                layouts.push(Some(self.lights.as_ref()?.fragment_layout()));
+            }
+            let layout = self
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("engine/impostor-pipeline-layout"),
+                    bind_group_layouts: &layouts,
+                    immediate_size: 0,
+                });
+            let pipeline = crate::impostors::draw_pipeline(
+                &self.device,
+                &self.mesh_shader,
+                &layout,
+                targets,
+                lit,
+                self.configuration.format,
+                DEPTH_FORMAT,
+            );
+            self.impostors.insert_pipeline(targets, lit, pipeline);
+        }
+        Some((targets, lit))
+    }
+
     fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {

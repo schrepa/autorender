@@ -80,7 +80,7 @@ The level takes two flag bits beside the visibility flags.
 ### Compaction and draws
 
 The compaction passes (decision 014) count, scan and scatter four buckets
-at once as `vec4` lanes: levels 0 to 2 and one reserved for impostors.
+at once as `vec4` lanes: levels 0 to 2 and impostors (decision 048).
 
 - Each level has its own plane of visible IDs and its own indirect
   arguments. Level `l` of batch `b` draws from `draws[l * batches + b]` with
@@ -119,7 +119,8 @@ differ from them only by simplifications within `pixel_error`.
   `BrowserApp` hosts and the Stress Lab's `?lod=off` turn it off.
 - `rendering.lod0_instances`, `lod1_instances` and `lod2_instances` count
   the instances drawn at each level, read back a few frames late.
-  `impostor_instances` is reserved. Profiles count
+  `impostor_instances` counts those drawn as impostors
+  ([decision 048](adr-048-impostors.md)). Profiles count
   `render.lod0_instances` to `render.lod2_instances`.
 - `web/scripts/lod-smoke.mjs` checks that:
   - the settings are discoverable;
@@ -135,10 +136,13 @@ Measurements:
   shows no visible difference, and the close view is identical.
 - The overview draws 47,595 instances at level 0, 9,512 at level 1 and 1,504
   at level 2.
-- Firefox on the laptop's integrated GPU, three alternating runs each:
-  - opaque pass 10.33 ms off, 9.12 ms on;
-  - throughput 42.4 to 44.7 fps off (mean 43.4), 43.8 to 48.0 on (mean
-    45.8).
+- Firefox on the laptop's integrated GPU, one build without impostors
+  (decision 048), three alternating runs each:
+  - opaque pass 9.60 ms off, 7.45 ms on;
+  - throughput 49.0 to 52.8 fps off (mean 50.7), 55.9 to 57.4 on (mean
+    56.6).
+  - An earlier pair of runs, while the machine was also building, measured
+    10.33 ms and 9.12 ms (43.4 and 45.8 fps).
 
 ## Consequences
 
@@ -151,7 +155,8 @@ Measurements:
   error of 0.3 m, which is drawn only where 0.3 m is under a pixel. Props
   under 64 triangles get no levels at all.
 - The instances that remain costly from afar are many small instances, not
-  their triangles. Impostors are the next step.
+  their triangles. Impostors ([decision 048](adr-048-impostors.md)) are the
+  coarsest level.
 
 ## Alternatives and evidence
 

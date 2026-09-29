@@ -484,6 +484,12 @@ impl TemporalPass {
         )
     }
 
+    /// The pose group layout of temporal frames: poses, colors, previous
+    /// poses and joint palettes.
+    pub(crate) fn pose_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.pose_layout
+    }
+
     /// The lit mesh pipeline; call [`Self::ensure_lit`] first.
     pub(crate) fn lit_mesh_pipeline(&self) -> &wgpu::RenderPipeline {
         self.lit_mesh_pipeline

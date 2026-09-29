@@ -35,8 +35,9 @@ flattening casters in front of a map onto its near plane:
 - the kept far map covers the region and holds casters whose pose has not
   changed for 8 frames (180 once a kept caster moved again: casters that
   pause stay in the moving map instead of redrawing kept tiles at every
-  pause). It is redrawn whole when the sun, the region or the
-  resolution changes, and otherwise only where it is dirty, in tiles of a
+  pause). It is redrawn whole when the sun, the region, the resolution or
+  its casters' levels of detail (decision 047) change, and otherwise only
+  where it is dirty, in tiles of a
   16x16 grid: each frame one rectangle of them, cleared under a scissor,
   the dirty tiles of the lowest row holding any and of the rows above it
   while the rectangle stays within 16 tiles;

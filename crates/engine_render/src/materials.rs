@@ -301,6 +301,11 @@ impl MaterialStore {
         }
     }
 
+    /// The mip generator textures and impostors (decision 048) share.
+    pub(crate) fn mips(&self) -> &MipGenerator {
+        &self.mips
+    }
+
     /// The bind group of `material`, when uploaded.
     pub(crate) fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
         self.materials

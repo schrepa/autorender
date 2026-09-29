@@ -646,6 +646,18 @@ impl BatchPlan {
         self.material_handles.binary_search(&handle).is_ok()
     }
 
+    /// The material `snapshot` (the one planned) supplies for `handle`.
+    pub fn material<'a>(
+        &self,
+        snapshot: &'a RenderSnapshot,
+        handle: MaterialHandle,
+    ) -> Option<&'a engine_core::Material> {
+        self.material_source_indices
+            .binary_search_by_key(&handle, |&index| snapshot.materials[index].handle)
+            .ok()
+            .map(|rank| &snapshot.materials[self.material_source_indices[rank]].material)
+    }
+
     pub fn contains_texture(&self, handle: TextureHandle) -> bool {
         self.texture_handles.binary_search(&handle).is_ok()
     }
@@ -1265,6 +1277,13 @@ mod tests {
             }
         }
         assert!(visited.into_iter().all(|value| value));
+        // Batches find their materials among the snapshot's sources.
+        for source in &snapshot.materials {
+            assert_eq!(
+                plan.material(&snapshot, source.handle),
+                Some(&source.material)
+            );
+        }
         let capacities = (
             plan.ordered_instances.capacity(),
             plan.batches.capacity(),

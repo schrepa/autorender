@@ -1324,7 +1324,20 @@ impl ShadowPass {
             .iter()
             .flat_map(|&texel| draws.iter().map(move |draw| draw.level_within(texel * 0.5)))
             .collect();
-        self.groups_changed |= levels != self.template_levels;
+        if levels != self.template_levels {
+            // Casters drawn at other levels than the kept map holds redraw
+            // it whole, as a moved sun does (decision 047): its levels change
+            // only with its texel and when levels of detail turn on or off.
+            let kept = |levels: &[u8]| {
+                levels
+                    .get(KEPT_MAP * groups..(KEPT_MAP + 1) * groups)
+                    .map(<[u8]>::to_vec)
+            };
+            if kept(&levels) != kept(&self.template_levels) {
+                self.kept_valid = false;
+            }
+            self.groups_changed = true;
+        }
         if self.groups_changed {
             self.template_levels = levels;
             self.groups_changed = false;

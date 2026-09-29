@@ -321,6 +321,19 @@ impl StressGame {
             settings.enabled = enabled;
         }
     }
+    /// Whether draw groups draw impostors where they fit (decision 048, on
+    /// by default) or only their meshes' levels.
+    pub fn set_impostors(&mut self, enabled: bool) {
+        if let Some(mut settings) = self
+            .app
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<LevelOfDetail>()
+        {
+            settings.impostors = enabled;
+        }
+    }
     /// Whether virtual geometry shades through the visibility buffer
     /// (decision 045, on by default) or as it draws.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {

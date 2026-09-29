@@ -1126,12 +1126,26 @@
       ]
     },
     "SceneLevelOfDetail": {
-      "description": "Level of detail settings (decision 047): whether instances draw simplified\nlevels of their meshes where the simplification stays within a pixel\nerror. Requires version 8.",
+      "description": "Level of detail settings (decisions 047 and 048): whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "impostors": {
+          "description": "Whether draw groups draw impostors where they fit (decision 048).",
+          "type": "boolean",
+          "default": true
+        },
+        "max_impostors": {
+          "description": "The most impostors kept baked; omitted for no budget.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         },
         "pixel_error": {
           "description": "The largest simplification error a drawn level may show, in pixels of\nthe viewport height, from 0.25 to 64: smaller draws finer levels\nfarther away.",

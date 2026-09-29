@@ -74,6 +74,11 @@ pub struct RenderStats {
     /// budget or the GPU's binding left out.
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Impostors baked and resident (decision 048), and opaque draw groups
+    /// that qualified but draw their meshes because a budget or the GPU's
+    /// texture array layers left them none.
+    pub impostors: u32,
+    pub dropped_impostors: u32,
     /// Reflection probes (decision 043) surfaces could reflect this frame,
     /// the cube faces it captured, and probes a budget or the GPU's texture
     /// array layers left out.
@@ -139,6 +144,8 @@ mod decals;
 mod depth_pyramid;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;
+#[cfg(any(target_arch = "wasm32", test))]
+mod impostors;
 #[cfg(any(target_arch = "wasm32", test))]
 mod lights;
 #[cfg(any(target_arch = "wasm32", test))]

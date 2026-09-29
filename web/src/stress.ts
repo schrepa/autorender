@@ -250,6 +250,8 @@ const visibility = params.get("visibility") === "off" ? "off" : "on";
 // ?lod=off draws every instance as its mesh instead of at its level of
 // detail (decision 047), for A/B.
 const lod = params.get("lod") === "off" ? "off" : "on";
+// ?impostors=off draws no impostors (decision 048), only mesh levels.
+const impostors = params.get("impostors") === "off" ? "off" : "on";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
 const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
@@ -319,6 +321,7 @@ boot({
     runtime.set_subpixel_culling(subpixel === "on");
     runtime.set_visibility_buffer(visibility === "on");
     runtime.set_level_of_detail(lod === "on");
+    runtime.set_impostors(impostors === "on");
     runtime.set_look(initialLook);
     choice("look").value = initialLook;
     runtime.set_effects(initialEffects);
@@ -341,7 +344,7 @@ boot({
           metadata() {
             const data = snapshot(runtime);
             return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, look: choice("look").value, effects: choice("effects").value,
+              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors, look: choice("look").value, effects: choice("effects").value,
               build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
               start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
               viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
@@ -413,7 +416,7 @@ el("record").addEventListener("click", () => {
   try {
     const data = snapshot(game);
     recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, look: choice("look").value, effects: choice("effects").value,
+      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors, look: choice("look").value, effects: choice("effects").value,
       build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
       start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
       scroll: [window.scrollX, window.scrollY],

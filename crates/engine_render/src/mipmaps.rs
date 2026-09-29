@@ -97,13 +97,38 @@ impl MipGenerator {
         encoder: &mut wgpu::CommandEncoder,
         texture: &wgpu::Texture,
     ) -> u32 {
+        self.record_views(device, encoder, texture, None)
+    }
+
+    /// [`Self::record`] for layer `layer` of an array texture: impostors'
+    /// (decision 048), after a bake renders its first level.
+    pub(crate) fn record_layer(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+        layer: u32,
+    ) -> u32 {
+        self.record_views(device, encoder, texture, Some(layer))
+    }
+
+    fn record_views(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+        layer: Option<u32>,
+    ) -> u32 {
         let levels = texture.mip_level_count();
         let views: Vec<wgpu::TextureView> = (0..levels)
             .map(|level| {
                 texture.create_view(&wgpu::TextureViewDescriptor {
                     label: Some("engine/texture-mip-level"),
+                    dimension: layer.map(|_| wgpu::TextureViewDimension::D2),
                     base_mip_level: level,
                     mip_level_count: Some(1),
+                    base_array_layer: layer.unwrap_or(0),
+                    array_layer_count: layer.map(|_| 1),
                     ..Default::default()
                 })
             })

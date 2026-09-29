@@ -173,7 +173,10 @@ null without it); `subpixel_instances`, the visible instances covering no
 pixel center left undrawn (read back late, null without sub-pixel culling);
 `lod0_instances`, `lod1_instances` and `lod2_instances`, the instances drawn
 as their mesh and its two simplifications ([decision 047](adr-047-levels-of-detail.md),
-read back late, null on CPU-presented frames). `Mesh3d` reports each material's `surface`, `opacity` and
+read back late, null on CPU-presented frames), and `impostor_instances`, those
+drawn as impostors ([decision 048](adr-048-impostors.md)), with `impostors`
+baked and `dropped_impostors`, the draw groups a budget or the GPU left
+drawing their meshes. `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

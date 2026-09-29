@@ -168,6 +168,10 @@ pub struct FrameStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Impostors baked, and draw groups a budget or the GPU's texture array
+    /// layers left drawing their meshes (decision 048).
+    pub impostors: u32,
+    pub dropped_impostors: u32,
     /// Reflection probes surfaces could reflect, cube faces captured, and
     /// probes a budget or the GPU's texture array layers left out (decision
     /// 043).
@@ -271,6 +275,10 @@ pub struct BrowserStats {
     /// (decision 039).
     pub decals: u32,
     pub dropped_decals: u32,
+    /// Impostors baked, and draw groups a budget or the GPU's texture array
+    /// layers left drawing their meshes (decision 048).
+    pub impostors: u32,
+    pub dropped_impostors: u32,
     /// Reflection probes surfaces could reflect, cube faces captured, and
     /// probes a budget or the GPU's texture array layers left out (decision
     /// 043).
@@ -366,6 +374,8 @@ impl From<FrameStats> for BrowserStats {
             dropped_particles: stats.dropped_particles,
             decals: stats.decals,
             dropped_decals: stats.dropped_decals,
+            impostors: stats.impostors,
+            dropped_impostors: stats.dropped_impostors,
             reflection_probes: stats.reflection_probes,
             reflection_probe_faces: stats.reflection_probe_faces,
             dropped_reflection_probes: stats.dropped_reflection_probes,
@@ -756,6 +766,8 @@ impl BrowserApp {
             dropped_particles: rendered.dropped_particles,
             decals: rendered.decals,
             dropped_decals: rendered.dropped_decals,
+            impostors: rendered.impostors,
+            dropped_impostors: rendered.dropped_impostors,
             reflection_probes: rendered.reflection_probes,
             reflection_probe_faces: rendered.reflection_probe_faces,
             dropped_reflection_probes: rendered.dropped_reflection_probes,

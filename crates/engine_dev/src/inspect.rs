@@ -268,7 +268,7 @@ impl Default for DevTools {
             |settings| json!(SceneVirtualGeometry::from(settings)),
         ).expect("built-in descriptor is bounded");
         tools.register_resource::<LevelOfDetail>(
-            InspectorDescriptor::new("LevelOfDetail", "Level of detail settings (decision 047): whether GPU-presented frames draw each instance at the coarsest simplified level of its mesh whose error stays within the pixel error of the viewport height. Missing means every instance draws its mesh. The rendering observation reports instances drawn at each level.", schemas["LevelOfDetail"].clone())
+            InspectorDescriptor::new("LevelOfDetail", "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out.", schemas["LevelOfDetail"].clone())
                 .with_default(json!(SceneLevelOfDetail::default())),
             |settings| json!(SceneLevelOfDetail::from(settings)),
         ).expect("built-in descriptor is bounded");

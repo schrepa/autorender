@@ -44,7 +44,8 @@ struct Frame {
     // The screen error in pixels levels of detail keep within; 0 draws every
     // candidate at full detail.
     lod_error: f32,
-    // The eye the frame rasterizes from (w unused).
+    // The eye the frame rasterizes from; w: 1 when draw groups' impostors
+    // (decision 048) may draw.
     eye: vec4<f32>,
 }
 
@@ -90,7 +91,8 @@ struct Batch {
     first_instance: u32,
     first_plane: u32,
     // Levels 1 and 2 (decision 047): first index and index count each; their
-    // geometric errors in mesh units, and the level count.
+    // geometric errors in mesh units, the level count, and the error of the
+    // group's impostor (decision 048; 0 without one).
     lod_ranges: vec4<u32>,
     lod_errors: vec4<f32>,
 }
@@ -164,6 +166,9 @@ struct Skinned {
 // last displayed and the frames in a row it displayed it, up to
 // STILL_FRAMES.
 @group(0) @binding(23) var<storage, read_write> still_frames: array<vec2<u32>>;
+// Impostors (decision 048): each impostor instance's visible ID and draw
+// group, compacted over every group.
+@group(0) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -192,9 +197,13 @@ const PROBE: u32 = 128u;
 // it.
 const STILL_FRAMES: u32 = 16u;
 // Levels of detail (decision 047): the level a camera candidate draws at, in
-// two flag bits from this one; draw groups have at most LOD_LEVELS.
+// two flag bits from this one; draw groups have at most LOD_LEVELS, and
+// level IMPOSTOR draws the group's impostor (decision 048).
 const LOD_SHIFT: u32 = 8u;
 const LOD_LEVELS: u32 = 3u;
+const IMPOSTOR: u32 = 3u;
+// Vertices of an impostor card: two triangles.
+const IMPOSTOR_VERTICES: u32 = 6u;
 // Pixels the projected bounds are widened by before looking for pixel
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
@@ -494,11 +503,13 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
 // The coarsest level of detail of `batch` (decision 047) whose geometric
 // error, scaled by `model`'s largest axis, projects within the frame's pixel
 // error at the posed bounding sphere's nearest distance from the eye (not its
-// depth, so turning the camera never changes a level); 0 for groups without
-// levels, frames without them and spheres around the eye.
+// depth, so turning the camera never changes a level): its impostor
+// (decision 048) wherever that fits, the cheapest of all; 0 for groups
+// without levels, frames without them and spheres around the eye.
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
     let levels = u32(batch.lod_errors.z);
-    if levels <= 1u || !(frame.lod_error > 0.0) {
+    let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
+    if (levels <= 1u && !impostor) || !(frame.lod_error > 0.0) {
         return 0u;
     }
     let center = (model * vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0)).xyz;
@@ -516,11 +527,18 @@ fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
     let to_eye = center - frame.eye.xyz;
     let distance_squared = dot(to_eye, to_eye);
     var level = 0u;
-    for (var l = 1u; l < min(levels, LOD_LEVELS); l++) {
-        let error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u) * scale * pixels;
-        var fits = error <= 1.0;
+    for (var l = 1u; l < IMPOSTOR + 1u; l++) {
+        var error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u);
+        if l == IMPOSTOR {
+            error = batch.lod_errors.w;
+        }
+        if (l < IMPOSTOR && l >= levels) || (l == IMPOSTOR && !impostor) {
+            continue;
+        }
+        let projected = error * scale * pixels;
+        var fits = projected <= 1.0;
         if perspective {
-            let reach = error + radius;
+            let reach = projected + radius;
             fits = reach * reach <= distance_squared;
         }
         if fits {
@@ -951,6 +969,12 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
         batch_bases[4u * id.x + level] = base[level];
     }
     draws[id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex, batch.first_instance);
+    // Every group's impostors (decision 048) draw as one card list, whose
+    // arguments a non-indexed draw reads: vertices, instances and zeros.
+    if id.x == 0u {
+        draws[LOD_LEVELS * frame.batches] = DrawArgs(IMPOSTOR_VERTICES,
+            load_sums(frame.groups)[IMPOSTOR], 0u, 0, 0u);
+    }
     let levels = u32(batch.lod_errors.z);
     if levels > 1u {
         draws[frame.batches + id.x] = DrawArgs(batch.lod_ranges.y, visible.y,
@@ -989,7 +1013,12 @@ fn scatter(
     if any(hot != vec4<u32>(0u)) {
         let level = bucket(stored);
         let global = (load_sums(group.x) + shared_counts[lane] - hot)[level];
-        if level != 0u || global < frame.budget {
+        if level == IMPOSTOR {
+            // Impostors of every group compact into one list.
+            let candidate = candidates[id.x];
+            impostor_ids[global] = vec2<u32>(
+                candidate.slot | select(0u, MOVED_SLOT, (stored & MOVING) != 0u), candidate.batch);
+        } else if level != 0u || global < frame.budget {
             let candidate = candidates[id.x];
             let batch = candidate.batch;
             visible_ids[level * frame.plane + batches[batch].start

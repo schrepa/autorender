@@ -702,9 +702,9 @@ impl SceneVirtualGeometry {
     }
 }
 
-/// Level of detail settings (decision 047): whether instances draw simplified
-/// levels of their meshes where the simplification stays within a pixel
-/// error. Requires version 8.
+/// Level of detail settings (decisions 047 and 048): whether instances draw
+/// simplified levels of their meshes, and impostors, where the
+/// simplification stays within a pixel error. Requires version 8.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -715,6 +715,11 @@ pub struct SceneLevelOfDetail {
     /// farther away.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
     pub pixel_error: f32,
+    /// Whether draw groups draw impostors where they fit (decision 048).
+    pub impostors: bool,
+    /// The most impostors kept baked; omitted for no budget.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_impostors: Option<u32>,
 }
 
 impl Default for SceneLevelOfDetail {
@@ -728,6 +733,8 @@ impl From<&LevelOfDetail> for SceneLevelOfDetail {
         Self {
             enabled: settings.enabled,
             pixel_error: settings.pixel_error,
+            impostors: settings.impostors,
+            max_impostors: settings.max_impostors,
         }
     }
 }
@@ -740,6 +747,8 @@ impl SceneLevelOfDetail {
         Ok(LevelOfDetail {
             enabled: self.enabled,
             pixel_error: self.pixel_error,
+            impostors: self.impostors,
+            max_impostors: self.max_impostors,
         })
     }
 }

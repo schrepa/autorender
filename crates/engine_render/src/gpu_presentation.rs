@@ -187,6 +187,9 @@ pub(crate) struct BatchMeta {
     /// 047): each one's first index, index count and geometric error in
     /// mesh units, finest first.
     pub lods: Vec<(u32, u32, f32)>,
+    /// The error of its impostor in mesh units (decision 048), 0 without
+    /// one.
+    pub impostor: f32,
 }
 
 pub(crate) struct GpuPresentationPass {
@@ -223,6 +226,10 @@ pub(crate) struct GpuPresentationPass {
     frame_phase2: wgpu::Buffer,
     draws2: wgpu::Buffer,
     visible_ids2: wgpu::Buffer,
+    // Impostors (decision 048): each phase's impostor instances, a visible
+    // ID and draw group each, drawn by the argument after every level's.
+    impostor_ids: wgpu::Buffer,
+    impostor_ids2: wgpu::Buffer,
     occlusion_counts: wgpu::Buffer,
     totals: wgpu::Buffer,
     occlusion_group: Option<(OcclusionKey, wgpu::BindGroup)>,
@@ -259,7 +266,7 @@ pub(crate) struct GpuPresentationPass {
     // The pose buffer this frame's culling writes.
     poses_index: usize,
     uploaded: Option<(u64, u64)>,
-    groups_key: Option<(u64, u64, u64, u64, bool, u64)>,
+    groups_key: Option<(u64, u64, u64, u64, bool, u64, u64)>,
     candidate_count: u32,
     batch_count: u32,
     level_ranges: Vec<(u32, u32)>,
@@ -440,6 +447,18 @@ impl GpuPresentationPass {
                 0,
                 wgpu::BufferUsages::VERTEX,
             ),
+            impostor_ids: storage(
+                device,
+                "engine/presentation-impostor-ids",
+                0,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            impostor_ids2: storage(
+                device,
+                "engine/presentation-impostor-ids2",
+                0,
+                wgpu::BufferUsages::VERTEX,
+            ),
             occlusion_counts: storage(
                 device,
                 "engine/presentation-occlusion-counts",
@@ -539,6 +558,8 @@ impl GpuPresentationPass {
             &self.visible_ids2,
             &self.draws_probe,
             &self.visible_ids_probe,
+            &self.impostor_ids,
+            &self.impostor_ids2,
             &self.joint_nodes,
             &self.inverse_binds,
         ]
@@ -676,6 +697,19 @@ impl GpuPresentationPass {
                 planes * capacity * 4,
                 wgpu::BufferUsages::VERTEX,
             );
+            // Impostor instances (decision 048): two words each.
+            self.impostor_ids = storage(
+                device,
+                "engine/presentation-impostor-ids",
+                capacity * 8,
+                wgpu::BufferUsages::VERTEX,
+            );
+            self.impostor_ids2 = storage(
+                device,
+                "engine/presentation-impostor-ids2",
+                capacity * 8,
+                wgpu::BufferUsages::VERTEX,
+            );
             self.groups_key = None;
             self.bind_groups = None;
             self.buffers_generation += 1;
@@ -696,24 +730,25 @@ impl GpuPresentationPass {
                 capacity * 16,
                 wgpu::BufferUsages::empty(),
             );
-            // Draw arguments per level of detail and batch.
-            let planes = LOD_LEVELS as u64;
+            // Draw arguments per level of detail and batch, then the
+            // impostors' (decision 048).
+            let args = (LOD_LEVELS as u64 * capacity + 1) * DRAW_ARGS_BYTES;
             self.draws = storage(
                 device,
                 "engine/presentation-draws",
-                planes * capacity * DRAW_ARGS_BYTES,
+                args,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.draws2 = storage(
                 device,
                 "engine/presentation-draws2",
-                planes * capacity * DRAW_ARGS_BYTES,
+                args,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.draws_probe = storage(
                 device,
                 "engine/presentation-draws-probe",
-                planes * capacity * DRAW_ARGS_BYTES,
+                args,
                 wgpu::BufferUsages::INDIRECT,
             );
             self.groups_key = None;
@@ -854,6 +889,7 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(11, &self.visible_ids),
+                    entry(24, &self.impostor_ids),
                 ],
             ),
             sum_groups2: group(
@@ -891,6 +927,7 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(11, &self.visible_ids2),
+                    entry(24, &self.impostor_ids2),
                 ],
             ),
             count_still,
@@ -1081,8 +1118,10 @@ impl GpuPresentationPass {
         occlusion: Option<(u32, u32, u32)>,
         subpixel: bool,
         lod_error: f32,
+        impostors: bool,
         stillness: Option<bool>,
         virtual_generation: u64,
+        impostor_generation: u64,
         viewport: (u32, u32),
         stamps: Option<StageStamps<'_>>,
     ) -> GpuPrepared {
@@ -1312,8 +1351,8 @@ impl GpuPresentationPass {
         prepared.blend = self.blend;
 
         // Candidate groups: rebuilt with the candidate structure or node space.
-        // Which batches draw virtual geometry (decision 044), by the
-        // generation of that choice.
+        // Which batches draw virtual geometry (decision 044) and which have
+        // impostors (decision 048), by the generations of those choices.
         let key = (
             frame.identity(),
             frame.structure_revision(),
@@ -1321,6 +1360,7 @@ impl GpuPresentationPass {
             gpu.identity,
             shadow_groups,
             virtual_generation,
+            impostor_generation,
         );
         if self.groups_key != Some(key) {
             let slot_nodes = frame.slot_nodes();
@@ -1339,6 +1379,7 @@ impl GpuPresentationPass {
                     joints,
                     virtual_geometry,
                     lods,
+                    impostor,
                 } = batch_meta(index, batch);
                 let lod = |level: usize| lods.get(level).copied().unwrap_or((0, 0, 0.0));
                 let skinned = joints != 0;
@@ -1361,7 +1402,7 @@ impl GpuPresentationPass {
                         0
                     },
                     lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
-                    lod_errors: [lod(0).2, lod(1).2, (1 + lods.len()) as f32, 0.0],
+                    lod_errors: [lod(0).2, lod(1).2, (1 + lods.len()) as f32, impostor],
                     pad: group,
                     bounds_min: bounds
                         .min()
@@ -1534,7 +1575,7 @@ impl GpuPresentationPass {
             } else {
                 0.0
             },
-            eye: eye.extend(0.0).to_array(),
+            eye: eye.extend(if impostors { 1.0 } else { 0.0 }).to_array(),
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
         self.frame_uniform = Some(uniform);
@@ -2055,6 +2096,8 @@ impl GpuPresentationPass {
                     entry(9, &self.scan),
                     entry(10, &self.batch_bases),
                     entry(11, &self.visible_ids_probe),
+                    // Probe faces draw no impostors.
+                    entry(24, &self.impostor_ids),
                 ],
             ),
         }
@@ -2097,6 +2140,18 @@ impl GpuPresentationPass {
         };
         let args = (level * self.batch_count as usize + index) as u64;
         (self.ids(ids, batch, level), draws, args * DRAW_ARGS_BYTES)
+    }
+
+    /// Phase `phase`'s impostor instances (decision 048) and the arguments
+    /// of the non-indexed draw of their cards.
+    pub(crate) fn impostor_source(&self, phase: usize) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
+        let (ids, draws) = if phase == 0 {
+            (&self.impostor_ids, &self.draws)
+        } else {
+            (&self.impostor_ids2, &self.draws2)
+        };
+        let args = LOD_LEVELS as u64 * u64::from(self.batch_count);
+        (ids, draws, args * DRAW_ARGS_BYTES)
     }
 
     /// A batch's visible IDs at level of detail `level` in `ids`: the whole

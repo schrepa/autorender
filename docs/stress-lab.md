@@ -143,8 +143,9 @@ occlusion test ([decision 040](adr-040-occlusion-culling.md)), and
 `subpixel=off` also every instance covering no pixel center
 ([decision 041](adr-041-subpixel-culling.md)), and `lod=off` draws every
 instance as its mesh instead of at its level of detail
-([decision 047](adr-047-levels-of-detail.md)), for same-build comparisons;
-recordings report `occlusion`, `subpixel` and `lod`. Spatial
+([decision 047](adr-047-levels-of-detail.md)), and `impostors=off` draws no
+impostors ([decision 048](adr-048-impostors.md)), for same-build comparisons;
+recordings report `occlusion`, `subpixel`, `lod` and `impostors`. Spatial
 queries require the collision-enabled presets. No automated suite starts when
 opening the page. Runtime code lives in `examples/stress-lab`, independent of
 engine implementations.

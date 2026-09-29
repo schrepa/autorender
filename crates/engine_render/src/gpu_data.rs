@@ -1565,6 +1565,16 @@ mod tests {
             size_of::<crate::decals::DecalData>()
         );
         assert_eq!(size_of::<crate::decals::DecalData>(), 96);
+        // Impostors (decision 048).
+        assert_eq!(
+            size(SHADER, "ImpostorRecord"),
+            size_of::<crate::impostors::ImpostorRecord>()
+        );
+        assert_eq!(size_of::<crate::impostors::ImpostorRecord>(), 48);
+        assert_eq!(
+            size(SHADER, "ImpostorBake"),
+            size_of::<crate::impostors::ImpostorBakeUniform>()
+        );
         // Particles (decision 026).
         assert_eq!(
             size(PARTICLE_SHADER, "Emitter"),
@@ -1712,16 +1722,38 @@ mod tests {
 
     #[test]
     fn levels_of_detail_match_wgsl() {
-        let module = naga::front::wgsl::parse_str(PRESENTATION_SHADER).unwrap();
-        let (_, constant) = module
-            .constants
-            .iter()
-            .find(|(_, constant)| constant.name.as_deref() == Some("LOD_LEVELS"))
-            .unwrap();
-        assert!(matches!(
-            module.global_expressions[constant.init],
-            naga::Expression::Literal(naga::Literal::U32(levels)) if levels as usize == LOD_LEVELS
-        ));
+        let constant = |source: &str, name: &str| {
+            let module = naga::front::wgsl::parse_str(source).unwrap();
+            let (_, constant) = module
+                .constants
+                .iter()
+                .find(|(_, constant)| constant.name.as_deref() == Some(name))
+                .unwrap();
+            match module.global_expressions[constant.init] {
+                naga::Expression::Literal(naga::Literal::U32(value)) => value,
+                ref other => panic!("{name} is {other:?}"),
+            }
+        };
+        assert_eq!(
+            constant(PRESENTATION_SHADER, "LOD_LEVELS") as usize,
+            LOD_LEVELS
+        );
+        // Impostors (decision 048) are the level after the mesh's levels.
+        assert_eq!(
+            constant(PRESENTATION_SHADER, "IMPOSTOR") as usize,
+            LOD_LEVELS
+        );
+        assert_eq!(constant(PRESENTATION_SHADER, "IMPOSTOR_VERTICES"), 6);
+        use crate::impostors::{IMPOSTOR_FRAMES, IMPOSTOR_LEVELS, IMPOSTOR_TEXELS};
+        assert_eq!(constant(SHADER, "IMPOSTOR_FRAMES"), IMPOSTOR_FRAMES);
+        assert_eq!(constant(SHADER, "IMPOSTOR_TEXELS"), IMPOSTOR_TEXELS);
+        assert_eq!(constant(SHADER, "IMPOSTOR_LEVELS"), IMPOSTOR_LEVELS);
+        // Frames keep two texels across at the coarsest level, and fit the
+        // six bits a card packs each frame in.
+        const {
+            assert!(IMPOSTOR_TEXELS >> (IMPOSTOR_LEVELS - 1) >= 2);
+            assert!(IMPOSTOR_FRAMES * IMPOSTOR_FRAMES <= 64);
+        }
     }
 
     #[test]
