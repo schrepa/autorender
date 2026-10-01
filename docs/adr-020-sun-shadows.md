@@ -101,3 +101,21 @@ when `bounds` fit the scene; without them the map follows the camera and
 spends resolution behind it. Public snapshots lack shadows of casters
 outside the view. Only one directional light casts shadows; lamps and
 emissive surfaces do not.
+
+## Alternatives and evidence
+
+- **Virtual shadow maps** (considered 30 September 2026). A page-cached
+  virtual map draws each page at the resolution its receivers need and keeps
+  still casters per page, as the kept map's tiles do. Measurements in the
+  Stress Lab Metro overview (Firefox, integrated GPU):
+  - The cost a virtual map could save is the moving map's, 1.08 ms: still
+    casters are already cached in the kept map's tiles (about 0.2 ms) and
+    the near cascades take 0.43 ms.
+  - Clearing the moving map costs 0.19 ms. Drawing all its casters at their
+    coarsest levels still costs 0.76 ms more.
+  - Matching each caster's resolution to its distance could thus save at
+    most 0.14 ms (decision 047). Moving casters line every street, so
+    nearly every visible page would need redrawing each frame.
+  - A virtual map would also add work every frame: marking pages from the
+    depth buffer, allocating them, and an indirection on every lookup.
+  - The kept map, the moving map and the near cascades stay.
