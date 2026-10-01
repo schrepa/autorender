@@ -206,6 +206,23 @@ Measurements:
     whenever a member moves.
   - Not built: the empty and simplified levels above take the same
     triangles out without any of that.
+- **Leaner shading at coarser levels** (sized 1 October 2026). Drawing
+  instances at simplified levels with a shader that skips features would
+  only pay where those instances cover many pixels. They do not:
+  - Tinting their pixels marks 1.05% of the Metro overview's GPU-presented
+    pixels in Chrome (808x583 canvas), single specks, and none of the close
+    view's.
+  - Skipping all of their shading changed `opaque_meshes` by -0.07, -0.66
+    and -0.24 ms in three alternating Firefox runs (2262x967 canvas). That
+    is within the session's noise: a variant that cannot change the pass
+    moved it by -0.34 ms.
+  - Removing a feature from every pixel changed the pass by -0.66 ms
+    (normal mapping), -0.51 ms (reflection probes) and -0.25 ms (local
+    lights), and all three together by -0.85 ms (medians against the
+    nearest unchanged run). No single feature dominates, and removing them
+    changes every pixel's look.
+
+  Not built.
 
 - **Per-level error bounds** (1% and 5% of the mesh's extent, tried 29
   September 2026). Boxy low-poly props cannot simplify within them, so no

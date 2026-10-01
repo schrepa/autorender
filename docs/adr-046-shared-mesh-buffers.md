@@ -87,3 +87,17 @@ cost about 0.08 ms of script time per pass in Firefox and 0.05 ms in Chrome
 (0.13 ms with the discrete GPU), against 0.01 ms for a bundle. Metro's
 command encoding, about 0.6 ms a frame, did not fall: recording and
 comparing the commands cost what the calls saved. Bundles were not adopted.
+
+Merged, vertex-pulled draws (tried 1 October 2026). Engines that draw many
+tiny meshes report a fixed cost per instance, which merging them into one
+non-instanced draw per material removes (id Software's merged index buffers
+in Doom Eternal; AMD's measurements of vertex pulling against instancing).
+Metro's impostor cards (decision 048) are that case in its purest form:
+about 14,000 instances of six vertices each in one instanced draw. Drawn
+instead as one non-instanced draw of six vertices per card, each vertex
+carrying its card's visible ID, they took the same time: `opaque_meshes`
+measured 8.42 ms against 8.43 ms over three alternating Firefox runs on the
+integrated GPU, with identical images. At the 50 ns per instance those
+reports suggest, the cards alone would have saved about 0.7 ms. Instancing
+costs nothing measurable here, so merging small instances and shadow
+casters was not built.

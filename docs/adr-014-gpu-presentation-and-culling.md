@@ -300,3 +300,29 @@ no worker threads, asset formats or render graph.
   - The pass is bound by each candidate's reads and its pose write, which
     shadow casters need for every candidate whether the camera sees it or
     not. Blocks could not skip that work.
+- **A persistent static scene** (sized 1 October 2026). Still instances
+  repeat the same work every frame: culling rewrites poses that did not
+  change, and shadow selection hashes them to find that they did not move.
+  Shader-only variants sized that work in the same overview (three
+  alternating Firefox runs each; 86,700 of the 90,000 candidates are in the
+  frustum):
+  - Not writing inactive nodes' poses: `presentation_cull` 0.654 to
+    0.564 ms. Without temporal antialiasing culling writes the retained
+    instance buffer, which already held them, so images did not change.
+  - Writing them only where the stored rows differ: 0.625 to 0.598 ms (a
+    second session). Reading costs about what writing does.
+  - Inactive candidates skipping culling altogether, which could only hold
+    while the camera stands still: 0.40 ms.
+  - Shadow selection returning after the stillness read for kept casters:
+    `shadow_select` 0.49 to 0.38 ms. The rest is reading every candidate's
+    records.
+  - Flags in slot order instead of at draw-group positions (second
+    session): 0.016 ms in culling and 0.004 ms in shadow selection. The 360 KB flag array stays
+    in the GPU's cache, so scattered flag accesses cost nothing.
+  - Counting still frames for probes: about 0.02 ms. The occlusion test is
+    0.20 of the occlusion pass's 0.77 ms; the depth pyramid and phase two's
+    compaction are the rest.
+
+  With a moving camera every test stays, so the attainable total is about
+  0.2 to 0.35 ms of a 21 ms frame, and blocks would skip little more where
+  nearly every candidate is in view. Not built.
