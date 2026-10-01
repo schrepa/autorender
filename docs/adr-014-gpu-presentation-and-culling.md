@@ -287,3 +287,16 @@ the CPU path as the reference and opt-out. Display poses never feed back into
 simulation, collision or authored data; gameplay that needs presented poses uses
 `prepare_presented_transforms` or CPU presentation explicitly. The GPU path adds
 no worker threads, asset formats or render graph.
+
+## Alternatives and evidence
+
+- **Hierarchical culling: blocks first** (considered 30 September 2026).
+  Testing blocks of candidates before their members only pays where the
+  per-candidate tests cost something. They do not, measured in the Stress
+  Lab Metro overview (Firefox, integrated GPU, 90,000 candidates).
+  - `presentation_cull` takes 0.64 ms.
+  - Marking every candidate visible at level 0, with no frustum, sub-pixel
+    or level tests, takes 0.65 ms.
+  - The pass is bound by each candidate's reads and its pose write, which
+    shadow casters need for every candidate whether the camera sees it or
+    not. Blocks could not skip that work.
