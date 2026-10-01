@@ -223,6 +223,23 @@ add a `taa_resolve` GPU sample for the full-screen resolve; their
 (targets and the second pose buffer). The resolve scales with canvas pixels, so
 compare it at identical sizes.
 
+Every timed frame adds three GPU-clock samples. They show whether the GPU
+is busy for the whole frame, and how much of that time the engine's own
+passes cover:
+- `frame_gpu`: from the frame's first timed pass begin to its last timed
+  pass end. It includes GPU time between passes: untimed uploads and copies,
+  and other GPU work interleaved with the frame, such as the browser's
+  compositor or other processes.
+- `frame_gpu_gap`: the GPU time from the previous frame's last end to this
+  frame's first begin, when both frames are timed.
+- `frame_gpu_interval`: the GPU time from one timed frame's first begin to
+  the next's, per frame between them.
+
+Compare `frame_gpu_interval` with `frame_gpu` and the passes' sum. If they
+nearly match with small gaps, the GPU limits the frame rate. Time inside
+`frame_gpu` that the passes leave uncovered is either other work sharing
+the GPU or the engine's untimed copies.
+
 Shadows ([decision 020](adr-020-sun-shadows.md)) add `shadow_select`, the
 caster selection pass, `shadow_maps`, from the first to the last depth pass,
 and per map `shadow_near` (every near cascade), `shadow_moving` and

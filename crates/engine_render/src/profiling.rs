@@ -128,6 +128,15 @@ struct Sample {
     stages: [Option<f64>; STAGES.len()],
     resolve_ms: Option<f64>,
     effects: [Option<f64>; EFFECTS.len()],
+    // The frame's first timed pass begin to its last timed pass end, and the
+    // GPU time from the previous frame's last end to this frame's first
+    // begin: work outside the engine's passes (the browser compositor, other
+    // processes) or idle.
+    frame_ms: Option<f64>,
+    gap_ms: Option<f64>,
+    // GPU time from the last read frame's first timed pass to this one's, per
+    // frame between them: the GPU's frame interval.
+    interval_ms: Option<f64>,
 }
 
 /// Retains one capture and a small reusable ring. A new capture clears samples,
@@ -144,6 +153,8 @@ pub(crate) struct GpuProfiler {
     errors: u64,
     sample_limit_reached: bool,
     samples: Vec<Sample>,
+    // The last read frame and its first and last timed GPU timestamps.
+    last_span: Option<(u64, u64, u64)>,
 }
 
 impl GpuProfiler {
@@ -160,6 +171,7 @@ impl GpuProfiler {
             errors: 0,
             sample_limit_reached: false,
             samples: Vec::new(),
+            last_span: None,
         }
     }
 
@@ -340,6 +352,7 @@ impl GpuProfiler {
             let mut stages = [None; STAGES.len()];
             let mut resolve_ms = None;
             let mut effects = [None; EFFECTS.len()];
+            let mut span = None;
             let (duration, compute_ms) =
                 slot.readback
                     .get_mapped_range(..)
@@ -384,6 +397,32 @@ impl GpuProfiler {
                                 .map(|ticks| ticks as f64 * period_ns / 1_000_000.0)
                                 .filter(|value| value.is_finite());
                         }
+                        // The frame's GPU span: every query this slot wrote,
+                        // the opaque pass's always.
+                        let mut written = vec![0, 1];
+                        for stage in 0..STAGES.len() {
+                            if timed(stage) {
+                                written.extend([2 + 2 * stage, 3 + 2 * stage]);
+                            }
+                        }
+                        if slot.resolved {
+                            written.extend([RESOLVE_QUERY as usize, RESOLVE_QUERY as usize + 1]);
+                        }
+                        for effect in 0..EFFECTS.len() {
+                            if effect != SHADOW_MAPS && slot.effects & (1 << effect) != 0 {
+                                let query = EFFECT_QUERY as usize + 2 * effect;
+                                written.extend([query, query + 1]);
+                            }
+                        }
+                        let stamps: Vec<u64> = written
+                            .iter()
+                            .filter_map(|&query| stamp(&bytes, query))
+                            .collect();
+                        span = stamps
+                            .iter()
+                            .min()
+                            .zip(stamps.iter().max())
+                            .map(|(&a, &b)| (a, b));
                         // The frame's own compute passes: every stage but the
                         // shift, which is submitted before the frame's uploads.
                         let first = (1..STAGES.len()).find(|&stage| timed(stage));
@@ -400,6 +439,29 @@ impl GpuProfiler {
                         )
                     });
             slot.readback.unmap();
+            let to_ms = |ticks: u64| ticks as f64 * period_ns / 1_000_000.0;
+            let frame_ms = span
+                .and_then(|(first, last)| last.checked_sub(first))
+                .map(to_ms);
+            let previous = self.last_span.filter(|&(frame, _, _)| frame < origin.frame);
+            let gap_ms = span
+                .zip(previous)
+                .and_then(|((first, _), (frame, _, end))| {
+                    (frame + 1 == origin.frame)
+                        .then(|| first.checked_sub(end))
+                        .flatten()
+                        .map(to_ms)
+                });
+            let interval_ms = span
+                .zip(previous)
+                .and_then(|((first, _), (frame, start, _))| {
+                    first
+                        .checked_sub(start)
+                        .map(|ticks| to_ms(ticks) / (origin.frame - frame) as f64)
+                });
+            if let Some((first, last)) = span {
+                self.last_span = Some((origin.frame, first, last));
+            }
             if Some(origin.capture) != self.capture {
                 continue;
             }
@@ -412,6 +474,9 @@ impl GpuProfiler {
                     stages,
                     resolve_ms,
                     effects,
+                    frame_ms: frame_ms.filter(|value| value.is_finite()),
+                    gap_ms: gap_ms.filter(|value| value.is_finite()),
+                    interval_ms: interval_ms.filter(|value| value.is_finite()),
                 });
             } else {
                 self.errors = self.errors.saturating_add(1);
@@ -434,7 +499,7 @@ impl GpuProfiler {
             "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
             "capture_id": self.capture.map(|id| id.to_string()),
             "active": active,
-            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving and shadow_kept per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch); excludes uploads, queue latency, presentation and timestamp readback",
+            "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving and shadow_kept per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch), effects_filter, and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
             "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
             "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
             "precision": "browser may quantize timestamp values; zero durations remain valid samples",
@@ -483,11 +548,21 @@ impl GpuProfiler {
                         .iter()
                         .zip(sample.effects)
                         .filter_map(|(name, value)| Some(entry(sample, name, value?)));
+                    let frame = sample
+                        .frame_ms
+                        .map(|frame| entry(sample, "frame_gpu", frame));
+                    let gap = sample.gap_ms.map(|gap| entry(sample, "frame_gpu_gap", gap));
+                    let interval = sample
+                        .interval_ms
+                        .map(|interval| entry(sample, "frame_gpu_interval", interval));
                     std::iter::once(entry(sample, "opaque_meshes", sample.duration_ms))
                         .chain(compute)
                         .chain(stages)
                         .chain(resolve)
                         .chain(effects)
+                        .chain(frame)
+                        .chain(gap)
+                        .chain(interval)
                         .collect::<Vec<_>>()
                 })
                 .collect(),
