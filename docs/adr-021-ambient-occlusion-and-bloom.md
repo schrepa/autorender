@@ -37,9 +37,12 @@ glow target holding each pixel's exposed brightness above the threshold as
   on its surface, by a Gaussian: inverse distance from the eye changes
   linearly across a plane on screen, so a neighbor counts while its inverse
   distance stays within about 1% of the center's, extrapolated by the
-  center's slope toward its nearer neighbor on each axis. Applying it, four
-  bilinear taps smooth it over three texels and darken only the pixel's
-  ambient share. Without the filter, the eight turned samples left a
+  center's slope toward its nearer neighbor on each axis. The same pass
+  brings sun shafts ([decision 024](adr-024-sun-shafts.md)) up to half
+  resolution beside it, so one target holds both. Applying it, four
+  bilinear taps smooth both over three texels, and the occlusion darkens
+  only the pixel's ambient share. Without the filter, the eight turned
+  samples left a
   mottled, screen-fixed pattern wherever something partly occluded a
   surface within the radius, strongest where ambient light is most of a
   pixel's light: metal in shadow, which only reflects.
@@ -62,7 +65,8 @@ Firefox on the laptop's integrated GPU, Stress Lab Metro at 1512x792: the
 `ambient_occlusion` sample (the samples and their filter) takes 0.31 ms in
 the overview and 0.50 ms in the street-level view, of which the filter is
 0.14 and 0.20 ms; `bloom` takes 0.57 ms and `post_composite`, on frames
-without temporal antialiasing, 0.46 ms.
+without temporal antialiasing, 0.46 ms. Since 30 September 2026 the filter
+is its own `effects_filter` sample, shared with sun shafts.
 
 ## Consequences
 

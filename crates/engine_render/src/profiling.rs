@@ -25,8 +25,9 @@ pub(crate) const STAGES: [&str; STAGE_COUNT] = [
 /// begin to its end query. `shadow_maps` spans the near
 /// cascades' begin (or the moving map's) to the kept map's end (or the moving
 /// map's), from the per-map queries; `probe_captures` every face captured in
-/// a frame, with its culling, light binning and blurring.
-pub(crate) const EFFECTS: [&str; 17] = [
+/// a frame, with its culling, light binning and blurring; `effects_filter`
+/// the half-resolution filter of ambient occlusion and sun shafts.
+pub(crate) const EFFECTS: [&str; 18] = [
     "shadow_select",
     "shadow_maps",
     "ambient_occlusion",
@@ -46,7 +47,11 @@ pub(crate) const EFFECTS: [&str; 17] = [
     "occlusion",
     "probe_captures",
     "virtual_selection",
+    "effects_filter",
 ];
+// `PostPass::encode_effects` writes the filter's queries past occlusion's
+// (entry 2) by this offset.
+const _: () = assert!(crate::post::EFFECTS_FILTER_QUERY as usize == 2 * (EFFECTS.len() - 1 - 2));
 const SHADOW_MAPS: usize = 1;
 const SHADOW_NEAR: usize = 11;
 const SHADOW_MOVING: usize = 12;

@@ -191,7 +191,6 @@ impl TemporalPass {
                 texture_entry(5, true),
                 texture_entry(6, true),
                 texture_entry(8, true),
-                texture_entry(9, true),
                 wgpu::BindGroupLayoutEntry {
                     binding: 7,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -519,7 +518,7 @@ impl TemporalPass {
         {
             return;
         }
-        let ([scene, occlusion, bloom, reflections, shafts], settings) = post.resolve_inputs();
+        let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
         let group = |previous: &wgpu::TextureView| {
             let view = |binding, view| wgpu::BindGroupEntry {
                 binding,
@@ -543,7 +542,6 @@ impl TemporalPass {
                     view(5, occlusion),
                     view(6, bloom),
                     view(8, reflections),
-                    view(9, shafts),
                     wgpu::BindGroupEntry {
                         binding: 7,
                         resource: settings.as_entire_binding(),

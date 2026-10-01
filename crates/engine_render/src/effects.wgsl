@@ -30,20 +30,34 @@ struct Post {
     sun: vec4<f32>,
 }
 
+// The full-resolution pixel quarter-resolution sun shaft texel `texel`
+// traces (decision 024): the second of each 4x4 block's diagonal, centered
+// at 4 * texel + 1.5.
+fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
+    return texel * 4 + vec2<i32>(1);
+}
+
+// The ambient occlusion's visibility (x) and the sun shafts' light (y) at
+// `uv`, which the half-resolution filter of post.wgsl writes together: four
+// bilinear taps around the pixel smooth them over three texels.
+fn screen_effects(effects: texture_2d<f32>, linear: sampler, uv: vec2<f32>,
+        settings: Post) -> vec2<f32> {
+    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let t = settings.bloom.zw * 0.5;
+    return (textureSampleLevel(effects, linear, uv - t, 0.0).rg
+        + textureSampleLevel(effects, linear, uv + vec2<f32>(t.x, -t.y), 0.0).rg
+        + textureSampleLevel(effects, linear, uv + vec2<f32>(-t.x, t.y), 0.0).rg
+        + textureSampleLevel(effects, linear, uv + t, 0.0).rg) * 0.25;
+}
+
 // The factor darkening a pixel whose light has an ambient share of
-// `ambient` (the scene target's alpha) by the filtered half-resolution
-// occlusion at `uv`. Four bilinear taps around the pixel smooth it over
-// three texels.
-fn occlusion_factor(ambient: f32, occlusion: texture_2d<f32>, linear: sampler,
-        uv: vec2<f32>, settings: Post) -> f32 {
+// `ambient` (the scene target's alpha) by the occlusion's `visible` share.
+fn occlusion_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
     if settings.occlusion.w == 0.0 {
         return 1.0;
     }
-    let t = settings.bloom.zw * 0.5;
-    let visible = (textureSampleLevel(occlusion, linear, uv - t, 0.0).r
-        + textureSampleLevel(occlusion, linear, uv + vec2<f32>(t.x, -t.y), 0.0).r
-        + textureSampleLevel(occlusion, linear, uv + vec2<f32>(-t.x, t.y), 0.0).r
-        + textureSampleLevel(occlusion, linear, uv + t, 0.0).r) * 0.25;
     return 1.0 - ambient * (1.0 - visible);
 }
 
@@ -59,18 +73,12 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
     return mix(color, reflection.rgb, saturate(reflection.a * settings.reflections.y));
 }
 
-// Sunlight scattered toward the eye at `uv` (decision 024), blurred over
-// three half-resolution texels, added as a screen blend.
-fn shafted(color: vec3<f32>, shafts: texture_2d<f32>, linear: sampler, uv: vec2<f32>,
-        settings: Post) -> vec3<f32> {
+// Sunlight scattered toward the eye (decision 024), `amount` of it, added as
+// a screen blend.
+fn shafted(color: vec3<f32>, amount: f32, settings: Post) -> vec3<f32> {
     if settings.shafts.w == 0.0 {
         return color;
     }
-    let t = settings.bloom.zw * 0.5;
-    let amount = (textureSampleLevel(shafts, linear, uv - t, 0.0).r
-        + textureSampleLevel(shafts, linear, uv + vec2<f32>(t.x, -t.y), 0.0).r
-        + textureSampleLevel(shafts, linear, uv + vec2<f32>(-t.x, t.y), 0.0).r
-        + textureSampleLevel(shafts, linear, uv + t, 0.0).r) * 0.25;
     let light = settings.sun.rgb * max(amount, 0.0);
     let added = light / (vec3<f32>(1.0) + light);
     return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - added);

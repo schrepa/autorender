@@ -1,10 +1,10 @@
 // Screen effects (decisions 021 and 025), prepended with effects.wgsl.
-// Ambient occlusion samples the depth buffer at half resolution and filters
-// the result;
-// screen-space reflections trace reflected rays through it at half
-// resolution; bloom filters the scene's glowing light down a chain of
-// half-resolution levels and back up; the composite applies them and sun
-// shafts (shafts.wgsl) to the scene target and writes the canvas.
+// Ambient occlusion samples the depth buffer at half resolution, and one
+// half-resolution filter smooths it and brings the quarter-resolution sun
+// shafts (shafts.wgsl) up beside it; screen-space reflections trace
+// reflected rays through it at half resolution; bloom filters the scene's
+// glowing light down a chain of half-resolution levels and back up; the
+// composite applies them to the scene target and writes the canvas.
 // Temporally antialiased frames apply them in their resolve instead.
 
 @group(0) @binding(0) var<uniform> post: Post;
@@ -16,11 +16,15 @@
 @group(0) @binding(3) var glow: texture_2d<f32>;
 // The level a bloom pass reads.
 @group(0) @binding(4) var source: texture_2d<f32>;
+// The filtered ambient occlusion's visibility and the sun shafts' light at
+// half resolution.
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var linear: sampler;
-// Reflected color and its weight, and scattered sunlight, at half resolution.
+// Reflected color and its weight at half resolution.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
+// Sun shafts (decision 024) at quarter resolution: scattered light, and the
+// length of the ray that gathered it.
 @group(0) @binding(9) var shafts: texture_2d<f32>;
 // Reflections (decision 025): the nearest depth of each 2x2 block of the
 // depth buffer, then of each block of the level below, which rays skip
@@ -143,9 +147,7 @@ fn inverse_distance(texel: vec2<i32>) -> f32 {
 // shadow). Inverse distance changes linearly across a plane on screen, so a
 // neighbor counts while its inverse distance lies near the center's
 // extrapolated by the center's slope toward its nearer neighbor on each axis.
-@fragment
-fn fs_occlusion_filter(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
-    let texel = vec2<i32>(position.xy);
+fn filtered_occlusion(texel: vec2<i32>) -> f32 {
     let last = vec2<i32>(textureDimensions(raw_occlusion)) - 1;
     let center = textureLoad(raw_occlusion, texel, 0);
     if !(center.y > 0.0) {
@@ -177,6 +179,62 @@ fn fs_occlusion_filter(@builtin(position) position: vec4<f32>) -> @location(0) f
         }
     }
     return sum / total;
+}
+
+// How far a quarter-resolution shaft ray's length may lie from a texel's
+// own, as a share of it, before the filter stops counting it.
+const SHAFT_REACH: f32 = 0.1;
+
+// The sun shafts at half-resolution texel `texel` (decision 024): the four
+// quarter-resolution rays around the pixel it stands for, weighted
+// bilinearly and by how near their lengths are to that pixel's ray, so light
+// gathered past a silhouette does not spill onto the surface in front of it.
+// Where no ray is near, the bilinear weights alone remain.
+fn upsampled_shafts(texel: vec2<i32>) -> f32 {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let pixel = min(texel * 2, last);
+    let depth = textureLoad(depth_texture, pixel, 0);
+    let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
+    let far_point = post.inverse_view_projection
+        * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    let reach = min(length(far_point.xyz / far_point.w - post.eye.xyz), post.shafts.z);
+    // Quarter-resolution texels in shaft_pixel's centers.
+    let position = (vec2<f32>(pixel) - 1.0) * 0.25;
+    let first = vec2<i32>(floor(position));
+    let f = position - floor(position);
+    let shaft_last = vec2<i32>(textureDimensions(shafts)) - 1;
+    let tolerance = SHAFT_REACH * max(reach, 1.0e-3);
+    var sum = 0.0;
+    var total = 0.0;
+    for (var y = 0; y < 2; y++) {
+        for (var x = 0; x < 2; x++) {
+            let sample = textureLoad(shafts,
+                clamp(first + vec2<i32>(x, y), vec2<i32>(0), shaft_last), 0);
+            let bilinear = select(1.0 - f.x, f.x, x == 1) * select(1.0 - f.y, f.y, y == 1);
+            let near = saturate(1.25 - abs(sample.y - reach) / tolerance);
+            let weight = bilinear * (near + 1.0e-3);
+            sum += sample.x * weight;
+            total += weight;
+        }
+    }
+    return sum / max(total, 1.0e-8);
+}
+
+// One half-resolution pass for the screen effects that need smoothing: the
+// filtered occlusion (x; 1 without occlusion) and the sun shafts brought up
+// from quarter resolution (y; 0 without shafts).
+@fragment
+fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+    let texel = vec2<i32>(position.xy);
+    var visible = 1.0;
+    if post.occlusion.w != 0.0 {
+        visible = filtered_occlusion(texel);
+    }
+    var shafts_light = 0.0;
+    if post.shafts.w != 0.0 {
+        shafts_light = upsampled_shafts(texel);
+    }
+    return vec2<f32>(visible, shafts_light);
 }
 
 // Reflection rays walk at most this many cells of the depth pyramid.
@@ -490,9 +548,10 @@ fn fs_bloom_up(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32>
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = textureLoad(scene, vec2<i32>(position.xy), 0);
     let uv = position.xy * post.size.zw;
-    let shade = occlusion_factor(texel.a, occlusion, linear, uv, post);
+    let effects = screen_effects(occlusion, linear, uv, post);
+    let shade = occlusion_factor(texel.a, effects.x, post);
     let mirrored = reflected(texel.rgb * shade, reflections, linear, uv, post);
-    let lit = shafted(mirrored, shafts, linear, uv, post);
+    let lit = shafted(mirrored, effects.y, post);
     let color = glowing(lit, bloom, linear, uv, post);
     if SURFACE_IS_SRGB {
         return vec4<f32>(color, 1.0);

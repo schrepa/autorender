@@ -244,7 +244,8 @@ level of detail ([decision 047](adr-047-levels-of-detail.md)),
 without one, and `memory.gpu_impostor_bytes` their arrays
 ([decision 048](adr-048-impostors.md)); `render.triangles` counts the
 triangles the camera's mesh draws submitted. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
-add `ambient_occlusion` (the samples and their filter), `bloom` (every
+add `ambient_occlusion` (the samples), `effects_filter` (the
+half-resolution filter of the occlusion and the sun shafts), `bloom` (every
 level down and up) and, on frames
 without temporal antialiasing, `post_composite`. Counters report
 `render.shadow_refresh` (0 no kept-map redraw, 1 dirty tiles, 2 the whole map),

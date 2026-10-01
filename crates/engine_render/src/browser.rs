@@ -2854,7 +2854,8 @@ impl Renderer {
             _effects_timed |= u32::from(post_frame.occlusion) << 2
                 | u32::from(post_frame.bloom) << 3
                 | u32::from(post_frame.reflections) << 5
-                | u32::from(post_frame.shafts) << 6;
+                | u32::from(post_frame.shafts) << 6
+                | u32::from(post_frame.occlusion || post_frame.shafts) << 17;
             if temporal_pass.is_none() {
                 let queries = effect_queries.map(|(set, first)| (set, first + 8));
                 post.encode_composite(&mut encoder, &view, queries);
