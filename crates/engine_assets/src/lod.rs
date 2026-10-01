@@ -1,19 +1,19 @@
 //! Automatic levels of detail (decision 047): coarser index lists of a mesh
 //! over its own vertices, each simplified from the last by [`simplify`] with
-//! meshoptimizer's recommended chain settings, and the geometric error each
-//! may show in mesh units. Renderers draw the coarsest level whose error
-//! projects within a pixel budget.
+//! meshoptimizer's recommended chain settings, then an empty level, and the
+//! geometric error each may show in mesh units. Renderers draw the coarsest
+//! level whose error projects within a pixel budget: past the empty level's,
+//! nothing.
 
 use crate::Mesh;
 use crate::simplify::{
     SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
 };
 
-/// Triangles below which a mesh gets no levels: the draws its levels add
-/// would cost more than their triangles save.
-pub const LOD_MIN_TRIANGLES: usize = 64;
-/// Triangles below which a level is not worth drawing.
-const LEVEL_MIN_TRIANGLES: usize = 16;
+/// The empty level's error over the error at which pruning removes the
+/// mesh's last part (that part's radius about its center): the mesh vanishes
+/// only where its largest part's diameter projects within the pixel budget.
+const EMPTY_ERROR_SCALE: f32 = 2.0;
 /// Each level targets this share of the last one's triangles.
 const LEVEL_RATIO: f32 = 0.5;
 /// A level keeping more than this share of the last one's triangles stops
@@ -28,8 +28,8 @@ const NORMAL_WEIGHT: f32 = 1.0;
 const UV_WEIGHT: f32 = 1.0;
 
 /// A level of detail: where its indices start in [`MeshLods::indices`], how
-/// many there are, and the largest geometric deviation from the mesh in mesh
-/// units.
+/// many there are (none for the empty level), and the largest geometric
+/// deviation from the mesh in mesh units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LodLevel {
     pub first_index: u32,
@@ -44,20 +44,16 @@ pub struct MeshLods {
     pub levels: Vec<LodLevel>,
 }
 
-/// `mesh`'s levels of detail, at most `max_levels` of them: none for meshes
-/// with joints (which move their vertices) or virtual geometry (which has
-/// its own), and for meshes below [`LOD_MIN_TRIANGLES`]. The indices always
-/// start with the mesh's own.
+/// `mesh`'s levels of detail, at most `max_levels` of them, the last empty:
+/// none for meshes with joints (which move their vertices) or virtual
+/// geometry (which has its own). The indices always start with the mesh's
+/// own.
 pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
     let mut lods = MeshLods {
         indices: mesh.indices().to_vec(),
         levels: Vec::new(),
     };
-    if mesh.joint_count() != 0
-        || mesh.virtual_geometry().is_some()
-        || mesh.indices().len() / 3 < LOD_MIN_TRIANGLES
-        || max_levels == 0
-    {
+    if mesh.joint_count() != 0 || mesh.virtual_geometry().is_some() || max_levels == 0 {
         return lods;
     }
     let vertices = mesh.vertices();
@@ -107,7 +103,8 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
     };
     let mut current = mesh.indices().to_vec();
     let mut error = 0.0_f32;
-    while lods.levels.len() < max_levels {
+    // Simplified levels, leaving room for the empty one.
+    while lods.levels.len() + 1 < max_levels {
         let target = ((current.len() / 3) as f32 * LEVEL_RATIO) as usize * 3;
         let input = SimplifyInput::new(&current, &positions)
             .with_attributes(&attributes, 5, &weights)
@@ -120,9 +117,7 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
             break;
         };
         let triangles = simplified.indices.len() / 3;
-        if triangles < LEVEL_MIN_TRIANGLES
-            || triangles as f32 > (current.len() / 3) as f32 * LEVEL_KEEP_LIMIT
-        {
+        if triangles == 0 || triangles as f32 > (current.len() / 3) as f32 * LEVEL_KEEP_LIMIT {
             break;
         }
         error = engine_math::max(error * ERROR_GROWTH, simplified.error);
@@ -133,6 +128,19 @@ pub fn mesh_lods(mesh: &Mesh, max_levels: usize) -> MeshLods {
         });
         lods.indices.extend_from_slice(&simplified.indices);
         current = simplified.indices;
+    }
+    // The empty level, past the error at which pruning removes every part.
+    let input = SimplifyInput::new(&current, &positions)
+        .with_attributes(&attributes, 5, &weights)
+        .with_vertex_flags(&flags);
+    if let Ok(gone) = simplify(&input, 0, f32::INFINITY, options)
+        && gone.indices.is_empty()
+    {
+        lods.levels.push(LodLevel {
+            first_index: lods.indices.len() as u32,
+            index_count: 0,
+            error: engine_math::max(error * ERROR_GROWTH, gone.error * EMPTY_ERROR_SCALE),
+        });
     }
     lods
 }
@@ -173,11 +181,19 @@ mod tests {
     #[test]
     fn levels_shrink_and_grow_their_errors() {
         let mesh = sphere(24, 48);
-        let lods = mesh_lods(&mesh, 2);
-        assert_eq!(lods.levels.len(), 2);
+        let lods = mesh_lods(&mesh, 3);
+        assert_eq!(lods.levels.len(), 3);
         assert_eq!(&lods.indices[..mesh.indices().len()], mesh.indices());
+        // The last level is empty, past twice the radius.
+        let (empty, simplified) = lods.levels.split_last().unwrap();
+        assert_eq!(empty.index_count, 0);
+        assert_eq!(empty.first_index as usize, lods.indices.len());
+        assert!(
+            empty.error > simplified[1].error && empty.error >= 1.9,
+            "{empty:?}"
+        );
         let mut previous = (mesh.indices().len() as u32, 0.0);
-        for level in &lods.levels {
+        for level in simplified {
             assert!(level.index_count < previous.0 * 3 / 4, "{level:?}");
             assert!(level.error > previous.1, "{level:?}");
             // A unit sphere's simplification stays within its radius.
@@ -194,12 +210,19 @@ mod tests {
     }
 
     #[test]
-    fn small_meshes_get_no_levels() {
+    fn small_meshes_simplify_and_vanish() {
         let mesh = sphere(4, 6);
-        assert!(mesh.indices().len() / 3 < LOD_MIN_TRIANGLES);
         let lods = mesh_lods(&mesh, 2);
-        assert!(lods.levels.is_empty());
-        assert_eq!(lods.indices, mesh.indices());
+        assert_eq!(lods.levels.len(), 2);
+        assert!(lods.levels[0].index_count > 0);
+        assert!((lods.levels[0].index_count as usize) < mesh.indices().len());
+        assert_eq!(lods.levels[1].index_count, 0);
+        assert_eq!(&lods.indices[..mesh.indices().len()], mesh.indices());
         assert!(mesh_lods(&sphere(24, 48), 0).levels.is_empty());
+        // One level allowed: the empty one.
+        let one = mesh_lods(&sphere(24, 48), 1);
+        assert_eq!(one.levels.len(), 1);
+        assert_eq!(one.levels[0].index_count, 0);
+        assert_eq!(one.indices, sphere(24, 48).indices());
     }
 }

@@ -2479,6 +2479,10 @@ impl Renderer {
                         // with its own.
                         let virtual_geometry = self.virtual_drawn.get(index) == Some(&true);
                         for level in 0..lod_levels(batch, mesh, virtual_geometry) {
+                            // An empty level draws nothing.
+                            if level > 0 && mesh.lods[level - 1].1 == 0 {
+                                continue;
+                            }
                             let (ids, draws, offset) = self
                                 .gpu_presentation
                                 .draw_source(batch, index, phase, level);

@@ -37,7 +37,7 @@ pub use effects::{
     AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
 };
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LOD_MIN_TRIANGLES, LodLevel,
+    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LodLevel,
     MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
     MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, Transmission,
     UvTransform, Wrap, mesh_lods,

@@ -37,12 +37,11 @@ meshes. It takes about as long as the C++ natively and in Wasm (a
 coordinates: 33.7 ms C++, 31.5 ms Rust, 32.8 ms Wasm).
 
 `engine_assets::mesh_lods(mesh, max_levels)` builds the chain when the
-renderer uploads a mesh. Meshes with joints, virtual geometry or fewer than
-`LOD_MIN_TRIANGLES` (64) triangles get none.
+renderer uploads a mesh. Meshes with joints or virtual geometry get none.
 
-- Each level simplifies the previous one toward half its triangles, using
-  the mesh's normals and texture coordinates as attributes. Texture
-  coordinates are weighted per unit of their own range.
+- Each simplified level simplifies the previous one toward half its
+  triangles, using the mesh's normals and texture coordinates as
+  attributes. Texture coordinates are weighted per unit of their own range.
 - Texture seams are protected. Normal seams, which split every edge of
   faceted meshes, may be crossed.
 - The options are meshoptimizer's recommended chain: absolute errors,
@@ -50,15 +49,20 @@ renderer uploads a mesh. Meshes with joints, virtual geometry or fewer than
   parts.
 - There is no error limit. A level is drawn only where its error projects
   within the pixel budget.
-- The chain stops at a level that keeps more than 85% of the last one's
-  triangles or has fewer than 16.
+- The simplified levels stop at one that keeps more than 85% of the last
+  one's triangles, or none.
 - Each level's error is at least 1.5 times the last one's, so errors grow
   strictly.
+- The last level is empty. Its error is twice the error at which pruning
+  removes the mesh's last part, that part's radius about its center. A mesh
+  thus vanishes only where its largest part's diameter projects within the
+  pixel budget, much as sub-pixel culling (decision 041) drops what covers
+  no pixel center.
 
 Levels are index lists over the mesh's own vertices. The arena (decision
 046) stores them after the mesh's indices in the same range, so a level
 costs indices only. Draw groups have at most `LOD_LEVELS` (3) levels: the
-mesh and two simplifications.
+mesh, a simplification and the empty level, which issues no draws.
 
 ### Selection
 
@@ -74,6 +78,8 @@ frustum-visible instance's level in the culling pass (`lod_level` in
 - It measures distance from the eye, not depth, so turning the camera
   never changes a level.
 - Orthographic views compare `error_l * s * K` with 1.
+- An empty level wins wherever it fits, even over an impostor, since it
+  draws nothing.
 
 The level takes two flag bits beside the visibility flags.
 
@@ -165,13 +171,41 @@ Measurements:
 - Metro's props are mostly closed boxes of a few triangles each. Nothing
   collapses in them without deleting a whole part, so their levels come
   from pruning. A 208-triangle car goes straight to 36 triangles with an
-  error of 0.3 m, which is drawn only where 0.3 m is under a pixel. Props
-  under 64 triangles get no levels at all.
+  error of 0.3 m, which is drawn only where 0.3 m is under a pixel. Small
+  props simplify the same way, and a 12-triangle box has only its empty
+  level.
 - The instances that remain costly from afar are many small instances, not
   their triangles. Impostors ([decision 048](adr-048-impostors.md)) are the
-  coarsest level.
+  coarsest level that still draws.
 
 ## Alternatives and evidence
+
+- **Chains by triangle count only** (until 30 September 2026). Meshes under
+  64 triangles got no levels, and levels under 16 triangles were dropped.
+  From the Metro overview, half of all instances then drew at full detail:
+  boxes and small props that only pruning can shrink. Simulating the
+  overview's still instances, its levels and impostors submitted 1.20
+  million triangles. A simplified level for every mesh plus an empty level
+  submits 0.85 million, and 9,100 instances vanish.
+  Measured in Firefox (integrated GPU, 2262x968 canvas, three alternating
+  pairs), the overview's draws fell from 1.135 to 0.980 million triangles.
+  Instances at the simplified level went from 6 to 7,100, and 810 vanished.
+  `opaque_meshes` fell by 0.1, 2.5 and 2.5 ms in the three pairs, on a
+  noisy machine where the old build alone ranged from 8.5 to 12.6 ms.
+  Chrome captures differ in 0.2% of the overview's pixels (single specks)
+  and not at all in the close view; the LOD smoke check's level-only frame
+  differs in 0.33% of pixels against the exact one.
+- **Merged far levels (HLOD)** (considered 30 September 2026). Still
+  instances can be merged per 96 m cell and material, then simplified
+  together.
+  - At the same errors this keeps as many triangles as simplifying each
+    instance alone (Metro, still instances: 1.60 against 1.56 million of
+    3.67 million at 0.5 m; 1.14 against 1.19 million at 1 m).
+  - It would add about 65 MB of proxy indices and corner references.
+  - It would add per-cell draws, about 3,200 at 96 m cells, and rebuilds
+    whenever a member moves.
+  - Not built: the empty and simplified levels above take the same
+    triangles out without any of that.
 
 - **Per-level error bounds** (1% and 5% of the mesh's extent, tried 29
   September 2026). Boxy low-poly props cannot simplify within them, so no

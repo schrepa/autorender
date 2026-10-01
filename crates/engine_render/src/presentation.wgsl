@@ -504,9 +504,10 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
 // The coarsest level of detail of `batch` (decision 047) whose geometric
 // error, scaled by `model`'s largest axis, projects within the frame's pixel
 // error at the posed bounding sphere's nearest distance from the eye (not its
-// depth, so turning the camera never changes a level): its impostor
-// (decision 048) wherever that fits, the cheapest of all; 0 for groups
-// without levels, frames without them and spheres around the eye.
+// depth, so turning the camera never changes a level): an empty level, which
+// draws nothing, wherever that fits; otherwise its impostor (decision 048)
+// wherever that fits; 0 for groups without levels, frames without them and
+// spheres around the eye.
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
     let levels = u32(batch.lod_errors.z);
     let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
@@ -544,9 +545,17 @@ fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
         }
         if fits {
             level = l;
+            if l < IMPOSTOR && level_indices(batch, l) == 0u {
+                return l;
+            }
         }
     }
     return level;
+}
+
+// Indices of mesh level `level` (1 or 2) of `batch`: 0 for an empty level.
+fn level_indices(batch: Batch, level: u32) -> u32 {
+    return select(batch.lod_ranges.w, batch.lod_ranges.y, level == 1u);
 }
 
 // Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
