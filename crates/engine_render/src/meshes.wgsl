@@ -37,6 +37,13 @@ override MATERIAL_MAPS: bool = false;
 override NORMAL_MAP: bool = false;
 override ALPHA_MASK: bool = false;
 override DOUBLE_SIDED: bool = false;
+// Maps the material has: absent ones read as the white texel they would
+// sample. A packed occlusion map is the metallic-roughness texture, read in
+// the same sample's red.
+override METALLIC_ROUGHNESS_MAP: bool = true;
+override OCCLUSION_MAP: bool = true;
+override EMISSIVE_MAP: bool = true;
+override PACKED_OCCLUSION: bool = false;
 // Transmissive materials shade as glass in the transparent pass (decision
 // 038).
 override TRANSMISSION: bool = false;
@@ -689,13 +696,24 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     }
     texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
     if MATERIAL_MAPS {
-        // glTF: green is roughness and blue metalness.
-        texels.factors = textureSample(metallic_roughness_texture, metallic_roughness_sampler,
-            map_uv(1u, uv, uv1)).gb;
-        texels.occlusion = textureSample(occlusion_texture, occlusion_sampler,
-            map_uv(3u, uv, uv1)).r;
-        texels.emissive = textureSample(emissive_texture, emissive_sampler,
-            map_uv(4u, uv, uv1)).rgb;
+        // glTF: green is roughness and blue metalness, red packed occlusion.
+        var metallic_roughness = vec4<f32>(1.0);
+        if METALLIC_ROUGHNESS_MAP {
+            metallic_roughness = textureSample(metallic_roughness_texture,
+                metallic_roughness_sampler, map_uv(1u, uv, uv1));
+        }
+        texels.factors = metallic_roughness.gb;
+        if PACKED_OCCLUSION {
+            texels.occlusion = metallic_roughness.r;
+        } else if OCCLUSION_MAP {
+            texels.occlusion = textureSample(occlusion_texture, occlusion_sampler,
+                map_uv(3u, uv, uv1)).r;
+        }
+        texels.emissive = vec3<f32>(1.0);
+        if EMISSIVE_MAP {
+            texels.emissive = textureSample(emissive_texture, emissive_sampler,
+                map_uv(4u, uv, uv1)).rgb;
+        }
     }
     if NORMAL_MAP {
         let normal_uv = map_uv(2u, uv, uv1);
@@ -740,16 +758,27 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
     texels.base = textureSampleGrad(base_color_texture, base_color_sampler, base_uv, base_dx,
         base_dy);
     if MATERIAL_MAPS {
-        texels.factors = textureSampleGrad(metallic_roughness_texture,
-            metallic_roughness_sampler, map_uv(1u, uv, uv1),
-            map_gradient(1u, gradients.dx, gradients.dx1),
-            map_gradient(1u, gradients.dy, gradients.dy1)).gb;
-        texels.occlusion = textureSampleGrad(occlusion_texture, occlusion_sampler,
-            map_uv(3u, uv, uv1), map_gradient(3u, gradients.dx, gradients.dx1),
-            map_gradient(3u, gradients.dy, gradients.dy1)).r;
-        texels.emissive = textureSampleGrad(emissive_texture, emissive_sampler,
-            map_uv(4u, uv, uv1), map_gradient(4u, gradients.dx, gradients.dx1),
-            map_gradient(4u, gradients.dy, gradients.dy1)).rgb;
+        var metallic_roughness = vec4<f32>(1.0);
+        if METALLIC_ROUGHNESS_MAP {
+            metallic_roughness = textureSampleGrad(metallic_roughness_texture,
+                metallic_roughness_sampler, map_uv(1u, uv, uv1),
+                map_gradient(1u, gradients.dx, gradients.dx1),
+                map_gradient(1u, gradients.dy, gradients.dy1));
+        }
+        texels.factors = metallic_roughness.gb;
+        if PACKED_OCCLUSION {
+            texels.occlusion = metallic_roughness.r;
+        } else if OCCLUSION_MAP {
+            texels.occlusion = textureSampleGrad(occlusion_texture, occlusion_sampler,
+                map_uv(3u, uv, uv1), map_gradient(3u, gradients.dx, gradients.dx1),
+                map_gradient(3u, gradients.dy, gradients.dy1)).r;
+        }
+        texels.emissive = vec3<f32>(1.0);
+        if EMISSIVE_MAP {
+            texels.emissive = textureSampleGrad(emissive_texture, emissive_sampler,
+                map_uv(4u, uv, uv1), map_gradient(4u, gradients.dx, gradients.dx1),
+                map_gradient(4u, gradients.dy, gradients.dy1)).rgb;
+        }
     }
     if NORMAL_MAP {
         texels.normal_dx = map_gradient(2u, gradients.dx, gradients.dx1);

@@ -532,23 +532,31 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
 /// plain opaque base color textures use [`Variant::BASIC`], the shading of
 /// every material before glTF maps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(crate) struct Variant(u8);
+pub(crate) struct Variant(u16);
 
 impl Variant {
     pub(crate) const BASIC: Self = Self(0);
-    const MAPS: u8 = 1;
-    const NORMAL_MAP: u8 = 2;
-    const ALPHA_MASK: u8 = 4;
-    const DOUBLE_SIDED: u8 = 8;
+    const MAPS: u16 = 1;
+    const NORMAL_MAP: u16 = 2;
+    const ALPHA_MASK: u16 = 4;
+    const DOUBLE_SIDED: u16 = 8;
     // Meshes with a second vertex stream (decision 034): extended entry
     // points rather than a constant.
-    const EXTENDED: u8 = 16;
+    const EXTENDED: u16 = 16;
     // Skinned slots' meshes (decision 036): skinned entry points, which
     // read the second stream and a skin stream.
-    const SKINNED: u8 = 32;
+    const SKINNED: u16 = 32;
     // Transmissive materials (decision 038): glass shading in the
     // transparent pass.
-    const TRANSMISSION: u8 = 64;
+    const TRANSMISSION: u16 = 64;
+    // Maps a material with maps has: the others are not sampled, as the
+    // white texel they would read changes nothing. Occlusion packed in the
+    // metallic-roughness texture's red (the same texture, sampler, transform
+    // and coordinates) is read from its sample.
+    const METALLIC_ROUGHNESS_MAP: u16 = 128;
+    const OCCLUSION_MAP: u16 = 256;
+    const EMISSIVE_MAP: u16 = 512;
+    const PACKED_OCCLUSION: u16 = 1024;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -564,6 +572,19 @@ impl Variant {
         let mut bits = 0;
         if maps {
             bits |= Self::MAPS;
+            let metallic_roughness = material.metallic_roughness_texture();
+            let occlusion = material.occlusion_texture();
+            if metallic_roughness.is_some() {
+                bits |= Self::METALLIC_ROUGHNESS_MAP;
+            }
+            if occlusion.is_some() && occlusion == metallic_roughness {
+                bits |= Self::PACKED_OCCLUSION;
+            } else if occlusion.is_some() {
+                bits |= Self::OCCLUSION_MAP;
+            }
+            if material.emissive_texture().is_some() {
+                bits |= Self::EMISSIVE_MAP;
+            }
         }
         if material.normal_texture().is_some() {
             bits |= Self::NORMAL_MAP;
@@ -581,14 +602,18 @@ impl Variant {
     }
 
     /// Fragment override constants.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 5] {
-        let set = |bit: u8| if self.0 & bit != 0 { 1.0 } else { 0.0 };
+    pub(crate) fn constants(self) -> [(&'static str, f64); 9] {
+        let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("MATERIAL_MAPS", set(Self::MAPS)),
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),
             ("DOUBLE_SIDED", set(Self::DOUBLE_SIDED)),
             ("TRANSMISSION", set(Self::TRANSMISSION)),
+            ("METALLIC_ROUGHNESS_MAP", set(Self::METALLIC_ROUGHNESS_MAP)),
+            ("OCCLUSION_MAP", set(Self::OCCLUSION_MAP)),
+            ("EMISSIVE_MAP", set(Self::EMISSIVE_MAP)),
+            ("PACKED_OCCLUSION", set(Self::PACKED_OCCLUSION)),
         ]
     }
 
@@ -1444,17 +1469,42 @@ mod tests {
             constants(Variant::of(
                 &plain.with_base_color_texture(transformed).unwrap()
             )),
-            [1.0, 0.0, 0.0, 0.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert_eq!(
             constants(Variant::of(&plain.with_normal_texture(map, 1.0).unwrap())),
-            [1.0, 1.0, 0.0, 0.0, 0.0]
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        );
+        // Only the maps a material has are sampled; occlusion packed in the
+        // metallic-roughness texture is read from its sample.
+        let packed = plain
+            .with_metallic_roughness_texture(map)
+            .unwrap()
+            .with_occlusion_texture(map, 1.0)
+            .unwrap();
+        assert_eq!(
+            constants(Variant::of(&packed)),
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+        );
+        let separate = plain
+            .with_metallic_roughness_texture(map)
+            .unwrap()
+            .with_occlusion_texture(map.with_tex_coord(1), 1.0)
+            .unwrap()
+            .with_emissive_texture(map)
+            .unwrap();
+        assert_eq!(
+            constants(Variant::of(&separate)),
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]
         );
         let masked = plain
             .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
             .unwrap()
             .with_double_sided(true);
-        assert_eq!(constants(Variant::of(&masked)), [1.0, 0.0, 1.0, 1.0, 0.0]);
+        assert_eq!(
+            constants(Variant::of(&masked)),
+            [1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        );
         assert!(Variant::of(&masked).double_sided());
         // The visibility buffer (decision 045) leaves masked materials to
         // forward drawing.
@@ -1465,7 +1515,10 @@ mod tests {
             .unwrap()
             .with_base_color_texture(map)
             .unwrap();
-        assert_eq!(constants(Variant::of(&glass)), [1.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(
+            constants(Variant::of(&glass)),
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        );
         assert_eq!(
             Variant::of(&plain.with_opacity(0.5).unwrap()),
             Variant::BASIC
@@ -1480,7 +1533,10 @@ mod tests {
             })
             .unwrap();
         assert!(clear.is_transparent() && clear.has_maps());
-        assert_eq!(constants(Variant::of(&clear)), [0.0, 0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            constants(Variant::of(&clear)),
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+        );
         assert!(Variant::of(&clear).transmission());
         assert_eq!(MaterialUniform::new(&clear).volume, [0.9, 1.33, 0.25, 0.0]);
         assert!(

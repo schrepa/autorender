@@ -64,7 +64,13 @@ matched the engine's.
   with `discard`) and `DOUBLE_SIDED` (no culling). Materials without maps and
   untransformed opaque base color textures use the unchanged basic variant,
   so plain workloads compile to the same shading. Variant pipelines of each
-  pass are created with the first frame that draws them.
+  pass are created with the first frame that draws them. With maps, further
+  constants name which of the metallic-roughness, occlusion and emissive
+  maps a material has. Absent maps are not sampled: the white texel they
+  would read changes nothing. Occlusion packed into the metallic-roughness
+  texture's red channel is read from that sample. Packing means the same
+  texture, sampler, transform and coordinates, as glTF's ORM convention
+  shares them. In the Stress Lab Metro overview (Firefox, integrated GPU, 30 September 2026), roads, roofs and paving then skip two samples a pixel. `opaque_meshes` fell by 0.04, 0.36 and 0.67 ms in three alternating pairs, with identical captures.
 - **Scene version 8** authors all of it: `texture` is a texture ID or a map
   object (`id`, `wrap_u`, `wrap_v`, `mag_filter`, `min_filter`,
   `mipmap_filter`, `offset`, `rotation`, `scale`), beside
