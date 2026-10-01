@@ -40,7 +40,9 @@ reflected over the surface's roughness lobe: a cone 1.19 GGX alphas wide on
 each side (the Phong lobe matching GGX narrows to 0.244 of its peak there,
 as in cone-traced reflections), whose width where it lands picks one of six
 half-resolution levels of the scene blurred with the bloom's downsampling
-filter; mirrors read the scene itself. Reflections traced along the depth
+filter; mirrors read the scene itself. Frames that also bloom write each of
+these levels in the same pass as the bloom level of its size, the first
+from the same taps of the scene. Reflections traced along the depth
 normal and read sharp drew brushed and rough metal as a flat mirror over
 the streaked, blurred sky reflection its lighting showed, so such surfaces
 changed look with whatever happened to be on screen. A filter then blends
@@ -70,7 +72,10 @@ Firefox on the laptop's integrated GPU, Stress Lab Metro at 1512x792: the
 `reflections` sample (the depth pyramid, the blurred scene levels, the
 march and the filter) takes 1.07 ms in the overview and 1.36 ms in the
 street-level view: 0.73 and 0.97 ms before the surface target and the
-roughness cone, and 0.27 ms for the fixed steps first traced. Writing the
+roughness cone, and 0.27 ms for the fixed steps first traced. At a 2262x968
+canvas (30 September 2026) the scene levels alone took 0.49 ms of 1.57;
+blurred in the bloom's passes, `reflections` and `bloom` together fell from
+2.45 to 2.27 ms (means of three runs each), with identical captures. Writing the
 surface target added about 1 ms to the overview's `opaque_meshes` (9.3 to
 10.5 ms, means of four interleaved runs varying by 1 ms each) and nothing
 measurable at street level; frame rates stayed within run-to-run noise.

@@ -83,6 +83,10 @@ struct Targets {
     // (up, adding into `i`).
     bloom_down: Vec<wgpu::BindGroup>,
     bloom_up: Vec<wgpu::BindGroup>,
+    // Frames that reflect and bloom halve both chains in the same passes:
+    // the first from the scene, group `i` from scene and bloom level `i`.
+    levels_first: wgpu::BindGroup,
+    levels_down: Vec<wgpu::BindGroup>,
     composite: wgpu::BindGroup,
 }
 
@@ -112,6 +116,9 @@ pub(crate) struct PostPass {
     bloom_first: wgpu::RenderPipeline,
     bloom_down: wgpu::RenderPipeline,
     bloom_up: wgpu::RenderPipeline,
+    // Both chains' levels at once, into two targets.
+    levels_first: wgpu::RenderPipeline,
+    levels_down: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     written: Option<PostUniform>,
@@ -173,6 +180,29 @@ impl PostPass {
                     cache: None,
                 })
             };
+        let levels_pipeline = |label, entry: &str| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_fullscreen"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
         let add = Some(wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -307,6 +337,8 @@ impl PostPass {
                 add,
                 None,
             ),
+            levels_first: levels_pipeline("engine/post-levels-first", "fs_levels_first"),
+            levels_down: levels_pipeline("engine/post-levels-down", "fs_levels_down"),
             composite: pipeline(
                 "engine/post-composite",
                 "fs_composite",
@@ -606,12 +638,14 @@ impl PostPass {
         )
     }
 
-    /// Records ambient occlusion, reflections, sun shafts (over the camera
-    /// group `camera` of the main passes), the filter of occlusion and
-    /// shafts, and bloom after the opaque and transparent passes. With
-    /// `timestamps` (a query set and its first index), occlusion's samples
-    /// write queries `first` and `first + 1`, bloom `first + 2` and
-    /// `first + 3`, reflections (their depth pyramid, trace and filter)
+    /// Records ambient occlusion, bloom, reflections, sun shafts (over the
+    /// camera group `camera` of the main passes) and the filter of occlusion
+    /// and shafts after the opaque and transparent passes. Frames with bloom
+    /// and reflections blur the scene levels reflections read in the bloom's
+    /// passes down. With `timestamps` (a query set and its first index),
+    /// occlusion's samples write queries `first` and `first + 1`, bloom
+    /// (with those scene levels) `first + 2` and `first + 3`, reflections
+    /// (their depth pyramid, any scene levels left, trace and filter)
     /// `first + 6` and `first + 7`, shafts `first + 8` and `first + 9` and the
     /// filter `first + EFFECTS_FILTER_QUERY` and the one after.
     pub(crate) fn encode_effects(
@@ -636,17 +670,28 @@ impl PostPass {
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        if frame.reflections
+        let reflecting =
+            frame.reflections && self.reflections_group.is_some() && self.filter_group.is_some();
+        // Bloom first: with reflections, its passes down also blur the scene
+        // for rough reflections.
+        let levels_done = if frame.bloom {
+            self.encode_bloom(encoder, reflecting, timestamps)
+        } else {
+            0
+        };
+        if reflecting
             && let Some((_, group)) = &self.reflections_group
             && let Some((_, _, filter)) = &self.filter_group
         {
             self.nearest
                 .encode(encoder, timestamps.map(|(set, first)| (set, first + 6)));
-            // The scene blurred down its levels for rough reflections.
+            // The scene blurred down its levels for rough reflections, past
+            // those the bloom's passes wrote.
             for (view, group) in targets
                 .scene_level_views
                 .iter()
                 .zip(&targets.scene_level_groups)
+                .skip(levels_done)
             {
                 let mut pass = fullscreen_pass(
                     encoder,
@@ -719,50 +764,97 @@ impl PostPass {
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        if frame.bloom {
-            let levels = targets.bloom.len();
-            let timed = |first: bool, last: bool| {
-                timestamps.map(|(set, index)| {
-                    (set, first.then_some(index + 2), last.then_some(index + 3))
-                })
-            };
-            {
-                let mut pass = fullscreen_pass(
-                    encoder,
-                    "engine/post-bloom",
-                    &targets.bloom[0],
-                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    timed(true, levels == 1),
-                );
-                pass.set_pipeline(&self.bloom_first);
-                pass.set_bind_group(0, &targets.bloom_first, &[]);
+    }
+
+    /// Records the bloom chain down and back up. With `scene_levels` its
+    /// passes down also halve the scene levels rough reflections read, as
+    /// many as both chains have; returns how many they wrote.
+    fn encode_bloom(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        scene_levels: bool,
+        timestamps: Option<(&wgpu::QuerySet, u32)>,
+    ) -> usize {
+        let targets = self.targets.as_ref().expect("sized in begin");
+        let levels = targets.bloom.len();
+        let timed = |first: bool, last: bool| {
+            timestamps
+                .map(|(set, index)| (set, first.then_some(index + 2), last.then_some(index + 3)))
+        };
+        let shared = if scene_levels {
+            targets.scene_level_views.len().min(levels)
+        } else {
+            0
+        };
+        if shared > 0 {
+            for level in 0..shared {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/post-levels"),
+                    color_attachments: &[
+                        Some(cleared(&targets.scene_level_views[level])),
+                        Some(cleared(&targets.bloom[level])),
+                    ],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: timed(level == 0, levels == 1).and_then(
+                        |(query_set, begin, end)| {
+                            (begin.is_some() || end.is_some()).then_some(
+                                wgpu::RenderPassTimestampWrites {
+                                    query_set,
+                                    beginning_of_pass_write_index: begin,
+                                    end_of_pass_write_index: end,
+                                },
+                            )
+                        },
+                    ),
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if level == 0 {
+                    pass.set_pipeline(&self.levels_first);
+                    pass.set_bind_group(0, &targets.levels_first, &[]);
+                } else {
+                    pass.set_pipeline(&self.levels_down);
+                    pass.set_bind_group(0, &targets.levels_down[level - 1], &[]);
+                }
                 pass.draw(0..3, 0..1);
             }
-            for level in 1..levels {
-                let mut pass = fullscreen_pass(
-                    encoder,
-                    "engine/post-bloom",
-                    &targets.bloom[level],
-                    wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    None,
-                );
-                pass.set_pipeline(&self.bloom_down);
-                pass.set_bind_group(0, &targets.bloom_down[level - 1], &[]);
-                pass.draw(0..3, 0..1);
-            }
-            for level in (0..levels - 1).rev() {
-                let mut pass = fullscreen_pass(
-                    encoder,
-                    "engine/post-bloom",
-                    &targets.bloom[level],
-                    wgpu::LoadOp::Load,
-                    timed(false, level == 0),
-                );
-                pass.set_pipeline(&self.bloom_up);
-                pass.set_bind_group(0, &targets.bloom_up[level], &[]);
-                pass.draw(0..3, 0..1);
-            }
+        } else {
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/post-bloom",
+                &targets.bloom[0],
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                timed(true, levels == 1),
+            );
+            pass.set_pipeline(&self.bloom_first);
+            pass.set_bind_group(0, &targets.bloom_first, &[]);
+            pass.draw(0..3, 0..1);
         }
+        for level in shared.max(1)..levels {
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/post-bloom",
+                &targets.bloom[level],
+                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                None,
+            );
+            pass.set_pipeline(&self.bloom_down);
+            pass.set_bind_group(0, &targets.bloom_down[level - 1], &[]);
+            pass.draw(0..3, 0..1);
+        }
+        for level in (0..levels - 1).rev() {
+            let mut pass = fullscreen_pass(
+                encoder,
+                "engine/post-bloom",
+                &targets.bloom[level],
+                wgpu::LoadOp::Load,
+                timed(false, level == 0),
+            );
+            pass.set_pipeline(&self.bloom_up);
+            pass.set_bind_group(0, &targets.bloom_up[level], &[]);
+            pass.draw(0..3, 0..1);
+        }
+        shared
     }
 
     /// Records the composite of a frame without temporal antialiasing into
@@ -907,6 +999,27 @@ impl PostPass {
                 )
             })
             .collect();
+        let levels_first = group(
+            &self.levels_first,
+            &[
+                uniform.clone(),
+                texture_entry(2, &scene),
+                texture_entry(3, &glow),
+                sampler.clone(),
+            ],
+        );
+        let levels_down = (1..scene_level_views.len().min(bloom.len()))
+            .map(|level| {
+                group(
+                    &self.levels_down,
+                    &[
+                        texture_entry(4, &scene_level_views[level - 1]),
+                        texture_entry(15, &bloom[level - 1]),
+                        sampler.clone(),
+                    ],
+                )
+            })
+            .collect();
         let composite = group(
             &self.composite,
             &[
@@ -936,8 +1049,23 @@ impl PostPass {
             bloom_first,
             bloom_down,
             bloom_up,
+            levels_first,
+            levels_down,
             composite,
         }
+    }
+}
+
+/// An attachment of `view` cleared to black and stored.
+fn cleared(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
+    wgpu::RenderPassColorAttachment {
+        view,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            store: wgpu::StoreOp::Store,
+        },
     }
 }
 

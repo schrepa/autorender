@@ -227,7 +227,8 @@ Shadows ([decision 020](adr-020-sun-shadows.md)) add `shadow_select`, the
 caster selection pass, `shadow_maps`, from the first to the last depth pass,
 and per map `shadow_near` (every near cascade), `shadow_moving` and
 `shadow_kept` (on frames that redraw it). Reflections and sun shafts add
-`reflections` (their depth pyramid, march and filter) and `sun_shafts`,
+`reflections` (their depth pyramid, march and filter, and the blurred scene
+levels on frames without bloom) and `sun_shafts`,
 local lights `light_bins`, decals `decals`, reflection probe captures
 ([decision 043](adr-043-environment-maps.md)) `probe_captures` (every face a
 frame captured, with its culling, light binning and blurring),
@@ -246,7 +247,8 @@ without one, and `memory.gpu_impostor_bytes` their arrays
 triangles the camera's mesh draws submitted. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
 add `ambient_occlusion` (the samples), `effects_filter` (the
 half-resolution filter of the occlusion and the sun shafts), `bloom` (every
-level down and up) and, on frames
+level down and up, and the scene levels reflections read, which its passes
+down blur too) and, on frames
 without temporal antialiasing, `post_composite`. Counters report
 `render.shadow_refresh` (0 no kept-map redraw, 1 dirty tiles, 2 the whole map),
 `render.shadow_groups`, `render.shadow_draws` (indexed shadow draws, beside

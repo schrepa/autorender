@@ -50,7 +50,8 @@ glow target holding each pixel's exposed brightness above the threshold as
   half-resolution level, weighting taps by `1 / (1 + luminance)` so single
   pixels cannot flicker, filters it down five more levels and back up (a
   dual filter), and adds it to the canvas as a screen blend, which never
-  passes white. Temporal frames add it after their history, so glow never
+  passes white. With reflections (decision 025) each pass down also writes
+  the blurred scene level of its size, into a second target. Temporal frames add it after their history, so glow never
   accumulates in it.
 
 ## Observable behavior

@@ -39,6 +39,9 @@
 // blurred down half-resolution levels for rough surfaces.
 @group(0) @binding(13) var surface_texture: texture_2d<f32>;
 @group(0) @binding(14) var scene_levels: texture_2d<f32>;
+// The bloom level a pass halving both chains reads beside the scene level
+// in `source`.
+@group(0) @binding(15) var bloom_source: texture_2d<f32>;
 
 // sRGB targets apply output encoding themselves; UNORM canvas targets do not.
 override SURFACE_IS_SRGB: bool = false;
@@ -512,18 +515,69 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     return vec4<f32>(sum / weights, 1.0);
 }
 
-// Half the resolution of `source`: its 2x2 block weighted four times against
-// the four diagonal neighbors (a dual filter).
+// Half the resolution of `level` at `position`: its 2x2 block weighted four
+// times against the four diagonal neighbors (a dual filter).
+fn halved(level: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(level));
+    let uv = position * 2.0 * texel;
+    let sum = textureSampleLevel(level, linear, uv, 0.0).rgb * 4.0
+        + textureSampleLevel(level, linear, uv - texel, 0.0).rgb
+        + textureSampleLevel(level, linear, uv + texel, 0.0).rgb
+        + textureSampleLevel(level, linear, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb
+        + textureSampleLevel(level, linear, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb;
+    return vec4<f32>(sum * 0.125, 1.0);
+}
+
 @fragment
 fn fs_bloom_down(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let texel = 1.0 / vec2<f32>(textureDimensions(source));
+    return halved(source, position.xy);
+}
+
+// Frames that both reflect and bloom halve the scene for rough reflections
+// and the bloom's glowing light in the same passes (decisions 021 and 025).
+struct Levels {
+    @location(0) scene: vec4<f32>,
+    @location(1) bloom: vec4<f32>,
+}
+
+// The first level of both chains from the same five taps of the scene:
+// fs_bloom_down's of its color and fs_bloom_first's of its glowing light.
+@fragment
+fn fs_levels_first(@builtin(position) position: vec4<f32>) -> Levels {
+    let texel = post.size.zw;
     let uv = position.xy * 2.0 * texel;
-    let sum = textureSampleLevel(source, linear, uv, 0.0).rgb * 4.0
-        + textureSampleLevel(source, linear, uv - texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + texel, 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(texel.x, -texel.y), 0.0).rgb
-        + textureSampleLevel(source, linear, uv + vec2<f32>(-texel.x, texel.y), 0.0).rgb;
-    return vec4<f32>(sum * 0.125, 1.0);
+    var colors: array<vec3<f32>, 5>;
+    var sum = vec3<f32>(0.0);
+    var weights = 0.0;
+    for (var i = 0u; i < 5u; i++) {
+        var offset = vec2<f32>(0.0);
+        if i > 0u {
+            offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
+        }
+        let at = uv + offset * texel;
+        let color = textureSampleLevel(scene, linear, at, 0.0).rgb;
+        let decoded = min(textureSampleLevel(glow, linear, at, 0.0).r, 0.98);
+        let light = color * (decoded / (1.0 - decoded));
+        let weight = select(1.0, 4.0, i == 0u) / (1.0 + luminance(light));
+        sum += light * weight;
+        weights += weight;
+        colors[i] = color;
+    }
+    var levels: Levels;
+    // `halved`'s order: offsets (-1, -1), (1, 1), (1, -1) and (-1, 1).
+    levels.scene = vec4<f32>(
+        (colors[0] * 4.0 + colors[4] + colors[3] + colors[1] + colors[2]) * 0.125, 1.0);
+    levels.bloom = vec4<f32>(sum / weights, 1.0);
+    return levels;
+}
+
+// Both chains' next levels, which share their size.
+@fragment
+fn fs_levels_down(@builtin(position) position: vec4<f32>) -> Levels {
+    var levels: Levels;
+    levels.scene = halved(source, position.xy);
+    levels.bloom = halved(bloom_source, position.xy);
+    return levels;
 }
 
 // Twice the resolution of `source`, added to the level below: a tent of
