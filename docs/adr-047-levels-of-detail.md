@@ -98,9 +98,10 @@ The two occlusion phases (decision 040) each compact their own levels.
 
 Each shadow map picks one level per draw group: the coarsest whose error is
 within half a texel of that map. The kept and moving maps use their far
-texel, and each cascade uses its own. The level changes only when a map's
-texel does, and the argument template is rewritten then. Every instance in
-the group casts at that level.
+texel, and each cascade uses its own. The moving map, whose casters are drawn
+every frame, allows a whole texel: its outlines may then move by one texel.
+The level changes only when a map's texel does, and the argument template
+is rewritten then. Every instance in the group casts at that level.
 
 ### Everything else draws meshes
 
@@ -146,6 +147,15 @@ Measurements:
     56.6).
   - An earlier pair of runs, while the machine was also building, measured
     10.33 ms and 9.12 ms (43.4 and 45.8 fps).
+- The moving map's whole-texel levels (Firefox, integrated GPU, Metro
+  overview, 2262x968 canvas, two runs each, 30 September 2026):
+  - `shadow_moving` fell from 1.54 to 1.08 ms.
+  - Clearing the map without drawing costs 0.19 ms.
+  - Drawing every moving caster at its coarsest level costs 0.95 ms. Choosing
+    levels per instance by distance could therefore save at most 0.14 ms
+    more, so it was not built.
+  - Chrome captures differ in 0.1% of the overview's pixels, in single far
+    shadow texels, and not at all in the close view.
 
 ## Consequences
 

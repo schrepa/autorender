@@ -1306,7 +1306,9 @@ impl ShadowPass {
         // The draw arguments' template names each group's mesh placement,
         // at the coarsest level of detail whose error stays within half a
         // texel of each map (decision 047): the rasterized depths then
-        // differ from the mesh's by less than rounding.
+        // differ from the mesh's by less than rounding. The moving map, whose
+        // casters are drawn every frame, allows a whole texel: its outlines
+        // may then move by one texel, and it draws half the geometry.
         self.groups_changed |= self.mesh_layout != mesh_layout;
         self.mesh_layout = mesh_layout;
         let draws: Vec<CasterDraw> = self
@@ -1314,15 +1316,16 @@ impl ShadowPass {
             .iter()
             .map(|group| placement(group.mesh))
             .collect();
-        let texels: [f32; MAPS] = std::array::from_fn(|map| match map {
-            MOVING_MAP | KEPT_MAP => far.texel(resolution),
+        let errors: [f32; MAPS] = std::array::from_fn(|map| match map {
+            MOVING_MAP => far.texel(resolution),
+            KEPT_MAP => far.texel(resolution) * 0.5,
             cascade => near
                 .get(cascade)
-                .map_or(0.0, |(_, region)| region.texel(near_resolution)),
+                .map_or(0.0, |(_, region)| region.texel(near_resolution) * 0.5),
         });
-        let levels: Vec<u8> = texels
+        let levels: Vec<u8> = errors
             .iter()
-            .flat_map(|&texel| draws.iter().map(move |draw| draw.level_within(texel * 0.5)))
+            .flat_map(|&error| draws.iter().map(move |draw| draw.level_within(error)))
             .collect();
         if levels != self.template_levels {
             // Casters drawn at other levels than the kept map holds redraw
