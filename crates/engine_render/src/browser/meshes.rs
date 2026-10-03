@@ -3,6 +3,7 @@
 //! and the opaque drawing order (decision 046).
 
 use super::*;
+use crate::bindings::EMPTY;
 use crate::entries::{self, Slots};
 
 /// Mesh pipelines (decision 049): their layouts by `mesh_layout_index`,
@@ -40,15 +41,9 @@ impl SkyTargets {
 
 impl MeshPipelines {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let empty_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/empty-layout"),
-            entries: &[],
-        });
-        let empty_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/empty-group"),
-            layout: &empty_layout,
-            entries: &[],
-        });
+        let empty_layout = crate::pipelines::layout(device, &EMPTY);
+        let empty_group =
+            crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
         Self {
             layouts: Default::default(),
             variants: HashMap::new(),

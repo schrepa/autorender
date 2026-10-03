@@ -5,6 +5,7 @@
 //! Color textures average in linear light through their sRGB format; data
 //! textures (decision 031) average their stored values.
 
+use crate::bindings::MIPMAPS;
 use crate::gpu_data::MIPMAP_SHADER;
 
 pub(crate) struct MipGenerator {
@@ -16,27 +17,7 @@ pub(crate) struct MipGenerator {
 
 impl MipGenerator {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/texture-mip-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        let layout = crate::pipelines::layout(device, &MIPMAPS);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/mipmaps.wgsl"),
             source: wgpu::ShaderSource::Wgsl(MIPMAP_SHADER.into()),
@@ -126,20 +107,16 @@ impl MipGenerator {
             })
             .collect();
         for pair in views.windows(2) {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/texture-mip-group"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&pair[0]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
+            let group = crate::pipelines::group(
+                device,
+                "engine/texture-mip-group",
+                &MIPMAPS,
+                &self.layout,
+                &[
+                    ("source", crate::pipelines::view(&pair[0])),
+                    ("source_sampler", crate::pipelines::sampler(&self.sampler)),
                 ],
-            });
+            );
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("engine/texture-mip"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -132,6 +132,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::bindings::PARTICLES;
     use crate::cached::Cached;
     use crate::gpu_data::PARTICLE_SHADER;
 
@@ -183,35 +184,7 @@ mod gpu {
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
-            let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            };
-            let read = wgpu::BufferBindingType::Storage { read_only: true };
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("engine/particle-layout"),
-                entries: &[
-                    buffer(0, wgpu::BufferBindingType::Uniform),
-                    buffer(1, read),
-                    buffer(2, read),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+            let layout = crate::pipelines::layout(device, &PARTICLES);
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/particle-pipeline-layout"),
                 bind_group_layouts: &[Some(camera_layout), Some(&layout)],
@@ -326,19 +299,18 @@ mod gpu {
             }
             let key = (depth_generation, self.buffers_generation);
             if self.group.stale(&key) {
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/particle-group"),
-                    layout: &self.layout,
-                    entries: &[
-                        buffer_entry(0, &self.uniform),
-                        buffer_entry(1, &self.emitters),
-                        buffer_entry(2, &self.owners),
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(depth),
-                        },
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/particle-group",
+                    &PARTICLES,
+                    &self.layout,
+                    &[
+                        buffer_entry("particles", &self.uniform),
+                        buffer_entry("emitters", &self.emitters),
+                        buffer_entry("owners", &self.owners),
+                        ("depth_texture", crate::pipelines::view(depth)),
                     ],
-                });
+                );
                 self.group.set(key, group);
             }
             Some(ParticleFrame {
@@ -449,11 +421,12 @@ mod gpu {
         }
     }
 
-    fn buffer_entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-        wgpu::BindGroupEntry {
-            binding,
-            resource: buffer.as_entire_binding(),
-        }
+    // A buffer bound whole as binding `name`.
+    fn buffer_entry<'a>(
+        name: &'a str,
+        buffer: &'a wgpu::Buffer,
+    ) -> (&'a str, wgpu::BindingResource<'a>) {
+        (name, buffer.as_entire_binding())
     }
 
     fn pipeline(

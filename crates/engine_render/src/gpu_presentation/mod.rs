@@ -233,11 +233,9 @@ fn storage(
     })
 }
 
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
+// A buffer bound whole as binding `name`.
+fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
+    (name, buffer.as_entire_binding())
 }
 
 fn grow(needed: usize) -> usize {
@@ -493,7 +491,7 @@ impl GpuPresentationPass {
         pose_groups[poses.parity].get_or_insert_with(key, || {
             let current = poses.current();
             let palette = poses.palette();
-            let group = |family, label, entries: &[wgpu::BindGroupEntry<'_>]| {
+            let group = |family, label, entries: &[(&str, wgpu::BindingResource<'_>)]| {
                 shaders.group(device, family, label, entries)
             };
             PoseGroups {
@@ -501,43 +499,43 @@ impl GpuPresentationPass {
                     &shaders.families.cull,
                     "engine/presentation-cull-group",
                     &[
-                        entry(0, frame),
-                        entry(1, &nodes.locals),
-                        entry(2, &nodes.info),
-                        entry(3, &nodes.authority),
-                        entry(4, &nodes.composed),
-                        entry(7, &groups.batches),
-                        entry(8, current),
-                        entry(9, &groups.scan),
-                        entry(14, &groups.slot_candidates),
+                        entry("frame", frame),
+                        entry("locals", &nodes.locals),
+                        entry("info", &nodes.info),
+                        entry("authority", &nodes.authority),
+                        entry("composed", &nodes.composed),
+                        entry("batches", &groups.batches),
+                        entry("poses", current),
+                        entry("scan", &groups.scan),
+                        entry("slot_candidates", &groups.slot_candidates),
                     ],
                 ),
                 skin: group(
                     &shaders.families.compose,
                     "engine/presentation-skin-group",
                     &[
-                        entry(0, frame),
-                        entry(1, &nodes.locals),
-                        entry(2, &nodes.info),
-                        entry(3, &nodes.authority),
-                        entry(4, &nodes.composed),
-                        entry(15, &joints.nodes),
-                        entry(16, &joints.inverse_binds),
-                        entry(17, palette),
+                        entry("frame", frame),
+                        entry("locals", &nodes.locals),
+                        entry("info", &nodes.info),
+                        entry("authority", &nodes.authority),
+                        entry("composed", &nodes.composed),
+                        entry("joint_nodes", &joints.nodes),
+                        entry("inverse_binds", &joints.inverse_binds),
+                        entry("palette", palette),
                     ],
                 ),
                 skin_bounds: group(
                     &shaders.families.skin_bounds,
                     "engine/presentation-skin-bounds-group",
                     &[
-                        entry(0, frame),
-                        entry(7, &groups.batches),
-                        entry(8, current),
-                        entry(9, &groups.scan),
-                        entry(17, palette),
-                        entry(20, poses.colors),
-                        entry(21, &groups.skinned),
-                        entry(22, &groups.skin_bounds),
+                        entry("frame", frame),
+                        entry("batches", &groups.batches),
+                        entry("poses", current),
+                        entry("scan", &groups.scan),
+                        entry("palette", palette),
+                        entry("slot_colors", poses.colors),
+                        entry("skinned", &groups.skinned),
+                        entry("skin_bounds", &groups.skin_bounds),
                     ],
                 ),
                 count_still: stillness.kept().then(|| {
@@ -545,11 +543,11 @@ impl GpuPresentationPass {
                         &shaders.families.tests,
                         "engine/presentation-count-still-group",
                         &[
-                            entry(0, frame),
-                            entry(8, current),
-                            entry(9, &groups.scan),
-                            entry(14, &groups.slot_candidates),
-                            entry(23, &stillness.frames),
+                            entry("frame", frame),
+                            entry("poses", current),
+                            entry("scan", &groups.scan),
+                            entry("slot_candidates", &groups.slot_candidates),
+                            entry("still_frames", &stillness.frames),
                         ],
                     )
                 }),
@@ -779,16 +777,13 @@ impl GpuPresentationPass {
                 &self.shaders.families.tests,
                 "engine/presentation-occlusion-group",
                 &[
-                    entry(0, &self.frame),
-                    entry(7, &groups.batches),
-                    entry(8, poses),
-                    entry(9, &groups.scan),
-                    entry(14, &groups.slot_candidates),
-                    wgpu::BindGroupEntry {
-                        binding: 18,
-                        resource: wgpu::BindingResource::TextureView(pyramid.0),
-                    },
-                    entry(19, &self.occlusion_counts),
+                    entry("frame", &self.frame),
+                    entry("batches", &groups.batches),
+                    entry("poses", poses),
+                    entry("scan", &groups.scan),
+                    entry("slot_candidates", &groups.slot_candidates),
+                    ("depth_pyramid", crate::pipelines::view(pyramid.0)),
+                    entry("occlusion_counts", &self.occlusion_counts),
                 ],
             )
         });
@@ -874,9 +869,9 @@ fn node_groups(
             &shaders.families.tests,
             "engine/presentation-shift-group",
             &[
-                entry(0, frame),
-                entry(2, &nodes.info),
-                entry(13, &nodes.locals),
+                entry("frame", frame),
+                entry("info", &nodes.info),
+                entry("locals_shift", &nodes.locals),
             ],
         ),
         compose_parents: shaders.group(
@@ -884,12 +879,12 @@ fn node_groups(
             &shaders.families.compose,
             "engine/presentation-compose-group",
             &[
-                entry(0, frame),
-                entry(1, &nodes.locals),
-                entry(2, &nodes.info),
-                entry(3, &nodes.authority),
-                entry(4, &nodes.composed),
-                entry(5, &nodes.parents),
+                entry("frame", frame),
+                entry("locals", &nodes.locals),
+                entry("info", &nodes.info),
+                entry("authority", &nodes.authority),
+                entry("composed", &nodes.composed),
+                entry("parents", &nodes.parents),
             ],
         ),
     }
@@ -913,15 +908,15 @@ fn compact_group(
         &shaders.families.compact,
         label,
         &[
-            entry(0, frame),
-            entry(6, &groups.candidates),
-            entry(7, &groups.batches),
-            entry(9, &groups.scan),
-            entry(10, &groups.batch_bases),
-            entry(11, &groups.visible_ids[compaction]),
-            entry(12, &groups.draws[compaction]),
-            entry(19, counts),
-            entry(24, groups.impostor_ids_of(compaction)),
+            entry("frame", frame),
+            entry("candidates", &groups.candidates),
+            entry("batches", &groups.batches),
+            entry("scan", &groups.scan),
+            entry("batch_bases", &groups.batch_bases),
+            entry("visible_ids", &groups.visible_ids[compaction]),
+            entry("draws", &groups.draws[compaction]),
+            entry("occlusion_counts", counts),
+            entry("impostor_ids", groups.impostor_ids_of(compaction)),
         ],
     )
 }

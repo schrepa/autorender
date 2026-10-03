@@ -151,6 +151,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
     use crate::browser::FramePoses;
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
@@ -240,61 +241,15 @@ mod gpu {
         })
     }
 
-    fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-        wgpu::BindGroupEntry {
-            binding,
-            resource: buffer.as_entire_binding(),
-        }
-    }
-
-    fn layout_entry(
-        binding: u32,
-        visibility: wgpu::ShaderStages,
-        ty: wgpu::BufferBindingType,
-    ) -> wgpu::BindGroupLayoutEntry {
-        wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }
+    // A buffer bound whole as binding `name`.
+    fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
+        (name, buffer.as_entire_binding())
     }
 
     impl LightPass {
         pub(crate) fn new(device: &wgpu::Device) -> Self {
-            let compute = wgpu::ShaderStages::COMPUTE;
-            let read = wgpu::BufferBindingType::Storage { read_only: true };
-            let write = wgpu::BufferBindingType::Storage { read_only: false };
-            let compute_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("engine/light-binning-layout"),
-                    entries: &[
-                        layout_entry(0, compute, wgpu::BufferBindingType::Uniform),
-                        layout_entry(1, compute, read),
-                        layout_entry(2, compute, read),
-                        layout_entry(3, compute, write),
-                        layout_entry(4, compute, write),
-                        layout_entry(5, compute, write),
-                        layout_entry(6, compute, write),
-                        layout_entry(7, compute, write),
-                        layout_entry(8, compute, read),
-                    ],
-                });
-            let fragment = wgpu::ShaderStages::FRAGMENT;
-            let fragment_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("engine/light-shading-layout"),
-                    entries: &[
-                        layout_entry(0, fragment, wgpu::BufferBindingType::Uniform),
-                        layout_entry(1, fragment, read),
-                        layout_entry(2, fragment, read),
-                        layout_entry(3, fragment, read),
-                    ],
-                });
+            let compute_layout = crate::pipelines::layout(device, &LIGHT_BINNING);
+            let fragment_layout = crate::pipelines::layout(device, &LIGHT_SHADING);
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("engine/lights.wgsl"),
                 source: wgpu::ShaderSource::Wgsl(LIGHT_SHADER.into()),
@@ -479,36 +434,40 @@ mod gpu {
                         *generation == key.0 && *buffers == key.2
                     });
                     let pose_buffer = poses.as_ref().map_or(&self.no_poses, FramePoses::current);
-                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("engine/light-binning-group"),
-                        layout: &self.compute_layout,
-                        entries: &[
-                            entry(0, &self.uniform),
-                            entry(1, &self.inputs),
-                            entry(2, pose_buffer),
-                            entry(3, &self.lights),
-                            entry(4, &self.counts),
-                            entry(5, &self.indices),
-                            entry(6, &self.totals),
-                            entry(7, &self.ranges),
-                            entry(8, &self.no_still),
+                    let group = crate::pipelines::group(
+                        device,
+                        "engine/light-binning-group",
+                        &LIGHT_BINNING,
+                        &self.compute_layout,
+                        &[
+                            entry("clusters", &self.uniform),
+                            entry("inputs", &self.inputs),
+                            entry("poses", pose_buffer),
+                            entry("lights", &self.lights),
+                            entry("counts", &self.counts),
+                            entry("indices", &self.indices),
+                            entry("totals", &self.totals),
+                            entry("ranges", &self.ranges),
+                            entry("still_frames", &self.no_still),
                         ],
-                    });
+                    );
                     self.compute_groups.push((key, group));
                     self.compute_groups.len() - 1
                 }
             };
             if self.fragment_group.stale(&self.buffers_generation) {
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/light-shading-group"),
-                    layout: &self.fragment_layout,
-                    entries: &[
-                        entry(0, &self.uniform),
-                        entry(1, &self.lights),
-                        entry(2, &self.ranges),
-                        entry(3, &self.indices),
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/light-shading-group",
+                    &LIGHT_SHADING,
+                    &self.fragment_layout,
+                    &[
+                        entry("clusters", &self.uniform),
+                        entry("lights", &self.lights),
+                        entry("cluster_ranges", &self.ranges),
+                        entry("cluster_lights", &self.indices),
                     ],
-                });
+                );
                 self.fragment_group.set(self.buffers_generation, group);
             }
             Some(LightFrame {
@@ -623,31 +582,35 @@ mod gpu {
                     .probe_uniforms
                     .iter()
                     .map(|uniform| {
-                        let compute = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("engine/light-binning-probe-group"),
-                            layout: &self.compute_layout,
-                            entries: &[
-                                entry(0, uniform),
-                                entry(1, &self.inputs),
-                                entry(2, poses.current()),
-                                entry(3, &self.lights),
-                                entry(4, &self.counts),
-                                entry(5, &self.indices),
-                                entry(6, &self.totals),
-                                entry(7, &self.ranges),
-                                entry(8, still.0),
+                        let compute = crate::pipelines::group(
+                            device,
+                            "engine/light-binning-probe-group",
+                            &LIGHT_BINNING,
+                            &self.compute_layout,
+                            &[
+                                entry("clusters", uniform),
+                                entry("inputs", &self.inputs),
+                                entry("poses", poses.current()),
+                                entry("lights", &self.lights),
+                                entry("counts", &self.counts),
+                                entry("indices", &self.indices),
+                                entry("totals", &self.totals),
+                                entry("ranges", &self.ranges),
+                                entry("still_frames", still.0),
                             ],
-                        });
-                        let fragment = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("engine/light-shading-probe-group"),
-                            layout: &self.fragment_layout,
-                            entries: &[
-                                entry(0, uniform),
-                                entry(1, &self.lights),
-                                entry(2, &self.ranges),
-                                entry(3, &self.indices),
+                        );
+                        let fragment = crate::pipelines::group(
+                            device,
+                            "engine/light-shading-probe-group",
+                            &LIGHT_SHADING,
+                            &self.fragment_layout,
+                            &[
+                                entry("clusters", uniform),
+                                entry("lights", &self.lights),
+                                entry("cluster_ranges", &self.ranges),
+                                entry("cluster_lights", &self.indices),
                             ],
-                        });
+                        );
                         (compute, fragment)
                     })
                     .collect();

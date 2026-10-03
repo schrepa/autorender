@@ -88,6 +88,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::bindings::DECALS;
     use crate::cached::Cached;
     use crate::materials::MaterialStore;
 
@@ -127,35 +128,9 @@ mod gpu {
 
     impl DecalPass {
         pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
-            let read = |binding, visibility| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            };
             // Group 2 beside the mesh poses' bindings: the joint palette
             // (decision 036) holds retained frames' decal poses.
-            let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("engine/decal-layout"),
-                entries: &[
-                    read(3, wgpu::ShaderStages::VERTEX),
-                    read(8, wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 9,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+            let layout = crate::pipelines::layout(device, &DECALS);
             Self {
                 layout,
                 pipeline_layouts: [None, None],
@@ -221,24 +196,17 @@ mod gpu {
             let (generation, parity) = pose_key.unwrap_or((u64::MAX, 0));
             let key = (depth_generation, self.buffer_generation, generation, parity);
             if self.group.stale(&key) {
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/decal-group"),
-                    layout: &self.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: palette.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 8,
-                            resource: self.records.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 9,
-                            resource: wgpu::BindingResource::TextureView(depth),
-                        },
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/decal-group",
+                    &DECALS,
+                    &self.layout,
+                    &[
+                        ("palette", palette.as_entire_binding()),
+                        ("decal_records", self.records.as_entire_binding()),
+                        ("decal_depth", crate::pipelines::view(depth)),
                     ],
-                });
+                );
                 self.group.set(key, group);
             }
             Some(DecalFrame {

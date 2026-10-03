@@ -11,6 +11,8 @@ use std::{
     },
 };
 
+use crate::bindings::{Kind, Sample, Sampling, Stages, Table, View};
+
 thread_local! {
     static CREATED: Cell<u32> = const { Cell::new(0) };
 }
@@ -81,75 +83,103 @@ impl PipelineCounts {
     }
 }
 
-/// What one binding of a shared layout holds (decision 049).
+/// The `wgpu` binding type of `kind`.
+fn binding_type(kind: Kind) -> wgpu::BindingType {
+    let buffer = |ty, min_size: u64, dynamic| wgpu::BindingType::Buffer {
+        ty,
+        has_dynamic_offset: dynamic,
+        min_binding_size: wgpu::BufferSize::new(min_size),
+    };
+    match kind {
+        Kind::Uniform { min_size, dynamic } => {
+            buffer(wgpu::BufferBindingType::Uniform, min_size, dynamic)
+        }
+        Kind::Read { min_size } => buffer(
+            wgpu::BufferBindingType::Storage { read_only: true },
+            min_size,
+            false,
+        ),
+        Kind::Write => buffer(
+            wgpu::BufferBindingType::Storage { read_only: false },
+            0,
+            false,
+        ),
+        Kind::Texture { sample, view } => wgpu::BindingType::Texture {
+            sample_type: match sample {
+                Sample::Float => wgpu::TextureSampleType::Float { filterable: true },
+                Sample::Unfilterable => wgpu::TextureSampleType::Float { filterable: false },
+                Sample::Depth => wgpu::TextureSampleType::Depth,
+                Sample::Uint => wgpu::TextureSampleType::Uint,
+            },
+            view_dimension: match view {
+                View::D2 => wgpu::TextureViewDimension::D2,
+                View::D2Array => wgpu::TextureViewDimension::D2Array,
+                View::Cube => wgpu::TextureViewDimension::Cube,
+                View::CubeArray => wgpu::TextureViewDimension::CubeArray,
+            },
+            multisampled: false,
+        },
+        Kind::StorageR32Float => wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format: wgpu::TextureFormat::R32Float,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
+            Sampling::Filtering => wgpu::SamplerBindingType::Filtering,
+            Sampling::NonFiltering => wgpu::SamplerBindingType::NonFiltering,
+            Sampling::Comparison => wgpu::SamplerBindingType::Comparison,
+        }),
+    }
+}
+
+/// The `wgpu` stages of `stages`.
+fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
+    let mut shader = wgpu::ShaderStages::NONE;
+    if stages.vertex() {
+        shader |= wgpu::ShaderStages::VERTEX;
+    }
+    if stages.fragment() {
+        shader |= wgpu::ShaderStages::FRAGMENT;
+    }
+    if stages.compute() {
+        shader |= wgpu::ShaderStages::COMPUTE;
+    }
+    shader
+}
+
+/// The bind group layout of `table` (`crate::bindings`).
 ///
 /// Each distinct pipeline layout costs the browser real work: Firefox's
 /// Direct3D 12 backend builds a root signature and three indirect command
 /// signatures for it, which an integrated Intel GPU's driver compiles in
-/// about 150 ms. Passes of one family therefore share a layout listing every
+/// about 150 ms. Passes of one family therefore share a table listing every
 /// binding any of them reads, and their bind groups fill the bindings a pass
-/// leaves alone with [`Fillers`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Slot {
-    Uniform,
-    /// A storage buffer shaders only read.
-    Read,
-    /// A storage buffer shaders write.
-    Write,
-    /// A 2D float texture shaders load from.
-    Texture,
-    /// A 2D float texture shaders sample with filtering.
-    Filtered,
-    /// A 2D depth texture.
-    Depth,
-    /// A filtering sampler.
-    Sampler,
-}
-
-impl Slot {
-    fn binding_type(self) -> wgpu::BindingType {
-        let buffer = |ty| wgpu::BindingType::Buffer {
-            ty,
-            has_dynamic_offset: false,
-            min_binding_size: None,
-        };
-        let texture = |sample_type| wgpu::BindingType::Texture {
-            sample_type,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false,
-        };
-        match self {
-            Self::Uniform => buffer(wgpu::BufferBindingType::Uniform),
-            Self::Read => buffer(wgpu::BufferBindingType::Storage { read_only: true }),
-            Self::Write => buffer(wgpu::BufferBindingType::Storage { read_only: false }),
-            Self::Texture => texture(wgpu::TextureSampleType::Float { filterable: false }),
-            Self::Filtered => texture(wgpu::TextureSampleType::Float { filterable: true }),
-            Self::Depth => texture(wgpu::TextureSampleType::Depth),
-            Self::Sampler => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        }
-    }
-}
-
-/// A bind group layout of `slots`, each visible to `visibility`.
-pub(crate) fn group_layout(
-    device: &wgpu::Device,
-    label: &str,
-    visibility: wgpu::ShaderStages,
-    slots: &[(u32, Slot)],
-) -> wgpu::BindGroupLayout {
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = slots
+/// leaves alone with [`Fillers`] (decision 049).
+pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLayout {
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = table
+        .bindings
         .iter()
-        .map(|&(binding, slot)| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility,
-            ty: slot.binding_type(),
+        .map(|binding| wgpu::BindGroupLayoutEntry {
+            binding: binding.binding,
+            visibility: shader_stages(binding.stages),
+            ty: binding_type(binding.kind),
             count: None,
         })
         .collect();
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some(label),
+        label: Some(table.label),
         entries: &entries,
     })
+}
+
+/// A texture view as a binding's resource.
+pub(crate) fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::TextureView(view)
+}
+
+/// A sampler as a binding's resource.
+pub(crate) fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Sampler(sampler)
 }
 
 /// Written storage fillers per group: each written binding a group fills
@@ -160,7 +190,7 @@ const WRITE_FILLERS: u64 = 32;
 const FILLER_BYTES: u64 = 256;
 
 /// Resources standing in for the bindings of a shared layout a pass does not
-/// read: the smallest buffers and textures of each [`Slot`]. Read and written
+/// read: the smallest buffers, 2D textures and sampler. Read and written
 /// storage have separate buffers, since one buffer may not be both in a
 /// dispatch or draw.
 pub(crate) struct Fillers {
@@ -225,47 +255,90 @@ impl Fillers {
         }
     }
 
-    // The filler of `slot`, the `written`th written storage binding a group
-    // fills.
-    fn resource(&self, slot: Slot, written: u64) -> wgpu::BindingResource<'_> {
-        match slot {
-            Slot::Uniform => self.uniform.as_entire_binding(),
-            Slot::Read => self.read.as_entire_binding(),
-            Slot::Write => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+    // The filler of a binding of `kind`, the `written`th written storage
+    // binding a group fills.
+    fn resource(&self, kind: Kind, written: u64) -> wgpu::BindingResource<'_> {
+        match kind {
+            Kind::Uniform { .. } => self.uniform.as_entire_binding(),
+            Kind::Read { .. } => self.read.as_entire_binding(),
+            Kind::Write => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &self.write,
                 offset: written % WRITE_FILLERS * FILLER_BYTES,
                 size: wgpu::BufferSize::new(FILLER_BYTES),
             }),
-            Slot::Texture | Slot::Filtered => wgpu::BindingResource::TextureView(&self.texture),
-            Slot::Depth => wgpu::BindingResource::TextureView(&self.depth),
-            Slot::Sampler => wgpu::BindingResource::Sampler(&self.sampler),
+            Kind::Texture {
+                sample: Sample::Depth,
+                view: View::D2,
+            } => wgpu::BindingResource::TextureView(&self.depth),
+            Kind::Texture {
+                sample: Sample::Float | Sample::Unfilterable,
+                view: View::D2,
+            } => wgpu::BindingResource::TextureView(&self.texture),
+            Kind::Sampler(Sampling::Filtering) => wgpu::BindingResource::Sampler(&self.sampler),
+            kind => panic!("no filler for {kind:?}"),
         }
     }
 }
 
-/// A bind group of `layout`, made from `slots`, holding `entries` and
-/// [`Fillers`] for the bindings they leave out.
+/// A bind group of `layout`, built from `table`, binding `resources` by
+/// their WGSL names; every binding of the table needs one.
+pub(crate) fn group(
+    device: &wgpu::Device,
+    label: &str,
+    table: &Table,
+    layout: &wgpu::BindGroupLayout,
+    resources: &[(&str, wgpu::BindingResource<'_>)],
+) -> wgpu::BindGroup {
+    debug_assert_eq!(
+        resources.len(),
+        table.bindings.len(),
+        "{label} binds every binding of {}",
+        table.label
+    );
+    let entries: Vec<wgpu::BindGroupEntry<'_>> = resources
+        .iter()
+        .map(|(name, resource)| wgpu::BindGroupEntry {
+            binding: table.binding(name).binding,
+            resource: resource.clone(),
+        })
+        .collect();
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some(label),
+        layout,
+        entries: &entries,
+    })
+}
+
+/// [`group`] with [`Fillers`] for the bindings `resources` leave out.
 pub(crate) fn filled_group(
     device: &wgpu::Device,
     label: &str,
+    table: &Table,
     layout: &wgpu::BindGroupLayout,
-    slots: &[(u32, Slot)],
-    entries: &[wgpu::BindGroupEntry<'_>],
+    resources: &[(&str, wgpu::BindingResource<'_>)],
     fillers: &Fillers,
 ) -> wgpu::BindGroup {
+    for (name, _) in resources {
+        table.binding(name);
+    }
     let mut written = 0;
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = slots
+    let entries: Vec<wgpu::BindGroupEntry<'_>> = table
+        .bindings
         .iter()
-        .map(|&(binding, slot)| {
-            entries
+        .map(|binding| {
+            let resource = resources
                 .iter()
-                .find(|entry| entry.binding == binding)
-                .cloned()
+                .find(|(name, _)| *name == binding.name)
+                .map(|(_, resource)| resource.clone())
                 .unwrap_or_else(|| {
-                    let resource = fillers.resource(slot, written);
-                    written += u64::from(slot == Slot::Write);
-                    wgpu::BindGroupEntry { binding, resource }
-                })
+                    let filler = fillers.resource(binding.kind, written);
+                    written += u64::from(binding.kind == Kind::Write);
+                    filler
+                });
+            wgpu::BindGroupEntry {
+                binding: binding.binding,
+                resource,
+            }
         })
         .collect();
     debug_assert!(written <= WRITE_FILLERS, "more written fillers than ranges");

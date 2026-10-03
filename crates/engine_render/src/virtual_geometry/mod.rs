@@ -26,6 +26,7 @@ use std::sync::Arc;
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{MeshHandle, VirtualMesh};
 
+use crate::bindings::VIRTUAL_SHADOW;
 use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
@@ -210,11 +211,9 @@ pub(crate) struct VirtualGeometryPass {
     no_pyramid: wgpu::TextureView,
 }
 
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
+// A buffer bound whole as binding `name`.
+fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
+    (name, buffer.as_entire_binding())
 }
 
 impl VirtualGeometryPass {
@@ -359,24 +358,26 @@ impl VirtualGeometryPass {
                 .get_or_insert_with(|| ShadowDrawing::new(device, module));
             let key = (self.arena.generation(), poses.key(), views.clone());
             self.shadow_groups[self.parity].get_or_insert_with(key, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/virtual-shadow-group"),
-                    layout: &drawing.layout,
-                    entries: &[
-                        entry(2, &arena.meshes),
-                        entry(5, &arena.clusters),
-                        entry(6, poses.current()),
-                        entry(17, &arena.pages),
-                        wgpu::BindGroupEntry {
-                            binding: 18,
-                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                crate::pipelines::group(
+                    device,
+                    "engine/virtual-shadow-group",
+                    &VIRTUAL_SHADOW,
+                    &drawing.layout,
+                    &[
+                        entry("meshes", &arena.meshes),
+                        entry("clusters", &arena.clusters),
+                        entry("poses", poses.current()),
+                        entry("pages", &arena.pages),
+                        (
+                            "shadow_view",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                                 buffer: views,
                                 offset: 0,
                                 size: wgpu::BufferSize::new(64),
                             }),
-                        },
+                        ),
                     ],
-                })
+                )
             });
         }
         let key = (
@@ -390,24 +391,21 @@ impl VirtualGeometryPass {
         let pyramid = frame.pyramid.map_or(&self.no_pyramid, |(view, _)| view);
         let storage = &self.storage;
         self.groups[self.parity].get_or_insert_with(key, || {
-            let texture = |binding| wgpu::BindGroupEntry {
-                binding,
-                resource: wgpu::BindingResource::TextureView(pyramid),
-            };
+            let texture = || ("depth_pyramid", crate::pipelines::view(pyramid));
             let [queue_a, queue_b] = &storage.queues;
             let seed = |source: usize, ids: &IdBuffers<'_>| {
                 pipelines.group(
                     device,
                     &pipelines.seed_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(1, &storage.batches[source]),
-                        entry(2, &arena.meshes),
-                        entry(7, ids.ids),
-                        entry(8, ids.draws),
-                        entry(9, queue_a),
-                        entry(10, queue_b),
-                        entry(12, &storage.counters),
+                        entry("frame", &storage.uniform),
+                        entry("batches", &storage.batches[source]),
+                        entry("meshes", &arena.meshes),
+                        entry("ids", ids.ids),
+                        entry("draws", ids.draws),
+                        entry("queue_a", queue_a),
+                        entry("queue_b", queue_b),
+                        entry("counters", &storage.counters),
                     ],
                 )
             };
@@ -420,62 +418,62 @@ impl VirtualGeometryPass {
                     device,
                     &pipelines.seed_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(12, &storage.counters),
-                        entry(15, &storage.dispatch),
+                        entry("frame", &storage.uniform),
+                        entry("counters", &storage.counters),
+                        entry("dispatch", &storage.dispatch),
                     ],
                 ),
                 traverse: pipelines.group(
                     device,
                     &pipelines.traverse_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(3, &arena.nodes),
-                        entry(6, poses.current()),
-                        entry(9, queue_a),
-                        entry(10, queue_b),
-                        entry(11, &storage.work),
-                        entry(12, &storage.counters),
+                        entry("frame", &storage.uniform),
+                        entry("nodes", &arena.nodes),
+                        entry("poses", poses.current()),
+                        entry("queue_a", queue_a),
+                        entry("queue_b", queue_b),
+                        entry("work", &storage.work),
+                        entry("counters", &storage.counters),
                     ],
                 ),
                 select: pipelines.group(
                     device,
                     &pipelines.select_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(4, &arena.groups),
-                        entry(5, &arena.clusters),
-                        entry(6, poses.current()),
-                        entry(11, &storage.work),
-                        entry(12, &storage.counters),
-                        entry(13, &storage.visible),
-                        entry(14, &storage.bins),
-                        texture(19),
-                        entry(20, &storage.retest),
+                        entry("frame", &storage.uniform),
+                        entry("groups", &arena.groups),
+                        entry("clusters", &arena.clusters),
+                        entry("poses", poses.current()),
+                        entry("work", &storage.work),
+                        entry("counters", &storage.counters),
+                        entry("visible", &storage.visible),
+                        entry("bins", &storage.bins),
+                        texture(),
+                        entry("retest", &storage.retest),
                     ],
                 ),
                 bin_args: pipelines.group(
                     device,
                     &pipelines.bin_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(12, &storage.counters),
-                        entry(14, &storage.bins),
-                        entry(16, &storage.draw_args),
+                        entry("frame", &storage.uniform),
+                        entry("counters", &storage.counters),
+                        entry("bins", &storage.bins),
+                        entry("draw_args", &storage.draw_args),
                     ],
                 ),
                 retest: pipelines.group(
                     device,
                     &pipelines.select_family,
                     &[
-                        entry(0, &storage.uniform),
-                        entry(5, &arena.clusters),
-                        entry(6, poses.current()),
-                        entry(12, &storage.counters),
-                        entry(13, &storage.visible),
-                        entry(14, &storage.bins),
-                        texture(19),
-                        entry(20, &storage.retest),
+                        entry("frame", &storage.uniform),
+                        entry("clusters", &arena.clusters),
+                        entry("poses", poses.current()),
+                        entry("counters", &storage.counters),
+                        entry("visible", &storage.visible),
+                        entry("bins", &storage.bins),
+                        texture(),
+                        entry("retest", &storage.retest),
                     ],
                 ),
             }

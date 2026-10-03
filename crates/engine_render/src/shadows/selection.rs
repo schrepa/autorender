@@ -9,6 +9,7 @@ use std::{cell::Cell, rc::Rc};
 use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
 use super::{GROUP, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source, entry};
+use crate::bindings::{SHADOW_SELECT, SHADOW_SKINNED};
 use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
@@ -367,40 +368,44 @@ impl Selection {
                 }
                 _ => (&self.listed, &self.listed_groups, &self.no_flags),
             };
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/shadow-select-group"),
-                layout: &pipelines.select_layout,
-                entries: &[
-                    entry(0, &pipelines.cull),
-                    entry(1, candidate_buffer),
-                    entry(2, batch_buffer),
-                    entry(3, pose_buffer),
-                    entry(4, flag_buffer),
-                    entry(5, &self.stillness),
-                    entry(6, &self.ids),
-                    entry(7, &self.args),
-                    entry(8, &self.dirty),
+            let group = crate::pipelines::group(
+                device,
+                "engine/shadow-select-group",
+                &SHADOW_SELECT,
+                &pipelines.select_layout,
+                &[
+                    entry("cull", &pipelines.cull),
+                    entry("candidates", candidate_buffer),
+                    entry("batches", batch_buffer),
+                    entry("poses", pose_buffer),
+                    entry("flags", flag_buffer),
+                    entry("stillness", &self.stillness),
+                    entry("ids", &self.ids),
+                    entry("args", &self.args),
+                    entry("counters", &self.dirty),
                 ],
-            });
+            );
             self.select_group.set(key, group);
         }
         if let Some(presented) = presented.filter(|_| skinned != 0) {
             let key = (self.generation, presented.generation);
             if self.skinned_group.stale(&key) {
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/shadow-skinned-group"),
-                    layout: &pipelines.skinned_layout,
-                    entries: &[
-                        entry(0, &pipelines.cull),
-                        entry(2, presented.batches),
-                        entry(4, presented.flags),
-                        entry(6, &self.ids),
-                        entry(7, &self.args),
-                        entry(8, &self.dirty),
-                        entry(10, presented.skinned),
-                        entry(11, presented.skin_bounds),
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/shadow-skinned-group",
+                    &SHADOW_SKINNED,
+                    &pipelines.skinned_layout,
+                    &[
+                        entry("cull", &pipelines.cull),
+                        entry("batches", presented.batches),
+                        entry("flags", presented.flags),
+                        entry("ids", &self.ids),
+                        entry("args", &self.args),
+                        entry("counters", &self.dirty),
+                        entry("skinned", presented.skinned),
+                        entry("skin_bounds", presented.skin_bounds),
                     ],
-                });
+                );
                 self.skinned_group.set(key, group);
             }
         }

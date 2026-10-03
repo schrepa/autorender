@@ -4,6 +4,7 @@
 //! after phase one draws; or the nearest depths, which screen-space
 //! reflections (decision 025) walk after the opaque pass.
 
+use crate::bindings::{PYRAMID_DOWN, PYRAMID_FIRST};
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::profiling::Span;
 
@@ -48,43 +49,8 @@ impl DepthPyramid {
         // A level's source and the level written: both kinds of pass map to
         // the same descriptors, and so share one root signature in Direct3D
         // 12 (decision 049).
-        let group_layout = |label, binding, sample_type| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: FORMAT,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    },
-                ],
-            })
-        };
-        let first_layout = group_layout(
-            "engine/depth-pyramid-first-layout",
-            0,
-            wgpu::TextureSampleType::Depth,
-        );
-        let down_layout = group_layout(
-            "engine/depth-pyramid-down-layout",
-            1,
-            wgpu::TextureSampleType::Float { filterable: false },
-        );
+        let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
+        let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
         let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(entry),
@@ -161,39 +127,33 @@ impl DepthPyramid {
             .map(|level| {
                 let size = ((base.0 >> level).max(1), (base.1 >> level).max(1));
                 let group = if level == 0 {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("engine/depth-pyramid-first"),
-                        layout: &self.first_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(depth),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&views[0]),
-                            },
+                    crate::pipelines::group(
+                        device,
+                        "engine/depth-pyramid-first",
+                        &PYRAMID_FIRST,
+                        &self.first_layout,
+                        &[
+                            ("source_depth", crate::pipelines::view(depth)),
+                            ("target_level", crate::pipelines::view(&views[0])),
                         ],
-                    })
+                    )
                 } else {
-                    device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("engine/depth-pyramid-down"),
-                        layout: &self.down_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(
-                                    &views[level as usize - 1],
-                                ),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(
-                                    &views[level as usize],
-                                ),
-                            },
+                    crate::pipelines::group(
+                        device,
+                        "engine/depth-pyramid-down",
+                        &PYRAMID_DOWN,
+                        &self.down_layout,
+                        &[
+                            (
+                                "source_level",
+                                crate::pipelines::view(&views[level as usize - 1]),
+                            ),
+                            (
+                                "target_level",
+                                crate::pipelines::view(&views[level as usize]),
+                            ),
                         ],
-                    })
+                    )
                 };
                 (group, size)
             })

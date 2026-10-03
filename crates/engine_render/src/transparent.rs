@@ -6,6 +6,7 @@
 //! weighted average over the frame's color. Targets exist only while frames
 //! draw something transparent.
 
+use crate::bindings::TRANSPARENT_COMPOSITE;
 use crate::gpu_data::TRANSPARENT_SHADER;
 
 /// Weighted premultiplied color and coverage, added.
@@ -78,20 +79,7 @@ impl TransparentPass {
         surface_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> Self {
-        let texture = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/transparent-composite-layout"),
-            entries: &[texture(0), texture(1)],
-        });
+        let layout = crate::pipelines::layout(device, &TRANSPARENT_COMPOSITE);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/transparent-composite-pipeline-layout"),
             bind_group_layouts: &[Some(&layout)],
@@ -146,20 +134,16 @@ impl TransparentPass {
         let [accumulated, revealed] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/transparent-composite-group"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&accumulated),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&revealed),
-                },
+        let group = crate::pipelines::group(
+            device,
+            "engine/transparent-composite-group",
+            &TRANSPARENT_COMPOSITE,
+            &self.layout,
+            &[
+                ("accumulated", crate::pipelines::view(&accumulated)),
+                ("revealed", crate::pipelines::view(&revealed)),
             ],
-        });
+        );
         self.targets = Some(Targets {
             size,
             textures,

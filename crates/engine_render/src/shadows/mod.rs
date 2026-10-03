@@ -33,6 +33,7 @@ use std::cell::Cell;
 use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
 
 use crate::batches::BatchPlan;
+use crate::bindings::SHADOW_POSES;
 use crate::browser::FramePoses;
 use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
@@ -199,11 +200,9 @@ impl ShadowFrame {
     }
 }
 
-fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: buffer.as_entire_binding(),
-    }
+// A buffer bound whole as binding `name`.
+fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
+    (name, buffer.as_entire_binding())
 }
 
 pub(crate) struct ShadowPass {
@@ -252,10 +251,10 @@ impl ShadowPass {
         self.maps.generation()
     }
 
-    /// Bindings 2 to 7 of the main passes' first group: the lookup uniform,
-    /// the near cascades, the kept and moving maps, the comparison sampler
-    /// and the texel sampler of receiver planes.
-    pub(crate) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 6] {
+    /// Bindings of the main passes' first group (`bindings::CAMERA`): the
+    /// lookup uniform, the near cascades, the kept and moving maps, the
+    /// comparison sampler and the texel sampler of receiver planes.
+    pub(crate) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 6] {
         self.maps.entries()
     }
 
@@ -471,11 +470,17 @@ impl ShadowPass {
             {
                 let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {
                     buffer.map(|buffer| {
-                        device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("engine/shadow-pose-group"),
-                            layout: &pipelines.pose_layout,
-                            entries: &[entry(0, buffer), entry(1, poses.colors), entry(2, palette)],
-                        })
+                        crate::pipelines::group(
+                            device,
+                            "engine/shadow-pose-group",
+                            &SHADOW_POSES,
+                            &pipelines.pose_layout,
+                            &[
+                                entry("slot_poses", buffer),
+                                entry("slot_colors", poses.colors),
+                                entry("slot_palette", palette),
+                            ],
+                        )
                     })
                 };
                 self.pose_groups = Some((

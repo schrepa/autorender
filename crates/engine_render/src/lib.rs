@@ -152,6 +152,8 @@ pub struct RenderStats {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod bindings;
+#[cfg(any(target_arch = "wasm32", test))]
 mod cached;
 #[cfg(any(target_arch = "wasm32", test))]
 mod gpu_data;

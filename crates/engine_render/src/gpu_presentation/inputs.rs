@@ -8,6 +8,7 @@
 use engine_core::{GpuPresentation, MAX_HIERARCHY_DEPTH, NodeInfo, NodePose, PoseRows};
 
 use super::{grow, storage};
+use crate::bindings::PRESENTATION_LEVEL;
 use crate::gpu_data::COMPOSED_BYTES;
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
@@ -81,18 +82,20 @@ impl NodeInputs {
         });
         let level_groups = (0..LEVELS as u64)
             .map(|level| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/presentation-level-group"),
-                    layout: level_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                crate::pipelines::group(
+                    device,
+                    "engine/presentation-level-group",
+                    &PRESENTATION_LEVEL,
+                    level_layout,
+                    &[(
+                        "level",
+                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                             buffer: &levels,
                             offset: level * LEVEL_STRIDE,
                             size: wgpu::BufferSize::new(16),
                         }),
-                    }],
-                })
+                    )],
+                )
             })
             .collect();
         let empty = |label| storage(device, label, 0, wgpu::BufferUsages::empty());

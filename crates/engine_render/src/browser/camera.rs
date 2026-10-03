@@ -4,6 +4,7 @@
 //! environment maps or reflection probe grid it binds are replaced.
 
 use super::*;
+use crate::bindings::CAMERA;
 
 pub(super) struct CameraBindings {
     pub(super) layout: wgpu::BindGroupLayout,
@@ -44,107 +45,7 @@ impl CameraBindings {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let uniform_entry = |binding, visibility, size: usize| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(size as u64),
-            },
-            count: None,
-        };
-        let shadow_map_entry = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Depth,
-                view_dimension,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/camera-layout"),
-            entries: &[
-                // Fragments read the eye, sky rays and the jitter.
-                uniform_entry(
-                    0,
-                    wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    size_of::<CameraUniform>(),
-                ),
-                uniform_entry(
-                    1,
-                    wgpu::ShaderStages::FRAGMENT,
-                    size_of::<LightingUniform>(),
-                ),
-                // Shadow lookups (decisions 020 and 028): the near cascades,
-                // then the kept and moving maps.
-                uniform_entry(2, wgpu::ShaderStages::FRAGMENT, size_of::<ShadowUniform>()),
-                shadow_map_entry(3, wgpu::TextureViewDimension::D2Array),
-                shadow_map_entry(4, wgpu::TextureViewDimension::D2),
-                shadow_map_entry(5, wgpu::TextureViewDimension::D2),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                    count: None,
-                },
-                // Receiver-plane lookups read four texels (decision 028).
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                    count: None,
-                },
-                // What glass refracts (decision 038) and its sampler.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // The environment maps surfaces reflect (decision 043) and
-                // their sampler.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // The grid of reflection probes each cell's surfaces read.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let layout = crate::pipelines::layout(device, &CAMERA);
         let refraction_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("engine/refraction-fallback"),
             size: wgpu::Extent3d {
@@ -319,44 +220,31 @@ fn camera_group(
     ),
 ) -> wgpu::BindGroup {
     let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("engine/camera-bind-group"),
+    crate::pipelines::group(
+        device,
+        "engine/camera-bind-group",
+        &CAMERA,
         layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: lighting.as_entire_binding(),
-            },
+        &[
+            ("camera", camera.as_entire_binding()),
+            ("lighting", lighting.as_entire_binding()),
             shadow,
             near,
             kept,
             moving,
             sampler,
             texel_sampler,
-            wgpu::BindGroupEntry {
-                binding: 8,
-                resource: wgpu::BindingResource::TextureView(refraction),
-            },
-            wgpu::BindGroupEntry {
-                binding: 9,
-                resource: wgpu::BindingResource::Sampler(refraction_sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 10,
-                resource: wgpu::BindingResource::TextureView(environment),
-            },
-            wgpu::BindGroupEntry {
-                binding: 11,
-                resource: wgpu::BindingResource::Sampler(environment_sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 12,
-                resource: probe_words.as_entire_binding(),
-            },
+            ("refraction_source", crate::pipelines::view(refraction)),
+            (
+                "refraction_sampler",
+                crate::pipelines::sampler(refraction_sampler),
+            ),
+            ("environment_maps", crate::pipelines::view(environment)),
+            (
+                "environment_sampler",
+                crate::pipelines::sampler(environment_sampler),
+            ),
+            ("probe_words", probe_words.as_entire_binding()),
         ],
-    })
+    )
 }

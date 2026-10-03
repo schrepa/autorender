@@ -1,0 +1,1275 @@
+//! Bind group layouts as data (decision 049): every layout the renderer
+//! builds is a table of the bindings its shaders read, each with its
+//! number, WGSL name, kind and the stages reading it. Layouts and bind
+//! groups are built from the tables (`crate::pipelines::layout` and
+//! `group`), so a binding's number is written once in WGSL and once here,
+//! groups bind resources by name, and a test reflects every shader to check
+//! each table against the entry points of the pipelines using it.
+
+use crate::gpu_data::{
+    CameraUniform, ColorData, LightingUniform, MaterialUniform, PoseData, PostUniform,
+    ResolveUniform, ShadowCullUniform, ShadowUniform,
+};
+use crate::impostors::{ImpostorBakeUniform, ImpostorRecord};
+
+/// Shader stages, as bits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stages(u8);
+
+impl Stages {
+    pub(crate) const VERTEX: Self = Self(1);
+    pub(crate) const FRAGMENT: Self = Self(2);
+    pub(crate) const COMPUTE: Self = Self(4);
+    pub(crate) const VERTEX_FRAGMENT: Self = Self(3);
+
+    pub(crate) fn vertex(self) -> bool {
+        self.0 & 1 != 0
+    }
+
+    pub(crate) fn fragment(self) -> bool {
+        self.0 & 2 != 0
+    }
+
+    pub(crate) fn compute(self) -> bool {
+        self.0 & 4 != 0
+    }
+}
+
+/// How shaders read a texture's texels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sample {
+    /// Floats, filtered by samplers.
+    Float,
+    /// Floats shaders only load.
+    Unfilterable,
+    Depth,
+    Uint,
+}
+
+/// A texture view's dimension.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum View {
+    D2,
+    D2Array,
+    Cube,
+    CubeArray,
+}
+
+/// How a sampler filters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sampling {
+    Filtering,
+    NonFiltering,
+    Comparison,
+}
+
+/// What a binding holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// A uniform buffer of at least `min_size` bytes (0 leaves it to
+    /// draws), bound at a dynamic offset when `dynamic`.
+    Uniform {
+        min_size: u64,
+        dynamic: bool,
+    },
+    /// A storage buffer shaders only read, of at least `min_size` bytes.
+    Read {
+        min_size: u64,
+    },
+    /// A storage buffer shaders write.
+    Write,
+    Texture {
+        sample: Sample,
+        view: View,
+    },
+    /// A 2D texture of 32-bit floats shaders write.
+    StorageR32Float,
+    Sampler(Sampling),
+}
+
+/// One binding of a layout.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Binding {
+    pub(crate) binding: u32,
+    pub(crate) name: &'static str,
+    pub(crate) kind: Kind,
+    pub(crate) stages: Stages,
+}
+
+/// A bind group layout: its label and bindings.
+#[derive(Debug)]
+pub(crate) struct Table {
+    pub(crate) label: &'static str,
+    pub(crate) bindings: &'static [Binding],
+}
+
+impl Table {
+    /// The binding named `name`; a name the table lacks is a programming
+    /// error.
+    pub(crate) fn binding(&self, name: &str) -> &Binding {
+        self.bindings
+            .iter()
+            .find(|binding| binding.name == name)
+            .unwrap_or_else(|| panic!("{} has no binding named {name}", self.label))
+    }
+}
+
+const fn bind(binding: u32, name: &'static str, kind: Kind, stages: Stages) -> Binding {
+    Binding {
+        binding,
+        name,
+        kind,
+        stages,
+    }
+}
+
+const fn uniform(binding: u32, name: &'static str, stages: Stages) -> Binding {
+    bind(
+        binding,
+        name,
+        Kind::Uniform {
+            min_size: 0,
+            dynamic: false,
+        },
+        stages,
+    )
+}
+
+const fn uniform_of(binding: u32, name: &'static str, size: usize, stages: Stages) -> Binding {
+    bind(
+        binding,
+        name,
+        Kind::Uniform {
+            min_size: size as u64,
+            dynamic: false,
+        },
+        stages,
+    )
+}
+
+const fn dynamic_uniform(binding: u32, name: &'static str, size: u64, stages: Stages) -> Binding {
+    bind(
+        binding,
+        name,
+        Kind::Uniform {
+            min_size: size,
+            dynamic: true,
+        },
+        stages,
+    )
+}
+
+const fn read(binding: u32, name: &'static str, stages: Stages) -> Binding {
+    bind(binding, name, Kind::Read { min_size: 0 }, stages)
+}
+
+const fn read_of(binding: u32, name: &'static str, size: usize, stages: Stages) -> Binding {
+    bind(
+        binding,
+        name,
+        Kind::Read {
+            min_size: size as u64,
+        },
+        stages,
+    )
+}
+
+const fn write(binding: u32, name: &'static str, stages: Stages) -> Binding {
+    bind(binding, name, Kind::Write, stages)
+}
+
+const fn texture(
+    binding: u32,
+    name: &'static str,
+    sample: Sample,
+    view: View,
+    stages: Stages,
+) -> Binding {
+    bind(binding, name, Kind::Texture { sample, view }, stages)
+}
+
+const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: Stages) -> Binding {
+    bind(binding, name, Kind::Sampler(sampling), stages)
+}
+
+use Sample::{Depth, Float, Uint, Unfilterable};
+use Sampling::{Comparison, Filtering, NonFiltering};
+use View::{Cube, CubeArray, D2, D2Array};
+
+const C: Stages = Stages::COMPUTE;
+const F: Stages = Stages::FRAGMENT;
+const V: Stages = Stages::VERTEX;
+const VF: Stages = Stages::VERTEX_FRAGMENT;
+// Bytes of a pose, a slot color, and of virtual geometry's mesh, cluster
+// and page records (decision 044).
+const POSE: usize = size_of::<PoseData>();
+const COLOR: usize = size_of::<ColorData>();
+const VIRTUAL_MESH: usize = 80;
+const VIRTUAL_CLUSTER: usize = 48;
+const VIRTUAL_PAGE: usize = 16;
+
+/// A group binding nothing, standing in for groups a pipeline skips.
+pub(crate) const EMPTY: Table = Table {
+    label: "engine/empty-layout",
+    bindings: &[],
+};
+
+// The mesh shader (`gpu_data::SHADER`).
+
+/// Group 0 of mesh, sky and effect pipelines: the camera, lighting and
+/// shadow lookups (decisions 020 and 028), what glass refracts (decision
+/// 038), the environment maps and reflection probes (decision 043).
+pub(crate) const CAMERA: Table = Table {
+    label: "engine/camera-layout",
+    bindings: &[
+        // Fragments read the eye, sky rays and the jitter.
+        uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
+        uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
+        uniform_of(2, "shadow", size_of::<ShadowUniform>(), F),
+        texture(3, "near_shadows", Depth, D2Array, F),
+        texture(4, "kept_shadows", Depth, D2, F),
+        texture(5, "moving_shadows", Depth, D2, F),
+        sampler(6, "shadow_sampler", Comparison, F),
+        // Receiver-plane lookups read four texels (decision 028).
+        sampler(7, "shadow_texels", NonFiltering, F),
+        texture(8, "refraction_source", Float, D2, F),
+        sampler(9, "refraction_sampler", Filtering, F),
+        texture(10, "environment_maps", Float, CubeArray, F),
+        sampler(11, "environment_sampler", Filtering, F),
+        read(12, "probe_words", F),
+    ],
+};
+
+/// Group 1 of mesh pipelines: a material's maps and their samplers and its
+/// map parameters (decision 031); shadow casters bind it as group 2.
+pub(crate) const MATERIAL: Table = Table {
+    label: "engine/material-layout",
+    bindings: &[
+        texture(0, "base_color_texture", Float, D2, F),
+        sampler(1, "base_color_sampler", Filtering, F),
+        texture(2, "metallic_roughness_texture", Float, D2, F),
+        sampler(3, "metallic_roughness_sampler", Filtering, F),
+        texture(4, "normal_texture", Float, D2, F),
+        sampler(5, "normal_sampler", Filtering, F),
+        texture(6, "occlusion_texture", Float, D2, F),
+        sampler(7, "occlusion_sampler", Filtering, F),
+        texture(8, "emissive_texture", Float, D2, F),
+        sampler(9, "emissive_sampler", Filtering, F),
+        uniform_of(10, "material_maps", size_of::<MaterialUniform>(), F),
+    ],
+};
+
+/// Group 2 of retained mesh pipelines: slot poses, colors and the joint
+/// palettes of skinned slots (decision 036).
+pub(crate) const RETAINED_POSES: Table = Table {
+    label: "engine/retained-pose-layout",
+    bindings: &[
+        read_of(0, "poses", POSE, V),
+        read_of(1, "colors", COLOR, V),
+        read_of(3, "palette", POSE, V),
+    ],
+};
+
+/// Group 2 of temporal mesh pipelines (decision 017): the retained poses
+/// and the previous frame's poses and palettes.
+pub(crate) const TEMPORAL_POSES: Table = Table {
+    label: "engine/temporal-pose-layout",
+    bindings: &[
+        read_of(0, "poses", POSE, V),
+        read_of(1, "colors", COLOR, V),
+        read_of(2, "previous_poses", POSE, V),
+        read_of(3, "palette", POSE, V),
+        read_of(4, "previous_palette", POSE, V),
+    ],
+};
+
+/// Group 2 of virtual geometry's pipelines (decision 044): poses, colors,
+/// previous poses and the arena's meshes, clusters and pages.
+pub(crate) const VIRTUAL_POSES: Table = Table {
+    label: "engine/virtual-pose-layout",
+    bindings: &[
+        read_of(0, "poses", POSE, V),
+        read_of(1, "colors", COLOR, V),
+        read_of(2, "previous_poses", POSE, V),
+        read_of(5, "virtual_meshes", VIRTUAL_MESH, V),
+        read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, V),
+        read_of(7, "virtual_pages", VIRTUAL_PAGE, V),
+    ],
+};
+
+/// Group 2 of the visibility pass (decision 045): poses, the arena and each
+/// draw's bin through a dynamic offset.
+pub(crate) const VISIBILITY_PASS: Table = Table {
+    label: "engine/visibility-layout",
+    bindings: &[
+        read_of(0, "poses", POSE, V),
+        read_of(5, "virtual_meshes", VIRTUAL_MESH, V),
+        read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, V),
+        read_of(7, "virtual_pages", VIRTUAL_PAGE, V),
+        dynamic_uniform(8, "visibility_draw", 16, V),
+    ],
+};
+
+/// Group 2 of the visibility buffer's resolves (decision 045): the poses,
+/// arena and draw, the selected clusters, the ID target and the tile lists.
+pub(crate) const VISIBILITY_RESOLVE: Table = Table {
+    label: "engine/visibility-resolve-layout",
+    bindings: &[
+        read_of(0, "poses", POSE, F),
+        read_of(1, "colors", COLOR, F),
+        read_of(2, "previous_poses", POSE, F),
+        read_of(5, "virtual_meshes", VIRTUAL_MESH, F),
+        read_of(6, "virtual_clusters", VIRTUAL_CLUSTER, F),
+        read_of(7, "virtual_pages", VIRTUAL_PAGE, F),
+        dynamic_uniform(8, "visibility_draw", 16, VF),
+        read_of(9, "visible_clusters", 8, F),
+        texture(10, "visibility_ids", Uint, D2, VF),
+        read_of(11, "resolve_tiles", 4, V),
+    ],
+};
+
+/// Group 3 of lit pipelines: the clustered local lights (decision 023).
+pub(crate) const LIGHT_SHADING: Table = Table {
+    label: "engine/light-shading-layout",
+    bindings: &[
+        uniform(0, "clusters", F),
+        read(1, "lights", F),
+        read(2, "cluster_ranges", F),
+        read(3, "cluster_lights", F),
+    ],
+};
+
+/// Group 2 of decals (decision 039) beside the mesh poses' bindings: the
+/// joint palette holds retained frames' decal poses.
+pub(crate) const DECALS: Table = Table {
+    label: "engine/decal-layout",
+    bindings: &[
+        read(3, "palette", V),
+        read(8, "decal_records", VF),
+        texture(9, "decal_depth", Depth, D2, F),
+    ],
+};
+
+/// Group 1 of impostor cards (decision 048): the records and the four
+/// arrays of baked frames.
+pub(crate) const IMPOSTOR_DRAW: Table = Table {
+    label: "engine/impostor-layout",
+    bindings: &[
+        read_of(11, "impostor_records", size_of::<ImpostorRecord>(), VF),
+        texture(12, "impostor_albedo", Float, D2Array, F),
+        texture(13, "impostor_emissive", Float, D2Array, F),
+        texture(14, "impostor_geometry", Float, D2Array, F),
+        texture(15, "impostor_surface", Float, D2Array, F),
+        sampler(16, "impostor_sampler", Filtering, F),
+    ],
+};
+
+/// Group 2 of impostor bakes: the frame being baked.
+pub(crate) const IMPOSTOR_BAKE: Table = Table {
+    label: "engine/impostor-bake-layout",
+    bindings: &[uniform_of(
+        20,
+        "impostor_bake",
+        size_of::<ImpostorBakeUniform>(),
+        V,
+    )],
+};
+
+// GPU presentation's families (decision 014; `presentation.wgsl`).
+
+/// Parent composition, and skinned slots' palettes from the composed
+/// parents.
+pub(crate) const PRESENTATION_COMPOSE: Table = Table {
+    label: "engine/presentation-compose-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(1, "locals", C),
+        read(2, "info", C),
+        read(3, "authority", C),
+        write(4, "composed", C),
+        read(5, "parents", C),
+        read(15, "joint_nodes", C),
+        read(16, "inverse_binds", C),
+        write(17, "palette", C),
+    ],
+};
+
+/// Each depth level's parent range, group 1 of composition.
+pub(crate) const PRESENTATION_LEVEL: Table = Table {
+    label: "engine/presentation-level-layout",
+    bindings: &[uniform(0, "level", C)],
+};
+
+pub(crate) const PRESENTATION_CULL: Table = Table {
+    label: "engine/presentation-cull-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(1, "locals", C),
+        read(2, "info", C),
+        read(3, "authority", C),
+        write(4, "composed", C),
+        read(7, "batches", C),
+        write(8, "poses", C),
+        write(9, "scan", C),
+        read(14, "slot_candidates", C),
+    ],
+};
+
+/// The occlusion test, reflection probe culling and still frame count, and
+/// the previous-pose shift.
+pub(crate) const PRESENTATION_TESTS: Table = Table {
+    label: "engine/presentation-test-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(2, "info", C),
+        read(7, "batches", C),
+        write(8, "poses", C),
+        write(9, "scan", C),
+        write(13, "locals_shift", C),
+        read(14, "slot_candidates", C),
+        texture(18, "depth_pyramid", Unfilterable, D2, C),
+        write(19, "occlusion_counts", C),
+        write(23, "still_frames", C),
+    ],
+};
+
+/// Group sums, their scan, draw arguments and the scatter of visible slots:
+/// one group per compaction binds all four.
+pub(crate) const PRESENTATION_COMPACT: Table = Table {
+    label: "engine/presentation-compact-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(6, "candidates", C),
+        read(7, "batches", C),
+        write(9, "scan", C),
+        write(10, "batch_bases", C),
+        write(11, "visible_ids", C),
+        write(12, "draws", C),
+        write(19, "occlusion_counts", C),
+        write(24, "impostor_ids", C),
+    ],
+};
+
+/// Skinned slots' bounds (decision 036) from their palettes, culled.
+pub(crate) const PRESENTATION_SKIN_BOUNDS: Table = Table {
+    label: "engine/presentation-skin-bounds-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(7, "batches", C),
+        write(8, "poses", C),
+        write(9, "scan", C),
+        write(17, "palette", C),
+        read(20, "slot_colors", C),
+        read(21, "skinned", C),
+        write(22, "skin_bounds", C),
+    ],
+};
+
+// Virtual geometry's selection (decision 044; `virtual_geometry.wgsl`).
+// Passes dispatching from the dispatch arguments (15) never bind them.
+
+/// Seeding, and the dispatch arguments of each level, the work and the
+/// retest.
+pub(crate) const VIRTUAL_SEED: Table = Table {
+    label: "engine/virtual-seed-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(1, "batches", C),
+        read(2, "meshes", C),
+        read(7, "ids", C),
+        read(8, "draws", C),
+        write(9, "queue_a", C),
+        write(10, "queue_b", C),
+        write(12, "counters", C),
+        write(15, "dispatch", C),
+    ],
+};
+
+pub(crate) const VIRTUAL_TRAVERSE: Table = Table {
+    label: "engine/virtual-traverse-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(3, "nodes", C),
+        read(6, "poses", C),
+        write(9, "queue_a", C),
+        write(10, "queue_b", C),
+        write(11, "work", C),
+        write(12, "counters", C),
+    ],
+};
+
+/// Selection, and the retest of the clusters it left waiting.
+pub(crate) const VIRTUAL_SELECT: Table = Table {
+    label: "engine/virtual-select-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(4, "groups", C),
+        read(5, "clusters", C),
+        read(6, "poses", C),
+        write(11, "work", C),
+        write(12, "counters", C),
+        write(13, "visible", C),
+        read(14, "bins", C),
+        texture(19, "depth_pyramid", Unfilterable, D2, C),
+        write(20, "retest", C),
+    ],
+};
+
+pub(crate) const VIRTUAL_BIN: Table = Table {
+    label: "engine/virtual-bin-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        write(12, "counters", C),
+        read(14, "bins", C),
+        write(16, "draw_args", C),
+    ],
+};
+
+/// Depth-only drawing of shadow views' bins: the arena, the frame's poses
+/// and the shadow maps' views at dynamic offsets.
+pub(crate) const VIRTUAL_SHADOW: Table = Table {
+    label: "engine/virtual-shadow-layout",
+    bindings: &[
+        read(2, "meshes", V),
+        read(5, "clusters", V),
+        read(6, "poses", V),
+        read(17, "pages", V),
+        dynamic_uniform(18, "shadow_view", 64, V),
+    ],
+};
+
+// Shadows (decision 020; `shadows.wgsl`).
+
+/// Caster selection and counting.
+pub(crate) const SHADOW_SELECT: Table = Table {
+    label: "engine/shadow-select-layout",
+    bindings: &[
+        uniform_of(0, "cull", size_of::<ShadowCullUniform>(), C),
+        read(1, "candidates", C),
+        read(2, "batches", C),
+        read(3, "poses", C),
+        read(4, "flags", C),
+        write(5, "stillness", C),
+        write(6, "ids", C),
+        write(7, "args", C),
+        write(8, "counters", C),
+    ],
+};
+
+/// Skinned casters (decision 036) by their palette bounds: within eight
+/// storage buffers.
+pub(crate) const SHADOW_SKINNED: Table = Table {
+    label: "engine/shadow-skinned-layout",
+    bindings: &[
+        uniform_of(0, "cull", size_of::<ShadowCullUniform>(), C),
+        read(2, "batches", C),
+        read(4, "flags", C),
+        write(6, "ids", C),
+        write(7, "args", C),
+        write(8, "counters", C),
+        read(10, "skinned", C),
+        read(11, "skin_bounds", C),
+    ],
+};
+
+/// Group 0 of depth passes: each map's view matrix at a dynamic offset.
+pub(crate) const SHADOW_VIEW: Table = Table {
+    label: "engine/shadow-view-layout",
+    bindings: &[dynamic_uniform(9, "view", 64, V)],
+};
+
+/// Group 1 of retained depth passes: slot poses, and slot colors and joint
+/// palettes for masked and skinned casters.
+pub(crate) const SHADOW_POSES: Table = Table {
+    label: "engine/shadow-pose-layout",
+    bindings: &[
+        read_of(0, "slot_poses", 48, V),
+        read_of(1, "slot_colors", 16, V),
+        read_of(2, "slot_palette", 48, V),
+    ],
+};
+
+// Other passes.
+
+/// Light binning (decision 023; `lights.wgsl`).
+pub(crate) const LIGHT_BINNING: Table = Table {
+    label: "engine/light-binning-layout",
+    bindings: &[
+        uniform(0, "clusters", C),
+        read(1, "inputs", C),
+        read(2, "poses", C),
+        write(3, "lights", C),
+        write(4, "counts", C),
+        write(5, "indices", C),
+        write(6, "totals", C),
+        write(7, "ranges", C),
+        read(8, "still_frames", C),
+    ],
+};
+
+/// The screen effects (decision 021; `post.wgsl`), whose passes each read
+/// some of these. Textures the passes sample with the linear sampler
+/// filter; the others only load.
+pub(crate) const POST: Table = Table {
+    label: "engine/post-layout",
+    bindings: &[
+        uniform(0, "post", F),
+        texture(1, "depth_texture", Depth, D2, F),
+        // Scene, glow, a level's source, filtered occlusion, bloom.
+        texture(2, "scene", Float, D2, F),
+        texture(3, "glow", Float, D2, F),
+        texture(4, "source", Float, D2, F),
+        texture(5, "occlusion", Float, D2, F),
+        texture(6, "bloom", Float, D2, F),
+        sampler(7, "linear", Filtering, F),
+        texture(8, "reflections", Float, D2, F),
+        // Shafts, nearest depths, traced reflections, raw occlusion, surface.
+        texture(9, "shafts", Unfilterable, D2, F),
+        texture(10, "nearest_depth", Unfilterable, D2, F),
+        texture(11, "traced", Unfilterable, D2, F),
+        texture(12, "raw_occlusion", Unfilterable, D2, F),
+        texture(13, "surface_texture", Unfilterable, D2, F),
+        // Scene levels and a bloom level halved beside them.
+        texture(14, "scene_levels", Float, D2, F),
+        texture(15, "bloom_source", Float, D2, F),
+    ],
+};
+
+/// Group 1 of sun shafts (decision 024; `shafts.wgsl`).
+pub(crate) const SHAFTS: Table = Table {
+    label: "engine/post-shafts-layout",
+    bindings: &[
+        uniform_of(0, "post", size_of::<PostUniform>(), F),
+        texture(1, "depth_texture", Depth, D2, F),
+    ],
+};
+
+/// Temporal antialiasing's resolve (decision 017; `temporal.wgsl`).
+pub(crate) const TAA_RESOLVE: Table = Table {
+    label: "engine/taa-resolve-layout",
+    bindings: &[
+        uniform_of(0, "resolve", size_of::<ResolveUniform>(), F),
+        texture(1, "scene", Unfilterable, D2, F),
+        texture(2, "motion", Unfilterable, D2, F),
+        texture(3, "history", Float, D2, F),
+        sampler(4, "history_sampler", Filtering, F),
+        texture(5, "occlusion", Float, D2, F),
+        texture(6, "bloom", Float, D2, F),
+        uniform_of(7, "post", size_of::<PostUniform>(), F),
+        texture(8, "reflections", Float, D2, F),
+    ],
+};
+
+/// The transparent composite (decision 026; `transparent.wgsl`).
+pub(crate) const TRANSPARENT_COMPOSITE: Table = Table {
+    label: "engine/transparent-composite-layout",
+    bindings: &[
+        texture(0, "accumulated", Unfilterable, D2, F),
+        texture(1, "revealed", Unfilterable, D2, F),
+    ],
+};
+
+/// Group 1 of particles (decision 026; `particles.wgsl`).
+pub(crate) const PARTICLES: Table = Table {
+    label: "engine/particle-layout",
+    bindings: &[
+        uniform(0, "particles", VF),
+        read(1, "emitters", VF),
+        read(2, "owners", VF),
+        texture(3, "depth_texture", Depth, D2, F),
+    ],
+};
+
+/// The environment maps' sky (decision 043; `environment.wgsl`).
+pub(crate) const ENVIRONMENT_SKY: Table = Table {
+    label: "engine/environment-sky-layout",
+    bindings: &[uniform(1, "lighting", F)],
+};
+
+/// Each environment level down from the level above it.
+pub(crate) const ENVIRONMENT_DOWN: Table = Table {
+    label: "engine/environment-down-layout",
+    bindings: &[
+        texture(20, "level_source", Float, Cube, F),
+        sampler(22, "cube_sampler", Filtering, F),
+    ],
+};
+
+/// The prefilter of every level.
+pub(crate) const ENVIRONMENT_PREFILTER: Table = Table {
+    label: "engine/environment-prefilter-layout",
+    bindings: &[
+        texture(21, "radiance", Float, Cube, F),
+        sampler(22, "cube_sampler", Filtering, F),
+    ],
+};
+
+/// Texture mipmaps (`mipmaps.wgsl`).
+pub(crate) const MIPMAPS: Table = Table {
+    label: "engine/texture-mip-layout",
+    bindings: &[
+        texture(0, "source", Float, D2, F),
+        sampler(1, "source_sampler", Filtering, F),
+    ],
+};
+
+/// The depth pyramid's first level from the depth buffer (decision 040;
+/// `depth_pyramid.wgsl`).
+pub(crate) const PYRAMID_FIRST: Table = Table {
+    label: "engine/depth-pyramid-first-layout",
+    bindings: &[
+        texture(0, "source_depth", Depth, D2, C),
+        bind(2, "target_level", Kind::StorageR32Float, C),
+    ],
+};
+
+/// Each further level from the one above it.
+pub(crate) const PYRAMID_DOWN: Table = Table {
+    label: "engine/depth-pyramid-down-layout",
+    bindings: &[
+        texture(1, "source_level", Unfilterable, D2, C),
+        bind(2, "target_level", Kind::StorageR32Float, C),
+    ],
+};
+
+/// The visibility buffer's tile classification (decision 045;
+/// `visibility.wgsl`).
+pub(crate) const VISIBILITY_CLASSIFY: Table = Table {
+    label: "engine/visibility-classify-layout",
+    bindings: &[
+        uniform(0, "classify", C),
+        texture(1, "ids", Uint, D2, C),
+        write(2, "counts", C),
+        write(3, "tiles", C),
+        write(4, "draw_args", C),
+    ],
+};
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use super::*;
+    use crate::entries::{self, PassKind, Streams};
+    use crate::gpu_data::{
+        DEPTH_PYRAMID_SHADER, ENVIRONMENT_SHADER, LIGHT_SHADER, MIPMAP_SHADER, PARTICLE_SHADER,
+        POST_SHADER, PRESENTATION_SHADER, SHADER, SHADOW_SHADER, SHAFTS_SHADER, TEMPORAL_SHADER,
+        TRANSPARENT_SHADER, VIRTUAL_SHADER, VISIBILITY_SHADER,
+    };
+    use crate::render_graph::Targets;
+
+    const TARGETS: [Targets; 3] = [Targets::Canvas, Targets::Post, Targets::Temporal];
+
+    /// Pipelines over one layout: their entry points and the table bound
+    /// at each group (`None` for an empty or missing group).
+    struct Pipelines {
+        entries: Vec<&'static str>,
+        groups: Vec<Option<&'static Table>>,
+    }
+
+    fn pipelines(entries: &[&'static str], groups: &[Option<&'static Table>]) -> Pipelines {
+        Pipelines {
+            entries: entries.to_vec(),
+            groups: groups.to_vec(),
+        }
+    }
+
+    /// Every pipeline of the mesh shader, by layout.
+    fn mesh_pipelines() -> Vec<Pipelines> {
+        let mut all = Vec::new();
+        for lit in [false, true] {
+            let lights = lit.then_some(&LIGHT_SHADING);
+            // Mesh variants: camera and material, the pass's poses (an
+            // empty group where lights follow) and the lights.
+            for affine in [false, true] {
+                for targets in TARGETS {
+                    let kind = PassKind::opaque(targets, lit, affine);
+                    let poses = match kind.slots() {
+                        entries::Slots::Temporal => Some(&TEMPORAL_POSES),
+                        entries::Slots::Retained => Some(&RETAINED_POSES),
+                        entries::Slots::Instances => None,
+                    };
+                    all.push(mesh_variant(kind, poses, lights));
+                }
+                let kind = PassKind::transparent(lit, affine);
+                let poses = affine.then_some(&RETAINED_POSES);
+                all.push(mesh_variant(kind, poses, lights));
+            }
+            all.push(mesh_variant(
+                PassKind::probe(lit),
+                Some(&RETAINED_POSES),
+                lights,
+            ));
+            for targets in TARGETS {
+                let kind = PassKind::opaque(targets, lit, true);
+                // Virtual geometry's clusters (decision 044) shade as the
+                // opaque passes' fragments.
+                all.push(pipelines(
+                    &[entries::virtual_vertex(targets), kind.fragment_entry(false)],
+                    &[Some(&CAMERA), Some(&MATERIAL), Some(&VIRTUAL_POSES), lights],
+                ));
+                all.push(pipelines(
+                    &[
+                        entries::RESOLVE_VERTEX,
+                        entries::resolve_fragment(targets, lit),
+                    ],
+                    &[
+                        Some(&CAMERA),
+                        Some(&MATERIAL),
+                        Some(&VISIBILITY_RESOLVE),
+                        lights,
+                    ],
+                ));
+                let poses = if targets == Targets::Temporal {
+                    &TEMPORAL_POSES
+                } else {
+                    &RETAINED_POSES
+                };
+                all.push(pipelines(
+                    &[
+                        entries::impostor_vertex(targets),
+                        entries::impostor_fragment(targets, lit),
+                    ],
+                    &[Some(&CAMERA), Some(&IMPOSTOR_DRAW), Some(poses), lights],
+                ));
+            }
+            all.push(pipelines(
+                &[entries::DECAL_VERTEX, entries::decal_fragment(lit)],
+                &[Some(&CAMERA), Some(&MATERIAL), Some(&DECALS), lights],
+            ));
+        }
+        let mut sky = vec![entries::SKY_VERTEX, entries::sky_fragment(None)];
+        sky.extend(TARGETS.map(|targets| entries::sky_fragment(Some(targets))));
+        all.push(pipelines(&sky, &[Some(&CAMERA)]));
+        all.push(pipelines(
+            &[entries::VISIBILITY_VERTEX, entries::VISIBILITY_FRAGMENT],
+            &[Some(&CAMERA), None, Some(&VISIBILITY_PASS)],
+        ));
+        for extended in [false, true] {
+            let (vertex, fragment) = entries::impostor_bake(extended);
+            all.push(pipelines(
+                &[vertex, fragment],
+                &[None, Some(&MATERIAL), Some(&IMPOSTOR_BAKE)],
+            ));
+        }
+        all
+    }
+
+    /// Mesh variants of `kind` for every vertex stream.
+    fn mesh_variant(
+        kind: PassKind,
+        poses: Option<&'static Table>,
+        lights: Option<&'static Table>,
+    ) -> Pipelines {
+        let mut entries = vec![kind.fragment_entry(false), kind.fragment_entry(true)];
+        entries
+            .extend([Streams::Basic, Streams::Extended].map(|streams| kind.vertex_entry(streams)));
+        if kind.affine {
+            entries.push(kind.vertex_entry(Streams::Skinned));
+        }
+        pipelines(&entries, &[Some(&CAMERA), Some(&MATERIAL), poses, lights])
+    }
+
+    /// Every shader with its pipelines.
+    fn shaders() -> Vec<(&'static str, &'static str, Vec<Pipelines>)> {
+        let compose = [Some(&PRESENTATION_COMPOSE), Some(&PRESENTATION_LEVEL)];
+        vec![
+            ("meshes", SHADER, mesh_pipelines()),
+            (
+                "presentation",
+                PRESENTATION_SHADER,
+                vec![
+                    pipelines(&["compose_parents", "skin_palette"], &compose),
+                    pipelines(&["cull"], &[Some(&PRESENTATION_CULL)]),
+                    pipelines(
+                        &[
+                            "shift_previous",
+                            "occlusion_test",
+                            "count_still",
+                            "probe_cull",
+                        ],
+                        &[Some(&PRESENTATION_TESTS)],
+                    ),
+                    pipelines(
+                        &["sum_groups", "scan_groups", "batch_args", "scatter"],
+                        &[Some(&PRESENTATION_COMPACT)],
+                    ),
+                    pipelines(&["skin_bounds_pass"], &[Some(&PRESENTATION_SKIN_BOUNDS)]),
+                ],
+            ),
+            (
+                "virtual geometry",
+                VIRTUAL_SHADER,
+                vec![
+                    pipelines(
+                        &[
+                            "seed",
+                            "level_args_even",
+                            "level_args_odd",
+                            "work_args",
+                            "retest_args",
+                        ],
+                        &[Some(&VIRTUAL_SEED)],
+                    ),
+                    pipelines(
+                        &["traverse_even", "traverse_odd"],
+                        &[Some(&VIRTUAL_TRAVERSE)],
+                    ),
+                    pipelines(
+                        &["select_clusters", "retest_clusters"],
+                        &[Some(&VIRTUAL_SELECT)],
+                    ),
+                    pipelines(&["bin_args"], &[Some(&VIRTUAL_BIN)]),
+                    pipelines(&["vs_shadow"], &[Some(&VIRTUAL_SHADOW)]),
+                ],
+            ),
+            (
+                "shadows",
+                SHADOW_SHADER,
+                vec![
+                    pipelines(
+                        &["select_casters", "count_casters"],
+                        &[Some(&SHADOW_SELECT)],
+                    ),
+                    pipelines(&["select_skinned"], &[Some(&SHADOW_SKINNED)]),
+                    pipelines(
+                        &[
+                            "vs_affine",
+                            "vs_affine_masked",
+                            "vs_affine_skinned",
+                            "vs_affine_masked_skinned",
+                            "vs_clear",
+                            "fs_masked",
+                        ],
+                        &[Some(&SHADOW_VIEW), Some(&SHADOW_POSES), Some(&MATERIAL)],
+                    ),
+                    pipelines(
+                        &["vs_full", "vs_full_masked"],
+                        &[Some(&SHADOW_VIEW), None, Some(&MATERIAL)],
+                    ),
+                ],
+            ),
+            (
+                "lights",
+                LIGHT_SHADER,
+                vec![pipelines(
+                    &["count_lights", "scan_clusters", "bin_lights"],
+                    &[Some(&LIGHT_BINNING)],
+                )],
+            ),
+            (
+                "post",
+                POST_SHADER,
+                vec![pipelines(
+                    &[
+                        "vs_fullscreen",
+                        "fs_occlusion",
+                        "fs_effects_filter",
+                        "fs_reflections",
+                        "fs_reflections_filter",
+                        "fs_bloom_first",
+                        "fs_bloom_down",
+                        "fs_bloom_up",
+                        "fs_levels_first",
+                        "fs_levels_down",
+                        "fs_composite",
+                    ],
+                    &[Some(&POST)],
+                )],
+            ),
+            (
+                "shafts",
+                SHAFTS_SHADER,
+                vec![pipelines(
+                    &["vs_fullscreen", "fs_shafts"],
+                    &[Some(&CAMERA), Some(&SHAFTS)],
+                )],
+            ),
+            (
+                "temporal",
+                TEMPORAL_SHADER,
+                vec![pipelines(
+                    &["vs_fullscreen", "fs_resolve"],
+                    &[Some(&TAA_RESOLVE)],
+                )],
+            ),
+            (
+                "transparent",
+                TRANSPARENT_SHADER,
+                vec![pipelines(
+                    &["vs_fullscreen", "fs_composite"],
+                    &[Some(&TRANSPARENT_COMPOSITE)],
+                )],
+            ),
+            (
+                "particles",
+                PARTICLE_SHADER,
+                vec![pipelines(
+                    &[
+                        "vs_particle",
+                        "fs_particle",
+                        "fs_particle_add",
+                        "fs_particle_add_post",
+                    ],
+                    &[Some(&CAMERA), Some(&PARTICLES)],
+                )],
+            ),
+            (
+                "environment",
+                ENVIRONMENT_SHADER,
+                vec![
+                    pipelines(
+                        &["vs_environment", "fs_environment_sky"],
+                        &[Some(&ENVIRONMENT_SKY)],
+                    ),
+                    pipelines(
+                        &["vs_environment", "fs_environment_down"],
+                        &[Some(&ENVIRONMENT_DOWN)],
+                    ),
+                    pipelines(
+                        &["vs_environment", "fs_environment_prefilter"],
+                        &[Some(&ENVIRONMENT_PREFILTER)],
+                    ),
+                ],
+            ),
+            (
+                "mipmaps",
+                MIPMAP_SHADER,
+                vec![pipelines(&["vs_mip", "fs_mip"], &[Some(&MIPMAPS)])],
+            ),
+            (
+                "depth pyramid",
+                DEPTH_PYRAMID_SHADER,
+                vec![
+                    pipelines(
+                        &["pyramid_first", "pyramid_first_nearest"],
+                        &[Some(&PYRAMID_FIRST)],
+                    ),
+                    pipelines(
+                        &["pyramid_down", "pyramid_down_nearest"],
+                        &[Some(&PYRAMID_DOWN)],
+                    ),
+                ],
+            ),
+            (
+                "visibility",
+                VISIBILITY_SHADER,
+                vec![pipelines(
+                    &["classify_tiles", "resolve_args"],
+                    &[Some(&VISIBILITY_CLASSIFY)],
+                )],
+            ),
+        ]
+    }
+
+    /// Whether `kind` describes WGSL type `ty` in address space `space`.
+    fn matches(
+        module: &naga::Module,
+        kind: Kind,
+        space: naga::AddressSpace,
+        ty: &naga::Type,
+    ) -> bool {
+        use naga::{AddressSpace, ImageClass, ImageDimension, ScalarKind, TypeInner};
+        match (kind, space, &ty.inner) {
+            // A layout's minimum covers what each shader reads of it.
+            (Kind::Uniform { min_size, .. }, AddressSpace::Uniform, inner) => {
+                min_size == 0 || u64::from(inner.size(module.to_ctx())) <= min_size
+            }
+            (Kind::Read { .. }, AddressSpace::Storage { access }, _) => {
+                !access.contains(naga::StorageAccess::STORE)
+            }
+            (Kind::Write, AddressSpace::Storage { access }, _) => {
+                access.contains(naga::StorageAccess::STORE)
+            }
+            (
+                Kind::Texture { sample, view },
+                AddressSpace::Handle,
+                TypeInner::Image {
+                    dim,
+                    arrayed,
+                    class,
+                },
+            ) => {
+                let view_matches = matches!(
+                    (view, dim, arrayed),
+                    (View::D2, ImageDimension::D2, false)
+                        | (View::D2Array, ImageDimension::D2, true)
+                        | (View::Cube, ImageDimension::Cube, false)
+                        | (View::CubeArray, ImageDimension::Cube, true)
+                );
+                let sample_matches = match (sample, class) {
+                    (Sample::Float | Sample::Unfilterable, ImageClass::Sampled { kind, multi }) => {
+                        *kind == ScalarKind::Float && !multi
+                    }
+                    (Sample::Uint, ImageClass::Sampled { kind, multi }) => {
+                        *kind == ScalarKind::Uint && !multi
+                    }
+                    (Sample::Depth, ImageClass::Depth { multi }) => !multi,
+                    _ => false,
+                };
+                view_matches && sample_matches
+            }
+            (
+                Kind::StorageR32Float,
+                AddressSpace::Handle,
+                TypeInner::Image {
+                    dim: ImageDimension::D2,
+                    arrayed: false,
+                    class: ImageClass::Storage { format, .. },
+                },
+            ) => *format == naga::StorageFormat::R32Float,
+            (Kind::Sampler(sampling), AddressSpace::Handle, TypeInner::Sampler { comparison }) => {
+                *comparison == (sampling == Sampling::Comparison)
+            }
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn tables_bind_what_every_entry_point_reads() {
+        let mut errors = Vec::new();
+        for (shader, source, pipelines) in shaders() {
+            let module = naga::front::wgsl::parse_str(source).expect("WGSL syntax");
+            let info = naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::all(),
+            )
+            .validate(&module)
+            .expect("valid WGSL");
+            let entry_points: BTreeMap<&str, usize> = module
+                .entry_points
+                .iter()
+                .enumerate()
+                .map(|(index, entry)| (entry.name.as_str(), index))
+                .collect();
+            let mut covered = BTreeSet::new();
+            for pipelines in &pipelines {
+                for entry in &pipelines.entries {
+                    let Some(&index) = entry_points.get(entry) else {
+                        errors.push(format!("{shader}: no entry point {entry}"));
+                        continue;
+                    };
+                    covered.insert(*entry);
+                    let stage = module.entry_points[index].stage;
+                    let usage = info.get_entry_point(index);
+                    for (handle, global) in module.global_variables.iter() {
+                        let Some(resource) = &global.binding else {
+                            continue;
+                        };
+                        if usage[handle].is_empty() {
+                            continue;
+                        }
+                        let name = global.name.as_deref().unwrap_or("?");
+                        let place = format!(
+                            "{shader} {entry}: @group({}) @binding({}) {name}",
+                            resource.group, resource.binding
+                        );
+                        let Some(Some(table)) = pipelines.groups.get(resource.group as usize)
+                        else {
+                            errors.push(format!("{place}: the layout binds no group there"));
+                            continue;
+                        };
+                        let Some(binding) = table
+                            .bindings
+                            .iter()
+                            .find(|binding| binding.binding == resource.binding)
+                        else {
+                            errors.push(format!("{place}: {} lacks the binding", table.label));
+                            continue;
+                        };
+                        if binding.name != name {
+                            errors.push(format!(
+                                "{place}: {} names it {}",
+                                table.label, binding.name
+                            ));
+                        }
+                        if !matches(
+                            &module,
+                            binding.kind,
+                            global.space,
+                            &module.types[global.ty],
+                        ) {
+                            errors.push(format!(
+                                "{place}: {} declares {:?}",
+                                table.label, binding.kind
+                            ));
+                        }
+                        let visible = match stage {
+                            naga::ShaderStage::Vertex => binding.stages.vertex(),
+                            naga::ShaderStage::Fragment => binding.stages.fragment(),
+                            _ => binding.stages.compute(),
+                        };
+                        if !visible {
+                            errors
+                                .push(format!("{place}: {} hides it from {stage:?}", table.label));
+                        }
+                    }
+                }
+            }
+            for entry in entry_points.keys() {
+                if !covered.contains(entry) {
+                    errors.push(format!(
+                        "{shader}: no pipeline registers entry point {entry}"
+                    ));
+                }
+            }
+        }
+        assert!(errors.is_empty(), "{}", errors.join("\n"));
+    }
+
+    #[test]
+    fn tables_name_each_binding_once() {
+        let tables = [
+            &EMPTY,
+            &CAMERA,
+            &MATERIAL,
+            &RETAINED_POSES,
+            &TEMPORAL_POSES,
+            &VIRTUAL_POSES,
+            &VISIBILITY_PASS,
+            &VISIBILITY_RESOLVE,
+            &LIGHT_SHADING,
+            &DECALS,
+            &IMPOSTOR_DRAW,
+            &IMPOSTOR_BAKE,
+            &PRESENTATION_COMPOSE,
+            &PRESENTATION_LEVEL,
+            &PRESENTATION_CULL,
+            &PRESENTATION_TESTS,
+            &PRESENTATION_COMPACT,
+            &PRESENTATION_SKIN_BOUNDS,
+            &VIRTUAL_SEED,
+            &VIRTUAL_TRAVERSE,
+            &VIRTUAL_SELECT,
+            &VIRTUAL_BIN,
+            &VIRTUAL_SHADOW,
+            &SHADOW_SELECT,
+            &SHADOW_SKINNED,
+            &SHADOW_VIEW,
+            &SHADOW_POSES,
+            &LIGHT_BINNING,
+            &POST,
+            &SHAFTS,
+            &TAA_RESOLVE,
+            &TRANSPARENT_COMPOSITE,
+            &PARTICLES,
+            &ENVIRONMENT_SKY,
+            &ENVIRONMENT_DOWN,
+            &ENVIRONMENT_PREFILTER,
+            &MIPMAPS,
+            &PYRAMID_FIRST,
+            &PYRAMID_DOWN,
+            &VISIBILITY_CLASSIFY,
+        ];
+        for table in tables {
+            let numbers: BTreeSet<u32> = table.bindings.iter().map(|b| b.binding).collect();
+            let names: BTreeSet<&str> = table.bindings.iter().map(|b| b.name).collect();
+            assert_eq!(numbers.len(), table.bindings.len(), "{}", table.label);
+            assert_eq!(names.len(), table.bindings.len(), "{}", table.label);
+            // Groups bind resources by these names.
+            for binding in table.bindings {
+                assert_eq!(table.binding(binding.name).binding, binding.binding);
+            }
+        }
+    }
+}

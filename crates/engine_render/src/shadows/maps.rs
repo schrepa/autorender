@@ -5,7 +5,7 @@
 
 use crate::gpu_data::ShadowUniform;
 
-use super::entry;
+use crate::pipelines::{sampler, view};
 
 pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
@@ -170,10 +170,10 @@ impl ShadowMaps {
         self.textures.as_ref()
     }
 
-    /// Bindings 2 to 7 of the main passes' first group: the lookup uniform,
-    /// the near cascades, the kept and moving maps, the comparison sampler
-    /// and the texel sampler of receiver planes.
-    pub(super) fn entries(&self) -> [wgpu::BindGroupEntry<'_>; 6] {
+    /// Bindings of the main passes' first group (`bindings::CAMERA`): the
+    /// lookup uniform, the near cascades, the kept and moving maps, the
+    /// comparison sampler and the texel sampler of receiver planes.
+    pub(super) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 6] {
         let (near, kept, moving) = match &self.textures {
             Some(maps) => (&maps.near_array, &maps.kept, &maps.moving),
             None => (
@@ -183,27 +183,12 @@ impl ShadowMaps {
             ),
         };
         [
-            entry(2, &self.uniform),
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::TextureView(near),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::TextureView(kept),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: wgpu::BindingResource::TextureView(moving),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: wgpu::BindingResource::Sampler(&self.sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: wgpu::BindingResource::Sampler(&self.texel_sampler),
-            },
+            ("shadow", self.uniform.as_entire_binding()),
+            ("near_shadows", view(near)),
+            ("kept_shadows", view(kept)),
+            ("moving_shadows", view(moving)),
+            ("shadow_sampler", sampler(&self.sampler)),
+            ("shadow_texels", sampler(&self.texel_sampler)),
         ]
     }
 
