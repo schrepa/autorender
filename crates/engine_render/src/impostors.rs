@@ -718,9 +718,7 @@ mod gpu {
     ) -> wgpu::RenderPipeline {
         let constants = variant.constants();
         let extended = variant.extended();
-        let suffix = if extended { "_extended" } else { "" };
-        let vertex = format!("vs_impostor_bake{suffix}");
-        let fragment = format!("fs_impostor_bake{suffix}");
+        let (vertex, fragment) = crate::entries::impostor_bake(extended);
         let mut buffers = vec![crate::browser::vertex_layout()];
         if extended {
             buffers.push(crate::browser::extra_layout());
@@ -733,7 +731,7 @@ mod gpu {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
-                    entry_point: Some(&vertex),
+                    entry_point: Some(vertex),
                     compilation_options: Default::default(),
                     buffers: &buffers,
                 },
@@ -756,7 +754,7 @@ mod gpu {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
-                    entry_point: Some(&fragment),
+                    entry_point: Some(fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()
@@ -781,16 +779,8 @@ mod gpu {
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        let vertex = if targets == Targets::Temporal {
-            "vs_impostor_temporal"
-        } else {
-            "vs_impostor"
-        };
-        let fragment = format!(
-            "fs_impostor{}{}",
-            targets.entry_suffix(),
-            if lit { "_lit" } else { "" }
-        );
+        let vertex = crate::entries::impostor_vertex(targets);
+        let fragment = crate::entries::impostor_fragment(targets, lit);
         let color_targets = targets.color_targets(canvas);
         let constants = targets.constants(canvas);
         crate::pipelines::render(
@@ -824,7 +814,7 @@ mod gpu {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
-                    entry_point: Some(&fragment),
+                    entry_point: Some(fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()

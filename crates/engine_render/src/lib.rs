@@ -163,6 +163,8 @@ mod decals;
 #[cfg(target_arch = "wasm32")]
 mod depth_pyramid;
 #[cfg(any(target_arch = "wasm32", test))]
+mod entries;
+#[cfg(any(target_arch = "wasm32", test))]
 mod gpu_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
 mod impostors;

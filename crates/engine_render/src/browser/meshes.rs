@@ -3,6 +3,7 @@
 //! and the opaque drawing order (decision 046).
 
 use super::*;
+use crate::entries::{self, Slots};
 
 /// Mesh pipelines (decision 049): their layouts by `mesh_layout_index`,
 /// created with the first variant needing each (temporal frames' come with
@@ -174,12 +175,12 @@ impl Renderer {
         let canvas = self.display.format();
         let (fragment, color_targets, constants) = match targets {
             SkyTargets::Frame(targets) => (
-                format!("fs_sky{}", targets.entry_suffix()),
+                entries::sky_fragment(Some(targets)),
                 targets.color_targets(canvas),
                 targets.constants(canvas),
             ),
             SkyTargets::Probe => (
-                "fs_probe_sky".to_owned(),
+                entries::sky_fragment(None),
                 vec![Some(ENVIRONMENT_FORMAT.into())],
                 Vec::new(),
             ),
@@ -188,7 +189,7 @@ impl Renderer {
             &self.device,
             &self.mesh_shader,
             &self.camera.layout,
-            &fragment,
+            fragment,
             &color_targets,
             &constants,
         ));
@@ -236,45 +237,28 @@ impl Renderer {
     /// The pipeline of `kind` shading materials of `variant`.
     pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
         let canvas = self.display.format();
-        let (layout, slots) = if kind.targets() == Some(Targets::Temporal) {
+        let layout = if kind.slots() == Slots::Temporal {
             let temporal = self.temporal.as_ref().expect("temporal frames create it");
-            (temporal.mesh_layout(kind.lit), VertexSlots::Temporal)
+            temporal.mesh_layout(kind.lit)
         } else {
-            let layout = self.mesh_pipelines.layouts[mesh_layout_index(kind.lit, kind.affine)]
+            self.mesh_pipelines.layouts[mesh_layout_index(kind.lit, kind.affine)]
                 .as_ref()
-                .expect("created with the variant");
-            let slots = if kind.affine {
-                VertexSlots::Retained
-            } else {
-                VertexSlots::Instances
-            };
-            (layout, slots)
+                .expect("created with the variant")
         };
-        let lit = if kind.lit { "_lit" } else { "" };
         let fragment = match kind.pass {
             MeshPass::Opaque(targets) => MeshFragment {
-                fragment: format!(
-                    "fs_{}{lit}",
-                    match targets {
-                        Targets::Canvas => "main",
-                        Targets::Post => "post",
-                        Targets::Temporal => "temporal",
-                    }
-                ),
                 targets: targets.color_targets(canvas),
                 constants: targets.constants(canvas),
                 depth_write: true,
                 mirrored: false,
             },
             MeshPass::Transparent => MeshFragment {
-                fragment: format!("fs_transparent{lit}"),
                 targets: accumulation_targets().to_vec(),
                 constants: Vec::new(),
                 depth_write: false,
                 mirrored: false,
             },
             MeshPass::Probe => MeshFragment {
-                fragment: format!("fs_probe{lit}"),
                 targets: vec![Some(ENVIRONMENT_FORMAT.into())],
                 constants: Vec::new(),
                 depth_write: true,
@@ -285,7 +269,7 @@ impl Renderer {
             &self.device,
             &self.mesh_shader,
             layout,
-            slots,
+            kind,
             &fragment,
             variant,
         )
@@ -350,7 +334,7 @@ fn sky_pipeline(
             label: "engine/sky",
             layout: &layout,
             module: shader,
-            vertex: "vs_sky",
+            vertex: entries::SKY_VERTEX,
             fragment,
             constants,
             targets,
@@ -366,21 +350,9 @@ fn sky_pipeline(
     )
 }
 
-/// Where a mesh pipeline's instances come from: public instance records,
-/// retained slots, or retained slots of temporal frames, which also pose
-/// them as the previous frame did (decision 017).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum VertexSlots {
-    Instances,
-    Retained,
-    Temporal,
-}
-
-/// Fragment stage of a mesh pipeline: entry point, color targets and
-/// pipeline constants, and whether it writes depth (transparent surfaces do
-/// not).
+/// Fragment stage of a mesh pipeline: color targets and pipeline
+/// constants, and whether it writes depth (transparent surfaces do not).
 struct MeshFragment {
-    fragment: String,
     targets: Vec<Option<wgpu::ColorTargetState>>,
     constants: Vec<(&'static str, f64)>,
     depth_write: bool,
@@ -389,13 +361,13 @@ struct MeshFragment {
     mirrored: bool,
 }
 
-/// A mesh pipeline over `layout` drawing `slots`' instances, shading
-/// materials of `variant` (decision 031).
+/// A mesh pipeline of `kind` over `layout`, shading materials of `variant`
+/// (decision 031).
 fn mesh_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
-    slots: VertexSlots,
+    kind: PassKind,
     fragment: &MeshFragment,
     variant: Variant,
 ) -> wgpu::RenderPipeline {
@@ -407,23 +379,18 @@ fn mesh_pipeline(
         .collect();
     // Extended meshes (decision 034) read a third vertex buffer through
     // their own entry points; skinned slots' meshes (decision 036) a fourth.
-    let affine = slots != VertexSlots::Instances;
+    let affine = kind.slots() != Slots::Instances;
     let extended = variant.extended();
     let skinned = affine && variant.skinned();
-    let vertex = match slots {
-        VertexSlots::Instances => "vs_main",
-        VertexSlots::Retained => "vs_affine",
-        VertexSlots::Temporal => "vs_affine_temporal",
-    };
-    let vertex_entry = if skinned {
-        format!("{vertex}_skinned")
+    let streams = if skinned {
+        Streams::Skinned
     } else if extended {
-        format!("{vertex}_extended")
+        Streams::Extended
     } else {
-        vertex.to_owned()
+        Streams::Basic
     };
-    let suffix = if extended { "_extended" } else { "" };
-    let fragment_entry = format!("{}{suffix}", fragment.fragment);
+    let vertex_entry = kind.vertex_entry(streams);
+    let fragment_entry = kind.fragment_entry(extended);
     let full_layouts = [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -435,12 +402,10 @@ fn mesh_pipeline(
     ];
     let [mesh, slot_ids] = affine_layouts();
     let affine_layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
-    let streams = if skinned {
-        4
-    } else if extended {
-        3
-    } else {
-        2
+    let buffers = match streams {
+        Streams::Skinned => 4,
+        Streams::Extended => 3,
+        Streams::Basic => 2,
     };
     // Entry points and variant bits name the pipeline in captures.
     let label = format!(
@@ -454,12 +419,12 @@ fn mesh_pipeline(
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: shader,
-                entry_point: Some(&vertex_entry),
+                entry_point: Some(vertex_entry),
                 compilation_options: Default::default(),
                 buffers: if affine {
-                    &affine_layouts[..streams]
+                    &affine_layouts[..buffers]
                 } else {
-                    &full_layouts[..streams]
+                    &full_layouts[..buffers]
                 },
             },
             primitive: wgpu::PrimitiveState {
@@ -482,7 +447,7 @@ fn mesh_pipeline(
             multisample: wgpu::MultisampleState::default(),
             fragment: Some(wgpu::FragmentState {
                 module: shader,
-                entry_point: Some(&fragment_entry),
+                entry_point: Some(fragment_entry),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants,
                     ..Default::default()
