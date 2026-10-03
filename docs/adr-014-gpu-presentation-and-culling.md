@@ -129,7 +129,7 @@ pass; see `docs/profiling.md`):
    candidates sit far apart. At 250,000 objects in eight meshes and textures
    this halved the stage (2.19-2.41 ms to 1.18-1.23 ms, Firefox, Intel Xe-LPG),
    about the cost of a single draw group.
-   `sum_groups` then reduces the flags of every 256 candidates in draw-group
+   `sum_groups` then reduces the flags of every 64 candidates in draw-group
    order, counting each level of detail in its own lane.
 3. `scan_groups` turns group sums into exclusive offsets and totals.
 4. `batch_args` writes one indirect draw per draw group and level, applying the

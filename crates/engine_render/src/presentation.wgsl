@@ -217,7 +217,11 @@ const SUBPIXEL_MARGIN: f32 = 0.0625;
 // order as without occlusion culling.
 const HIDDEN_SCALE: f32 = 0.9999847412109375;
 const LINEAR_ROTATION_DOT: f32 = 0.9995;
-const GROUP: u32 = 256u;
+// Candidates per workgroup of the compaction passes. Their workgroup arrays
+// are zero-initialized before each workgroup runs; Firefox's translation
+// does that as one whole-array store whose compile time grows with the
+// array, about 300 ms per pass at 256 against 70 ms at 64 (decision 049).
+const GROUP: u32 = 64u;
 // Exact hex literals: browsers reject decimal spellings above f32::MAX.
 // 32 * f32::EPSILON, as the CPU support test; covers model/view rounding.
 const ROUNDING_MARGIN: f32 = 0x1p-18f;
@@ -230,9 +234,9 @@ const MIN_LINEAR_SCALE: f32 = 0x1p-10f;
 const COEFFICIENT_LIMIT: f32 = 0x1p+20f;
 const COMMON_DETERMINANT_MARGIN: f32 = 0x1p-9f;
 
-var<workgroup> shared_values: array<u32, 256>;
+var<workgroup> shared_values: array<u32, GROUP>;
 // Per-level counts of the compaction passes (decision 047).
-var<workgroup> shared_counts: array<vec4<u32>, 256>;
+var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
@@ -850,7 +854,7 @@ fn gathered(flags: u32) -> vec4<u32> {
     return hot;
 }
 
-// Per-level sums after the candidates' flags: one vec4 per group of 256,
+// Per-level sums after the candidates' flags: one vec4 per group of GROUP,
 // then the totals, then the total over levels.
 fn load_sums(index: u32) -> vec4<u32> {
     let at = frame.candidates + 4u * index;
@@ -865,9 +869,9 @@ fn store_sums(index: u32, value: vec4<u32>) {
     scan[at + 3u] = value.w;
 }
 
-// Visible count of every group of 256 candidates in draw-group order, per
+// Visible count of every group of GROUP candidates in draw-group order, per
 // level of detail.
-@compute @workgroup_size(256)
+@compute @workgroup_size(GROUP)
 fn sum_groups(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
@@ -903,9 +907,9 @@ fn sum_groups(
 }
 
 // Exclusive prefix of the group sums per level and the totals: one workgroup
-// scans 512 groups per chunk and carries the running sums across chunks.
-// The total over levels follows the per-level totals.
-@compute @workgroup_size(256)
+// scans 2 * GROUP groups per chunk and carries the running sums across
+// chunks. The total over levels follows the per-level totals.
+@compute @workgroup_size(GROUP)
 fn scan_groups(@builtin(local_invocation_index) lane: u32) {
     var carry = vec4<u32>(0u);
     for (var chunk = 0u; chunk < frame.groups; chunk += 2u * GROUP) {
@@ -1020,7 +1024,7 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // Visible slots keep candidate order within each group's region of their
 // level's plane.
-@compute @workgroup_size(256)
+@compute @workgroup_size(GROUP)
 fn scatter(
     @builtin(global_invocation_id) id: vec3<u32>,
     @builtin(local_invocation_index) lane: u32,
