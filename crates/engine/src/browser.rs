@@ -1,6 +1,7 @@
 //! Coarse frame boundary between the TypeScript host and Rust engine.
 use engine_core::{Engine, FrameReport, InputState, PresentationMode};
 use engine_render::Renderer;
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -119,13 +120,17 @@ pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
     engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
 }
 
-/// CPU observations from the last submitted frame. Render time is not GPU time.
-#[derive(Clone, Copy, Debug, Default)]
+/// CPU observations from the last submitted frame and the renderer's report
+/// of it. Render time is not GPU time.
+///
+/// Hosts and agents read it as the flat JSON object [`BrowserApp::stats_json`]
+/// returns: these fields and the renderer's [`engine_render::RenderStats`],
+/// under their own names.
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct FrameStats {
     pub simulation_ms: f64,
     pub extraction_ms: f64,
     pub render_ms: f64,
-    pub instances: u32,
     pub invalid_transforms: u32,
     pub render_candidates: u32,
     pub visible_instances: u32,
@@ -133,326 +138,14 @@ pub struct FrameStats {
     pub dropped_instances: u32,
     pub missing_assets: u32,
     pub culling_enabled: bool,
-    pub draw_calls: u32,
-    pub upload_bytes: u64,
     pub fixed_steps: u32,
     /// Total simulation time discarded by the fixed-step budget in this session.
     pub dropped_seconds: f64,
-    pub resident_meshes: u32,
-    pub mesh_upload_bytes: u64,
-    pub resident_mesh_bytes: u64,
-    pub resident_textures: u32,
-    pub texture_upload_bytes: u64,
-    pub resident_texture_bytes: u64,
-    /// Sun shadow work (decision 020); `None` when shadows are off.
-    pub shadows: Option<engine_render::ShadowStats>,
-    /// Screen effects applied (decision 021).
-    pub ambient_occlusion: bool,
-    pub bloom: bool,
-    /// Local lights (decision 023); `None` when the frame shaded none.
-    pub lights: Option<engine_render::LightStats>,
-    /// Sun shafts (decision 024) and reflections (decision 025) applied.
-    pub sun_shafts: bool,
-    pub reflections: bool,
-    /// Glass refracted the opaque scene (decision 038).
-    pub refraction: bool,
-    /// Whether the visibility buffer resolved the camera's virtual geometry
-    /// (decision 045).
-    pub visibility_buffer: bool,
-    /// Transparent draws, particles drawn and particles a budget or the
-    /// GPU's bindings left out (decision 026).
-    pub transparent_draws: u32,
-    pub particles: u32,
-    pub dropped_particles: u32,
-    /// Decals drawn and decals a budget or the GPU's binding left out
-    /// (decision 039).
-    pub decals: u32,
-    pub dropped_decals: u32,
-    /// Impostors baked, and draw groups a budget or the GPU's texture array
-    /// layers left drawing their meshes (decision 048).
-    pub impostors: u32,
-    pub dropped_impostors: u32,
-    /// Reflection probes surfaces could reflect, cube faces captured, and
-    /// probes a budget or the GPU's texture array layers left out (decision
-    /// 043).
-    pub reflection_probes: u32,
-    pub reflection_probe_faces: u32,
-    pub dropped_reflection_probes: u32,
-    /// Pipelines the renderer has created, and those the last frame created
-    /// (decision 049): 0 once everything the scene draws is compiled.
-    pub pipelines: u32,
-    pub pipelines_created: u32,
     /// Whether the GPU may still be compiling pipelines earlier frames
-    /// created, read when the stats are.
+    /// created, read when the stats are (decision 049).
     pub pipelines_compiling: bool,
-    /// Clusters and triangles virtual geometry drew for the camera and into
-    /// shadow maps, the camera's clusters occlusion culling left undrawn,
-    /// and selections dropped while its storage grew (decision 044), read
-    /// back a few frames late.
-    pub virtual_clusters: u32,
-    pub virtual_triangles: u32,
-    pub virtual_shadow_clusters: u32,
-    pub virtual_shadow_triangles: u32,
-    pub virtual_occluded_clusters: u32,
-    pub dropped_virtual: u32,
-    /// Streamed pages resident, still loading, wanted and lacking in the
-    /// last read-back frame, and those of them (with arrivals since) that
-    /// found no room (decision 044).
-    pub virtual_resident_pages: u32,
-    pub virtual_loading_pages: u32,
-    pub virtual_missing_pages: u32,
-    pub dropped_virtual_pages: u32,
-    /// Visible instances occlusion culling left undrawn (decision 040), read
-    /// back a few frames late; `None` without occlusion culling.
-    pub occluded_instances: Option<u32>,
-    /// Visible instances left undrawn because their bounds cover no pixel
-    /// center (decision 041), read back a few frames late; `None` without
-    /// sub-pixel culling.
-    pub subpixel_instances: Option<u32>,
-    /// Instances drawn as their mesh, its two simplifications and impostors
-    /// (decision 047), read back a few frames late; `None` without levels
-    /// of detail.
-    pub lod0_instances: Option<u32>,
-    pub lod1_instances: Option<u32>,
-    pub lod2_instances: Option<u32>,
-    pub impostor_instances: Option<u32>,
-    /// Triangles the camera's mesh draws submitted, levels of detail and
-    /// impostors included (virtual geometry's are `virtual_triangles`);
-    /// read back a few frames late on GPU-culled frames.
-    pub triangles: Option<u32>,
-    /// The passes the frame ran and those its render graph culled
-    /// (decision 050), as masks `engine_render::render_pass_names` reads.
-    pub render_passes: u32,
-    pub culled_passes: u32,
-}
-
-/// Owned diagnostics returned at low frequency across the browser boundary.
-/// JavaScript callers free this generated binding object after reading it.
-#[wasm_bindgen]
-pub struct BrowserStats {
-    pub simulation_ms: f64,
-    pub extraction_ms: f64,
-    pub render_ms: f64,
-    pub instances: u32,
-    pub invalid_transforms: u32,
-    pub render_candidates: u32,
-    pub visible_instances: u32,
-    pub culled_instances: u32,
-    pub dropped_instances: u32,
-    pub missing_assets: u32,
-    pub culling_enabled: bool,
-    pub draw_calls: u32,
-    pub upload_bytes: f64,
-    pub fixed_steps: u32,
-    pub dropped_seconds: f64,
-    pub resident_meshes: u32,
-    pub mesh_upload_bytes: f64,
-    pub resident_mesh_bytes: f64,
-    pub resident_textures: u32,
-    pub texture_upload_bytes: f64,
-    pub resident_texture_bytes: f64,
-    /// Whether the sun cast shadows (decision 020).
-    pub shadows_enabled: bool,
-    /// Indexed shadow-map draws, in addition to the camera pass's `draw_calls`.
-    pub shadow_draws: u32,
-    /// Kept-map redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole
-    /// map.
-    pub shadow_kept_redraw: u32,
-    /// Casters the near, moving and kept shadow maps drew, read back a few
-    /// frames late; undefined before the first read-back.
-    pub shadow_near_casters: Option<u32>,
-    pub shadow_moving_casters: Option<u32>,
-    pub shadow_kept_casters: Option<u32>,
-    /// Whether ambient occlusion and bloom ran (decision 021).
-    pub ambient_occlusion: bool,
-    pub bloom: bool,
-    /// Local lights shaded (decision 023) and usable lights beyond the budget.
-    pub local_lights: u32,
-    pub dropped_lights: u32,
-    /// Lights that reached a view cluster and cluster entries lost to full
-    /// lists, read back a few frames late; undefined before then.
-    pub lights_visible: Option<u32>,
-    pub light_cluster_overflow: Option<u32>,
-    /// Whether sun shafts (decision 024) and reflections (decision 025) ran.
-    pub sun_shafts: bool,
-    pub reflections: bool,
-    /// Whether glass refracted the opaque scene (decision 038).
-    pub refraction: bool,
-    /// Whether the visibility buffer resolved the camera's virtual geometry
-    /// (decision 045).
-    pub visibility_buffer: bool,
-    /// Transparent draws, included in `draw_calls`, particles drawn and
-    /// particles a budget or the GPU's bindings left out (decision 026).
-    pub transparent_draws: u32,
-    pub particles: u32,
-    pub dropped_particles: u32,
-    /// Decals drawn and decals a budget or the GPU's binding left out
-    /// (decision 039).
-    pub decals: u32,
-    pub dropped_decals: u32,
-    /// Impostors baked, and draw groups a budget or the GPU's texture array
-    /// layers left drawing their meshes (decision 048).
-    pub impostors: u32,
-    pub dropped_impostors: u32,
-    /// Reflection probes surfaces could reflect, cube faces captured, and
-    /// probes a budget or the GPU's texture array layers left out (decision
-    /// 043).
-    pub reflection_probes: u32,
-    pub reflection_probe_faces: u32,
-    pub dropped_reflection_probes: u32,
-    /// Pipelines the renderer has created, and those the last frame created
-    /// (decision 049): 0 once everything the scene draws is compiled.
-    pub pipelines: u32,
-    pub pipelines_created: u32,
-    /// Whether the GPU may still be compiling pipelines earlier frames
-    /// created, read when the stats are.
-    pub pipelines_compiling: bool,
-    /// Clusters and triangles virtual geometry drew for the camera and into
-    /// shadow maps, the camera's clusters occlusion culling left undrawn,
-    /// and selections dropped while its storage grew (decision 044), read
-    /// back a few frames late.
-    pub virtual_clusters: u32,
-    pub virtual_triangles: u32,
-    pub virtual_shadow_clusters: u32,
-    pub virtual_shadow_triangles: u32,
-    pub virtual_occluded_clusters: u32,
-    pub dropped_virtual: u32,
-    /// Streamed pages resident, still loading, wanted and lacking in the
-    /// last read-back frame, and those of them (with arrivals since) that
-    /// found no room (decision 044).
-    pub virtual_resident_pages: u32,
-    pub virtual_loading_pages: u32,
-    pub virtual_missing_pages: u32,
-    pub dropped_virtual_pages: u32,
-    /// Visible instances occlusion culling left undrawn (decision 040), read
-    /// back a few frames late; undefined without occlusion culling.
-    pub occluded_instances: Option<u32>,
-    /// Visible instances left undrawn because their bounds cover no pixel
-    /// center (decision 041), read back a few frames late; undefined without
-    /// sub-pixel culling.
-    pub subpixel_instances: Option<u32>,
-    /// Instances drawn as their mesh, its two simplifications and impostors
-    /// (decision 047), read back a few frames late; undefined without levels
-    /// of detail.
-    pub lod0_instances: Option<u32>,
-    pub lod1_instances: Option<u32>,
-    pub lod2_instances: Option<u32>,
-    pub impostor_instances: Option<u32>,
-    /// Triangles the camera's mesh draws submitted, levels of detail and
-    /// impostors included (virtual geometry's are `virtual_triangles`);
-    /// read back a few frames late on GPU-culled frames.
-    pub triangles: Option<u32>,
-    // The passes the frame ran and those its render graph culled (decision
-    // 050), read by name through `render_passes` and `culled_passes`.
-    passes: u32,
-    culled: u32,
-}
-
-#[wasm_bindgen]
-impl BrowserStats {
-    /// The passes the last frame ran, in order (decision 050).
-    #[wasm_bindgen(getter)]
-    pub fn render_passes(&self) -> String {
-        engine_render::render_pass_names(self.passes)
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-
-    /// The passes the last frame's render graph culled: none unless a
-    /// pass's results went unread (decision 050).
-    #[wasm_bindgen(getter)]
-    pub fn culled_passes(&self) -> String {
-        engine_render::render_pass_names(self.culled)
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-}
-
-impl From<FrameStats> for BrowserStats {
-    fn from(stats: FrameStats) -> Self {
-        Self {
-            simulation_ms: stats.simulation_ms,
-            extraction_ms: stats.extraction_ms,
-            render_ms: stats.render_ms,
-            instances: stats.instances,
-            invalid_transforms: stats.invalid_transforms,
-            render_candidates: stats.render_candidates,
-            visible_instances: stats.visible_instances,
-            culled_instances: stats.culled_instances,
-            dropped_instances: stats.dropped_instances,
-            missing_assets: stats.missing_assets,
-            culling_enabled: stats.culling_enabled,
-            draw_calls: stats.draw_calls,
-            upload_bytes: stats.upload_bytes as f64,
-            fixed_steps: stats.fixed_steps,
-            dropped_seconds: stats.dropped_seconds,
-            resident_meshes: stats.resident_meshes,
-            mesh_upload_bytes: stats.mesh_upload_bytes as f64,
-            resident_mesh_bytes: stats.resident_mesh_bytes as f64,
-            resident_textures: stats.resident_textures,
-            texture_upload_bytes: stats.texture_upload_bytes as f64,
-            resident_texture_bytes: stats.resident_texture_bytes as f64,
-            shadows_enabled: stats.shadows.is_some(),
-            shadow_draws: stats.shadows.map_or(0, |shadows| shadows.draws),
-            shadow_kept_redraw: stats
-                .shadows
-                .map_or(0, |shadows| u32::from(shadows.kept_redraw)),
-            shadow_near_casters: stats
-                .shadows
-                .and_then(|shadows| shadows.casters)
-                .map(|c| c[0]),
-            shadow_moving_casters: stats
-                .shadows
-                .and_then(|shadows| shadows.casters)
-                .map(|c| c[1]),
-            shadow_kept_casters: stats
-                .shadows
-                .and_then(|shadows| shadows.casters)
-                .map(|c| c[2]),
-            ambient_occlusion: stats.ambient_occlusion,
-            bloom: stats.bloom,
-            local_lights: stats.lights.map_or(0, |lights| lights.lights),
-            dropped_lights: stats.lights.map_or(0, |lights| lights.dropped),
-            lights_visible: stats.lights.and_then(|lights| lights.visible),
-            light_cluster_overflow: stats.lights.and_then(|lights| lights.overflow),
-            sun_shafts: stats.sun_shafts,
-            reflections: stats.reflections,
-            refraction: stats.refraction,
-            visibility_buffer: stats.visibility_buffer,
-            transparent_draws: stats.transparent_draws,
-            particles: stats.particles,
-            dropped_particles: stats.dropped_particles,
-            decals: stats.decals,
-            dropped_decals: stats.dropped_decals,
-            impostors: stats.impostors,
-            dropped_impostors: stats.dropped_impostors,
-            reflection_probes: stats.reflection_probes,
-            reflection_probe_faces: stats.reflection_probe_faces,
-            dropped_reflection_probes: stats.dropped_reflection_probes,
-            pipelines: stats.pipelines,
-            pipelines_created: stats.pipelines_created,
-            pipelines_compiling: stats.pipelines_compiling,
-            virtual_clusters: stats.virtual_clusters,
-            virtual_triangles: stats.virtual_triangles,
-            virtual_shadow_clusters: stats.virtual_shadow_clusters,
-            virtual_shadow_triangles: stats.virtual_shadow_triangles,
-            virtual_occluded_clusters: stats.virtual_occluded_clusters,
-            virtual_resident_pages: stats.virtual_resident_pages,
-            virtual_loading_pages: stats.virtual_loading_pages,
-            virtual_missing_pages: stats.virtual_missing_pages,
-            dropped_virtual_pages: stats.dropped_virtual_pages,
-            dropped_virtual: stats.dropped_virtual,
-            occluded_instances: stats.occluded_instances,
-            subpixel_instances: stats.subpixel_instances,
-            lod0_instances: stats.lod0_instances,
-            lod1_instances: stats.lod1_instances,
-            lod2_instances: stats.lod2_instances,
-            impostor_instances: stats.impostor_instances,
-            triangles: stats.triangles,
-            passes: stats.render_passes,
-            culled: stats.culled_passes,
-        }
-    }
+    #[serde(flatten)]
+    pub render: engine_render::RenderStats,
 }
 
 /// Owns the runtime, extracted data, and GPU state for one canvas.
@@ -791,7 +484,6 @@ impl BrowserApp {
             simulation_ms,
             extraction_ms: after_extraction - before_extraction,
             render_ms: self.performance.now() - after_extraction,
-            instances: rendered.instances,
             invalid_transforms: snapshot.invalid_transforms.min(u32::MAX as usize) as u32,
             render_candidates: snapshot.render_candidates.min(u32::MAX as usize) as u32,
             visible_instances: visible,
@@ -799,56 +491,10 @@ impl BrowserApp {
             dropped_instances: dropped,
             missing_assets: snapshot.missing_assets.min(u32::MAX as usize) as u32,
             culling_enabled,
-            draw_calls: rendered.draw_calls,
-            upload_bytes: rendered.upload_bytes,
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
-            resident_meshes: rendered.resident_meshes,
-            mesh_upload_bytes: rendered.mesh_upload_bytes,
-            resident_mesh_bytes: rendered.resident_mesh_bytes,
-            resident_textures: rendered.resident_textures,
-            texture_upload_bytes: rendered.texture_upload_bytes,
-            resident_texture_bytes: rendered.resident_texture_bytes,
-            shadows: rendered.shadows,
-            ambient_occlusion: rendered.ambient_occlusion,
-            bloom: rendered.bloom,
-            lights: rendered.lights,
-            sun_shafts: rendered.sun_shafts,
-            reflections: rendered.reflections,
-            refraction: rendered.refraction,
-            visibility_buffer: rendered.visibility_buffer,
-            transparent_draws: rendered.transparent_draws,
-            particles: rendered.particles,
-            dropped_particles: rendered.dropped_particles,
-            decals: rendered.decals,
-            dropped_decals: rendered.dropped_decals,
-            impostors: rendered.impostors,
-            dropped_impostors: rendered.dropped_impostors,
-            reflection_probes: rendered.reflection_probes,
-            reflection_probe_faces: rendered.reflection_probe_faces,
-            dropped_reflection_probes: rendered.dropped_reflection_probes,
-            pipelines: rendered.pipelines,
-            pipelines_created: rendered.pipelines_created,
             pipelines_compiling: false,
-            virtual_clusters: rendered.virtual_clusters,
-            virtual_triangles: rendered.virtual_triangles,
-            virtual_shadow_clusters: rendered.virtual_shadow_clusters,
-            virtual_shadow_triangles: rendered.virtual_shadow_triangles,
-            virtual_occluded_clusters: rendered.virtual_occluded_clusters,
-            virtual_resident_pages: rendered.virtual_resident_pages,
-            virtual_loading_pages: rendered.virtual_loading_pages,
-            virtual_missing_pages: rendered.virtual_missing_pages,
-            dropped_virtual_pages: rendered.dropped_virtual_pages,
-            dropped_virtual: rendered.dropped_virtual,
-            occluded_instances: rendered.occluded_instances,
-            subpixel_instances: rendered.subpixel_instances,
-            lod0_instances: rendered.lod_instances.map(|levels| levels[0]),
-            lod1_instances: rendered.lod_instances.map(|levels| levels[1]),
-            lod2_instances: rendered.lod_instances.map(|levels| levels[2]),
-            impostor_instances: rendered.lod_instances.map(|levels| levels[3]),
-            triangles: rendered.triangles,
-            render_passes: rendered.passes,
-            culled_passes: rendered.culled_passes,
+            render: rendered,
         };
         Ok(())
     }
@@ -858,6 +504,11 @@ impl BrowserApp {
             pipelines_compiling: self.renderer.pipelines_compiling(),
             ..self.stats
         }
+    }
+
+    /// [`Self::stats`] as the JSON object hosts and agents read.
+    pub fn stats_json(&self) -> String {
+        serde_json::to_string(&self.stats()).expect("frame stats serialize")
     }
 
     /// GPU residency reflects the last valid render boundary, not queue completion.

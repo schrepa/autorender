@@ -1,5 +1,5 @@
 import { stressBindings } from "./bindings";
-import { boot, type HostControls, type RuntimeStats } from "./host";
+import { boot, readStats, type HostControls, type RuntimeStats } from "./host";
 import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressFiles, StressGame } from "../pkg/stress_lab";
@@ -24,10 +24,6 @@ type Snapshot = {
   queries: { calls: number; hits: number; errors: number; total_errors: string; last_error: string | null };
   camera: { position: number[]; target: number[]; vertical_fov_radians: number; near: number; far: number };
 };
-type Stats = Pick<RuntimeStats, typeof fields[number] | "culling_enabled">;
-const fields = ["simulation_ms", "extraction_ms", "render_ms", "instances", "draw_calls", "upload_bytes", "invalid_transforms",
-  "render_candidates", "visible_instances", "culled_instances", "dropped_instances", "missing_assets", "fixed_steps", "dropped_seconds",
-  "resident_meshes", "mesh_upload_bytes", "resident_mesh_bytes", "resident_textures", "texture_upload_bytes", "resident_texture_bytes"] as const;
 const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const choice = (id: string) => el<HTMLSelectElement>(id);
 const number = (id: string) => Number(el<HTMLInputElement>(id).value);
@@ -87,13 +83,6 @@ const listeners = new AbortController();
 const listenerOptions = { signal: listeners.signal };
 const intervals: number[] = [], chart: [number, number, number][] = [];
 
-function copyStats(value: RuntimeStats): Stats {
-  try {
-    const result = { culling_enabled: value.culling_enabled } as Stats;
-    for (const field of fields) result[field] = value[field];
-    return result;
-  } finally { value.free(); }
-}
 function snapshot(runtime: StressGame): Snapshot { return JSON.parse(runtime.stress_stats()) as Snapshot; }
 function notice(text: string, error = false) {
   el("notice").textContent = text; el("notice").dataset.error = String(error);
@@ -183,7 +172,7 @@ function mutate(action: (runtime: StressGame) => void) {
   try { controls?.mutate(action); } catch (error) { notice(String(error), true); }
 }
 
-function drawChart(stats: Stats) {
+function drawChart(stats: RuntimeStats) {
   chart.push([stats.simulation_ms, stats.extraction_ms, stats.render_ms]);
   if (chart.length > 120) chart.shift();
   const max = Math.max(33.34, ...chart.flat()) * 1.08;
@@ -198,7 +187,7 @@ function drawChart(stats: Stats) {
 
 function poll(runtime: StressGame) {
   latest = snapshot(runtime);
-  const stats = copyStats(runtime.stats()), data = latest;
+  const stats = readStats(runtime), data = latest;
   el("active-summary").textContent = `${format(data.renderables)} objects · ${format(data.moving_nodes)} moving nodes · seed ${data.config.seed}`;
   el("scene-count").textContent = `${format(data.renderables)} OBJECTS`;
   el("pixel-size").textContent = controls ? controls.size().join(" × ") : "";
@@ -379,7 +368,7 @@ boot({
     }
     previousTimestamp = timestamp;
     if (!recorder.active) return;
-    const stats = copyStats(runtime.stats()), data = snapshot(runtime);
+    const stats = readStats(runtime), data = snapshot(runtime);
     recorder.sample({ timestamp, simulation_ms: stats.simulation_ms, extraction_ms: stats.extraction_ms, render_ms: stats.render_ms,
       dropped_seconds: stats.dropped_seconds,
       phases_ms: { collision_sync: data.timings.sync_pre_ms + data.timings.sync_post_ms, sensors: data.timings.sensor_ms,

@@ -7,8 +7,8 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["dep:engine_dev", "engine_core/dev", "dep:serde_json"]
-profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_render/profiling", "dep:serde_json"]
+dev = ["dep:engine_dev", "engine_core/dev"]
+profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_render/profiling"]
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
 
 [dependencies]
@@ -17,7 +17,8 @@ engine_profile.workspace = true
 engine_collision.workspace = true
 engine_scene.workspace = true
 engine_dev = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 engine_render.workspace = true

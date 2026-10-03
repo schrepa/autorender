@@ -9,6 +9,7 @@
 //! so the graph keeps the declared order and holds no GPU objects: the
 //! renderer encodes each kept pass by its [`Pass`] with the derived
 //! operations. [`plan`] declares the renderer's frame from its [`FrameShape`].
+#![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 
 /// A resource the frame's passes share.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -300,11 +301,19 @@ impl Pass {
 
 /// The names of the passes in `mask`, a frame's [`RenderGraph::kept`] or
 /// [`RenderGraph::culled`], in frame order.
-pub fn pass_names(mask: u32) -> impl Iterator<Item = &'static str> {
+pub(crate) fn pass_names(mask: u32) -> impl Iterator<Item = &'static str> {
     PASSES
         .into_iter()
         .filter(move |pass| mask & pass.bit() != 0)
         .map(Pass::name)
+}
+
+/// Serializes a mask of passes as the list of their names.
+pub(crate) fn serialize_passes<S: serde::Serializer>(
+    mask: &u32,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(pass_names(*mask))
 }
 
 /// Color attachments a pass may draw into.
@@ -640,8 +649,8 @@ pub(crate) const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
-/// The far plane's depth (reversed, decision 042).
-const FAR: f32 = crate::gpu_data::FAR_DEPTH;
+/// The far plane's depth (reversed, decision 042): `gpu_data::FAR_DEPTH`.
+const FAR: f32 = 0.0;
 
 /// Declares the passes of a frame of `shape` into `graph`.
 pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
@@ -1081,6 +1090,11 @@ mod tests {
                 resource: Resource::Depth
             })
         );
+    }
+
+    #[test]
+    fn depth_clears_to_the_far_plane() {
+        assert_eq!(FAR, crate::gpu_data::FAR_DEPTH);
     }
 
     #[test]
