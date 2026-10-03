@@ -8,7 +8,7 @@ use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, Reco
 use crate::particles::ParticleFrame;
 use crate::post::PostFrame;
 use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
-use crate::shadows::ShadowFrame;
+use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
 /// What kind of frame this is, decided before any GPU work.
 #[derive(Clone, Copy)]
@@ -902,52 +902,52 @@ impl Renderer {
         let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
 
         // Shadow maps (decision 020) select from this frame's poses.
-        {
-            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let poses = affine.then(|| self.instances.frame_poses(parity));
-            let meshes = &self.meshes;
-            let arena = &self.mesh_arena;
-            self.shadows.prepare(
-                &self.device,
-                &self.queue,
-                snapshot,
-                gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
-                poses,
-                self.instances.capacity,
-                self.mesh_layout,
+        let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+        let meshes = &self.meshes;
+        let arena = &self.mesh_arena;
+        let placement = |mesh| {
+            meshes.get(&mesh).map_or(
+                CasterDraw {
+                    index_count: 0,
+                    first_index: 0,
+                    base_vertex: 0,
+                    lods: Vec::new(),
+                },
                 |mesh| {
-                    meshes.get(&mesh).map_or(
-                        CasterDraw {
-                            index_count: 0,
-                            first_index: 0,
-                            base_vertex: 0,
-                            lods: Vec::new(),
-                        },
-                        |mesh| {
-                            let draw = mesh.draw(arena);
-                            // Levels of detail (decision 047) of meshes
-                            // without joints, which move their vertices.
-                            let lods = if mesh.skinned || !snapshot.level_of_detail.enabled {
-                                Vec::new()
-                            } else {
-                                mesh.lods
-                                    .iter()
-                                    .map(|&(offset, count, error)| {
-                                        (draw.first_index + offset, count, error)
-                                    })
-                                    .collect()
-                            };
-                            CasterDraw {
-                                index_count: draw.index_count,
-                                first_index: draw.first_index,
-                                base_vertex: draw.base_vertex,
-                                lods,
-                            }
-                        },
-                    )
+                    let draw = mesh.draw(arena);
+                    // Levels of detail (decision 047) of meshes without
+                    // joints, which move their vertices.
+                    let lods = if mesh.skinned || !snapshot.level_of_detail.enabled {
+                        Vec::new()
+                    } else {
+                        mesh.lods
+                            .iter()
+                            .map(|&(offset, count, error)| {
+                                (draw.first_index + offset, count, error)
+                            })
+                            .collect()
+                    };
+                    CasterDraw {
+                        index_count: draw.index_count,
+                        first_index: draw.first_index,
+                        base_vertex: draw.base_vertex,
+                        lods,
+                    }
                 },
             )
-        }
+        };
+        self.shadows.prepare(
+            &self.device,
+            &self.queue,
+            &ShadowInputs {
+                snapshot,
+                presented: gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
+                poses: affine.then(|| self.instances.frame_poses(parity)),
+                slot_capacity: self.instances.capacity,
+                mesh_layout: self.mesh_layout,
+                placement: &placement,
+            },
+        )
     }
 
     /// Environment maps and reflection probes (decision 043), and the camera
@@ -1611,21 +1611,25 @@ impl Renderer {
         let encoded = self.shadows.encode_maps(
             encoder,
             shadow_frame,
-            &self.plan,
-            &self.instances.buffer,
-            |mesh| {
-                meshes
-                    .get(&mesh)
-                    .map(|mesh| (mesh.draw(arena), mesh.skinned))
-            },
-            |material| self.materials.group(material),
-            |pass, map| {
-                shadow_bins
-                    .iter()
-                    .find(|(bin_map, _, _)| *bin_map == map)
-                    .map_or(0, |&(_, bin, offset)| {
-                        u32::from(virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset))
-                    })
+            &MapSources {
+                plan: &self.plan,
+                instances: &self.instances.buffer,
+                meshes: &|mesh| {
+                    meshes
+                        .get(&mesh)
+                        .map(|mesh| (mesh.draw(arena), mesh.skinned))
+                },
+                materials: &|material| self.materials.group(material),
+                virtual_draw: &|pass, map| {
+                    shadow_bins
+                        .iter()
+                        .find(|(bin_map, _, _)| *bin_map == map)
+                        .map_or(0, |&(_, bin, offset)| {
+                            u32::from(
+                                virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset),
+                            )
+                        })
+                },
             },
             effect_queries,
         );
