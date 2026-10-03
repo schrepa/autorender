@@ -115,6 +115,7 @@ mod gpu {
     use engine_core::{Material, MaterialHandle, MeshHandle};
 
     use super::*;
+    use crate::cached::Cached;
     use crate::gpu_data::Variant;
     use crate::mesh_arena::MeshDraw;
     use crate::mipmaps::MipGenerator;
@@ -197,7 +198,7 @@ mod gpu {
         // them with the arrays, keyed by the generations of both.
         records: wgpu::Buffer,
         uploaded: Vec<ImpostorRecord>,
-        group: Option<((u64, u64), wgpu::BindGroup)>,
+        group: Cached<(u64, u64), wgpu::BindGroup>,
         records_generation: u64,
         arrays_generation: u64,
         // Advances whenever an impostor is baked or dropped: batch records
@@ -305,7 +306,7 @@ mod gpu {
                 sampler,
                 records: record_buffer(device, 1),
                 uploaded: Vec::new(),
-                group: None,
+                group: Cached::default(),
                 records_generation: 0,
                 arrays_generation: 0,
                 generation: 0,
@@ -610,7 +611,7 @@ mod gpu {
                 self.uploaded.extend_from_slice(records);
             }
             let key = (self.records_generation, self.arrays_generation);
-            if self.group.as_ref().is_none_or(|(built, _)| *built != key) {
+            if self.group.stale(&key) {
                 let view = |binding, view| wgpu::BindGroupEntry {
                     binding,
                     resource: wgpu::BindingResource::TextureView(view),
@@ -633,14 +634,14 @@ mod gpu {
                         },
                     ],
                 });
-                self.group = Some((key, group));
+                self.group.set(key, group);
             }
             true
         }
 
         /// The draws' group, after [`Self::prepare`] built it.
         pub(crate) fn group(&self) -> Option<&wgpu::BindGroup> {
-            self.group.as_ref().map(|(_, group)| group)
+            self.group.get()
         }
 
         /// The draw pipeline into `targets`, shading local lights when `lit`,

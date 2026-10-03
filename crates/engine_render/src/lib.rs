@@ -143,6 +143,8 @@ pub struct ShadowStats {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod cached;
+#[cfg(any(target_arch = "wasm32", test))]
 mod gpu_data;
 
 #[cfg(any(target_arch = "wasm32", test))]

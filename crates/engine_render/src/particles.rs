@@ -132,6 +132,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::cached::Cached;
     use crate::gpu_data::PARTICLE_SHADER;
 
     /// A frame's particles: alpha instances first, then additive ones, and
@@ -160,7 +161,7 @@ mod gpu {
         uploaded: Vec<EmitterData>,
         owner_staging: Vec<u32>,
         uploaded_owners: Vec<u32>,
-        group: Option<((u64, u64), wgpu::BindGroup)>,
+        group: Cached<(u64, u64), wgpu::BindGroup>,
         buffers_generation: u64,
     }
 
@@ -250,7 +251,7 @@ mod gpu {
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
                 uploaded_owners: Vec::new(),
-                group: None,
+                group: Cached::default(),
                 buffers_generation: 0,
             }
         }
@@ -324,7 +325,7 @@ mod gpu {
                 self.written = Some(uniform);
             }
             let key = (depth_generation, self.buffers_generation);
-            if self.group.as_ref().is_none_or(|(built, _)| *built != key) {
+            if self.group.stale(&key) {
                 let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("engine/particle-group"),
                     layout: &self.layout,
@@ -338,7 +339,7 @@ mod gpu {
                         },
                     ],
                 });
-                self.group = Some((key, group));
+                self.group.set(key, group);
             }
             Some(ParticleFrame {
                 alpha,
@@ -425,7 +426,7 @@ mod gpu {
             }
             pass.set_pipeline(&self.alpha);
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &self.group.as_ref().expect("prepared this frame").1, &[]);
+            pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
             pass.draw(0..6, 0..frame.alpha);
         }
 
@@ -443,7 +444,7 @@ mod gpu {
             }
             pass.set_pipeline(self.additive[usize::from(post)].as_ref().expect("ensured"));
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, &self.group.as_ref().expect("prepared this frame").1, &[]);
+            pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
             pass.draw(0..6, frame.alpha..frame.total);
         }
     }

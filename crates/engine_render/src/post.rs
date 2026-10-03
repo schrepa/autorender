@@ -15,6 +15,7 @@
 
 use engine_core::{RenderSnapshot, glam::Mat4};
 
+use crate::cached::Cached;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{Fillers, Fullscreen, Slot, filled_group, fullscreen, group_layout};
@@ -155,11 +156,11 @@ pub(crate) struct PostPass {
     targets: Option<Targets>,
     // Occlusion, filter, reflection and shaft bindings over the depth buffer
     // and targets of those generations (and reflections', the pyramid's).
-    occlusion_group: Option<(u64, u64, wgpu::BindGroup)>,
-    effects_filter_group: Option<(u64, u64, wgpu::BindGroup)>,
-    reflections_group: Option<((u64, u64, u64), wgpu::BindGroup)>,
-    filter_group: Option<(u64, u64, wgpu::BindGroup)>,
-    shafts_group: Option<(u64, wgpu::BindGroup)>,
+    occlusion_group: Cached<(u64, u64), wgpu::BindGroup>,
+    effects_filter_group: Cached<(u64, u64), wgpu::BindGroup>,
+    reflections_group: Cached<(u64, u64, u64), wgpu::BindGroup>,
+    filter_group: Cached<(u64, u64), wgpu::BindGroup>,
+    shafts_group: Cached<u64, wgpu::BindGroup>,
     // Advances when targets are replaced: the temporal resolve rebinds.
     generation: u64,
 }
@@ -365,11 +366,11 @@ impl PostPass {
             written: None,
             sampler,
             targets: None,
-            occlusion_group: None,
-            effects_filter_group: None,
-            reflections_group: None,
-            filter_group: None,
-            shafts_group: None,
+            occlusion_group: Cached::default(),
+            effects_filter_group: Cached::default(),
+            reflections_group: Cached::default(),
+            filter_group: Cached::default(),
+            shafts_group: Cached::default(),
             generation: 0,
         }
     }
@@ -383,10 +384,10 @@ impl PostPass {
     /// frame recreates them.
     pub(crate) fn release_targets(&mut self) {
         self.targets = None;
-        self.occlusion_group = None;
-        self.effects_filter_group = None;
-        self.reflections_group = None;
-        self.filter_group = None;
+        self.occlusion_group.clear();
+        self.effects_filter_group.clear();
+        self.reflections_group.clear();
+        self.filter_group.clear();
         self.nearest.release();
     }
 
@@ -438,14 +439,8 @@ impl PostPass {
             // Shafts gather light through the shadow maps.
             shafts: shafts.enabled() && snapshot.shadows.enabled,
         };
-        if frame.occlusion
-            && self
-                .occlusion_group
-                .as_ref()
-                .is_none_or(|(depth, targets, _)| {
-                    *depth != depth_generation || *targets != self.generation
-                })
-        {
+        let targets_key = (depth_generation, self.generation);
+        if frame.occlusion && self.occlusion_group.stale(&targets_key) {
             let group = self.group(
                 device,
                 "engine/post-occlusion-group",
@@ -460,16 +455,9 @@ impl PostPass {
                     },
                 ],
             );
-            self.occlusion_group = Some((depth_generation, self.generation, group));
+            self.occlusion_group.set(targets_key, group);
         }
-        if (frame.occlusion || frame.shafts)
-            && self
-                .effects_filter_group
-                .as_ref()
-                .is_none_or(|(depth, targets, _)| {
-                    *depth != depth_generation || *targets != self.generation
-                })
-        {
+        if (frame.occlusion || frame.shafts) && self.effects_filter_group.stale(&targets_key) {
             let targets = self.targets.as_ref().expect("sized above");
             let group = self.group(
                 device,
@@ -487,7 +475,7 @@ impl PostPass {
                     texture_entry(12, &targets.raw_occlusion),
                 ],
             );
-            self.effects_filter_group = Some((depth_generation, self.generation, group));
+            self.effects_filter_group.set(targets_key, group);
         }
         self.trace_index = if temporal {
             (self.trace_index + 1) % 4
@@ -502,11 +490,7 @@ impl PostPass {
             && let Some((nearest, nearest_generation)) = nearest
         {
             let key = (depth_generation, self.generation, nearest_generation);
-            if self
-                .reflections_group
-                .as_ref()
-                .is_none_or(|(built, _)| *built != key)
-            {
+            if self.reflections_group.stale(&key) {
                 let targets = self.targets.as_ref().expect("sized above");
                 let group = self.group(
                     device,
@@ -531,15 +515,9 @@ impl PostPass {
                         texture_entry(14, &targets.scene_levels),
                     ],
                 );
-                self.reflections_group = Some((key, group));
+                self.reflections_group.set(key, group);
             }
-            if self
-                .filter_group
-                .as_ref()
-                .is_none_or(|(depth, targets, _)| {
-                    *depth != depth_generation || *targets != self.generation
-                })
-            {
+            if self.filter_group.stale(&targets_key) {
                 let targets = self.targets.as_ref().expect("sized above");
                 let group = self.group(
                     device,
@@ -556,15 +534,10 @@ impl PostPass {
                         texture_entry(11, &targets.traced),
                     ],
                 );
-                self.filter_group = Some((depth_generation, self.generation, group));
+                self.filter_group.set(targets_key, group);
             }
         }
-        if frame.shafts
-            && self
-                .shafts_group
-                .as_ref()
-                .is_none_or(|(depth, _)| *depth != depth_generation)
-        {
+        if frame.shafts && self.shafts_group.stale(&depth_generation) {
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("engine/post-shafts-group"),
                 layout: &self.shafts_layout,
@@ -579,7 +552,7 @@ impl PostPass {
                     },
                 ],
             });
-            self.shafts_group = Some((depth_generation, group));
+            self.shafts_group.set(depth_generation, group);
         }
         let (width, height) = (size.0 as f32, size.1 as f32);
         let view_projection = snapshot.view_projection;
@@ -690,7 +663,7 @@ impl PostPass {
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
         if frame.occlusion
-            && let Some((_, _, group)) = &self.occlusion_group
+            && let Some(group) = self.occlusion_group.get()
         {
             let mut pass = fullscreen_pass(
                 encoder,
@@ -703,8 +676,9 @@ impl PostPass {
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        let reflecting =
-            frame.reflections && self.reflections_group.is_some() && self.filter_group.is_some();
+        let reflecting = frame.reflections
+            && self.reflections_group.get().is_some()
+            && self.filter_group.get().is_some();
         // Bloom first: with reflections, its passes down also blur the scene
         // for rough reflections.
         let levels_done = if frame.bloom {
@@ -713,8 +687,8 @@ impl PostPass {
             0
         };
         if reflecting
-            && let Some((_, group)) = &self.reflections_group
-            && let Some((_, _, filter)) = &self.filter_group
+            && let Some(group) = self.reflections_group.get()
+            && let Some(filter) = self.filter_group.get()
         {
             self.nearest
                 .encode(encoder, timestamps.map(|(set, first)| (set, first + 6)));
@@ -761,7 +735,7 @@ impl PostPass {
             pass.draw(0..3, 0..1);
         }
         if frame.shafts
-            && let Some((_, group)) = &self.shafts_group
+            && let Some(group) = self.shafts_group.get()
         {
             let mut pass = fullscreen_pass(
                 encoder,
@@ -778,7 +752,7 @@ impl PostPass {
         // The occlusion filtered and the shafts at half resolution, together
         // (1 and 0 where either is off).
         if (frame.occlusion || frame.shafts)
-            && let Some((_, _, group)) = &self.effects_filter_group
+            && let Some(group) = self.effects_filter_group.get()
         {
             let mut pass = fullscreen_pass(
                 encoder,

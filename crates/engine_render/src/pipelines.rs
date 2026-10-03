@@ -3,7 +3,13 @@
 //! frames report when compiling ends: a frame that creates none compiles
 //! nothing, and hosts reveal the canvas once frames stop creating them.
 
-use std::cell::Cell;
+use std::{
+    cell::Cell,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 thread_local! {
     static CREATED: Cell<u32> = const { Cell::new(0) };
@@ -32,8 +38,47 @@ pub(crate) fn compute(
 }
 
 /// The pipelines created since the last call.
-pub(crate) fn take_created() -> u32 {
+fn take_created() -> u32 {
     CREATED.with(|created| created.replace(0))
+}
+
+/// The pipelines a renderer created, and whether their compiles may still
+/// run: they precede the work submitted after them, so once the GPU
+/// completes the last frame that created some, they are done.
+#[derive(Default)]
+pub(crate) struct PipelineCounts {
+    created: u32,
+    // Frames that created some, and the latest of those the GPU completed.
+    frames: u64,
+    compiled: Arc<AtomicU64>,
+}
+
+impl PipelineCounts {
+    /// Counts the pipelines created since the last call, after the frame
+    /// creating them was submitted to `queue`; returns how many.
+    pub(crate) fn frame_submitted(&mut self, queue: &wgpu::Queue) -> u32 {
+        let created = take_created();
+        self.created = self.created.saturating_add(created);
+        if created > 0 {
+            self.frames += 1;
+            let (compiled, frame) = (Arc::clone(&self.compiled), self.frames);
+            queue.on_submitted_work_done(move || {
+                compiled.fetch_max(frame, Ordering::Relaxed);
+            });
+        }
+        created
+    }
+
+    /// Pipelines created so far.
+    pub(crate) fn created(&self) -> u32 {
+        self.created
+    }
+
+    /// Whether the GPU has not yet completed the last frame that created
+    /// pipelines.
+    pub(crate) fn compiling(&self) -> bool {
+        self.compiled.load(Ordering::Relaxed) < self.frames
+    }
 }
 
 /// What one binding of a shared layout holds (decision 049).

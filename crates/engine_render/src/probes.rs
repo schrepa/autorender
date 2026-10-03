@@ -9,6 +9,7 @@ use engine_core::{
     math,
 };
 
+use crate::cached::Cached;
 use crate::gpu_data::STILL_FRAMES;
 
 /// Cube faces, in the order WebGPU samples them: +X, -X, +Y, -Y, +Z, -Z.
@@ -224,7 +225,7 @@ pub(crate) struct ProbePass {
     // The camera of each face being captured.
     cameras: [wgpu::Buffer; FACES],
     // Depth of the face being captured, and its size.
-    depth: Option<(u32, wgpu::TextureView)>,
+    depth: Cached<u32, wgpu::TextureView>,
     // The grid words surfaces read (`meshes.wgsl`'s `probe_words`).
     words: wgpu::Buffer,
     staging: Vec<[u32; 4]>,
@@ -249,7 +250,7 @@ impl ProbePass {
                 ..ProbeSlots::default()
             },
             cameras,
-            depth: None,
+            depth: Cached::default(),
             words: words_buffer(device, 2),
             staging: Vec::new(),
             generation: 0,
@@ -273,7 +274,7 @@ impl ProbePass {
         size: u32,
         format: wgpu::TextureFormat,
     ) -> &wgpu::TextureView {
-        if self.depth.as_ref().is_none_or(|(built, _)| *built != size) {
+        if self.depth.stale(&size) {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("engine/probe-depth"),
                 size: wgpu::Extent3d {
@@ -289,9 +290,9 @@ impl ProbePass {
                 view_formats: &[],
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.depth = Some((size, view));
+            self.depth.set(size, view);
         }
-        &self.depth.as_ref().expect("created above").1
+        self.depth.get().expect("created above")
     }
 
     /// Uploads the grid of the ready probes when they changed.
@@ -312,8 +313,8 @@ impl ProbePass {
         self.words.size()
             + self
                 .depth
-                .as_ref()
-                .map_or(0, |(size, _)| u64::from(*size) * u64::from(*size) * 4)
+                .key()
+                .map_or(0, |size| u64::from(*size) * u64::from(*size) * 4)
     }
 }
 

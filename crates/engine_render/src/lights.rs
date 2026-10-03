@@ -151,6 +151,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
 
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -214,7 +215,7 @@ mod gpu {
         // Binning groups over (pose generation, pose buffer) and the storage
         // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
-        fragment_group: Option<(u64, wgpu::BindGroup)>,
+        fragment_group: Cached<u64, wgpu::BindGroup>,
         // Reflection probe faces (decision 043): each face's clusters, their
         // binning and shading groups over the pose, still-frame and list
         // storage they were built for (the last used current), and the
@@ -343,7 +344,7 @@ mod gpu {
                 uploaded: Vec::new(),
                 uploaded_revision: None,
                 compute_groups: Vec::new(),
-                fragment_group: None,
+                fragment_group: Cached::default(),
                 probe_uniforms: Vec::new(),
                 probe_groups: Vec::new(),
                 probe_current: 0,
@@ -503,11 +504,7 @@ mod gpu {
                     self.compute_groups.len() - 1
                 }
             };
-            if self
-                .fragment_group
-                .as_ref()
-                .is_none_or(|(built, _)| *built != self.buffers_generation)
-            {
+            if self.fragment_group.stale(&self.buffers_generation) {
                 let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("engine/light-shading-group"),
                     layout: &self.fragment_layout,
@@ -518,7 +515,7 @@ mod gpu {
                         entry(3, &self.indices),
                     ],
                 });
-                self.fragment_group = Some((self.buffers_generation, group));
+                self.fragment_group.set(self.buffers_generation, group);
             }
             Some(LightFrame {
                 count: count as u32,
@@ -528,7 +525,7 @@ mod gpu {
 
         /// The bindings lit mesh pipelines read at group 3.
         pub(crate) fn fragment_group(&self) -> &wgpu::BindGroup {
-            &self.fragment_group.as_ref().expect("prepared this frame").1
+            self.fragment_group.get().expect("prepared this frame")
         }
 
         /// Records this frame's binning: clears the clusters, counts every

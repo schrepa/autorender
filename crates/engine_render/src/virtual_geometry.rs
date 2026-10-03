@@ -33,6 +33,7 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
 use wasm_bindgen::JsCast;
 
+use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
 use crate::shadows::{SHADOW_FORMAT, VIRTUAL_SHADOW_PLANES as PLANES};
@@ -302,7 +303,7 @@ struct Groups {
 struct ShadowDrawing {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
-    groups: [Option<(ShadowGroupKey, wgpu::BindGroup)>; 2],
+    groups: [Cached<ShadowGroupKey, wgpu::BindGroup>; 2],
 }
 
 /// Generations of the arena, frame buffers, poses, camera IDs, shadow IDs
@@ -383,7 +384,7 @@ pub(crate) struct VirtualGeometryPass {
     frame_generation: u64,
     // Bindings per pose buffer parity (temporal frames alternate them), and
     // this frame's parity.
-    groups: [Option<(GroupsKey, Groups)>; 2],
+    groups: [Cached<GroupsKey, Groups>; 2],
     parity: usize,
     // This frame's poses and their key, for shadow drawing.
     poses: Option<(wgpu::Buffer, u64)>,
@@ -592,7 +593,7 @@ impl VirtualGeometryPass {
             _no_pyramid: no_pyramid,
             no_pyramid: no_pyramid_view,
             frame_generation: 0,
-            groups: [None, None],
+            groups: Default::default(),
             parity: 0,
             poses: None,
             shadow_drawing: None,
@@ -808,7 +809,7 @@ impl VirtualGeometryPass {
             pages,
         });
         self.arena_generation += 1;
-        self.groups = [None, None];
+        self.groups = Default::default();
         for page in preload {
             if self.residency.begin(page, self.frame) {
                 self.load_held(device, queue, page, usize::MAX);
@@ -1349,10 +1350,7 @@ impl VirtualGeometryPass {
             binding,
             resource: wgpu::BindingResource::TextureView(pyramid_view),
         };
-        if self.groups[self.parity]
-            .as_ref()
-            .is_some_and(|(built, _)| *built == key)
-        {
+        if !self.groups[self.parity].stale(&key) {
             return;
         }
         let arena = self.arena.as_ref().expect("checked above");
@@ -1446,7 +1444,7 @@ impl VirtualGeometryPass {
                 ],
             ),
         };
-        self.groups[self.parity] = Some((key, groups));
+        self.groups[self.parity].set(key, groups);
     }
 
     /// The shadow drawing pipeline, once, and its bindings of the arena,
@@ -1530,15 +1528,12 @@ impl VirtualGeometryPass {
             ShadowDrawing {
                 layout,
                 pipeline,
-                groups: [None, None],
+                groups: Default::default(),
             }
         });
         let key = (self.arena_generation, *poses_key, views.clone());
         let parity = (*poses_key & 1) as usize;
-        if drawing.groups[parity]
-            .as_ref()
-            .is_some_and(|(built, _)| *built == key)
-        {
+        if !drawing.groups[parity].stale(&key) {
             return;
         }
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -1559,7 +1554,7 @@ impl VirtualGeometryPass {
                 },
             ],
         });
-        drawing.groups[parity] = Some((key, group));
+        drawing.groups[parity].set(key, group);
     }
 
     /// Records this frame's selection: seeds of both ID sources, one
@@ -1567,7 +1562,7 @@ impl VirtualGeometryPass {
     /// draw arguments, then the counters' copy for read-back. Nothing
     /// without bound batches.
     pub(crate) fn encode(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
-        let Some((_, groups)) = &self.groups[self.parity] else {
+        let Some(groups) = self.groups[self.parity].get() else {
             return;
         };
         if self.batch_counts == [0, 0] {
@@ -1648,7 +1643,7 @@ impl VirtualGeometryPass {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        let Some((_, groups)) = &self.groups[self.parity] else {
+        let Some(groups) = self.groups[self.parity].get() else {
             return;
         };
         if !self.retesting || self.batch_counts == [0, 0] {
@@ -1713,7 +1708,7 @@ impl VirtualGeometryPass {
         else {
             return false;
         };
-        let Some((_, group)) = &groups[self.parity] else {
+        let Some(group) = groups[self.parity].get() else {
             return false;
         };
         if bin >= self.bin_regions.len() {

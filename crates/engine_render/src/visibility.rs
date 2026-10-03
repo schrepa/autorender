@@ -5,6 +5,7 @@
 //! each bin's resolve (`fs_resolve*`) shades its pixels once, however many
 //! triangles overlapped them or however small they were.
 
+use crate::cached::Cached;
 use crate::gpu_data::VISIBILITY_SHADER;
 
 /// Each pixel's visible entry plus one (0: none) and its triangle | bin << 7.
@@ -43,7 +44,7 @@ pub(crate) struct VisibilityBuffer {
     held: (usize, (u32, u32)),
     // Advances whenever the target or a buffer is replaced.
     generation: u64,
-    group: Option<(u64, wgpu::BindGroup)>,
+    group: Cached<u64, wgpu::BindGroup>,
 }
 
 fn storage(
@@ -150,7 +151,7 @@ impl VisibilityBuffer {
             draws: uniform(device, "engine/visibility-draws", DRAW_STRIDE),
             held: (0, (0, 0)),
             generation: 0,
-            group: None,
+            group: Cached::default(),
         }
     }
 
@@ -206,11 +207,7 @@ impl VisibilityBuffer {
             self.held = (bins, self.tiles);
             self.generation += 1;
         }
-        if self
-            .group
-            .as_ref()
-            .is_none_or(|(built, _)| *built != self.generation)
-        {
+        if self.group.stale(&self.generation) {
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("engine/visibility-classify-group"),
                 layout: &self.layout,
@@ -237,7 +234,7 @@ impl VisibilityBuffer {
                     },
                 ],
             });
-            self.group = Some((self.generation, group));
+            self.group.set(self.generation, group);
         }
         let capacity = capacity as u32;
         queue.write_buffer(
@@ -267,7 +264,7 @@ impl VisibilityBuffer {
     /// Records the tile lists of the first `bins` bins from the ID target,
     /// and their resolve arguments.
     pub(crate) fn encode_classify(&self, encoder: &mut wgpu::CommandEncoder, bins: usize) {
-        let Some((_, group)) = &self.group else {
+        let Some(group) = self.group.get() else {
             return;
         };
         encoder.clear_buffer(&self.counts, 0, None);

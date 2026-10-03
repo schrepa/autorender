@@ -43,19 +43,11 @@ impl Renderer {
         };
         // Read back a few frames late (decision 044).
         let virtual_stats = virtual_frame
-            .then(|| self.virtual_geometry.stats())
+            .then(|| self.virtual_draws.pass.stats())
             .flatten();
-        let pipelines_created = crate::pipelines::take_created();
-        self.pipelines = self.pipelines.saturating_add(pipelines_created);
-        if pipelines_created > 0 {
-            // Pipelines compile before the work submitted after them runs:
-            // this frame's completion ends their compiles (decision 049).
-            self.pipeline_frames += 1;
-            let (compiled, frame) = (Arc::clone(&self.pipelines_compiled), self.pipeline_frames);
-            self.queue.on_submitted_work_done(move || {
-                compiled.fetch_max(frame, Ordering::Relaxed);
-            });
-        }
+        // Pipelines compile before the work submitted after them runs: this
+        // frame's completion ends their compiles (decision 049).
+        let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
         let stats = RenderStats {
             draw_calls: self.plan.batches.len() as u32,
             upload_bytes: camera_upload_bytes
@@ -74,12 +66,12 @@ impl Renderer {
                 _ => instance_count as u32,
             },
             gpu_visible,
-            occluded_instances: if gpu_mode && self.occlusion_culling {
+            occluded_instances: if gpu_mode && self.culling.occlusion {
                 self.gpu_presentation.occluded()
             } else {
                 None
             },
-            subpixel_instances: if gpu_mode && self.subpixel_culling {
+            subpixel_instances: if gpu_mode && self.culling.subpixel {
                 self.gpu_presentation.subpixel()
             } else {
                 None
@@ -99,7 +91,7 @@ impl Renderer {
                     .batches
                     .iter()
                     .enumerate()
-                    .filter(|(index, _)| self.virtual_drawn.get(*index) != Some(&true))
+                    .filter(|(index, _)| self.virtual_draws.drawn.get(*index) != Some(&true))
                     .map(|(_, batch)| {
                         u64::from(batch.instances.end - batch.instances.start)
                             * u64::from(
@@ -154,12 +146,12 @@ impl Renderer {
                     .as_ref()
                     .map_or(0, |frame| u64::from(frame.dropped)))
             .min(u64::from(u32::MAX)) as u32,
-            impostors: self.impostors.live(),
-            dropped_impostors: self.dropped_impostors,
+            impostors: self.impostors.atlas.live(),
+            dropped_impostors: self.impostors.dropped,
             reflection_probes: self.probes.slots.ready(),
             reflection_probe_faces: probe_faces,
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
-            pipelines: self.pipelines,
+            pipelines: self.pipeline_counts.created(),
             pipelines_created,
             virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
@@ -221,7 +213,7 @@ impl Renderer {
         let (full_upload, fallback) = (packing.full_upload, packing.fallback);
 
         if engine_profile::active() {
-            engine_profile::counter("render.instance_capacity", self.instance_capacity as f64);
+            engine_profile::counter("render.instance_capacity", self.instances.capacity as f64);
             engine_profile::counter("render.instances", f64::from(stats.instances));
             engine_profile::counter("render.draw_calls", self.plan.batches.len() as f64);
             engine_profile::counter("render.mesh_upload_bytes", mesh_upload_bytes as f64);
@@ -270,9 +262,10 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_virtual_bytes",
-                (self.virtual_geometry.capacity_bytes()
+                (self.virtual_draws.pass.capacity_bytes()
                     + self
                         .visibility
+                        .buffer
                         .as_ref()
                         .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
             );
@@ -340,7 +333,7 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_impostor_bytes",
-                self.impostors.capacity_bytes() as f64,
+                self.impostors.atlas.capacity_bytes() as f64,
             );
             if let Some(occluded) = stats.occluded_instances {
                 engine_profile::counter("render.occluded_instances", f64::from(occluded));
@@ -393,8 +386,7 @@ impl Renderer {
                     .temporal
                     .as_ref()
                     .map_or(0, TemporalPass::capacity_bytes)
-                    + self.alternate_poses.as_ref().map_or(0, wgpu::Buffer::size))
-                    as f64,
+                    + self.instances.alternate_bytes()) as f64,
             );
             if let Some(prepared) = &gpu_prepared {
                 engine_profile::counter("render.gpu_candidates", f64::from(prepared.candidates));
@@ -430,7 +422,8 @@ impl Renderer {
                 "memory.gpu_presentation_bytes",
                 (self.gpu_presentation.capacity_bytes()
                     + self
-                        .depth_pyramid
+                        .culling
+                        .pyramid
                         .as_ref()
                         .map_or(0, DepthPyramid::capacity_bytes)) as f64,
             );
@@ -456,7 +449,8 @@ impl Renderer {
             engine_profile::counter("render.colors_repacked", colors_repacked as f64);
             engine_profile::counter(
                 "memory.render_upload_cache_bytes",
-                (size_of::<UploadCache>() + self.retained_uploads.capacity_bytes()) as f64,
+                (size_of::<UploadCache>() + self.instances.retained_uploads.capacity_bytes())
+                    as f64,
             );
             engine_profile::counter(
                 "memory.render_upload_range_bytes",
@@ -465,24 +459,24 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.render_staging_capacity_bytes",
-                (self.staging.capacity() * size_of::<InstanceData>()
-                    + self.color_staging.capacity() * size_of::<ColorData>()
-                    + self.slot_staging.capacity() * size_of::<u32>()
+                (self.instances.staging.capacity() * size_of::<InstanceData>()
+                    + self.instances.color_staging.capacity() * size_of::<ColorData>()
+                    + self.instances.slot_staging.capacity() * size_of::<u32>()
                     + self.vertex_staging.capacity() * size_of::<Vertex>()) as f64,
             );
             engine_profile::counter(
                 "memory.gpu_pose_staging_bytes",
-                self.pose_uploads.capacity_bytes() as f64,
+                self.instances.pose_uploads.capacity_bytes() as f64,
             );
             engine_profile::counter(
                 "memory.gpu_instance_buffer_bytes",
-                (self.instance_capacity
+                (self.instances.capacity
                     * if affine {
                         size_of::<PoseData>() + size_of::<ColorData>()
                     } else {
                         size_of::<InstanceData>()
                     }
-                    + self.slot_capacity * size_of::<u32>()) as f64,
+                    + self.instances.slot_capacity * size_of::<u32>()) as f64,
             );
             engine_profile::counter("render.upload_bytes", stats.upload_bytes as f64);
             engine_profile::counter(
