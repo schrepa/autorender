@@ -5,17 +5,36 @@
 use super::*;
 
 /// Mesh pipelines (decision 049): their layouts by `mesh_layout_index`,
-/// created with the first variant needing each; every pass kind's material
-/// variants, whose BASIC entries are the base pipelines; the sky by target
-/// kind (`SKY_CANVAS`, `SKY_POST`, `SKY_PROBE`), built when a pass first
-/// draws it; and the empty group lit public-instance pipelines bind as
+/// created with the first variant needing each (temporal frames' come with
+/// the temporal pass); every pass kind's material variants, whose BASIC
+/// entries are the base pipelines; the sky by its targets, built when a pass
+/// first draws it; and the empty group lit public-instance pipelines bind as
 /// group 2.
 pub(super) struct MeshPipelines {
     pub(super) layouts: [Option<wgpu::PipelineLayout>; 4],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    pub(super) sky: [Option<wgpu::RenderPipeline>; 3],
+    sky: [Option<wgpu::RenderPipeline>; 4],
     pub(super) empty_layout: wgpu::BindGroupLayout,
     pub(super) empty_group: wgpu::BindGroup,
+}
+
+/// The targets a sky draws into: an opaque pass's, or a reflection probe
+/// face's (decision 043).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SkyTargets {
+    Frame(Targets),
+    Probe,
+}
+
+impl SkyTargets {
+    fn index(self) -> usize {
+        match self {
+            Self::Frame(Targets::Canvas) => 0,
+            Self::Frame(Targets::Post) => 1,
+            Self::Frame(Targets::Temporal) => 2,
+            Self::Probe => 3,
+        }
+    }
 }
 
 impl MeshPipelines {
@@ -36,6 +55,18 @@ impl MeshPipelines {
             empty_layout,
             empty_group,
         }
+    }
+
+    /// The sky into `targets`, once [`Renderer::ensure_sky`] built it.
+    pub(super) fn sky(&self, targets: SkyTargets) -> &wgpu::RenderPipeline {
+        self.sky[targets.index()]
+            .as_ref()
+            .expect("prepared with the frame's pipelines")
+    }
+
+    /// Forgets the sky into `targets`.
+    pub(super) fn forget_sky(&mut self, targets: SkyTargets) {
+        self.sky[targets.index()] = None;
     }
 }
 
@@ -100,7 +131,7 @@ pub(super) fn affine_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2]
 
 impl Renderer {
     /// Creates the pipelines of the plan's material variants for this frame's
-    /// opaque and transparent passes.
+    /// opaque and transparent passes, and the opaque pass's sky.
     pub(super) fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
@@ -111,14 +142,10 @@ impl Renderer {
                 opaque
             };
             // Only retained slots skin (decision 036).
-            let affine = match kind {
-                PassKind::Opaque { affine, .. } | PassKind::Transparent { affine, .. } => affine,
-                PassKind::Temporal { .. } | PassKind::Probe { .. } => true,
-            };
             let mesh = self.meshes.get(&batch.mesh);
             let variant = variant
                 .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-                .with_skinned(affine && mesh.is_some_and(|mesh| mesh.skinned));
+                .with_skinned(kind.affine && mesh.is_some_and(|mesh| mesh.skinned));
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
             {
@@ -132,39 +159,38 @@ impl Renderer {
                 .variants
                 .insert((kind, variant), pipeline);
         }
-        // The opaque pass ends with the sky of its targets; temporal frames
-        // draw the temporal pass's own.
-        if let PassKind::Opaque { post, .. } = opaque {
-            self.ensure_sky(sky_kind(post));
+        // The opaque pass ends with the sky of its targets.
+        if let Some(targets) = opaque.targets() {
+            self.ensure_sky(SkyTargets::Frame(targets));
         }
     }
 
-    /// The sky pipeline of `kind` (`SKY_CANVAS`, `SKY_POST` or
-    /// `SKY_PROBE`), built the first time a pass draws it.
-    pub(super) fn ensure_sky(&mut self, kind: usize) {
-        if self.mesh_pipelines.sky[kind].is_some() {
+    /// The sky into `targets`, built the first time a pass draws it.
+    pub(super) fn ensure_sky(&mut self, targets: SkyTargets) {
+        let index = targets.index();
+        if self.mesh_pipelines.sky[index].is_some() {
             return;
         }
-        let format = self.display.format();
-        let post_targets = [
-            Some(SCENE_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let canvas_targets = [Some(format.into())];
-        let probe_targets = [Some(ENVIRONMENT_FORMAT.into())];
-        let (fragment, targets, srgb): (_, &[Option<wgpu::ColorTargetState>], _) = match kind {
-            SKY_CANVAS => ("fs_sky", &canvas_targets, Some(format.is_srgb())),
-            SKY_POST => ("fs_sky_post", &post_targets, None),
-            _ => ("fs_probe_sky", &probe_targets, None),
+        let canvas = self.display.format();
+        let (fragment, color_targets, constants) = match targets {
+            SkyTargets::Frame(targets) => (
+                format!("fs_sky{}", targets.entry_suffix()),
+                targets.color_targets(canvas),
+                targets.constants(canvas),
+            ),
+            SkyTargets::Probe => (
+                "fs_probe_sky".to_owned(),
+                vec![Some(ENVIRONMENT_FORMAT.into())],
+                Vec::new(),
+            ),
         };
-        self.mesh_pipelines.sky[kind] = Some(sky_pipeline(
+        self.mesh_pipelines.sky[index] = Some(sky_pipeline(
             &self.device,
             &self.mesh_shader,
             &self.camera.layout,
-            fragment,
-            targets,
-            srgb,
+            &fragment,
+            &color_targets,
+            &constants,
         ));
     }
 
@@ -173,9 +199,10 @@ impl Renderer {
     /// (an empty group otherwise where lights follow), and the lights' group
     /// for lit ones (decision 023). Temporal frames have their own.
     pub(super) fn ensure_mesh_layout(&mut self, kind: PassKind) {
-        let Some((lit, affine)) = mesh_layout_key(kind) else {
+        if kind.targets() == Some(Targets::Temporal) {
             return;
-        };
+        }
+        let (lit, affine) = (kind.lit, kind.affine);
         let index = mesh_layout_index(lit, affine);
         if self.mesh_pipelines.layouts[index].is_some() {
             return;
@@ -208,99 +235,60 @@ impl Renderer {
 
     /// The pipeline of `kind` shading materials of `variant`.
     pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
-        let (device, shader) = (&self.device, &self.mesh_shader);
-        let layout = |lit: bool, affine: bool| {
-            self.mesh_pipelines.layouts[mesh_layout_index(lit, affine)]
+        let canvas = self.display.format();
+        let (layout, slots) = if kind.targets() == Some(Targets::Temporal) {
+            let temporal = self.temporal.as_ref().expect("temporal frames create it");
+            (temporal.mesh_layout(kind.lit), VertexSlots::Temporal)
+        } else {
+            let layout = self.mesh_pipelines.layouts[mesh_layout_index(kind.lit, kind.affine)]
                 .as_ref()
-                .expect("created with the variant")
+                .expect("created with the variant");
+            let slots = if kind.affine {
+                VertexSlots::Retained
+            } else {
+                VertexSlots::Instances
+            };
+            (layout, slots)
         };
-        match kind {
-            PassKind::Opaque { post, lit, affine } => {
-                let canvas_target = [Some(wgpu::ColorTargetState {
-                    format: self.display.format(),
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })];
-                let canvas_constants = [(
-                    "SURFACE_IS_SRGB",
-                    if self.display.format().is_srgb() {
-                        1.0
-                    } else {
-                        0.0
-                    },
-                )];
-                let post_targets = [
-                    Some(SCENE_FORMAT.into()),
-                    Some(GLOW_FORMAT.into()),
-                    Some(SURFACE_FORMAT.into()),
-                ];
-                let targets = MeshTargets {
-                    fragment: match (post, lit) {
-                        (false, false) => "fs_main",
-                        (false, true) => "fs_main_lit",
-                        (true, false) => "fs_post",
-                        (true, true) => "fs_post_lit",
-                    },
-                    targets: if post { &post_targets } else { &canvas_target },
-                    constants: if post { &[] } else { &canvas_constants },
-                    depth_write: true,
-                    mirrored: false,
-                };
-                mesh_pipeline(
-                    device,
-                    shader,
-                    layout(lit, affine),
-                    affine,
-                    &targets,
-                    variant,
-                )
-            }
-            PassKind::Transparent { lit, affine } => {
-                let targets = accumulation_targets();
-                let targets = MeshTargets {
-                    fragment: if lit {
-                        "fs_transparent_lit"
-                    } else {
-                        "fs_transparent"
-                    },
-                    targets: &targets,
-                    constants: &[],
-                    depth_write: false,
-                    mirrored: false,
-                };
-                mesh_pipeline(
-                    device,
-                    shader,
-                    layout(lit, affine),
-                    affine,
-                    &targets,
-                    variant,
-                )
-            }
-            PassKind::Probe { lit } => {
-                let targets = [Some(ENVIRONMENT_FORMAT.into())];
-                let targets = MeshTargets {
-                    fragment: if lit { "fs_probe_lit" } else { "fs_probe" },
-                    targets: &targets,
-                    constants: &[],
-                    depth_write: true,
-                    mirrored: true,
-                };
-                mesh_pipeline(device, shader, layout(lit, true), true, &targets, variant)
-            }
-            PassKind::Temporal { lit } => self
-                .temporal
-                .as_ref()
-                .expect("temporal frames create it")
-                .variant(
-                    device,
-                    shader,
-                    lit,
-                    variant,
-                    &affine_layouts(),
-                    DEPTH_FORMAT,
+        let lit = if kind.lit { "_lit" } else { "" };
+        let fragment = match kind.pass {
+            MeshPass::Opaque(targets) => MeshFragment {
+                fragment: format!(
+                    "fs_{}{lit}",
+                    match targets {
+                        Targets::Canvas => "main",
+                        Targets::Post => "post",
+                        Targets::Temporal => "temporal",
+                    }
                 ),
-        }
+                targets: targets.color_targets(canvas),
+                constants: targets.constants(canvas),
+                depth_write: true,
+                mirrored: false,
+            },
+            MeshPass::Transparent => MeshFragment {
+                fragment: format!("fs_transparent{lit}"),
+                targets: accumulation_targets().to_vec(),
+                constants: Vec::new(),
+                depth_write: false,
+                mirrored: false,
+            },
+            MeshPass::Probe => MeshFragment {
+                fragment: format!("fs_probe{lit}"),
+                targets: vec![Some(ENVIRONMENT_FORMAT.into())],
+                constants: Vec::new(),
+                depth_write: true,
+                mirrored: true,
+            },
+        };
+        mesh_pipeline(
+            &self.device,
+            &self.mesh_shader,
+            layout,
+            slots,
+            &fragment,
+            variant,
+        )
     }
 
     /// Orders the plan's opaque batches for drawing: by pipeline variant,
@@ -340,23 +328,22 @@ impl Renderer {
     }
 }
 
-/// The sky pass of `fragment` into `targets`: one triangle at the far
-/// plane, tested but not written against depth, over the camera bindings.
-/// `surface_srgb` tells a pass into the canvas whether it is sRGB.
-pub(crate) fn sky_pipeline(
+/// The sky pass of `fragment` into `targets` with `constants`: one triangle
+/// at the far plane, tested but not written against depth, over the camera
+/// bindings.
+fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     camera_layout: &wgpu::BindGroupLayout,
     fragment: &str,
     targets: &[Option<wgpu::ColorTargetState>],
-    surface_srgb: Option<bool>,
+    constants: &[(&str, f64)],
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("engine/sky-pipeline-layout"),
         bind_group_layouts: &[Some(camera_layout)],
         immediate_size: 0,
     });
-    let constants = surface_srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
     crate::pipelines::fullscreen(
         device,
         &crate::pipelines::Fullscreen {
@@ -365,7 +352,7 @@ pub(crate) fn sky_pipeline(
             module: shader,
             vertex: "vs_sky",
             fragment,
-            constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
+            constants,
             targets,
             // On the far plane: it shows where nothing was drawn.
             depth: Some(wgpu::DepthStencilState {
@@ -379,27 +366,37 @@ pub(crate) fn sky_pipeline(
     )
 }
 
+/// Where a mesh pipeline's instances come from: public instance records,
+/// retained slots, or retained slots of temporal frames, which also pose
+/// them as the previous frame did (decision 017).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VertexSlots {
+    Instances,
+    Retained,
+    Temporal,
+}
+
 /// Fragment stage of a mesh pipeline: entry point, color targets and
 /// pipeline constants, and whether it writes depth (transparent surfaces do
 /// not).
-pub(super) struct MeshTargets<'a> {
-    fragment: &'a str,
-    targets: &'a [Option<wgpu::ColorTargetState>],
-    constants: &'a [(&'a str, f64)],
+struct MeshFragment {
+    fragment: String,
+    targets: Vec<Option<wgpu::ColorTargetState>>,
+    constants: Vec<(&'static str, f64)>,
     depth_write: bool,
     // Drawn through a mirroring view (reflection probe faces): triangles
     // wind the other way.
     mirrored: bool,
 }
 
-/// A mesh pipeline over `layout`: affine slot-stream inputs or public
-/// instance records, shading materials of `variant` (decision 031).
-pub(super) fn mesh_pipeline(
+/// A mesh pipeline over `layout` drawing `slots`' instances, shading
+/// materials of `variant` (decision 031).
+fn mesh_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
-    affine: bool,
-    fragment: &MeshTargets<'_>,
+    slots: VertexSlots,
+    fragment: &MeshFragment,
     variant: Variant,
 ) -> wgpu::RenderPipeline {
     let constants: Vec<(&str, f64)> = fragment
@@ -410,14 +407,22 @@ pub(super) fn mesh_pipeline(
         .collect();
     // Extended meshes (decision 034) read a third vertex buffer through
     // their own entry points; skinned slots' meshes (decision 036) a fourth.
+    let affine = slots != VertexSlots::Instances;
     let extended = variant.extended();
     let skinned = affine && variant.skinned();
-    let suffix = if extended { "_extended" } else { "" };
-    let vertex_entry = if skinned {
-        "vs_affine_skinned".to_owned()
-    } else {
-        format!("{}{suffix}", if affine { "vs_affine" } else { "vs_main" })
+    let vertex = match slots {
+        VertexSlots::Instances => "vs_main",
+        VertexSlots::Retained => "vs_affine",
+        VertexSlots::Temporal => "vs_affine_temporal",
     };
+    let vertex_entry = if skinned {
+        format!("{vertex}_skinned")
+    } else if extended {
+        format!("{vertex}_extended")
+    } else {
+        vertex.to_owned()
+    };
+    let suffix = if extended { "_extended" } else { "" };
     let fragment_entry = format!("{}{suffix}", fragment.fragment);
     let full_layouts = [
         vertex_layout(),
@@ -428,8 +433,8 @@ pub(super) fn mesh_pipeline(
         }),
         extra_layout(),
     ];
-    let [mesh, slots] = affine_layouts();
-    let affine_layouts = [mesh, slots, extra_layout(), skin_layout()];
+    let [mesh, slot_ids] = affine_layouts();
+    let affine_layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
     let streams = if skinned {
         4
     } else if extended {
@@ -482,7 +487,7 @@ pub(super) fn mesh_pipeline(
                     constants: &constants,
                     ..Default::default()
                 },
-                targets: fragment.targets,
+                targets: &fragment.targets,
             }),
             multiview_mask: None,
             cache: None,
@@ -490,34 +495,8 @@ pub(super) fn mesh_pipeline(
     )
 }
 
-/// Whether `kind`'s mesh variants shade local lights (decision 023) and draw
-/// retained slots; temporal frames have layouts of their own.
-pub(super) fn mesh_layout_key(kind: PassKind) -> Option<(bool, bool)> {
-    match kind {
-        PassKind::Opaque { lit, affine, .. } | PassKind::Transparent { lit, affine } => {
-            Some((lit, affine))
-        }
-        PassKind::Probe { lit } => Some((lit, true)),
-        PassKind::Temporal { .. } => None,
-    }
-}
-
 /// The index in `mesh_layouts` of the mesh pipeline layout of lit and
 /// affine passes.
-pub(super) fn mesh_layout_index(lit: bool, affine: bool) -> usize {
+fn mesh_layout_index(lit: bool, affine: bool) -> usize {
     usize::from(lit) * 2 + usize::from(affine)
-}
-
-/// Sky pipelines by target kind: the canvas, the screen effects' targets
-/// (decision 021) and reflection probe faces (decision 043).
-pub(super) const SKY_CANVAS: usize = 0;
-
-pub(super) const SKY_POST: usize = 1;
-
-pub(super) const SKY_PROBE: usize = 2;
-
-/// The sky kind of the opaque pass, drawing into the screen effects' targets
-/// or not.
-pub(super) fn sky_kind(post: bool) -> usize {
-    if post { SKY_POST } else { SKY_CANVAS }
 }

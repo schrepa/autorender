@@ -205,6 +205,8 @@ mod shadows;
 #[cfg(target_arch = "wasm32")]
 mod staging;
 #[cfg(target_arch = "wasm32")]
+mod targets;
+#[cfg(target_arch = "wasm32")]
 mod temporal;
 #[cfg(target_arch = "wasm32")]
 mod transparent;

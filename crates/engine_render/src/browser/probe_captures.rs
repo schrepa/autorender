@@ -20,9 +20,7 @@ impl Renderer {
         lights: Option<(&LightFrame, &engine_core::LocalLights)>,
     ) -> u32 {
         let lights = lights.filter(|_| self.lights.is_some());
-        let kind = PassKind::Probe {
-            lit: lights.is_some(),
-        };
+        let kind = PassKind::probe(lights.is_some());
         self.ensure_probe_pipelines(kind);
         self.camera.prepare_probe_groups(
             &self.device,
@@ -145,11 +143,7 @@ impl Renderer {
                     bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
-                pass.set_pipeline(
-                    self.mesh_pipelines.sky[SKY_PROBE]
-                        .as_ref()
-                        .expect("created with the probe pipelines"),
-                );
+                pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
                 pass.draw(0..3, 0..1);
             }
             drawn += 1;
@@ -164,7 +158,7 @@ impl Renderer {
     /// and `kind`'s uber variants (decision 049) for this frame's still
     /// opaque meshes.
     pub(super) fn ensure_probe_pipelines(&mut self, kind: PassKind) {
-        self.ensure_sky(SKY_PROBE);
+        self.ensure_sky(SkyTargets::Probe);
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {

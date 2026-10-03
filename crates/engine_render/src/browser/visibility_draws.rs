@@ -97,10 +97,7 @@ impl Renderer {
     /// too small ones for `kind`'s resolves; the bins then draw forward.
     pub(super) fn prepare_visibility(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
         self.visibility.bins.clear();
-        let lit = matches!(
-            kind,
-            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
-        );
+        let lit = kind.lit;
         let needed = if lit {
             RESOLVE_LIT_STORAGE_BUFFERS
         } else {
@@ -196,10 +193,7 @@ impl Renderer {
             };
             self.visibility.pipelines = Some([pipeline(false), pipeline(true)]);
         }
-        let lit = matches!(
-            kind,
-            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
-        );
+        let lit = kind.lit;
         if self.visibility.resolve_layouts[usize::from(lit)].is_none() {
             let lights = self.lights.as_ref().filter(|_| lit);
             let mut layouts = vec![
@@ -281,7 +275,7 @@ impl Renderer {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &self.mesh_shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some(&fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()

@@ -7,9 +7,7 @@ use crate::decals::DecalFrame;
 use crate::gpu_presentation::GpuPrepared;
 use crate::particles::ParticleFrame;
 use crate::post::PostFrame;
-use crate::render_graph::{
-    self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource, Targets,
-};
+use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
 use crate::shadows::ShadowFrame;
 
 /// What kind of frame this is, decided before any GPU work.
@@ -97,7 +95,7 @@ struct PresentationPrep {
 pub(super) struct Passes {
     pub(super) opaque_kind: PassKind,
     pub(super) transparent_kind: PassKind,
-    pub(super) impostor_pass: Option<(ImpostorTargets, bool)>,
+    pub(super) impostor_pass: Option<(Targets, bool)>,
 }
 
 /// Everything a frame's encoding, submission and stats read.
@@ -1233,25 +1231,15 @@ impl Renderer {
 
         // Pipelines of the material variants (decision 031) this frame draws.
         let lit_frame = light_frame.is_some() && self.lights.is_some();
-        let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
-            PassKind::Temporal { lit: lit_frame }
-        } else {
-            PassKind::Opaque {
-                post: post_frame.is_some(),
-                lit: lit_frame,
-                affine,
-            }
-        };
-        let transparent_kind = PassKind::Transparent {
-            lit: lit_frame,
-            affine,
-        };
+        let targets = self.frame_targets(temporal_frame, post_frame);
+        let opaque_kind = PassKind::opaque(targets, lit_frame, affine);
+        let transparent_kind = PassKind::transparent(lit_frame, affine);
         self.ensure_variants(opaque_kind, transparent_kind);
         // Reflection probes (decision 043) capture once their slots stand
         // still: their pipelines are prepared with the first frame that has
         // probes, not in the middle of play (decision 049).
         if gpu_mode && affine && !probe_list.is_empty() {
-            self.ensure_probe_pipelines(PassKind::Probe { lit: lit_frame });
+            self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
         // Impostors (decision 048): this frame's records, group and pipeline.
         let impostor_pass = if gpu_mode
@@ -1323,6 +1311,21 @@ impl Renderer {
         (virtual_frame, resolving)
     }
 
+    /// Where the frame's main passes draw: the temporal targets of temporal
+    /// frames (decision 017), the screen effects' targets of frames with
+    /// effects (decision 021), otherwise the canvas.
+    fn frame_targets(
+        &self,
+        temporal_frame: &Option<TemporalFrame>,
+        post_frame: Option<PostFrame>,
+    ) -> Targets {
+        match (temporal_frame, post_frame.filter(|_| self.post.is_some())) {
+            (Some(_), Some(_)) if self.temporal.is_some() => Targets::Temporal,
+            (_, Some(_)) => Targets::Post,
+            (_, None) => Targets::Canvas,
+        }
+    }
+
     /// The frame's shape (decision 050): which passes its render graph
     /// declares, from what each feature prepared.
     fn frame_shape(
@@ -1332,13 +1335,8 @@ impl Renderer {
         features: &Features<'_>,
         (virtual_frame, resolving): (bool, bool),
     ) -> FrameShape {
-        let temporal = packing.temporal_frame.is_some() && self.temporal.is_some();
         let post = features.post_frame.filter(|_| self.post.is_some());
-        let targets = match (temporal, post) {
-            (true, Some(_)) => Targets::Temporal,
-            (_, Some(_)) => Targets::Post,
-            (_, None) => Targets::Canvas,
-        };
+        let targets = self.frame_targets(&packing.temporal_frame, features.post_frame);
         // Occlusion culling (decision 040) draws in two phases: what the
         // last test left visible, then, after the depth pyramid of those
         // depths and the test, what the test newly finds visible.
@@ -1520,17 +1518,8 @@ impl Renderer {
     /// The sky of the frame's opaque targets, drawn after its last opaque
     /// geometry.
     fn sky_pipeline(&self, state: &FrameState<'_>) -> &wgpu::RenderPipeline {
-        match state
-            .packing
-            .temporal_frame
-            .as_ref()
-            .zip(self.temporal.as_ref())
-        {
-            Some((_, temporal)) => temporal.sky_pipeline(),
-            None => self.mesh_pipelines.sky[sky_kind(state.shape.targets == Targets::Post)]
-                .as_ref()
-                .expect("prepared with the frame's variants"),
-        }
+        self.mesh_pipelines
+            .sky(SkyTargets::Frame(state.shape.targets))
     }
 
     /// The pose buffers of this frame and the previous one, as the virtual

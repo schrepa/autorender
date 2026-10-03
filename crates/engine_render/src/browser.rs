@@ -20,19 +20,18 @@ use crate::gpu_data::{
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
-use crate::impostors::{
-    BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorRecord, ImpostorTargets,
-};
+use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorRecord};
 use crate::lights::{LightFrame, LightPass, LightPoses};
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
 use crate::particles::ParticlePass;
 use crate::pipelines::PipelineCounts;
-use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
+use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, Poses, ShadowPass};
 use crate::staging::{self, StagingRing};
+use crate::targets::Targets;
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
@@ -58,8 +57,8 @@ use camera::CameraBindings;
 use display::{DepthTarget, Display};
 use impostor_draws::ImpostorDraws;
 use instances::Instances;
-use meshes::{DrawOrder, MeshPipelines, SKY_PROBE, sky_kind};
-pub(crate) use meshes::{extra_layout, skin_layout, sky_pipeline, vertex_layout};
+use meshes::{DrawOrder, MeshPipelines, SkyTargets};
+pub(crate) use meshes::{extra_layout, skin_layout, vertex_layout};
 use virtual_draws::{VIRTUAL_ATTRIBUTES, VirtualDraws, VirtualStages};
 use visibility_draws::VisibilityDraws;
 
@@ -137,17 +136,57 @@ fn lod_chain(source: &engine_core::Mesh) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
     (lods.indices, levels)
 }
 
-/// The pipelines a material variant (decision 031) rebuilds: opaque meshes
-/// into the canvas or the screen effects' targets, temporal frames' opaque
-/// meshes, and transparent meshes, lit or not.
+/// What a mesh pipeline draws: the opaque pass into the frame's targets,
+/// transparent surfaces (decision 026) or a reflection probe face (decision
+/// 043: linear light, drawn mirrored). `lit` passes shade local lights
+/// (decision 023) and `affine` ones draw retained slots; temporal frames and
+/// probe faces always do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum PassKind {
-    Opaque { post: bool, lit: bool, affine: bool },
-    Temporal { lit: bool },
-    Transparent { lit: bool, affine: bool },
-    // Reflection probe captures (decision 043): linear light into a cube
-    // face, drawn mirrored.
-    Probe { lit: bool },
+struct PassKind {
+    pass: MeshPass,
+    lit: bool,
+    affine: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum MeshPass {
+    Opaque(Targets),
+    Transparent,
+    Probe,
+}
+
+impl PassKind {
+    fn opaque(targets: Targets, lit: bool, affine: bool) -> Self {
+        Self {
+            pass: MeshPass::Opaque(targets),
+            lit,
+            affine: affine || targets == Targets::Temporal,
+        }
+    }
+
+    fn transparent(lit: bool, affine: bool) -> Self {
+        Self {
+            pass: MeshPass::Transparent,
+            lit,
+            affine,
+        }
+    }
+
+    fn probe(lit: bool) -> Self {
+        Self {
+            pass: MeshPass::Probe,
+            lit,
+            affine: true,
+        }
+    }
+
+    /// The targets of an opaque pass; `None` for the others.
+    fn targets(self) -> Option<Targets> {
+        match self.pass {
+            MeshPass::Opaque(targets) => Some(targets),
+            MeshPass::Transparent | MeshPass::Probe => None,
+        }
+    }
 }
 
 /// Generations of the shadow maps, environment maps and reflection probe
@@ -490,7 +529,6 @@ impl Renderer {
         if enabled {
             self.temporal = Some(TemporalPass::new(
                 &self.device,
-                &self.mesh_shader,
                 &self.camera.layout,
                 self.materials.layout(),
                 self.display.format(),
@@ -499,15 +537,15 @@ impl Renderer {
             self.temporal = None;
             // Pipelines over the temporal pass's layouts go with it.
             let current =
-                |&(kind, _): &(PassKind, Variant)| !matches!(kind, PassKind::Temporal { .. });
+                |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
             self.mesh_pipelines.variants.retain(|key, _| current(key));
             self.virtual_draws.pipelines.retain(|key, _| current(key));
             self.visibility
                 .resolve_pipelines
                 .retain(|key, _| current(key));
-            self.impostors
-                .atlas
-                .forget_pipelines(ImpostorTargets::Temporal);
+            self.impostors.atlas.forget_pipelines(Targets::Temporal);
+            self.mesh_pipelines
+                .forget_sky(SkyTargets::Frame(Targets::Temporal));
             self.instances.release_alternate();
         }
     }

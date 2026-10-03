@@ -588,7 +588,7 @@ fn load_op(access: Access, written: bool) -> Load {
 }
 
 /// Where a frame's main passes draw.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Targets {
     /// Straight into the canvas.
     Canvas,

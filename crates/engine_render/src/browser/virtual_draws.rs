@@ -320,10 +320,7 @@ impl Renderer {
     /// The virtual geometry pipelines (decision 044) of `kind` for this
     /// frame's bins' material variants.
     pub(super) fn ensure_virtual_pipelines(&mut self, kind: PassKind) {
-        let lit = matches!(
-            kind,
-            PassKind::Opaque { lit: true, .. } | PassKind::Temporal { lit: true }
-        );
+        let lit = kind.lit;
         if self.virtual_draws.layouts[usize::from(lit)].is_none() {
             let lights = self.lights.as_ref().filter(|_| lit);
             let mut layouts = vec![
@@ -406,7 +403,7 @@ impl Renderer {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &self.mesh_shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some(&fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()
@@ -428,72 +425,30 @@ impl Renderer {
         variant: Variant,
         resolve: bool,
     ) -> VirtualStages {
-        let canvas = vec![Some(wgpu::ColorTargetState {
-            format: self.display.format(),
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let canvas_constants = vec![(
-            "SURFACE_IS_SRGB",
-            if self.display.format().is_srgb() {
-                1.0
-            } else {
-                0.0
-            },
-        )];
-        let post = vec![
-            Some(SCENE_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let temporal = vec![
-            Some(SCENE_FORMAT.into()),
-            Some(crate::temporal::MOTION_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let (vertex, fragment, targets, constants) = match kind {
-            PassKind::Opaque {
-                post: false, lit, ..
-            } => (
-                "vs_virtual",
-                match (lit, resolve) {
-                    (false, false) => "fs_main",
-                    (true, false) => "fs_main_lit",
-                    (false, true) => "fs_resolve",
-                    (true, true) => "fs_resolve_lit",
-                },
-                canvas,
-                canvas_constants,
-            ),
-            PassKind::Opaque {
-                post: true, lit, ..
-            } => (
-                "vs_virtual",
-                match (lit, resolve) {
-                    (false, false) => "fs_post",
-                    (true, false) => "fs_post_lit",
-                    (false, true) => "fs_resolve_post",
-                    (true, true) => "fs_resolve_post_lit",
-                },
-                post,
-                Vec::new(),
-            ),
-            PassKind::Temporal { lit } => (
-                "vs_virtual_temporal",
-                match (lit, resolve) {
-                    (false, false) => "fs_temporal",
-                    (true, false) => "fs_temporal_lit",
-                    (false, true) => "fs_resolve_temporal",
-                    (true, true) => "fs_resolve_temporal_lit",
-                },
-                temporal,
-                Vec::new(),
-            ),
-            PassKind::Transparent { .. } | PassKind::Probe { .. } => {
-                unreachable!("virtual geometry draws in opaque passes")
-            }
+        let targets = kind
+            .targets()
+            .expect("virtual geometry draws in opaque passes");
+        let canvas = self.display.format();
+        let lit = if kind.lit { "_lit" } else { "" };
+        let vertex = if targets == Targets::Temporal {
+            "vs_virtual_temporal"
+        } else {
+            "vs_virtual"
         };
+        let fragment = if resolve {
+            format!("fs_resolve{}{lit}", targets.entry_suffix())
+        } else {
+            format!(
+                "fs_{}{lit}",
+                match targets {
+                    Targets::Canvas => "main",
+                    Targets::Post => "post",
+                    Targets::Temporal => "temporal",
+                }
+            )
+        };
+        let constants = targets.constants(canvas);
+        let targets = targets.color_targets(canvas);
         VirtualStages {
             vertex: if resolve { "vs_resolve" } else { vertex },
             fragment,
@@ -507,7 +462,7 @@ impl Renderer {
 /// (decisions 044 and 045).
 pub(super) struct VirtualStages {
     pub(super) vertex: &'static str,
-    pub(super) fragment: &'static str,
+    pub(super) fragment: String,
     pub(super) targets: Vec<Option<wgpu::ColorTargetState>>,
     pub(super) constants: Vec<(&'static str, f64)>,
 }
