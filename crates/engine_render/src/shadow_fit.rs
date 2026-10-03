@@ -277,6 +277,108 @@ impl DirtyTiles {
     }
 }
 
+/// A redraw of the kept far map: whole, or a rectangle of its tiles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Refresh {
+    Whole,
+    Tiles(TileRegion),
+}
+
+/// Texels of margin around the far region.
+const MARGIN_TEXELS: f32 = 2.0;
+
+/// What the kept far map holds (decision 020): the light basis and region
+/// it was drawn for, the anchor its region follows the camera with when no
+/// bounds are set, whether it holds the current casters there, and the
+/// tiles that casters moving since dirtied.
+#[derive(Debug, Default)]
+pub(crate) struct KeptMap {
+    basis: Option<LightBasis>,
+    region: Option<MapRegion>,
+    anchor: Option<Vec3>,
+    valid: bool,
+    dirty: DirtyTiles,
+}
+
+impl KeptMap {
+    /// Adds tiles the selection pass marked dirty.
+    pub(crate) fn merge(&mut self, tiles: [u32; TILE_WORDS]) {
+        self.dirty.merge(tiles);
+    }
+
+    /// The map no longer holds the current casters: the next refresh
+    /// redraws it whole.
+    pub(crate) fn invalidate(&mut self) {
+        self.valid = false;
+    }
+
+    /// Keeps the map's casters only while shadows stay `enabled`.
+    pub(crate) fn keep_while(&mut self, enabled: bool) {
+        self.valid &= enabled;
+    }
+
+    /// Every tile needs redrawing, as after casters were removed.
+    pub(crate) fn dirty_all(&mut self) {
+        self.dirty = DirtyTiles::ALL;
+    }
+
+    /// The far maps' region in light `basis`, `texels` wide: the box
+    /// `bounds`, or a cube `distance` around an anchor that follows `eye` a
+    /// quarter of the distance at a time. A new basis or region invalidates
+    /// the map.
+    pub(crate) fn place(
+        &mut self,
+        basis: LightBasis,
+        bounds: Option<(Vec3, Vec3)>,
+        distance: f32,
+        eye: Vec3,
+        texels: u32,
+    ) -> MapRegion {
+        if self.basis != Some(basis) {
+            self.basis = Some(basis);
+            self.valid = false;
+        }
+        let (min, max) = match bounds {
+            Some(bounds) => {
+                self.anchor = None;
+                bounds
+            }
+            None => {
+                let anchor = match self.anchor {
+                    Some(anchor) if anchor.distance(eye) <= distance * 0.25 => anchor,
+                    _ => {
+                        let grid = distance * 0.125;
+                        (eye / grid).round() * grid
+                    }
+                };
+                self.anchor = Some(anchor);
+                (
+                    anchor - Vec3::splat(distance),
+                    anchor + Vec3::splat(distance),
+                )
+            }
+        };
+        let region = MapRegion::of_box(&basis, min, max, texels, MARGIN_TEXELS);
+        if self.region != Some(region) {
+            self.region = Some(region);
+            self.valid = false;
+        }
+        region
+    }
+
+    /// This frame's redraw: the whole map once invalidated (dirty tiles go
+    /// with it), otherwise the next rectangle of dirty tiles.
+    pub(crate) fn refresh(&mut self) -> Option<Refresh> {
+        if self.valid {
+            self.dirty.take_region().map(Refresh::Tiles)
+        } else {
+            self.valid = true;
+            self.dirty = DirtyTiles::default();
+            Some(Refresh::Whole)
+        }
+    }
+}
+
 impl TileRegion {
     /// The region's light-space rectangle in the kept map's rectangle
     /// `rect`, widened by `margin`.
@@ -347,6 +449,65 @@ mod tests {
             assert_eq!((region.columns, region.rows), ([0, TILES - 1], [row, row]));
         }
         assert_eq!(dirty.take_region(), None);
+    }
+
+    #[test]
+    fn kept_maps_follow_the_camera_in_steps_and_redraw_what_changed() {
+        let basis = LightBasis::new(Vec3::new(0.3, 1.0, 0.2));
+        let mut kept = KeptMap::default();
+        // An anchor on the eighth-distance grid: a new map is drawn whole
+        // once, then only dirty tiles.
+        let first = kept.place(basis, None, 40.0, Vec3::new(1.0, 0.0, 2.0), 2048);
+        assert_eq!(
+            first,
+            MapRegion::of_box(&basis, Vec3::splat(-40.0), Vec3::splat(40.0), 2048, 2.0)
+        );
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        assert_eq!(kept.refresh(), None);
+        kept.merge(tiles(&[(5, 3)]).0);
+        let Some(Refresh::Tiles(region)) = kept.refresh() else {
+            panic!("dirty tiles redraw");
+        };
+        assert_eq!((region.columns, region.rows), ([5, 5], [3, 3]));
+        // Within a quarter of the distance the region stays.
+        assert_eq!(
+            kept.place(basis, None, 40.0, Vec3::new(9.0, 0.0, 2.0), 2048),
+            first
+        );
+        assert_eq!(kept.refresh(), None);
+        // Farther, it moves to the eye's grid point and is drawn whole,
+        // dropping the tiles dirtied before.
+        let moved = kept.place(basis, None, 40.0, Vec3::new(30.0, 0.0, 2.0), 2048);
+        assert_ne!(moved, first);
+        kept.merge(tiles(&[(1, 1)]).0);
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        assert_eq!(kept.refresh(), None);
+        // Bounds fix the region; a new sun redraws it, as does turning
+        // shadows off, but not leaving them on.
+        let bounds = (Vec3::splat(-10.0), Vec3::splat(10.0));
+        kept.place(basis, Some(bounds), 40.0, Vec3::ZERO, 2048);
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        kept.place(
+            LightBasis::new(Vec3::Y),
+            Some(bounds),
+            40.0,
+            Vec3::ZERO,
+            2048,
+        );
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        kept.keep_while(true);
+        assert_eq!(kept.refresh(), None);
+        kept.keep_while(false);
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        // Every tile dirty: a row of tiles a frame; invalidated: whole.
+        kept.dirty_all();
+        let Some(Refresh::Tiles(region)) = kept.refresh() else {
+            panic!("dirty tiles redraw");
+        };
+        assert_eq!((region.columns, region.rows), ([0, TILES - 1], [0, 0]));
+        kept.invalidate();
+        assert_eq!(kept.refresh(), Some(Refresh::Whole));
+        assert_eq!(kept.refresh(), None);
     }
 
     #[test]
