@@ -28,6 +28,7 @@ use engine_core::{
 };
 
 use crate::batches::BatchPlan;
+use crate::cached::Cached;
 use crate::gpu_data::{
     BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
     ShadowUniform,
@@ -816,10 +817,10 @@ pub(crate) struct ShadowPass {
     listed_staging: Vec<CandidateData>,
     listed_group_staging: Vec<BatchData>,
     // Selection bindings and the inputs they were built for.
-    select_group: Option<(SelectKey, wgpu::BindGroup)>,
+    select_group: Cached<SelectKey, wgpu::BindGroup>,
     // Skinned selection's bindings (decision 036) and the buffer and
     // presentation generations they were built for.
-    skinned_group: Option<((u64, u64), wgpu::BindGroup)>,
+    skinned_group: Cached<(u64, u64), wgpu::BindGroup>,
     // Advances when this pass replaces a selection buffer.
     buffers_generation: u64,
     groups: Vec<ShadowGroup>,
@@ -942,8 +943,8 @@ impl ShadowPass {
             listed_capacity: 0,
             listed_staging: Vec::new(),
             listed_group_staging: Vec::new(),
-            select_group: None,
-            skinned_group: None,
+            select_group: Cached::default(),
+            skinned_group: Cached::default(),
             buffers_generation: 0,
             groups: Vec::new(),
             group_total: 0,
@@ -1683,11 +1684,7 @@ impl ShadowPass {
                     poses: poses.generation,
                     pose_index,
                 };
-                if self
-                    .select_group
-                    .as_ref()
-                    .is_none_or(|(built, _)| *built != key)
-                {
+                if self.select_group.stale(&key) {
                     let pose_buffer = poses.buffers[pose_index].expect("the frame's pose buffer");
                     let (candidate_buffer, batch_buffer, flag_buffer) = match &presented {
                         Some(presented) if self.source == Source::Presented => {
@@ -1714,15 +1711,11 @@ impl ShadowPass {
                             entry(8, &self.dirty),
                         ],
                     });
-                    self.select_group = Some((key, group));
+                    self.select_group.set(key, group);
                 }
                 if let Some(presented) = presented.as_ref().filter(|_| skinned != 0) {
                     let key = (self.buffers_generation, presented.generation);
-                    if self
-                        .skinned_group
-                        .as_ref()
-                        .is_none_or(|(built, _)| *built != key)
-                    {
+                    if self.skinned_group.stale(&key) {
                         let pipelines = self.pipelines.as_ref().expect("created above");
                         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("engine/shadow-skinned-group"),
@@ -1738,7 +1731,7 @@ impl ShadowPass {
                                 entry(11, presented.skin_bounds),
                             ],
                         });
-                        self.skinned_group = Some((key, group));
+                        self.skinned_group.set(key, group);
                     }
                 }
             }
@@ -1785,7 +1778,7 @@ impl ShadowPass {
                 0,
                 MAPS as u64 * groups * DRAW_ARGS_BYTES,
             );
-            if let Some((_, group)) = &self.select_group
+            if let Some(group) = self.select_group.get()
                 && frame.candidates != 0
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1804,7 +1797,7 @@ impl ShadowPass {
                 pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
                 // Skinned casters by their palette bounds (decision 036).
                 if frame.skinned != 0
-                    && let Some((_, skinned)) = &self.skinned_group
+                    && let Some(skinned) = self.skinned_group.get()
                 {
                     pass.set_pipeline(&pipelines.select_skinned);
                     pass.set_bind_group(0, skinned, &[]);

@@ -9,6 +9,7 @@
 
 use engine_core::{RenderFrame, glam::Mat4};
 
+use crate::cached::Cached;
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, Variant, jitter_clip, jitter_offset, jittered,
 };
@@ -28,7 +29,7 @@ struct Targets {
     history: [wgpu::TextureView; 2],
     // Frames writing history `p` read history `1 - p` through group `p`,
     // over the screen-effect targets of that generation.
-    groups: Option<(u64, [wgpu::BindGroup; 2])>,
+    groups: Cached<u64, [wgpu::BindGroup; 2]>,
 }
 
 impl Drop for Targets {
@@ -84,7 +85,7 @@ pub(crate) struct TemporalPass {
     targets: Option<Targets>,
     // Pose groups for (current, previous) buffer pairs, index 2 * current +
     // previous, of the pose storage generation they were built for.
-    pose_groups: Option<(u64, [wgpu::BindGroup; 4])>,
+    pose_groups: Cached<u64, [wgpu::BindGroup; 4]>,
     history: Option<History>,
     frame: u32,
 }
@@ -244,7 +245,7 @@ impl TemporalPass {
             uniform,
             written: None,
             targets: None,
-            pose_groups: None,
+            pose_groups: Cached::default(),
             history: None,
             frame: 0,
         }
@@ -334,11 +335,7 @@ impl TemporalPass {
         colors: &wgpu::Buffer,
         palettes: [&wgpu::Buffer; 2],
     ) {
-        if self
-            .pose_groups
-            .as_ref()
-            .is_none_or(|(built, _)| *built != generation)
-        {
+        if self.pose_groups.stale(&generation) {
             let group = |current: usize, previous: usize| {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("engine/temporal-pose-group"),
@@ -367,10 +364,10 @@ impl TemporalPass {
                     ],
                 })
             };
-            self.pose_groups = Some((
+            self.pose_groups.set(
                 generation,
                 [group(0, 0), group(0, 1), group(1, 0), group(1, 1)],
-            ));
+            );
         }
     }
 
@@ -382,7 +379,7 @@ impl TemporalPass {
         } else {
             frame.parity
         };
-        let (_, groups) = self.pose_groups.as_ref().expect("prepared this frame");
+        let groups = self.pose_groups.get().expect("prepared this frame");
         &groups[2 * frame.parity + previous]
     }
 
@@ -463,11 +460,7 @@ impl TemporalPass {
         let Some(targets) = self.targets.as_mut() else {
             return;
         };
-        if targets
-            .groups
-            .as_ref()
-            .is_some_and(|(built, _)| *built == generation)
-        {
+        if !targets.groups.stale(&generation) {
             return;
         }
         let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
@@ -502,7 +495,7 @@ impl TemporalPass {
             })
         };
         let groups = [group(&targets.history[1]), group(&targets.history[0])];
-        targets.groups = Some((generation, groups));
+        targets.groups.set(generation, groups);
     }
 
     /// Records the resolve of `frame` into `canvas` and its history texture.
@@ -514,7 +507,7 @@ impl TemporalPass {
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
-        let (_, groups) = targets.groups.as_ref().expect("bound in prepare_resolve");
+        let groups = targets.groups.get().expect("bound in prepare_resolve");
         // The triangle covers every pixel: clears only spare loading them.
         let attachment = |view| {
             Some(wgpu::RenderPassColorAttachment {
@@ -585,7 +578,7 @@ impl TemporalPass {
             textures,
             motion,
             history: [first, second],
-            groups: None,
+            groups: Cached::default(),
         }
     }
 }

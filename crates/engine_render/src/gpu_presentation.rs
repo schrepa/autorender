@@ -15,6 +15,7 @@ use engine_core::{
 };
 
 use crate::batches::{BatchPlan, DrawBatch};
+use crate::cached::Cached;
 use crate::gpu_data::{
     BatchData, COMPOSED_BYTES, CandidateData, DRAW_ARGS_BYTES, FLAG_PHASE1, FLAG_PHASE2,
     FLAG_PROBE, FLAG_VISIBLE, LOD_LEVELS, PRESENTATION_SHADER, PresentationFrame, STILL_FRAMES,
@@ -349,7 +350,7 @@ pub(crate) struct GpuPresentationPass {
     impostor_ids2: wgpu::Buffer,
     occlusion_counts: wgpu::Buffer,
     totals: wgpu::Buffer,
-    occlusion_group: Option<(OcclusionKey, wgpu::BindGroup)>,
+    occlusion_group: Cached<OcclusionKey, wgpu::BindGroup>,
     // Reflection probe captures (decision 043): a uniform per cube face, the
     // draw arguments and visible IDs faces draw from in turn, each face's
     // cull and compaction groups over the buffer and pose storage
@@ -621,7 +622,7 @@ impl GpuPresentationPass {
                 usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            occlusion_group: None,
+            occlusion_group: Cached::default(),
             frame_probes,
             draws_probe: storage(
                 device,
@@ -1899,11 +1900,7 @@ impl GpuPresentationPass {
             self.buffers_generation,
             self.poses_generation,
         );
-        if self
-            .occlusion_group
-            .as_ref()
-            .is_none_or(|(built, _)| *built != key)
-        {
+        if self.occlusion_group.stale(&key) {
             let group = self.families.tests.group(
                 device,
                 &self.fillers,
@@ -1921,7 +1918,7 @@ impl GpuPresentationPass {
                     entry(19, &self.occlusion_counts),
                 ],
             );
-            self.occlusion_group = Some((key, group));
+            self.occlusion_group.set(key, group);
         }
         let workgroups = self.candidate_count.div_ceil(GROUP);
         {
@@ -1936,11 +1933,7 @@ impl GpuPresentationPass {
                 }),
             });
             pass.set_pipeline(&self.pipelines.occlusion_test);
-            pass.set_bind_group(
-                0,
-                &self.occlusion_group.as_ref().expect("built above").1,
-                &[],
-            );
+            pass.set_bind_group(0, self.occlusion_group.get().expect("built above"), &[]);
             pass.dispatch_workgroups(workgroups, 1, 1);
             // Phase two's compaction over its own mask and outputs.
             let scan_workgroups = self.candidate_count.div_ceil(SCAN_GROUP);

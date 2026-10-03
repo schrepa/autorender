@@ -88,6 +88,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::cached::Cached;
     use crate::materials::MaterialStore;
 
     /// A frame's decals: those drawn and those beyond the GPU's binding.
@@ -111,7 +112,7 @@ mod gpu {
         uploaded: Vec<DecalData>,
         runs: Vec<DecalRun>,
         // Keyed by the depth buffer, record buffer and palette they bind.
-        group: Option<((u64, u64, u64, usize), wgpu::BindGroup)>,
+        group: Cached<(u64, u64, u64, usize), wgpu::BindGroup>,
         buffer_generation: u64,
     }
 
@@ -164,7 +165,7 @@ mod gpu {
                 staging: Vec::new(),
                 uploaded: Vec::new(),
                 runs: Vec::new(),
-                group: None,
+                group: Cached::default(),
                 buffer_generation: 0,
             }
         }
@@ -219,7 +220,7 @@ mod gpu {
             }
             let (generation, parity) = pose_key.unwrap_or((u64::MAX, 0));
             let key = (depth_generation, self.buffer_generation, generation, parity);
-            if self.group.as_ref().is_none_or(|(built, _)| *built != key) {
+            if self.group.stale(&key) {
                 let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("engine/decal-group"),
                     layout: &self.layout,
@@ -238,7 +239,7 @@ mod gpu {
                         },
                     ],
                 });
-                self.group = Some((key, group));
+                self.group.set(key, group);
             }
             Some(DecalFrame {
                 drawn: self.staging.len() as u32,
@@ -296,7 +297,7 @@ mod gpu {
             post: bool,
         ) {
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(2, &self.group.as_ref().expect("prepared this frame").1, &[]);
+            pass.set_bind_group(2, self.group.get().expect("prepared this frame"), &[]);
             if let Some(lights) = lights {
                 pass.set_bind_group(3, lights, &[]);
             }
