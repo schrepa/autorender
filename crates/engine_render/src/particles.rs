@@ -502,7 +502,7 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::ParticlePass;
+pub(crate) use gpu::{ParticleFrame, ParticlePass};
 
 #[cfg(test)]
 mod tests {

@@ -393,7 +393,7 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::DecalPass;
+pub(crate) use gpu::{DecalFrame, DecalPass};
 
 #[cfg(test)]
 mod tests {
