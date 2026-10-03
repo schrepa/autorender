@@ -395,7 +395,7 @@ impl Renderer {
         self.virtual_draws.pass.upload(
             &self.device,
             &self.queue,
-            snapshot.virtual_geometry.max_resident_pages,
+            snapshot.environment.virtual_geometry.max_resident_pages,
         );
         // New textures' mip levels render from their uploaded base level in
         // a command buffer submitted ahead of this frame's.
@@ -557,10 +557,10 @@ impl Renderer {
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
         let lighting = LightingUniform::new(
-            &snapshot.atmosphere,
-            &snapshot.bloom,
-            &snapshot.reflections,
-            &snapshot.refraction,
+            &snapshot.environment.atmosphere,
+            &snapshot.environment.bloom,
+            &snapshot.environment.reflections,
+            &snapshot.environment.refraction,
         );
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut instance_upload_bytes = 0_u64;
@@ -760,7 +760,7 @@ impl Renderer {
         };
         // Batches drawing virtual geometry (decision 044) instead of their
         // fallback meshes, by the arena and whether it draws.
-        let virtual_enabled = affine && snapshot.virtual_geometry.enabled;
+        let virtual_enabled = affine && snapshot.environment.virtual_geometry.enabled;
         let arena = self
             .virtual_draws
             .pass
@@ -803,7 +803,7 @@ impl Renderer {
                 meshes: virtual_key ^ (self.mesh_layout << 32),
                 // Batch records carry impostor errors: rebuilt with the
                 // impostors, and when turning them on or off.
-                impostors: if snapshot.level_of_detail.impostors {
+                impostors: if snapshot.environment.level_of_detail.impostors {
                     self.impostors.atlas.generation() + 1
                 } else {
                     0
@@ -820,15 +820,15 @@ impl Renderer {
                     .is_some_and(|temporal| temporal.motion_valid),
                 occlusion: occlusion.map(|(_, _, levels)| levels),
                 subpixel: self.culling.subpixel,
-                lod_error: if snapshot.level_of_detail.enabled {
-                    snapshot.level_of_detail.pixel_error
+                lod_error: if snapshot.environment.level_of_detail.enabled {
+                    snapshot.environment.level_of_detail.pixel_error
                 } else {
                     0.0
                 },
-                impostors: snapshot.level_of_detail.impostors,
+                impostors: snapshot.environment.level_of_detail.impostors,
                 // Reflection probes (decision 043) capture still slots,
                 // counted while captures wait.
-                stillness: (snapshot.reflection_probe_settings.enabled
+                stillness: (snapshot.environment.reflection_probes.enabled
                     && !snapshot.reflection_probes.is_empty())
                 .then(|| self.probes.slots.waiting()),
             };
@@ -889,7 +889,7 @@ impl Renderer {
                     let draw = mesh.draw(arena);
                     // Levels of detail (decision 047) of meshes without
                     // joints, which move their vertices.
-                    let lods = if mesh.skinned || !snapshot.level_of_detail.enabled {
+                    let lods = if mesh.skinned || !snapshot.environment.level_of_detail.enabled {
                         Vec::new()
                     } else {
                         mesh.lods
@@ -938,7 +938,7 @@ impl Renderer {
         // probes kept need (the nearest first, as many as the GPU's texture
         // arrays hold), the sky's redrawn when it changes, then the probes'
         // cubes assigned and their grid uploaded.
-        let probe_settings = snapshot.reflection_probe_settings;
+        let probe_settings = snapshot.environment.reflection_probes;
         let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
             &snapshot.reflection_probes
         } else {
@@ -990,7 +990,7 @@ impl Renderer {
 
         // Local lights (decision 023): binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
-        if snapshot.local_lights.active() && !snapshot.lights.is_empty() {
+        if snapshot.environment.local_lights.active() && !snapshot.lights.is_empty() {
             let device = &self.device;
             let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
             if temporal && let Some(pass) = self.temporal.as_mut() {
@@ -1027,13 +1027,14 @@ impl Renderer {
     ) -> (Option<PostFrame>, bool) {
         // Screen effects (decision 021); temporal frames apply them in their
         // resolve, whose history averages the occlusion noise.
-        let effects = snapshot.ambient_occlusion.sanitized().enabled()
-            || snapshot.bloom.sanitized().enabled()
-            || snapshot.reflections.sanitized().enabled()
-            || (snapshot.sun_shafts.sanitized().enabled() && snapshot.shadows.enabled);
+        let effects = snapshot.environment.ambient_occlusion.sanitized().enabled()
+            || snapshot.environment.bloom.sanitized().enabled()
+            || snapshot.environment.reflections.sanitized().enabled()
+            || (snapshot.environment.sun_shafts.sanitized().enabled()
+                && snapshot.environment.shadows.enabled);
         // Glass refracts the opaque color of the scene target (decision
         // 038): frames drawing it render into the target.
-        let refraction = snapshot.refraction.enabled()
+        let refraction = snapshot.environment.refraction.enabled()
             && self.plan.batches.iter().any(|batch| {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
             });
@@ -1078,33 +1079,34 @@ impl Renderer {
         // Transparent surfaces and particles (decision 026). Particles
         // sample the depth buffer for their soft edges.
         let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
-        let particle_frame = if snapshot.particles.enabled && !snapshot.emitters.is_empty() {
-            let device = &self.device;
-            let (camera_layout, format) = (&self.camera.layout, self.display.format());
-            let particles = self.particles.get_or_insert_with(|| {
-                ParticlePass::new(
+        let particle_frame =
+            if snapshot.environment.particles.enabled && !snapshot.emitters.is_empty() {
+                let device = &self.device;
+                let (camera_layout, format) = (&self.camera.layout, self.display.format());
+                let particles = self.particles.get_or_insert_with(|| {
+                    ParticlePass::new(
+                        device,
+                        camera_layout,
+                        format,
+                        DEPTH_FORMAT,
+                        &accumulation_targets(),
+                    )
+                });
+                let prepared = particles.prepare(
                     device,
-                    camera_layout,
-                    format,
-                    DEPTH_FORMAT,
-                    &accumulation_targets(),
-                )
-            });
-            let prepared = particles.prepare(
-                device,
-                &self.queue,
-                snapshot,
-                self.display.size(),
-                &self.depth.view,
-                self.depth.generation,
-            );
-            if prepared.is_some() {
-                particles.ensure_additive(device, post_frame.is_some());
-            }
-            prepared
-        } else {
-            None
-        };
+                    &self.queue,
+                    snapshot,
+                    self.display.size(),
+                    &self.depth.view,
+                    self.depth.generation,
+                );
+                if prepared.is_some() {
+                    particles.ensure_additive(device, post_frame.is_some());
+                }
+                prepared
+            } else {
+                None
+            };
         let transparency = transparent_draws || particle_frame.is_some();
         if transparency {
             let (device, format) = (&self.device, self.display.format());
@@ -1144,7 +1146,7 @@ impl Renderer {
             .as_ref()
             .and(self.lights.as_ref())
             .map(LightPass::fragment_layout);
-        if snapshot.decal_settings.enabled && !snapshot.decals.is_empty() {
+        if snapshot.environment.decals.enabled && !snapshot.decals.is_empty() {
             let (device, format) = (&self.device, self.display.format());
             let decals = self
                 .decals
@@ -2193,12 +2195,12 @@ impl Renderer {
         let faces = self.encode_probe_captures(
             encoder,
             probe_list,
-            snapshot.reflection_probe_settings.faces_per_frame,
+            snapshot.environment.reflection_probes.faces_per_frame,
             odd,
             snapshot.elapsed_seconds,
             light_frame
                 .as_ref()
-                .map(|frame| (frame, &snapshot.local_lights)),
+                .map(|frame| (frame, &snapshot.environment.local_lights)),
         );
         report.probe_faces = faces;
     }

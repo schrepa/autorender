@@ -180,7 +180,7 @@ impl Regions {
         }
         // The far maps shadow receivers up to the shadow distance, and
         // sun shafts (decision 024) sample them along view rays.
-        let shafts = snapshot.sun_shafts.sanitized();
+        let shafts = snapshot.environment.sun_shafts.sanitized();
         let far_reach = if shafts.enabled() {
             math::max(settings.distance, shafts.distance)
         } else {

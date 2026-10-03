@@ -344,7 +344,7 @@ mod gpu {
             poses: Option<FramePoses<'_>>,
             revision: Option<(u64, u64)>,
         ) -> Option<LightFrame> {
-            if !snapshot.local_lights.active() || snapshot.lights.is_empty() {
+            if !snapshot.environment.local_lights.active() || snapshot.lights.is_empty() {
                 return None;
             }
             let count = snapshot.lights.len();
@@ -407,10 +407,10 @@ mod gpu {
                 snapshot.view_projection,
                 size.0,
                 size.1,
-                snapshot.local_lights.distance,
+                snapshot.environment.local_lights.distance,
                 count as u32,
                 poses.is_some(),
-                snapshot.local_lights.lights_per_cluster,
+                snapshot.environment.local_lights.lights_per_cluster,
                 self.index_capacity.min(u64::from(u32::MAX)) as u32,
             );
             if self.written != Some(uniform) {

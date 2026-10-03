@@ -34,7 +34,7 @@ impl Renderer {
             },
             |handle| plan.material(snapshot, handle).copied(),
         );
-        let settings = snapshot.level_of_detail;
+        let settings = snapshot.environment.level_of_detail;
         if !(gpu_mode && settings.enabled && settings.impostors) {
             return;
         }

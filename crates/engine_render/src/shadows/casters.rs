@@ -135,7 +135,7 @@ impl CasterGroups {
     ) -> bool {
         // Retained frames draw virtual geometry (decision 044) where it is
         // enabled.
-        let clustered = frame.is_some() && snapshot.virtual_geometry.enabled;
+        let clustered = frame.is_some() && snapshot.environment.virtual_geometry.enabled;
         let (source, key) = match frame {
             Some(frame) if gpu => (
                 Source::Presented,

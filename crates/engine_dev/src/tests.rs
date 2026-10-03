@@ -918,7 +918,7 @@ fn environment_projections_share_scene_sections_and_surfaces_are_inspectable() {
     assert!(matches!(
         control,
         crate::BrowserControl::Environment {
-            shadows: Some(engine_scene::SceneShadows { enabled: false, .. }),
+            shadows: Some(Shadows { enabled: false, .. }),
             bloom: None,
             ..
         }
@@ -1216,9 +1216,10 @@ fn lights_particles_and_opt_in_effects_are_discoverable_and_controllable() {
         None,
         json!({"version":1,"op":"inspect","component":"Reflections"}),
     );
-    let section: engine_scene::SceneReflections =
+    let section: Reflections =
         serde_json::from_value(reflections["result"]["value"].clone()).unwrap();
-    assert_eq!(section.resolve("$").unwrap(), Reflections::default());
+    assert_eq!(section, Reflections::default());
+    assert!(section.validate().is_ok());
     let _ = SunShafts::default();
 
     // Entity projections are the scene fields.
@@ -1273,7 +1274,7 @@ fn lights_particles_and_opt_in_effects_are_discoverable_and_controllable() {
         control,
         crate::BrowserControl::Environment {
             sun_shafts: Some(_),
-            local_lights: Some(engine_scene::SceneLocalLights { enabled: false, .. }),
+            local_lights: Some(engine_core::LocalLights { enabled: false, .. }),
             reflections: Some(_),
             particles: Some(_),
             ..
@@ -1308,9 +1309,9 @@ fn reflection_probes_are_discoverable_inspectable_and_controllable() {
         None,
         json!({"version":1,"op":"inspect","component":"ReflectionProbes"}),
     );
-    let section: engine_scene::SceneReflectionProbes =
+    let section: ReflectionProbes =
         serde_json::from_value(settings["result"]["value"].clone()).unwrap();
-    assert_eq!(section.resolve("$").unwrap(), ReflectionProbes::default());
+    assert_eq!(section, ReflectionProbes::default());
     let look = execute(
         &tools,
         &mut engine,
@@ -1359,8 +1360,9 @@ fn reflection_probes_are_discoverable_inspectable_and_controllable() {
     else {
         panic!("expected reflection probe settings");
     };
+    assert!(section.validate().is_ok());
     assert_eq!(
-        section.resolve("$").unwrap(),
+        section,
         ReflectionProbes {
             max_probes: Some(8),
             faces_per_frame: 2,
@@ -1400,9 +1402,9 @@ fn virtual_geometry_settings_are_discoverable_inspectable_and_controllable() {
         None,
         json!({"version":1,"op":"inspect","component":"VirtualGeometry"}),
     );
-    let section: engine_scene::SceneVirtualGeometry =
+    let section: VirtualGeometry =
         serde_json::from_value(settings["result"]["value"].clone()).unwrap();
-    assert_eq!(section.resolve("$").unwrap(), VirtualGeometry::default());
+    assert_eq!(section, VirtualGeometry::default());
     let look = execute(
         &tools,
         &mut engine,
@@ -1426,22 +1428,23 @@ fn virtual_geometry_settings_are_discoverable_inspectable_and_controllable() {
     else {
         panic!("expected virtual geometry settings");
     };
+    assert!(section.validate().is_ok());
     assert_eq!(
-        section.resolve("$").unwrap(),
+        section,
         VirtualGeometry {
             pixel_error: 3.0,
             ..VirtualGeometry::default()
         }
     );
     assert_eq!(
-        engine_scene::SceneVirtualGeometry {
+        VirtualGeometry {
             pixel_error: 0.1,
             ..Default::default()
         }
-        .resolve("$")
+        .validate()
         .unwrap_err()
-        .path,
-        "$.pixel_error"
+        .field,
+        "pixel_error"
     );
     assert!(
         serde_json::from_value::<crate::BrowserControl>(

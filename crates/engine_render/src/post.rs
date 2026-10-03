@@ -375,16 +375,16 @@ impl PostPass {
             self.targets = Some(self.create_targets(device, size));
             self.generation += 1;
         }
-        let occlusion = snapshot.ambient_occlusion.sanitized();
-        let bloom = snapshot.bloom.sanitized();
-        let reflections = snapshot.reflections.sanitized();
-        let shafts = snapshot.sun_shafts.sanitized();
+        let occlusion = snapshot.environment.ambient_occlusion.sanitized();
+        let bloom = snapshot.environment.bloom.sanitized();
+        let reflections = snapshot.environment.reflections.sanitized();
+        let shafts = snapshot.environment.sun_shafts.sanitized();
         let frame = PostFrame {
             occlusion: occlusion.enabled(),
             bloom: bloom.enabled(),
             reflections: reflections.enabled(),
             // Shafts gather light through the shadow maps.
-            shafts: shafts.enabled() && snapshot.shadows.enabled,
+            shafts: shafts.enabled() && snapshot.environment.shadows.enabled,
         };
         let targets_key = (depth_generation, self.generation);
         if frame.occlusion && self.occlusion_group.stale(&targets_key) {
@@ -477,7 +477,7 @@ impl PostPass {
         // distance into half the viewport height.
         let focal = view_projection.row(1).truncate().length();
         let half = ((size.0 / 2).max(1) as f32, (size.1 / 2).max(1) as f32);
-        let atmosphere = snapshot.atmosphere.sanitized();
+        let atmosphere = snapshot.environment.atmosphere.sanitized();
         let uniform = PostUniform {
             inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
             view_projection: view_projection.to_cols_array_2d(),

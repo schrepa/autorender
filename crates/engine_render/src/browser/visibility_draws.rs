@@ -62,7 +62,7 @@ impl Renderer {
         } else {
             RESOLVE_STORAGE_BUFFERS
         };
-        if !snapshot.virtual_geometry.visibility_buffer
+        if !snapshot.environment.virtual_geometry.visibility_buffer
             || self.device.limits().max_storage_buffers_per_shader_stage < needed
             || self
                 .virtual_draws

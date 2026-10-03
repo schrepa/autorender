@@ -3,6 +3,10 @@
 //!
 //! Extraction reads one record per decal each frame; decals keep no GPU
 //! state of their own, so frames without decals pay nothing.
+//!
+//! The [`Decals`] settings are inserted by default; without them, or when
+//! disabled, frames draw no decals. Beyond `max_decals` the decals nearest
+//! the camera win and the rest count as dropped.
 
 use std::sync::Arc;
 
@@ -11,7 +15,9 @@ use bevy_ecs::{
     query::QueryState,
 };
 use glam::Mat4;
+use serde::{Deserialize, Serialize};
 
+use crate::environment::{InvalidSetting, check_budget};
 use crate::{
     AssetLibrary, GlobalTransforms, MaterialHandle, PresentedTransforms, RenderJoint,
     RenderMaterial, RenderSnapshot, RenderTexture, Surface, TransformIndex,
@@ -88,14 +94,20 @@ impl Decal {
     }
 }
 
-/// Decal settings (decision 039), inserted by default. Without this
-/// resource, or when disabled, frames draw no decals.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Decal settings (decision 039). Requires version 8.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneDecals")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Decals {
     pub enabled: bool,
-    /// An optional budget of decals per frame: beyond it the decals nearest
-    /// the camera win and the rest count as dropped. `None`, the default,
-    /// draws every decal.
+    /// An optional budget of decals a frame draws; beyond it the decals
+    /// nearest the camera win. Omitted, every decal draws.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_decals: Option<u32>,
 }
 
@@ -109,6 +121,11 @@ impl Default for Decals {
 }
 
 impl Decals {
+    /// Ok for a budget of at least one decal.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_budget("max_decals", self.max_decals)
+    }
+
     /// A budget of at least one decal.
     pub fn sanitized(self) -> Self {
         Self {
@@ -179,14 +196,8 @@ impl DecalExtraction {
         snapshot: &mut RenderSnapshot,
         poses: DecalPoses,
     ) {
-        let settings = world.get_resource::<Decals>().map_or(
-            Decals {
-                enabled: false,
-                ..Decals::default()
-            },
-            |value| value.sanitized(),
-        );
-        snapshot.decal_settings = settings;
+        // Extracted sanitized with the environment, before this.
+        let settings = snapshot.environment.decals;
         snapshot.decals.clear();
         snapshot.decal_materials.clear();
         snapshot.decal_textures.clear();

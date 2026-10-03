@@ -29,12 +29,7 @@ pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,
 };
-pub use environment::{
-    AtmospherePreset, EnvironmentSettings, SceneAmbientOcclusion, SceneAtmosphere, SceneBloom,
-    SceneBounds, SceneDecals, SceneEnvironment, SceneLevelOfDetail, SceneLocalLights,
-    SceneParticles, SceneReflectionProbes, SceneReflections, SceneRefraction, SceneShadows,
-    SceneSunShafts, SceneVirtualGeometry,
-};
+pub use environment::{AtmospherePreset, EnvironmentSettings, SceneAtmosphere, SceneEnvironment};
 pub use error::SceneError;
 pub use files::{
     ANIMATION_BUFFER_MAGIC, MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile,

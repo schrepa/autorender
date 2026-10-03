@@ -18,6 +18,7 @@ schemars.workspace = true
 engine_scene = { workspace = true, features = ["schema"] }
 
 [build-dependencies]
+engine_core = { workspace = true, features = ["schema"] }
 engine_scene = { workspace = true, features = ["schema"] }
 serde.workspace = true
 serde_json.workspace = true

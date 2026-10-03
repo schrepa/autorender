@@ -721,6 +721,122 @@ fn generated_schema_rejects_unknown_properties_and_describes_source_variants() {
     assert!(text.contains("inline"));
 }
 
+/// Every bound the schema gives an environment section's field passes that
+/// field's `validate`: the schema's ranges (attributes) agree with the rules.
+#[cfg(feature = "schema")]
+#[test]
+fn environment_schema_bounds_pass_validation() {
+    use engine_core::{
+        AmbientOcclusion, Bloom, Decals, InvalidSetting, LevelOfDetail, LocalLights, Particles,
+        ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
+    };
+    use serde::{Serialize, de::DeserializeOwned};
+
+    fn bounds<T: Default + Serialize + DeserializeOwned>(
+        definitions: &serde_json::Value,
+        name: &str,
+        validate: fn(&T) -> Result<(), InvalidSetting>,
+        failures: &mut Vec<String>,
+    ) -> usize {
+        let properties = definitions[name]["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{name} has properties"));
+        let mut checked = 0;
+        for (field, schema) in properties {
+            for bound in ["minimum", "maximum"] {
+                let Some(value) = schema.get(bound) else {
+                    continue;
+                };
+                let mut section = serde_json::to_value(T::default()).unwrap();
+                section[field.as_str()] = value.clone();
+                let settings: T = serde_json::from_value(section).unwrap();
+                checked += 1;
+                // Another field's rule may refuse the combination; this
+                // field's own rule must not.
+                if let Err(invalid) = validate(&settings)
+                    && invalid.field == field.as_str()
+                {
+                    failures.push(format!("{name}.{field} {bound} {value}: {invalid}"));
+                }
+            }
+        }
+        checked
+    }
+
+    let schema: serde_json::Value = serde_json::from_str(&SceneDocument::schema_json()).unwrap();
+    let definitions = &schema["$defs"];
+    let mut failures = Vec::new();
+    let checked = bounds(
+        definitions,
+        "SceneShadows",
+        Shadows::validate,
+        &mut failures,
+    ) + bounds(
+        definitions,
+        "SceneAmbientOcclusion",
+        AmbientOcclusion::validate,
+        &mut failures,
+    ) + bounds(definitions, "SceneBloom", Bloom::validate, &mut failures)
+        + bounds(
+            definitions,
+            "SceneLocalLights",
+            LocalLights::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneSunShafts",
+            SunShafts::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneReflections",
+            Reflections::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneRefraction",
+            Refraction::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneParticles",
+            Particles::validate,
+            &mut failures,
+        )
+        + bounds(definitions, "SceneDecals", Decals::validate, &mut failures)
+        + bounds(
+            definitions,
+            "SceneReflectionProbes",
+            ReflectionProbes::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneVirtualGeometry",
+            VirtualGeometry::validate,
+            &mut failures,
+        )
+        + bounds(
+            definitions,
+            "SceneLevelOfDetail",
+            LevelOfDetail::validate,
+            &mut failures,
+        );
+    assert!(checked >= 30, "only {checked} bounds found");
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.join(
+            "
+"
+        )
+    );
+}
+
 #[test]
 fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
     use engine_core::{
@@ -786,12 +902,11 @@ fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
     assert_eq!(world.resource::<LocalLights>().distance, 90.0);
     // Cluster lists have no budget unless a scene sets one.
     assert_eq!(world.resource::<LocalLights>().lights_per_cluster, None);
-    let budgeted: crate::SceneLocalLights =
-        serde_json::from_str(r#"{"lights_per_cluster": 32}"#).unwrap();
-    assert_eq!(budgeted.resolve("$").unwrap().lights_per_cluster, Some(32));
-    let empty: crate::SceneLocalLights =
-        serde_json::from_str(r#"{"lights_per_cluster": 0}"#).unwrap();
-    assert_eq!(empty.resolve("$").unwrap_err().path, "$.lights_per_cluster");
+    let budgeted: LocalLights = serde_json::from_str(r#"{"lights_per_cluster": 32}"#).unwrap();
+    assert_eq!(budgeted.lights_per_cluster, Some(32));
+    assert!(budgeted.validate().is_ok());
+    let empty: LocalLights = serde_json::from_str(r#"{"lights_per_cluster": 0}"#).unwrap();
+    assert_eq!(empty.validate().unwrap_err().field, "lights_per_cluster");
     assert_eq!(world.resource::<SunShafts>().intensity, 2.0);
     assert_eq!(world.resource::<Particles>().max_particles, Some(500));
     assert!(world.get_resource::<Reflections>().is_none());
@@ -859,7 +974,7 @@ fn version_six_shadow_cascades_validate_and_earlier_versions_refuse_them() {
     assert_eq!(world.resource::<Shadows>().cascades, 2);
     // Inspection reproduces them; an omitted count takes the default.
     let current = crate::SceneEnvironment::current(&world);
-    assert_eq!(current.shadows.unwrap().cascades, Some(2));
+    assert_eq!(current.shadows.unwrap().cascades, 2);
     instance.despawn(&mut world);
     source["environment"]["shadows"] = serde_json::json!({"enabled": true});
     let document = SceneDocument::from_json(&source.to_string()).unwrap();
@@ -876,6 +991,14 @@ fn version_six_shadow_cascades_validate_and_earlier_versions_refuse_them() {
             (error.code, error.path.as_str()),
             ("invalid_environment", "$.environment.shadows.cascades")
         );
+    }
+    // The default count needs no version 6, a null one reads as omitted,
+    // and scenes write it only when it differs.
+    source["version"] = serde_json::json!(5);
+    for cascades in [serde_json::json!(3), serde_json::Value::Null] {
+        source["environment"]["shadows"] = serde_json::json!({"cascades": cascades});
+        let document = SceneDocument::from_json(&source.to_string()).unwrap();
+        assert!(!document.to_json().unwrap().contains("cascades"));
     }
 }
 

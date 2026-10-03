@@ -6,6 +6,8 @@
 use bevy_ecs::prelude::Resource;
 use glam::Vec3;
 
+use crate::environment::InvalidSetting;
+
 /// Lighting of the rendered scene, read when frames are extracted.
 ///
 /// Colors are linear RGB. The sun and sky may exceed 1: the renderer tone
@@ -167,41 +169,64 @@ impl Atmosphere {
         }
     }
 
-    /// This atmosphere when its values are usable: finite, colors and
-    /// scales nonnegative, a nonzero sun direction and a fog maximum in
-    /// `[0, 1]`. Otherwise the default.
-    pub fn sanitized(self) -> Self {
+    /// Ok when every value is usable: finite, colors and scales
+    /// nonnegative, a nonzero sun direction and a fog maximum of at most 1.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
         let colors = [
-            self.sun_color,
-            self.zenith,
-            self.horizon,
-            self.ground,
-            self.shadow_tint,
-            self.highlight_tint,
+            ("sun_color", self.sun_color),
+            ("zenith", self.zenith),
+            ("horizon", self.horizon),
+            ("ground", self.ground),
+            ("shadow_tint", self.shadow_tint),
+            ("highlight_tint", self.highlight_tint),
         ];
-        let scales = [
-            self.ambient,
-            self.fog_start,
-            self.fog_density,
-            self.fog_falloff,
-            self.rim,
-            self.specular,
-            self.emission,
-            self.exposure,
-            self.saturation,
-            self.contrast,
-            self.vibrance,
+        for (field, color) in colors {
+            if !color.is_finite() || color.min_element() < 0.0 {
+                return Err(InvalidSetting::new(
+                    field,
+                    "color channels must be finite and nonnegative",
+                ));
+            }
+        }
+        if !self.sun_direction.is_finite() || self.sun_direction.length_squared() == 0.0 {
+            return Err(InvalidSetting::new(
+                "sun_direction",
+                "must be finite and nonzero",
+            ));
+        }
+        let scalars = [
+            ("ambient", self.ambient),
+            ("fog_start", self.fog_start),
+            ("fog_density", self.fog_density),
+            ("fog_falloff", self.fog_falloff),
+            ("fog_max", self.fog_max),
+            ("rim", self.rim),
+            ("specular", self.specular),
+            ("emission", self.emission),
+            ("exposure", self.exposure),
+            ("saturation", self.saturation),
+            ("contrast", self.contrast),
+            ("vibrance", self.vibrance),
         ];
-        let usable = self.sun_direction.is_finite()
-            && self.sun_direction.length_squared() > 0.0
-            && colors
-                .iter()
-                .all(|color| color.is_finite() && color.min_element() >= 0.0)
-            && scales
-                .iter()
-                .all(|value| value.is_finite() && *value >= 0.0)
-            && (0.0..=1.0).contains(&self.fog_max);
-        if usable { self } else { Self::default() }
+        for (field, value) in scalars {
+            if !value.is_finite() || value < 0.0 {
+                return Err(InvalidSetting::new(field, "must be finite and nonnegative"));
+            }
+        }
+        if self.fog_max > 1.0 {
+            return Err(InvalidSetting::new("fog_max", "must be at most 1"));
+        }
+        Ok(())
+    }
+
+    /// This atmosphere when [`Self::validate`] accepts it, otherwise the
+    /// default.
+    pub fn sanitized(self) -> Self {
+        if self.validate().is_ok() {
+            self
+        } else {
+            Self::default()
+        }
     }
 }
 

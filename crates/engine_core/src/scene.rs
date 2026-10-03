@@ -298,36 +298,20 @@ pub struct RenderSnapshot {
     /// Presentation time ([`crate::FrameTime::elapsed_seconds`]) for animated
     /// surfaces such as ripples.
     pub elapsed_seconds: f32,
-    /// The scene's lighting, sanitized ([`crate::Atmosphere::sanitized`]).
-    pub atmosphere: crate::Atmosphere,
-    /// Sun shadows (decision 020), sanitized.
-    pub shadows: crate::Shadows,
-    /// Ambient occlusion and bloom (decision 021), sanitized.
-    pub ambient_occlusion: crate::AmbientOcclusion,
-    pub bloom: crate::Bloom,
-    /// Sun shafts (decision 024) and screen-space reflections (decision
-    /// 025), sanitized; intensity 0 when their resources are missing.
-    pub sun_shafts: crate::SunShafts,
-    pub reflections: crate::Reflections,
-    /// Refraction through glass (decision 038), sanitized; strength 0 when
-    /// the resource is missing.
-    pub refraction: crate::Refraction,
-    /// Local lighting settings (decision 023), sanitized; disabled when the
-    /// resource is missing.
-    pub local_lights: crate::LocalLights,
-    /// This frame's local lights, within the settings' budget.
+    /// The scene's atmosphere and every effect's settings (decision 022),
+    /// sanitized ([`crate::Environment::current`]): a missing atmosphere
+    /// reads as the default one and a missing effect resource as off.
+    pub environment: crate::Environment,
+    /// This frame's local lights (decision 023), within the settings' budget.
     pub lights: Vec<crate::RenderLight>,
     /// Usable lights beyond the budget, or without a valid pose.
     pub dropped_lights: usize,
-    /// Particle settings (decision 026), sanitized; disabled when missing.
-    pub particles: crate::Particles,
-    /// This frame's particle emitters, within the particle budget.
+    /// This frame's particle emitters (decision 026), within the particle
+    /// budget.
     pub emitters: Vec<crate::RenderEmitter>,
     /// Particles of emitters skipped beyond the budget.
     pub dropped_particles: usize,
-    /// Decal settings (decision 039), sanitized; disabled when missing.
-    pub decal_settings: crate::Decals,
-    /// This frame's decals, within the settings' budget.
+    /// This frame's decals (decision 039), within the settings' budget.
     pub decals: Vec<crate::RenderDecal>,
     /// Materials with maps that decals draw with, each once, and their
     /// textures; they may repeat [`Self::materials`] and [`Self::textures`].
@@ -335,17 +319,8 @@ pub struct RenderSnapshot {
     pub decal_textures: Vec<RenderTexture>,
     /// Usable decals beyond the budget.
     pub dropped_decals: usize,
-    /// Reflection probe settings (decision 043), sanitized; disabled when
-    /// the resource is missing.
-    pub reflection_probe_settings: crate::ReflectionProbes,
-    /// Virtual geometry settings (decision 044), sanitized; disabled when
-    /// the resource is missing.
-    pub virtual_geometry: crate::VirtualGeometry,
-    /// Level of detail settings (decision 047), sanitized; disabled when the
-    /// resource is missing.
-    pub level_of_detail: crate::LevelOfDetail,
-    /// This frame's usable reflection probes, nearest the camera first,
-    /// within the settings' budget.
+    /// This frame's usable reflection probes (decision 043), nearest the
+    /// camera first, within the settings' budget.
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,
     /// Usable probes beyond the budget.
     pub dropped_reflection_probes: usize,

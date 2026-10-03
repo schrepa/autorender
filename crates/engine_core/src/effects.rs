@@ -8,112 +8,138 @@
 //! the resource to remove the effect. Shadows, ambient occlusion and bloom
 //! are inserted by default; sun shafts, reflections and refraction are
 //! opt-in: insert them (their defaults are on). Without an `Atmosphere`
-//! frames use the default one.
+//! frames use the default one. Each is also a scene environment section in
+//! the same JSON shape (decision 022) and checks itself with `validate`;
+//! their docs are the sections' schema descriptions, written for authors.
+//!
+//! Shadows: every rendered instance casts and receives them. One map covers
+//! `bounds`, or without bounds a sphere of `distance` around the camera that
+//! moves when the camera travels a quarter of it. Instances that stay still
+//! are drawn into that map once and kept; moving ones are drawn every frame.
+//! Sharper maps follow the first `near_distance` of the view, split into
+//! `cascades` (decision 028): each has three times the texel density of the
+//! next and is a depth pass per frame over the casters it covers, and each
+//! has half the far maps' `resolution` per side.
+//!
+//! Ambient occlusion darkens the sky's ambient light in creases, corners and
+//! under objects. Bloom makes light glow beyond bright pixels such as
+//! emissive surfaces, sun glints and the sun itself: emission and highlights
+//! usually exceed its default threshold, which applies to brightness before
+//! tone mapping; sunlit walls do not. Sun shafts are sunlight the fog
+//! scatters toward the eye, with a glow around the sun; they read the fog's
+//! density and height falloff as the medium. Screen-space reflections fall
+//! back to the sky where their rays leave the screen. Refraction bends the
+//! opaque scene seen through transmissive materials along their index of
+//! refraction and thickness and blurs it by their roughness; frames without
+//! glass never pay for it.
 
 use bevy_ecs::prelude::{Resource, World};
 use glam::Vec3;
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{Atmosphere, Camera, FrameTime, RenderSnapshot};
+use crate::environment::{InvalidSetting, check_range};
+use crate::{Camera, Environment, FrameTime, RenderSnapshot};
 
-/// Copies the camera eye, presentation time, atmosphere and effects of
-/// `world` into `snapshot`, sanitized. A missing atmosphere reads as the
-/// default one; a missing effect resource turns that effect off.
+/// Copies the camera eye, presentation time and environment of `world`
+/// into `snapshot`, sanitized ([`Environment::current`]): a missing
+/// atmosphere reads as the default one, a missing effect resource turns that
+/// effect off.
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     snapshot.camera_position = world.resource::<Camera>().eye();
     snapshot.elapsed_seconds = world
         .get_resource::<FrameTime>()
         .map_or(0.0, |time| time.elapsed_seconds as f32);
-    snapshot.atmosphere = world
-        .get_resource::<Atmosphere>()
-        .map_or_else(Atmosphere::default, |value| value.sanitized());
-    snapshot.shadows = world.get_resource::<Shadows>().map_or(
-        Shadows {
-            enabled: false,
-            ..Shadows::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.ambient_occlusion = world.get_resource::<AmbientOcclusion>().map_or(
-        AmbientOcclusion {
-            intensity: 0.0,
-            ..AmbientOcclusion::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.bloom = world.get_resource::<Bloom>().map_or(
-        Bloom {
-            intensity: 0.0,
-            ..Bloom::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.sun_shafts = world.get_resource::<SunShafts>().map_or(
-        SunShafts {
-            intensity: 0.0,
-            ..SunShafts::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.reflections = world.get_resource::<Reflections>().map_or(
-        Reflections {
-            intensity: 0.0,
-            ..Reflections::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.refraction = world.get_resource::<Refraction>().map_or(
-        Refraction {
-            strength: 0.0,
-            ..Refraction::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.virtual_geometry = world.get_resource::<crate::VirtualGeometry>().map_or(
-        crate::VirtualGeometry {
-            enabled: false,
-            ..crate::VirtualGeometry::default()
-        },
-        |value| value.sanitized(),
-    );
-    snapshot.level_of_detail = world.get_resource::<crate::LevelOfDetail>().map_or(
-        crate::LevelOfDetail {
-            enabled: false,
-            ..crate::LevelOfDetail::default()
-        },
-        |value| value.sanitized(),
-    );
+    snapshot.environment = Environment::current(world).sanitized();
 }
 
 /// Most near shadow cascades ([`Shadows::cascades`]).
 pub const MAX_SHADOW_CASCADES: u32 = 4;
 
-/// Shadows cast by the atmosphere's sun (decision 020).
-///
-/// Every rendered instance casts and receives them. One map covers `bounds`,
-/// or without bounds a sphere of `distance` around the camera that moves
-/// when the camera travels a quarter of it. Instances that stay still are
-/// drawn into that map once and kept; moving ones are drawn every frame.
-/// Sharper maps follow the first `near_distance` of the view, split into
-/// `cascades` (decision 028).
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Sun shadows (decision 020); omitted fields take the engine defaults.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneShadows")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Shadows {
     pub enabled: bool,
-    /// World region (minimum and maximum corners) whose shadows are kept.
-    /// A region that holds the whole scene fits the map to it and never
-    /// moves it; `None` follows the camera instead.
+    /// Region to keep shadows for: the whole scene gives the sharpest, stable
+    /// shadows. Without it the maps follow the camera.
+    #[serde(with = "bounds", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<bounds::Bounds>"))]
     pub bounds: Option<(Vec3, Vec3)>,
-    /// Shadows fade out this far from the camera.
+    /// Shadows fade out this far from the camera (world units).
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub distance: f32,
-    /// View distance covered by the sharper maps that follow the camera.
+    /// View distance of the sharper maps that follow the camera.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub near_distance: f32,
-    /// Near maps (cascades) splitting `near_distance`, 1 to
-    /// [`MAX_SHADOW_CASCADES`]: each reaches a third as far as the next and
-    /// so has three times its texel density. Each is a depth pass per frame
-    /// over the casters it covers.
+    /// Sharper maps (cascades) splitting `near_distance`, each reaching a
+    /// third as far as the next: 1 to 4, 3 when omitted. Version 6
+    /// (decision 028).
+    #[serde(
+        deserialize_with = "cascades_or_default",
+        skip_serializing_if = "is_default_cascades"
+    )]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "Option<u32>", range(min = 1, max = 4))
+    )]
     pub cascades: u32,
-    /// Texels per side of the far maps: a power of two in `1024..=4096`.
-    /// Each near map has half as many.
+    /// Texels per side of the far maps: 1024, 2048 or 4096.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1024, max = 4096)))]
     pub resolution: u32,
+}
+
+/// Shadow bounds as a scene writes them: `{"min": [x, y, z], "max": [x, y, z]}`.
+mod bounds {
+    use glam::Vec3;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    /// A world box (minimum and maximum corners).
+    #[derive(Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneBounds")
+    )]
+    #[serde(deny_unknown_fields)]
+    pub(super) struct Bounds {
+        min: [f32; 3],
+        max: [f32; 3],
+    }
+
+    pub(super) fn serialize<S: Serializer>(
+        bounds: &Option<(Vec3, Vec3)>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        bounds
+            .map(|(min, max)| Bounds {
+                min: min.to_array(),
+                max: max.to_array(),
+            })
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<(Vec3, Vec3)>, D::Error> {
+        Ok(Option::<Bounds>::deserialize(deserializer)?
+            .map(|bounds| (Vec3::from_array(bounds.min), Vec3::from_array(bounds.max))))
+    }
+}
+
+/// Reads a null cascade count as the default, as an omitted one.
+fn cascades_or_default<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    Ok(Option::<u32>::deserialize(deserializer)?.unwrap_or(Shadows::default().cascades))
+}
+
+/// Scenes omit the default cascade count, which documents before version 6
+/// cannot change.
+fn is_default_cascades(cascades: &u32) -> bool {
+    *cascades == Shadows::default().cascades
 }
 
 impl Default for Shadows {
@@ -162,6 +188,49 @@ impl Shadows {
         }
     }
 
+    /// Ok when a scene may hold these settings: positive distances with the
+    /// near one inside the other, a resolution of 1024, 2048 or 4096, 1 to
+    /// [`MAX_SHADOW_CASCADES`] cascades, and finite bounds with `min` at most
+    /// `max` on every axis.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        if !self.distance.is_finite() || self.distance <= 0.0 {
+            return Err(InvalidSetting::new(
+                "distance",
+                "must be finite and positive",
+            ));
+        }
+        if !self.near_distance.is_finite()
+            || self.near_distance <= 0.0
+            || self.near_distance >= self.distance
+        {
+            return Err(InvalidSetting::new(
+                "near_distance",
+                "must be finite, positive and less than distance",
+            ));
+        }
+        if ![1024, 2048, 4096].contains(&self.resolution) {
+            return Err(InvalidSetting::new(
+                "resolution",
+                "must be 1024, 2048 or 4096",
+            ));
+        }
+        if !(1..=MAX_SHADOW_CASCADES).contains(&self.cascades) {
+            return Err(InvalidSetting::new(
+                "cascades",
+                format!("must be 1 to {MAX_SHADOW_CASCADES}"),
+            ));
+        }
+        if let Some((min, max)) = self.bounds
+            && (!min.is_finite() || !max.is_finite() || !min.cmple(max).all())
+        {
+            return Err(InvalidSetting::new(
+                "bounds",
+                "corners must be finite with min at most max on every axis",
+            ));
+        }
+        Ok(())
+    }
+
     /// View distance each near cascade reaches, nearest first: the last
     /// reaches `near_distance`, and each one before it a third as far.
     pub fn cascade_reaches(&self) -> impl Iterator<Item = f32> {
@@ -173,13 +242,19 @@ impl Shadows {
     }
 }
 
-/// Screen-space ambient occlusion (decision 021): creases, corners and the
-/// ground under objects receive less of the sky's ambient light.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Ambient occlusion (decision 021); an intensity of 0 turns it off.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneAmbientOcclusion")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct AmbientOcclusion {
-    /// How much occluded ambient light darkens, in `[0, 1]`; 0 disables it.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub intensity: f32,
     /// World distance within which geometry occludes.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub radius: f32,
 }
 
@@ -193,6 +268,15 @@ impl Default for AmbientOcclusion {
 }
 
 impl AmbientOcclusion {
+    /// Ok for an intensity in `[0, 1]` and a finite, positive radius.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("intensity", self.intensity, 0.0..=1.0)?;
+        if !self.radius.is_finite() || self.radius <= 0.0 {
+            return Err(InvalidSetting::new("radius", "must be finite and positive"));
+        }
+        Ok(())
+    }
+
     /// Intensity clamped into `[0, 1]` (NaN disables it); an unusable radius
     /// falls back to the default.
     pub fn sanitized(self) -> Self {
@@ -215,14 +299,19 @@ impl AmbientOcclusion {
     }
 }
 
-/// Bloom (decision 021): light glows beyond bright pixels, such as emissive
-/// surfaces, sun glints and the sun itself.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Bloom (decision 021); an intensity of 0 turns it off.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneBloom")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Bloom {
-    /// Strength of the glow in `[0, 4]`; 0 disables it.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub intensity: f32,
-    /// Exposed brightness (before tone mapping) above which light glows.
-    /// Emission and highlights usually exceed the default; sunlit walls do not.
+    /// Exposed brightness above which light glows.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub threshold: f32,
 }
 
@@ -236,6 +325,18 @@ impl Default for Bloom {
 }
 
 impl Bloom {
+    /// Ok for an intensity in `[0, 4]` and a finite, nonnegative threshold.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("intensity", self.intensity, 0.0..=4.0)?;
+        if !self.threshold.is_finite() || self.threshold < 0.0 {
+            return Err(InvalidSetting::new(
+                "threshold",
+                "must be finite and nonnegative",
+            ));
+        }
+        Ok(())
+    }
+
     /// Intensity clamped into `[0, 4]` (NaN disables it); an unusable
     /// threshold falls back to the default.
     pub fn sanitized(self) -> Self {
@@ -258,19 +359,36 @@ impl Bloom {
     }
 }
 
-/// Sunlight scattered toward the eye by the atmosphere's fog (decision 024):
-/// shafts of light between shadow casters and a glow around the sun. Opt-in:
-/// insert this resource (its default is on). It needs sun shadows, and reads
-/// the fog's density and height falloff as the medium.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Sun shafts (decision 024): sunlight scattered by the fog between shadow
+/// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneSunShafts")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct SunShafts {
-    /// Strength in `[0, 4]`; 0 turns the shafts off.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub intensity: f32,
-    /// Forward scattering in `[0, 0.95]`: higher concentrates light toward
-    /// the sun.
+    /// Forward scattering: higher concentrates light toward the sun.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.95)))]
     pub anisotropy: f32,
     /// World distance along each view ray light is gathered over.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 100000.0)))]
     pub distance: f32,
+}
+
+/// Ok for a world distance that is positive and at most 100 000.
+fn check_distance(distance: f32) -> Result<(), InvalidSetting> {
+    if distance.is_finite() && distance > 0.0 && distance <= 100_000.0 {
+        Ok(())
+    } else {
+        Err(InvalidSetting::new(
+            "distance",
+            "must be positive and at most 100000",
+        ))
+    }
 }
 
 impl Default for SunShafts {
@@ -284,6 +402,14 @@ impl Default for SunShafts {
 }
 
 impl SunShafts {
+    /// Ok for an intensity in `[0, 4]`, an anisotropy in `[0, 0.95]` and a
+    /// distance that is positive and at most 100 000.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("intensity", self.intensity, 0.0..=4.0)?;
+        check_range("anisotropy", self.anisotropy, 0.0..=0.95)?;
+        check_distance(self.distance)
+    }
+
     /// Intensity and anisotropy clamped into their ranges (NaN disables);
     /// an unusable distance falls back to the default.
     pub fn sanitized(self) -> Self {
@@ -311,16 +437,23 @@ impl SunShafts {
     }
 }
 
-/// Screen-space reflections (decision 025): glossy surfaces reflect the
-/// scene on screen, falling back to the sky where their rays leave it.
-/// Opt-in: insert this resource (its default is on).
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Screen-space reflections (decision 025). Requires version 6; an intensity
+/// of 0 turns them off.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneReflections")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Reflections {
-    /// Strength in `[0, 1]`; 0 turns reflections off.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub intensity: f32,
-    /// Surfaces rougher than this, in `[0.05, 1]`, reflect only the sky.
+    /// Surfaces rougher than this reflect only the sky.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.05, max = 1.0)))]
     pub max_roughness: f32,
     /// World distance reflection rays travel.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 100000.0)))]
     pub distance: f32,
 }
 
@@ -335,6 +468,14 @@ impl Default for Reflections {
 }
 
 impl Reflections {
+    /// Ok for an intensity in `[0, 1]`, a maximum roughness in `[0.05, 1]`
+    /// and a distance that is positive and at most 100 000.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("intensity", self.intensity, 0.0..=1.0)?;
+        check_range("max_roughness", self.max_roughness, 0.05..=1.0)?;
+        check_distance(self.distance)
+    }
+
     /// Values clamped into their ranges (NaN intensity disables); an
     /// unusable distance falls back to the default.
     pub fn sanitized(self) -> Self {
@@ -362,17 +503,21 @@ impl Reflections {
     }
 }
 
-/// Refraction through glass (decision 038): transmissive materials show the
-/// opaque scene behind them, along rays their index of refraction bends
-/// through their thickness, blurred by their roughness. Opt-in: insert this
-/// resource (its default is on); without it transmissive materials blend as
-/// plain transparency, and frames without glass never pay for it.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Refraction through glass (decision 038). Requires version 8; a strength
+/// of 0 turns it off.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneRefraction")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Refraction {
-    /// Scales how far rays bend, in `[0, 4]`; 0 turns refraction off.
+    /// Scales how far rays bend through transmissive materials.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub strength: f32,
-    /// The blur radius in pixels, in `[0, 64]`, that fully rough glass
-    /// reaches; smoother glass blurs less.
+    /// Blur radius in pixels that fully rough glass reaches.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 64.0)))]
     pub blur: f32,
 }
 
@@ -386,6 +531,12 @@ impl Default for Refraction {
 }
 
 impl Refraction {
+    /// Ok for a strength in `[0, 4]` and a blur in `[0, 64]`.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("strength", self.strength, 0.0..=4.0)?;
+        check_range("blur", self.blur, 0.0..=64.0)
+    }
+
     /// Values clamped into their ranges; NaN strength disables and a NaN
     /// blur reads as the default.
     pub fn sanitized(self) -> Self {

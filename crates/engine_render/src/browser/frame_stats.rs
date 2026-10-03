@@ -49,7 +49,7 @@ impl Renderer {
         // frame's completion ends their compiles (decision 049).
         let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
         // Read back a few frames late, like the visible count.
-        let lod_instances = if gpu_mode && snapshot.level_of_detail.enabled {
+        let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
             self.gpu_presentation.lod_instances()
         } else {
             None
