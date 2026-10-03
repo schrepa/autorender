@@ -222,17 +222,7 @@ impl Renderer {
             phase_two: self.virtual_draws.phase_two.map(|bin| bin as u32),
             subpixel: gpu_mode && self.gpu_presentation.culls_subpixel(),
         };
-        self.virtual_draws.pass.prepare(
-            &self.device,
-            &self.queue,
-            [&batches, &shadow_batches],
-            bins,
-            &views,
-            &tests,
-            snapshot.virtual_geometry.max_resident_pages,
-        );
-        let poses = self.instances.frame_poses(usize::from(odd));
-        let camera_ids = if gpu_mode {
+        let camera = if gpu_mode {
             let (ids, draws, generation) = self.gpu_presentation.visible_sources();
             IdBuffers {
                 ids,
@@ -248,18 +238,26 @@ impl Renderer {
             }
         };
         let (shadow_ids, shadow_args, _, shadow_key) = self.shadows.caster_buffers();
-        self.virtual_draws.pass.bind(
+        self.virtual_draws.pass.prepare(
             &self.device,
-            &poses,
-            camera_ids,
-            (!shadow_batches.is_empty()).then_some(IdBuffers {
-                ids: shadow_ids,
-                draws: shadow_args,
-                key: shadow_key,
-            }),
-            [max_instances, shadow_instances],
-            self.shadows.view_buffer(),
-            pyramid,
+            &self.queue,
+            &SelectionFrame {
+                batches: [&batches, &shadow_batches],
+                bins,
+                views: &views,
+                tests,
+                budget: snapshot.virtual_geometry.max_resident_pages,
+                poses: self.instances.frame_poses(usize::from(odd)),
+                camera,
+                shadows: (!shadow_batches.is_empty()).then_some(IdBuffers {
+                    ids: shadow_ids,
+                    draws: shadow_args,
+                    key: shadow_key,
+                }),
+                max_instances: [max_instances, shadow_instances],
+                shadow_views: self.shadows.view_buffer(),
+                pyramid,
+            },
         );
         true
     }

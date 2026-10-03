@@ -138,8 +138,8 @@ snapshots carry its sanitized values.
 
 ### Selection and drawing
 
-`engine_render`'s `virtual_geometry.rs` and `virtual_geometry.wgsl` keep an
-arena of every resident virtual mesh. At upload, its nodes, groups and
+`engine_render`'s `virtual_geometry` module (its `arena` part) and
+`virtual_geometry.wgsl` keep an arena of every resident virtual mesh. At upload, its nodes, groups and
 clusters are rebased to absolute indices, and its pages load unchanged into
 slots as Streaming describes. The arena is rebuilt when meshes become
 resident or retire.
@@ -250,7 +250,7 @@ the same way from their listed casters.
 
 Hosts load each virtual mesh's prefix, and renderers load its other pages as
 views need them into a pool of 128 KiB slots (`virtual_streaming.rs` keeps
-the bookkeeping, `virtual_geometry.rs` the pool and the fetches):
+the bookkeeping, `virtual_geometry/arena.rs` the pool and the fetches):
 
 - **Arena.** The pages buffer starts with a slot table, one word per page of
   every resident mesh (its slot, or none), followed by the pool's slots.
