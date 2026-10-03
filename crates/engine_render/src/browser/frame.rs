@@ -1,0 +1,2504 @@
+//! One frame of [`Renderer`], stage by stage: planning, the surface, asset
+//! uploads, instance packing and writes, each feature's preparation, the
+//! frame's pipelines, encoding and submission. `frame_stats` reports it.
+
+use super::*;
+use crate::decals::DecalFrame;
+use crate::gpu_presentation::GpuPrepared;
+use crate::particles::ParticleFrame;
+use crate::post::PostFrame;
+use crate::shadows::ShadowFrame;
+
+/// What kind of frame this is, decided before any GPU work.
+#[derive(Clone, Copy)]
+pub(super) struct FrameKind {
+    /// Retained slots of a core frame, not a public snapshot's instance
+    /// records.
+    pub(super) affine: bool,
+    /// Presented on the GPU (decision 014).
+    pub(super) gpu_mode: bool,
+    /// Temporally antialiased (decision 017).
+    pub(super) temporal: bool,
+    pub(super) instance_count: usize,
+}
+
+/// A frame's asset uploads, and the encoder of new textures' mip levels and
+/// impostor bakes, submitted first.
+pub(super) struct AssetUploads {
+    pub(super) mesh_bytes: u64,
+    pub(super) texture_bytes: u64,
+    pub(super) mip_levels: u32,
+    pub(super) encoder: Option<wgpu::CommandEncoder>,
+}
+
+/// How a frame packed its instance storage.
+pub(super) struct Packing {
+    /// This frame's temporal antialiasing (decision 017).
+    pub(super) temporal_frame: Option<TemporalFrame>,
+    write_slots: bool,
+    slot_key: Option<(u64, u64)>,
+    pub(super) repacked: usize,
+    pub(super) poses_repacked: usize,
+    pub(super) colors_repacked: usize,
+    pub(super) full_upload: bool,
+    pub(super) fallback: bool,
+}
+
+/// A frame's uniform and instance writes, and the staged pose copies
+/// submitted before it.
+pub(super) struct Writes {
+    pub(super) lighting: LightingUniform,
+    pub(super) camera_bytes: u64,
+    pub(super) instance_bytes: u64,
+    pub(super) pose_bytes: u64,
+    pub(super) color_bytes: u64,
+    pub(super) slot_bytes: u64,
+    pub(super) ranges: usize,
+    pub(super) staged_poses: Option<wgpu::CommandBuffer>,
+}
+
+/// What each feature prepared for a frame.
+pub(super) struct Features<'s> {
+    /// GPU presentation's input copies, submitted before the frame.
+    pub(super) input_copies: Option<wgpu::CommandEncoder>,
+    /// The viewport and depth pyramid levels of occlusion culling
+    /// (decision 040).
+    pub(super) occlusion: Option<(u32, u32, u32)>,
+    pub(super) gpu_prepared: Option<GpuPrepared>,
+    pub(super) shadow_frame: Option<ShadowFrame>,
+    /// Environment maps' and reflection probes' work (decision 043),
+    /// submitted before the frame.
+    pub(super) environment_encoder: Option<wgpu::CommandEncoder>,
+    pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
+    pub(super) dropped_probes: u64,
+    pub(super) light_frame: Option<LightFrame>,
+    pub(super) post_frame: Option<PostFrame>,
+    pub(super) refraction: bool,
+    pub(super) transparent_draws: bool,
+    pub(super) particle_frame: Option<ParticleFrame>,
+    pub(super) transparency: bool,
+    pub(super) decal_frame: Option<DecalFrame>,
+}
+
+/// GPU presentation's preparation: the input copies submitted before the
+/// frame, occlusion culling's viewport and depth pyramid levels, and what
+/// presentation prepared.
+struct PresentationPrep {
+    input_copies: Option<wgpu::CommandEncoder>,
+    occlusion: Option<(u32, u32, u32)>,
+    gpu_prepared: Option<GpuPrepared>,
+}
+
+/// The mesh pass kinds a frame draws with, and its impostors' pipeline.
+#[derive(Clone, Copy)]
+pub(super) struct Passes {
+    pub(super) opaque_kind: PassKind,
+    pub(super) transparent_kind: PassKind,
+    pub(super) impostor_pass: Option<(ImpostorTargets, bool)>,
+}
+
+/// Everything a frame's encoding, submission and stats read.
+pub(super) struct FrameState<'s> {
+    pub(super) snapshot: &'s RenderSnapshot,
+    pub(super) retained: Option<&'s RenderFrame<'s>>,
+    pub(super) kind: FrameKind,
+    /// The profiler's query slot (profiling builds).
+    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
+    pub(super) query_slot: Option<usize>,
+    pub(super) assets: AssetUploads,
+    pub(super) packing: Packing,
+    pub(super) writes: Writes,
+    pub(super) features: Features<'s>,
+    pub(super) passes: Passes,
+    /// Virtual geometry draws its clusters (decision 044), and the
+    /// visibility buffer resolves some of them (decision 045).
+    pub(super) virtual_frame: bool,
+    pub(super) resolving: bool,
+}
+
+/// What encoding counted: the profiler's timed effects, shadow draws and
+/// reflection probe faces.
+#[derive(Default)]
+pub(super) struct EncodeReport {
+    pub(super) effects_timed: u32,
+    pub(super) shadow_draws: u32,
+    pub(super) probe_faces: u32,
+}
+
+impl Renderer {
+    pub(super) fn render_inner(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        display: bool,
+    ) -> Result<RenderStats, JsValue> {
+        let _profile = engine_profile::span("render", "render_snapshot");
+        if let Ok(failure) = self.failure.lock()
+            && let Some(message) = failure.as_ref()
+        {
+            return Err(JsValue::from_str(message));
+        }
+        let (kind, gpu) = self.plan_frame(snapshot, retained, display)?;
+        if self.suspended {
+            return Ok(self.residency_stats());
+        }
+        let Some(frame) = self.acquire_surface()? else {
+            return Ok(self.residency_stats());
+        };
+        let assets = self.upload_assets(snapshot, kind);
+        let packing = self.pack_instances(snapshot, retained, kind);
+        let profile_writes = engine_profile::span("render", "queue_writes");
+        let writes = self.write_frame_data(snapshot, retained, kind, &packing);
+        #[cfg(feature = "profiling")]
+        let query_slot = self.profiler.reserve(&self.device);
+        #[cfg(not(feature = "profiling"))]
+        let query_slot = None;
+        let features = self.prepare_features(
+            snapshot,
+            retained,
+            gpu.as_ref(),
+            kind,
+            &packing.temporal_frame,
+            &writes.lighting,
+            query_slot,
+        );
+        drop(profile_writes);
+        let profile_encoding = engine_profile::span("render", "command_encoding");
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/frame-encoder"),
+            });
+        let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
+        if kind.gpu_mode {
+            self.encode_presentation(&mut encoder, query_slot);
+        }
+        let (virtual_frame, resolving) = self.prepare_virtual_frame(
+            snapshot,
+            kind,
+            &packing.temporal_frame,
+            features.occlusion,
+            passes.opaque_kind,
+        );
+        let mut state = FrameState {
+            snapshot,
+            retained,
+            kind,
+            query_slot,
+            assets,
+            packing,
+            writes,
+            features,
+            passes,
+            virtual_frame,
+            resolving,
+        };
+        let mut report = EncodeReport::default();
+        self.encode_shadows(&state, &mut encoder, &mut report);
+        self.prepare_frame_groups(&state);
+        self.encode_opaque(&state, &mut encoder, &view, &mut report);
+        self.encode_decals(&state, &mut encoder, &view, &mut report);
+        self.encode_transparency(&state, &mut encoder, &view, &mut report);
+        self.encode_effects(&state, &mut encoder, &view, &mut report);
+        report.probe_faces = self.encode_probes(&state, &mut encoder);
+        #[cfg(feature = "profiling")]
+        self.profiler.resolve(state.query_slot, &mut encoder);
+        drop(profile_encoding);
+        self.submit_frame(&mut state, frame, encoder);
+        Ok(self.frame_stats(&state, &report))
+    }
+
+    /// Plans the frame's batches and shadow casters, retires assets it no
+    /// longer uses and decides its kind; also returns GPU presentation's
+    /// inputs.
+    fn plan_frame<'f>(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'f>>,
+        display: bool,
+    ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), JsValue> {
+        {
+            let _profile = engine_profile::span("render", "batch_plan");
+            let planned = if let Some(frame) = retained {
+                self.plan.prepare_frame(frame)
+            } else {
+                self.plan.prepare(snapshot)
+            };
+            planned.map_err(|error| js_error("Invalid render snapshot", error))?;
+        }
+        let gpu = retained.and_then(|frame| frame.gpu());
+        let gpu_mode = gpu.is_some();
+        if self.gpu_frame && !gpu_mode {
+            // GPU frames wrote poses and skipped the slot-ID stream; CPU frames
+            // must not trust either upload cache.
+            self.retained_uploads.invalidate();
+            self.slot_revision = None;
+        }
+        self.gpu_frame = gpu_mode;
+        let temporal = display && gpu_mode && self.temporal.is_some();
+        if !temporal && let Some(pass) = &mut self.temporal {
+            pass.reset();
+        }
+        let profile_residency = engine_profile::span("render", "validate_and_retire");
+        for source in snapshot.textures.iter().chain(&snapshot.decal_textures) {
+            if source.texture.width().max(source.texture.height()) > self.max_dimension {
+                return Err(JsValue::from_str(&format!(
+                    "Texture {:?} exceeds the device's {}-pixel dimension limit.",
+                    source.handle, self.max_dimension,
+                )));
+            }
+        }
+        // Shadow draw groups (decision 020): CPU-prepared frames also draw
+        // culled casters, whose meshes stay resident and upload with the
+        // batches' meshes.
+        self.shadows
+            .plan_groups(snapshot, &self.plan, retained, gpu_mode);
+        let shadow_meshes: BTreeSet<MeshHandle> = self
+            .shadows
+            .groups()
+            .iter()
+            .map(|group| group.mesh)
+            .collect();
+        // Supplied sources keep residency across culling; uploads below follow
+        // only emitted draw batches, shadow casters and referenced textures.
+        let (plan, arena) = (&self.plan, &mut self.mesh_arena);
+        let resident = self.meshes.len();
+        self.meshes.retain(|handle, mesh| {
+            let keep = plan.contains_mesh(*handle) || shadow_meshes.contains(handle);
+            if !keep && let Ok(placement) = mesh.placement {
+                arena.remove(placement);
+            }
+            keep
+        });
+        if self.meshes.len() != resident {
+            self.mesh_layout += 1;
+        }
+        let meshes = &self.meshes;
+        self.virtual_geometry
+            .retain(|handle| meshes.contains_key(&handle));
+        self.materials.retain(&self.plan, snapshot);
+        drop(profile_residency);
+        Ok((
+            FrameKind {
+                affine: retained.is_some(),
+                gpu_mode,
+                temporal,
+                instance_count: self.plan.ordered_instances.len(),
+            },
+            gpu,
+        ))
+    }
+
+    /// The canvas texture to draw, reconfiguring the surface first when
+    /// resized; `None` skips the frame (a lost, outdated or busy surface).
+    fn acquire_surface(&mut self) -> Result<Option<wgpu::SurfaceTexture>, JsValue> {
+        let profile_surface = engine_profile::span("render", "surface_acquisition");
+        if self.reconfigure_next_frame {
+            self.surface.configure(&self.device, &self.configuration);
+            self.depth = create_depth(
+                &self.device,
+                self.configuration.width,
+                self.configuration.height,
+            );
+            self.depth_generation += 1;
+            self.reconfigure_next_frame = false;
+        }
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.reconfigure_next_frame = true;
+                frame
+            }
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                return Ok(None);
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.reconfigure_next_frame = true;
+                return Ok(None);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self
+                    .instance
+                    .create_surface(wgpu::SurfaceTarget::Canvas(self.canvas.clone()))
+                    .map_err(|error| js_error("Could not recover the WebGPU surface", error))?;
+                self.reconfigure_next_frame = true;
+                return Ok(None);
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err(JsValue::from_str(
+                    "WebGPU surface validation failed. Reload to recreate the engine.",
+                ));
+            }
+        };
+        drop(profile_surface);
+        Ok(Some(frame))
+    }
+
+    /// Uploads the frame's new meshes (with their levels of detail and
+    /// virtual geometry) and textures, bakes new impostors, and orders the
+    /// opaque draws.
+    fn upload_assets(&mut self, snapshot: &RenderSnapshot, kind: FrameKind) -> AssetUploads {
+        let gpu_mode = kind.gpu_mode;
+
+        let profile_upload = engine_profile::span("render", "asset_uploads");
+        let mut mesh_upload_bytes = 0_u64;
+        let sources = self
+            .plan
+            .batches
+            .iter()
+            .map(|batch| (batch.mesh, batch.source_index))
+            .chain(
+                self.shadows
+                    .groups()
+                    .iter()
+                    .map(|group| (group.mesh, group.source_index)),
+            );
+        for (handle, source_index) in sources {
+            if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
+                let source = &snapshot.meshes[source_index].mesh;
+                self.vertex_staging.clear();
+                self.vertex_staging.reserve_exact(source.vertices().len());
+                self.vertex_staging
+                    .extend(source.vertices().iter().map(Vertex::from));
+                // The arena holds the mesh in its streams' class; the device's
+                // limits alone leave a mesh buffers of its own.
+                let extras = ExtraVertex::stream(source);
+                let skin = SkinVertex::stream(source);
+                let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.vertex_staging)];
+                if let Some(extras) = &extras {
+                    streams.push(bytemuck::cast_slice(extras));
+                }
+                if let Some(skin) = &skin {
+                    streams.push(bytemuck::cast_slice(skin));
+                }
+                // Levels of detail (decision 047) follow the mesh's own
+                // indices in its range.
+                let (indices, lods) = lod_chain(source);
+                let placement = self
+                    .mesh_arena
+                    .insert(
+                        &self.device,
+                        &self.queue,
+                        &streams,
+                        self.vertex_staging.len() as u32,
+                        &indices,
+                    )
+                    .ok_or_else(|| {
+                        let buffer = |label, contents: &[u8], usage| {
+                            self.device
+                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                    label: Some(label),
+                                    contents,
+                                    usage,
+                                })
+                        };
+                        let vertex = wgpu::BufferUsages::VERTEX;
+                        OwnMesh {
+                            vertices: buffer("engine/mesh-vertices", streams[0], vertex),
+                            extras: extras.as_ref().map(|stream| {
+                                buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
+                            }),
+                            skin: skin.as_ref().map(|stream| {
+                                buffer("engine/mesh-skin", bytemuck::cast_slice(stream), vertex)
+                            }),
+                            indices: buffer(
+                                "engine/mesh-indices",
+                                bytemuck::cast_slice(&indices),
+                                wgpu::BufferUsages::INDEX,
+                            ),
+                        }
+                    });
+                self.mesh_layout += 1;
+                let byte_len = source.byte_len() as u64;
+                entry.insert(GpuMesh {
+                    placement,
+                    extended: extras.is_some(),
+                    skinned: skin.is_some(),
+                    index_count: source.indices().len() as u32,
+                    byte_len,
+                    lods,
+                });
+                mesh_upload_bytes += byte_len;
+                if let Some(geometry) = source.virtual_geometry() {
+                    self.virtual_geometry.insert(handle, geometry);
+                }
+            }
+        }
+        self.virtual_geometry.upload(
+            &self.device,
+            &self.queue,
+            snapshot.virtual_geometry.max_resident_pages,
+        );
+        // New textures' mip levels render from their uploaded base level in
+        // a command buffer submitted ahead of this frame's.
+        let mut mip_encoder = None;
+        // Masked shadow casters bind their materials even when culled.
+        let shadow_materials = self
+            .shadows
+            .groups()
+            .iter()
+            .filter_map(|group| group.material);
+        let (texture_upload_bytes, mip_levels) = self.materials.upload(
+            &self.device,
+            &self.queue,
+            snapshot,
+            &self.plan,
+            shadow_materials,
+            &mut mip_encoder,
+        );
+        // Impostors (decision 048) bake after their materials' levels.
+        self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
+        drop(profile_upload);
+        self.order_draws();
+        AssetUploads {
+            mesh_bytes: mesh_upload_bytes,
+            texture_bytes: texture_upload_bytes,
+            mip_levels,
+            encoder: mip_encoder,
+        }
+    }
+
+    /// Sizes instance, pose, color and palette storage for the frame, begins
+    /// its temporal antialiasing, and packs the records to upload.
+    fn pack_instances(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        kind: FrameKind,
+    ) -> Packing {
+        let FrameKind {
+            gpu_mode,
+            temporal,
+            instance_count,
+            ..
+        } = kind;
+
+        let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
+        let affine = retained.is_some();
+        let payload_count = if affine {
+            snapshot.instances.len()
+        } else {
+            instance_count
+        };
+        let layout_changed = self.affine_layout != affine;
+        let grew = payload_count > self.instance_capacity;
+        if layout_changed {
+            self.affine_layout = affine;
+            // A caller switching contracts replaces the old staging layout;
+            // do not retain a second full population of instance payloads.
+            self.staging = Vec::new();
+            self.color_staging = Vec::new();
+            self.retained_uploads = RetainedUploads::default();
+            self.pose_uploads.clear();
+            self.slot_buffer = None;
+            self.slot_capacity = 0;
+            self.slot_staging = Vec::new();
+            self.slot_revision = None;
+        }
+        if grew {
+            self.instance_capacity = payload_count.next_power_of_two().min(self.instance_limit);
+            engine_profile::counter("render.instance_buffer_growth", 1.0);
+        }
+        // Joint palettes (decision 036) grow with the frame's joints.
+        let joints = if affine { snapshot.joints.len() } else { 0 };
+        let palettes_grew = joints > self.palette_capacity;
+        if palettes_grew {
+            self.palette_capacity = joints.next_power_of_two();
+            self.palettes = [0, 1].map(|_| {
+                create_storage_buffer(&self.device, self.palette_capacity, size_of::<PoseData>())
+            });
+        }
+        if grew || layout_changed {
+            let stride = if affine {
+                size_of::<PoseData>()
+            } else {
+                size_of::<InstanceData>()
+            };
+            self.instance_buffer = if affine {
+                create_storage_buffer(&self.device, self.instance_capacity, stride)
+            } else {
+                create_instance_buffer(&self.device, self.instance_capacity, stride)
+            };
+            self.color_buffer = affine.then(|| {
+                create_storage_buffer(&self.device, self.instance_capacity, size_of::<ColorData>())
+            });
+            self.uploads.invalidate_instances();
+            self.retained_uploads.invalidate();
+            self.alternate_poses = None;
+        }
+        if grew || layout_changed || palettes_grew {
+            self.pose_bind_group = self.color_buffer.as_ref().map(|color| {
+                pose_group(
+                    &self.device,
+                    &self.pose_layout,
+                    &self.instance_buffer,
+                    color,
+                    &self.palettes[0],
+                )
+            });
+            self.pose_generation += 1;
+        }
+        if temporal && self.alternate_poses.is_none() {
+            self.alternate_poses = Some(create_storage_buffer(
+                &self.device,
+                self.instance_capacity,
+                size_of::<PoseData>(),
+            ));
+            self.pose_generation += 1;
+        }
+        let temporal_frame: Option<TemporalFrame> = match (self.temporal.as_mut(), retained) {
+            (Some(pass), Some(frame)) if temporal => Some(pass.begin(
+                &self.device,
+                &self.queue,
+                frame,
+                (self.configuration.width, self.configuration.height),
+                self.pose_generation,
+            )),
+            _ => None,
+        };
+        // Pose/color buffers retain core slot positions. Only compact IDs follow
+        // changing visibility and mesh/texture grouping, so order changes never
+        // shift payload records or force otherwise unchanged colors to upload.
+        let slot_key = retained.map(|frame| (frame.identity(), frame.structure_revision()));
+        let mut write_slots = false;
+        if affine && !gpu_mode {
+            if self.slot_buffer.is_none() || instance_count > self.slot_capacity {
+                self.slot_capacity = instance_count
+                    .max(INITIAL_CAPACITY)
+                    .next_power_of_two()
+                    .min(self.instance_limit);
+                // Virtual geometry selection (decision 044) reads the slots
+                // of CPU-prepared frames.
+                self.slot_buffer = Some(self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("engine/retained-slots"),
+                    size: (self.slot_capacity * size_of::<u32>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX
+                        | wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }));
+                self.slot_revision = None;
+            }
+            if self.slot_revision != slot_key {
+                self.slot_staging.clear();
+                self.slot_staging.reserve_exact(instance_count);
+                self.slot_staging
+                    .extend(self.plan.ordered_instances.iter().map(|&slot| slot as u32));
+                write_slots = !self.slot_staging.is_empty();
+            }
+        }
+        let (repacked, poses_repacked, colors_repacked, full_upload, fallback) =
+            if let Some(frame) = retained {
+                if self.color_staging.capacity() < self.instance_capacity {
+                    self.color_staging
+                        .reserve_exact(self.instance_capacity - self.color_staging.len());
+                }
+                let prepared = self
+                    .retained_uploads
+                    .prepare(frame, &mut self.color_staging);
+                (
+                    prepared.repacked,
+                    prepared.poses_repacked,
+                    prepared.colors_repacked,
+                    prepared.full_upload,
+                    prepared.fallback,
+                )
+            } else {
+                if self.staging.capacity() < self.instance_capacity {
+                    self.staging
+                        .reserve_exact(self.instance_capacity - self.staging.len());
+                }
+                let prepared = self.uploads.prepare_instances(
+                    &snapshot.instances,
+                    &self.plan.ordered_instances,
+                    &mut self.staging,
+                );
+                debug_assert_eq!(prepared.write, !self.uploads.instance_ranges().is_empty());
+                (
+                    prepared.repacked,
+                    prepared.repacked,
+                    prepared.repacked,
+                    prepared.full_upload,
+                    prepared.fallback,
+                )
+            };
+        drop(profile_packing);
+        Packing {
+            temporal_frame,
+            write_slots,
+            slot_key,
+            repacked,
+            poses_repacked,
+            colors_repacked,
+            full_upload,
+            fallback,
+        }
+    }
+
+    /// Writes the camera and lighting uniforms and the frame's changed
+    /// poses, colors, palettes, slots or instance records.
+    fn write_frame_data(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        kind: FrameKind,
+        packing: &Packing,
+    ) -> Writes {
+        let gpu_mode = kind.gpu_mode;
+        let temporal_frame = &packing.temporal_frame;
+        let (write_slots, slot_key) = (packing.write_slots, packing.slot_key);
+
+        let camera = temporal_frame.as_ref().map_or_else(
+            || {
+                CameraUniform::exact(
+                    snapshot.view_projection,
+                    snapshot.camera_position,
+                    snapshot.elapsed_seconds,
+                )
+            },
+            |frame| frame.camera,
+        );
+        let mut camera_upload_bytes = 0_u64;
+        if self.uploads.camera_needs_write(&camera) {
+            self.queue
+                .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera));
+            self.uploads.commit_camera(camera);
+            camera_upload_bytes = size_of::<CameraUniform>() as u64;
+        }
+        let lighting = LightingUniform::new(
+            &snapshot.atmosphere,
+            &snapshot.bloom,
+            &snapshot.reflections,
+            &snapshot.refraction,
+        );
+        if self.lighting != Some(lighting) {
+            self.queue
+                .write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
+            self.lighting = Some(lighting);
+            camera_upload_bytes += size_of::<LightingUniform>() as u64;
+        }
+        let mut instance_upload_bytes = 0_u64;
+        let mut pose_upload_bytes = 0_u64;
+        let mut color_upload_bytes = 0_u64;
+        let mut slot_upload_bytes = 0_u64;
+        let instance_write_ranges;
+        // Large pose uploads copy into a persistently mapped staging buffer
+        // and a GPU copy submitted before this frame's draws.
+        let mut staged_poses = None;
+        if let Some(frame) = retained {
+            // GPU-presented frames write poses on the GPU.
+            let pose_ranges = if gpu_mode {
+                &[][..]
+            } else {
+                self.retained_uploads.pose_ranges()
+            };
+            instance_write_ranges = pose_ranges.len()
+                + self.retained_uploads.color_ranges().len()
+                + usize::from(write_slots);
+            // Core keeps each slot's pose in this upload layout.
+            let pose_rows: &[u8] = bytemuck::cast_slice(frame.pose_rows());
+            let stride = size_of::<PoseData>();
+            pose_upload_bytes = pose_ranges
+                .iter()
+                .map(|range| ((range.end - range.start) * stride) as u64)
+                .sum();
+            let mut staged = false;
+            if pose_upload_bytes as usize >= staging::MIN_STAGED_BYTES {
+                let mut encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("engine/pose-staging-copies"),
+                        });
+                let outcome = self.pose_uploads.record(
+                    &self.device,
+                    &mut encoder,
+                    &self.instance_buffer,
+                    pose_rows,
+                    stride,
+                    pose_ranges,
+                );
+                staged = outcome == staging::Staged::Recorded;
+                engine_profile::counter("render.pose_staged", f64::from(u8::from(staged)));
+                engine_profile::counter(
+                    "render.pose_staging_unavailable",
+                    f64::from(u8::from(!staged)),
+                );
+                staged_poses = staged.then(|| encoder.finish());
+            }
+            if !staged {
+                for range in pose_ranges {
+                    self.queue.write_buffer(
+                        &self.instance_buffer,
+                        (range.start * stride) as u64,
+                        &pose_rows[range.start * stride..range.end * stride],
+                    );
+                }
+            }
+            for range in self.retained_uploads.color_ranges() {
+                let records = &self.color_staging[range.start..range.end];
+                self.queue.write_buffer(
+                    self.color_buffer.as_ref().expect("affine color buffer"),
+                    (range.start * size_of::<ColorData>()) as u64,
+                    bytemuck::cast_slice(records),
+                );
+                color_upload_bytes += std::mem::size_of_val(records) as u64;
+            }
+            // CPU-prepared frames upload skinned slots' palettes (decision
+            // 036); GPU-presented ones compute them.
+            if !gpu_mode && !snapshot.joints.is_empty() {
+                self.palette_staging.clear();
+                self.palette_staging
+                    .extend(snapshot.joints.iter().map(|joint| joint.matrix));
+                self.queue.write_buffer(
+                    &self.palettes[0],
+                    0,
+                    bytemuck::cast_slice(&self.palette_staging),
+                );
+                pose_upload_bytes += std::mem::size_of_val(&self.palette_staging[..]) as u64;
+            }
+            if write_slots {
+                self.queue.write_buffer(
+                    self.slot_buffer.as_ref().expect("retained slot buffer"),
+                    0,
+                    bytemuck::cast_slice(&self.slot_staging),
+                );
+                slot_upload_bytes = (self.slot_staging.len() * size_of::<u32>()) as u64;
+            }
+            instance_upload_bytes = pose_upload_bytes + color_upload_bytes + slot_upload_bytes;
+            self.retained_uploads.commit();
+            self.slot_revision = slot_key;
+        } else {
+            instance_write_ranges = self.uploads.instance_ranges().len();
+            for range in self.uploads.instance_ranges() {
+                let records = &self.staging[range.start..range.end];
+                self.queue.write_buffer(
+                    &self.instance_buffer,
+                    (range.start * size_of::<InstanceData>()) as u64,
+                    bytemuck::cast_slice(records),
+                );
+                instance_upload_bytes += std::mem::size_of_val(records) as u64;
+            }
+            self.uploads.commit_instances();
+        }
+        Writes {
+            lighting,
+            camera_bytes: camera_upload_bytes,
+            instance_bytes: instance_upload_bytes,
+            pose_bytes: pose_upload_bytes,
+            color_bytes: color_upload_bytes,
+            slot_bytes: slot_upload_bytes,
+            ranges: instance_write_ranges,
+            staged_poses,
+        }
+    }
+
+    /// Prepares every feature the frame runs, in order: GPU presentation
+    /// with occlusion culling, shadows, environment maps and reflection
+    /// probes, local lights, screen effects, transparency and particles,
+    /// and decals.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_features<'s>(
+        &mut self,
+        snapshot: &'s RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        gpu: Option<&engine_core::GpuPresentation<'_>>,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        lighting: &LightingUniform,
+        query_slot: Option<usize>,
+    ) -> Features<'s> {
+        let PresentationPrep {
+            input_copies,
+            occlusion,
+            gpu_prepared,
+        } = self.prepare_presentation(snapshot, retained, gpu, kind, temporal_frame, query_slot);
+        let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
+        let (environment_encoder, probe_list, dropped_probes) =
+            self.prepare_environment(snapshot, lighting);
+        let light_frame = self.prepare_lights(snapshot, retained, kind, temporal_frame);
+        let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
+        let (transparent_draws, particle_frame, transparency) =
+            self.prepare_transparency(snapshot, temporal_frame, post_frame);
+        let decal_frame =
+            self.prepare_decals(snapshot, kind, temporal_frame, &light_frame, post_frame);
+        Features {
+            input_copies,
+            occlusion,
+            gpu_prepared,
+            shadow_frame,
+            environment_encoder: Some(environment_encoder),
+            probe_list,
+            dropped_probes,
+            light_frame,
+            post_frame,
+            refraction,
+            transparent_draws,
+            particle_frame,
+            transparency,
+            decal_frame,
+        }
+    }
+
+    /// Occlusion culling's depth pyramid and GPU presentation's inputs
+    /// (decision 014); returns the input copies to submit first, the
+    /// occlusion viewport and levels, and what presentation prepared.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_presentation(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        gpu: Option<&engine_core::GpuPresentation<'_>>,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] query_slot: Option<usize>,
+    ) -> PresentationPrep {
+        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+
+        let mut input_copies = None;
+        // Occlusion culling (decision 040): the depth pyramid of this frame's
+        // depth buffer, sized before presentation plans two phases.
+        let occlusion = if gpu_mode && self.occlusion_culling {
+            let device = &self.device;
+            let pyramid = self
+                .depth_pyramid
+                .get_or_insert_with(|| DepthPyramid::new(device, Reduction::Farthest));
+            let (width, height) = (self.configuration.width, self.configuration.height);
+            let levels = pyramid.prepare(
+                device,
+                &self.depth.view,
+                self.depth_generation,
+                (width, height),
+            );
+            Some((width, height, levels))
+        } else {
+            None
+        };
+        // Batches drawing virtual geometry (decision 044) instead of their
+        // fallback meshes, by the arena and whether it draws.
+        let virtual_enabled = affine && snapshot.virtual_geometry.enabled;
+        let arena = self
+            .virtual_geometry
+            .arena()
+            .map_or(0, |(_, generation)| generation);
+        let virtual_key = arena * 2 + u64::from(virtual_enabled);
+        let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu) {
+            let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
+            let shadows = &self.shadows;
+            let virtual_meshes = &self.virtual_geometry;
+            let impostor_records = &self.impostor_records;
+            // Batch records carry impostor errors: rebuilt with the
+            // impostors, and when turning them on or off.
+            let impostor_key = if snapshot.level_of_detail.impostors {
+                self.impostors.generation() + 1
+            } else {
+                0
+            };
+            // Temporal frames alternate pose buffers; the other keeps the
+            // previous frame's poses.
+            let (poses, poses_index) = match &temporal_frame {
+                Some(temporal) if temporal.parity == 1 => {
+                    (self.alternate_poses.as_ref().expect("created above"), 1)
+                }
+                _ => (&self.instance_buffer, 0),
+            };
+            #[cfg(feature = "profiling")]
+            let stamps = self.profiler.stage_stamps(query_slot);
+            #[cfg(not(feature = "profiling"))]
+            let stamps = None;
+            Some(
+                self.gpu_presentation.prepare(
+                    &self.device,
+                    &self.queue,
+                    &mut self.pose_uploads,
+                    &mut input_copies,
+                    frame,
+                    gpu,
+                    &self.plan,
+                    |index, batch| {
+                        let mesh = &snapshot.meshes[batch.source_index].mesh;
+                        let gpu_mesh = &meshes[&batch.mesh];
+                        let draw = gpu_mesh.draw(arena);
+                        let virtual_geometry = virtual_enabled
+                            && !batch.transparent
+                            && virtual_meshes.mesh_index(batch.mesh).is_some();
+                        let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
+                        BatchMeta {
+                            index_count: draw.index_count,
+                            first_index: draw.first_index,
+                            base_vertex: draw.base_vertex,
+                            bounds: mesh.bounds(),
+                            group: shadows.batch_group(index),
+                            joints: mesh.joint_count(),
+                            virtual_geometry,
+                            lods: gpu_mesh.lods[..levels - 1]
+                                .iter()
+                                .map(|&(offset, count, error)| {
+                                    (draw.first_index + offset, count, error)
+                                })
+                                .collect(),
+                            impostor: impostor_records
+                                .get(index)
+                                .map_or(0.0, ImpostorRecord::error),
+                        }
+                    },
+                    !shadows.groups().is_empty(),
+                    poses,
+                    &self.palettes[poses_index],
+                    self.color_buffer.as_ref().expect("affine color buffer"),
+                    poses_index,
+                    self.pose_generation,
+                    temporal_frame
+                        .as_ref()
+                        .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
+                    snapshot.camera_position,
+                    temporal_frame
+                        .as_ref()
+                        .is_some_and(|temporal| temporal.motion_valid),
+                    occlusion,
+                    self.subpixel_culling,
+                    if snapshot.level_of_detail.enabled {
+                        snapshot.level_of_detail.pixel_error
+                    } else {
+                        0.0
+                    },
+                    snapshot.level_of_detail.impostors,
+                    // Reflection probes (decision 043) capture still slots,
+                    // counted while captures wait.
+                    (snapshot.reflection_probe_settings.enabled
+                        && !snapshot.reflection_probes.is_empty())
+                    .then(|| self.probes.slots.waiting()),
+                    virtual_key ^ (self.mesh_layout << 32),
+                    impostor_key,
+                    (self.configuration.width, self.configuration.height),
+                    stamps,
+                ),
+            )
+        } else {
+            None
+        };
+        #[cfg(feature = "profiling")]
+        if let Some(prepared) = &gpu_prepared {
+            self.profiler.timed_stages(query_slot, prepared.timed);
+        }
+        PresentationPrep {
+            input_copies,
+            occlusion,
+            gpu_prepared,
+        }
+    }
+
+    /// The frame's shadow maps (decision 020), selecting from its poses.
+    fn prepare_shadows(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+    ) -> Option<ShadowFrame> {
+        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+
+        // Shadow maps (decision 020) select from this frame's poses.
+        {
+            let poses = affine.then(|| Poses {
+                buffers: [Some(&self.instance_buffer), self.alternate_poses.as_ref()],
+                colors: self.color_buffer.as_ref().expect("affine color buffer"),
+                palettes: [&self.palettes[0], &self.palettes[1]],
+                index: temporal_frame.as_ref().map_or(0, |frame| frame.parity),
+                generation: self.pose_generation,
+            });
+            let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
+            self.shadows.prepare(
+                &self.device,
+                &self.queue,
+                snapshot,
+                gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
+                poses,
+                self.instance_capacity,
+                self.mesh_layout,
+                |mesh| {
+                    meshes.get(&mesh).map_or(
+                        CasterDraw {
+                            index_count: 0,
+                            first_index: 0,
+                            base_vertex: 0,
+                            lods: Vec::new(),
+                        },
+                        |mesh| {
+                            let draw = mesh.draw(arena);
+                            // Levels of detail (decision 047) of meshes
+                            // without joints, which move their vertices.
+                            let lods = if mesh.skinned || !snapshot.level_of_detail.enabled {
+                                Vec::new()
+                            } else {
+                                mesh.lods
+                                    .iter()
+                                    .map(|&(offset, count, error)| {
+                                        (draw.first_index + offset, count, error)
+                                    })
+                                    .collect()
+                            };
+                            CasterDraw {
+                                index_count: draw.index_count,
+                                first_index: draw.first_index,
+                                base_vertex: draw.base_vertex,
+                                lods,
+                            }
+                        },
+                    )
+                },
+            )
+        }
+    }
+
+    /// Environment maps and reflection probes (decision 043), and the camera
+    /// group binding them; returns the environment's encoder, the probes the
+    /// frame keeps and those beyond the GPU's arrays.
+    fn prepare_environment<'s>(
+        &mut self,
+        snapshot: &'s RenderSnapshot,
+        lighting: &LightingUniform,
+    ) -> (
+        wgpu::CommandEncoder,
+        &'s [engine_core::RenderReflectionProbe],
+        u64,
+    ) {
+        // Environment maps (decision 043): as many cubes as the reflection
+        // probes kept need (the nearest first, as many as the GPU's texture
+        // arrays hold), the sky's redrawn when it changes, then the probes'
+        // cubes assigned and their grid uploaded.
+        let probe_settings = snapshot.reflection_probe_settings;
+        let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
+            &snapshot.reflection_probes
+        } else {
+            &[]
+        };
+        let most_cubes = (self.device.limits().max_texture_array_layers / FACES as u32).max(1);
+        let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
+        let cubes = if wanted_cubes == 1 {
+            1
+        } else if wanted_cubes > self.environment.cubes() {
+            wanted_cubes.next_power_of_two().min(most_cubes)
+        } else {
+            self.environment.cubes()
+        };
+        let mut environment_encoder =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/environment-encoder"),
+                });
+        let lost = self.environment.ensure(
+            &self.device,
+            &mut environment_encoder,
+            probe_settings.resolution,
+            cubes,
+        );
+        let sky_changed = self
+            .environment
+            .encode_sky(&mut environment_encoder, lighting);
+        self.probes
+            .slots
+            .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
+        self.probes.upload(&self.device, &self.queue);
+        let dropped_probes = snapshot.dropped_reflection_probes as u64
+            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1));
+        let camera_key = (
+            self.shadows.generation(),
+            self.environment.generation(),
+            self.probes.words().1,
+        );
+        if camera_key != self.camera_groups_key {
+            self.camera_groups_key = camera_key;
+            self.camera_bind_group = camera_bind_group(
+                &self.device,
+                &self.camera_layout,
+                &self.camera_buffer,
+                &self.lighting_buffer,
+                &self.shadows,
+                (&self.refraction_fallback, &self.refraction_sampler),
+                (self.environment.binding(), self.probes.words().0),
+            );
+            self.probe_camera_groups.clear();
+        }
+        (environment_encoder, probe_list, dropped_probes)
+    }
+
+    /// Local lights (decision 023), binned from the frame's poses.
+    fn prepare_lights(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        retained: Option<&RenderFrame<'_>>,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+    ) -> Option<LightFrame> {
+        let (affine, temporal) = (kind.affine, kind.temporal);
+
+        // Local lights (decision 023): binned on the GPU from this frame's
+        // poses, so slot lights follow GPU-presented meshes.
+        if snapshot.local_lights.active() && !snapshot.lights.is_empty() {
+            let device = &self.device;
+            let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
+            if temporal && let Some(pass) = self.temporal.as_mut() {
+                pass.ensure_lit_layout(
+                    device,
+                    [
+                        &self.camera_layout,
+                        self.materials.layout(),
+                        lights.fragment_layout(),
+                    ],
+                );
+            }
+            let (buffer, index) = match &temporal_frame {
+                Some(frame) if frame.parity == 1 => {
+                    (self.alternate_poses.as_ref().expect("created above"), 1)
+                }
+                _ => (&self.instance_buffer, 0),
+            };
+            let poses = affine.then_some(LightPoses {
+                buffer,
+                generation: self.pose_generation,
+                index,
+            });
+            lights.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                poses,
+                retained.map(|frame| (frame.identity(), frame.lights_revision())),
+            )
+        } else {
+            None
+        }
+    }
+
+    /// Screen effects (decision 021) and refraction's targets (decision
+    /// 038); returns the effects and whether glass refracts.
+    fn prepare_post(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        temporal_frame: &Option<TemporalFrame>,
+    ) -> (Option<PostFrame>, bool) {
+        // Screen effects (decision 021); temporal frames apply them in their
+        // resolve, whose history averages the occlusion noise.
+        let effects = snapshot.ambient_occlusion.sanitized().enabled()
+            || snapshot.bloom.sanitized().enabled()
+            || snapshot.reflections.sanitized().enabled()
+            || (snapshot.sun_shafts.sanitized().enabled() && snapshot.shadows.enabled);
+        // Glass refracts the opaque color of the scene target (decision
+        // 038): frames drawing it render into the target.
+        let refraction = snapshot.refraction.enabled()
+            && self.plan.batches.iter().any(|batch| {
+                batch.transparent && self.materials.binding(batch.material).1.transmission()
+            });
+        let post_frame = if temporal_frame.is_some() || effects || refraction {
+            let format = self.configuration.format;
+            let (device, camera_layout) = (&self.device, &self.camera_layout);
+            let post = self
+                .post
+                .get_or_insert_with(|| PostPass::new(device, format, camera_layout));
+            Some(post.begin(
+                &self.device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                &self.depth.view,
+                self.depth_generation,
+                temporal_frame.is_some(),
+            ))
+        } else {
+            // Frames without effects release their targets.
+            if let Some(post) = self.post.as_mut() {
+                post.release_targets();
+            }
+            None
+        };
+        if let (Some(_), Some(pass), Some(post)) =
+            (&temporal_frame, self.temporal.as_mut(), self.post.as_ref())
+        {
+            pass.prepare_resolve(&self.device, post);
+        }
+        (post_frame, refraction)
+    }
+
+    /// Transparent surfaces and particles (decision 026); returns whether
+    /// transparent batches draw, the particles, and whether either does.
+    fn prepare_transparency(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        temporal_frame: &Option<TemporalFrame>,
+        post_frame: Option<PostFrame>,
+    ) -> (bool, Option<ParticleFrame>, bool) {
+        // Transparent surfaces and particles (decision 026). Particles
+        // sample the depth buffer for their soft edges.
+        let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
+        let particle_frame = if snapshot.particles.enabled && !snapshot.emitters.is_empty() {
+            let device = &self.device;
+            let (camera_layout, format) = (&self.camera_layout, self.configuration.format);
+            let particles = self.particles.get_or_insert_with(|| {
+                ParticlePass::new(
+                    device,
+                    camera_layout,
+                    format,
+                    DEPTH_FORMAT,
+                    &accumulation_targets(),
+                )
+            });
+            let prepared = particles.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (self.configuration.width, self.configuration.height),
+                &self.depth.view,
+                self.depth_generation,
+            );
+            if prepared.is_some() {
+                particles.ensure_additive(device, post_frame.is_some());
+            }
+            prepared
+        } else {
+            None
+        };
+        let transparency = transparent_draws || particle_frame.is_some();
+        if transparency {
+            let (device, format) = (&self.device, self.configuration.format);
+            let pass = self
+                .transparent
+                .get_or_insert_with(|| TransparentPass::new(device, format, DEPTH_FORMAT));
+            pass.begin(
+                device,
+                (self.configuration.width, self.configuration.height),
+            );
+            pass.ensure_composite(device, post_frame.is_some());
+            if transparent_draws
+                && temporal_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.parity == 1)
+                && self
+                    .alternate_pose_group
+                    .as_ref()
+                    .is_none_or(|(built, _)| *built != self.pose_generation)
+            {
+                let group = pose_group(
+                    device,
+                    &self.pose_layout,
+                    self.alternate_poses.as_ref().expect("created above"),
+                    self.color_buffer.as_ref().expect("affine color buffer"),
+                    &self.palettes[1],
+                );
+                self.alternate_pose_group = Some((self.pose_generation, group));
+            }
+        } else if let Some(pass) = self.transparent.as_mut() {
+            pass.release_targets();
+        }
+        (transparent_draws, particle_frame, transparency)
+    }
+
+    /// Decals (decision 039) over the opaque surfaces.
+    fn prepare_decals(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        light_frame: &Option<LightFrame>,
+        post_frame: Option<PostFrame>,
+    ) -> Option<DecalFrame> {
+        let affine = kind.affine;
+
+        // Decals (decision 039) cover the opaque surfaces the depth buffer
+        // holds; retained frames read their displayed poses from the joint
+        // palette.
+        let decal_lights = light_frame
+            .as_ref()
+            .and(self.lights.as_ref())
+            .map(LightPass::fragment_layout);
+        if snapshot.decal_settings.enabled && !snapshot.decals.is_empty() {
+            let (device, format) = (&self.device, self.configuration.format);
+            let decals = self
+                .decals
+                .get_or_insert_with(|| DecalPass::new(device, format));
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            let prepared = decals.prepare(
+                device,
+                &self.queue,
+                snapshot,
+                (
+                    &self.palettes[parity],
+                    affine.then_some((self.pose_generation, parity)),
+                ),
+                &self.depth.view,
+                self.depth_generation,
+            );
+            if prepared.is_some() {
+                decals.ensure_pipelines(
+                    device,
+                    &self.mesh_shader,
+                    [&self.camera_layout, self.materials.layout()],
+                    decal_lights,
+                    post_frame.is_some(),
+                );
+            }
+            prepared
+        } else {
+            None
+        }
+    }
+
+    /// The pipelines of the material variants (decision 031) the frame's
+    /// mesh passes draw, reflection probe captures' (decision 043) and the
+    /// impostors' (decision 048).
+    fn prepare_pipelines(
+        &mut self,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        features: &Features<'_>,
+    ) -> Passes {
+        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+        let (light_frame, post_frame, probe_list) = (
+            &features.light_frame,
+            features.post_frame,
+            features.probe_list,
+        );
+
+        // Pipelines of the material variants (decision 031) this frame draws.
+        let lit_frame = light_frame.is_some() && self.lights.is_some();
+        let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
+            PassKind::Temporal { lit: lit_frame }
+        } else {
+            PassKind::Opaque {
+                post: post_frame.is_some(),
+                lit: lit_frame,
+                affine,
+            }
+        };
+        let transparent_kind = PassKind::Transparent {
+            lit: lit_frame,
+            affine,
+        };
+        self.ensure_variants(opaque_kind, transparent_kind);
+        // Reflection probes (decision 043) capture once their slots stand
+        // still: their pipelines are prepared with the first frame that has
+        // probes, not in the middle of play (decision 049).
+        if gpu_mode && affine && !probe_list.is_empty() {
+            self.ensure_probe_pipelines(PassKind::Probe { lit: lit_frame });
+        }
+        // Impostors (decision 048): this frame's records, group and pipeline.
+        let impostor_pass = if gpu_mode
+            && self
+                .impostor_records
+                .iter()
+                .any(|record| record.sphere[3] > 0.0)
+        {
+            self.prepare_impostor_draws(opaque_kind)
+        } else {
+            None
+        };
+        Passes {
+            opaque_kind,
+            transparent_kind,
+            impostor_pass,
+        }
+    }
+
+    /// GPU presentation's blending, composition, culling and compaction
+    /// (decision 014).
+    fn encode_presentation(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] query_slot: Option<usize>,
+    ) {
+        #[cfg(feature = "profiling")]
+        let stamps = self.profiler.stage_stamps(query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let stamps = None;
+        let _timed = self.gpu_presentation.encode(&self.device, encoder, stamps);
+        #[cfg(feature = "profiling")]
+        self.profiler.timed_stages(query_slot, _timed);
+    }
+
+    /// Virtual geometry's selection for the frame (decision 044) and the
+    /// visibility buffer's bins (decision 045); returns whether clusters
+    /// draw and whether the visibility buffer resolves.
+    fn prepare_virtual_frame(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        kind: FrameKind,
+        temporal_frame: &Option<TemporalFrame>,
+        occlusion: Option<(u32, u32, u32)>,
+        opaque_kind: PassKind,
+    ) -> (bool, bool) {
+        let FrameKind {
+            affine,
+            gpu_mode,
+            instance_count,
+            ..
+        } = kind;
+
+        // Virtual geometry (decision 044): the clusters the visible
+        // instances of virtual meshes draw this frame.
+        let odd = temporal_frame
+            .as_ref()
+            .is_some_and(|frame| frame.parity == 1);
+        let rasterized = temporal_frame
+            .as_ref()
+            .map_or(snapshot.view_projection, |temporal| temporal.rasterized);
+        let virtual_frame = affine
+            && self.prepare_virtual(
+                snapshot,
+                gpu_mode,
+                odd,
+                (rasterized, occlusion.map(|(_, _, levels)| levels)),
+            );
+        if !affine {
+            self.virtual_drawn.clear();
+        }
+        if virtual_frame {
+            self.ensure_virtual_pipelines(opaque_kind);
+            self.ensure_virtual_pose_groups();
+        }
+        // The visibility buffer (decision 045) resolves the camera's bins it
+        // can shade; the others draw forward.
+        let resolving =
+            virtual_frame && instance_count > 0 && self.prepare_visibility(snapshot, opaque_kind);
+        if resolving {
+            self.ensure_visibility_pipelines(opaque_kind);
+            self.ensure_visibility_groups();
+        }
+        (virtual_frame, resolving)
+    }
+
+    /// Shadow caster selection, virtual geometry's cluster selection, the
+    /// shadow maps and light binning.
+    fn encode_shadows(
+        &mut self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        report: &mut EncodeReport,
+    ) {
+        let virtual_frame = state.virtual_frame;
+        let (shadow_frame, light_frame) =
+            (&state.features.shadow_frame, &state.features.light_frame);
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(state.query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+
+        // Shadow casters first: virtual geometry selects the clusters of the
+        // virtual ones (decision 044) with the camera's, then the maps draw.
+        if let Some(shadow_frame) = &shadow_frame {
+            report.effects_timed |= u32::from(self.shadows.encode_selection(
+                &self.device,
+                encoder,
+                shadow_frame,
+                effect_queries,
+            ));
+        }
+        if virtual_frame {
+            timestamp_pass(encoder, effect_queries, VIRTUAL_SELECTION, false);
+            self.virtual_geometry.encode(&self.device, encoder);
+            timestamp_pass(encoder, effect_queries, VIRTUAL_SELECTION, true);
+            report.effects_timed |= u32::from(effect_queries.is_some()) << VIRTUAL_SELECTION;
+        }
+        if let Some(shadow_frame) = &shadow_frame {
+            let meshes = &self.meshes;
+            let arena = &self.mesh_arena;
+            let (virtual_geometry, shadow_bins) =
+                (&self.virtual_geometry, &self.virtual_shadow_bins);
+            let encoded = self.shadows.encode_maps(
+                encoder,
+                shadow_frame,
+                &self.plan,
+                &self.instance_buffer,
+                |mesh| {
+                    meshes
+                        .get(&mesh)
+                        .map(|mesh| (mesh.draw(arena), mesh.skinned))
+                },
+                |material| self.materials.group(material),
+                |pass, map| {
+                    shadow_bins
+                        .iter()
+                        .find(|(bin_map, _, _)| *bin_map == map)
+                        .map_or(0, |&(_, bin, offset)| {
+                            u32::from(
+                                virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset),
+                            )
+                        })
+                },
+                effect_queries,
+            );
+            report.effects_timed |= u32::from(encoded.timed);
+            report.shadow_draws = encoded.draws;
+        }
+        if let (Some(frame), Some(lights)) = (&light_frame, self.lights.as_mut()) {
+            lights.encode(
+                &self.device,
+                encoder,
+                frame,
+                effect_queries.map(|(set, first)| (set, first + 14)),
+            );
+            report.effects_timed |= u32::from(effect_queries.is_some()) << 7;
+        }
+    }
+
+    /// Temporal antialiasing's pose groups (decision 017) and the camera
+    /// group of glass refracting the opaque color (decision 038).
+    fn prepare_frame_groups(&mut self, state: &FrameState<'_>) {
+        let (temporal_frame, refraction) =
+            (&state.packing.temporal_frame, state.features.refraction);
+
+        if let (Some(_), Some(pass)) = (&temporal_frame, self.temporal.as_mut()) {
+            pass.prepare_pose_groups(
+                &self.device,
+                self.pose_generation,
+                [
+                    &self.instance_buffer,
+                    self.alternate_poses.as_ref().expect("created above"),
+                ],
+                self.color_buffer.as_ref().expect("affine color buffer"),
+                [&self.palettes[0], &self.palettes[1]],
+            );
+        }
+        if refraction && let Some(post) = self.post.as_ref() {
+            let key = (post.generation(), self.camera_groups_key);
+            if self
+                .refraction_group
+                .as_ref()
+                .is_none_or(|(built, _)| *built != key)
+            {
+                let (scene, ..) = post.targets();
+                let group = camera_bind_group(
+                    &self.device,
+                    &self.camera_layout,
+                    &self.camera_buffer,
+                    &self.lighting_buffer,
+                    &self.shadows,
+                    (scene, &self.refraction_sampler),
+                    (self.environment.binding(), self.probes.words().0),
+                );
+                self.refraction_group = Some((key, group));
+            }
+        }
+    }
+
+    /// The opaque pass, in two phases around the occlusion test when
+    /// culling occludes (decision 040), each with its visibility buffer
+    /// resolve (decision 045), and the sky last.
+    /// The opaque pass, in two phases around the occlusion test when
+    /// culling occludes (decision 040), each with its visibility buffer
+    /// resolve (decision 045), and the sky last.
+    fn encode_opaque(
+        &mut self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        report: &mut EncodeReport,
+    ) {
+        let (gpu_mode, instance_count) = (state.kind.gpu_mode, state.kind.instance_count);
+        let (virtual_frame, resolving) = (state.virtual_frame, state.resolving);
+        let temporal_frame = &state.packing.temporal_frame;
+        let features = &state.features;
+        let post_frame = features.post_frame;
+        let (transparency, decal_frame) = (features.transparency, &features.decal_frame);
+        #[cfg(feature = "profiling")]
+        let query_slot = state.query_slot;
+        // Occlusion culling (decision 040) draws in two phases: what the last
+        // test left visible, then, after the depth pyramid of those depths and
+        // the test, what the test newly finds visible.
+        let phases = if gpu_mode && self.gpu_presentation.occlusion() {
+            2
+        } else {
+            1
+        };
+        for phase in 0..phases {
+            if phase == 1 {
+                self.encode_occlusion_test(state, encoder, report);
+            }
+            let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
+            let post = self.post.as_ref().filter(|_| post_frame.is_some());
+            // The first of this phase's camera bins (decision 044), and
+            // whether the visibility buffer resolves them (decision 045).
+            let virtual_first = match phase {
+                0 => Some(0),
+                _ => self.virtual_phase_two,
+            }
+            .filter(|_| virtual_frame);
+            let resolve_phase = resolving && virtual_first.is_some();
+            let load = |clear| {
+                if phase == 0 {
+                    wgpu::LoadOp::Clear(clear)
+                } else {
+                    wgpu::LoadOp::Load
+                }
+            };
+            let attachment = |view, clear| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: load(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            };
+            // Frames with screen effects draw into their sRGB scene, glow and
+            // surface targets, temporal frames into their motion target as
+            // well.
+            let mut targets = [None, None, None, None];
+            let count = match (temporal_pass, post) {
+                (Some((_, pass)), Some(post)) => {
+                    let (scene, glow, surface) = post.targets();
+                    targets = [
+                        attachment(scene, clear_color(true)),
+                        attachment(pass.motion(), wgpu::Color::TRANSPARENT),
+                        attachment(glow, wgpu::Color::TRANSPARENT),
+                        attachment(surface, wgpu::Color::TRANSPARENT),
+                    ];
+                    4
+                }
+                (_, Some(post)) => {
+                    let (scene, glow, surface) = post.targets();
+                    targets[0] = attachment(scene, clear_color(true));
+                    targets[1] = attachment(glow, wgpu::Color::TRANSPARENT);
+                    targets[2] = attachment(surface, wgpu::Color::TRANSPARENT);
+                    3
+                }
+                (_, None) => {
+                    targets[0] = attachment(view, clear_color(self.configuration.format.is_srgb()));
+                    1
+                }
+            };
+            // Ambient occlusion, decals, the transparent passes and a second
+            // phase read the depth buffer afterwards.
+            let keep_depth = post_frame
+                .is_some_and(|frame| frame.occlusion || frame.reflections || frame.shafts)
+                || transparency
+                || decal_frame.is_some()
+                || phase + 1 < phases
+                || resolve_phase;
+            // Profiled frames time both phases as one opaque span.
+            #[cfg(feature = "profiling")]
+            let timestamp_writes = self
+                .profiler
+                .writes(query_slot)
+                .map(|mut writes| {
+                    if phase != 0 {
+                        writes.beginning_of_pass_write_index = None;
+                    }
+                    if phase + 1 != phases || resolve_phase {
+                        writes.end_of_pass_write_index = None;
+                    }
+                    writes
+                })
+                .filter(timestamps_written);
+            #[cfg(not(feature = "profiling"))]
+            let timestamp_writes = None;
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/opaque-meshes"),
+                color_attachments: &targets[..count],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: if phase == 0 {
+                            wgpu::LoadOp::Clear(FAR_DEPTH)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: if keep_depth {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if instance_count > 0 {
+                self.draw_opaque(state, &mut pass, phase, virtual_first);
+            }
+            // Last, so depth testing leaves the sky only uncovered pixels.
+            let sky = match temporal_pass {
+                Some((_, temporal)) => temporal.sky_pipeline(),
+                None => self.sky_pipelines[sky_kind(post.is_some())]
+                    .as_ref()
+                    .expect("prepared with the frame's variants"),
+            };
+            if phase + 1 == phases && !resolve_phase {
+                pass.set_pipeline(sky);
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.draw(0..3, 0..1);
+            }
+            drop(pass);
+            // The visibility buffer (decision 045): this phase's resolved
+            // bins write which triangle covers each pixel, compute lists each
+            // bin's tiles, and each bin's resolve shades its pixels; the sky
+            // follows the last phase's.
+            let Some(first_bin) = virtual_first.filter(|_| resolve_phase) else {
+                continue;
+            };
+            self.encode_visibility(
+                state,
+                encoder,
+                (phase, phases),
+                first_bin,
+                &targets[..count],
+                sky,
+            );
+        }
+    }
+
+    /// Occlusion culling's test between the opaque phases (decision 040): the
+    /// depth pyramid of phase one's depths, the test and phase two's
+    /// compaction, and virtual geometry's retest of the camera's clusters the
+    /// last frame's pyramid hid (decision 044).
+    fn encode_occlusion_test(
+        &mut self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        report: &mut EncodeReport,
+    ) {
+        let virtual_frame = state.virtual_frame;
+        let temporal_frame = &state.packing.temporal_frame;
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(state.query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+        if let Some((pyramid, generation)) =
+            self.depth_pyramid.as_ref().and_then(DepthPyramid::view)
+        {
+            let odd = temporal_frame
+                .as_ref()
+                .is_some_and(|frame| frame.parity == 1);
+            let poses = if odd {
+                self.alternate_poses.as_ref().expect("created above")
+            } else {
+                &self.instance_buffer
+            };
+            let timed = |index: u32, begin: bool| {
+                effect_queries.map(|(set, first)| (set, first + 2 * index + u32::from(!begin)))
+            };
+            self.depth_pyramid
+                .as_ref()
+                .expect("viewed above")
+                .encode(encoder, timed(14, true));
+            // The camera's clusters the last frame's pyramid hid
+            // (decision 044) are retested against this frame's within
+            // the same span.
+            self.gpu_presentation.encode_occlusion(
+                &self.device,
+                encoder,
+                (pyramid, generation),
+                poses,
+                timed(14, false).filter(|_| !virtual_frame),
+            );
+            if virtual_frame {
+                self.virtual_geometry.encode_retest(&self.device, encoder);
+                timestamp_pass(encoder, effect_queries, 14, true);
+            }
+            report.effects_timed |= u32::from(effect_queries.is_some()) << 14;
+        }
+    }
+
+    /// The opaque meshes of `phase` (GPU-presented frames draw each level of
+    /// detail's visible slots, decision 047), the impostors' cards (decision
+    /// 048), and virtual geometry's bins the visibility buffer leaves to
+    /// forward drawing (decision 044).
+    fn draw_opaque(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+        phase: usize,
+        virtual_first: Option<usize>,
+    ) {
+        let FrameKind {
+            affine, gpu_mode, ..
+        } = state.kind;
+        let Passes {
+            opaque_kind,
+            impostor_pass,
+            ..
+        } = state.passes;
+        let temporal_pass = state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .zip(self.temporal.as_ref());
+        // Lit frames shade with the lit pipelines and the lights' group.
+        let lit = state
+            .features
+            .light_frame
+            .as_ref()
+            .zip(self.lights.as_ref());
+        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        if let Some((_, lights)) = lit {
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+            if !affine {
+                pass.set_bind_group(2, &self.empty_group, &[]);
+            }
+        }
+        if affine {
+            pass.set_bind_group(
+                2,
+                temporal_pass.map_or_else(
+                    || {
+                        self.pose_bind_group
+                            .as_ref()
+                            .expect("retained pose bindings")
+                    },
+                    |(frame, temporal)| temporal.pose_group(frame),
+                ),
+                &[],
+            );
+            if !gpu_mode {
+                pass.set_vertex_buffer(
+                    1,
+                    self.slot_buffer
+                        .as_ref()
+                        .expect("retained slot buffer")
+                        .slice(..),
+                );
+            }
+        } else {
+            pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+        }
+        let mut bound = None;
+        let mut bindings = Bindings::default();
+        for &index in &self.draw_order {
+            let index = index as usize;
+            let batch = &self.plan.batches[index];
+            // Batches drawing virtual geometry (decision 044) draw its
+            // clusters below.
+            if self.virtual_drawn.get(index) == Some(&true) {
+                continue;
+            }
+            // Every planned source was validated and uploaded above.
+            let mesh = &self.meshes[&batch.mesh];
+            let (group, variant) = self.materials.binding(batch.material);
+            let skinned = mesh.skinned && affine;
+            let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
+            if bound != Some(variant) {
+                pass.set_pipeline(&self.variant_pipelines[&(opaque_kind, variant)]);
+                bound = Some(variant);
+            }
+            bindings.group(pass, 1, group);
+            let draw = mesh.draw(&self.mesh_arena);
+            bindings.vertex(pass, 0, draw.vertices);
+            if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+                bindings.vertex(pass, 2, extras);
+            }
+            if let Some(skin) = draw.skin.filter(|_| skinned) {
+                bindings.vertex(pass, 3, skin);
+            }
+            bindings.index(pass, draw.indices);
+            if gpu_mode {
+                // Visible slots of this group, compacted and counted
+                // on the GPU, each level of detail (decision 047)
+                // with its own.
+                let virtual_geometry = self.virtual_drawn.get(index) == Some(&true);
+                for level in 0..lod_levels(batch, mesh, virtual_geometry) {
+                    // An empty level draws nothing.
+                    if level > 0 && mesh.lods[level - 1].1 == 0 {
+                        continue;
+                    }
+                    let (ids, draws, offset) = self
+                        .gpu_presentation
+                        .draw_source(batch, index, phase, level);
+                    bindings.ids(pass, 1, ids);
+                    pass.draw_indexed_indirect(draws, offset);
+                }
+            } else {
+                pass.draw_indexed(
+                    draw.index_range(),
+                    draw.base_vertex,
+                    batch.instances.clone(),
+                );
+            }
+        }
+        // Impostors (decision 048): every draw group's cards in one
+        // draw, over the pose and light groups the meshes bound.
+        if gpu_mode
+            && let Some((targets, lit)) = impostor_pass
+            && let (Some(pipeline), Some(group)) = (
+                self.impostors.pipeline(targets, lit),
+                self.impostors.group(),
+            )
+        {
+            let (ids, args, offset) = self.gpu_presentation.impostor_source(phase);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, group, &[]);
+            pass.set_vertex_buffer(0, ids.slice(..));
+            pass.draw_indirect(args, offset);
+        }
+        // Virtual geometry (decision 044): each bin's selected
+        // clusters, in phase one, then each bin's twin of clusters
+        // the retest found visible in phase two; bins the visibility
+        // buffer resolves draw below.
+        if let Some(first_bin) = virtual_first {
+            let groups = &self.virtual_pose_groups.as_ref().expect("built above").1;
+            let group = match temporal_pass {
+                Some((frame, _)) => {
+                    let previous = if frame.motion_valid {
+                        1 - frame.parity
+                    } else {
+                        frame.parity
+                    };
+                    &groups[2 * frame.parity + previous]
+                }
+                None => &groups[0],
+            };
+            pass.set_bind_group(2, group, &[]);
+            for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
+                if self.visibility_bins.get(bin) == Some(&true) {
+                    continue;
+                }
+                pass.set_pipeline(&self.virtual_pipelines[&(opaque_kind, *variant)]);
+                pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
+                let (stream, args, offset) = self.virtual_geometry.bin_source(first_bin + bin);
+                pass.set_vertex_buffer(0, stream);
+                pass.draw_indirect(args, offset);
+            }
+        }
+    }
+
+    /// The visibility buffer's work in `phase` of `phases` (decision 045):
+    /// the bins it resolves (from `first_bin`) write which triangle covers
+    /// each pixel, compute lists each bin's tiles, and each bin's resolve
+    /// shades its pixels into the opaque pass's `targets`; the `sky` follows
+    /// the last phase's.
+    fn encode_visibility(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        (phase, phases): (usize, usize),
+        first_bin: usize,
+        targets: &[Option<wgpu::RenderPassColorAttachment<'_>>],
+        sky: &wgpu::RenderPipeline,
+    ) {
+        let opaque_kind = state.passes.opaque_kind;
+        let temporal_pass = state
+            .packing
+            .temporal_frame
+            .as_ref()
+            .zip(self.temporal.as_ref());
+        let lit = state
+            .features
+            .light_frame
+            .as_ref()
+            .zip(self.lights.as_ref());
+        #[cfg(feature = "profiling")]
+        let query_slot = state.query_slot;
+        let visibility = self.visibility.as_ref().expect("prepared above");
+        let pipelines = self.visibility_pipelines.as_ref().expect("created above");
+        let (_, pass_groups, resolve_groups) =
+            self.visibility_groups.as_ref().expect("built above");
+        let bins = self.virtual_bins.len();
+        // Pose buffers as the virtual pose groups pick them.
+        let (current, previous) = match temporal_pass {
+            Some((frame, _)) if frame.motion_valid => (frame.parity, 1 - frame.parity),
+            Some((frame, _)) => (frame.parity, frame.parity),
+            None => (0, 0),
+        };
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/visibility"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: visibility.ids_view(),
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.set_bind_group(1, &self.empty_group, &[]);
+            for (bin, (_, variant)) in self.virtual_bins.iter().enumerate() {
+                if !self.visibility_bins[bin] {
+                    continue;
+                }
+                pass.set_pipeline(&pipelines[usize::from(variant.double_sided())]);
+                pass.set_bind_group(
+                    2,
+                    &pass_groups[current],
+                    &[VisibilityBuffer::draw_offset(phase, bins, bin)],
+                );
+                let (stream, args, offset) = self.virtual_geometry.bin_source(first_bin + bin);
+                pass.set_vertex_buffer(0, stream);
+                pass.draw_indirect(args, offset);
+            }
+        }
+        visibility.encode_classify(encoder, bins);
+        let resolve_targets: Vec<_> = targets
+            .iter()
+            .map(|target| {
+                target
+                    .as_ref()
+                    .map(|target| wgpu::RenderPassColorAttachment {
+                        view: target.view,
+                        depth_slice: target.depth_slice,
+                        resolve_target: target.resolve_target,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+            })
+            .collect();
+        #[cfg(feature = "profiling")]
+        let timestamp_writes = self
+            .profiler
+            .writes(query_slot)
+            .map(|mut writes| {
+                writes.beginning_of_pass_write_index = None;
+                if phase + 1 != phases {
+                    writes.end_of_pass_write_index = None;
+                }
+                writes
+            })
+            .filter(timestamps_written);
+        #[cfg(not(feature = "profiling"))]
+        let timestamp_writes = None;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/visibility-resolve"),
+            color_attachments: &resolve_targets,
+            // Read-only: the resolves test no depth and the sky tests it.
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth.view,
+                depth_ops: None,
+                stencil_ops: None,
+            }),
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        pass.set_bind_group(0, &self.camera_bind_group, &[]);
+        if let Some((_, lights)) = lit {
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        }
+        let (_, _, resolve_args) = visibility.buffers();
+        for (bin, (material, variant)) in self.virtual_bins.iter().enumerate() {
+            if !self.visibility_bins[bin] {
+                continue;
+            }
+            pass.set_pipeline(&self.resolve_pipelines[&(opaque_kind, *variant)]);
+            pass.set_bind_group(1, self.materials.binding(*material).0, &[]);
+            pass.set_bind_group(
+                2,
+                &resolve_groups[2 * current + previous],
+                &[VisibilityBuffer::draw_offset(phase, bins, bin)],
+            );
+            pass.draw_indirect(resolve_args, bin as u64 * 16);
+        }
+        if phase + 1 == phases {
+            pass.set_pipeline(sky);
+            pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    /// Decals (decision 039) into the frame's color target.
+    fn encode_decals(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        report: &mut EncodeReport,
+    ) {
+        let features = &state.features;
+        let (decal_frame, light_frame) = (&features.decal_frame, &features.light_frame);
+        let post = self.post.as_ref().filter(|_| features.post_frame.is_some());
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(state.query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+        // Timestamp writes of effect `index` of the profiler's `EFFECTS`.
+        let effect_writes = |index: u32| {
+            effect_queries.map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: Some(first + 2 * index),
+                end_of_pass_write_index: Some(first + 2 * index + 1),
+            })
+        };
+
+        if let (Some(_), Some(decals)) = (&decal_frame, self.decals.as_ref()) {
+            let target = post.map_or(view, |post| post.targets().0);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/decals"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: effect_writes(8),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            report.effects_timed |= u32::from(effect_queries.is_some()) << 8;
+            decals.draw(
+                &mut pass,
+                &self.camera_bind_group,
+                &self.materials,
+                light_frame
+                    .as_ref()
+                    .and(self.lights.as_ref())
+                    .map(LightPass::fragment_group),
+                post.is_some(),
+            );
+        }
+    }
+
+    /// Transparent surfaces and alpha particles accumulated, then composited
+    /// over the frame's color with additive particles (decision 026).
+    fn encode_transparency(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        report: &mut EncodeReport,
+    ) {
+        let FrameKind {
+            affine,
+            gpu_mode,
+            instance_count,
+            ..
+        } = state.kind;
+        let transparent_kind = state.passes.transparent_kind;
+        let temporal_frame = &state.packing.temporal_frame;
+        let features = &state.features;
+        let (light_frame, post_frame, particle_frame) = (
+            &features.light_frame,
+            features.post_frame,
+            &features.particle_frame,
+        );
+        let (transparency, transparent_draws, refraction) = (
+            features.transparency,
+            features.transparent_draws,
+            features.refraction,
+        );
+        let lit = light_frame.as_ref().zip(self.lights.as_ref());
+        let post = self.post.as_ref().filter(|_| post_frame.is_some());
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(state.query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+        // Timestamp writes of effect `index` of the profiler's `EFFECTS`.
+        let effect_writes = |index: u32| {
+            effect_queries.map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
+                query_set,
+                beginning_of_pass_write_index: Some(first + 2 * index),
+                end_of_pass_write_index: Some(first + 2 * index + 1),
+            })
+        };
+
+        if let Some(transparent) = self.transparent.as_ref().filter(|_| transparency) {
+            // Read-only depth: surfaces behind the opaque ones stay hidden,
+            // and particles sample it.
+            let depth = Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.depth.view,
+                depth_ops: None,
+                stencil_ops: None,
+            });
+            {
+                let attachments = transparent.attachments();
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/transparent-accumulation"),
+                    color_attachments: &attachments,
+                    depth_stencil_attachment: depth.clone(),
+                    timestamp_writes: effect_writes(9),
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                if transparent_draws && instance_count > 0 {
+                    // Glass reads the opaque color the pass draws over.
+                    let camera_group = match &self.refraction_group {
+                        Some((_, group)) if refraction && post_frame.is_some() => group,
+                        _ => &self.camera_bind_group,
+                    };
+                    pass.set_bind_group(0, camera_group, &[]);
+                    if let Some((_, lights)) = lit {
+                        pass.set_bind_group(3, lights.fragment_group(), &[]);
+                        if !affine {
+                            pass.set_bind_group(2, &self.empty_group, &[]);
+                        }
+                    }
+                    if affine {
+                        let odd = temporal_frame
+                            .as_ref()
+                            .is_some_and(|frame| frame.parity == 1);
+                        let group = if odd {
+                            &self.alternate_pose_group.as_ref().expect("built above").1
+                        } else {
+                            self.pose_bind_group
+                                .as_ref()
+                                .expect("retained pose bindings")
+                        };
+                        pass.set_bind_group(2, group, &[]);
+                        if !gpu_mode {
+                            pass.set_vertex_buffer(
+                                1,
+                                self.slot_buffer
+                                    .as_ref()
+                                    .expect("retained slot buffer")
+                                    .slice(..),
+                            );
+                        }
+                    } else {
+                        pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+                    }
+                    let mut bound = None;
+                    let mut bindings = Bindings::default();
+                    for (index, batch) in self.plan.batches.iter().enumerate() {
+                        if !batch.transparent {
+                            continue;
+                        }
+                        let mesh = &self.meshes[&batch.mesh];
+                        let (group, variant) = self.materials.binding(batch.material);
+                        let skinned = mesh.skinned && affine;
+                        let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
+                        if bound != Some(variant) {
+                            pass.set_pipeline(
+                                &self.variant_pipelines[&(transparent_kind, variant)],
+                            );
+                            bound = Some(variant);
+                        }
+                        bindings.group(&mut pass, 1, group);
+                        let draw = mesh.draw(&self.mesh_arena);
+                        bindings.vertex(&mut pass, 0, draw.vertices);
+                        if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+                            bindings.vertex(&mut pass, 2, extras);
+                        }
+                        if let Some(skin) = draw.skin.filter(|_| skinned) {
+                            bindings.vertex(&mut pass, 3, skin);
+                        }
+                        bindings.index(&mut pass, draw.indices);
+                        if gpu_mode {
+                            let (ids, draws, offset) =
+                                self.gpu_presentation.draw_source(batch, index, 0, 0);
+                            bindings.ids(&mut pass, 1, ids);
+                            pass.draw_indexed_indirect(draws, offset);
+                        } else {
+                            pass.draw_indexed(
+                                draw.index_range(),
+                                draw.base_vertex,
+                                batch.instances.clone(),
+                            );
+                        }
+                    }
+                }
+                if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
+                    particles.draw_alpha(&mut pass, &self.camera_bind_group, frame);
+                }
+            }
+            // The composite over the frame's color, then additive particles.
+            let load = |view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            };
+            let attachments = match post {
+                Some(post) => {
+                    let (scene, glow, _) = post.targets();
+                    [load(scene), load(glow)]
+                }
+                None => [load(view), None],
+            };
+            let count = if post.is_some() { 2 } else { 1 };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/transparent-composite"),
+                color_attachments: &attachments[..count],
+                depth_stencil_attachment: depth,
+                timestamp_writes: effect_writes(10),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            transparent.composite(&mut pass, post.is_some());
+            report.effects_timed |= u32::from(effect_queries.is_some()) << 9
+                | u32::from(effect_queries.is_some()) << 10;
+            if let (Some(frame), Some(particles)) = (&particle_frame, self.particles.as_ref()) {
+                particles.draw_additive(&mut pass, &self.camera_bind_group, frame, post.is_some());
+            }
+        }
+    }
+
+    /// Screen effects and their composite into the canvas (decision 021),
+    /// or temporal antialiasing's resolve (decision 017).
+    fn encode_effects(
+        &mut self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        report: &mut EncodeReport,
+    ) {
+        let temporal_frame = &state.packing.temporal_frame;
+        let post_frame = state.features.post_frame;
+        let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
+        let post = self.post.as_ref().filter(|_| post_frame.is_some());
+        #[cfg(feature = "profiling")]
+        let query_slot = state.query_slot;
+        #[cfg(feature = "profiling")]
+        let effect_queries = self.profiler.effect_queries(state.query_slot);
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+
+        if let (Some(post_frame), Some(post)) = (post_frame, post) {
+            let queries = effect_queries.map(|(set, first)| (set, first + 4));
+            post.encode_effects(encoder, post_frame, &self.camera_bind_group, queries);
+            report.effects_timed |= u32::from(post_frame.occlusion) << 2
+                | u32::from(post_frame.bloom) << 3
+                | u32::from(post_frame.reflections) << 5
+                | u32::from(post_frame.shafts) << 6
+                | u32::from(post_frame.occlusion || post_frame.shafts) << 17;
+            if temporal_pass.is_none() {
+                let queries = effect_queries.map(|(set, first)| (set, first + 8));
+                post.encode_composite(encoder, view, queries);
+                report.effects_timed |= 1 << 4;
+            }
+        }
+        #[cfg(feature = "profiling")]
+        if effect_queries.is_some() {
+            self.profiler
+                .timed_effects(query_slot, report.effects_timed);
+        }
+        if let Some((frame, pass)) = temporal_pass {
+            #[cfg(not(feature = "profiling"))]
+            let writes = None;
+            #[cfg(feature = "profiling")]
+            let writes = self.profiler.resolve_writes(query_slot);
+            pass.encode_resolve(encoder, view, frame, writes);
+            #[cfg(feature = "profiling")]
+            self.profiler.timed_resolve(query_slot);
+        }
+    }
+
+    /// Reflection probe captures (decision 043) after the frame's own
+    /// drawing; returns the faces drawn.
+    fn encode_probes(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) -> u32 {
+        let FrameKind {
+            affine, gpu_mode, ..
+        } = state.kind;
+        let snapshot = state.snapshot;
+        let temporal_frame = &state.packing.temporal_frame;
+        let (probe_list, light_frame) = (state.features.probe_list, &state.features.light_frame);
+        #[cfg(feature = "profiling")]
+        let query_slot = state.query_slot;
+        #[cfg(not(feature = "profiling"))]
+        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+
+        if gpu_mode && affine && !probe_list.is_empty() {
+            self.probes.slots.tick();
+            if self.gpu_presentation.stillness_settled() {
+                let odd = temporal_frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.parity == 1);
+                #[cfg(feature = "profiling")]
+                let effect_queries = self.profiler.effect_queries(query_slot);
+                timestamp_pass(encoder, effect_queries, PROBE_CAPTURES, false);
+                let faces = self.encode_probe_captures(
+                    encoder,
+                    probe_list,
+                    snapshot.reflection_probe_settings.faces_per_frame,
+                    odd,
+                    snapshot.elapsed_seconds,
+                    light_frame
+                        .as_ref()
+                        .map(|frame| (frame, &snapshot.local_lights)),
+                );
+                #[cfg(feature = "profiling")]
+                {
+                    let queries = self.profiler.effect_queries(query_slot);
+                    timestamp_pass(encoder, queries, PROBE_CAPTURES, true);
+                    if faces != 0 && queries.is_some() {
+                        self.profiler.timed_effects(query_slot, 1 << PROBE_CAPTURES);
+                    }
+                }
+                faces
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Submits the frame after the work it reads (asset levels, staged pose
+    /// and input copies, environment maps) and presents it.
+    fn submit_frame(
+        &mut self,
+        state: &mut FrameState<'_>,
+        frame: wgpu::SurfaceTexture,
+        encoder: wgpu::CommandEncoder,
+    ) {
+        let FrameKind { gpu_mode, .. } = state.kind;
+        let virtual_frame = state.virtual_frame;
+        let mip_encoder = state.assets.encoder.take();
+        let staged_poses = state.writes.staged_poses.take();
+        let input_copies = state.features.input_copies.take();
+        let environment_encoder = state
+            .features
+            .environment_encoder
+            .take()
+            .expect("prepared with the frame");
+        let temporal_frame = &state.packing.temporal_frame;
+        #[cfg(feature = "profiling")]
+        let query_slot = state.query_slot;
+
+        let profile_submit = engine_profile::span("render", "submit_and_present");
+        // Staged pose/input copies precede the passes that read them.
+        self.queue.submit(
+            mip_encoder
+                .map(wgpu::CommandEncoder::finish)
+                .into_iter()
+                .chain(staged_poses)
+                .chain(input_copies.map(wgpu::CommandEncoder::finish))
+                .chain([environment_encoder.finish(), encoder.finish()]),
+        );
+        self.pose_uploads.after_submit();
+        if gpu_mode {
+            self.gpu_presentation.after_submit();
+        }
+        self.shadows.after_submit();
+        if let Some(lights) = self.lights.as_mut() {
+            lights.after_submit();
+        }
+        if virtual_frame {
+            self.virtual_geometry.after_submit();
+        }
+        if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
+            pass.submitted(frame);
+        }
+        #[cfg(feature = "profiling")]
+        self.profiler.map_after_submit(query_slot);
+        self.queue.present(frame);
+        drop(profile_submit);
+    }
+}
