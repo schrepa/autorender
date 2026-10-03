@@ -203,33 +203,36 @@ impl TemporalPass {
                 bind_group_layouts: &[Some(&resolve_layout)],
                 immediate_size: 0,
             });
-        let resolve_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/taa-resolve"),
-            layout: Some(&resolve_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_fullscreen"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_resolve"),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &[(
-                        "SURFACE_IS_SRGB",
-                        if surface_format.is_srgb() { 1.0 } else { 0.0 },
-                    )],
-                    ..Default::default()
+        let resolve_pipeline = crate::pipelines::render(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("engine/taa-resolve"),
+                layout: Some(&resolve_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &module,
+                    entry_point: Some("vs_fullscreen"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
                 },
-                targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &module,
+                    entry_point: Some("fs_resolve"),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &[(
+                            "SURFACE_IS_SRGB",
+                            if surface_format.is_srgb() { 1.0 } else { 0.0 },
+                        )],
+                        ..Default::default()
+                    },
+                    targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
+            },
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/taa-history-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -630,44 +633,47 @@ fn mesh_pipeline(
     if variant.skinned() {
         buffers.push(crate::browser::skin_layout());
     }
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("engine/temporal-meshes"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: mesh_shader,
-            entry_point: Some(&vertex_entry),
-            compilation_options: Default::default(),
-            buffers: &buffers,
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: depth_format,
-            depth_write_enabled: Some(true),
-            // Reversed depth (decision 042).
-            depth_compare: Some(wgpu::CompareFunction::Greater),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: mesh_shader,
-            entry_point: Some(&fragment_entry),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &constants,
+    crate::pipelines::render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some("engine/temporal-meshes"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: mesh_shader,
+                entry_point: Some(&vertex_entry),
+                compilation_options: Default::default(),
+                buffers: &buffers,
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
-            targets: &[
-                Some(SCENE_FORMAT.into()),
-                Some(MOTION_FORMAT.into()),
-                Some(GLOW_FORMAT.into()),
-                Some(SURFACE_FORMAT.into()),
-            ],
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: depth_format,
+                depth_write_enabled: Some(true),
+                // Reversed depth (decision 042).
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: mesh_shader,
+                entry_point: Some(&fragment_entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
+                targets: &[
+                    Some(SCENE_FORMAT.into()),
+                    Some(MOTION_FORMAT.into()),
+                    Some(GLOW_FORMAT.into()),
+                    Some(SURFACE_FORMAT.into()),
+                ],
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
 }

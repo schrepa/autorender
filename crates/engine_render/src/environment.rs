@@ -53,27 +53,30 @@ impl Environment {
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
         });
         let pipeline = |entry: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_environment"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
+            crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some(entry),
+                    layout: None,
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("vs_environment"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        targets: &[Some(ENVIRONMENT_FORMAT.into())],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(ENVIRONMENT_FORMAT.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         };
         let sky = pipeline("fs_environment_sky");
         let down = pipeline("fs_environment_down");

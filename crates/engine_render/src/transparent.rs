@@ -240,7 +240,8 @@ impl TransparentPass {
             }));
         }
         let constants = [("SURFACE_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
-        self.composite[index] = Some(device.create_render_pipeline(
+        self.composite[index] = Some(crate::pipelines::render(
+            device,
             &wgpu::RenderPipelineDescriptor {
                 label: Some("engine/transparent-composite"),
                 layout: Some(&self.pipeline_layout),

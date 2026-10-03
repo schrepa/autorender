@@ -41,14 +41,17 @@ impl DepthPyramid {
             source: wgpu::ShaderSource::Wgsl(DEPTH_PYRAMID_SHADER.into()),
         });
         let pipeline = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            crate::pipelines::compute(
+                device,
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: None,
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                },
+            )
         };
         let (first, down) = match reduction {
             Reduction::Farthest => ("pyramid_first", "pyramid_down"),

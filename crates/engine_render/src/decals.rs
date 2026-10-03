@@ -353,39 +353,42 @@ mod gpu {
         } else {
             crate::post::SCENE_FORMAT
         };
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/decals"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_decal"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            // The box's far faces cover its pixels once, from inside too.
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: Some(wgpu::Face::Front),
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(if lit { "fs_decal_lit" } else { "fs_decal" }),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
+        crate::pipelines::render(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("engine/decals"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs_decal"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                // The box's far faces cover its pixels once, from inside too.
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState { color, alpha: keep }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(if lit { "fs_decal_lit" } else { "fs_decal" }),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState { color, alpha: keep }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            },
+        )
     }
 }
 

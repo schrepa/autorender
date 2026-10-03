@@ -3,7 +3,7 @@ import type { RuntimeStats } from "./host";
 
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
 const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom", "sun_shafts", "reflections", "refraction",
-  "visibility_buffer"] as const;
+  "visibility_buffer", "pipelines_compiling"] as const;
 // Read back a few frames late: null until then.
 const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances", "subpixel_instances",
   "lod0_instances", "lod1_instances", "lod2_instances", "impostor_instances", "triangles"] as const;
@@ -16,7 +16,7 @@ const numericFields = [
   "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms",
   "shadow_draws", "shadow_kept_redraw", "local_lights", "dropped_lights", "transparent_draws", "particles",
   "dropped_particles", "decals", "dropped_decals", "impostors", "dropped_impostors", "reflection_probes", "reflection_probe_faces",
-  "dropped_reflection_probes", "virtual_clusters", "virtual_triangles", "virtual_shadow_clusters",
+  "dropped_reflection_probes", "pipelines", "pipelines_created", "virtual_clusters", "virtual_triangles", "virtual_shadow_clusters",
   "virtual_shadow_triangles", "virtual_occluded_clusters", "dropped_virtual", "virtual_resident_pages",
   "virtual_loading_pages", "virtual_missing_pages", "dropped_virtual_pages",
 ] as const;

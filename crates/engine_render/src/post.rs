@@ -147,11 +147,15 @@ impl PostPass {
             label: Some("engine/post.wgsl"),
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
         });
-        let pipeline =
-            |label, entry: &str, format: wgpu::TextureFormat, blend, srgb: Option<bool>| {
-                let constants =
-                    srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = |label,
+                        entry: &str,
+                        format: wgpu::TextureFormat,
+                        blend,
+                        srgb: Option<bool>| {
+            let constants = srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
+            crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
                     label: Some(label),
                     layout: None,
                     vertex: wgpu::VertexState {
@@ -178,30 +182,34 @@ impl PostPass {
                     }),
                     multiview_mask: None,
                     cache: None,
-                })
-            };
-        let levels_pipeline = |label, entry: &str| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: None,
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_fullscreen"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
                 },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
+        };
+        let levels_pipeline = |label, entry: &str| {
+            crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: None,
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("vs_fullscreen"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            )
         };
         let add = Some(wgpu::BlendState {
             color: wgpu::BlendComponent {
@@ -262,27 +270,30 @@ impl PostPass {
                 bind_group_layouts: &[Some(camera_layout), Some(&shafts_layout)],
                 immediate_size: 0,
             });
-        let shafts = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/post-shafts"),
-            layout: Some(&shafts_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shafts_module,
-                entry_point: Some("vs_fullscreen"),
-                compilation_options: Default::default(),
-                buffers: &[],
+        let shafts = crate::pipelines::render(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("engine/post-shafts"),
+                layout: Some(&shafts_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shafts_module,
+                    entry_point: Some("vs_fullscreen"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shafts_module,
+                    entry_point: Some("fs_shafts"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(SHAFT_FORMAT.into())],
+                }),
+                multiview_mask: None,
+                cache: None,
             },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shafts_module,
-                entry_point: Some("fs_shafts"),
-                compilation_options: Default::default(),
-                targets: &[Some(SHAFT_FORMAT.into())],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        );
         Self {
             occlusion: pipeline(
                 "engine/post-occlusion",
