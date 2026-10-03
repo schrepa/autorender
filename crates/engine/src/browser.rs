@@ -220,6 +220,10 @@ pub struct FrameStats {
     /// impostors included (virtual geometry's are `virtual_triangles`);
     /// read back a few frames late on GPU-culled frames.
     pub triangles: Option<u32>,
+    /// The passes the frame ran and those its render graph culled
+    /// (decision 050), as masks `engine_render::render_pass_names` reads.
+    pub render_passes: u32,
+    pub culled_passes: u32,
 }
 
 /// Owned diagnostics returned at low frequency across the browser boundary.
@@ -338,6 +342,30 @@ pub struct BrowserStats {
     /// impostors included (virtual geometry's are `virtual_triangles`);
     /// read back a few frames late on GPU-culled frames.
     pub triangles: Option<u32>,
+    // The passes the frame ran and those its render graph culled (decision
+    // 050), read by name through `render_passes` and `culled_passes`.
+    passes: u32,
+    culled: u32,
+}
+
+#[wasm_bindgen]
+impl BrowserStats {
+    /// The passes the last frame ran, in order (decision 050).
+    #[wasm_bindgen(getter)]
+    pub fn render_passes(&self) -> String {
+        engine_render::render_pass_names(self.passes)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The passes the last frame's render graph culled: none unless a
+    /// pass's results went unread (decision 050).
+    #[wasm_bindgen(getter)]
+    pub fn culled_passes(&self) -> String {
+        engine_render::render_pass_names(self.culled)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 impl From<FrameStats> for BrowserStats {
@@ -421,6 +449,8 @@ impl From<FrameStats> for BrowserStats {
             lod2_instances: stats.lod2_instances,
             impostor_instances: stats.impostor_instances,
             triangles: stats.triangles,
+            passes: stats.render_passes,
+            culled: stats.culled_passes,
         }
     }
 }
@@ -817,6 +847,8 @@ impl BrowserApp {
             lod2_instances: rendered.lod_instances.map(|levels| levels[2]),
             impostor_instances: rendered.lod_instances.map(|levels| levels[3]),
             triangles: rendered.triangles,
+            render_passes: rendered.passes,
+            culled_passes: rendered.culled_passes,
         };
         Ok(())
     }

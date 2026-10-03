@@ -153,6 +153,8 @@ impl Renderer {
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
             pipelines: self.pipeline_counts.created(),
             pipelines_created,
+            passes: report.passes,
+            culled_passes: report.culled_passes,
             virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
             virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),

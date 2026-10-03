@@ -498,33 +498,31 @@ impl TemporalPass {
         targets.groups.set(generation, groups);
     }
 
-    /// Records the resolve of `frame` into `canvas` and its history texture.
+    /// Records the resolve of `frame` into `canvas` and its history texture,
+    /// with operations `ops` for each.
     pub(crate) fn encode_resolve(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::TextureView,
         frame: &TemporalFrame,
+        [canvas_ops, history_ops]: [wgpu::Operations<wgpu::Color>; 2],
         timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
         let groups = targets.groups.get().expect("bound in prepare_resolve");
-        // The triangle covers every pixel: clears only spare loading them.
-        let attachment = |view| {
+        let attachment = |view, ops| {
             Some(wgpu::RenderPassColorAttachment {
                 view,
                 depth_slice: None,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
+                ops,
             })
         };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/taa-resolve"),
             color_attachments: &[
-                attachment(canvas),
-                attachment(&targets.history[frame.parity]),
+                attachment(canvas, canvas_ops),
+                attachment(&targets.history[frame.parity], history_ops),
             ],
             depth_stencil_attachment: None,
             timestamp_writes,

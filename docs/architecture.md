@@ -100,6 +100,11 @@ proportional to distance.
 hue-keeping filmic curve, contrast, split toning and vibrance.
 [Decision 028](adr-028-shadow-cascades-and-receiver-planes.md) splits the near
 shadow map into cascades and compares lookups against receiver planes.
+[Decision 050](adr-050-render-graph.md) declares each frame's passes as a
+render graph: passes state what they read and write and how they draw into
+their attachments, and compiling the graph checks their reads, culls passes
+whose results nothing uses and derives every attachment's load and store
+operations.
 
 ## Ownership and compatibility
 
@@ -136,7 +141,7 @@ The HUD reports frame cadence, sampled CPU simulation/presentation and extractio
 2. Add a second game with authored geometry and textures. That requirement should drive typed asset handles, readiness/failure states, and a small versioned asset format.
 3. Add cameras, visibility culling, simulation interpolation, and material batching where measured costs or gameplay needs justify them.
 4. Introduce editable scene text and bounded development inspection before an editor or broad tool protocol. Preserve a clear difference between persisted authoring changes and temporary runtime edits.
-5. Evaluate workers, asset compilation, render passes/graph, recovery, and mobile quality tiers as concrete workloads require them.
+5. Evaluate workers, asset compilation, recovery, and mobile quality tiers as concrete workloads require them.
 
 ## Primary references
 

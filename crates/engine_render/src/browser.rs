@@ -249,6 +249,8 @@ pub struct Renderer {
     // Decals (decision 039): records and pipelines, created with the first
     // frame that draws them.
     decals: Option<DecalPass>,
+    // The frame's passes (decision 050), declared anew each frame.
+    graph: crate::render_graph::RenderGraph,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.
     gpu_frame: bool,
     // The only callback-shared state is a rare error message, never ECS data.
@@ -441,6 +443,7 @@ impl Renderer {
             transparent: None,
             particles: None,
             decals: None,
+            graph: Default::default(),
             gpu_frame: false,
             failure,
             #[cfg(feature = "profiling")]
@@ -657,7 +660,9 @@ fn timestamp_pass(
     }
 }
 
-fn clear_color(srgb_target: bool) -> wgpu::Color {
+/// The canvas's clear color: the scene's in linear light, encoded unless the
+/// canvas is sRGB.
+fn canvas_clear(srgb_target: bool) -> [f64; 4] {
     let encode = |linear: f64| {
         if srgb_target {
             linear
@@ -665,12 +670,8 @@ fn clear_color(srgb_target: bool) -> wgpu::Color {
             1.055 * linear.powf(1.0 / 2.4) - 0.055
         }
     };
-    wgpu::Color {
-        r: encode(0.009),
-        g: encode(0.015),
-        b: encode(0.025),
-        a: 1.0,
-    }
+    let [r, g, b, a] = crate::render_graph::SCENE_CLEAR;
+    [encode(r), encode(g), encode(b), a]
 }
 
 fn js_error(context: &str, error: impl std::fmt::Display) -> JsValue {

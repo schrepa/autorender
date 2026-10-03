@@ -865,21 +865,34 @@ impl PostPass {
     }
 
     /// Records the composite of a frame without temporal antialiasing into
-    /// `canvas`.
+    /// `canvas` with operations `ops`.
     pub(crate) fn encode_composite(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::TextureView,
+        ops: wgpu::Operations<wgpu::Color>,
         timestamps: Option<(&wgpu::QuerySet, u32)>,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
-        let mut pass = fullscreen_pass(
-            encoder,
-            "engine/post-composite",
-            canvas,
-            wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-            timestamps.map(|(set, first)| (set, Some(first), Some(first + 1))),
-        );
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/post-composite"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: canvas,
+                depth_slice: None,
+                resolve_target: None,
+                ops,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: timestamps.map(|(query_set, first)| {
+                wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: Some(first),
+                    end_of_pass_write_index: Some(first + 1),
+                }
+            }),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
         pass.set_pipeline(&self.composite);
         pass.set_bind_group(0, &targets.composite, &[]);
         pass.draw(0..3, 0..1);

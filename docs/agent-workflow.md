@@ -182,7 +182,9 @@ on GPU-culled ones; virtual geometry's are `virtual_triangles`); `pipelines`,
 the pipelines the renderer has created, `pipelines_created`, those the last
 frame created, and `pipelines_compiling`, whether the GPU may still be
 compiling some ([decision 049](adr-049-pipeline-preparation.md)): steady
-frames create none. `Mesh3d` reports each material's `surface`, `opacity` and
+frames create none; `render_passes`, the passes the last frame ran in order,
+and `culled_passes`, those its render graph culled because nothing read
+their results ([decision 050](adr-050-render-graph.md)). `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

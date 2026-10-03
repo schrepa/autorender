@@ -23,7 +23,7 @@ export interface RuntimeStats {
   virtual_clusters: number; virtual_triangles: number; virtual_shadow_clusters: number; virtual_shadow_triangles: number;
   virtual_occluded_clusters: number; dropped_virtual: number;
   virtual_resident_pages: number; virtual_loading_pages: number; virtual_missing_pages: number;
-  dropped_virtual_pages: number;
+  dropped_virtual_pages: number; render_passes: string; culled_passes: string;
   subpixel_instances: number | undefined;
   lod0_instances: number | undefined; lod1_instances: number | undefined;
   lod2_instances: number | undefined; impostor_instances: number | undefined;
