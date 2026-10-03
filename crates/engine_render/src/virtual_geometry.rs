@@ -34,6 +34,7 @@ use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS
 use wasm_bindgen::JsCast;
 
 use crate::gpu_data::VIRTUAL_SHADER;
+use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
 use crate::shadows::{SHADOW_FORMAT, VIRTUAL_SHADOW_PLANES as PLANES};
 use crate::virtual_streaming::{MeshLinks, PageState, Placement, Residency};
 
@@ -202,6 +203,71 @@ struct ArenaBuffers {
     pages: wgpu::Buffer,
 }
 
+// The selection passes' shared layouts (decision 049): each lists every
+// binding its passes read, by virtual_geometry.wgsl's numbers, within the
+// eight storage buffers per stage WebGPU guarantees. Passes dispatching from
+// the dispatch arguments (15) never bind them.
+use Slot::{Read, Texture, Uniform, Write};
+// Seeding, and the dispatch arguments of each level, the work and the
+// retest.
+const SEED_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (1, Read),
+    (2, Read),
+    (7, Read),
+    (8, Read),
+    (9, Write),
+    (10, Write),
+    (12, Write),
+    (15, Write),
+];
+const TRAVERSE_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (3, Read),
+    (6, Read),
+    (9, Write),
+    (10, Write),
+    (11, Write),
+    (12, Write),
+];
+// Selection, and the retest of the clusters it left waiting.
+const SELECT_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (4, Read),
+    (5, Read),
+    (6, Read),
+    (11, Write),
+    (12, Write),
+    (13, Write),
+    (14, Read),
+    (19, Texture),
+    (20, Write),
+];
+const BIN_BINDINGS: &[(u32, Slot)] = &[(0, Uniform), (12, Write), (14, Read), (16, Write)];
+
+// A shared layout: its bindings, group layout and pipeline layout.
+struct Family {
+    bindings: &'static [(u32, Slot)],
+    group: wgpu::BindGroupLayout,
+    pipeline: wgpu::PipelineLayout,
+}
+
+impl Family {
+    fn new(device: &wgpu::Device, label: &str, bindings: &'static [(u32, Slot)]) -> Self {
+        let group = group_layout(device, label, wgpu::ShaderStages::COMPUTE, bindings);
+        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: &[Some(&group)],
+            immediate_size: 0,
+        });
+        Self {
+            bindings,
+            group,
+            pipeline,
+        }
+    }
+}
+
 struct Pipelines {
     seed: wgpu::ComputePipeline,
     level_args: [wgpu::ComputePipeline; 2],
@@ -211,17 +277,23 @@ struct Pipelines {
     bin_args: wgpu::ComputePipeline,
     retest_args: wgpu::ComputePipeline,
     retest: wgpu::ComputePipeline,
+    seed_family: Family,
+    traverse_family: Family,
+    select_family: Family,
+    bin_family: Family,
+    fillers: Fillers,
 }
 
 struct Groups {
     // Per ID source; shadows' only while shadow views select.
     seed: [Option<wgpu::BindGroup>; 2],
-    level_args: [wgpu::BindGroup; 2],
-    traverse: [wgpu::BindGroup; 2],
-    work_args: wgpu::BindGroup,
+    // Every pass writing dispatch arguments: each level's, the work's and
+    // the retest's.
+    args: wgpu::BindGroup,
+    // Both parities of the traversal.
+    traverse: wgpu::BindGroup,
     select: wgpu::BindGroup,
     bin_args: wgpu::BindGroup,
-    retest_args: wgpu::BindGroup,
     retest: wgpu::BindGroup,
 }
 
@@ -1204,12 +1276,17 @@ impl VirtualGeometryPass {
             label: Some("engine/virtual_geometry.wgsl"),
             source: wgpu::ShaderSource::Wgsl(VIRTUAL_SHADER.into()),
         });
-        let pipeline = |entry: &str| {
+        let seed_family = Family::new(device, "engine/virtual-seed-layout", SEED_BINDINGS);
+        let traverse_family =
+            Family::new(device, "engine/virtual-traverse-layout", TRAVERSE_BINDINGS);
+        let select_family = Family::new(device, "engine/virtual-select-layout", SELECT_BINDINGS);
+        let bin_family = Family::new(device, "engine/virtual-bin-layout", BIN_BINDINGS);
+        let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute(
                 device,
                 &wgpu::ComputePipelineDescriptor {
                     label: Some(entry),
-                    layout: None,
+                    layout: Some(&family.pipeline),
                     module: &module,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
@@ -1218,14 +1295,25 @@ impl VirtualGeometryPass {
             )
         };
         self.pipelines = Some(Pipelines {
-            seed: pipeline("seed"),
-            level_args: [pipeline("level_args_even"), pipeline("level_args_odd")],
-            traverse: [pipeline("traverse_even"), pipeline("traverse_odd")],
-            work_args: pipeline("work_args"),
-            select: pipeline("select_clusters"),
-            bin_args: pipeline("bin_args"),
-            retest_args: pipeline("retest_args"),
-            retest: pipeline("retest_clusters"),
+            seed: pipeline("seed", &seed_family),
+            level_args: [
+                pipeline("level_args_even", &seed_family),
+                pipeline("level_args_odd", &seed_family),
+            ],
+            traverse: [
+                pipeline("traverse_even", &traverse_family),
+                pipeline("traverse_odd", &traverse_family),
+            ],
+            work_args: pipeline("work_args", &seed_family),
+            select: pipeline("select_clusters", &select_family),
+            bin_args: pipeline("bin_args", &bin_family),
+            retest_args: pipeline("retest_args", &seed_family),
+            retest: pipeline("retest_clusters", &select_family),
+            seed_family,
+            traverse_family,
+            select_family,
+            bin_family,
+            fillers: Fillers::new(device),
         });
         self.module = Some(module);
     }
@@ -1278,42 +1366,21 @@ impl VirtualGeometryPass {
             return;
         }
         let arena = self.arena.as_ref().expect("checked above");
-        let group = |pipeline: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry<'_>]| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/virtual-group"),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries,
-            })
-        };
         let pipelines = self.pipelines.as_ref().expect("built above");
+        let group = |family: &Family, entries: &[wgpu::BindGroupEntry<'_>]| {
+            filled_group(
+                device,
+                "engine/virtual-group",
+                &family.group,
+                family.bindings,
+                entries,
+                &pipelines.fillers,
+            )
+        };
         let [queue_a, queue_b] = &self.queues;
-        let level = |pipeline| {
-            group(
-                pipeline,
-                &[
-                    entry(0, &self.uniform),
-                    entry(12, &self.counters),
-                    entry(15, &self.dispatch),
-                ],
-            )
-        };
-        let traverse = |pipeline| {
-            group(
-                pipeline,
-                &[
-                    entry(0, &self.uniform),
-                    entry(3, &arena.nodes),
-                    entry(6, poses.0),
-                    entry(9, queue_a),
-                    entry(10, queue_b),
-                    entry(11, &self.work),
-                    entry(12, &self.counters),
-                ],
-            )
-        };
         let seed = |source: usize, ids: &IdBuffers<'_>| {
             group(
-                &pipelines.seed,
+                &pipelines.seed_family,
                 &[
                     entry(0, &self.uniform),
                     entry(1, &self.batches[source]),
@@ -1331,17 +1398,28 @@ impl VirtualGeometryPass {
                 Some(seed(CAMERA, &camera)),
                 shadows.as_ref().map(|shadows| seed(SHADOWS, shadows)),
             ],
-            level_args: [
-                level(&pipelines.level_args[0]),
-                level(&pipelines.level_args[1]),
-            ],
-            traverse: [
-                traverse(&pipelines.traverse[0]),
-                traverse(&pipelines.traverse[1]),
-            ],
-            work_args: level(&pipelines.work_args),
+            args: group(
+                &pipelines.seed_family,
+                &[
+                    entry(0, &self.uniform),
+                    entry(12, &self.counters),
+                    entry(15, &self.dispatch),
+                ],
+            ),
+            traverse: group(
+                &pipelines.traverse_family,
+                &[
+                    entry(0, &self.uniform),
+                    entry(3, &arena.nodes),
+                    entry(6, poses.0),
+                    entry(9, queue_a),
+                    entry(10, queue_b),
+                    entry(11, &self.work),
+                    entry(12, &self.counters),
+                ],
+            ),
             select: group(
-                &pipelines.select,
+                &pipelines.select_family,
                 &[
                     entry(0, &self.uniform),
                     entry(4, &arena.groups),
@@ -1356,7 +1434,7 @@ impl VirtualGeometryPass {
                 ],
             ),
             bin_args: group(
-                &pipelines.bin_args,
+                &pipelines.bin_family,
                 &[
                     entry(0, &self.uniform),
                     entry(12, &self.counters),
@@ -1364,9 +1442,8 @@ impl VirtualGeometryPass {
                     entry(16, &self.draw_args),
                 ],
             ),
-            retest_args: level(&pipelines.retest_args),
             retest: group(
-                &pipelines.retest,
+                &pipelines.select_family,
                 &[
                     entry(0, &self.uniform),
                     entry(5, &arena.clusters),
@@ -1530,14 +1607,14 @@ impl VirtualGeometryPass {
             for level in 0..self.depth as usize {
                 let parity = level % 2;
                 pass.set_pipeline(&pipelines.level_args[parity]);
-                pass.set_bind_group(0, &groups.level_args[parity], &[]);
+                pass.set_bind_group(0, &groups.args, &[]);
                 pass.dispatch_workgroups(1, 1, 1);
                 pass.set_pipeline(&pipelines.traverse[parity]);
-                pass.set_bind_group(0, &groups.traverse[parity], &[]);
+                pass.set_bind_group(0, &groups.traverse, &[]);
                 pass.dispatch_workgroups_indirect(&self.dispatch, 0);
             }
             pass.set_pipeline(&pipelines.work_args);
-            pass.set_bind_group(0, &groups.work_args, &[]);
+            pass.set_bind_group(0, &groups.args, &[]);
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&pipelines.select);
             pass.set_bind_group(0, &groups.select, &[]);
@@ -1594,7 +1671,7 @@ impl VirtualGeometryPass {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&pipelines.retest_args);
-            pass.set_bind_group(0, &groups.retest_args, &[]);
+            pass.set_bind_group(0, &groups.args, &[]);
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&pipelines.retest);
             pass.set_bind_group(0, &groups.retest, &[]);
