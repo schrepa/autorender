@@ -69,11 +69,10 @@ pub(crate) struct TemporalFrame {
 }
 
 pub(crate) struct TemporalPass {
-    mesh_pipeline: wgpu::RenderPipeline,
+    // Mesh pipelines live with the renderer's other variants (decision 049);
+    // the pass owns their layouts, the lit one created with the first lit
+    // temporal frame (decision 023).
     mesh_layout: wgpu::PipelineLayout,
-    // Shading local lights (decision 023), created with the first lit
-    // temporal frame.
-    lit_mesh_pipeline: Option<wgpu::RenderPipeline>,
     lit_layout: Option<wgpu::PipelineLayout>,
     sky_pipeline: wgpu::RenderPipeline,
     pose_layout: wgpu::BindGroupLayout,
@@ -91,16 +90,14 @@ pub(crate) struct TemporalPass {
 }
 
 impl TemporalPass {
-    /// Creates the pipelines and fixed resources; targets follow the surface.
-    /// `mesh_shader` is `meshes.wgsl`, drawn with the retained affine vertex
-    /// layouts and the renderer's camera and texture layouts.
+    /// Creates the sky and resolve pipelines, the mesh pipeline layout and
+    /// fixed resources; targets follow the surface. `mesh_shader` is
+    /// `meshes.wgsl`; mesh pipelines are the renderer's variants.
     pub(crate) fn new(
         device: &wgpu::Device,
         mesh_shader: &wgpu::ShaderModule,
         camera_layout: &wgpu::BindGroupLayout,
         texture_layout: &wgpu::BindGroupLayout,
-        vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
-        depth_format: wgpu::TextureFormat,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let storage_entry = |binding, stride: usize| wgpu::BindGroupLayoutEntry {
@@ -134,15 +131,6 @@ impl TemporalPass {
             ],
             immediate_size: 0,
         });
-        let mesh_pipeline = mesh_pipeline(
-            device,
-            mesh_shader,
-            &mesh_layout,
-            vertex_layouts,
-            depth_format,
-            "fs_temporal",
-            Variant::BASIC,
-        );
         let sky_pipeline = crate::browser::sky_pipeline(
             device,
             mesh_shader,
@@ -257,9 +245,7 @@ impl TemporalPass {
             mapped_at_creation: false,
         });
         Self {
-            mesh_pipeline,
             mesh_layout,
-            lit_mesh_pipeline: None,
             lit_layout: None,
             sky_pipeline,
             pose_layout,
@@ -411,21 +397,14 @@ impl TemporalPass {
         &groups[2 * frame.parity + previous]
     }
 
-    pub(crate) fn mesh_pipeline(&self) -> &wgpu::RenderPipeline {
-        &self.mesh_pipeline
-    }
-
-    /// Creates the lit mesh pipeline unless it exists; `layouts` are the
-    /// camera, texture and lights layouts.
-    pub(crate) fn ensure_lit(
+    /// Creates the lit mesh pipeline layout unless it exists; `layouts` are
+    /// the camera, texture and lights layouts.
+    pub(crate) fn ensure_lit_layout(
         &mut self,
         device: &wgpu::Device,
-        mesh_shader: &wgpu::ShaderModule,
         layouts: [&wgpu::BindGroupLayout; 3],
-        vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
-        depth_format: wgpu::TextureFormat,
     ) {
-        if self.lit_mesh_pipeline.is_some() {
+        if self.lit_layout.is_some() {
             return;
         }
         let [camera, texture, lights] = layouts;
@@ -439,20 +418,11 @@ impl TemporalPass {
             ],
             immediate_size: 0,
         });
-        self.lit_mesh_pipeline = Some(mesh_pipeline(
-            device,
-            mesh_shader,
-            &layout,
-            vertex_layouts,
-            depth_format,
-            "fs_temporal_lit",
-            Variant::BASIC,
-        ));
         self.lit_layout = Some(layout);
     }
 
     /// The mesh pipeline, lit or not, shading materials of `variant`
-    /// (decision 031); lit ones after [`Self::ensure_lit`].
+    /// (decision 031); lit ones after [`Self::ensure_lit_layout`].
     pub(crate) fn variant(
         &self,
         device: &wgpu::Device,
@@ -487,13 +457,6 @@ impl TemporalPass {
     /// poses and joint palettes.
     pub(crate) fn pose_layout(&self) -> &wgpu::BindGroupLayout {
         &self.pose_layout
-    }
-
-    /// The lit mesh pipeline; call [`Self::ensure_lit`] first.
-    pub(crate) fn lit_mesh_pipeline(&self) -> &wgpu::RenderPipeline {
-        self.lit_mesh_pipeline
-            .as_ref()
-            .expect("created with the first lit frame")
     }
 
     pub(crate) fn sky_pipeline(&self) -> &wgpu::RenderPipeline {

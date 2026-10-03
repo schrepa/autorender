@@ -241,8 +241,10 @@ type GroupsKey = (u64, u64, u64, u64, Option<u64>, Option<u64>);
 type ShadowGroupKey = (u64, u64, wgpu::Buffer);
 
 pub(crate) struct VirtualGeometryPass {
-    module: wgpu::ShaderModule,
-    pipelines: Pipelines,
+    // Built with the first arena (decision 049): scenes without virtual
+    // meshes compile none of them.
+    module: Option<wgpu::ShaderModule>,
+    pipelines: Option<Pipelines>,
     resident: Vec<Resident>,
     index: HashMap<MeshHandle, u32>,
     dirty: bool,
@@ -426,30 +428,6 @@ fn entry(binding: u32, buffer: &wgpu::Buffer) -> wgpu::BindGroupEntry<'_> {
 
 impl VirtualGeometryPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/virtual_geometry.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(VIRTUAL_SHADER.into()),
-        });
-        let pipeline = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
-        };
-        let pipelines = Pipelines {
-            seed: pipeline("seed"),
-            level_args: [pipeline("level_args_even"), pipeline("level_args_odd")],
-            traverse: [pipeline("traverse_even"), pipeline("traverse_odd")],
-            work_args: pipeline("work_args"),
-            select: pipeline("select_clusters"),
-            bin_args: pipeline("bin_args"),
-            retest_args: pipeline("retest_args"),
-            retest: pipeline("retest_clusters"),
-        };
         let none = wgpu::BufferUsages::empty();
         let no_pyramid = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("engine/virtual-no-pyramid"),
@@ -467,8 +445,8 @@ impl VirtualGeometryPass {
         });
         let no_pyramid_view = no_pyramid.create_view(&Default::default());
         Self {
-            module,
-            pipelines,
+            module: None,
+            pipelines: None,
             resident: Vec::new(),
             index: HashMap::new(),
             dirty: false,
@@ -1216,6 +1194,39 @@ impl VirtualGeometryPass {
         queue.write_buffer(&self.uniform, 0, &bytes);
     }
 
+    /// The selection's module and pipelines, built the first time an arena
+    /// binds.
+    fn ensure_pipelines(&mut self, device: &wgpu::Device) {
+        if self.pipelines.is_some() {
+            return;
+        }
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("engine/virtual_geometry.wgsl"),
+            source: wgpu::ShaderSource::Wgsl(VIRTUAL_SHADER.into()),
+        });
+        let pipeline = |entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: None,
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+        };
+        self.pipelines = Some(Pipelines {
+            seed: pipeline("seed"),
+            level_args: [pipeline("level_args_even"), pipeline("level_args_odd")],
+            traverse: [pipeline("traverse_even"), pipeline("traverse_odd")],
+            work_args: pipeline("work_args"),
+            select: pipeline("select_clusters"),
+            bin_args: pipeline("bin_args"),
+            retest_args: pipeline("retest_args"),
+            retest: pipeline("retest_clusters"),
+        });
+        self.module = Some(module);
+    }
+
     /// Binds this frame's slot poses (their key's lowest bit tells which of
     /// the two pose buffers they are), and the IDs and draw arguments of the
     /// camera's batches and of the shadow maps' casters, each with a key
@@ -1240,6 +1251,7 @@ impl VirtualGeometryPass {
         if self.arena.is_none() {
             return;
         }
+        self.ensure_pipelines(device);
         if let Some(views) = shadow_views {
             self.bind_shadow_drawing(device, views);
         }
@@ -1270,7 +1282,7 @@ impl VirtualGeometryPass {
                 entries,
             })
         };
-        let pipelines = &self.pipelines;
+        let pipelines = self.pipelines.as_ref().expect("built above");
         let [queue_a, queue_b] = &self.queues;
         let level = |pipeline| {
             group(
@@ -1373,7 +1385,7 @@ impl VirtualGeometryPass {
         let (Some(arena), Some((poses, poses_key))) = (&self.arena, &self.poses) else {
             return;
         };
-        let module = &self.module;
+        let module = self.module.as_ref().expect("built with the arena");
         let drawing = self.shadow_drawing.get_or_insert_with(|| {
             let storage = |binding| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -1488,13 +1500,14 @@ impl VirtualGeometryPass {
         if self.batch_counts == [0, 0] {
             return;
         }
+        let pipelines = self.pipelines.as_ref().expect("bound groups build them");
         encoder.clear_buffer(&self.counters, 0, None);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/virtual-selection"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipelines.seed);
+            pass.set_pipeline(&pipelines.seed);
             for source in [CAMERA, SHADOWS] {
                 if self.batch_counts[source] == 0 {
                     continue;
@@ -1510,20 +1523,20 @@ impl VirtualGeometryPass {
             }
             for level in 0..self.depth as usize {
                 let parity = level % 2;
-                pass.set_pipeline(&self.pipelines.level_args[parity]);
+                pass.set_pipeline(&pipelines.level_args[parity]);
                 pass.set_bind_group(0, &groups.level_args[parity], &[]);
                 pass.dispatch_workgroups(1, 1, 1);
-                pass.set_pipeline(&self.pipelines.traverse[parity]);
+                pass.set_pipeline(&pipelines.traverse[parity]);
                 pass.set_bind_group(0, &groups.traverse[parity], &[]);
                 pass.dispatch_workgroups_indirect(&self.dispatch, 0);
             }
-            pass.set_pipeline(&self.pipelines.work_args);
+            pass.set_pipeline(&pipelines.work_args);
             pass.set_bind_group(0, &groups.work_args, &[]);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.pipelines.select);
+            pass.set_pipeline(&pipelines.select);
             pass.set_bind_group(0, &groups.select, &[]);
             pass.dispatch_workgroups_indirect(&self.dispatch, 12);
-            pass.set_pipeline(&self.pipelines.bin_args);
+            pass.set_pipeline(&pipelines.bin_args);
             pass.set_bind_group(0, &groups.bin_args, &[]);
             pass.dispatch_workgroups((self.bin_regions.len() as u32).div_ceil(GROUP).max(1), 1, 1);
         }
@@ -1568,18 +1581,19 @@ impl VirtualGeometryPass {
         if !self.retesting || self.batch_counts == [0, 0] {
             return;
         }
+        let pipelines = self.pipelines.as_ref().expect("bound groups build them");
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/virtual-retest"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(&self.pipelines.retest_args);
+            pass.set_pipeline(&pipelines.retest_args);
             pass.set_bind_group(0, &groups.retest_args, &[]);
             pass.dispatch_workgroups(1, 1, 1);
-            pass.set_pipeline(&self.pipelines.retest);
+            pass.set_pipeline(&pipelines.retest);
             pass.set_bind_group(0, &groups.retest, &[]);
             pass.dispatch_workgroups_indirect(&self.dispatch, 12);
-            pass.set_pipeline(&self.pipelines.bin_args);
+            pass.set_pipeline(&pipelines.bin_args);
             pass.set_bind_group(0, &groups.bin_args, &[]);
             pass.dispatch_workgroups((self.bin_regions.len() as u32).div_ceil(GROUP).max(1), 1, 1);
         }

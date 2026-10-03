@@ -215,13 +215,9 @@ pub struct Renderer {
     depth: DepthTarget,
     // Advances when the depth buffer is replaced (ambient occlusion reads it).
     depth_generation: u64,
-    pipeline: wgpu::RenderPipeline,
-    affine_pipeline: wgpu::RenderPipeline,
     pipeline_layout: wgpu::PipelineLayout,
     affine_pipeline_layout: wgpu::PipelineLayout,
-    // The same draws into the screen effects' scene and glow targets, and the
-    // effects themselves, created with the first frame that has an effect.
-    post_pipelines: Option<PostPipelines>,
+    // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     mesh_shader: wgpu::ShaderModule,
     camera_layout: wgpu::BindGroupLayout,
@@ -235,12 +231,10 @@ pub struct Renderer {
     lighting: Option<LightingUniform>,
     // The environment maps surfaces reflect (decision 043), redrawn when the
     // sky changes, and the reflection probes holding their cubes after the
-    // sky's: each face's camera group (built with the main group's key) and
-    // the captures' sky pipeline.
+    // sky's, and each face's camera group (built with the main group's key).
     environment: Environment,
     probes: ProbePass,
     probe_camera_groups: Vec<wgpu::BindGroup>,
-    probe_sky_pipeline: Option<wgpu::RenderPipeline>,
     // Virtual geometry (decision 044): the arena and cluster selection;
     // pipelines per pass kind and material variant over their layouts
     // (unlit, lit) and pose groups (poses, colors, previous poses and the
@@ -280,8 +274,10 @@ pub struct Renderer {
         [wgpu::BindGroup; 4],
     )>,
     visibility_bins: Vec<bool>,
-    // The sky behind all geometry, drawn last in the opaque pass.
-    sky_pipeline: wgpu::RenderPipeline,
+    // The sky behind all geometry, drawn last in the opaque pass, per
+    // target kind (`SKY_CANVAS`, `SKY_POST`, `SKY_PROBE`), built when a pass
+    // first draws it (decision 049).
+    sky_pipelines: [Option<wgpu::RenderPipeline>; 3],
     // Refraction through glass (decision 038): the white texel group 0 binds
     // where no opaque color is, its sampler, and group 0 of transparent
     // passes over the opaque color of post target generation `.0` and
@@ -291,18 +287,17 @@ pub struct Renderer {
     refraction_group: Option<((u64, CameraGroupsKey), wgpu::BindGroup)>,
     // Sun shadows (decision 020).
     shadows: ShadowPass,
-    // Local lights (decision 023): binning and the lit mesh pipelines,
-    // created with the first frame that has lights. Lit public-instance
-    // pipelines bind an empty group 2.
+    // Local lights (decision 023): binning and the lit mesh pipeline
+    // layouts, created with the first frame that has lights. Lit
+    // public-instance pipelines bind an empty group 2.
     lights: Option<LightPass>,
-    lit: Option<LitPipelines>,
+    lit: Option<LitLayouts>,
     empty_layout: wgpu::BindGroupLayout,
     empty_group: wgpu::BindGroup,
     // Transparent surfaces and particles (decision 026): targets, the
     // composite and particle pipelines, created with the first frame that
-    // draws them; transparent mesh pipelines `[unlit, lit][full, affine]`.
+    // draws them.
     transparent: Option<TransparentPass>,
-    transparent_pipelines: [[Option<wgpu::RenderPipeline>; 2]; 2],
     particles: Option<ParticlePass>,
     // Decals (decision 039): records and pipelines, created with the first
     // frame that draws them.
@@ -764,50 +759,6 @@ impl Renderer {
             label: Some("engine/meshes.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
-        let canvas_target = [Some(wgpu::ColorTargetState {
-            format: configuration.format,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let canvas_constants = [(
-            "SURFACE_IS_SRGB",
-            if configuration.format.is_srgb() {
-                1.0
-            } else {
-                0.0
-            },
-        )];
-        let direct = MeshTargets {
-            fragment: "fs_main",
-            targets: &canvas_target,
-            constants: &canvas_constants,
-            depth_write: true,
-            mirrored: false,
-        };
-        let pipeline = mesh_pipeline(
-            &device,
-            &shader,
-            &pipeline_layout,
-            false,
-            &direct,
-            Variant::BASIC,
-        );
-        let affine_pipeline = mesh_pipeline(
-            &device,
-            &shader,
-            &affine_pipeline_layout,
-            true,
-            &direct,
-            Variant::BASIC,
-        );
-        let sky_pipeline = sky_pipeline(
-            &device,
-            &shader,
-            &camera_layout,
-            "fs_sky",
-            &[Some(configuration.format.into())],
-            Some(configuration.format.is_srgb()),
-        );
         let instance_buffer =
             create_instance_buffer(&device, INITIAL_CAPACITY, size_of::<InstanceData>());
         let palettes = [0, 1].map(|_| create_storage_buffer(&device, 1, size_of::<PoseData>()));
@@ -852,11 +803,8 @@ impl Renderer {
             reconfigure_next_frame: false,
             depth,
             depth_generation: 0,
-            pipeline,
-            affine_pipeline,
             pipeline_layout,
             affine_pipeline_layout,
-            post_pipelines: None,
             post: None,
             mesh_shader: shader,
             camera_layout,
@@ -868,7 +816,6 @@ impl Renderer {
             environment,
             probes,
             probe_camera_groups: Vec::new(),
-            probe_sky_pipeline: None,
             virtual_geometry,
             virtual_pipelines: HashMap::new(),
             virtual_pose_layout,
@@ -889,7 +836,7 @@ impl Renderer {
             resolve_pipelines: HashMap::new(),
             visibility_groups: None,
             visibility_bins: Vec::new(),
-            sky_pipeline,
+            sky_pipelines: Default::default(),
             refraction_fallback,
             refraction_sampler,
             refraction_group: None,
@@ -899,7 +846,6 @@ impl Renderer {
             empty_layout,
             empty_group,
             transparent: None,
-            transparent_pipelines: Default::default(),
             particles: None,
             decals: None,
             impostors,
@@ -1005,8 +951,6 @@ impl Renderer {
                 &self.mesh_shader,
                 &self.camera_layout,
                 self.materials.layout(),
-                &affine_layouts(),
-                DEPTH_FORMAT,
                 self.configuration.format,
             ));
         } else {
@@ -1827,9 +1771,8 @@ impl Renderer {
             let device = &self.device;
             let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
             if self.lit.is_none() {
-                self.lit = Some(LitPipelines::new(
+                self.lit = Some(LitLayouts::new(
                     device,
-                    &self.mesh_shader,
                     [
                         &self.camera_layout,
                         self.materials.layout(),
@@ -1837,20 +1780,16 @@ impl Renderer {
                         &self.empty_layout,
                         lights.fragment_layout(),
                     ],
-                    self.configuration.format,
                 ));
             }
             if temporal && let Some(pass) = self.temporal.as_mut() {
-                pass.ensure_lit(
+                pass.ensure_lit_layout(
                     device,
-                    &self.mesh_shader,
                     [
                         &self.camera_layout,
                         self.materials.layout(),
                         lights.fragment_layout(),
                     ],
-                    &affine_layouts(),
-                    DEPTH_FORMAT,
                 );
             }
             let (buffer, index) = match &temporal_frame {
@@ -1888,14 +1827,6 @@ impl Renderer {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
             });
         let post_frame = if temporal_frame.is_some() || effects || refraction {
-            if self.post_pipelines.is_none() {
-                self.post_pipelines = Some(PostPipelines::new(
-                    &self.device,
-                    &self.mesh_shader,
-                    &self.camera_layout,
-                    [&self.pipeline_layout, &self.affine_pipeline_layout],
-                ));
-            }
             let format = self.configuration.format;
             let (device, camera_layout) = (&self.device, &self.camera_layout);
             let post = self
@@ -1963,56 +1894,23 @@ impl Renderer {
                 (self.configuration.width, self.configuration.height),
             );
             pass.ensure_composite(device, post_frame.is_some());
-            if transparent_draws {
-                let lit = light_frame.is_some();
-                let pipeline =
-                    &mut self.transparent_pipelines[usize::from(lit)][usize::from(affine)];
-                if pipeline.is_none() {
-                    let layout = match (lit, affine) {
-                        (false, false) => &self.pipeline_layout,
-                        (false, true) => &self.affine_pipeline_layout,
-                        (true, _) => {
-                            &self.lit.as_ref().expect("created with lights").layouts
-                                [usize::from(affine)]
-                        }
-                    };
-                    let targets = accumulation_targets();
-                    *pipeline = Some(mesh_pipeline(
-                        device,
-                        &self.mesh_shader,
-                        layout,
-                        affine,
-                        &MeshTargets {
-                            fragment: if lit {
-                                "fs_transparent_lit"
-                            } else {
-                                "fs_transparent"
-                            },
-                            targets: &targets,
-                            constants: &[],
-                            depth_write: false,
-                            mirrored: false,
-                        },
-                        Variant::BASIC,
-                    ));
-                }
-                if temporal_frame
+            if transparent_draws
+                && temporal_frame
                     .as_ref()
                     .is_some_and(|frame| frame.parity == 1)
-                    && self
-                        .alternate_pose_group
-                        .as_ref()
-                        .is_none_or(|(built, _)| *built != self.pose_generation)
-                {
-                    let group = pose_group(
-                        device,
-                        &self.pose_layout,
-                        self.alternate_poses.as_ref().expect("created above"),
-                        self.color_buffer.as_ref().expect("affine color buffer"),
-                        &self.palettes[1],
-                    );
-                    self.alternate_pose_group = Some((self.pose_generation, group));
-                }
+                && self
+                    .alternate_pose_group
+                    .as_ref()
+                    .is_none_or(|(built, _)| *built != self.pose_generation)
+            {
+                let group = pose_group(
+                    device,
+                    &self.pose_layout,
+                    self.alternate_poses.as_ref().expect("created above"),
+                    self.color_buffer.as_ref().expect("affine color buffer"),
+                    &self.palettes[1],
+                );
+                self.alternate_pose_group = Some((self.pose_generation, group));
             }
         } else if let Some(pass) = self.transparent.as_mut() {
             pass.release_targets();
@@ -2070,7 +1968,7 @@ impl Renderer {
             PassKind::Temporal { lit: lit_frame }
         } else {
             PassKind::Opaque {
-                post: post_frame.is_some() && self.post_pipelines.is_some(),
+                post: post_frame.is_some(),
                 lit: lit_frame,
                 affine,
             }
@@ -2241,10 +2139,6 @@ impl Renderer {
             .and(self.lit.as_ref())
             .zip(self.lights.as_ref());
         let post = self.post.as_ref().filter(|_| post_frame.is_some());
-        let post_pipelines = self
-            .post_pipelines
-            .as_ref()
-            .filter(|_| post_frame.is_some());
         // Occlusion culling (decision 040) draws in two phases: what the last
         // test left visible, then, after the depth pyramid of those depths and
         // the test, what the test newly finds visible.
@@ -2393,21 +2287,6 @@ impl Renderer {
                 multiview_mask: None,
             });
             if instance_count > 0 {
-                let opaque_base = match (temporal_pass, lit) {
-                    (Some((_, temporal)), Some(_)) => temporal.lit_mesh_pipeline(),
-                    (Some((_, temporal)), None) => temporal.mesh_pipeline(),
-                    (None, Some((pipelines, _))) => {
-                        &pipelines.variants[usize::from(post_pipelines.is_some())]
-                            [usize::from(affine)]
-                    }
-                    (None, None) => match post_pipelines {
-                        Some(pipelines) if affine => &pipelines.affine,
-                        Some(pipelines) => &pipelines.full,
-                        None if affine => &self.affine_pipeline,
-                        None => &self.pipeline,
-                    },
-                };
-                pass.set_pipeline(opaque_base);
                 pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 if let Some((_, lights)) = lit {
                     pass.set_bind_group(3, lights.fragment_group(), &[]);
@@ -2440,7 +2319,7 @@ impl Renderer {
                 } else {
                     pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                 }
-                let mut bound = Variant::BASIC;
+                let mut bound = None;
                 let mut bindings = Bindings::default();
                 for &index in &self.draw_order {
                     let index = index as usize;
@@ -2455,13 +2334,9 @@ impl Renderer {
                     let (group, variant) = self.materials.binding(batch.material);
                     let skinned = mesh.skinned && affine;
                     let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
-                    if variant != bound {
-                        pass.set_pipeline(if variant == Variant::BASIC {
-                            opaque_base
-                        } else {
-                            &self.variant_pipelines[&(opaque_kind, variant)]
-                        });
-                        bound = variant;
+                    if bound != Some(variant) {
+                        pass.set_pipeline(&self.variant_pipelines[&(opaque_kind, variant)]);
+                        bound = Some(variant);
                     }
                     bindings.group(&mut pass, 1, group);
                     let draw = mesh.draw(&self.mesh_arena);
@@ -2546,7 +2421,9 @@ impl Renderer {
             // Last, so depth testing leaves the sky only uncovered pixels.
             let sky = match temporal_pass {
                 Some((_, temporal)) => temporal.sky_pipeline(),
-                None => post_pipelines.map_or(&self.sky_pipeline, |pipelines| &pipelines.sky),
+                None => self.sky_pipelines[sky_kind(post.is_some())]
+                    .as_ref()
+                    .expect("prepared with the frame's variants"),
             };
             if phase + 1 == phases && !resolve_phase {
                 pass.set_pipeline(sky);
@@ -2730,11 +2607,6 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 if transparent_draws && instance_count > 0 {
-                    let transparent_base = self.transparent_pipelines[usize::from(lit.is_some())]
-                        [usize::from(affine)]
-                    .as_ref()
-                    .expect("created with the transparent frame");
-                    pass.set_pipeline(transparent_base);
                     // Glass reads the opaque color the pass draws over.
                     let camera_group = match &self.refraction_group {
                         Some((_, group)) if refraction && post_frame.is_some() => group,
@@ -2771,7 +2643,7 @@ impl Renderer {
                     } else {
                         pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
                     }
-                    let mut bound = Variant::BASIC;
+                    let mut bound = None;
                     let mut bindings = Bindings::default();
                     for (index, batch) in self.plan.batches.iter().enumerate() {
                         if !batch.transparent {
@@ -2781,13 +2653,11 @@ impl Renderer {
                         let (group, variant) = self.materials.binding(batch.material);
                         let skinned = mesh.skinned && affine;
                         let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
-                        if variant != bound {
-                            pass.set_pipeline(if variant == Variant::BASIC {
-                                transparent_base
-                            } else {
-                                &self.variant_pipelines[&(transparent_kind, variant)]
-                            });
-                            bound = variant;
+                        if bound != Some(variant) {
+                            pass.set_pipeline(
+                                &self.variant_pipelines[&(transparent_kind, variant)],
+                            );
+                            bound = Some(variant);
                         }
                         bindings.group(&mut pass, 1, group);
                         let draw = mesh.draw(&self.mesh_arena);
@@ -3542,8 +3412,7 @@ impl Renderer {
             let variant = variant
                 .with_extended(mesh.is_some_and(|mesh| mesh.extended))
                 .with_skinned(affine && mesh.is_some_and(|mesh| mesh.skinned));
-            if variant != Variant::BASIC
-                && !self.variant_pipelines.contains_key(&(kind, variant))
+            if !self.variant_pipelines.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
             {
                 missing.push((kind, variant));
@@ -3553,6 +3422,40 @@ impl Renderer {
             let pipeline = self.create_variant(kind, variant);
             self.variant_pipelines.insert((kind, variant), pipeline);
         }
+        // The opaque pass ends with the sky of its targets; temporal frames
+        // draw the temporal pass's own.
+        if let PassKind::Opaque { post, .. } = opaque {
+            self.ensure_sky(sky_kind(post));
+        }
+    }
+
+    /// The sky pipeline of `kind` (`SKY_CANVAS`, `SKY_POST` or
+    /// `SKY_PROBE`), built the first time a pass draws it.
+    fn ensure_sky(&mut self, kind: usize) {
+        if self.sky_pipelines[kind].is_some() {
+            return;
+        }
+        let format = self.configuration.format;
+        let post_targets = [
+            Some(SCENE_FORMAT.into()),
+            Some(GLOW_FORMAT.into()),
+            Some(SURFACE_FORMAT.into()),
+        ];
+        let canvas_targets = [Some(format.into())];
+        let probe_targets = [Some(ENVIRONMENT_FORMAT.into())];
+        let (fragment, targets, srgb): (_, &[Option<wgpu::ColorTargetState>], _) = match kind {
+            SKY_CANVAS => ("fs_sky", &canvas_targets, Some(format.is_srgb())),
+            SKY_POST => ("fs_sky_post", &post_targets, None),
+            _ => ("fs_probe_sky", &probe_targets, None),
+        };
+        self.sky_pipelines[kind] = Some(sky_pipeline(
+            &self.device,
+            &self.mesh_shader,
+            &self.camera_layout,
+            fragment,
+            targets,
+            srgb,
+        ));
     }
 
     /// Records up to `faces` reflection probe cube faces (decision 043), the
@@ -3727,7 +3630,11 @@ impl Renderer {
                     bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
-                pass.set_pipeline(self.probe_sky_pipeline.as_ref().expect("created above"));
+                pass.set_pipeline(
+                    self.sky_pipelines[SKY_PROBE]
+                        .as_ref()
+                        .expect("created with the probe pipelines"),
+                );
                 pass.draw(0..3, 0..1);
             }
             drawn += 1;
@@ -4483,16 +4390,7 @@ impl Renderer {
     /// The reflection probe captures' pipelines (decision 043): the sky's,
     /// and `kind`'s for the variants of this frame's still opaque meshes.
     fn ensure_probe_pipelines(&mut self, kind: PassKind) {
-        if self.probe_sky_pipeline.is_none() {
-            self.probe_sky_pipeline = Some(sky_pipeline(
-                &self.device,
-                &self.mesh_shader,
-                &self.camera_layout,
-                "fs_probe_sky",
-                &[Some(ENVIRONMENT_FORMAT.into())],
-                None,
-            ));
-        }
+        self.ensure_sky(SKY_PROBE);
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
@@ -4922,21 +4820,15 @@ fn mesh_pipeline(
 
 /// Mesh pipelines shading local lights (decision 023): canvas and scene
 /// target variants, each over public instances and retained slots.
-struct LitPipelines {
-    /// `[direct, post][full, affine]`.
-    variants: [[wgpu::RenderPipeline; 2]; 2],
-    /// Full and affine pipeline layouts with the lights' group.
+/// The lit mesh pipeline layouts (decision 023): full and affine, with the
+/// lights' group. Their pipelines are variants like any other.
+struct LitLayouts {
     layouts: [wgpu::PipelineLayout; 2],
 }
 
-impl LitPipelines {
+impl LitLayouts {
     /// `layouts`: camera, texture, pose, empty and lights layouts.
-    fn new(
-        device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        layouts: [&wgpu::BindGroupLayout; 5],
-        surface_format: wgpu::TextureFormat,
-    ) -> Self {
+    fn new(device: &wgpu::Device, layouts: [&wgpu::BindGroupLayout; 5]) -> Self {
         let [camera, texture, pose, empty, lights] = layouts;
         let layout = |group_two: &wgpu::BindGroupLayout| {
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -4945,88 +4837,22 @@ impl LitPipelines {
                 immediate_size: 0,
             })
         };
-        let full_layout = layout(empty);
-        let affine_layout = layout(pose);
-        let canvas_target = [Some(wgpu::ColorTargetState {
-            format: surface_format,
-            blend: None,
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        let canvas_constants = [(
-            "SURFACE_IS_SRGB",
-            if surface_format.is_srgb() { 1.0 } else { 0.0 },
-        )];
-        let direct = MeshTargets {
-            fragment: "fs_main_lit",
-            targets: &canvas_target,
-            constants: &canvas_constants,
-            depth_write: true,
-            mirrored: false,
-        };
-        let post_targets = [
-            Some(SCENE_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let post = MeshTargets {
-            fragment: "fs_post_lit",
-            targets: &post_targets,
-            constants: &[],
-            depth_write: true,
-            mirrored: false,
-        };
-        let basic = Variant::BASIC;
-        let variants = [
-            [
-                mesh_pipeline(device, shader, &full_layout, false, &direct, basic),
-                mesh_pipeline(device, shader, &affine_layout, true, &direct, basic),
-            ],
-            [
-                mesh_pipeline(device, shader, &full_layout, false, &post, basic),
-                mesh_pipeline(device, shader, &affine_layout, true, &post, basic),
-            ],
-        ];
         Self {
-            variants,
-            layouts: [full_layout, affine_layout],
+            layouts: [layout(empty), layout(pose)],
         }
     }
 }
 
-/// Mesh and sky pipelines drawing into the screen effects' scene, glow and
-/// surface targets (decisions 021 and 025).
-struct PostPipelines {
-    full: wgpu::RenderPipeline,
-    affine: wgpu::RenderPipeline,
-    sky: wgpu::RenderPipeline,
-}
+/// Sky pipelines by target kind: the canvas, the screen effects' targets
+/// (decision 021) and reflection probe faces (decision 043).
+const SKY_CANVAS: usize = 0;
+const SKY_POST: usize = 1;
+const SKY_PROBE: usize = 2;
 
-impl PostPipelines {
-    /// `layouts` are the public-instance and affine mesh pipeline layouts.
-    fn new(
-        device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        camera_layout: &wgpu::BindGroupLayout,
-        layouts: [&wgpu::PipelineLayout; 2],
-    ) -> Self {
-        let targets = [
-            Some(SCENE_FORMAT.into()),
-            Some(GLOW_FORMAT.into()),
-            Some(SURFACE_FORMAT.into()),
-        ];
-        let post = MeshTargets {
-            fragment: "fs_post",
-            targets: &targets,
-            constants: &[],
-            depth_write: true,
-            mirrored: false,
-        };
-        Self {
-            full: mesh_pipeline(device, shader, layouts[0], false, &post, Variant::BASIC),
-            affine: mesh_pipeline(device, shader, layouts[1], true, &post, Variant::BASIC),
-            sky: sky_pipeline(device, shader, camera_layout, "fs_sky_post", &targets, None),
-        }
-    }
+/// The sky kind of the opaque pass, drawing into the screen effects' targets
+/// or not.
+fn sky_kind(post: bool) -> usize {
+    if post { SKY_POST } else { SKY_CANVAS }
 }
 
 /// The main passes' first group: camera, lighting, shadow lookups, what
