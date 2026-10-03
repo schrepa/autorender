@@ -240,37 +240,23 @@ impl TransparentPass {
             }));
         }
         let constants = [("SURFACE_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
-        self.composite[index] = Some(crate::pipelines::render(
+        self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/transparent-composite"),
-                layout: Some(&self.pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &self.module,
-                    entry_point: Some("vs_fullscreen"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
+            &crate::pipelines::Fullscreen {
+                label: "engine/transparent-composite",
+                layout: &self.pipeline_layout,
+                module: &self.module,
+                vertex: "vs_fullscreen",
+                fragment: "fs_composite",
+                constants: &constants,
+                targets: &targets,
+                depth: Some(wgpu::DepthStencilState {
                     format: self.depth_format,
                     depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::Always),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.module,
-                    entry_point: Some("fs_composite"),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
-                    targets: &targets,
-                }),
-                multiview_mask: None,
-                cache: None,
             },
         ));
     }

@@ -949,8 +949,13 @@ impl Renderer {
             ));
         } else {
             self.temporal = None;
-            self.variant_pipelines
-                .retain(|(kind, _), _| !matches!(kind, PassKind::Temporal { .. }));
+            // Pipelines over the temporal pass's layouts go with it.
+            let current =
+                |&(kind, _): &(PassKind, Variant)| !matches!(kind, PassKind::Temporal { .. });
+            self.variant_pipelines.retain(|key, _| current(key));
+            self.virtual_pipelines.retain(|key, _| current(key));
+            self.resolve_pipelines.retain(|key, _| current(key));
+            self.impostors.forget_pipelines(ImpostorTargets::Temporal);
             if self.alternate_poses.take().is_some() {
                 // Culling must not keep writing the released buffer.
                 self.pose_generation += 1;
@@ -4735,38 +4740,24 @@ pub(crate) fn sky_pipeline(
         immediate_size: 0,
     });
     let constants = surface_srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
-    crate::pipelines::render(
+    crate::pipelines::fullscreen(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some("engine/sky"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some("vs_sky"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
+        &crate::pipelines::Fullscreen {
+            label: "engine/sky",
+            layout: &layout,
+            module: shader,
+            vertex: "vs_sky",
+            fragment,
+            constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
+            targets,
             // On the far plane: it shows where nothing was drawn.
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(fragment),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
-                    ..Default::default()
-                },
-                targets,
-            }),
-            multiview_mask: None,
-            cache: None,
         },
     )
 }
@@ -4829,10 +4820,15 @@ fn mesh_pipeline(
     } else {
         2
     };
+    // Entry points and variant bits name the pipeline in captures.
+    let label = format!(
+        "engine/mesh {vertex_entry} {fragment_entry} {:#06x}",
+        variant.bits()
+    );
     crate::pipelines::render(
         device,
         &wgpu::RenderPipelineDescriptor {
-            label: Some("engine/instanced-meshes"),
+            label: Some(&label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: shader,

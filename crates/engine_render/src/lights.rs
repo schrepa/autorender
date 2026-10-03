@@ -309,19 +309,8 @@ mod gpu {
                 bind_group_layouts: &[Some(&compute_layout)],
                 immediate_size: 0,
             });
-            let pipeline = |entry: &str| {
-                crate::pipelines::compute(
-                    device,
-                    &wgpu::ComputePipelineDescriptor {
-                        label: Some(entry),
-                        layout: Some(&layout),
-                        module: &module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        cache: None,
-                    },
-                )
-            };
+            let pipeline =
+                |entry: &str| crate::pipelines::compute_entry(device, &layout, &module, entry);
             let none = wgpu::BufferUsages::empty();
             Self {
                 count: pipeline("count_lights"),

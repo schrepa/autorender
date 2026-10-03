@@ -479,19 +479,8 @@ impl ShadowPipelines {
             bind_group_layouts: &[Some(&select_layout)],
             immediate_size: 0,
         });
-        let compute = |entry: &str| {
-            crate::pipelines::compute(
-                device,
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&compute_layout),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                },
-            )
-        };
+        let compute =
+            |entry: &str| crate::pipelines::compute_entry(device, &compute_layout, &module, entry);
         let select = compute("select_casters");
         let count = compute("count_casters");
         // Skinned casters (decision 036) bind their palette bounds instead of
@@ -515,16 +504,11 @@ impl ShadowPipelines {
                 bind_group_layouts: &[Some(&skinned_layout)],
                 immediate_size: 0,
             });
-        let select_skinned = crate::pipelines::compute(
+        let select_skinned = crate::pipelines::compute_entry(
             device,
-            &wgpu::ComputePipelineDescriptor {
-                label: Some("select_skinned"),
-                layout: Some(&skinned_pipeline_layout),
-                module: &module,
-                entry_point: Some("select_skinned"),
-                compilation_options: Default::default(),
-                cache: None,
-            },
+            &skinned_pipeline_layout,
+            &module,
+            "select_skinned",
         );
         let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-view-layout"),

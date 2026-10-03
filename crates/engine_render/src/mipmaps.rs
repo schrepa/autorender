@@ -51,28 +51,17 @@ impl MipGenerator {
             wgpu::TextureFormat::Rgba8Unorm,
         ]
         .map(|format| {
-            crate::pipelines::render(
+            crate::pipelines::fullscreen(
                 device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("engine/texture-mips"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs_mip"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some("fs_mip"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(format.into())],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
+                &crate::pipelines::Fullscreen {
+                    label: "engine/texture-mips",
+                    layout: &pipeline_layout,
+                    module: &module,
+                    vertex: "vs_mip",
+                    fragment: "fs_mip",
+                    constants: &[],
+                    targets: &[Some(format.into())],
+                    depth: None,
                 },
             )
         });

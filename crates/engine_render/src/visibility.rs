@@ -127,19 +127,8 @@ impl VisibilityBuffer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |entry: &str| {
-            crate::pipelines::compute(
-                device,
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&pipeline_layout),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                },
-            )
-        };
+        let pipeline =
+            |entry: &str| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
         let ids = ids_target(device, (1, 1));
         let none = wgpu::BufferUsages::empty();
         Self {

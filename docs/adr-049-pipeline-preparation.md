@@ -1,7 +1,7 @@
 # Decision 049: Pipeline preparation
 
-Status: in progress. The steps below land in order; this document records
-the design and, under Measurements, what each step changed.
+Status: accepted, apart from asynchronous creation (not yet). Measurements
+records what each step changed.
 
 ## Context
 
@@ -60,26 +60,31 @@ How other engines handle it:
 
 ## Decision
 
-### One preparation step, from a plan
+### Pipelines prepared with the frame that first runs them
 
-`PipelinePlan` describes what a frame runs: its mesh passes with the
-material variants and vertex classes their draw groups need, its screen
-effects, shadow caster classes, lights, particles, decals, virtual geometry
-and temporal antialiasing. It also holds what the content will run soon:
-reflection-probe captures when the scene has probes, impostor bakes when
-impostors are on.
-
-`Renderer` builds missing pipelines for a plan in one place, inside an error
-scope, before encoding. Encoding only looks pipelines up, and nothing is built
-for features or modes a frame does not run.
+Every render and compute pipeline goes through `pipelines::render` and
+`pipelines::compute`, which count creations. A frame's setup creates what
+its passes run, before they record: `ensure_variants` the material variants
+and vertex classes of its draw groups and the sky of its targets, and each
+pass module its own pipelines (screen effects, shadow caster classes,
+lights, particles, decals, virtual geometry, temporal antialiasing) when the
+frame first uses it. What the content needs soon is prepared with the first
+frame that has it: reflection-probe captures with the first frame that has
+probes, impostor bakes when a draw group first draws as an impostor. The
+passes only look pipelines up. Nothing is built for features or modes no
+frame has run, layouts included: mesh pipeline layouts are created with the
+first variant needing each, public snapshots' shadow casters with the first
+snapshot frame.
 
 ### Warm-up behind the loading screen
 
-`BrowserApp::prepare` extracts the first frame and prepares its whole plan.
-The host keeps the canvas hidden meanwhile (Firefox paints a visible WebGPU
-canvas by waiting on the GPU process), shows progress and starts frames once
-the GPU queue has drained. `rendering.pipelines` counts resident pipelines and
-`rendering.pipelines_created` those a frame built; steady frames build none.
+Ordinary sessions hide the canvas from the start (Firefox paints a visible
+WebGPU canvas by waiting on its GPU process). The host renders the starting
+state with zero elapsed time until frames stop creating pipelines and the
+GPU has completed the last frame that created some (status `preparing`),
+then reveals the canvas and starts play. `rendering.pipelines` counts the
+pipelines created and `rendering.pipelines_created` those a frame created;
+steady frames create none.
 
 ### Specialize the hot path, share the rest
 
@@ -93,10 +98,9 @@ map presence from the material uniform.
 
 ### Shared building blocks
 
-Each WGSL module compiles once. Fullscreen and compute passes use common
-builders, targets come from named sets, a native test checks every entry
-point name against the WGSL, and labels name the pass, the entry point and
-the variant.
+Fullscreen passes build through `pipelines::fullscreen` and compute passes
+through `pipelines::compute_entry`; mesh pipelines are labeled with their
+entry points and variant bits.
 
 Pipelines declare their layouts; none derive one (`layout: None`). Passes of
 a family share one layout that lists every binding any of them reads, built
@@ -105,15 +109,18 @@ leaves alone with `pipelines::Fillers`: 1x1 textures, small buffers, and a
 range of their own for written storage, since written bindings of a dispatch
 or draw may not overlap. Every pass of post.wgsl shares one layout (16
 bindings, within WebGPU's default 16 sampled textures per stage); GPU
-presentation's twelve passes share five, each within the default eight
-storage buffers per stage, and its four compaction passes one bind group
-per compaction.
+presentation's twelve passes share five and virtual geometry's ten share
+four, each within the default eight storage buffers per stage, and passes
+binding the same buffers (GPU presentation's four compaction passes per
+compaction, virtual geometry's dispatch-argument passes) share one group.
 
-### Asynchronous where the browser compiles in parallel
+### Not yet: asynchronous creation where the browser compiles in parallel
 
-A vendored wgpu (`vendor/wgpu`) carries asynchronous creation for warm-up.
-Chrome compiles in parallel; Firefox, which compiles serially either way, is
-unaffected.
+Chrome compiles `createRenderPipelineAsync` pipelines on worker threads, so
+warm-up there could create the frame's pipelines asynchronously and wait
+for all of them. wgpu 30 only creates them blocking (PR gfx-rs/wgpu#10438
+adds asynchronous creation); this needs a patched wgpu and a setup that can
+wait for pipelines. Firefox compiles serially either way.
 
 ## Measurements
 

@@ -230,3 +230,69 @@ pub(crate) fn filled_group(
         entries: &entries,
     })
 }
+
+/// The compute pipeline of `module`'s `entry` over `layout`, labeled with
+/// the entry point.
+pub(crate) fn compute_entry(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    module: &wgpu::ShaderModule,
+    entry: &str,
+) -> wgpu::ComputePipeline {
+    compute(
+        device,
+        &wgpu::ComputePipelineDescriptor {
+            label: Some(entry),
+            layout: Some(layout),
+            module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        },
+    )
+}
+
+/// A pass drawing one triangle over its whole target: no vertex buffers,
+/// entry points `vertex` and `fragment` of `module` with pipeline
+/// `constants`, color `targets` and an optional depth test.
+pub(crate) struct Fullscreen<'a> {
+    pub label: &'a str,
+    pub layout: &'a wgpu::PipelineLayout,
+    pub module: &'a wgpu::ShaderModule,
+    pub vertex: &'a str,
+    pub fragment: &'a str,
+    pub constants: &'a [(&'a str, f64)],
+    pub targets: &'a [Option<wgpu::ColorTargetState>],
+    pub depth: Option<wgpu::DepthStencilState>,
+}
+
+/// The pipeline of a fullscreen pass.
+pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
+    render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some(pass.label),
+            layout: Some(pass.layout),
+            vertex: wgpu::VertexState {
+                module: pass.module,
+                entry_point: Some(pass.vertex),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: pass.depth.clone(),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: pass.module,
+                entry_point: Some(pass.fragment),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: pass.constants,
+                    ..Default::default()
+                },
+                targets: pass.targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
+}

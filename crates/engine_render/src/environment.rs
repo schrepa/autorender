@@ -109,28 +109,17 @@ impl Environment {
                 bind_group_layouts: &[Some(group)],
                 immediate_size: 0,
             });
-            crate::pipelines::render(
+            crate::pipelines::fullscreen(
                 device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs_environment"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(ENVIRONMENT_FORMAT.into())],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
+                &crate::pipelines::Fullscreen {
+                    label: entry,
+                    layout: &layout,
+                    module: &module,
+                    vertex: "vs_environment",
+                    fragment: entry,
+                    constants: &[],
+                    targets: &[Some(ENVIRONMENT_FORMAT.into())],
+                    depth: None,
                 },
             )
         };

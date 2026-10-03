@@ -499,17 +499,7 @@ impl GpuPresentationPass {
             ),
         };
         let pipeline = |entry: &str, family: &Family| {
-            crate::pipelines::compute(
-                device,
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&family.pipeline),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                },
-            )
+            crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
         };
         let pipelines = Pipelines {
             shift_previous: pipeline("shift_previous", &families.tests),
