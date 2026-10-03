@@ -19,7 +19,7 @@ constant per object.
 - **Octahedral normals.** A vertex is its position (three f32), its normal
   as two 16-bit signed fractions on the octahedron |x| + |y| + |z| = 1 with
   the lower half folded over the upper (`gpu_data::octahedral`, decoded by
-  `octahedral_normal` in `meshes.wgsl`), and its texture coordinates (two
+  `octahedral_normal` in `meshes.wgsl`, now `meshes/vertex.wgsl`), and its texture coordinates (two
   f32): 24 bytes. Directions keep about 0.003 degrees (tested within 0.01
   degrees over 20,000 directions). Positions and texture coordinates keep
   full precision, so large meshes and tiled coordinates are unaffected.

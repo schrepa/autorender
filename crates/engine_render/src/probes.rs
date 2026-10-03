@@ -227,7 +227,7 @@ pub(crate) struct ProbePass {
     cameras: [wgpu::Buffer; FACES],
     // Depth of the face being captured, and its size.
     depth: Cached<u32, wgpu::TextureView>,
-    // The grid words surfaces read (`meshes.wgsl`'s `probe_words`).
+    // The grid words surfaces read (`meshes/declarations.wgsl`'s `probe_words`).
     words: wgpu::Buffer,
     staging: Vec<[u32; 4]>,
     // Advances when `words` is replaced: groups binding it rebuild.
@@ -348,7 +348,7 @@ pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
 }
 
 /// Fills `words` with the grid of `probes` (each with its environment cube)
-/// that `meshes.wgsl`'s `environment_light` reads.
+/// that `meshes/shading.wgsl`'s `environment_light` reads.
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {
     words.clear();
     if probes.is_empty() {

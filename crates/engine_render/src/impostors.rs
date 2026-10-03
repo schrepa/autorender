@@ -3,19 +3,19 @@
 //! from `IMPOSTOR_FRAMES` x `IMPOSTOR_FRAMES` directions over the sphere into
 //! one layer of four texture arrays, and GPU-presented frames draw instances
 //! too small for the layer's texels to show as cards blending the three
-//! frames around the view (`meshes.wgsl`). The GPU side is created with the
+//! frames around the view (`meshes/impostors.wgsl`). The GPU side is created with the
 //! first bake.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::Vec3;
 
 /// Frames per side of the octahedral grid, texels across a frame of the
-/// first level, and levels, as `meshes.wgsl` declares them.
+/// first level, and levels, as `meshes/impostors.wgsl` declares them.
 pub(crate) const IMPOSTOR_FRAMES: u32 = 8;
 pub(crate) const IMPOSTOR_TEXELS: u32 = 16;
 pub(crate) const IMPOSTOR_LEVELS: u32 = 4;
 
-/// WGSL `ImpostorRecord` of `meshes.wgsl`: 48 bytes.
+/// WGSL `ImpostorRecord` of `meshes/impostors.wgsl`: 48 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub(crate) struct ImpostorRecord {
@@ -54,7 +54,7 @@ impl ImpostorRecord {
     }
 }
 
-/// WGSL `ImpostorBake` uniform of `meshes.wgsl`: 16 bytes.
+/// WGSL `ImpostorBake` uniform of `meshes/impostors.wgsl`: 16 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct ImpostorBakeUniform {

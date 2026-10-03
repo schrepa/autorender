@@ -377,7 +377,7 @@ impl Renderer {
 }
 
 /// Group entries of slot poses and the virtual arena's meshes, clusters and
-/// pages (decision 044), at the bindings `meshes.wgsl` declares.
+/// pages (decision 044), at the bindings `meshes/declarations.wgsl` declares.
 fn arena_entries<'a>(
     poses: &'a wgpu::Buffer,
     [meshes, clusters, pages]: [&'a wgpu::Buffer; 3],

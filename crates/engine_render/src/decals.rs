@@ -10,7 +10,7 @@ use engine_core::{DecalBlend, MaterialHandle, PoseRows, RenderDecal};
 /// `DecalRecord::pose` of decals drawn from their own matrix.
 pub(crate) const NO_POSE: u32 = u32::MAX;
 
-/// WGSL `DecalRecord` of `meshes.wgsl`: 96 bytes.
+/// WGSL `DecalRecord` of `meshes/decals.wgsl`: 96 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct DecalData {

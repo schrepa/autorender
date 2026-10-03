@@ -32,7 +32,7 @@ const TOTALS_BYTES: u64 = 16;
 /// The per-cluster budget of clusters without one.
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
 
-/// WGSL `Clusters` of `lights.wgsl` and `meshes.wgsl`: 144 bytes.
+/// WGSL `Clusters` of `lights.wgsl` and `meshes/declarations.wgsl`: 144 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct ClusterUniform {

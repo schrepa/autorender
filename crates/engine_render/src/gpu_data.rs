@@ -385,7 +385,7 @@ impl SkinVertex {
 
 /// A nonzero normal as two 16-bit signed fractions: its direction on the
 /// octahedron |x| + |y| + |z| = 1, the lower half folded over the upper
-/// (Cigolle et al. 2014). `meshes.wgsl` decodes it with `octahedral_normal`;
+/// (Cigolle et al. 2014). `meshes/vertex.wgsl` decodes it with `octahedral_normal`;
 /// directions keep about 0.003 degrees.
 pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
@@ -401,7 +401,17 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
 }
 
 /// Meshes after the shared scene declarations.
-pub(crate) const SHADER: &str = concat!(include_str!("scene.wgsl"), include_str!("meshes.wgsl"));
+pub(crate) const SHADER: &str = concat!(
+    include_str!("scene.wgsl"),
+    include_str!("meshes/declarations.wgsl"),
+    include_str!("meshes/vertex.wgsl"),
+    include_str!("meshes/shading.wgsl"),
+    include_str!("meshes/forward.wgsl"),
+    include_str!("meshes/resolve.wgsl"),
+    include_str!("meshes/sky.wgsl"),
+    include_str!("meshes/decals.wgsl"),
+    include_str!("meshes/impostors.wgsl"),
+);
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
 /// The depth pyramid of occlusion culling (decision 040).
@@ -437,7 +447,7 @@ pub(crate) const POST_SHADER: &str =
 pub(crate) const ENVIRONMENT_SHADER: &str =
     concat!(include_str!("scene.wgsl"), include_str!("environment.wgsl"));
 
-/// WGSL `MaterialMaps` uniform of `meshes.wgsl` (decision 031), 192 bytes:
+/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl` (decision 031), 192 bytes:
 /// each map's texture coordinate transform, the emissive color and the map
 /// parameters of one material.
 #[repr(C)]
@@ -528,7 +538,7 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
     ]
 }
 
-/// A material's pipeline variant (decision 031): the `meshes.wgsl` override
+/// A material's pipeline variant (decision 031): the `meshes/declarations.wgsl` override
 /// constants it sets and whether back faces draw. Materials without maps and
 /// plain opaque base color textures use [`Variant::BASIC`], the shading of
 /// every material before glTF maps.
@@ -1097,7 +1107,7 @@ mod tests {
         assert_eq!(vertex.uv, [0.25, 0.75]);
     }
 
-    /// `octahedral_normal` of `meshes.wgsl`, on Snorm16x2 inputs.
+    /// `octahedral_normal` of `meshes/vertex.wgsl`, on Snorm16x2 inputs.
     fn octahedral_normal(encoded: [i16; 2]) -> Vec3 {
         let [x, y] = encoded.map(|value| engine_core::math::max(f32::from(value) / 32767.0, -1.0));
         let z = 1.0 - x.abs() - y.abs();

@@ -92,7 +92,7 @@ resolve rebuilds the shading normal at both partners, geometric normal,
 normal map sample and ripples included, and widens the lobe by the
 difference as forward fragments do.
 
-`meshes.wgsl` shares the rest with forward fragments: `material_texels` (implicit
+The mesh shader (`meshes/shading.wgsl`) shares the rest with forward fragments: `material_texels` (implicit
 derivatives) and `material_texels_grad` sample the same maps; `textured_point`,
 `shading_normal` and `widened` build the surface point; `finish`,
 `local_light`, `scene_targets` and `temporal_targets` light and write it.
