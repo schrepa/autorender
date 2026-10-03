@@ -222,12 +222,12 @@ impl GpuPresentationPass {
                 &self.shaders.families.tests,
                 "engine/presentation-probe-group",
                 &[
-                    entry(0, frame),
-                    entry(7, &groups.batches),
-                    entry(8, poses),
-                    entry(9, &groups.scan),
-                    entry(14, &groups.slot_candidates),
-                    entry(23, &self.stillness.frames),
+                    entry("frame", frame),
+                    entry("batches", &groups.batches),
+                    entry("poses", poses),
+                    entry("scan", &groups.scan),
+                    entry("slot_candidates", &groups.slot_candidates),
+                    entry("still_frames", &self.stillness.frames),
                 ],
             ),
             // Probe faces count no triangles and draw no impostors.

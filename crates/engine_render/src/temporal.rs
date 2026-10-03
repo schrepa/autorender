@@ -9,6 +9,7 @@
 
 use engine_core::{RenderFrame, glam::Mat4};
 
+use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
 use crate::cached::Cached;
 use crate::gpu_data::{
     CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
@@ -99,28 +100,7 @@ impl TemporalPass {
         texture_layout: &wgpu::BindGroupLayout,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let storage_entry = |binding, stride: usize| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(stride as u64),
-            },
-            count: None,
-        };
-        let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/temporal-pose-layout"),
-            entries: &[
-                storage_entry(0, size_of::<crate::gpu_data::PoseData>()),
-                storage_entry(1, size_of::<crate::gpu_data::ColorData>()),
-                storage_entry(2, size_of::<crate::gpu_data::PoseData>()),
-                // Joint palettes (decision 036): this frame's and the
-                // previous frame's.
-                storage_entry(3, size_of::<crate::gpu_data::PoseData>()),
-                storage_entry(4, size_of::<crate::gpu_data::PoseData>()),
-            ],
-        });
+        let pose_layout = crate::pipelines::layout(device, &TEMPORAL_POSES);
         let mesh_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/temporal-mesh-pipeline-layout"),
             bind_group_layouts: &[
@@ -130,55 +110,7 @@ impl TemporalPass {
             ],
             immediate_size: 0,
         });
-        let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let resolve_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/taa-resolve-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<ResolveUniform>() as u64),
-                    },
-                    count: None,
-                },
-                texture_entry(1, false),
-                texture_entry(2, false),
-                texture_entry(3, true),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                texture_entry(5, true),
-                texture_entry(6, true),
-                texture_entry(8, true),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<
-                            crate::gpu_data::PostUniform,
-                        >() as u64),
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let resolve_layout = crate::pipelines::layout(device, &TAA_RESOLVE);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/temporal.wgsl"),
             source: wgpu::ShaderSource::Wgsl(TEMPORAL_SHADER.into()),
@@ -321,32 +253,19 @@ impl TemporalPass {
     ) {
         if self.pose_groups.stale(&generation) {
             let group = |current: usize, previous: usize| {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/temporal-pose-group"),
-                    layout: &self.pose_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: poses[current].as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: colors.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: poses[previous].as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: palettes[current].as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: palettes[previous].as_entire_binding(),
-                        },
+                crate::pipelines::group(
+                    device,
+                    "engine/temporal-pose-group",
+                    &TEMPORAL_POSES,
+                    &self.pose_layout,
+                    &[
+                        ("poses", poses[current].as_entire_binding()),
+                        ("colors", colors.as_entire_binding()),
+                        ("previous_poses", poses[previous].as_entire_binding()),
+                        ("palette", palettes[current].as_entire_binding()),
+                        ("previous_palette", palettes[previous].as_entire_binding()),
                     ],
-                })
+                )
             };
             self.pose_groups.set(
                 generation,
@@ -425,34 +344,23 @@ impl TemporalPass {
         }
         let ([scene, occlusion, bloom, reflections], settings) = post.resolve_inputs();
         let group = |previous: &wgpu::TextureView| {
-            let view = |binding, view| wgpu::BindGroupEntry {
-                binding,
-                resource: wgpu::BindingResource::TextureView(view),
-            };
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/taa-resolve-group"),
-                layout: &self.resolve_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    view(1, scene),
-                    view(2, &targets.motion),
-                    view(3, previous),
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    view(5, occlusion),
-                    view(6, bloom),
-                    view(8, reflections),
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: settings.as_entire_binding(),
-                    },
+            crate::pipelines::group(
+                device,
+                "engine/taa-resolve-group",
+                &TAA_RESOLVE,
+                &self.resolve_layout,
+                &[
+                    ("resolve", self.uniform.as_entire_binding()),
+                    ("scene", crate::pipelines::view(scene)),
+                    ("motion", crate::pipelines::view(&targets.motion)),
+                    ("history", crate::pipelines::view(previous)),
+                    ("history_sampler", crate::pipelines::sampler(&self.sampler)),
+                    ("occlusion", crate::pipelines::view(occlusion)),
+                    ("bloom", crate::pipelines::view(bloom)),
+                    ("reflections", crate::pipelines::view(reflections)),
+                    ("post", settings.as_entire_binding()),
                 ],
-            })
+            )
         };
         let groups = [group(&targets.history[1]), group(&targets.history[0])];
         targets.groups.set(generation, groups);

@@ -6,6 +6,7 @@
 //! same radiance cube face by face. Screen-space reflections (decision 025)
 //! fall back to them.
 
+use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
 
 /// Linear radiance: the sky and what reflects it exceed 1.
@@ -60,48 +61,12 @@ impl Environment {
             label: Some("engine/environment.wgsl"),
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
         });
-        let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty,
-            count: None,
-        };
-        let cube = |binding| {
-            fragment_entry(
-                binding,
-                wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::Cube,
-                    multisampled: false,
-                },
-            )
-        };
-        let sampler = fragment_entry(
-            22,
-            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-        );
-        let group_layout = |label, entries: &[wgpu::BindGroupLayoutEntry]| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries,
-            })
-        };
         // The sky reads the lighting uniform; each level down reads the
         // level above it, and the prefilter every level.
         let layouts = Layouts {
-            sky: group_layout(
-                "engine/environment-sky-layout",
-                &[fragment_entry(
-                    1,
-                    wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                )],
-            ),
-            down: group_layout("engine/environment-down-layout", &[cube(20), sampler]),
-            prefilter: group_layout("engine/environment-prefilter-layout", &[cube(21), sampler]),
+            sky: crate::pipelines::layout(device, &ENVIRONMENT_SKY),
+            down: crate::pipelines::layout(device, &ENVIRONMENT_DOWN),
+            prefilter: crate::pipelines::layout(device, &ENVIRONMENT_PREFILTER),
         };
         let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -136,14 +101,13 @@ impl Environment {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/environment-sky-group"),
-            layout: &layouts.sky,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 1,
-                resource: lighting.as_entire_binding(),
-            }],
-        });
+        let sky_group = crate::pipelines::group(
+            device,
+            "engine/environment-sky-group",
+            &ENVIRONMENT_SKY,
+            &layouts.sky,
+            &[("lighting", lighting.as_entire_binding())],
+        );
         let maps = create_maps(device, (&layouts, &sampler), size, 1);
         Self {
             maps,
@@ -358,38 +322,33 @@ fn create_maps(
             ..Default::default()
         })
     };
-    let sampler_entry = wgpu::BindGroupEntry {
-        binding: 22,
-        resource: wgpu::BindingResource::Sampler(sampler),
-    };
+    let sampler_entry = ("cube_sampler", crate::pipelines::sampler(sampler));
     let down_groups = (0..levels.saturating_sub(1))
         .map(|level| {
             let source = cube_view(level, 1);
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/environment-down-group"),
-                layout: &layouts.down,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 20,
-                        resource: wgpu::BindingResource::TextureView(&source),
-                    },
+            crate::pipelines::group(
+                device,
+                "engine/environment-down-group",
+                &ENVIRONMENT_DOWN,
+                &layouts.down,
+                &[
+                    ("level_source", crate::pipelines::view(&source)),
                     sampler_entry.clone(),
                 ],
-            })
+            )
         })
         .collect();
     let every_level = cube_view(0, levels);
-    let prefilter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("engine/environment-prefilter-group"),
-        layout: &layouts.prefilter,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 21,
-                resource: wgpu::BindingResource::TextureView(&every_level),
-            },
+    let prefilter_group = crate::pipelines::group(
+        device,
+        "engine/environment-prefilter-group",
+        &ENVIRONMENT_PREFILTER,
+        &layouts.prefilter,
+        &[
+            ("radiance", crate::pipelines::view(&every_level)),
             sampler_entry,
         ],
-    });
+    );
     let maps_view = maps.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::CubeArray),
         ..Default::default()

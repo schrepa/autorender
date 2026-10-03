@@ -15,10 +15,11 @@
 
 use engine_core::{RenderSnapshot, glam::Mat4};
 
+use crate::bindings::{POST, SHAFTS};
 use crate::cached::Cached;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
-use crate::pipelines::{Fillers, Fullscreen, Slot, filled_group, fullscreen, group_layout};
+use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
@@ -41,30 +42,6 @@ const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// Half-resolution bloom levels; each halves the one before.
 const BLOOM_LEVELS: u32 = 6;
-/// The layout every pass of post.wgsl shares (decision 049): its bindings,
-/// of which each pass reads some. Textures the passes sample with the
-/// linear sampler filter; the others only load.
-const POST_BINDINGS: &[(u32, Slot)] = &[
-    (0, Slot::Uniform),
-    (1, Slot::Depth),
-    // Scene, glow, a level's source, filtered occlusion, bloom.
-    (2, Slot::Filtered),
-    (3, Slot::Filtered),
-    (4, Slot::Filtered),
-    (5, Slot::Filtered),
-    (6, Slot::Filtered),
-    (7, Slot::Sampler),
-    (8, Slot::Filtered),
-    // Shafts, nearest depths, traced reflections, raw occlusion, surface.
-    (9, Slot::Texture),
-    (10, Slot::Texture),
-    (11, Slot::Texture),
-    (12, Slot::Texture),
-    (13, Slot::Texture),
-    // Scene levels and a bloom level halved beside them.
-    (14, Slot::Filtered),
-    (15, Slot::Filtered),
-];
 /// Blurred half-resolution levels of the scene rough reflections read.
 const SCENE_LEVELS: u32 = 6;
 
@@ -175,12 +152,8 @@ impl PostPass {
             label: Some("engine/post.wgsl"),
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
         });
-        let layout = group_layout(
-            device,
-            "engine/post-layout",
-            wgpu::ShaderStages::FRAGMENT,
-            POST_BINDINGS,
-        );
+        // Every pass of post.wgsl shares one layout (decision 049).
+        let layout = pipelines::layout(device, &POST);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/post-pipeline-layout"),
             bind_group_layouts: &[Some(&layout)],
@@ -247,31 +220,7 @@ impl PostPass {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let shafts_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/post-shafts-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(size_of::<PostUniform>() as u64),
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let shafts_layout = pipelines::layout(device, &SHAFTS);
         let shafts_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/shafts.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHAFTS_SHADER.into()),
@@ -443,14 +392,8 @@ impl PostPass {
                 device,
                 "engine/post-occlusion-group",
                 &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth),
-                    },
+                    ("post", self.uniform.as_entire_binding()),
+                    ("depth_texture", pipelines::view(depth)),
                 ],
             );
             self.occlusion_group.set(targets_key, group);
@@ -461,16 +404,10 @@ impl PostPass {
                 device,
                 "engine/post-effects-filter-group",
                 &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth),
-                    },
-                    texture_entry(9, &targets.shafts),
-                    texture_entry(12, &targets.raw_occlusion),
+                    ("post", self.uniform.as_entire_binding()),
+                    ("depth_texture", pipelines::view(depth)),
+                    texture_entry("shafts", &targets.shafts),
+                    texture_entry("raw_occlusion", &targets.raw_occlusion),
                 ],
             );
             self.effects_filter_group.set(targets_key, group);
@@ -494,23 +431,14 @@ impl PostPass {
                     device,
                     "engine/post-reflections-group",
                     &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.uniform.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(depth),
-                        },
-                        texture_entry(2, &targets.scene),
-                        texture_entry(3, &targets.glow),
-                        wgpu::BindGroupEntry {
-                            binding: 7,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
-                        texture_entry(10, nearest),
-                        texture_entry(13, &targets.surface),
-                        texture_entry(14, &targets.scene_levels),
+                        ("post", self.uniform.as_entire_binding()),
+                        ("depth_texture", pipelines::view(depth)),
+                        texture_entry("scene", &targets.scene),
+                        texture_entry("glow", &targets.glow),
+                        ("linear", pipelines::sampler(&self.sampler)),
+                        texture_entry("nearest_depth", nearest),
+                        texture_entry("surface_texture", &targets.surface),
+                        texture_entry("scene_levels", &targets.scene_levels),
                     ],
                 );
                 self.reflections_group.set(key, group);
@@ -521,35 +449,25 @@ impl PostPass {
                     device,
                     "engine/post-reflections-filter-group",
                     &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.uniform.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(depth),
-                        },
-                        texture_entry(11, &targets.traced),
+                        ("post", self.uniform.as_entire_binding()),
+                        ("depth_texture", pipelines::view(depth)),
+                        texture_entry("traced", &targets.traced),
                     ],
                 );
                 self.filter_group.set(targets_key, group);
             }
         }
         if frame.shafts && self.shafts_group.stale(&depth_generation) {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/post-shafts-group"),
-                layout: &self.shafts_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.uniform.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth),
-                    },
+            let group = pipelines::group(
+                device,
+                "engine/post-shafts-group",
+                &SHAFTS,
+                &self.shafts_layout,
+                &[
+                    ("post", self.uniform.as_entire_binding()),
+                    ("depth_texture", pipelines::view(depth)),
                 ],
-            });
+            );
             self.shafts_group.set(depth_generation, group);
         }
         let (width, height) = (size.0 as f32, size.1 as f32);
@@ -603,22 +521,15 @@ impl PostPass {
         frame
     }
 
-    // A group of the shared layout holding `entries`, filled where they
-    // leave bindings out.
+    // A group of the shared layout binding `resources` by name, filled
+    // where they leave bindings out.
     fn group(
         &self,
         device: &wgpu::Device,
         label: &str,
-        entries: &[wgpu::BindGroupEntry<'_>],
+        resources: &[(&str, wgpu::BindingResource<'_>)],
     ) -> wgpu::BindGroup {
-        filled_group(
-            device,
-            label,
-            &self.layout,
-            POST_BINDINGS,
-            entries,
-            &self.fillers,
-        )
+        filled_group(device, label, &POST, &self.layout, resources, &self.fillers)
     }
 
     /// The scene color, glow and surface targets of the opaque pass.
@@ -933,27 +844,22 @@ impl PostPass {
                 })
             })
             .collect();
-        let uniform = wgpu::BindGroupEntry {
-            binding: 0,
-            resource: self.uniform.as_entire_binding(),
+        let uniform = ("post", self.uniform.as_entire_binding());
+        let sampler = ("linear", pipelines::sampler(&self.sampler));
+        let group = |resources: &[(&str, wgpu::BindingResource<'_>)]| {
+            self.group(device, "engine/post-group", resources)
         };
-        let sampler = wgpu::BindGroupEntry {
-            binding: 7,
-            resource: wgpu::BindingResource::Sampler(&self.sampler),
-        };
-        let group =
-            |entries: &[wgpu::BindGroupEntry<'_>]| self.group(device, "engine/post-group", entries);
         let bloom_first = group(&[
             uniform.clone(),
-            texture_entry(2, &scene),
-            texture_entry(3, &glow),
+            texture_entry("scene", &scene),
+            texture_entry("glow", &glow),
             sampler.clone(),
         ]);
         let bloom_down = (0..bloom.len().saturating_sub(1))
-            .map(|level| group(&[texture_entry(4, &bloom[level]), sampler.clone()]))
+            .map(|level| group(&[texture_entry("source", &bloom[level]), sampler.clone()]))
             .collect();
         let bloom_up = (0..bloom.len().saturating_sub(1))
-            .map(|level| group(&[texture_entry(4, &bloom[level + 1]), sampler.clone()]))
+            .map(|level| group(&[texture_entry("source", &bloom[level + 1]), sampler.clone()]))
             .collect();
         // The scene levels blur with the bloom's downsampling filter, the
         // first from the scene itself.
@@ -973,31 +879,31 @@ impl PostPass {
                 } else {
                     &scene_level_views[level - 1]
                 };
-                group(&[texture_entry(4, source), sampler.clone()])
+                group(&[texture_entry("source", source), sampler.clone()])
             })
             .collect();
         let levels_first = group(&[
             uniform.clone(),
-            texture_entry(2, &scene),
-            texture_entry(3, &glow),
+            texture_entry("scene", &scene),
+            texture_entry("glow", &glow),
             sampler.clone(),
         ]);
         let levels_down = (1..scene_level_views.len().min(bloom.len()))
             .map(|level| {
                 group(&[
-                    texture_entry(4, &scene_level_views[level - 1]),
-                    texture_entry(15, &bloom[level - 1]),
+                    texture_entry("source", &scene_level_views[level - 1]),
+                    texture_entry("bloom_source", &bloom[level - 1]),
                     sampler.clone(),
                 ])
             })
             .collect();
         let composite = group(&[
             uniform.clone(),
-            texture_entry(2, &scene),
-            texture_entry(5, &occlusion),
-            texture_entry(6, &bloom[0]),
+            texture_entry("scene", &scene),
+            texture_entry("occlusion", &occlusion),
+            texture_entry("bloom", &bloom[0]),
             sampler.clone(),
-            texture_entry(8, &reflections),
+            texture_entry("reflections", &reflections),
         ]);
         Targets {
             size: (width, height),
@@ -1037,11 +943,12 @@ fn cleared(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
     }
 }
 
-fn texture_entry(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
-    wgpu::BindGroupEntry {
-        binding,
-        resource: wgpu::BindingResource::TextureView(view),
-    }
+// A texture view bound as binding `name`.
+fn texture_entry<'a>(
+    name: &'a str,
+    view: &'a wgpu::TextureView,
+) -> (&'a str, wgpu::BindingResource<'a>) {
+    (name, pipelines::view(view))
 }
 
 fn inverse_or_identity(matrix: Mat4) -> Mat4 {

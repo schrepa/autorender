@@ -1,70 +1,32 @@
 //! The selection's compute pipelines over their shared layouts (decision
-//! 049), each listing every binding its passes read, by
-//! virtual_geometry.wgsl's numbers, within the eight storage buffers per
-//! stage WebGPU guarantees; passes dispatching from the dispatch arguments
-//! (15) never bind them. And the depth-only pipeline drawing shadow views'
-//! bins.
+//! 049; `crate::bindings`), each listing every binding its passes read
+//! within the eight storage buffers per stage WebGPU guarantees. And the
+//! depth-only pipeline drawing shadow views' bins.
 
 use super::VISIBLE_BYTES;
-use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
+use crate::bindings::{
+    Table, VIRTUAL_BIN, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
+};
+use crate::pipelines::{Fillers, filled_group, layout};
 use crate::shadows::SHADOW_FORMAT;
 
-use Slot::{Read, Texture, Uniform, Write};
-
-// Seeding, and the dispatch arguments of each level, the work and the
-// retest.
-const SEED_BINDINGS: &[(u32, Slot)] = &[
-    (0, Uniform),
-    (1, Read),
-    (2, Read),
-    (7, Read),
-    (8, Read),
-    (9, Write),
-    (10, Write),
-    (12, Write),
-    (15, Write),
-];
-const TRAVERSE_BINDINGS: &[(u32, Slot)] = &[
-    (0, Uniform),
-    (3, Read),
-    (6, Read),
-    (9, Write),
-    (10, Write),
-    (11, Write),
-    (12, Write),
-];
-// Selection, and the retest of the clusters it left waiting.
-const SELECT_BINDINGS: &[(u32, Slot)] = &[
-    (0, Uniform),
-    (4, Read),
-    (5, Read),
-    (6, Read),
-    (11, Write),
-    (12, Write),
-    (13, Write),
-    (14, Read),
-    (19, Texture),
-    (20, Write),
-];
-const BIN_BINDINGS: &[(u32, Slot)] = &[(0, Uniform), (12, Write), (14, Read), (16, Write)];
-
-/// A shared layout: its bindings, group layout and pipeline layout.
+/// A shared layout: its table, group layout and pipeline layout.
 pub(super) struct Family {
-    bindings: &'static [(u32, Slot)],
+    table: &'static Table,
     group: wgpu::BindGroupLayout,
     pipeline: wgpu::PipelineLayout,
 }
 
 impl Family {
-    fn new(device: &wgpu::Device, label: &str, bindings: &'static [(u32, Slot)]) -> Self {
-        let group = group_layout(device, label, wgpu::ShaderStages::COMPUTE, bindings);
+    fn new(device: &wgpu::Device, table: &'static Table) -> Self {
+        let group = layout(device, table);
         let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(label),
+            label: Some(table.label),
             bind_group_layouts: &[Some(&group)],
             immediate_size: 0,
         });
         Self {
-            bindings,
+            table,
             group,
             pipeline,
         }
@@ -89,11 +51,10 @@ pub(super) struct Pipelines {
 
 impl Pipelines {
     pub(super) fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
-        let seed_family = Family::new(device, "engine/virtual-seed-layout", SEED_BINDINGS);
-        let traverse_family =
-            Family::new(device, "engine/virtual-traverse-layout", TRAVERSE_BINDINGS);
-        let select_family = Family::new(device, "engine/virtual-select-layout", SELECT_BINDINGS);
-        let bin_family = Family::new(device, "engine/virtual-bin-layout", BIN_BINDINGS);
+        let seed_family = Family::new(device, &VIRTUAL_SEED);
+        let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE);
+        let select_family = Family::new(device, &VIRTUAL_SELECT);
+        let bin_family = Family::new(device, &VIRTUAL_BIN);
         let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, module, entry)
         };
@@ -120,20 +81,20 @@ impl Pipelines {
         }
     }
 
-    /// A group of `family`'s layout holding `entries`, filled where they
-    /// leave bindings out.
+    /// A group of `family`'s layout binding `resources` by name, filled
+    /// where they leave bindings out.
     pub(super) fn group(
         &self,
         device: &wgpu::Device,
         family: &Family,
-        entries: &[wgpu::BindGroupEntry<'_>],
+        resources: &[(&str, wgpu::BindingResource<'_>)],
     ) -> wgpu::BindGroup {
         filled_group(
             device,
             "engine/virtual-group",
+            family.table,
             &family.group,
-            family.bindings,
-            entries,
+            resources,
             &self.fillers,
         )
     }
@@ -148,35 +109,7 @@ pub(super) struct ShadowDrawing {
 
 impl ShadowDrawing {
     pub(super) fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
-        let storage = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/virtual-shadow-layout"),
-            entries: &[
-                storage(2),
-                storage(5),
-                storage(6),
-                storage(17),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 18,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(64),
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let layout = layout(device, &VIRTUAL_SHADOW);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/virtual-shadow-pipeline-layout"),
             bind_group_layouts: &[Some(&layout)],

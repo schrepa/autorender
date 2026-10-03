@@ -115,6 +115,7 @@ mod gpu {
     use engine_core::{Material, MaterialHandle, MeshHandle};
 
     use super::*;
+    use crate::bindings::{IMPOSTOR_BAKE, IMPOSTOR_DRAW};
     use crate::cached::Cached;
     use crate::gpu_data::Variant;
     use crate::mesh_arena::MeshDraw;
@@ -213,21 +214,7 @@ mod gpu {
             material_layout: &wgpu::BindGroupLayout,
             empty_layout: &wgpu::BindGroupLayout,
         ) -> Self {
-            let bake_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("engine/impostor-bake-layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 20,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(
-                            size_of::<ImpostorBakeUniform>() as u64
-                        ),
-                    },
-                    count: None,
-                }],
-            });
+            let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
             let bake_pipeline_layout =
                 device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("engine/impostor-bake-pipeline-layout"),
@@ -238,43 +225,7 @@ mod gpu {
                     ],
                     immediate_size: 0,
                 });
-            let array = |binding| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2Array,
-                    multisampled: false,
-                },
-                count: None,
-            };
-            let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("engine/impostor-layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 11,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: wgpu::BufferSize::new(
-                                size_of::<ImpostorRecord>() as u64
-                            ),
-                        },
-                        count: None,
-                    },
-                    array(12),
-                    array(13),
-                    array(14),
-                    array(15),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 16,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+            let draw_layout = crate::pipelines::layout(device, &IMPOSTOR_DRAW);
             let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/impostor-sampler"),
                 address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -424,14 +375,13 @@ mod gpu {
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
             );
-            let uniform_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/impostor-bake-group"),
-                layout: &self.bake_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 20,
-                    resource: uniform.as_entire_binding(),
-                }],
-            });
+            let uniform_group = crate::pipelines::group(
+                device,
+                "engine/impostor-bake-group",
+                &IMPOSTOR_BAKE,
+                &self.bake_layout,
+                &[("impostor_bake", uniform.as_entire_binding())],
+            );
             let arrays = self.arrays.as_ref().expect("grown above");
             let resolves: Vec<wgpu::TextureView> = arrays
                 .textures
@@ -603,28 +553,26 @@ mod gpu {
             }
             let key = (self.records_generation, self.arrays_generation);
             if self.group.stale(&key) {
-                let view = |binding, view| wgpu::BindGroupEntry {
-                    binding,
-                    resource: wgpu::BindingResource::TextureView(view),
-                };
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("engine/impostor-group"),
-                    layout: &self.draw_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 11,
-                            resource: self.records.as_entire_binding(),
-                        },
-                        view(12, &arrays.views[0]),
-                        view(13, &arrays.views[1]),
-                        view(14, &arrays.views[2]),
-                        view(15, &arrays.views[3]),
-                        wgpu::BindGroupEntry {
-                            binding: 16,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
-                        },
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/impostor-group",
+                    &IMPOSTOR_DRAW,
+                    &self.draw_layout,
+                    &[
+                        ("impostor_records", self.records.as_entire_binding()),
+                        ("impostor_albedo", crate::pipelines::view(&arrays.views[0])),
+                        (
+                            "impostor_emissive",
+                            crate::pipelines::view(&arrays.views[1]),
+                        ),
+                        (
+                            "impostor_geometry",
+                            crate::pipelines::view(&arrays.views[2]),
+                        ),
+                        ("impostor_surface", crate::pipelines::view(&arrays.views[3])),
+                        ("impostor_sampler", crate::pipelines::sampler(&self.sampler)),
                     ],
-                });
+                );
                 self.group.set(key, group);
             }
             true

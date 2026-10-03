@@ -5,6 +5,7 @@
 //! each bin's resolve (`fs_resolve*`) shades its pixels once, however many
 //! triangles overlapped them or however small they were.
 
+use crate::bindings::VISIBILITY_CLASSIFY;
 use crate::cached::Cached;
 use crate::gpu_data::VISIBILITY_SHADER;
 
@@ -93,36 +94,7 @@ impl VisibilityBuffer {
             label: Some("engine/visibility.wgsl"),
             source: wgpu::ShaderSource::Wgsl(VISIBILITY_SHADER.into()),
         });
-        let buffer = |binding, ty| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let read_write = wgpu::BufferBindingType::Storage { read_only: false };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/visibility-classify-layout"),
-            entries: &[
-                buffer(0, wgpu::BufferBindingType::Uniform),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                buffer(2, read_write),
-                buffer(3, read_write),
-                buffer(4, read_write),
-            ],
-        });
+        let layout = crate::pipelines::layout(device, &VISIBILITY_CLASSIFY);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/visibility-classify-pipeline-layout"),
             bind_group_layouts: &[Some(&layout)],
@@ -208,32 +180,19 @@ impl VisibilityBuffer {
             self.generation += 1;
         }
         if self.group.stale(&self.generation) {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/visibility-classify-group"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: self.params.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&self.ids_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.counts.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.lists.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: self.draw_args.as_entire_binding(),
-                    },
+            let group = crate::pipelines::group(
+                device,
+                "engine/visibility-classify-group",
+                &VISIBILITY_CLASSIFY,
+                &self.layout,
+                &[
+                    ("classify", self.params.as_entire_binding()),
+                    ("ids", crate::pipelines::view(&self.ids_view)),
+                    ("counts", self.counts.as_entire_binding()),
+                    ("tiles", self.lists.as_entire_binding()),
+                    ("draw_args", self.draw_args.as_entire_binding()),
                 ],
-            });
+            );
             self.group.set(self.generation, group);
         }
         let capacity = capacity as u32;

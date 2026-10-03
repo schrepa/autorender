@@ -6,6 +6,7 @@
 //! binding holds.
 
 use super::*;
+use crate::bindings::RETAINED_POSES;
 
 pub(super) struct Instances {
     // Most instances this GPU's instance, pose and shadow buffers hold.
@@ -56,16 +57,7 @@ impl Instances {
             .max(size_of::<PoseData>())
             .max(6 * size_of::<u32>()) as u64;
         let limit = (binding / record).min(u64::from(crate::gpu_data::MOVED_SLOT)) as usize;
-        let vertex = wgpu::ShaderStages::VERTEX;
-        let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/retained-pose-layout"),
-            entries: &[
-                storage_entry(0, size_of::<PoseData>() as u64, vertex),
-                storage_entry(1, size_of::<ColorData>() as u64, vertex),
-                // Joint palettes of skinned slots (decision 036).
-                storage_entry(3, size_of::<PoseData>() as u64, vertex),
-            ],
-        });
+        let pose_layout = crate::pipelines::layout(device, &RETAINED_POSES);
         Self {
             limit,
             capacity: INITIAL_CAPACITY,
@@ -341,24 +333,17 @@ fn pose_group(
     colors: &wgpu::Buffer,
     palette: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("engine/retained-pose-bind-group"),
+    crate::pipelines::group(
+        device,
+        "engine/retained-pose-bind-group",
+        &RETAINED_POSES,
         layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: poses.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: colors.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: palette.as_entire_binding(),
-            },
+        &[
+            ("poses", poses.as_entire_binding()),
+            ("colors", colors.as_entire_binding()),
+            ("palette", palette.as_entire_binding()),
         ],
-    })
+    )
 }
 
 fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {

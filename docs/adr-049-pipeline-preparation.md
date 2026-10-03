@@ -102,12 +102,19 @@ Fullscreen passes build through `pipelines::fullscreen` and compute passes
 through `pipelines::compute_entry`; mesh pipelines are labeled with their
 entry points and variant bits.
 
-Pipelines declare their layouts; none derive one (`layout: None`). Passes of
-a family share one layout that lists every binding any of them reads, built
-from `pipelines::Slot`s, and each pass's bind group fills the bindings it
-leaves alone with `pipelines::Fillers`: 1x1 textures, small buffers, and a
-range of their own for written storage, since written bindings of a dispatch
-or draw may not overlap. Every pass of post.wgsl shares one layout (16
+Pipelines declare their layouts; none derive one (`layout: None`). Every
+bind group layout is a table in `crate::bindings` listing each binding's
+number, WGSL name, kind and stages; `pipelines::layout` builds the layout
+from it and `pipelines::group` binds resources by name, so a binding's
+number is written once in WGSL and once in its table. A native test parses
+every shader with naga and checks, for each registered pipeline's entry
+points, that every binding they read is in the table its group uses, with
+the same name and a matching kind and stage, and that no entry point goes
+unregistered. Passes of a family share one table that lists every binding
+any of them reads, and each pass's bind group fills the bindings it leaves
+alone with `pipelines::Fillers` (`pipelines::filled_group`): 1x1 textures,
+small buffers, and a range of their own for written storage, since written
+bindings of a dispatch or draw may not overlap. Every pass of post.wgsl shares one layout (16
 bindings, within WebGPU's default 16 sampled textures per stage); GPU
 presentation's twelve passes share five and virtual geometry's ten share
 four, each within the default eight storage buffers per stage, and passes

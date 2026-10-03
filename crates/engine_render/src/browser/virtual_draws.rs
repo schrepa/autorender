@@ -3,6 +3,7 @@
 //! drawing the selected clusters.
 
 use super::*;
+use crate::bindings::VIRTUAL_POSES;
 use crate::entries;
 
 /// Virtual geometry's draws (decision 044): the arena and cluster
@@ -30,18 +31,7 @@ impl VirtualDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         // Poses, colors, previous poses and the arena's meshes, clusters and
         // pages.
-        let vertex = wgpu::ShaderStages::VERTEX;
-        let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/virtual-pose-layout"),
-            entries: &[
-                storage_entry(0, size_of::<PoseData>() as u64, vertex),
-                storage_entry(1, size_of::<ColorData>() as u64, vertex),
-                storage_entry(2, size_of::<PoseData>() as u64, vertex),
-                storage_entry(5, 80, vertex),
-                storage_entry(6, 48, vertex),
-                storage_entry(7, 16, vertex),
-            ],
-        });
+        let pose_layout = crate::pipelines::layout(device, &VIRTUAL_POSES);
         Self {
             pass: VirtualGeometryPass::new(device),
             pipelines: HashMap::new(),
@@ -281,36 +271,20 @@ impl Renderer {
         let buffers = self.instances.pose_buffers();
         let colors = self.instances.colors();
         let group = |current: usize, previous: usize| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/virtual-pose-group"),
-                layout: &self.virtual_draws.pose_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: buffers[current].as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: colors.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: buffers[previous].as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: meshes.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: clusters.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 7,
-                        resource: pages.as_entire_binding(),
-                    },
+            crate::pipelines::group(
+                &self.device,
+                "engine/virtual-pose-group",
+                &VIRTUAL_POSES,
+                &self.virtual_draws.pose_layout,
+                &[
+                    ("poses", buffers[current].as_entire_binding()),
+                    ("colors", colors.as_entire_binding()),
+                    ("previous_poses", buffers[previous].as_entire_binding()),
+                    ("virtual_meshes", meshes.as_entire_binding()),
+                    ("virtual_clusters", clusters.as_entire_binding()),
+                    ("virtual_pages", pages.as_entire_binding()),
                 ],
-            })
+            )
         };
         let groups = [group(0, 0), group(0, 1), group(1, 0), group(1, 1)];
         self.virtual_draws.pose_groups.set(key, groups);

@@ -10,6 +10,7 @@ use engine_core::{
 };
 
 use crate::batches::BatchPlan;
+use crate::bindings::MATERIAL;
 use crate::gpu_data::{MaterialUniform, Variant, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
 
@@ -54,39 +55,7 @@ pub(crate) struct MaterialStore {
 
 impl MaterialStore {
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D2,
-                multisampled: false,
-            },
-            count: None,
-        };
-        let sampler_entry = |binding| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        };
-        let mut entries: Vec<wgpu::BindGroupLayoutEntry> = (0..5)
-            .flat_map(|map| [texture_entry(map * 2), sampler_entry(map * 2 + 1)])
-            .collect();
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 10,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(size_of::<MaterialUniform>() as u64),
-            },
-            count: None,
-        });
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/material-layout"),
-            entries: &entries,
-        });
+        let layout = crate::pipelines::layout(device, &MATERIAL);
         let texel = |label, format, pixel: [u8; 4]| {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -398,6 +367,16 @@ fn uniform_buffer(device: &wgpu::Device, uniform: &MaterialUniform) -> wgpu::Buf
     })
 }
 
+/// The texture and sampler bindings of a material's maps, in the order of
+/// `Material::maps` (`bindings::MATERIAL`).
+const MAP_BINDINGS: [(&str, &str); 5] = [
+    ("base_color_texture", "base_color_sampler"),
+    ("metallic_roughness_texture", "metallic_roughness_sampler"),
+    ("normal_texture", "normal_sampler"),
+    ("occlusion_texture", "occlusion_sampler"),
+    ("emissive_texture", "emissive_sampler"),
+];
+
 fn bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -405,26 +384,21 @@ fn bind_group(
     samplers: [&wgpu::Sampler; 5],
     uniform: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
-    let mut entries = Vec::with_capacity(11);
-    for (index, (view, sampler)) in views.into_iter().zip(samplers).enumerate() {
-        entries.push(wgpu::BindGroupEntry {
-            binding: index as u32 * 2,
-            resource: wgpu::BindingResource::TextureView(view),
-        });
-        entries.push(wgpu::BindGroupEntry {
-            binding: index as u32 * 2 + 1,
-            resource: wgpu::BindingResource::Sampler(sampler),
-        });
+    let mut resources = Vec::with_capacity(11);
+    for ((view, sampler), (texture_name, sampler_name)) in
+        views.into_iter().zip(samplers).zip(MAP_BINDINGS)
+    {
+        resources.push((texture_name, crate::pipelines::view(view)));
+        resources.push((sampler_name, crate::pipelines::sampler(sampler)));
     }
-    entries.push(wgpu::BindGroupEntry {
-        binding: 10,
-        resource: uniform.as_entire_binding(),
-    });
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("engine/material-group"),
+    resources.push(("material_maps", uniform.as_entire_binding()));
+    crate::pipelines::group(
+        device,
+        "engine/material-group",
+        &MATERIAL,
         layout,
-        entries: &entries,
-    })
+        &resources,
+    )
 }
 
 /// The GPU format of a compressed `format` read as sRGB or linear, and the

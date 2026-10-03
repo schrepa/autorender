@@ -2,6 +2,7 @@
 //! the pipelines and groups of its pass and resolves.
 
 use super::*;
+use crate::bindings::{VISIBILITY_PASS, VISIBILITY_RESOLVE};
 use crate::entries;
 
 /// What the visibility buffer's groups bind: the pose buffers' generation
@@ -32,51 +33,8 @@ impl VisibilityDraws {
         // Its pass poses clusters from the arena, and its resolves read
         // them, the selected clusters and the target in fragments, the tile
         // lists in vertices, and each draw's bin through a dynamic offset.
-        let (vertex, fragment) = (wgpu::ShaderStages::VERTEX, wgpu::ShaderStages::FRAGMENT);
-        let draw_entry = |visibility| wgpu::BindGroupLayoutEntry {
-            binding: 8,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                min_binding_size: wgpu::BufferSize::new(16),
-            },
-            count: None,
-        };
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/visibility-layout"),
-            entries: &[
-                storage_entry(0, size_of::<PoseData>() as u64, vertex),
-                storage_entry(5, 80, vertex),
-                storage_entry(6, 48, vertex),
-                storage_entry(7, 16, vertex),
-                draw_entry(vertex),
-            ],
-        });
-        let resolve_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/visibility-resolve-layout"),
-            entries: &[
-                storage_entry(0, size_of::<PoseData>() as u64, fragment),
-                storage_entry(1, size_of::<ColorData>() as u64, fragment),
-                storage_entry(2, size_of::<PoseData>() as u64, fragment),
-                storage_entry(5, 80, fragment),
-                storage_entry(6, 48, fragment),
-                storage_entry(7, 16, fragment),
-                draw_entry(vertex | fragment),
-                storage_entry(9, 8, fragment),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: vertex | fragment,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Uint,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                storage_entry(11, 4, vertex),
-            ],
-        });
+        let layout = crate::pipelines::layout(device, &VISIBILITY_PASS);
+        let resolve_layout = crate::pipelines::layout(device, &VISIBILITY_RESOLVE);
         Self {
             buffer: None,
             layout,
@@ -313,56 +271,48 @@ impl Renderer {
         let buffers = self.instances.pose_buffers();
         let colors = self.instances.colors();
         let (draws, tiles, _) = visibility.buffers();
-        let draw = wgpu::BindGroupEntry {
-            binding: 8,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        let draw = (
+            "visibility_draw",
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: draws,
                 offset: 0,
                 size: wgpu::BufferSize::new(16),
             }),
-        };
+        );
         let arena = [meshes, clusters, pages];
         let pass_group = |current: usize| {
             let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/visibility-group"),
-                layout: &self.visibility.layout,
-                entries: &[poses, meshes, clusters, pages, draw.clone()],
-            })
+            crate::pipelines::group(
+                &self.device,
+                "engine/visibility-group",
+                &VISIBILITY_PASS,
+                &self.visibility.layout,
+                &[poses, meshes, clusters, pages, draw.clone()],
+            )
         };
         let resolve_group = |current: usize, previous: usize| {
             let [poses, meshes, clusters, pages] = arena_entries(buffers[current], arena);
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/visibility-resolve-group"),
-                layout: &self.visibility.resolve_layout,
-                entries: &[
+            crate::pipelines::group(
+                &self.device,
+                "engine/visibility-resolve-group",
+                &VISIBILITY_RESOLVE,
+                &self.visibility.resolve_layout,
+                &[
                     poses,
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: colors.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: buffers[previous].as_entire_binding(),
-                    },
+                    ("colors", colors.as_entire_binding()),
+                    ("previous_poses", buffers[previous].as_entire_binding()),
                     meshes,
                     clusters,
                     pages,
                     draw.clone(),
-                    wgpu::BindGroupEntry {
-                        binding: 9,
-                        resource: visible.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 10,
-                        resource: wgpu::BindingResource::TextureView(visibility.ids_view()),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 11,
-                        resource: tiles.as_entire_binding(),
-                    },
+                    ("visible_clusters", visible.as_entire_binding()),
+                    (
+                        "visibility_ids",
+                        crate::pipelines::view(visibility.ids_view()),
+                    ),
+                    ("resolve_tiles", tiles.as_entire_binding()),
                 ],
-            })
+            )
         };
         let pass_groups = [pass_group(0), pass_group(1)];
         let resolve_groups = [
@@ -377,28 +327,16 @@ impl Renderer {
     }
 }
 
-/// Group entries of slot poses and the virtual arena's meshes, clusters and
-/// pages (decision 044), at the bindings `meshes/declarations.wgsl` declares.
+/// Bindings of slot poses and the virtual arena's meshes, clusters and
+/// pages (decision 044), by their names in `meshes/declarations.wgsl`.
 fn arena_entries<'a>(
     poses: &'a wgpu::Buffer,
     [meshes, clusters, pages]: [&'a wgpu::Buffer; 3],
-) -> [wgpu::BindGroupEntry<'a>; 4] {
+) -> [(&'static str, wgpu::BindingResource<'a>); 4] {
     [
-        wgpu::BindGroupEntry {
-            binding: 0,
-            resource: poses.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-            binding: 5,
-            resource: meshes.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-            binding: 6,
-            resource: clusters.as_entire_binding(),
-        },
-        wgpu::BindGroupEntry {
-            binding: 7,
-            resource: pages.as_entire_binding(),
-        },
+        ("poses", poses.as_entire_binding()),
+        ("virtual_meshes", meshes.as_entire_binding()),
+        ("virtual_clusters", clusters.as_entire_binding()),
+        ("virtual_pages", pages.as_entire_binding()),
     ]
 }

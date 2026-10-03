@@ -17,7 +17,7 @@ use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LOD_LEVELS, LightingUniform,
-    PoseData, SHADER, ShadowUniform, SkinVertex, Variant, Vertex, clamped_extent,
+    PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -151,24 +151,6 @@ struct Culling {
     occlusion: bool,
     subpixel: bool,
     pyramid: Option<DepthPyramid>,
-}
-
-/// A read-only storage binding of `stride`-byte records for `stages`.
-fn storage_entry(
-    binding: u32,
-    stride: u64,
-    stages: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
-    wgpu::BindGroupLayoutEntry {
-        binding,
-        visibility: stages,
-        ty: wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Storage { read_only: true },
-            has_dynamic_offset: false,
-            min_binding_size: wgpu::BufferSize::new(stride),
-        },
-        count: None,
-    }
 }
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.

@@ -4,7 +4,9 @@
 //! kept-map tiles, with the view matrices and selection uniform they read.
 
 use super::{FAR_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
+use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
 use crate::gpu_data::{SHADOW_SHADER, ShadowCullUniform};
+use crate::pipelines::{group, layout};
 
 /// Shadow pipelines and their fixed bindings, created with the first frame
 /// that has shadows: games without them never compile them.
@@ -118,40 +120,7 @@ impl ShadowPipelines {
             source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
         });
         // Selection and counting share one explicit layout, and so one group.
-        let storage_entry = |binding, read_only| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only },
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        };
-        let cull_entry = wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(size_of::<ShadowCullUniform>() as u64),
-            },
-            count: None,
-        };
-        let select_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/shadow-select-layout"),
-            entries: &[
-                cull_entry,
-                storage_entry(1, true),
-                storage_entry(2, true),
-                storage_entry(3, true),
-                storage_entry(4, true),
-                storage_entry(5, false),
-                storage_entry(6, false),
-                storage_entry(7, false),
-                storage_entry(8, false),
-            ],
-        });
+        let select_layout = layout(device, &SHADOW_SELECT);
         let compute_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/shadow-select-pipeline-layout"),
             bind_group_layouts: &[Some(&select_layout)],
@@ -163,19 +132,7 @@ impl ShadowPipelines {
         let count = compute("count_casters");
         // Skinned casters (decision 036) bind their palette bounds instead of
         // candidates, poses and stillness: within eight storage buffers.
-        let skinned_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/shadow-skinned-layout"),
-            entries: &[
-                cull_entry,
-                storage_entry(2, true),
-                storage_entry(4, true),
-                storage_entry(6, false),
-                storage_entry(7, false),
-                storage_entry(8, false),
-                storage_entry(10, true),
-                storage_entry(11, true),
-            ],
-        });
+        let skinned_layout = layout(device, &SHADOW_SKINNED);
         let skinned_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/shadow-skinned-pipeline-layout"),
@@ -188,34 +145,10 @@ impl ShadowPipelines {
             &module,
             "select_skinned",
         );
-        let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/shadow-view-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 9,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(64),
-                },
-                count: None,
-            }],
-        });
-        // Slot poses, and slot colors for masked casters.
-        let storage = |binding, size| wgpu::BindGroupLayoutEntry {
-            binding,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
-                has_dynamic_offset: false,
-                min_binding_size: wgpu::BufferSize::new(size),
-            },
-            count: None,
-        };
-        let pose_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("engine/shadow-pose-layout"),
-            entries: &[storage(0, 48), storage(1, 16), storage(2, 48)],
-        });
+        let view_layout = layout(device, &SHADOW_VIEW);
+        // Slot poses, and slot colors and palettes for masked and skinned
+        // casters.
+        let pose_layout = layout(device, &SHADOW_POSES);
         let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
         let masked_vertex_attributes = [
             wgpu::VertexAttribute {
@@ -337,18 +270,20 @@ impl ShadowPipelines {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let view_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/shadow-view-group"),
-            layout: &view_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 9,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        let view_group = group(
+            device,
+            "engine/shadow-view-group",
+            &SHADOW_VIEW,
+            &view_layout,
+            &[(
+                "view",
+                wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer: &view_buffer,
                     offset: 0,
                     size: wgpu::BufferSize::new(64),
                 }),
-            }],
-        });
+            )],
+        );
         let cull = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/shadow-select-uniform"),
             size: size_of::<ShadowCullUniform>() as u64,
