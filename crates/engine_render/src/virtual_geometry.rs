@@ -33,6 +33,7 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::{CLUSTER_WORDS, GROUP_WORDS, MeshHandle, NODE_WORDS, PAGE_WORDS, VirtualMesh};
 use wasm_bindgen::JsCast;
 
+use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
@@ -1309,8 +1310,7 @@ impl VirtualGeometryPass {
         self.module = Some(module);
     }
 
-    /// Binds this frame's slot poses (their key's lowest bit tells which of
-    /// the two pose buffers they are), and the IDs and draw arguments of the
+    /// Binds this frame's slot poses, and the IDs and draw arguments of the
     /// camera's batches and of the shadow maps' casters, each with a key
     /// that changes when the buffers do. `max_instances` is the most
     /// instances a batch of each source has; `shadow_views`, the shadow
@@ -1320,7 +1320,7 @@ impl VirtualGeometryPass {
     pub(crate) fn bind(
         &mut self,
         device: &wgpu::Device,
-        poses: (&wgpu::Buffer, u64),
+        poses: &FramePoses<'_>,
         camera: IdBuffers<'_>,
         shadows: Option<IdBuffers<'_>>,
         max_instances: [u32; 2],
@@ -1328,8 +1328,8 @@ impl VirtualGeometryPass {
         pyramid: Option<(&wgpu::TextureView, u64)>,
     ) {
         self.max_instances = max_instances;
-        self.poses = Some((poses.0.clone(), poses.1));
-        self.parity = (poses.1 & 1) as usize;
+        self.poses = Some((poses.current().clone(), poses.key()));
+        self.parity = poses.parity;
         if self.arena.is_none() {
             return;
         }
@@ -1340,7 +1340,7 @@ impl VirtualGeometryPass {
         let key = (
             self.arena_generation,
             self.frame_generation,
-            poses.1,
+            poses.key(),
             camera.key,
             shadows.map(|shadows| shadows.key),
             pyramid.map(|(_, generation)| generation),
@@ -1399,7 +1399,7 @@ impl VirtualGeometryPass {
                 &[
                     entry(0, &self.uniform),
                     entry(3, &arena.nodes),
-                    entry(6, poses.0),
+                    entry(6, poses.current()),
                     entry(9, queue_a),
                     entry(10, queue_b),
                     entry(11, &self.work),
@@ -1412,7 +1412,7 @@ impl VirtualGeometryPass {
                     entry(0, &self.uniform),
                     entry(4, &arena.groups),
                     entry(5, &arena.clusters),
-                    entry(6, poses.0),
+                    entry(6, poses.current()),
                     entry(11, &self.work),
                     entry(12, &self.counters),
                     entry(13, &self.visible),
@@ -1435,7 +1435,7 @@ impl VirtualGeometryPass {
                 &[
                     entry(0, &self.uniform),
                     entry(5, &arena.clusters),
-                    entry(6, poses.0),
+                    entry(6, poses.current()),
                     entry(12, &self.counters),
                     entry(13, &self.visible),
                     entry(14, &self.bins),

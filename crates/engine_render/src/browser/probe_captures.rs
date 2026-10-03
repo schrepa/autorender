@@ -45,7 +45,7 @@ impl Renderer {
             let camera = CameraUniform::probe(view_projection, probe.center, seconds);
             self.queue
                 .write_buffer(self.probes.camera(face), 0, bytemuck::bytes_of(&camera));
-            let poses = self.instances.poses(usize::from(odd));
+            let poses = self.instances.frame_poses(usize::from(odd));
             if !self.gpu_presentation.encode_probe_face(
                 &self.device,
                 &self.queue,
@@ -53,7 +53,7 @@ impl Renderer {
                 face,
                 self.environment.size(),
                 view_projection,
-                poses,
+                poses.current(),
             ) {
                 break;
             }
@@ -68,11 +68,7 @@ impl Renderer {
                     self.environment.size(),
                     settings,
                     frame,
-                    LightPoses {
-                        buffer: poses,
-                        generation: self.instances.generation,
-                        index: usize::from(odd),
-                    },
+                    poses,
                     self.gpu_presentation.still_frames(),
                 );
             }

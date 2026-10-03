@@ -211,23 +211,31 @@ impl Instances {
         }
     }
 
+    /// The pose storage of retained frames of temporal `parity`.
+    pub(super) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
+        FramePoses {
+            buffers: [Some(&self.buffer), self.alternate.as_ref()],
+            palettes: [&self.palettes[0], &self.palettes[1]],
+            colors: self.colors(),
+            parity,
+            generation: self.generation,
+        }
+    }
+
     /// GPU presentation's inputs (decision 014) for frames of temporal
-    /// `parity`: the staging ring of pose uploads, and the frame's pose
-    /// buffer, joint palette and the colors.
+    /// `parity`: the staging ring of pose uploads, and the pose storage.
     pub(super) fn presentation_inputs(
         &mut self,
         parity: usize,
-    ) -> (&mut StagingRing, [&wgpu::Buffer; 3]) {
-        let poses = if parity == 1 {
-            self.alternate.as_ref().expect("temporal frames create it")
-        } else {
-            &self.buffer
+    ) -> (&mut StagingRing, FramePoses<'_>) {
+        let poses = FramePoses {
+            buffers: [Some(&self.buffer), self.alternate.as_ref()],
+            palettes: [&self.palettes[0], &self.palettes[1]],
+            colors: self.colors.as_ref().expect("affine color buffer"),
+            parity,
+            generation: self.generation,
         };
-        let colors = self.colors.as_ref().expect("affine color buffer");
-        (
-            &mut self.pose_uploads,
-            [poses, &self.palettes[parity], colors],
-        )
+        (&mut self.pose_uploads, poses)
     }
 
     /// Both pose buffers: the first again when there is no alternate one.
@@ -289,6 +297,38 @@ impl Instances {
             );
             self.alternate_group.set(self.generation, group);
         }
+    }
+}
+
+/// The pose storage of a retained frame, which GPU presentation (decision
+/// 014) culls into and every pass drawing or lighting slots reads: both
+/// pose buffers (the second while temporal antialiasing alternates them,
+/// decision 017), the joint palette written with each (decision 036), the
+/// slot colors, which buffer the frame's poses are in, and the generation
+/// that advances when any of them is replaced.
+#[derive(Clone, Copy)]
+pub(crate) struct FramePoses<'a> {
+    pub buffers: [Option<&'a wgpu::Buffer>; 2],
+    pub palettes: [&'a wgpu::Buffer; 2],
+    pub colors: &'a wgpu::Buffer,
+    pub parity: usize,
+    pub generation: u64,
+}
+
+impl<'a> FramePoses<'a> {
+    /// The frame's pose buffer.
+    pub(crate) fn current(&self) -> &'a wgpu::Buffer {
+        self.buffers[self.parity].expect("temporal frames create the alternate pose buffer")
+    }
+
+    /// The joint palette written with the frame's poses.
+    pub(crate) fn palette(&self) -> &'a wgpu::Buffer {
+        self.palettes[self.parity]
+    }
+
+    /// A key naming the frame's pose buffer: its generation and parity.
+    pub(crate) fn key(&self) -> u64 {
+        self.generation * 2 + self.parity as u64
     }
 }
 
