@@ -36,7 +36,8 @@ use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::transparent::{TransparentPass, accumulation_targets};
 use crate::uploads::UploadCache;
 use crate::virtual_geometry::{
-    CameraTests, Cone, IdBuffers, MAX_VIEWS, VirtualBatch, VirtualGeometryPass, VirtualView,
+    CameraTests, Cone, IdBuffers, MAX_VIEWS, SelectionFrame, VirtualBatch, VirtualGeometryPass,
+    VirtualView,
 };
 use crate::visibility::{
     ID_FORMAT, RESOLVE_LIT_STORAGE_BUFFERS, RESOLVE_STORAGE_BUFFERS, VisibilityBuffer,
