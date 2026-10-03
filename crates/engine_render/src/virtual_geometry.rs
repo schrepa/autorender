@@ -1282,17 +1282,7 @@ impl VirtualGeometryPass {
         let select_family = Family::new(device, "engine/virtual-select-layout", SELECT_BINDINGS);
         let bin_family = Family::new(device, "engine/virtual-bin-layout", BIN_BINDINGS);
         let pipeline = |entry: &str, family: &Family| {
-            crate::pipelines::compute(
-                device,
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&family.pipeline),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                },
-            )
+            crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
         };
         self.pipelines = Some(Pipelines {
             seed: pipeline("seed", &seed_family),

@@ -17,7 +17,7 @@ use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
-use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
+use crate::pipelines::{Fillers, Fullscreen, Slot, filled_group, fullscreen, group_layout};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -187,67 +187,40 @@ impl PostPass {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = |label,
-                        entry: &str,
-                        format: wgpu::TextureFormat,
-                        blend,
-                        srgb: Option<bool>| {
-            let constants = srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
-            crate::pipelines::render(
-                device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
+        let pipeline =
+            |label, entry: &str, format: wgpu::TextureFormat, blend, srgb: Option<bool>| {
+                let constants =
+                    srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
+                fullscreen(
+                    device,
+                    &Fullscreen {
+                        label,
+                        layout: &pipeline_layout,
                         module: &module,
-                        entry_point: Some("vs_fullscreen"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some(entry),
-                        compilation_options: wgpu::PipelineCompilationOptions {
-                            constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
-                            ..Default::default()
-                        },
+                        vertex: "vs_fullscreen",
+                        fragment: entry,
+                        constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
                         targets: &[Some(wgpu::ColorTargetState {
                             format,
                             blend,
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                },
-            )
-        };
-        let levels_pipeline = |label, entry: &str| {
-            crate::pipelines::render(
-                device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs_fullscreen"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
+                        depth: None,
                     },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
+                )
+            };
+        let levels_pipeline = |label, entry: &str| {
+            fullscreen(
+                device,
+                &Fullscreen {
+                    label,
+                    layout: &pipeline_layout,
+                    module: &module,
+                    vertex: "vs_fullscreen",
+                    fragment: entry,
+                    constants: &[],
+                    targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
+                    depth: None,
                 },
             )
         };
@@ -310,28 +283,17 @@ impl PostPass {
                 bind_group_layouts: &[Some(camera_layout), Some(&shafts_layout)],
                 immediate_size: 0,
             });
-        let shafts = crate::pipelines::render(
+        let shafts = fullscreen(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/post-shafts"),
-                layout: Some(&shafts_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shafts_module,
-                    entry_point: Some("vs_fullscreen"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shafts_module,
-                    entry_point: Some("fs_shafts"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(SHAFT_FORMAT.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
+            &Fullscreen {
+                label: "engine/post-shafts",
+                layout: &shafts_pipeline_layout,
+                module: &shafts_module,
+                vertex: "vs_fullscreen",
+                fragment: "fs_shafts",
+                constants: &[],
+                targets: &[Some(SHAFT_FORMAT.into())],
+                depth: None,
             },
         );
         Self {

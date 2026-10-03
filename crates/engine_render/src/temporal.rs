@@ -203,34 +203,20 @@ impl TemporalPass {
                 bind_group_layouts: &[Some(&resolve_layout)],
                 immediate_size: 0,
             });
-        let resolve_pipeline = crate::pipelines::render(
+        let resolve_pipeline = crate::pipelines::fullscreen(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/taa-resolve"),
-                layout: Some(&resolve_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_fullscreen"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_resolve"),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &[(
-                            "SURFACE_IS_SRGB",
-                            if surface_format.is_srgb() { 1.0 } else { 0.0 },
-                        )],
-                        ..Default::default()
-                    },
-                    targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
+            &crate::pipelines::Fullscreen {
+                label: "engine/taa-resolve",
+                layout: &resolve_pipeline_layout,
+                module: &module,
+                vertex: "vs_fullscreen",
+                fragment: "fs_resolve",
+                constants: &[(
+                    "SURFACE_IS_SRGB",
+                    if surface_format.is_srgb() { 1.0 } else { 0.0 },
+                )],
+                targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
+                depth: None,
             },
         );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -633,10 +619,15 @@ fn mesh_pipeline(
     if variant.skinned() {
         buffers.push(crate::browser::skin_layout());
     }
+    // Entry points and variant bits name the pipeline in captures.
+    let label = format!(
+        "engine/temporal-mesh {vertex_entry} {fragment_entry} {:#06x}",
+        variant.bits()
+    );
     crate::pipelines::render(
         device,
         &wgpu::RenderPipelineDescriptor {
-            label: Some("engine/temporal-meshes"),
+            label: Some(&label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
                 module: mesh_shader,

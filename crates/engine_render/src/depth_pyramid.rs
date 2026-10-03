@@ -90,17 +90,7 @@ impl DepthPyramid {
                 bind_group_layouts: &[Some(group)],
                 immediate_size: 0,
             });
-            crate::pipelines::compute(
-                device,
-                &wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                },
-            )
+            crate::pipelines::compute_entry(device, &layout, &module, entry)
         };
         let (first, down) = match reduction {
             Reduction::Farthest => ("pyramid_first", "pyramid_down"),

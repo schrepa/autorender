@@ -661,6 +661,12 @@ mod gpu {
         ) {
             self.draw_pipelines.insert((targets, lit), pipeline);
         }
+
+        /// Drops the draw pipelines of `targets`, built over layouts of a
+        /// pass that is gone.
+        pub(crate) fn forget_pipelines(&mut self, targets: ImpostorTargets) {
+            self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
+        }
     }
 
     fn layer_view(texture: &wgpu::Texture, layer: u32, level: u32) -> wgpu::TextureView {
