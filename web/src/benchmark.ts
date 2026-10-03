@@ -2,28 +2,9 @@
 import type { RuntimeStats } from "./host";
 
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
-const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "bloom", "sun_shafts", "reflections", "refraction",
-  "visibility_buffer", "pipelines_compiling"] as const;
-// Read back a few frames late: null until then.
-const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances", "subpixel_instances",
-  "lod0_instances", "lod1_instances", "lod2_instances", "impostor_instances", "triangles"] as const;
-// The render graph's passes (decision 050), as lists of names.
-const passFields = ["render_passes", "culled_passes"] as const;
-export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number] | typeof passFields[number]>
-  & Record<typeof casterFields[number], number | null> & Record<typeof passFields[number], string[]>;
+export type RenderingStats = RuntimeStats;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };
-const numericFields = [
-  "render_candidates", "visible_instances", "culled_instances", "instances", "dropped_instances", "missing_assets", "invalid_transforms",
-  "draw_calls", "upload_bytes", "fixed_steps", "dropped_seconds", "resident_meshes", "resident_mesh_bytes", "mesh_upload_bytes",
-  "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms",
-  "shadow_draws", "shadow_kept_redraw", "local_lights", "dropped_lights", "transparent_draws", "particles",
-  "dropped_particles", "decals", "dropped_decals", "impostors", "dropped_impostors", "reflection_probes", "reflection_probe_faces",
-  "dropped_reflection_probes", "pipelines", "pipelines_created", "virtual_clusters", "virtual_triangles", "virtual_shadow_clusters",
-  "virtual_shadow_triangles", "virtual_occluded_clusters", "dropped_virtual", "virtual_resident_pages",
-  "virtual_loading_pages", "virtual_missing_pages", "dropped_virtual_pages",
-] as const;
-
 export class BenchmarkError extends Error {
   code: string;
   constructor(code: string, message: string) { super(message); this.code = code; }
@@ -43,16 +24,14 @@ export function benchmarkOptions(command: Record<string, unknown>): BenchmarkOpt
   return { mode, warmup, samples };
 }
 
-/** Copy aggregate fields and release the generated Wasm binding immediately. */
-export function readRendering(stats: RuntimeStats): RenderingStats {
-  try {
-    const result = {} as RenderingStats;
-    for (const field of flagFields) result[field] = stats[field];
-    for (const field of numericFields) result[field] = stats[field];
-    for (const field of casterFields) result[field] = stats[field] ?? null;
-    for (const field of passFields) result[field] = (stats[field] ?? "").split(" ").filter(Boolean);
-    return result;
-  } finally { stats.free(); }
+/** The frame statistics in `json`, which agents receive as `rendering`. */
+export function readRendering(json: string): RenderingStats {
+  return JSON.parse(json) as RenderingStats;
+}
+
+/** Fields that are numbers in every one of `measurements`. */
+function numericFields(measurements: RenderingStats[]) {
+  return Object.keys(measurements[0] ?? {}).filter(field => measurements.every(stats => typeof stats[field] === "number"));
 }
 
 /** Linear interpolation of sorted observations; counts describe actual samples. */
@@ -72,7 +51,7 @@ export function distribution(values: number[]) {
 type Context = {
   signal: AbortSignal;
   invoke(command: Record<string, unknown>): Reply;
-  stats(): RuntimeStats;
+  stats(): string;
   size(): [number, number];
   interrupted(): boolean;
 };
@@ -131,8 +110,8 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
     const timestamp = await nextFrame();
     if (index >= options.warmup) {
       frames.push(Math.max(0, timestamp - previousTimestamp));
-      for (const field of numericFields) {
-        if (!Number.isFinite(stats[field]) || stats[field] < 0) throw new BenchmarkError("invalid_measurement", `invalid ${field} statistic`);
+      for (const [field, value] of Object.entries(stats)) {
+        if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) throw new BenchmarkError("invalid_measurement", `invalid ${field} statistic`);
       }
       measurements.push(stats);
     }
@@ -140,7 +119,7 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
     end = reply.observation;
   }
   const final = invoke({ op: "assets" });
-  const range = (field: typeof numericFields[number]) => ({ min: Math.min(...measurements.map(stats => stats[field])), max: Math.max(...measurements.map(stats => stats[field])) });
+  const range = (field: string) => ({ min: Math.min(...measurements.map(stats => stats[field] as number)), max: Math.max(...measurements.map(stats => stats[field] as number)) });
   return {
     version: 1, ...options, elapsed_ms: performance.now() - startTime,
     frame_interval_ms: distribution(frames),
@@ -150,7 +129,7 @@ export async function sampleBenchmark(context: Context, options: BenchmarkOption
       render: distribution(measurements.map(stats => stats.render_ms)),
       total: distribution(measurements.map(stats => stats.simulation_ms + stats.extraction_ms + stats.render_ms)),
     },
-    rendering: { first: measurements[0], last: measurements.at(-1)!, ranges: Object.fromEntries(numericFields.map(field => [field, range(field)])) },
+    rendering: { first: measurements[0], last: measurements.at(-1)!, ranges: Object.fromEntries(numericFields(measurements).map(field => [field, range(field)])) },
     observation: { start: initial.observation, end }, assets: { before: initial.result, after: final.result },
     environment: { canvas_width: initialSize[0], canvas_height: initialSize[1], device_pixel_ratio: globalThis.devicePixelRatio ?? 1, user_agent: globalThis.navigator?.userAgent ?? "unknown" },
     timing: "CPU timings exclude JSON/stats collection; frame intervals include host work and browser pacing; GPU execution time is not measured",

@@ -1,38 +1,29 @@
 import { BrowserInput } from "./input";
 import "./style.css";
 
+/**
+ * The engine's frame statistics (Rust `FrameStats` with the renderer's
+ * `RenderStats`), parsed from the JSON `Runtime.stats` returns. Only the fields
+ * this host code reads are typed; agents receive every field.
+ */
 export interface RuntimeStats {
-  simulation_ms: number; extraction_ms: number; render_ms: number;
-  instances: number; draw_calls: number; upload_bytes: number;
-  invalid_transforms: number;
-  render_candidates: number; visible_instances: number; culled_instances: number;
-  dropped_instances: number; missing_assets: number; culling_enabled: boolean;
-  fixed_steps: number; dropped_seconds: number;
+  simulation_ms: number; extraction_ms: number; render_ms: number; dropped_seconds: number;
+  instances: number; draw_calls: number; upload_bytes: number; invalid_transforms: number; fixed_steps: number;
+  render_candidates: number; visible_instances: number; culled_instances: number; dropped_instances: number;
+  missing_assets: number; culling_enabled: boolean; triangles: number | null;
   resident_meshes: number; mesh_upload_bytes: number; resident_mesh_bytes: number;
   resident_textures: number; texture_upload_bytes: number; resident_texture_bytes: number;
-  shadows_enabled: boolean; shadow_draws: number; shadow_kept_redraw: number;
-  shadow_near_casters: number | undefined; shadow_moving_casters: number | undefined; shadow_kept_casters: number | undefined;
-  ambient_occlusion: boolean; bloom: boolean;
-  local_lights: number; dropped_lights: number;
-  lights_visible: number | undefined; light_cluster_overflow: number | undefined;
-  sun_shafts: boolean; reflections: boolean; refraction: boolean; visibility_buffer: boolean; transparent_draws: number; particles: number; dropped_particles: number;
-  decals: number; dropped_decals: number; impostors: number; dropped_impostors: number;
-  occluded_instances: number | undefined;
-  reflection_probes: number; reflection_probe_faces: number; dropped_reflection_probes: number;
-  pipelines: number; pipelines_created: number; pipelines_compiling: boolean;
-  virtual_clusters: number; virtual_triangles: number; virtual_shadow_clusters: number; virtual_shadow_triangles: number;
-  virtual_occluded_clusters: number; dropped_virtual: number;
-  virtual_resident_pages: number; virtual_loading_pages: number; virtual_missing_pages: number;
-  dropped_virtual_pages: number; render_passes: string; culled_passes: string;
-  subpixel_instances: number | undefined;
-  lod0_instances: number | undefined; lod1_instances: number | undefined;
-  lod2_instances: number | undefined; impostor_instances: number | undefined;
-  triangles: number | undefined;
-  free(): void;
+  shadows_enabled: boolean; shadow_draws: number; ambient_occlusion: boolean; bloom: boolean;
+  pipelines_created: number; pipelines_compiling: boolean;
+  [field: string]: unknown;
+}
+/** The last frame's statistics of `runtime`. */
+export function readStats(runtime: { stats(): string }): RuntimeStats {
+  return JSON.parse(runtime.stats()) as RuntimeStats;
 }
 export interface Runtime {
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
-  stats(): RuntimeStats;
+  stats(): string;
   suspend(): void;
   reset_camera(): void;
   set_count?(count: number): void;
@@ -184,16 +175,12 @@ function metric(id: string, value: string, unit = "") {
 function prepareFrame(current: T, timestamp: number) {
   preparedSince ??= performance.now();
   const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
-  const before = current.stats();
-  let compiling: boolean;
-  try { compiling = before.pipelines_compiling; } finally { before.free(); }
+  const compiling = readStats(current).pipelines_compiling;
   // Frames rendered while compiles run would only queue behind them.
   if (compiling && !late) return;
   current.suspend();
   current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
-  const after = current.stats();
-  let created: number;
-  try { created = after.pipelines_created; } finally { after.free(); }
+  const created = readStats(current).pipelines_created;
   quietFrames = created === 0 ? quietFrames + 1 : 0;
   if (quietFrames < QUIET_FRAMES && !late) return;
   preparing = false;
@@ -223,8 +210,8 @@ function frame(timestamp: number) {
     previousFrame = timestamp;
     // Poll aggregate observations only four times a second, outside entity loops.
     if (timestamp - lastStats >= 250) {
-      const stats = game.stats();
-      try {
+      const stats = readStats(game);
+      {
         simulation += stats.simulation_ms;
         extraction += stats.extraction_ms;
         submission += stats.render_ms;
@@ -235,7 +222,7 @@ function frame(timestamp: number) {
         metric("extraction", (extraction / samples).toFixed(2), "ms");
         metric("draws", String(stats.draw_calls));
         element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
-        const triangles = stats.triangles === undefined ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
+        const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
         element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
         canvas.dataset.frames = String(frameCount);
         canvas.dataset.instances = String(stats.instances);
@@ -256,7 +243,7 @@ function frame(timestamp: number) {
         canvas.dataset.ambientOcclusion = String(stats.ambient_occlusion);
         canvas.dataset.bloom = String(stats.bloom);
         options.poll?.(game);
-      } finally { stats.free(); }
+      }
       lastStats = timestamp;
       // Bounded windows keep the HUD responsive to workload changes.
       if (samples >= 4) { simulation = 0; extraction = 0; submission = 0; samples = 0; elapsed = 0; intervals = 0; }

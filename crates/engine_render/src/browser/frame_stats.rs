@@ -48,6 +48,17 @@ impl Renderer {
         // Pipelines compile before the work submitted after them runs: this
         // frame's completion ends their compiles (decision 049).
         let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
+        // Read back a few frames late, like the visible count.
+        let lod_instances = if gpu_mode && snapshot.level_of_detail.enabled {
+            self.gpu_presentation.lod_instances()
+        } else {
+            None
+        };
+        let shadow_casters = shadow_frame.as_ref().and(self.shadows.caster_counts());
+        let lit = light_frame.is_some();
+        let light_totals = light_frame
+            .as_ref()
+            .and(self.lights.as_ref().and_then(LightPass::totals));
         let stats = RenderStats {
             draw_calls: self.plan.batches.len() as u32,
             upload_bytes: camera_upload_bytes
@@ -76,11 +87,10 @@ impl Renderer {
             } else {
                 None
             },
-            lod_instances: if gpu_mode && snapshot.level_of_detail.enabled {
-                self.gpu_presentation.lod_instances()
-            } else {
-                None
-            },
+            lod0_instances: lod_instances.map(|levels| levels[0]),
+            lod1_instances: lod_instances.map(|levels| levels[1]),
+            lod2_instances: lod_instances.map(|levels| levels[2]),
+            impostor_instances: lod_instances.map(|levels| levels[3]),
             triangles: if gpu_mode {
                 self.gpu_presentation.triangles()
             } else {
@@ -107,22 +117,28 @@ impl Renderer {
             mesh_upload_bytes,
             texture_upload_bytes,
             submitted: true,
-            shadows: shadow_frame.as_ref().map(|frame| ShadowStats {
-                draws: shadow_draws,
-                kept_redraw: frame.refresh_kind(),
-                casters: self.shadows.caster_counts(),
-            }),
+            shadows_enabled: shadow_frame.is_some(),
+            shadow_draws: if shadow_frame.is_some() {
+                shadow_draws
+            } else {
+                0
+            },
+            shadow_kept_redraw: shadow_frame
+                .as_ref()
+                .map_or(0, |frame| u32::from(frame.refresh_kind())),
+            shadow_near_casters: shadow_casters.map(|casters| casters[0]),
+            shadow_moving_casters: shadow_casters.map(|casters| casters[1]),
+            shadow_kept_casters: shadow_casters.map(|casters| casters[2]),
             ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
             bloom: post_frame.is_some_and(|frame| frame.bloom),
-            lights: light_frame.as_ref().map(|_| {
-                let totals = self.lights.as_ref().and_then(LightPass::totals);
-                LightStats {
-                    lights: snapshot.lights.len() as u32,
-                    dropped: snapshot.dropped_lights.min(u32::MAX as usize) as u32,
-                    visible: totals.map(|totals| totals[0]),
-                    overflow: totals.map(|totals| totals[1]),
-                }
-            }),
+            local_lights: if lit { snapshot.lights.len() as u32 } else { 0 },
+            dropped_lights: if lit {
+                snapshot.dropped_lights.min(u32::MAX as usize) as u32
+            } else {
+                0
+            },
+            lights_visible: light_totals.map(|totals| totals[0]),
+            light_cluster_overflow: light_totals.map(|totals| totals[1]),
             transparent_draws: if instance_count > 0 {
                 self.plan
                     .batches
@@ -306,9 +322,10 @@ impl Renderer {
                 );
                 engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
             }
-            if let Some(lights) = &stats.lights {
-                engine_profile::counter("render.local_lights", f64::from(lights.lights));
-                if let Some([visible, overflow]) = self.lights.as_ref().and_then(LightPass::totals)
+            if state.features.light_frame.is_some() {
+                engine_profile::counter("render.local_lights", f64::from(stats.local_lights));
+                if let (Some(visible), Some(overflow)) =
+                    (stats.lights_visible, stats.light_cluster_overflow)
                 {
                     engine_profile::counter("render.lights_visible", f64::from(visible));
                     engine_profile::counter("render.light_cluster_overflow", f64::from(overflow));
@@ -346,16 +363,13 @@ impl Renderer {
             if let Some(triangles) = stats.triangles {
                 engine_profile::counter("render.triangles", f64::from(triangles));
             }
-            if let Some(levels) = stats.lod_instances {
-                for (name, count) in [
-                    "render.lod0_instances",
-                    "render.lod1_instances",
-                    "render.lod2_instances",
-                    "render.impostor_instances",
-                ]
-                .into_iter()
-                .zip(levels)
-                {
+            for (name, count) in [
+                ("render.lod0_instances", stats.lod0_instances),
+                ("render.lod1_instances", stats.lod1_instances),
+                ("render.lod2_instances", stats.lod2_instances),
+                ("render.impostor_instances", stats.impostor_instances),
+            ] {
+                if let Some(count) = count {
                     engine_profile::counter(name, f64::from(count));
                 }
             }

@@ -1,4 +1,4 @@
-use engine::browser::{BrowserApp, BrowserStats};
+use engine::browser::BrowserApp;
 use engine::prelude::*;
 use wasm_bindgen::prelude::*;
 
@@ -268,8 +268,9 @@ impl StressGame {
         )
     }
 
-    pub fn stats(&self) -> BrowserStats {
-        self.app.stats().into()
+    /// The last frame's statistics as a JSON object.
+    pub fn stats(&self) -> String {
+        self.app.stats_json()
     }
     pub fn stress_stats(&self) -> String {
         stress_observation(&self.app.engine, self.generation).to_string()

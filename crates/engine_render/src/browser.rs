@@ -8,6 +8,7 @@ use wasm_bindgen::JsValue;
 use web_sys::HtmlCanvasElement;
 use wgpu::util::DeviceExt;
 
+use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::cached::Cached;
 use crate::decals::DecalPass;
@@ -41,7 +42,6 @@ use crate::virtual_geometry::{
 use crate::visibility::{
     ID_FORMAT, RESOLVE_LIT_STORAGE_BUFFERS, RESOLVE_STORAGE_BUFFERS, VisibilityBuffer,
 };
-use crate::{LightStats, RenderStats, ShadowStats};
 
 mod camera;
 mod display;

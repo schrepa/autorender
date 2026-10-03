@@ -88,7 +88,7 @@ pub fn create_demo(count: u32) -> Engine {
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use super::*;
-    use engine::browser::{BrowserApp, BrowserStats};
+    use engine::browser::BrowserApp;
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
@@ -138,8 +138,9 @@ mod browser {
             )
         }
 
-        pub fn stats(&self) -> BrowserStats {
-            self.app.stats().into()
+        /// The last frame's statistics as a JSON object.
+        pub fn stats(&self) -> String {
+            self.app.stats_json()
         }
 
         pub fn set_count(&mut self, count: u32) {

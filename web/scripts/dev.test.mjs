@@ -31,7 +31,7 @@ function setup(t, options = {}) {
   let paused = options.paused ?? true;
   let freed = false;
   let accessesAfterFree = 0;
-  let statsFreed = 0;
+  let statsRead = 0;
   let polls = 0;
   let frame = 7;
   let tick = 12;
@@ -66,7 +66,8 @@ function setup(t, options = {}) {
     stats() {
       accessed("stats");
       calls.push({ stats: true });
-      return {
+      statsRead++;
+      return JSON.stringify({
         instances: 26, draw_calls: 4, resident_meshes: 4, resident_mesh_bytes: 1024,
         resident_textures: 1, resident_texture_bytes: 16, texture_upload_bytes: 0,
         invalid_transforms: 0,
@@ -75,18 +76,17 @@ function setup(t, options = {}) {
         upload_bytes: 2144, fixed_steps: 1, dropped_seconds: 0,
         mesh_upload_bytes: 0, simulation_ms: 0, extraction_ms: 0.1, render_ms: 0.2,
         shadows_enabled: true, shadow_draws: 2, shadow_kept_redraw: 0,
-        shadow_near_casters: undefined, shadow_moving_casters: 5, shadow_kept_casters: 0,
+        shadow_near_casters: null, shadow_moving_casters: 5, shadow_kept_casters: 0,
         ambient_occlusion: true, bloom: false,
-        local_lights: 3, dropped_lights: 0, lights_visible: undefined, light_cluster_overflow: 0,
-        sun_shafts: false, reflections: true, refraction: false, visibility_buffer: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, impostors: 0, dropped_impostors: 0, occluded_instances: undefined, subpixel_instances: undefined,
-        lod0_instances: undefined, lod1_instances: undefined, lod2_instances: undefined, impostor_instances: undefined, triangles: undefined,
+        local_lights: 3, dropped_lights: 0, lights_visible: null, light_cluster_overflow: 0,
+        sun_shafts: false, reflections: true, refraction: false, visibility_buffer: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, impostors: 0, dropped_impostors: 0, occluded_instances: null, subpixel_instances: null,
+        lod0_instances: null, lod1_instances: null, lod2_instances: null, impostor_instances: null, triangles: null,
         reflection_probes: 3, reflection_probe_faces: 1, dropped_reflection_probes: 0,
         pipelines: 12, pipelines_created: 0, pipelines_compiling: false,
         virtual_clusters: 0, virtual_triangles: 0, virtual_shadow_clusters: 0, virtual_shadow_triangles: 0, virtual_occluded_clusters: 0, dropped_virtual: 0,
         virtual_resident_pages: 0, virtual_loading_pages: 0, virtual_missing_pages: 0, dropped_virtual_pages: 0,
-        render_passes: "presentation shadow_select shadow_maps opaque decals effects composite", culled_passes: "",
-        free() { statsFreed++; },
-      };
+        render_passes: ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"], culled_passes: [],
+      });
     },
     frame() { assert.fail("development controls must not call the ordinary frame loop"); },
     suspend() { assert.fail("development adapter must use host pause transitions"); },
@@ -114,7 +114,7 @@ function setup(t, options = {}) {
   });
   return {
     api, host, game, lifecycle, dispose, calls, busy,
-    get counters() { return { frame, tick, revision, accessesAfterFree, statsFreed, polls }; },
+    get counters() { return { frame, tick, revision, accessesAfterFree, statsRead, polls }; },
     get pendingFrames() { return frames.size; },
     flushFrame(delta = 16) {
       const ready = [...frames.values()];
@@ -135,7 +135,7 @@ test("running sessions reject mutation and capture commands before forwarding th
   }
   assert.ok(session.calls.every(call => call.command?.op === "status"));
   assert.deepEqual(session.counters, {
-    frame: 7, tick: 12, revision: "4", accessesAfterFree: 0, statsFreed: 0, polls: 0,
+    frame: 7, tick: 12, revision: "4", accessesAfterFree: 0, statsRead: 0, polls: 0,
   });
   assert.deepEqual(session.busy, Array.from({ length: 10 }, () => [true, false]).flat());
 });
@@ -174,7 +174,7 @@ test("awaited source reload excludes competing commands and renders the accepted
   assert.deepEqual(session.busy, [true, false]);
   assert.equal(session.counters.frame, 7);
   assert.equal(session.counters.tick, 12);
-  assert.equal(session.counters.statsFreed, 1);
+  assert.equal(session.counters.statsRead, 1);
 });
 
 test("disposal during source fetch never invokes the freed runtime", async t => {
@@ -204,7 +204,7 @@ test("capture renders current state then waits for two animation frames without 
   session.flushFrame();
   await Promise.resolve();
   assert.equal(settled, false);
-  assert.equal(session.counters.statsFreed, 0);
+  assert.equal(session.counters.statsRead, 0);
   session.flushFrame();
   const reply = await capture;
   assert.equal(reply.ok, true);
@@ -227,7 +227,7 @@ test("capture renders current state then waits for two animation frames without 
   assert.equal(reply.result.rendering.particles, 40);
   assert.deepEqual(reply.result.rendering.render_passes, ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"]);
   assert.deepEqual(reply.result.rendering.culled_passes, []);
-  assert.equal(session.counters.statsFreed, 1);
+  assert.equal(session.counters.statsRead, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);
 });
@@ -245,7 +245,7 @@ test("capture disposal cancels its wait and never reads statistics from a freed 
   assert.equal(reply.ok, false);
   assert.equal(reply.error.code, "session_closed");
   assert.equal(session.counters.accessesAfterFree, 0);
-  assert.equal(session.counters.statsFreed, 0);
+  assert.equal(session.counters.statsRead, 0);
   assert.equal(session.counters.polls, 0);
   assert.equal(session.pendingFrames, 0);
 });
@@ -273,7 +273,7 @@ test("rejected fractional capture does not wait, read statistics, or advance clo
   const result = await session.api.request({ op: "capture", alpha: 2 });
   assert.equal(result.error.code, "invalid_presentation_alpha");
   assert.equal(session.pendingFrames, 0);
-  assert.equal(session.counters.statsFreed, 0);
+  assert.equal(session.counters.statsRead, 0);
   assert.equal(session.counters.tick, 12);
 });
 
@@ -304,7 +304,7 @@ test("request shape, byte budget, and reload revisions reject before mutation", 
     assert.equal(reply.error.code, "invalid_revision");
   }
   assert.ok(session.calls.every(call => call.command?.op === "status"));
-  assert.equal(session.counters.statsFreed, 0);
+  assert.equal(session.counters.statsRead, 0);
 });
 
 test("unserializable command values produce structured errors", async t => {
@@ -334,7 +334,7 @@ test("statistics ownership is released when a host poll callback fails", async t
   const reply = await session.api.request({ op: "status" });
   assert.equal(reply.ok, false);
   assert.equal(reply.error.code, "browser_command_failed");
-  assert.equal(session.counters.statsFreed, 1);
+  assert.equal(session.counters.statsRead, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);
 });
@@ -373,7 +373,7 @@ test("benchmark warms separately, samples exact fixed ticks, and excludes compet
   assert.deepEqual(result.rendering.ranges.culled_instances, { min:0,max:0 });
   assert.equal(session.calls.filter(call => call.command?.op === "step").length, 5);
   assert.equal(session.calls.filter(call => call.command?.op === "input").length, 1);
-  assert.equal(session.counters.statsFreed, 6);
+  assert.equal(session.counters.statsRead, 6);
   assert.equal(session.pendingFrames, 0);
 });
 

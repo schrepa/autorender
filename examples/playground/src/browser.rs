@@ -1,5 +1,5 @@
 use super::*;
-use engine::browser::{BrowserApp, BrowserStats, SceneFileSet};
+use engine::browser::{BrowserApp, SceneFileSet};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -78,8 +78,10 @@ impl PlaygroundGame {
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
         self.app.set_temporal_antialiasing(enabled);
     }
-    pub fn stats(&self) -> BrowserStats {
-        self.app.stats().into()
+
+    /// The last frame's statistics as a JSON object.
+    pub fn stats(&self) -> String {
+        self.app.stats_json()
     }
     pub fn suspend(&mut self) {
         self.app.suspend();

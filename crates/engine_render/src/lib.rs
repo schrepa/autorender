@@ -3,9 +3,14 @@
 //! The browser renderer owns one canvas and all its GPU resources. CPU upload
 //! records and WGSL live together; ordinary gameplay never handles GPU objects.
 
+use serde::Serialize;
+
 /// Work submitted by one frame, plus GPU asset residency after retirement.
 /// Skipped frames return zero work counters and current residency counters.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+///
+/// This is the one definition of the renderer's statistics: hosts and agents
+/// read them as the JSON object it serializes to, under these names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RenderStats {
     /// Indexed draw commands of the camera pass; `shadows` counts the
     /// shadow maps' separately.
@@ -20,6 +25,7 @@ pub struct RenderStats {
     pub instances: u32,
     /// GPU-culled frames only: the pre-budget visible count read back from the
     /// latest completed frame, a few frames old; `None` before the first one.
+    #[serde(skip)]
     pub gpu_visible: Option<u32>,
     /// GPU-culled frames with occlusion culling (decision 040): visible
     /// instances the occlusion test left undrawn, read back with
@@ -32,7 +38,10 @@ pub struct RenderStats {
     /// GPU-culled frames with levels of detail (decision 047): instances
     /// drawn as their mesh, its two simplifications and impostors, read
     /// back with `gpu_visible`; `None` otherwise.
-    pub lod_instances: Option<[u32; 4]>,
+    pub lod0_instances: Option<u32>,
+    pub lod1_instances: Option<u32>,
+    pub lod2_instances: Option<u32>,
+    pub impostor_instances: Option<u32>,
     /// Triangles the camera's mesh draws submitted, at their levels of
     /// detail and impostors' two each: exact on CPU-prepared frames, read
     /// back with `gpu_visible` on GPU-culled ones. Virtual geometry counts
@@ -52,14 +61,33 @@ pub struct RenderStats {
     pub resident_texture_bytes: u64,
     /// Whether the frame was submitted. A suspended, occluded or recovering
     /// surface skips drawing and uploads, which later frames then catch up.
+    #[serde(skip)]
     pub submitted: bool,
-    /// This frame's sun shadow work (decision 020); `None` without shadows.
-    pub shadows: Option<ShadowStats>,
+    /// Whether the sun cast shadows (decision 020), the indexed draws into
+    /// the shadow maps (beside the camera pass's `draw_calls`), and the kept
+    /// map's redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole map
+    /// (every still caster).
+    pub shadows_enabled: bool,
+    pub shadow_draws: u32,
+    pub shadow_kept_redraw: u32,
+    /// Casters the near, moving and kept maps drew, read back a few frames
+    /// late; `None` before the first read-back. In a settled scene the moving
+    /// count is the moving renderables; the kept count covers redraws only.
+    pub shadow_near_casters: Option<u32>,
+    pub shadow_moving_casters: Option<u32>,
+    pub shadow_kept_casters: Option<u32>,
     /// Whether this frame applied ambient occlusion and bloom (decision 021).
     pub ambient_occlusion: bool,
     pub bloom: bool,
-    /// This frame's local lights (decision 023); `None` when it shaded none.
-    pub lights: Option<LightStats>,
+    /// Local lights the frame shaded within the budget (decision 023), and
+    /// usable lights beyond it or without a valid pose.
+    pub local_lights: u32,
+    pub dropped_lights: u32,
+    /// Lights that reached a view cluster, and cluster entries lost to full
+    /// cluster lists, read back a few frames late; `None` before the first
+    /// read-back or without lights.
+    pub lights_visible: Option<u32>,
+    pub light_cluster_overflow: Option<u32>,
     /// Whether this frame applied sun shafts (decision 024) and screen-space
     /// reflections (decision 025).
     pub sun_shafts: bool,
@@ -112,38 +140,15 @@ pub struct RenderStats {
     pub virtual_loading_pages: u32,
     pub virtual_missing_pages: u32,
     pub dropped_virtual_pages: u32,
-    /// The passes this frame ran and those its render graph culled
-    /// (decision 050), as masks [`render_pass_names`] reads.
+    /// The passes this frame ran, in order, and those its render graph culled
+    /// (decision 050), named in the JSON.
+    #[serde(
+        rename = "render_passes",
+        serialize_with = "render_graph::serialize_passes"
+    )]
     pub passes: u32,
+    #[serde(serialize_with = "render_graph::serialize_passes")]
     pub culled_passes: u32,
-}
-
-/// Local lights of one frame (decision 023).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LightStats {
-    /// Lights the frame shaded, within the budget.
-    pub lights: u32,
-    /// Usable lights beyond the budget, or without a valid pose.
-    pub dropped: u32,
-    /// Lights that reached a view cluster, and cluster entries lost to full
-    /// cluster lists, read back a few frames late; `None` before the first
-    /// read-back.
-    pub visible: Option<u32>,
-    pub overflow: Option<u32>,
-}
-
-/// Sun shadow work of one frame (decision 020).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ShadowStats {
-    /// Indexed draws into the shadow maps, in addition to `draw_calls`.
-    pub draws: u32,
-    /// Kept-map redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole
-    /// map (every still caster).
-    pub kept_redraw: u8,
-    /// Casters the near, moving and kept maps drew, read back a few frames
-    /// late; `None` before the first read-back. In a settled scene the moving
-    /// count is the moving renderables; the kept count covers redraws only.
-    pub casters: Option<[u32; 3]>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -169,7 +174,6 @@ mod particles;
 mod pipelines;
 #[cfg(any(target_arch = "wasm32", test))]
 mod probes;
-#[cfg(any(target_arch = "wasm32", test))]
 mod render_graph;
 #[cfg(any(target_arch = "wasm32", test))]
 mod retained_uploads;
@@ -210,5 +214,3 @@ mod virtual_geometry;
 mod visibility;
 #[cfg(target_arch = "wasm32")]
 pub use browser::Renderer;
-#[cfg(target_arch = "wasm32")]
-pub use render_graph::pass_names as render_pass_names;
