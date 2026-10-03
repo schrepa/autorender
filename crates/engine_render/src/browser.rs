@@ -3613,7 +3613,7 @@ impl Renderer {
                         continue;
                     }
                     let (group, variant) = self.materials.binding(batch.material);
-                    let variant = variant.with_extended(mesh.extended);
+                    let variant = variant.with_extended(mesh.extended).uber();
                     if bound != Some(variant) {
                         pass.set_pipeline(&self.variant_pipelines[&(kind, variant)]);
                         bound = Some(variant);
@@ -4388,7 +4388,8 @@ impl Renderer {
     }
 
     /// The reflection probe captures' pipelines (decision 043): the sky's,
-    /// and `kind`'s for the variants of this frame's still opaque meshes.
+    /// and `kind`'s uber variants (decision 049) for this frame's still
+    /// opaque meshes.
     fn ensure_probe_pipelines(&mut self, kind: PassKind) {
         self.ensure_sky(SKY_PROBE);
         let mut missing = Vec::new();
@@ -4400,7 +4401,7 @@ impl Renderer {
                 continue;
             }
             let (_, variant) = self.materials.binding(batch.material);
-            let variant = variant.with_extended(mesh.extended);
+            let variant = variant.with_extended(mesh.extended).uber();
             if !self.variant_pipelines.contains_key(&(kind, variant)) && !missing.contains(&variant)
             {
                 missing.push(variant);
