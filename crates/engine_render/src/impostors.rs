@@ -119,6 +119,7 @@ mod gpu {
     use crate::gpu_data::Variant;
     use crate::mesh_arena::MeshDraw;
     use crate::mipmaps::MipGenerator;
+    use crate::targets::Targets;
 
     /// Texels across a layer's first level.
     const IMPOSTOR_SIZE: u32 = IMPOSTOR_FRAMES * IMPOSTOR_TEXELS;
@@ -173,16 +174,6 @@ mod gpu {
         pub material: Option<Material>,
     }
 
-    /// The impostor draw pipelines' targets: the canvas or the screen
-    /// effects' targets, temporal targets, and whether they shade local
-    /// lights.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub(crate) enum ImpostorTargets {
-        Canvas,
-        Post,
-        Temporal,
-    }
-
     pub(crate) struct ImpostorAtlas {
         arrays: Option<Arrays>,
         targets: Option<BakeTargets>,
@@ -192,7 +183,7 @@ mod gpu {
         bake_pipeline_layout: wgpu::PipelineLayout,
         bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
         draw_layout: wgpu::BindGroupLayout,
-        draw_pipelines: HashMap<(ImpostorTargets, bool), wgpu::RenderPipeline>,
+        draw_pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
         sampler: wgpu::Sampler,
         // One record per plan batch as last uploaded, and the group binding
         // them with the arrays, keyed by the generations of both.
@@ -648,7 +639,7 @@ mod gpu {
         /// once inserted.
         pub(crate) fn pipeline(
             &self,
-            targets: ImpostorTargets,
+            targets: Targets,
             lit: bool,
         ) -> Option<&wgpu::RenderPipeline> {
             self.draw_pipelines.get(&(targets, lit))
@@ -656,7 +647,7 @@ mod gpu {
 
         pub(crate) fn insert_pipeline(
             &mut self,
-            targets: ImpostorTargets,
+            targets: Targets,
             lit: bool,
             pipeline: wgpu::RenderPipeline,
         ) {
@@ -665,7 +656,7 @@ mod gpu {
 
         /// Drops the draw pipelines of `targets`, built over layouts of a
         /// pass that is gone.
-        pub(crate) fn forget_pipelines(&mut self, targets: ImpostorTargets) {
+        pub(crate) fn forget_pipelines(&mut self, targets: Targets) {
             self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
         }
     }
@@ -785,36 +776,23 @@ mod gpu {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        targets: ImpostorTargets,
+        targets: Targets,
         lit: bool,
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        let (vertex, fragment) = match (targets, lit) {
-            (ImpostorTargets::Canvas, false) => ("vs_impostor", "fs_impostor"),
-            (ImpostorTargets::Canvas, true) => ("vs_impostor", "fs_impostor_lit"),
-            (ImpostorTargets::Post, false) => ("vs_impostor", "fs_impostor_post"),
-            (ImpostorTargets::Post, true) => ("vs_impostor", "fs_impostor_post_lit"),
-            (ImpostorTargets::Temporal, false) => ("vs_impostor_temporal", "fs_impostor_temporal"),
-            (ImpostorTargets::Temporal, true) => {
-                ("vs_impostor_temporal", "fs_impostor_temporal_lit")
-            }
+        let vertex = if targets == Targets::Temporal {
+            "vs_impostor_temporal"
+        } else {
+            "vs_impostor"
         };
-        let color_targets: Vec<Option<wgpu::ColorTargetState>> = match targets {
-            ImpostorTargets::Canvas => vec![Some(canvas.into())],
-            ImpostorTargets::Post => vec![
-                Some(crate::post::SCENE_FORMAT.into()),
-                Some(crate::post::GLOW_FORMAT.into()),
-                Some(crate::post::SURFACE_FORMAT.into()),
-            ],
-            ImpostorTargets::Temporal => vec![
-                Some(crate::post::SCENE_FORMAT.into()),
-                Some(crate::temporal::MOTION_FORMAT.into()),
-                Some(crate::post::GLOW_FORMAT.into()),
-                Some(crate::post::SURFACE_FORMAT.into()),
-            ],
-        };
-        let constants = [("SURFACE_IS_SRGB", if canvas.is_srgb() { 1.0 } else { 0.0 })];
+        let fragment = format!(
+            "fs_impostor{}{}",
+            targets.entry_suffix(),
+            if lit { "_lit" } else { "" }
+        );
+        let color_targets = targets.color_targets(canvas);
+        let constants = targets.constants(canvas);
         crate::pipelines::render(
             device,
             &wgpu::RenderPipelineDescriptor {
@@ -846,13 +824,9 @@ mod gpu {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
-                    entry_point: Some(fragment),
+                    entry_point: Some(&fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: if targets == ImpostorTargets::Canvas {
-                            &constants
-                        } else {
-                            &[]
-                        },
+                        constants: &constants,
                         ..Default::default()
                     },
                     targets: &color_targets,
@@ -865,9 +839,7 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::{
-    BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorTargets, draw_pipeline,
-};
+pub(crate) use gpu::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, draw_pipeline};
 
 #[cfg(test)]
 mod tests {

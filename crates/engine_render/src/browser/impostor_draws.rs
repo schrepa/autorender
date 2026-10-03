@@ -100,26 +100,9 @@ impl Renderer {
     /// Uploads this frame's impostor records (decision 048) and creates the
     /// pipeline drawing them in the opaque pass of `kind`; returns its key,
     /// `None` when impostors cannot draw.
-    pub(super) fn prepare_impostor_draws(
-        &mut self,
-        kind: PassKind,
-    ) -> Option<(ImpostorTargets, bool)> {
-        let (targets, lit) = match kind {
-            PassKind::Opaque {
-                post,
-                lit,
-                affine: true,
-            } => (
-                if post {
-                    ImpostorTargets::Post
-                } else {
-                    ImpostorTargets::Canvas
-                },
-                lit,
-            ),
-            PassKind::Temporal { lit } => (ImpostorTargets::Temporal, lit),
-            _ => return None,
-        };
+    pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {
+        let targets = kind.targets().filter(|_| kind.affine)?;
+        let lit = kind.lit;
         if !self
             .impostors
             .atlas
@@ -128,7 +111,7 @@ impl Renderer {
             return None;
         }
         if self.impostors.atlas.pipeline(targets, lit).is_none() {
-            let pose_layout = if targets == ImpostorTargets::Temporal {
+            let pose_layout = if targets == Targets::Temporal {
                 self.temporal.as_ref()?.pose_layout()
             } else {
                 &self.instances.pose_layout

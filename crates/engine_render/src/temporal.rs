@@ -11,9 +11,9 @@ use engine_core::{RenderFrame, glam::Mat4};
 
 use crate::cached::Cached;
 use crate::gpu_data::{
-    CameraUniform, ResolveUniform, TEMPORAL_SHADER, Variant, jitter_clip, jitter_offset, jittered,
+    CameraUniform, ResolveUniform, TEMPORAL_SHADER, jitter_clip, jitter_offset, jittered,
 };
-use crate::post::{GLOW_FORMAT, PostPass, SCENE_FORMAT, SURFACE_FORMAT};
+use crate::post::PostPass;
 
 pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -75,7 +75,6 @@ pub(crate) struct TemporalPass {
     // temporal frame (decision 023).
     mesh_layout: wgpu::PipelineLayout,
     lit_layout: Option<wgpu::PipelineLayout>,
-    sky_pipeline: wgpu::RenderPipeline,
     pose_layout: wgpu::BindGroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_layout: wgpu::BindGroupLayout,
@@ -91,12 +90,11 @@ pub(crate) struct TemporalPass {
 }
 
 impl TemporalPass {
-    /// Creates the sky and resolve pipelines, the mesh pipeline layout and
-    /// fixed resources; targets follow the surface. `mesh_shader` is
-    /// `meshes.wgsl`; mesh pipelines are the renderer's variants.
+    /// Creates the resolve pipeline, the mesh pipeline layout and fixed
+    /// resources; targets follow the surface. Mesh and sky pipelines are the
+    /// renderer's.
     pub(crate) fn new(
         device: &wgpu::Device,
-        mesh_shader: &wgpu::ShaderModule,
         camera_layout: &wgpu::BindGroupLayout,
         texture_layout: &wgpu::BindGroupLayout,
         surface_format: wgpu::TextureFormat,
@@ -132,19 +130,6 @@ impl TemporalPass {
             ],
             immediate_size: 0,
         });
-        let sky_pipeline = crate::browser::sky_pipeline(
-            device,
-            mesh_shader,
-            camera_layout,
-            "fs_sky_temporal",
-            &[
-                Some(SCENE_FORMAT.into()),
-                Some(MOTION_FORMAT.into()),
-                Some(GLOW_FORMAT.into()),
-                Some(SURFACE_FORMAT.into()),
-            ],
-            None,
-        );
         let texture_entry = |binding, filterable| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -237,7 +222,6 @@ impl TemporalPass {
         Self {
             mesh_layout,
             lit_layout: None,
-            sky_pipeline,
             pose_layout,
             resolve_pipeline,
             resolve_layout,
@@ -407,46 +391,22 @@ impl TemporalPass {
         self.lit_layout = Some(layout);
     }
 
-    /// The mesh pipeline, lit or not, shading materials of `variant`
-    /// (decision 031); lit ones after [`Self::ensure_lit_layout`].
-    pub(crate) fn variant(
-        &self,
-        device: &wgpu::Device,
-        mesh_shader: &wgpu::ShaderModule,
-        lit: bool,
-        variant: Variant,
-        vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
-        depth_format: wgpu::TextureFormat,
-    ) -> wgpu::RenderPipeline {
-        let (layout, fragment) = if lit {
-            (
-                self.lit_layout
-                    .as_ref()
-                    .expect("created with the first lit frame"),
-                "fs_temporal_lit",
-            )
+    /// The layout of temporal frames' mesh pipelines, lit or not; lit ones
+    /// after [`Self::ensure_lit_layout`].
+    pub(crate) fn mesh_layout(&self, lit: bool) -> &wgpu::PipelineLayout {
+        if lit {
+            self.lit_layout
+                .as_ref()
+                .expect("created with the first lit frame")
         } else {
-            (&self.mesh_layout, "fs_temporal")
-        };
-        mesh_pipeline(
-            device,
-            mesh_shader,
-            layout,
-            vertex_layouts,
-            depth_format,
-            fragment,
-            variant,
-        )
+            &self.mesh_layout
+        }
     }
 
     /// The pose group layout of temporal frames: poses, colors, previous
     /// poses and joint palettes.
     pub(crate) fn pose_layout(&self) -> &wgpu::BindGroupLayout {
         &self.pose_layout
-    }
-
-    pub(crate) fn sky_pipeline(&self) -> &wgpu::RenderPipeline {
-        &self.sky_pipeline
     }
 
     /// The motion target of the opaque pass.
@@ -579,83 +539,4 @@ impl TemporalPass {
             groups: Cached::default(),
         }
     }
-}
-
-/// A temporal mesh pipeline over `layout`: jittered retained slots drawn
-/// into the scene, motion and glow targets with fragment entry `fragment`,
-/// shading materials of `variant` (decision 031).
-fn mesh_pipeline(
-    device: &wgpu::Device,
-    mesh_shader: &wgpu::ShaderModule,
-    layout: &wgpu::PipelineLayout,
-    vertex_layouts: &[Option<wgpu::VertexBufferLayout<'_>>],
-    depth_format: wgpu::TextureFormat,
-    fragment: &str,
-    variant: Variant,
-) -> wgpu::RenderPipeline {
-    let constants = variant.constants();
-    // Extended meshes (decision 034) read a third vertex buffer through
-    // their own entry points; skinned ones (decision 036) a fourth.
-    let suffix = if variant.extended() { "_extended" } else { "" };
-    let vertex_entry = if variant.skinned() {
-        "vs_affine_temporal_skinned".to_owned()
-    } else {
-        format!("vs_affine_temporal{suffix}")
-    };
-    let fragment_entry = format!("{fragment}{suffix}");
-    let mut buffers = vertex_layouts.to_vec();
-    if variant.extended() {
-        buffers.push(crate::browser::extra_layout());
-    }
-    if variant.skinned() {
-        buffers.push(crate::browser::skin_layout());
-    }
-    // Entry points and variant bits name the pipeline in captures.
-    let label = format!(
-        "engine/temporal-mesh {vertex_entry} {fragment_entry} {:#06x}",
-        variant.bits()
-    );
-    crate::pipelines::render(
-        device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some(&label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: mesh_shader,
-                entry_point: Some(&vertex_entry),
-                compilation_options: Default::default(),
-                buffers: &buffers,
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: Some(true),
-                // Reversed depth (decision 042).
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: mesh_shader,
-                entry_point: Some(&fragment_entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
-                targets: &[
-                    Some(SCENE_FORMAT.into()),
-                    Some(MOTION_FORMAT.into()),
-                    Some(GLOW_FORMAT.into()),
-                    Some(SURFACE_FORMAT.into()),
-                ],
-            }),
-            multiview_mask: None,
-            cache: None,
-        },
-    )
 }
