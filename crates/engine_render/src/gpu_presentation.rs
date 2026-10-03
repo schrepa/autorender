@@ -59,7 +59,11 @@ impl<'a> StageStamps<'a> {
     }
 }
 
+// Candidates per workgroup of the per-candidate passes, and of the
+// compaction passes (`GROUP` in presentation.wgsl), whose workgroup arrays
+// are kept small for Firefox's compile times (decision 049).
 const GROUP: u32 = 256;
+const SCAN_GROUP: u32 = 64;
 const PARENT_GROUP: u32 = 64;
 const JOINT_GROUP: u32 = 64;
 const SKINNED_GROUP: u32 = 64;
@@ -668,7 +672,7 @@ impl GpuPresentationPass {
         if candidates > self.candidate_capacity {
             self.candidate_capacity = grow(candidates);
             let capacity = self.candidate_capacity as u64;
-            let groups = capacity.div_ceil(u64::from(GROUP));
+            let groups = capacity.div_ceil(u64::from(SCAN_GROUP));
             self.candidates = storage(
                 device,
                 "engine/presentation-candidates",
@@ -1563,7 +1567,7 @@ impl GpuPresentationPass {
             candidates: self.candidate_count,
             budget: frame.instance_budget().min(u32::MAX as usize) as u32,
             culling: u32::from(culling),
-            groups: self.candidate_count.div_ceil(GROUP),
+            groups: self.candidate_count.div_ceil(SCAN_GROUP),
             batches: self.batch_count,
             node_capacity: self.node_capacity as u32,
             blend: u32::from(self.blend),
@@ -1677,7 +1681,7 @@ impl GpuPresentationPass {
                 }
                 pass.set_pipeline(&self.pipelines.sum_groups);
                 pass.set_bind_group(0, &groups.sum_groups, &[]);
-                pass.dispatch_workgroups(workgroups, 1, 1);
+                pass.dispatch_workgroups(self.candidate_count.div_ceil(SCAN_GROUP), 1, 1);
             }
             SCAN => {
                 pass.set_pipeline(&self.pipelines.scan_groups);
@@ -1690,7 +1694,7 @@ impl GpuPresentationPass {
             _ => {
                 pass.set_pipeline(&self.pipelines.scatter);
                 pass.set_bind_group(0, &groups.scatter, &[]);
-                pass.dispatch_workgroups(self.candidate_count.div_ceil(GROUP), 1, 1);
+                pass.dispatch_workgroups(self.candidate_count.div_ceil(SCAN_GROUP), 1, 1);
             }
         };
         let stages = [
@@ -1748,7 +1752,7 @@ impl GpuPresentationPass {
     // The compaction's totals per level of detail, after the per-level
     // group sums.
     fn level_offset(&self) -> u64 {
-        u64::from(self.candidate_count + 4 * self.candidate_count.div_ceil(GROUP)) * 4
+        u64::from(self.candidate_count + 4 * self.candidate_count.div_ceil(SCAN_GROUP)) * 4
     }
 
     fn read_back_totals(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
@@ -1827,9 +1831,10 @@ impl GpuPresentationPass {
             );
             pass.dispatch_workgroups(workgroups, 1, 1);
             // Phase two's compaction over its own mask and outputs.
+            let scan_workgroups = self.candidate_count.div_ceil(SCAN_GROUP);
             pass.set_pipeline(&self.pipelines.sum_groups);
             pass.set_bind_group(0, &groups.sum_groups2, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.dispatch_workgroups(scan_workgroups, 1, 1);
             pass.set_pipeline(&self.pipelines.scan_groups);
             pass.set_bind_group(0, &groups.scan_groups2, &[]);
             pass.dispatch_workgroups(1, 1, 1);
@@ -1838,7 +1843,7 @@ impl GpuPresentationPass {
             pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
             pass.set_pipeline(&self.pipelines.scatter);
             pass.set_bind_group(0, &groups.scatter2, &[]);
-            pass.dispatch_workgroups(workgroups, 1, 1);
+            pass.dispatch_workgroups(scan_workgroups, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 4, 4);
         encoder.copy_buffer_to_buffer(&self.scan, self.level_offset(), &self.totals, 32, 16);
@@ -2042,9 +2047,10 @@ impl GpuPresentationPass {
         pass.set_pipeline(&self.pipelines.probe_cull);
         pass.set_bind_group(0, &groups.cull, &[]);
         pass.dispatch_workgroups(workgroups, 1, 1);
+        let scan_workgroups = self.candidate_count.div_ceil(SCAN_GROUP);
         pass.set_pipeline(&self.pipelines.sum_groups);
         pass.set_bind_group(0, &groups.sum_groups, &[]);
-        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.dispatch_workgroups(scan_workgroups, 1, 1);
         pass.set_pipeline(&self.pipelines.scan_groups);
         pass.set_bind_group(0, &groups.scan_groups, &[]);
         pass.dispatch_workgroups(1, 1, 1);
@@ -2053,7 +2059,7 @@ impl GpuPresentationPass {
         pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
         pass.set_pipeline(&self.pipelines.scatter);
         pass.set_bind_group(0, &groups.scatter, &[]);
-        pass.dispatch_workgroups(workgroups, 1, 1);
+        pass.dispatch_workgroups(scan_workgroups, 1, 1);
         true
     }
 
