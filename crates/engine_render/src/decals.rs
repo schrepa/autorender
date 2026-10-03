@@ -361,7 +361,7 @@ mod gpu {
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
                     module: shader,
-                    entry_point: Some("vs_decal"),
+                    entry_point: Some(crate::entries::DECAL_VERTEX),
                     compilation_options: Default::default(),
                     buffers: &[],
                 },
@@ -375,7 +375,7 @@ mod gpu {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
-                    entry_point: Some(if lit { "fs_decal_lit" } else { "fs_decal" }),
+                    entry_point: Some(crate::entries::decal_fragment(lit)),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()

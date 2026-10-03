@@ -13,6 +13,7 @@ use crate::batches::{BatchPlan, DrawBatch};
 use crate::cached::Cached;
 use crate::decals::DecalPass;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
+use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
     CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LOD_LEVELS, LightingUniform,
@@ -137,59 +138,6 @@ fn lod_chain(source: &engine_core::Mesh) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
         .map(|level| (level.first_index, level.index_count, level.error))
         .collect();
     (lods.indices, levels)
-}
-
-/// What a mesh pipeline draws: the opaque pass into the frame's targets,
-/// transparent surfaces (decision 026) or a reflection probe face (decision
-/// 043: linear light, drawn mirrored). `lit` passes shade local lights
-/// (decision 023) and `affine` ones draw retained slots; temporal frames and
-/// probe faces always do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct PassKind {
-    pass: MeshPass,
-    lit: bool,
-    affine: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum MeshPass {
-    Opaque(Targets),
-    Transparent,
-    Probe,
-}
-
-impl PassKind {
-    fn opaque(targets: Targets, lit: bool, affine: bool) -> Self {
-        Self {
-            pass: MeshPass::Opaque(targets),
-            lit,
-            affine: affine || targets == Targets::Temporal,
-        }
-    }
-
-    fn transparent(lit: bool, affine: bool) -> Self {
-        Self {
-            pass: MeshPass::Transparent,
-            lit,
-            affine,
-        }
-    }
-
-    fn probe(lit: bool) -> Self {
-        Self {
-            pass: MeshPass::Probe,
-            lit,
-            affine: true,
-        }
-    }
-
-    /// The targets of an opaque pass; `None` for the others.
-    fn targets(self) -> Option<Targets> {
-        match self.pass {
-            MeshPass::Opaque(targets) => Some(targets),
-            MeshPass::Transparent | MeshPass::Probe => None,
-        }
-    }
 }
 
 /// Generations of the shadow maps, environment maps and reflection probe

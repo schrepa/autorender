@@ -3,6 +3,7 @@
 //! drawing the selected clusters.
 
 use super::*;
+use crate::entries;
 
 /// Virtual geometry's draws (decision 044): the arena and cluster
 /// selection; pipelines per pass kind and material variant over their
@@ -401,7 +402,7 @@ impl Renderer {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &self.mesh_shader,
-                    entry_point: Some(&fragment),
+                    entry_point: Some(fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()
@@ -427,28 +428,18 @@ impl Renderer {
             .targets()
             .expect("virtual geometry draws in opaque passes");
         let canvas = self.display.format();
-        let lit = if kind.lit { "_lit" } else { "" };
-        let vertex = if targets == Targets::Temporal {
-            "vs_virtual_temporal"
-        } else {
-            "vs_virtual"
-        };
-        let fragment = if resolve {
-            format!("fs_resolve{}{lit}", targets.entry_suffix())
-        } else {
-            format!(
-                "fs_{}{lit}",
-                match targets {
-                    Targets::Canvas => "main",
-                    Targets::Post => "post",
-                    Targets::Temporal => "temporal",
-                }
+        let (vertex, fragment) = if resolve {
+            (
+                entries::RESOLVE_VERTEX,
+                entries::resolve_fragment(targets, kind.lit),
             )
+        } else {
+            (entries::virtual_vertex(targets), kind.fragment_entry(false))
         };
         let constants = targets.constants(canvas);
         let targets = targets.color_targets(canvas);
         VirtualStages {
-            vertex: if resolve { "vs_resolve" } else { vertex },
+            vertex,
             fragment,
             targets,
             constants: constants.into_iter().chain(variant.constants()).collect(),
@@ -460,7 +451,7 @@ impl Renderer {
 /// (decisions 044 and 045).
 pub(super) struct VirtualStages {
     pub(super) vertex: &'static str,
-    pub(super) fragment: String,
+    pub(super) fragment: &'static str,
     pub(super) targets: Vec<Option<wgpu::ColorTargetState>>,
     pub(super) constants: Vec<(&'static str, f64)>,
 }

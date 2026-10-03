@@ -2,6 +2,7 @@
 //! the pipelines and groups of its pass and resolves.
 
 use super::*;
+use crate::entries;
 
 /// What the visibility buffer's groups bind: the pose buffers' generation
 /// and whether alternate poses exist, and the generations of the virtual
@@ -159,7 +160,7 @@ impl Renderer {
                         layout: Some(&layout),
                         vertex: wgpu::VertexState {
                             module: &self.mesh_shader,
-                            entry_point: Some("vs_visibility"),
+                            entry_point: Some(entries::VISIBILITY_VERTEX),
                             compilation_options: Default::default(),
                             buffers: &[Some(wgpu::VertexBufferLayout {
                                 array_stride: crate::virtual_geometry::VISIBLE_BYTES,
@@ -182,7 +183,7 @@ impl Renderer {
                         multisample: wgpu::MultisampleState::default(),
                         fragment: Some(wgpu::FragmentState {
                             module: &self.mesh_shader,
-                            entry_point: Some("fs_visibility"),
+                            entry_point: Some(entries::VISIBILITY_FRAGMENT),
                             compilation_options: Default::default(),
                             targets: &[Some(ID_FORMAT.into())],
                         }),
@@ -275,7 +276,7 @@ impl Renderer {
                 multisample: wgpu::MultisampleState::default(),
                 fragment: Some(wgpu::FragmentState {
                     module: &self.mesh_shader,
-                    entry_point: Some(&fragment),
+                    entry_point: Some(fragment),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &constants,
                         ..Default::default()

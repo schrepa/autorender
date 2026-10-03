@@ -38,15 +38,4 @@ impl Targets {
             Self::Post | Self::Temporal => Vec::new(),
         }
     }
-
-    /// The suffix of fragment entry points drawing into these targets (the
-    /// sky's, impostors' and the visibility buffer's resolves): none for the
-    /// canvas.
-    pub(crate) fn entry_suffix(self) -> &'static str {
-        match self {
-            Self::Canvas => "",
-            Self::Post => "_post",
-            Self::Temporal => "_temporal",
-        }
-    }
 }
