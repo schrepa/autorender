@@ -29,6 +29,10 @@ pub(crate) enum Reduction {
 pub(crate) struct DepthPyramid {
     first: wgpu::ComputePipeline,
     down: wgpu::ComputePipeline,
+    // The group layouts of the first level, which reads the depth buffer,
+    // and of the levels after it, which read the level below.
+    first_layout: wgpu::BindGroupLayout,
+    down_layout: wgpu::BindGroupLayout,
     levels: Option<(u64, Levels)>,
     // Advances with every rebuilt texture, for the groups that bind it.
     generation: u64,
@@ -40,12 +44,57 @@ impl DepthPyramid {
             label: Some("engine/depth-pyramid.wgsl"),
             source: wgpu::ShaderSource::Wgsl(DEPTH_PYRAMID_SHADER.into()),
         });
-        let pipeline = |entry: &str| {
+        // A level's source and the level written: both kinds of pass map to
+        // the same descriptors, and so share one root signature in Direct3D
+        // 12 (decision 049).
+        let group_layout = |label, binding, sample_type| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: FORMAT,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            })
+        };
+        let first_layout = group_layout(
+            "engine/depth-pyramid-first-layout",
+            0,
+            wgpu::TextureSampleType::Depth,
+        );
+        let down_layout = group_layout(
+            "engine/depth-pyramid-down-layout",
+            1,
+            wgpu::TextureSampleType::Float { filterable: false },
+        );
+        let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(entry),
+                bind_group_layouts: &[Some(group)],
+                immediate_size: 0,
+            });
             crate::pipelines::compute(
                 device,
                 &wgpu::ComputePipelineDescriptor {
                     label: Some(entry),
-                    layout: None,
+                    layout: Some(&layout),
                     module: &module,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
@@ -58,8 +107,10 @@ impl DepthPyramid {
             Reduction::Nearest => ("pyramid_first_nearest", "pyramid_down_nearest"),
         };
         Self {
-            first: pipeline(first),
-            down: pipeline(down),
+            first: pipeline(first, &first_layout),
+            down: pipeline(down, &down_layout),
+            first_layout,
+            down_layout,
             levels: None,
             generation: 0,
         }
@@ -121,7 +172,7 @@ impl DepthPyramid {
                 let group = if level == 0 {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("engine/depth-pyramid-first"),
-                        layout: &self.first.get_bind_group_layout(0),
+                        layout: &self.first_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
@@ -136,7 +187,7 @@ impl DepthPyramid {
                 } else {
                     device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("engine/depth-pyramid-down"),
-                        layout: &self.down.get_bind_group_layout(0),
+                        layout: &self.down_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 1,

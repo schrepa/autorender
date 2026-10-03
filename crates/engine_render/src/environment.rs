@@ -31,11 +31,19 @@ struct Maps {
     maps_view: wgpu::TextureView,
 }
 
+// The sky, level and prefilter passes' group layouts.
+struct Layouts {
+    sky: wgpu::BindGroupLayout,
+    down: wgpu::BindGroupLayout,
+    prefilter: wgpu::BindGroupLayout,
+}
+
 pub(crate) struct Environment {
     maps: Maps,
     sky: wgpu::RenderPipeline,
     down: wgpu::RenderPipeline,
     prefilter: wgpu::RenderPipeline,
+    layouts: Layouts,
     sky_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
     // The atmosphere values the sky map was drawn with.
@@ -52,12 +60,60 @@ impl Environment {
             label: Some("engine/environment.wgsl"),
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
         });
-        let pipeline = |entry: &str| {
+        let fragment_entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty,
+            count: None,
+        };
+        let cube = |binding| {
+            fragment_entry(
+                binding,
+                wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::Cube,
+                    multisampled: false,
+                },
+            )
+        };
+        let sampler = fragment_entry(
+            22,
+            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+        );
+        let group_layout = |label, entries: &[wgpu::BindGroupLayoutEntry]| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some(label),
+                entries,
+            })
+        };
+        // The sky reads the lighting uniform; each level down reads the
+        // level above it, and the prefilter every level.
+        let layouts = Layouts {
+            sky: group_layout(
+                "engine/environment-sky-layout",
+                &[fragment_entry(
+                    1,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                )],
+            ),
+            down: group_layout("engine/environment-down-layout", &[cube(20), sampler]),
+            prefilter: group_layout("engine/environment-prefilter-layout", &[cube(21), sampler]),
+        };
+        let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(entry),
+                bind_group_layouts: &[Some(group)],
+                immediate_size: 0,
+            });
             crate::pipelines::render(
                 device,
                 &wgpu::RenderPipelineDescriptor {
                     label: Some(entry),
-                    layout: None,
+                    layout: Some(&layout),
                     vertex: wgpu::VertexState {
                         module: &module,
                         entry_point: Some("vs_environment"),
@@ -78,9 +134,9 @@ impl Environment {
                 },
             )
         };
-        let sky = pipeline("fs_environment_sky");
-        let down = pipeline("fs_environment_down");
-        let prefilter = pipeline("fs_environment_prefilter");
+        let sky = pipeline("fs_environment_sky", &layouts.sky);
+        let down = pipeline("fs_environment_down", &layouts.down);
+        let prefilter = pipeline("fs_environment_prefilter", &layouts.prefilter);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/environment-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -93,18 +149,19 @@ impl Environment {
         });
         let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("engine/environment-sky-group"),
-            layout: &sky.get_bind_group_layout(0),
+            layout: &layouts.sky,
             entries: &[wgpu::BindGroupEntry {
                 binding: 1,
                 resource: lighting.as_entire_binding(),
             }],
         });
-        let maps = create_maps(device, (&down, &prefilter, &sampler), size, 1);
+        let maps = create_maps(device, (&layouts, &sampler), size, 1);
         Self {
             maps,
             sky,
             down,
             prefilter,
+            layouts,
             sky_group,
             sampler,
             drawn: None,
@@ -147,12 +204,7 @@ impl Environment {
         if self.maps.size == size && self.maps.cubes == cubes {
             return false;
         }
-        let maps = create_maps(
-            device,
-            (&self.down, &self.prefilter, &self.sampler),
-            size,
-            cubes,
-        );
+        let maps = create_maps(device, (&self.layouts, &self.sampler), size, cubes);
         let kept = self.maps.size == size && cubes > self.maps.cubes;
         if kept {
             for level in 0..self.maps.levels {
@@ -257,7 +309,7 @@ impl Environment {
 
 fn create_maps(
     device: &wgpu::Device,
-    (down, prefilter, sampler): (&wgpu::RenderPipeline, &wgpu::RenderPipeline, &wgpu::Sampler),
+    (layouts, sampler): (&Layouts, &wgpu::Sampler),
     size: u32,
     cubes: u32,
 ) -> Maps {
@@ -326,7 +378,7 @@ fn create_maps(
             let source = cube_view(level, 1);
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("engine/environment-down-group"),
-                layout: &down.get_bind_group_layout(0),
+                layout: &layouts.down,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 20,
@@ -340,7 +392,7 @@ fn create_maps(
     let every_level = cube_view(0, levels);
     let prefilter_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("engine/environment-prefilter-group"),
-        layout: &prefilter.get_bind_group_layout(0),
+        layout: &layouts.prefilter,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 21,

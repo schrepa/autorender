@@ -218,8 +218,6 @@ pub struct Renderer {
     depth: DepthTarget,
     // Advances when the depth buffer is replaced (ambient occlusion reads it).
     depth_generation: u64,
-    pipeline_layout: wgpu::PipelineLayout,
-    affine_pipeline_layout: wgpu::PipelineLayout,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     mesh_shader: wgpu::ShaderModule,
@@ -294,7 +292,9 @@ pub struct Renderer {
     // layouts, created with the first frame that has lights. Lit
     // public-instance pipelines bind an empty group 2.
     lights: Option<LightPass>,
-    lit: Option<LitLayouts>,
+    // Mesh pipeline layouts by `mesh_layout_index`, created with the first
+    // variant needing each (decision 049).
+    mesh_layouts: [Option<wgpu::PipelineLayout>; 4],
     empty_layout: wgpu::BindGroupLayout,
     empty_group: wgpu::BindGroup,
     // Transparent surfaces and particles (decision 026): targets, the
@@ -663,12 +663,6 @@ impl Renderer {
             (&refraction_fallback, &refraction_sampler),
             (environment.binding(), probes.words().0),
         );
-        let texture_layout = materials.layout();
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("engine/mesh-pipeline-layout"),
-            bind_group_layouts: &[Some(&camera_layout), Some(texture_layout)],
-            immediate_size: 0,
-        });
         let storage_entry = |binding, stride| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::VERTEX,
@@ -754,16 +748,6 @@ impl Renderer {
                 storage_entry(11, 4),
             ],
         });
-        let affine_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/retained-mesh-pipeline-layout"),
-                bind_group_layouts: &[
-                    Some(&camera_layout),
-                    Some(texture_layout),
-                    Some(&pose_layout),
-                ],
-                immediate_size: 0,
-            });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/meshes.wgsl"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -812,8 +796,6 @@ impl Renderer {
             reconfigure_next_frame: false,
             depth,
             depth_generation: 0,
-            pipeline_layout,
-            affine_pipeline_layout,
             post: None,
             mesh_shader: shader,
             camera_layout,
@@ -851,7 +833,7 @@ impl Renderer {
             refraction_group: None,
             shadows,
             lights: None,
-            lit: None,
+            mesh_layouts: Default::default(),
             empty_layout,
             empty_group,
             transparent: None,
@@ -1782,18 +1764,6 @@ impl Renderer {
         let light_frame = if snapshot.local_lights.active() && !snapshot.lights.is_empty() {
             let device = &self.device;
             let lights = self.lights.get_or_insert_with(|| LightPass::new(device));
-            if self.lit.is_none() {
-                self.lit = Some(LitLayouts::new(
-                    device,
-                    [
-                        &self.camera_layout,
-                        self.materials.layout(),
-                        &self.pose_layout,
-                        &self.empty_layout,
-                        lights.fragment_layout(),
-                    ],
-                ));
-            }
             if temporal && let Some(pass) = self.temporal.as_mut() {
                 pass.ensure_lit_layout(
                     device,
@@ -1975,7 +1945,7 @@ impl Renderer {
                 label: Some("engine/frame-encoder"),
             });
         // Pipelines of the material variants (decision 031) this frame draws.
-        let lit_frame = light_frame.is_some() && self.lit.is_some() && self.lights.is_some();
+        let lit_frame = light_frame.is_some() && self.lights.is_some();
         let opaque_kind = if temporal_frame.is_some() && self.temporal.is_some() {
             PassKind::Temporal { lit: lit_frame }
         } else {
@@ -2152,10 +2122,7 @@ impl Renderer {
         }
         let temporal_pass = temporal_frame.as_ref().zip(self.temporal.as_ref());
         // Lit frames shade with the lit pipelines and the lights' group.
-        let lit = light_frame
-            .as_ref()
-            .and(self.lit.as_ref())
-            .zip(self.lights.as_ref());
+        let lit = light_frame.as_ref().zip(self.lights.as_ref());
         let post = self.post.as_ref().filter(|_| post_frame.is_some());
         // Occlusion culling (decision 040) draws in two phases: what the last
         // test left visible, then, after the depth pyramid of those depths and
@@ -3454,6 +3421,7 @@ impl Renderer {
             }
         }
         for (kind, variant) in missing {
+            self.ensure_mesh_layout(kind);
             let pipeline = self.create_variant(kind, variant);
             self.variant_pipelines.insert((kind, variant), pipeline);
         }
@@ -3508,7 +3476,7 @@ impl Renderer {
         seconds: f32,
         lights: Option<(&LightFrame, &engine_core::LocalLights)>,
     ) -> u32 {
-        let lights = lights.filter(|_| self.lit.is_some() && self.lights.is_some());
+        let lights = lights.filter(|_| self.lights.is_some());
         let kind = PassKind::Probe {
             lit: lights.is_some(),
         };
@@ -4449,22 +4417,57 @@ impl Renderer {
             }
         }
         for variant in missing {
+            self.ensure_mesh_layout(kind);
             let pipeline = self.create_variant(kind, variant);
             self.variant_pipelines.insert((kind, variant), pipeline);
         }
+    }
+
+    /// The pipeline layout of `kind`'s mesh variants unless created: the
+    /// camera and material groups, retained slots' poses for affine passes
+    /// (an empty group otherwise where lights follow), and the lights' group
+    /// for lit ones (decision 023). Temporal frames have their own.
+    fn ensure_mesh_layout(&mut self, kind: PassKind) {
+        let Some((lit, affine)) = mesh_layout_key(kind) else {
+            return;
+        };
+        let index = mesh_layout_index(lit, affine);
+        if self.mesh_layouts[index].is_some() {
+            return;
+        }
+        let lights = lit.then(|| {
+            self.lights
+                .as_ref()
+                .expect("lit frames create the light pass")
+                .fragment_layout()
+        });
+        let groups = [
+            Some(&self.camera_layout),
+            Some(self.materials.layout()),
+            Some(if affine {
+                &self.pose_layout
+            } else {
+                &self.empty_layout
+            }),
+            lights,
+        ];
+        let count = if lit { 4 } else { 2 + usize::from(affine) };
+        self.mesh_layouts[index] = Some(self.device.create_pipeline_layout(
+            &wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/mesh-pipeline-layout"),
+                bind_group_layouts: &groups[..count],
+                immediate_size: 0,
+            },
+        ));
     }
 
     /// The pipeline of `kind` shading materials of `variant`.
     fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
         let (device, shader) = (&self.device, &self.mesh_shader);
         let layout = |lit: bool, affine: bool| {
-            if lit {
-                &self.lit.as_ref().expect("lit frames create it").layouts[usize::from(affine)]
-            } else if affine {
-                &self.affine_pipeline_layout
-            } else {
-                &self.pipeline_layout
-            }
+            self.mesh_layouts[mesh_layout_index(lit, affine)]
+                .as_ref()
+                .expect("created with the variant")
         };
         match kind {
             PassKind::Opaque { post, lit, affine } => {
@@ -4874,29 +4877,22 @@ fn mesh_pipeline(
     )
 }
 
-/// Mesh pipelines shading local lights (decision 023): canvas and scene
-/// target variants, each over public instances and retained slots.
-/// The lit mesh pipeline layouts (decision 023): full and affine, with the
-/// lights' group. Their pipelines are variants like any other.
-struct LitLayouts {
-    layouts: [wgpu::PipelineLayout; 2],
+/// Whether `kind`'s mesh variants shade local lights (decision 023) and draw
+/// retained slots; temporal frames have layouts of their own.
+fn mesh_layout_key(kind: PassKind) -> Option<(bool, bool)> {
+    match kind {
+        PassKind::Opaque { lit, affine, .. } | PassKind::Transparent { lit, affine } => {
+            Some((lit, affine))
+        }
+        PassKind::Probe { lit } => Some((lit, true)),
+        PassKind::Temporal { .. } => None,
+    }
 }
 
-impl LitLayouts {
-    /// `layouts`: camera, texture, pose, empty and lights layouts.
-    fn new(device: &wgpu::Device, layouts: [&wgpu::BindGroupLayout; 5]) -> Self {
-        let [camera, texture, pose, empty, lights] = layouts;
-        let layout = |group_two: &wgpu::BindGroupLayout| {
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("engine/lit-mesh-pipeline-layout"),
-                bind_group_layouts: &[Some(camera), Some(texture), Some(group_two), Some(lights)],
-                immediate_size: 0,
-            })
-        };
-        Self {
-            layouts: [layout(empty), layout(pose)],
-        }
-    }
+/// The index in `mesh_layouts` of the mesh pipeline layout of lit and
+/// affine passes.
+fn mesh_layout_index(lit: bool, affine: bool) -> usize {
+    usize::from(lit) * 2 + usize::from(affine)
 }
 
 /// Sky pipelines by target kind: the canvas, the screen effects' targets

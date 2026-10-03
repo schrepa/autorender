@@ -126,6 +126,7 @@ Stress Lab Metro, Intel Xe-LPG:
 | Uber variants for probe captures and impostor bakes | 74 (12) | 6 |
 | One preparation step, probes with the first frame, loading gate | 74 (12) | 0 |
 | Shared layouts: post 10 to 1, presentation 12 to 5 | 74 (12) | 0 |
+| Layouts and snapshot shadow casters by need; every layout declared | 72 (12) | 0 |
 
 - Never bound in 25 s of play: 23 before, 5 after the first step (three
   shadow pipelines of other paths and two bloom passes the reflection levels
@@ -145,6 +146,14 @@ Stress Lab Metro, Intel Xe-LPG:
     Cold replays of the captured layouts and pipelines: 9.1-9.4 s against
     10.7-10.9 s, the presentation passes 0.50-0.57 s against 2.38-2.40 s
     with their five layouts 0.81 s, and post 0.27 s against 1.36 s.
+  - Mesh pipeline layouts created by need (three of four were unused), the
+    public snapshots' shadow casters with the first snapshot frame, and
+    every layout declared (the depth pyramid's and environment's now share
+    shapes on purpose; virtual geometry's ten passes share four layouts
+    instead of six derived ones): Firefox playable after 10.3-11.1 s against
+    11.4-12.0 s (three alternating cold runs each, paired differences -0.3
+    to -1.7 s); replays 8.6-9.1 s against 9.4-10.0 s. 22 distinct layouts
+    remain, about 3.7 s of the replays in Firefox.
   - Chrome: playable after about 15 s before; 6.8 s with the loading gate,
     with no stall after.
 - Every step kept captures pixel-identical (overview and close view, CPU and

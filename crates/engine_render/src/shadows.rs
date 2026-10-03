@@ -338,19 +338,91 @@ struct ShadowPipelines {
     select_skinned: wgpu::ComputePipeline,
     skinned_layout: wgpu::BindGroupLayout,
     affine: wgpu::RenderPipeline,
-    full: wgpu::RenderPipeline,
     // Alpha-masked casters (decision 031), with a material group.
     affine_masked: wgpu::RenderPipeline,
-    full_masked: wgpu::RenderPipeline,
     // Retained casters of meshes with joints (decision 036), plain and
     // masked, which read a skin stream and the joint palettes.
     affine_skinned: wgpu::RenderPipeline,
     affine_masked_skinned: wgpu::RenderPipeline,
+    // Public snapshots' casters from full instance matrices, plain and
+    // masked, created with the first frame drawing a snapshot (decision
+    // 049), from the module and view layout kept for them.
+    full: Option<[wgpu::RenderPipeline; 2]>,
+    module: wgpu::ShaderModule,
+    view_layout: wgpu::BindGroupLayout,
     clear: wgpu::RenderPipeline,
     view_buffer: wgpu::Buffer,
     view_group: wgpu::BindGroup,
     pose_layout: wgpu::BindGroupLayout,
     cull: wgpu::Buffer,
+}
+
+/// A shadow caster pipeline of `module`'s `entry_point` over `layouts` and
+/// vertex `buffers`; `clear` passes write the far depth everywhere, and
+/// `masked` casters test their material's texels.
+#[allow(clippy::too_many_arguments)]
+fn caster_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    label: &str,
+    layouts: &[Option<&wgpu::BindGroupLayout>],
+    entry_point: &str,
+    buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
+    clear: bool,
+    masked: bool,
+) -> wgpu::RenderPipeline {
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some(label),
+        bind_group_layouts: layouts,
+        immediate_size: 0,
+    });
+    crate::pipelines::render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                buffers,
+            },
+            // Both faces cast: open and single-sided meshes shadow too.
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: SHADOW_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(if clear {
+                    wgpu::CompareFunction::Always
+                } else {
+                    wgpu::CompareFunction::Less
+                }),
+                stencil: Default::default(),
+                // Receiver planes (decision 028) keep lit surfaces off
+                // their own depth; a unit of bias covers the sun shafts'
+                // plain comparisons.
+                bias: if clear {
+                    Default::default()
+                } else {
+                    wgpu::DepthBiasState {
+                        constant: 1,
+                        slope_scale: 0.0,
+                        clamp: 0.0,
+                    }
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            // Only masked casters test texels; the rest write depth alone.
+            fragment: masked.then_some(wgpu::FragmentState {
+                module,
+                entry_point: Some("fs_masked"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
 }
 
 impl ShadowPipelines {
@@ -360,7 +432,7 @@ impl ShadowPipelines {
     /// offset in a vertex.
     fn new(
         device: &wgpu::Device,
-        (vertex_stride, instance_stride, uv_offset): (u64, u64, u64),
+        (vertex_stride, _, uv_offset): (u64, u64, u64),
         material_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -497,13 +569,6 @@ impl ShadowPipelines {
         ];
         let slot_attributes = wgpu::vertex_attr_array![2 => Uint32];
         let skin_layout = crate::browser::skin_layout();
-        let model_attributes = wgpu::vertex_attr_array![
-            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
-        ];
-        // Columns and the packed color of public instance records.
-        let masked_model_attributes = wgpu::vertex_attr_array![
-            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2
-        ];
         let mesh_layout = wgpu::VertexBufferLayout {
             array_stride: vertex_stride,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -520,57 +585,15 @@ impl ShadowPipelines {
                         buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
                         clear: bool,
                         masked: bool| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: layouts,
-                immediate_size: 0,
-            });
-            crate::pipelines::render(
+            caster_pipeline(
                 device,
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some(entry_point),
-                        compilation_options: Default::default(),
-                        buffers,
-                    },
-                    // Both faces cast: open and single-sided meshes shadow too.
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: SHADOW_FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(if clear {
-                            wgpu::CompareFunction::Always
-                        } else {
-                            wgpu::CompareFunction::Less
-                        }),
-                        stencil: Default::default(),
-                        // Receiver planes (decision 028) keep lit surfaces off
-                        // their own depth; a unit of bias covers the sun shafts'
-                        // plain comparisons.
-                        bias: if clear {
-                            Default::default()
-                        } else {
-                            wgpu::DepthBiasState {
-                                constant: 1,
-                                slope_scale: 0.0,
-                                clamp: 0.0,
-                            }
-                        },
-                    }),
-                    multisample: wgpu::MultisampleState::default(),
-                    // Only masked casters test texels; the rest write depth alone.
-                    fragment: masked.then_some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some("fs_masked"),
-                        compilation_options: Default::default(),
-                        targets: &[],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                },
+                &module,
+                label,
+                layouts,
+                entry_point,
+                buffers,
+                clear,
+                masked,
             )
         };
         let affine = pipeline(
@@ -583,21 +606,6 @@ impl ShadowPipelines {
                     array_stride: 4,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &slot_attributes,
-                }),
-            ],
-            false,
-            false,
-        );
-        let full = pipeline(
-            "engine/shadow-full",
-            &[Some(&view_layout)],
-            "vs_full",
-            &[
-                Some(mesh_layout.clone()),
-                Some(wgpu::VertexBufferLayout {
-                    array_stride: instance_stride,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &model_attributes,
                 }),
             ],
             false,
@@ -617,21 +625,6 @@ impl ShadowPipelines {
                     array_stride: 4,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &slot_attributes,
-                }),
-            ],
-            false,
-            true,
-        );
-        let full_masked = pipeline(
-            "engine/shadow-full-masked",
-            &[Some(&view_layout), None, Some(material_layout)],
-            "vs_full_masked",
-            &[
-                Some(masked_mesh_layout.clone()),
-                Some(wgpu::VertexBufferLayout {
-                    array_stride: instance_stride,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &masked_model_attributes,
                 }),
             ],
             false,
@@ -698,17 +691,90 @@ impl ShadowPipelines {
             select_skinned,
             skinned_layout,
             affine,
-            full,
             affine_masked,
-            full_masked,
             affine_skinned,
             affine_masked_skinned,
+            full: None,
+            module,
+            view_layout,
             clear,
             view_buffer,
             view_group,
             pose_layout,
             cull,
         }
+    }
+}
+
+impl ShadowPipelines {
+    /// Creates the public snapshots' casters, plain and masked, unless
+    /// created. `layout` and `material_layout` are as for [`Self::new`].
+    fn ensure_full(
+        &mut self,
+        device: &wgpu::Device,
+        (vertex_stride, instance_stride, uv_offset): (u64, u64, u64),
+        material_layout: &wgpu::BindGroupLayout,
+    ) {
+        if self.full.is_some() {
+            return;
+        }
+        let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
+        let masked_vertex_attributes = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: uv_offset,
+                shader_location: 7,
+            },
+        ];
+        let model_attributes = wgpu::vertex_attr_array![
+            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
+        ];
+        // Columns and the packed color of public instance records.
+        let masked_model_attributes = wgpu::vertex_attr_array![
+            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2
+        ];
+        let vertices = |attributes| wgpu::VertexBufferLayout {
+            array_stride: vertex_stride,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes,
+        };
+        let instances = |attributes| wgpu::VertexBufferLayout {
+            array_stride: instance_stride,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes,
+        };
+        let full = caster_pipeline(
+            device,
+            &self.module,
+            "engine/shadow-full",
+            &[Some(&self.view_layout)],
+            "vs_full",
+            &[
+                Some(vertices(&vertex_attributes)),
+                Some(instances(&model_attributes)),
+            ],
+            false,
+            false,
+        );
+        let full_masked = caster_pipeline(
+            device,
+            &self.module,
+            "engine/shadow-full-masked",
+            &[Some(&self.view_layout), None, Some(material_layout)],
+            "vs_full_masked",
+            &[
+                Some(vertices(&masked_vertex_attributes)),
+                Some(instances(&masked_model_attributes)),
+            ],
+            false,
+            true,
+        );
+        self.full = Some([full, full_masked]);
     }
 }
 
@@ -1191,12 +1257,11 @@ impl ShadowPass {
             self.write_uniform(queue, bytemuck::Zeroable::zeroed());
             return None;
         }
-        if self.pipelines.is_none() {
-            self.pipelines = Some(ShadowPipelines::new(
-                device,
-                self.layout,
-                &self.material_layout,
-            ));
+        let pipelines = self.pipelines.get_or_insert_with(|| {
+            ShadowPipelines::new(device, self.layout, &self.material_layout)
+        });
+        if self.source == Source::Snapshot {
+            pipelines.ensure_full(device, self.layout, &self.material_layout);
         }
         let resolution = settings.resolution;
         if self
@@ -1901,7 +1966,11 @@ impl ShadowPass {
             draws.set(draws.get() + virtual_draw(pass, map));
         };
         let draw_snapshot = |pass: &mut wgpu::RenderPass<'_>| {
-            pass.set_pipeline(&pipelines.full);
+            let full = pipelines
+                .full
+                .as_ref()
+                .expect("prepared for snapshot frames");
+            pass.set_pipeline(&full[0]);
             pass.set_vertex_buffer(1, instances.slice(..));
             let mut masked = false;
             let mut bindings = Bindings::default();
@@ -1917,12 +1986,7 @@ impl ShadowPass {
                 let Some((draw, _)) = meshes(batch.mesh) else {
                     continue;
                 };
-                if !bind_material(
-                    pass,
-                    &mut masked,
-                    group.material,
-                    [&pipelines.full, &pipelines.full_masked],
-                ) {
+                if !bind_material(pass, &mut masked, group.material, [&full[0], &full[1]]) {
                     continue;
                 }
                 bindings.vertex(pass, 0, draw.vertices);
