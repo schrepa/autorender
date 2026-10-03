@@ -190,3 +190,14 @@ Stress Lab Metro, Intel Xe-LPG:
   a skipped draw there stays wrong until the next refresh.
 - **Creating at first draw** (the previous behavior). Every new pass or
   variant became a freeze in the middle of play.
+- **Lit and unlit mesh pipelines sharing one layout** (an override constant
+  instead of separate lit entry points, with every mesh layout listing the
+  lights' group). Measured 2026-10-03 by recording every layout and pipeline
+  a Stress Lab page creates in 30 s (`artifacts/layout-shapes.mjs`, which
+  also groups layouts by root-signature shape): Metro and the city create
+  only lit mesh pipelines (one mesh layout each) and the tower field only
+  unlit ones. Frames list every usable light rather than the visible ones,
+  so a scene's frames are all lit or all unlit, and switch only when it
+  gains its first light or loses its last. Sharing would remove no layout or
+  pipeline there, while unlit frames would bind an empty lights group, so it
+  was not made.
