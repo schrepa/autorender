@@ -11,6 +11,9 @@ dev = []
 profiling = ["engine_profile/enabled"]
 # Profiling only: hot helpers out of line for sampling attribution (docs/profiling.md).
 attribution = []
+# JSON schemas of the settings types, for authoring tools (engine_scene's
+# `schema`): they are a scene's environment sections (decision 022).
+schema = ["dep:schemars"]
 
 [dependencies]
 engine_assets.workspace = true
@@ -19,6 +22,8 @@ engine_profile.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
+serde.workspace = true
+schemars = { workspace = true, optional = true }
 
 [lints]
 workspace = true

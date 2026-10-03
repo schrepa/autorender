@@ -319,7 +319,7 @@ impl ShadowPass {
         frame: Option<&RenderFrame<'_>>,
         gpu: bool,
     ) {
-        if !snapshot.shadows.enabled {
+        if !snapshot.environment.shadows.enabled {
             self.casters.clear();
             return;
         }
@@ -348,7 +348,7 @@ impl ShadowPass {
         } = inputs;
         self.kept.merge(self.selection.take_dirty_tiles());
         self.virtual_views.clear();
-        let settings = snapshot.shadows.sanitized();
+        let settings = snapshot.environment.shadows.sanitized();
         if !settings.enabled || self.casters.groups().is_empty() {
             if !settings.enabled {
                 self.maps.release();
@@ -374,7 +374,7 @@ impl ShadowPass {
         }
         // The far region: the settings' bounds, or a cube around an anchor
         // that follows the camera a quarter of the distance at a time.
-        let basis = LightBasis::new(snapshot.atmosphere.sanitized().sun_direction);
+        let basis = LightBasis::new(snapshot.environment.atmosphere.sanitized().sun_direction);
         let eye = snapshot.camera_position;
         let far = self.kept.place(
             basis,

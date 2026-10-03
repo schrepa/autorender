@@ -1,26 +1,51 @@
 //! Virtual geometry settings (decision 044): meshes built from cluster
 //! hierarchies ([`crate::Mesh::from_virtual`]) draw the clusters each view
 //! needs, selected on the GPU, instead of their fallback cut.
+//!
+//! The [`VirtualGeometry`] settings are inserted by default; without them,
+//! or when disabled, meshes with virtual geometry draw their fallback cut.
+//! Resident pages live on the GPU. Without the visibility buffer, or where
+//! the device binds too few storage buffers, the camera's clusters shade as
+//! they draw rather than once per pixel after all of them are drawn.
 
 use bevy_ecs::prelude::Resource;
+use serde::{Deserialize, Serialize};
 
-/// Virtual geometry settings, inserted by default. Without this resource,
-/// or when disabled, meshes with virtual geometry draw their fallback cut.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+use crate::environment::{InvalidSetting, check_budget, check_range};
+
+/// Virtual geometry settings (decision 044): whether meshes built as cluster
+/// hierarchies draw the clusters each view needs, and how coarse those may
+/// be. Requires version 8.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneVirtualGeometry")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct VirtualGeometry {
     pub enabled: bool,
     /// The largest simplification error a drawn cluster may show, in pixels
-    /// of the viewport height: smaller draws more triangles.
+    /// of the viewport height, from 0.25 to 64: smaller draws more
+    /// triangles.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
     pub pixel_error: f32,
-    /// An optional budget of pages (128 KiB each) kept resident on the GPU;
+    /// An optional budget of streamed pages (128 KiB each) kept resident;
     /// beyond it the least recently used make room, and pinned pages always
-    /// stay. Without one, only the device's limits bound them.
+    /// stay. Omitted, only the device's limits bound them.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_resident_pages: Option<u32>,
     /// Whether the camera's clusters shade through the visibility buffer
-    /// (decision 045): each pixel once, after all of them are drawn. Off,
-    /// or where the device binds too few storage buffers, they shade as
-    /// they draw.
+    /// (decision 045), each pixel once; false shades them as they draw.
+    /// Omitted, true.
+    #[serde(skip_serializing_if = "is_true")]
     pub visibility_buffer: bool,
+}
+
+/// Scenes omit the visibility buffer while it is on.
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 impl Default for VirtualGeometry {
@@ -35,6 +60,13 @@ impl Default for VirtualGeometry {
 }
 
 impl VirtualGeometry {
+    /// Ok for a pixel error in `[0.25, 64]` and a budget of at least one
+    /// page.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("pixel_error", self.pixel_error, 0.25..=64.0)?;
+        check_budget("max_resident_pages", self.max_resident_pages)
+    }
+
     /// The pixel error within `[0.25, 64]` (1.5 when not finite), and a
     /// budget of at least one page.
     pub fn sanitized(self) -> Self {

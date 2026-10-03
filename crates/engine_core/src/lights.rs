@@ -6,6 +6,13 @@
 //! CPU work while they are unchanged. Lights on other entities follow the
 //! authoritative world pose. Renderers bin lights into view clusters and shade
 //! each pixel with its cluster's lights; frames without lights pay nothing.
+//!
+//! The [`LocalLights`] settings are inserted by default; without them, or
+//! when disabled, frames shade no local lights. Beyond `max_lights` the
+//! lights nearest the camera win, chosen every frame, and the rest count as
+//! dropped; beyond `lights_per_cluster` a cluster's later-binned lights are
+//! lost and counted as cluster overflow. Light fades out over the last tenth
+//! of `distance`.
 
 use bevy_ecs::{
     change_detection::{DetectChanges, Tick},
@@ -13,7 +20,9 @@ use bevy_ecs::{
     query::QueryState,
 };
 use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
+use crate::environment::{InvalidSetting, check_budget, check_range};
 use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
 
 /// The cone of a spot light.
@@ -110,23 +119,32 @@ impl LocalLight {
     }
 }
 
-/// Local lighting settings (decision 023), inserted by default. Without
-/// this resource, or when disabled, frames shade no local lights.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Local lighting settings (decision 023). Requires version 6.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneLocalLights")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct LocalLights {
     pub enabled: bool,
-    /// An optional budget of lights per frame: beyond it the lights nearest
-    /// the camera win, chosen every frame, and the rest count as dropped.
-    /// `None`, the default, shades every light.
+    /// An optional budget of lights a frame shades; beyond it the nearest to
+    /// the camera win. Omitted, every light shades.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_lights: Option<u32>,
-    /// An optional budget of lights one view cluster lists: beyond it the
-    /// cluster's later-binned lights are lost and counted as cluster
-    /// overflow. `None`, the default, lists every light reaching a cluster.
+    /// An optional budget of lights one view cluster lists. Omitted, every
+    /// light reaching a cluster shades there.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lights_per_cluster: Option<u32>,
-    /// Scales every light's intensity, e.g. to dim street lamps by day.
+    /// Scales every light's intensity, e.g. to dim lamps by day.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
     pub intensity: f32,
-    /// View distance beyond which local light fades out over its last
-    /// tenth: distant lights cost no shading.
+    /// View distance beyond which local light fades out: distant lights
+    /// cost no shading.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 100000.0)))]
     pub distance: f32,
 }
 
@@ -143,6 +161,15 @@ impl Default for LocalLights {
 }
 
 impl LocalLights {
+    /// Ok for budgets of at least one light, an intensity in `[0, 100]` and
+    /// a distance in `[1, 100000]`.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_budget("max_lights", self.max_lights)?;
+        check_budget("lights_per_cluster", self.lights_per_cluster)?;
+        check_range("intensity", self.intensity, 0.0..=100.0)?;
+        check_range("distance", self.distance, 1.0..=100_000.0)
+    }
+
     /// Budgets and cluster lists of at least one light; an unusable
     /// intensity scale reads as 1 and an unusable distance as the default.
     pub fn sanitized(self) -> Self {
@@ -290,14 +317,8 @@ impl LightExtraction {
         source_revision: Option<u64>,
         gpu: bool,
     ) {
-        let settings = world.get_resource::<LocalLights>().map_or(
-            LocalLights {
-                enabled: false,
-                ..LocalLights::default()
-            },
-            |value| value.sanitized(),
-        );
-        snapshot.local_lights = settings;
+        // Extracted sanitized with the environment, before this.
+        let settings = snapshot.environment.local_lights;
         snapshot.dropped_lights = 0;
         if !settings.active() {
             snapshot.lights.clear();

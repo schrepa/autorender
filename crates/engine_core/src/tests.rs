@@ -1015,18 +1015,18 @@ fn frames_carry_the_atmosphere_and_the_eye() {
     let mut snapshot = RenderSnapshot::default();
     engine.extract(1.5, &mut snapshot);
     assert_eq!(snapshot.camera_position, Vec3::new(1.0, 2.0, 3.0));
-    assert_eq!(snapshot.atmosphere, Atmosphere::night());
+    assert_eq!(snapshot.environment.atmosphere, Atmosphere::night());
     let frame = engine
         .extract_frame(1.5, PresentationMode::Current)
         .unwrap();
-    assert_eq!(frame.snapshot().atmosphere, Atmosphere::night());
+    assert_eq!(frame.snapshot().environment.atmosphere, Atmosphere::night());
     assert_eq!(frame.snapshot().camera_position, Vec3::new(1.0, 2.0, 3.0));
     // Unusable lighting and a non-finite eye fall back to defaults.
     let world = engine.app.world_mut();
     world.resource_mut::<Atmosphere>().fog_max = 2.0;
     world.resource_mut::<Camera>().position = Vec3::NAN;
     engine.extract(1.5, &mut snapshot);
-    assert_eq!(snapshot.atmosphere, Atmosphere::default());
+    assert_eq!(snapshot.environment.atmosphere, Atmosphere::default());
     assert_eq!(snapshot.camera_position, Camera::default().position);
 }
 
@@ -1045,9 +1045,9 @@ fn frames_carry_sanitized_effects_and_presentation_time() {
     engine.advance(0.5);
     let mut snapshot = RenderSnapshot::default();
     engine.extract(1.5, &mut snapshot);
-    assert_eq!(snapshot.shadows, shadows);
-    assert_eq!(snapshot.ambient_occlusion.intensity, 1.0);
-    assert!(!snapshot.bloom.enabled());
+    assert_eq!(snapshot.environment.shadows, shadows);
+    assert_eq!(snapshot.environment.ambient_occlusion.intensity, 1.0);
+    assert!(!snapshot.environment.bloom.enabled());
     assert_eq!(
         snapshot.elapsed_seconds, 0.25,
         "presentation time is capped per frame"
@@ -1055,7 +1055,7 @@ fn frames_carry_sanitized_effects_and_presentation_time() {
     let frame = engine
         .extract_frame(1.5, PresentationMode::Current)
         .unwrap();
-    assert_eq!(frame.snapshot().shadows, shadows);
+    assert_eq!(frame.snapshot().environment.shadows, shadows);
     assert_eq!(frame.snapshot().elapsed_seconds, 0.25);
     // Removing an effect's resource removes the effect.
     let world = engine.app.world_mut();
@@ -1064,10 +1064,10 @@ fn frames_carry_sanitized_effects_and_presentation_time() {
     world.remove_resource::<Bloom>();
     world.remove_resource::<Atmosphere>();
     engine.extract(1.5, &mut snapshot);
-    assert!(!snapshot.shadows.enabled);
-    assert!(!snapshot.ambient_occlusion.enabled());
-    assert!(!snapshot.bloom.enabled());
-    assert_eq!(snapshot.atmosphere, Atmosphere::default());
+    assert!(!snapshot.environment.shadows.enabled);
+    assert!(!snapshot.environment.ambient_occlusion.enabled());
+    assert!(!snapshot.environment.bloom.enabled());
+    assert_eq!(snapshot.environment.atmosphere, Atmosphere::default());
 }
 
 #[test]
@@ -1177,20 +1177,23 @@ fn sun_shafts_and_reflections_are_opt_in_resources() {
     let mut engine = Engine::default();
     let mut snapshot = RenderSnapshot::default();
     engine.extract(1.5, &mut snapshot);
-    assert!(!snapshot.sun_shafts.enabled(), "not inserted by default");
-    assert!(!snapshot.reflections.enabled());
+    assert!(
+        !snapshot.environment.sun_shafts.enabled(),
+        "not inserted by default"
+    );
+    assert!(!snapshot.environment.reflections.enabled());
     engine.app.insert_resource(SunShafts::default());
     engine.app.insert_resource(Reflections {
         intensity: 7.0,
         ..Reflections::default()
     });
     engine.extract(1.5, &mut snapshot);
-    assert_eq!(snapshot.sun_shafts, SunShafts::default());
-    assert_eq!(snapshot.reflections.intensity, 1.0, "sanitized");
+    assert_eq!(snapshot.environment.sun_shafts, SunShafts::default());
+    assert_eq!(snapshot.environment.reflections.intensity, 1.0, "sanitized");
     let frame = engine
         .extract_frame(1.5, PresentationMode::Current)
         .unwrap();
-    assert!(frame.snapshot().sun_shafts.enabled());
+    assert!(frame.snapshot().environment.sun_shafts.enabled());
 }
 
 fn spawn_lamp(world: &mut World, translation: Vec3, light: LocalLight, mesh: bool) -> Entity {
@@ -1263,7 +1266,7 @@ fn lights_follow_slots_on_meshes_and_world_poses_elsewhere() {
     engine.app.world_mut().remove_resource::<LocalLights>();
     engine.extract(1.5, &mut snapshot);
     assert!(snapshot.lights.is_empty());
-    assert!(!snapshot.local_lights.active());
+    assert!(!snapshot.environment.local_lights.active());
 }
 
 #[test]
@@ -1802,7 +1805,7 @@ fn reflection_probes_list_nearest_first_within_their_budget() {
     world.spawn((at(1.0), ReflectionProbe::new(Vec3::new(1.0, 0.0, 1.0))));
     let mut snapshot = RenderSnapshot::default();
     engine.extract(1.5, &mut snapshot);
-    assert!(snapshot.reflection_probe_settings.enabled);
+    assert!(snapshot.environment.reflection_probes.enabled);
     let keys: Vec<u64> = snapshot
         .reflection_probes
         .iter()
@@ -1825,7 +1828,7 @@ fn reflection_probes_list_nearest_first_within_their_budget() {
     // Without the resource, frames list none.
     engine.app.world_mut().remove_resource::<ReflectionProbes>();
     engine.extract(1.5, &mut snapshot);
-    assert!(!snapshot.reflection_probe_settings.enabled);
+    assert!(!snapshot.environment.reflection_probes.enabled);
     assert!(snapshot.reflection_probes.is_empty());
 }
 

@@ -1,8 +1,8 @@
-use engine_scene::{
-    SceneAmbientOcclusion, SceneAtmosphere, SceneBloom, SceneDecals, SceneLevelOfDetail,
-    SceneLocalLights, SceneParticles, SceneReflectionProbes, SceneReflections, SceneRefraction,
-    SceneShadows, SceneSunShafts, SceneVirtualGeometry,
+use engine_core::{
+    AmbientOcclusion, Bloom, Decals, LevelOfDetail, LocalLights, Particles, ReflectionProbes,
+    Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
 };
+use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
 
 /// Versioned, read-only requests processed synchronously between frames.
@@ -204,29 +204,29 @@ pub enum BrowserControl {
         #[serde(default)]
         atmosphere: Option<SceneAtmosphere>,
         #[serde(default)]
-        shadows: Option<SceneShadows>,
+        shadows: Option<Shadows>,
         #[serde(default)]
-        ambient_occlusion: Option<SceneAmbientOcclusion>,
+        ambient_occlusion: Option<AmbientOcclusion>,
         #[serde(default)]
-        bloom: Option<SceneBloom>,
+        bloom: Option<Bloom>,
         #[serde(default)]
-        local_lights: Option<SceneLocalLights>,
+        local_lights: Option<LocalLights>,
         #[serde(default)]
-        sun_shafts: Option<SceneSunShafts>,
+        sun_shafts: Option<SunShafts>,
         #[serde(default)]
-        reflections: Option<SceneReflections>,
+        reflections: Option<Reflections>,
         #[serde(default)]
-        particles: Option<SceneParticles>,
+        particles: Option<Particles>,
         #[serde(default)]
-        refraction: Option<SceneRefraction>,
+        refraction: Option<Refraction>,
         #[serde(default)]
-        decals: Option<SceneDecals>,
+        decals: Option<Decals>,
         #[serde(default)]
-        reflection_probes: Option<SceneReflectionProbes>,
+        reflection_probes: Option<ReflectionProbes>,
         #[serde(default)]
-        virtual_geometry: Option<SceneVirtualGeometry>,
+        virtual_geometry: Option<VirtualGeometry>,
         #[serde(default)]
-        level_of_detail: Option<SceneLevelOfDetail>,
+        level_of_detail: Option<LevelOfDetail>,
     },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {

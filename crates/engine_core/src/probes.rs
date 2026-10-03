@@ -5,13 +5,20 @@
 //! Extraction lists the usable probes nearest the camera each frame; the
 //! renderer keeps what it captured of each until the probe changes or the
 //! sky does.
+//!
+//! The [`ReflectionProbes`] settings are inserted by default; without them,
+//! or when disabled, frames capture and reflect no probes. Beyond
+//! `max_probes` the probes nearest the camera win and the rest count as
+//! dropped; without a budget, as many stay as the GPU's texture arrays hold.
 
 use bevy_ecs::{
     prelude::{Component, Entity, Resource, World},
     query::QueryState,
 };
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
+use crate::environment::{InvalidSetting, check_budget};
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 
 /// Captures its surroundings from its entity's world position into an
@@ -53,20 +60,29 @@ impl ReflectionProbe {
     }
 }
 
-/// Reflection probe settings (decision 043), inserted by default. Without
-/// this resource, or when disabled, frames capture and reflect no probes.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Reflection probe settings (decision 043). Requires version 8.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneReflectionProbes")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct ReflectionProbes {
     pub enabled: bool,
-    /// Texels across each face of every environment map, the sky's included:
-    /// a power of two in `[16, 1024]`.
+    /// Texels across each face of every environment map, the sky's
+    /// included: a power of two from 16 to 1024.
+    #[cfg_attr(feature = "schema", schemars(range(min = 16, max = 1024)))]
     pub resolution: u32,
-    /// An optional budget of probes kept captured: beyond it the probes
-    /// nearest the camera win and the rest count as dropped. `None`, the
-    /// default, keeps as many as the GPU's texture arrays hold.
+    /// An optional budget of probes kept captured; beyond it the probes
+    /// nearest the camera win. Omitted, as many as the GPU's texture arrays
+    /// hold.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_probes: Option<u32>,
     /// Cube faces captured per frame while probes wait: more fill new places
     /// sooner, fewer keep those frames lighter.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub faces_per_frame: u32,
 }
 
@@ -82,6 +98,22 @@ impl Default for ReflectionProbes {
 }
 
 impl ReflectionProbes {
+    /// Ok for a resolution that is a power of two from 16 to 1024, a budget
+    /// of at least one probe and at least one face per frame.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        if !(self.resolution.is_power_of_two() && (16..=1024).contains(&self.resolution)) {
+            return Err(InvalidSetting::new(
+                "resolution",
+                "must be a power of two from 16 to 1024",
+            ));
+        }
+        check_budget("max_probes", self.max_probes)?;
+        if self.faces_per_frame == 0 {
+            return Err(InvalidSetting::new("faces_per_frame", "must be at least 1"));
+        }
+        Ok(())
+    }
+
     /// The resolution rounded up to a power of two in `[16, 1024]`, a budget
     /// of at least one probe and at least one face per frame.
     pub fn sanitized(self) -> Self {
@@ -130,14 +162,8 @@ impl ProbeExtraction {
     /// Fills the snapshot's probes, nearest the camera first, from their
     /// entities' authoritative poses; beyond a budget the nearest win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        let settings = world.get_resource::<ReflectionProbes>().map_or(
-            ReflectionProbes {
-                enabled: false,
-                ..ReflectionProbes::default()
-            },
-            |value| value.sanitized(),
-        );
-        snapshot.reflection_probe_settings = settings;
+        // Extracted sanitized with the environment, before this.
+        let settings = snapshot.environment.reflection_probes;
         snapshot.reflection_probes.clear();
         snapshot.dropped_reflection_probes = 0;
         if !settings.enabled {

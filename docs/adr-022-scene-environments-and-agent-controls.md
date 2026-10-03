@@ -18,9 +18,14 @@ or not, and an effect could be turned off but not left out.
 
 One JSON shape, `SceneEnvironment`, describes the look everywhere: an
 `atmosphere` (a preset, `golden_hour` by default, plus any fields that differ),
-`shadows`, `ambient_occlusion` and `bloom`. `engine_scene` owns the types and
-their validation; errors carry the code `invalid_environment` and the path of
-the field, such as `$.environment.shadows.resolution`. Shadow resolutions are
+`shadows`, `ambient_occlusion` and `bloom`. Every section but the atmosphere
+is the engine's settings type itself (`engine_core::Shadows` and so on,
+serialized in the section's shape), which checks itself with `validate`;
+`engine_scene` owns the document shape, the atmosphere's preset form (whose
+rules are `Atmosphere::validate`) and the version rules, and errors carry the
+code `invalid_environment` and the path of the field, such as
+`$.environment.shadows.resolution`. (Until 2026-10-03 `engine_scene` mirrored
+each type as a `Scene*` section with its own copy of the rules.) Shadow resolutions are
 1024, 2048 or 4096, the near distance is below the shadow distance, the fog
 maximum is at most 1, and every other value is finite and nonnegative.
 

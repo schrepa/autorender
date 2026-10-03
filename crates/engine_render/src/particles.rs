@@ -245,7 +245,7 @@ mod gpu {
             depth: &wgpu::TextureView,
             depth_generation: u64,
         ) -> Option<ParticleFrame> {
-            if !snapshot.particles.enabled || snapshot.emitters.is_empty() {
+            if !snapshot.environment.particles.enabled || snapshot.emitters.is_empty() {
                 return None;
             }
             // One owner entry per particle and one record per emitter, within

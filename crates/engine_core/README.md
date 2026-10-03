@@ -59,6 +59,15 @@ deltas. `reset_clock` clears the accumulator without rewinding simulation; the
 host must also reset its timestamp after suspension. Reset also clears held and
 pending action input, without synthesizing release events, and resets interpolation history.
 
+The look's settings (`Atmosphere`, `Shadows`, `AmbientOcclusion`, `Bloom`,
+`LocalLights`, `SunShafts`, `Reflections`, `Refraction`, `Particles`, `Decals`,
+`ReflectionProbes`, `VirtualGeometry`, `LevelOfDetail`) are resources that also
+serialize as their scene environment sections ([decision 022](../../docs/adr-022-scene-environments-and-agent-controls.md));
+each checks itself with `validate` and clamps with `sanitized`.
+`Environment::current` reads all of them, missing effect resources as off, and
+extraction carries them sanitized as `RenderSnapshot::environment`. The optional
+`schema` feature derives their JSON schemas for host tools.
+
 The opt-in `dev` feature exposes `Engine::step_fixed(ticks)` for paused development
 control. Counts outside 1–120 fail before mutation or plugin startup. A valid
 request discards only the fractional accumulator, preserves pending action edges,

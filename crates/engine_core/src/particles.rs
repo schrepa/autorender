@@ -4,6 +4,12 @@
 //! time, so frames keep no particle state: pausing freezes them, captures are
 //! exact, and the CPU extracts only one record per emitter each frame.
 //! Particles blend in the transparent pass, in any order.
+//!
+//! The [`Particles`] settings are inserted by default; without them, or when
+//! disabled, frames draw no particles. Beyond `max_particles` the emitters
+//! nearest the camera win and the others are skipped whole, counted as the
+//! frame's dropped particles; without a budget only the GPU's buffer limits
+//! bound them.
 
 use std::collections::HashMap;
 
@@ -12,7 +18,9 @@ use bevy_ecs::{
     query::QueryState,
 };
 use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
+use crate::environment::{InvalidSetting, check_budget};
 use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
 
 /// Most particles one emitter keeps alive (its rate times its lifetime): a
@@ -135,15 +143,20 @@ impl ParticleEmitter {
     }
 }
 
-/// Particle settings (decision 026), inserted by default. Without this
-/// resource, or when disabled, frames draw no particles.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// Particle settings (decision 026). Requires version 6.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneParticles")
+)]
+#[serde(default, deny_unknown_fields)]
 pub struct Particles {
     pub enabled: bool,
-    /// An optional budget of particles per frame: beyond it the emitters
-    /// nearest the camera win and the others are skipped whole, counted as
-    /// the frame's dropped particles. `None`, the default, draws every
-    /// emitter; only the GPU's buffer limits bound it then.
+    /// An optional budget of particles a frame draws; beyond it the emitters
+    /// nearest the camera win. Omitted, every emitter draws.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub max_particles: Option<u32>,
 }
 
@@ -157,6 +170,11 @@ impl Default for Particles {
 }
 
 impl Particles {
+    /// Ok for a budget of at least one particle.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_budget("max_particles", self.max_particles)
+    }
+
     /// A budget of at least one particle.
     pub fn sanitized(self) -> Self {
         Self {
@@ -206,14 +224,8 @@ impl ParticleExtraction {
     /// authoritative poses on `gpu` frames. Beyond a particle budget, the
     /// emitters nearest the camera win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
-        let settings = world.get_resource::<Particles>().map_or(
-            Particles {
-                enabled: false,
-                ..Particles::default()
-            },
-            |value| value.sanitized(),
-        );
-        snapshot.particles = settings;
+        // Extracted sanitized with the environment, before this.
+        let settings = snapshot.environment.particles;
         snapshot.emitters.clear();
         snapshot.dropped_particles = 0;
         if !settings.enabled {

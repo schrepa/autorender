@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "engine_core/schema"]
 
 [dependencies]
 base64.workspace = true

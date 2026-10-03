@@ -164,7 +164,7 @@ mod gpu {
             depth: &wgpu::TextureView,
             depth_generation: u64,
         ) -> Option<DecalFrame> {
-            if !snapshot.decal_settings.enabled || snapshot.decals.is_empty() {
+            if !snapshot.environment.decals.enabled || snapshot.decals.is_empty() {
                 return None;
             }
             let limits = device.limits();

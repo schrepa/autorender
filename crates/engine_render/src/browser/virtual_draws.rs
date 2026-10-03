@@ -89,7 +89,7 @@ impl Renderer {
                     .then_some(projection)
             });
         self.virtual_draws.previous = pyramid.map(|(_, generation)| (generation, rasterized));
-        if !snapshot.virtual_geometry.enabled {
+        if !snapshot.environment.virtual_geometry.enabled {
             return false;
         }
         let mut batches = Vec::new();
@@ -139,7 +139,8 @@ impl Renderer {
             min_distance: VIRTUAL_NEAREST,
             // The projection's y scale: its second row's length.
             projection: view_projection.row(1).truncate().length() * 0.5,
-            threshold: snapshot.virtual_geometry.pixel_error / self.display.size().1.max(1) as f32,
+            threshold: snapshot.environment.virtual_geometry.pixel_error
+                / self.display.size().1.max(1) as f32,
             unseen_error: 0.0,
             cone: Cone::Eye,
         };
@@ -190,7 +191,8 @@ impl Renderer {
                 views.push(VirtualView {
                     planes: shadow_view.planes,
                     min_distance: shadow_view.min_distance.unwrap_or(VIRTUAL_NEAREST),
-                    unseen_error: snapshot.virtual_geometry.pixel_error * shadow_view.texel,
+                    unseen_error: snapshot.environment.virtual_geometry.pixel_error
+                        * shadow_view.texel,
                     cone: Cone::Along(shadow_view.direction),
                     ..camera
                 });
@@ -237,7 +239,7 @@ impl Renderer {
                 bins,
                 views: &views,
                 tests,
-                budget: snapshot.virtual_geometry.max_resident_pages,
+                budget: snapshot.environment.virtual_geometry.max_resident_pages,
                 poses: self.instances.frame_poses(usize::from(odd)),
                 camera,
                 shadows: (!shadow_batches.is_empty()).then_some(IdBuffers {
