@@ -94,6 +94,8 @@ let paused = development;
 // compiled them; then play starts. Development sessions start paused and
 // compile with the frames their commands render.
 let preparing = !development;
+// Hidden from the start: creating the renderer already compiles pipelines.
+if (preparing) canvas.style.visibility = "hidden";
 let preparedSince: number | undefined;
 let quietFrames = 0;
 const QUIET_FRAMES = 3;
@@ -269,7 +271,6 @@ function resume() {
   if (game && paused && !document.hidden && !failed) setStatus("Paused", "paused");
   if (game && !paused && !document.hidden && !failed && !request) {
     if (preparing) {
-      canvas.style.visibility = "hidden";
       message.hidden = false;
       message.textContent = "Compiling shaders…";
       setStatus("Compiling shaders", "preparing");
