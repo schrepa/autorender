@@ -28,6 +28,7 @@ use engine_core::{
 };
 
 use crate::batches::BatchPlan;
+use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::{
     BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_CASCADES, SHADOW_SHADER, ShadowCullUniform,
@@ -134,19 +135,6 @@ pub(crate) struct Presented<'a> {
     pub skin_bounds: &'a wgpu::Buffer,
     pub skinned_count: u32,
     /// Advances when any of these buffers is replaced.
-    pub generation: u64,
-}
-
-/// Pose storage of retained frames: the buffer pair of `generation` and the
-/// one this frame's poses are in.
-pub(crate) struct Poses<'a> {
-    pub buffers: [Option<&'a wgpu::Buffer>; 2],
-    /// Slot colors, whose alpha masked casters test and whose flags locate
-    /// skinned slots' palettes (decision 036).
-    pub colors: &'a wgpu::Buffer,
-    /// Joint palettes, one per pose buffer.
-    pub palettes: [&'a wgpu::Buffer; 2],
-    pub index: usize,
     pub generation: u64,
 }
 
@@ -1233,7 +1221,7 @@ impl ShadowPass {
         queue: &wgpu::Queue,
         snapshot: &RenderSnapshot,
         presented: Option<Presented<'_>>,
-        poses: Option<Poses<'_>>,
+        poses: Option<FramePoses<'_>>,
         slot_capacity: usize,
         mesh_layout: u64,
         placement: impl Fn(MeshHandle) -> CasterDraw,
@@ -1648,13 +1636,13 @@ impl ShadowPass {
             },
         );
         // Bindings: poses of this frame, and the selection inputs.
-        let pose_index = poses.as_ref().map_or(0, |poses| poses.index);
+        let pose_index = poses.as_ref().map_or(0, |poses| poses.parity);
         if let Some(poses) = &poses {
             if self
                 .pose_groups
                 .as_ref()
                 .is_none_or(|(generation, groups)| {
-                    *generation != poses.generation || groups[poses.index].is_none()
+                    *generation != poses.generation || groups[poses.parity].is_none()
                 })
             {
                 let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {

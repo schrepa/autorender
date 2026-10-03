@@ -24,6 +24,14 @@ impl<K: PartialEq, V> Cached<K, V> {
     pub(crate) fn set(&mut self, key: K, value: V) {
         self.entry = Some((key, value));
     }
+
+    /// The value for `key`, built by `build` unless it already was.
+    pub(crate) fn get_or_insert_with(&mut self, key: K, build: impl FnOnce() -> V) -> &V {
+        if self.stale(&key) {
+            self.entry = Some((key, build()));
+        }
+        &self.entry.as_ref().expect("built above").1
+    }
 }
 
 impl<K, V> Cached<K, V> {
@@ -60,6 +68,20 @@ mod tests {
         cached.set(2, "two");
         assert!(cached.stale(&1));
         assert_eq!(cached.get(), Some(&"two"));
+    }
+
+    #[test]
+    fn builds_only_for_new_keys() {
+        let mut cached = Cached::default();
+        let mut builds = 0;
+        let mut build = |value| {
+            builds += 1;
+            value
+        };
+        assert_eq!(*cached.get_or_insert_with(1, || build("one")), "one");
+        assert_eq!(*cached.get_or_insert_with(1, || build("again")), "one");
+        assert_eq!(*cached.get_or_insert_with(2, || build("two")), "two");
+        assert_eq!(builds, 2);
     }
 
     #[test]

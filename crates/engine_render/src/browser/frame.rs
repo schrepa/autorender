@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::decals::DecalFrame;
-use crate::gpu_presentation::GpuPrepared;
+use crate::gpu_presentation::{CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 use crate::particles::ParticleFrame;
 use crate::post::PostFrame;
 use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
@@ -793,91 +793,91 @@ impl Renderer {
             let shadows = &self.shadows;
             let virtual_meshes = &self.virtual_draws.pass;
             let impostor_records = &self.impostors.records;
-            // Batch records carry impostor errors: rebuilt with the
-            // impostors, and when turning them on or off.
-            let impostor_key = if snapshot.level_of_detail.impostors {
-                self.impostors.atlas.generation() + 1
-            } else {
-                0
+            let batch_meta = |index, batch: &DrawBatch| {
+                let mesh = &snapshot.meshes[batch.source_index].mesh;
+                let gpu_mesh = &meshes[&batch.mesh];
+                let draw = gpu_mesh.draw(arena);
+                let virtual_geometry = virtual_enabled
+                    && !batch.transparent
+                    && virtual_meshes.mesh_index(batch.mesh).is_some();
+                let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
+                BatchMeta {
+                    index_count: draw.index_count,
+                    first_index: draw.first_index,
+                    base_vertex: draw.base_vertex,
+                    bounds: mesh.bounds(),
+                    group: shadows.batch_group(index),
+                    joints: mesh.joint_count(),
+                    virtual_geometry,
+                    lods: gpu_mesh.lods[..levels - 1]
+                        .iter()
+                        .map(|&(offset, count, error)| (draw.first_index + offset, count, error))
+                        .collect(),
+                    impostor: impostor_records
+                        .get(index)
+                        .map_or(0.0, ImpostorRecord::error),
+                }
+            };
+            let records = RecordsKey {
+                shadow_groups: !shadows.groups().is_empty(),
+                meshes: virtual_key ^ (self.mesh_layout << 32),
+                // Batch records carry impostor errors: rebuilt with the
+                // impostors, and when turning them on or off.
+                impostors: if snapshot.level_of_detail.impostors {
+                    self.impostors.atlas.generation() + 1
+                } else {
+                    0
+                },
+            };
+            let view = CullingView {
+                view_projection: temporal_frame
+                    .as_ref()
+                    .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
+                eye: snapshot.camera_position,
+                viewport: self.display.size(),
+                motion: temporal_frame
+                    .as_ref()
+                    .is_some_and(|temporal| temporal.motion_valid),
+                occlusion: occlusion.map(|(_, _, levels)| levels),
+                subpixel: self.culling.subpixel,
+                lod_error: if snapshot.level_of_detail.enabled {
+                    snapshot.level_of_detail.pixel_error
+                } else {
+                    0.0
+                },
+                impostors: snapshot.level_of_detail.impostors,
+                // Reflection probes (decision 043) capture still slots,
+                // counted while captures wait.
+                stillness: (snapshot.reflection_probe_settings.enabled
+                    && !snapshot.reflection_probes.is_empty())
+                .then(|| self.probes.slots.waiting()),
             };
             // Temporal frames alternate pose buffers; the other keeps the
             // previous frame's poses.
-            let poses_index = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let pose_generation = self.instances.generation;
-            let (pose_uploads, [poses, palette, colors]) =
-                self.instances.presentation_inputs(poses_index);
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            let (ring, poses) = self.instances.presentation_inputs(parity);
             #[cfg(feature = "profiling")]
             let stamps = self.profiler.stage_stamps(query_slot);
             #[cfg(not(feature = "profiling"))]
             let stamps = None;
-            Some(
-                self.gpu_presentation.prepare(
-                    &self.device,
-                    &self.queue,
-                    pose_uploads,
-                    &mut input_copies,
+            Some(self.gpu_presentation.prepare(
+                &self.device,
+                &self.queue,
+                Staging {
+                    ring,
+                    copies: &mut input_copies,
+                },
+                &PresentationInputs {
                     frame,
                     gpu,
-                    &self.plan,
-                    |index, batch| {
-                        let mesh = &snapshot.meshes[batch.source_index].mesh;
-                        let gpu_mesh = &meshes[&batch.mesh];
-                        let draw = gpu_mesh.draw(arena);
-                        let virtual_geometry = virtual_enabled
-                            && !batch.transparent
-                            && virtual_meshes.mesh_index(batch.mesh).is_some();
-                        let levels = lod_levels(batch, gpu_mesh, virtual_geometry);
-                        BatchMeta {
-                            index_count: draw.index_count,
-                            first_index: draw.first_index,
-                            base_vertex: draw.base_vertex,
-                            bounds: mesh.bounds(),
-                            group: shadows.batch_group(index),
-                            joints: mesh.joint_count(),
-                            virtual_geometry,
-                            lods: gpu_mesh.lods[..levels - 1]
-                                .iter()
-                                .map(|&(offset, count, error)| {
-                                    (draw.first_index + offset, count, error)
-                                })
-                                .collect(),
-                            impostor: impostor_records
-                                .get(index)
-                                .map_or(0.0, ImpostorRecord::error),
-                        }
-                    },
-                    !shadows.groups().is_empty(),
+                    plan: &self.plan,
+                    batch_meta: &batch_meta,
+                    records,
                     poses,
-                    palette,
-                    colors,
-                    poses_index,
-                    pose_generation,
-                    temporal_frame
-                        .as_ref()
-                        .map_or(snapshot.view_projection, |temporal| temporal.rasterized),
-                    snapshot.camera_position,
-                    temporal_frame
-                        .as_ref()
-                        .is_some_and(|temporal| temporal.motion_valid),
-                    occlusion,
-                    self.culling.subpixel,
-                    if snapshot.level_of_detail.enabled {
-                        snapshot.level_of_detail.pixel_error
-                    } else {
-                        0.0
-                    },
-                    snapshot.level_of_detail.impostors,
-                    // Reflection probes (decision 043) capture still slots,
-                    // counted while captures wait.
-                    (snapshot.reflection_probe_settings.enabled
-                        && !snapshot.reflection_probes.is_empty())
-                    .then(|| self.probes.slots.waiting()),
-                    virtual_key ^ (self.mesh_layout << 32),
-                    impostor_key,
-                    self.display.size(),
-                    stamps,
-                ),
-            )
+                },
+                &view,
+                stamps,
+            ))
         } else {
             None
         };
@@ -903,13 +903,8 @@ impl Renderer {
 
         // Shadow maps (decision 020) select from this frame's poses.
         {
-            let poses = affine.then(|| Poses {
-                buffers: [Some(&self.instances.buffer), self.instances.alternate()],
-                colors: self.instances.colors(),
-                palettes: [&self.instances.palettes[0], &self.instances.palettes[1]],
-                index: temporal_frame.as_ref().map_or(0, |frame| frame.parity),
-                generation: self.instances.generation,
-            });
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            let poses = affine.then(|| self.instances.frame_poses(parity));
             let meshes = &self.meshes;
             let arena = &self.mesh_arena;
             self.shadows.prepare(
@@ -1036,12 +1031,8 @@ impl Renderer {
                     ],
                 );
             }
-            let index = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let poses = affine.then_some(LightPoses {
-                buffer: self.instances.poses(index),
-                generation: self.instances.generation,
-                index,
-            });
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            let poses = affine.then(|| self.instances.frame_poses(parity));
             lights.prepare(
                 device,
                 &self.queue,

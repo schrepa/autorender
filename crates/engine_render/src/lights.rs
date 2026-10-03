@@ -151,6 +151,7 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
+    use crate::browser::FramePoses;
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
 
@@ -179,14 +180,6 @@ mod gpu {
         (u64, usize, u64, u64),
         Vec<(wgpu::BindGroup, wgpu::BindGroup)>,
     );
-
-    /// Pose storage a frame's slot lights read: a buffer, its storage
-    /// generation and which of the frame's pose buffers it is.
-    pub(crate) struct LightPoses<'a> {
-        pub buffer: &'a wgpu::Buffer,
-        pub generation: u64,
-        pub index: usize,
-    }
 
     pub(crate) struct LightPass {
         // Counting, scanning and filling the cluster lists.
@@ -392,7 +385,7 @@ mod gpu {
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
             size: (u32, u32),
-            poses: Option<LightPoses<'_>>,
+            poses: Option<FramePoses<'_>>,
             revision: Option<(u64, u64)>,
         ) -> Option<LightFrame> {
             if !snapshot.local_lights.active() || snapshot.lights.is_empty() {
@@ -471,7 +464,7 @@ mod gpu {
             let key = poses
                 .as_ref()
                 .map_or((0, usize::MAX, self.buffers_generation), |poses| {
-                    (poses.generation, poses.index, self.buffers_generation)
+                    (poses.generation, poses.parity, self.buffers_generation)
                 });
             let group = match self
                 .compute_groups
@@ -484,7 +477,7 @@ mod gpu {
                     self.compute_groups.retain(|((generation, _, buffers), _)| {
                         *generation == key.0 && *buffers == key.2
                     });
-                    let pose_buffer = poses.as_ref().map_or(&self.no_poses, |poses| poses.buffer);
+                    let pose_buffer = poses.as_ref().map_or(&self.no_poses, FramePoses::current);
                     let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("engine/light-binning-group"),
                         layout: &self.compute_layout,
@@ -587,7 +580,7 @@ mod gpu {
             size: u32,
             settings: &engine_core::LocalLights,
             frame: &LightFrame,
-            poses: LightPoses<'_>,
+            poses: FramePoses<'_>,
             still: (&wgpu::Buffer, u64),
         ) {
             if self.probe_uniforms.is_empty() {
@@ -616,7 +609,7 @@ mod gpu {
             queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));
             let key = (
                 poses.generation,
-                poses.index,
+                poses.parity,
                 self.buffers_generation,
                 still.1,
             );
@@ -642,7 +635,7 @@ mod gpu {
                             entries: &[
                                 entry(0, uniform),
                                 entry(1, &self.inputs),
-                                entry(2, poses.buffer),
+                                entry(2, poses.current()),
                                 entry(3, &self.lights),
                                 entry(4, &self.counts),
                                 entry(5, &self.indices),
@@ -747,7 +740,7 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::{LightFrame, LightPass, LightPoses};
+pub(crate) use gpu::{LightFrame, LightPass};
 
 #[cfg(test)]
 mod tests {

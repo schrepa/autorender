@@ -231,7 +231,7 @@ impl Renderer {
             &tests,
             snapshot.virtual_geometry.max_resident_pages,
         );
-        let poses = self.instances.poses(usize::from(odd));
+        let poses = self.instances.frame_poses(usize::from(odd));
         let camera_ids = if gpu_mode {
             let (ids, draws, generation) = self.gpu_presentation.visible_sources();
             IdBuffers {
@@ -250,7 +250,7 @@ impl Renderer {
         let (shadow_ids, shadow_args, _, shadow_key) = self.shadows.caster_buffers();
         self.virtual_draws.pass.bind(
             &self.device,
-            (poses, self.instances.generation * 2 + u64::from(odd)),
+            &poses,
             camera_ids,
             (!shadow_batches.is_empty()).then_some(IdBuffers {
                 ids: shadow_ids,
