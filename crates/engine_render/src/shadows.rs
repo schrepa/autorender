@@ -643,7 +643,16 @@ impl ShadowPipelines {
             false,
             true,
         );
-        let clear = pipeline("engine/shadow-clear", &[], "vs_clear", &[], true, false);
+        // The clear binds nothing but shares the plain casters' layout: each
+        // distinct layout costs Firefox a root signature (decision 049).
+        let clear = pipeline(
+            "engine/shadow-clear",
+            &[Some(&view_layout), Some(&pose_layout)],
+            "vs_clear",
+            &[],
+            true,
+            false,
+        );
         let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("engine/shadow-views"),
             size: FAR_VIEW + VIEW_STRIDE,
@@ -2036,9 +2045,14 @@ impl ShadowPass {
                 },
                 writes(KEPT_MAP),
             );
-            if let Refresh::Tiles(region) = refresh {
+            // Tiles refresh in GPU-presented frames, which bind poses.
+            if let Refresh::Tiles(region) = refresh
+                && let Some(pose_group) = pose_group
+            {
                 let [x, y, width, height] = region.scissor(maps.resolution);
                 pass.set_scissor_rect(x, y, width, height);
+                pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
+                pass.set_bind_group(1, pose_group, &[]);
                 pass.set_pipeline(&pipelines.clear);
                 pass.draw(0..3, 0..1);
             }
