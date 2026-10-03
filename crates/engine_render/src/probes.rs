@@ -9,6 +9,7 @@ use engine_core::{
     math,
 };
 
+#[cfg(target_arch = "wasm32")]
 use crate::cached::Cached;
 use crate::gpu_data::STILL_FRAMES;
 

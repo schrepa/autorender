@@ -112,6 +112,10 @@ pub struct RenderStats {
     pub virtual_loading_pages: u32,
     pub virtual_missing_pages: u32,
     pub dropped_virtual_pages: u32,
+    /// The passes this frame ran and those its render graph culled
+    /// (decision 050), as masks [`render_pass_names`] reads.
+    pub passes: u32,
+    pub culled_passes: u32,
 }
 
 /// Local lights of one frame (decision 023).
@@ -166,6 +170,8 @@ mod pipelines;
 #[cfg(any(target_arch = "wasm32", test))]
 mod probes;
 #[cfg(any(target_arch = "wasm32", test))]
+mod render_graph;
+#[cfg(any(target_arch = "wasm32", test))]
 mod retained_uploads;
 #[cfg(any(target_arch = "wasm32", test))]
 mod shadow_fit;
@@ -204,3 +210,5 @@ mod virtual_geometry;
 mod visibility;
 #[cfg(target_arch = "wasm32")]
 pub use browser::Renderer;
+#[cfg(target_arch = "wasm32")]
+pub use render_graph::pass_names as render_pass_names;

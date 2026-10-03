@@ -7,7 +7,10 @@ const flagFields = ["culling_enabled", "shadows_enabled", "ambient_occlusion", "
 // Read back a few frames late: null until then.
 const casterFields = ["shadow_near_casters", "shadow_moving_casters", "shadow_kept_casters", "lights_visible", "light_cluster_overflow", "occluded_instances", "subpixel_instances",
   "lod0_instances", "lod1_instances", "lod2_instances", "impostor_instances", "triangles"] as const;
-export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number]> & Record<typeof casterFields[number], number | null>;
+// The render graph's passes (decision 050), as lists of names.
+const passFields = ["render_passes", "culled_passes"] as const;
+export type RenderingStats = Omit<RuntimeStats, "free" | typeof casterFields[number] | typeof passFields[number]>
+  & Record<typeof casterFields[number], number | null> & Record<typeof passFields[number], string[]>;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
 export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };
 const numericFields = [
@@ -47,6 +50,7 @@ export function readRendering(stats: RuntimeStats): RenderingStats {
     for (const field of flagFields) result[field] = stats[field];
     for (const field of numericFields) result[field] = stats[field];
     for (const field of casterFields) result[field] = stats[field] ?? null;
+    for (const field of passFields) result[field] = (stats[field] ?? "").split(" ").filter(Boolean);
     return result;
   } finally { stats.free(); }
 }

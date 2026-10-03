@@ -181,25 +181,11 @@ impl TransparentPass {
         })
     }
 
-    /// The accumulation pass's attachments, cleared to nothing added and
-    /// everything revealed.
-    pub(crate) fn attachments(&self) -> [Option<wgpu::RenderPassColorAttachment<'_>>; 2] {
+    /// The accumulation pass's targets, accumulated color and revealage,
+    /// which it clears to nothing added and everything revealed.
+    pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {
         let targets = self.targets.as_ref().expect("sized in begin");
-        let attachment = |view, clear| {
-            Some(wgpu::RenderPassColorAttachment {
-                view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
-                    store: wgpu::StoreOp::Store,
-                },
-            })
-        };
-        [
-            attachment(&targets.accumulated, wgpu::Color::TRANSPARENT),
-            attachment(&targets.revealed, wgpu::Color::WHITE),
-        ]
+        [&targets.accumulated, &targets.revealed]
     }
 
     /// Creates the composite into the canvas or, with `post`, the scene

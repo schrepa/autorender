@@ -81,8 +81,10 @@ function setup(t, options = {}) {
         sun_shafts: false, reflections: true, refraction: false, visibility_buffer: false, transparent_draws: 1, particles: 40, dropped_particles: 0, decals: 2, dropped_decals: 0, impostors: 0, dropped_impostors: 0, occluded_instances: undefined, subpixel_instances: undefined,
         lod0_instances: undefined, lod1_instances: undefined, lod2_instances: undefined, impostor_instances: undefined, triangles: undefined,
         reflection_probes: 3, reflection_probe_faces: 1, dropped_reflection_probes: 0,
+        pipelines: 12, pipelines_created: 0, pipelines_compiling: false,
         virtual_clusters: 0, virtual_triangles: 0, virtual_shadow_clusters: 0, virtual_shadow_triangles: 0, virtual_occluded_clusters: 0, dropped_virtual: 0,
         virtual_resident_pages: 0, virtual_loading_pages: 0, virtual_missing_pages: 0, dropped_virtual_pages: 0,
+        render_passes: "presentation shadow_select shadow_maps opaque decals effects composite", culled_passes: "",
         free() { statsFreed++; },
       };
     },
@@ -223,6 +225,8 @@ test("capture renders current state then waits for two animation frames without 
   assert.equal(reply.result.rendering.lights_visible, null);
   assert.equal(reply.result.rendering.reflections, true);
   assert.equal(reply.result.rendering.particles, 40);
+  assert.deepEqual(reply.result.rendering.render_passes, ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"]);
+  assert.deepEqual(reply.result.rendering.culled_passes, []);
   assert.equal(session.counters.statsFreed, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);
