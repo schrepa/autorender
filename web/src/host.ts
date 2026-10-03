@@ -19,6 +19,7 @@ export interface RuntimeStats {
   decals: number; dropped_decals: number; impostors: number; dropped_impostors: number;
   occluded_instances: number | undefined;
   reflection_probes: number; reflection_probe_faces: number; dropped_reflection_probes: number;
+  pipelines: number; pipelines_created: number; pipelines_compiling: boolean;
   virtual_clusters: number; virtual_triangles: number; virtual_shadow_clusters: number; virtual_shadow_triangles: number;
   virtual_occluded_clusters: number; dropped_virtual: number;
   virtual_resident_pages: number; virtual_loading_pages: number; virtual_missing_pages: number;
@@ -86,6 +87,17 @@ let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
 let paused = development;
+// Pipelines compile when a frame first needs them (decision 049). Ordinary
+// sessions first render their starting state without advancing time behind a
+// hidden canvas (Firefox paints a visible WebGPU canvas by waiting on its GPU
+// process), until rendered frames stop creating pipelines and the GPU has
+// compiled them; then play starts. Development sessions start paused and
+// compile with the frames their commands render.
+let preparing = !development;
+let preparedSince: number | undefined;
+let quietFrames = 0;
+const QUIET_FRAMES = 3;
+const PREPARE_LIMIT_MS = 60000;
 let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 let failed = false;
@@ -167,10 +179,38 @@ function metric(id: string, value: string, unit = "") {
   }
 }
 
+function prepareFrame(current: T, timestamp: number) {
+  preparedSince ??= performance.now();
+  const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
+  const before = current.stats();
+  let compiling: boolean;
+  try { compiling = before.pipelines_compiling; } finally { before.free(); }
+  // Frames rendered while compiles run would only queue behind them.
+  if (compiling && !late) return;
+  current.suspend();
+  current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+  const after = current.stats();
+  let created: number;
+  try { created = after.pipelines_created; } finally { after.free(); }
+  quietFrames = created === 0 ? quietFrames + 1 : 0;
+  if (quietFrames < QUIET_FRAMES && !late) return;
+  preparing = false;
+  current.suspend();
+  previousFrame = undefined;
+  canvas.style.visibility = "";
+  message.hidden = true;
+  setStatus("WebGPU active", "running");
+}
+
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
   try {
+    if (preparing) {
+      prepareFrame(game, timestamp);
+      if (!disposed) request = requestAnimationFrame(frame);
+      return;
+    }
     options.beforeFrame?.(game, timestamp);
     game.frame(timestamp, pixelWidth, pixelHeight, inputEnabled ? input.forward : 0, inputEnabled ? input.right : 0, inputEnabled ? input.upAxis : 0,
       inputEnabled ? input.yaw : 0, inputEnabled ? input.pitch : 0, inputEnabled ? input.held : 0, inputEnabled ? input.pressed : 0, inputEnabled ? input.released : 0);
@@ -228,7 +268,14 @@ function resume() {
   if (disposed) return;
   if (game && paused && !document.hidden && !failed) setStatus("Paused", "paused");
   if (game && !paused && !document.hidden && !failed && !request) {
-    setStatus("WebGPU active", "running");
+    if (preparing) {
+      canvas.style.visibility = "hidden";
+      message.hidden = false;
+      message.textContent = "Compiling shaders…";
+      setStatus("Compiling shaders", "preparing");
+    } else {
+      setStatus("WebGPU active", "running");
+    }
     request = requestAnimationFrame(frame);
   }
 }

@@ -178,7 +178,11 @@ drawn as impostors ([decision 048](adr-048-impostors.md)), with `impostors`
 baked and `dropped_impostors`, the draw groups a budget or the GPU left
 drawing their meshes; `triangles`, those the camera's mesh draws submitted at
 their levels, impostors two each (exact on CPU-prepared frames, read back late
-on GPU-culled ones; virtual geometry's are `virtual_triangles`). `Mesh3d` reports each material's `surface`, `opacity` and
+on GPU-culled ones; virtual geometry's are `virtual_triangles`); `pipelines`,
+the pipelines the renderer has created, `pipelines_created`, those the last
+frame created, and `pipelines_compiling`, whether the GPU may still be
+compiling some ([decision 049](adr-049-pipeline-preparation.md)): steady
+frames create none. `Mesh3d` reports each material's `surface`, `opacity` and
 whether its texture masks emission (`texture_emission_mask`).
 
 ## Extend a game

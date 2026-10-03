@@ -1205,14 +1205,17 @@ impl VirtualGeometryPass {
             source: wgpu::ShaderSource::Wgsl(VIRTUAL_SHADER.into()),
         });
         let pipeline = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: None,
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            crate::pipelines::compute(
+                device,
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: None,
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                },
+            )
         };
         self.pipelines = Some(Pipelines {
             seed: pipeline("seed"),
@@ -1422,38 +1425,41 @@ impl VirtualGeometryPass {
                 immediate_size: 0,
             });
             let attributes = wgpu::vertex_attr_array![0 => Uint32, 1 => Uint32];
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("engine/virtual-shadow"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module,
-                    entry_point: Some("vs_shadow"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VISIBLE_BYTES,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &attributes,
-                    })],
-                },
-                // Both faces cast, as the shadow maps' other casters.
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: SHADOW_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    // The shadow maps' constant unit of bias (decision 028).
-                    bias: wgpu::DepthBiasState {
-                        constant: 1,
-                        slope_scale: 0.0,
-                        clamp: 0.0,
+            let pipeline = crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("engine/virtual-shadow"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module,
+                        entry_point: Some("vs_shadow"),
+                        compilation_options: Default::default(),
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: VISIBLE_BYTES,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &attributes,
+                        })],
                     },
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: None,
-                multiview_mask: None,
-                cache: None,
-            });
+                    // Both faces cast, as the shadow maps' other casters.
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: Default::default(),
+                        // The shadow maps' constant unit of bias (decision 028).
+                        bias: wgpu::DepthBiasState {
+                            constant: 1,
+                            slope_scale: 0.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: None,
+                    multiview_mask: None,
+                    cache: None,
+                },
+            );
             ShadowDrawing {
                 layout,
                 pipeline,

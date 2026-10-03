@@ -51,27 +51,30 @@ impl MipGenerator {
             wgpu::TextureFormat::Rgba8Unorm,
         ]
         .map(|format| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("engine/texture-mips"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some("vs_mip"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
+            crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("engine/texture-mips"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some("vs_mip"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("fs_mip"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(format.into())],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_mip"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(format.into())],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/texture-mip-sampler"),

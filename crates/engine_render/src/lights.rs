@@ -310,14 +310,17 @@ mod gpu {
                 immediate_size: 0,
             });
             let pipeline = |entry: &str| {
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    module: &module,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    cache: None,
-                })
+                crate::pipelines::compute(
+                    device,
+                    &wgpu::ComputePipelineDescriptor {
+                        label: Some(entry),
+                        layout: Some(&layout),
+                        module: &module,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        cache: None,
+                    },
+                )
             };
             let none = wgpu::BufferUsages::empty();
             Self {

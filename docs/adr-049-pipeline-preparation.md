@@ -94,7 +94,27 @@ unaffected.
 
 ## Measurements
 
-Filled as the steps land.
+Stress Lab Metro, Intel Xe-LPG:
+
+| Step | Pipelines (modules) | Created during play |
+|---|---|---|
+| Before | 103 (13) | 12, about 3 s in |
+| Base pipelines as variants, virtual geometry on first use | 83 (12) | 12 |
+| Uber variants for probe captures and impostor bakes | 74 (12) | 6 |
+| One preparation step, probes with the first frame, loading gate | 74 (12) | 0 |
+
+- Never bound in 25 s of play: 23 before, 5 after the first step (three
+  shadow pipelines of other paths and two bloom passes the reflection levels
+  replace).
+- Startup, cold profiles, until the canvas shows a playable frame:
+  - Firefox: first frame after 9-13 s, then freezes of 16-20 s (playable
+    after 12-35 s) before; playable after 14.0-14.5 s now, with no frame over
+    120 ms in the 15 s that follow.
+  - Chrome: playable after about 15 s before; 6.8 s now, with no stall after.
+- Every step kept captures pixel-identical (overview and close view, CPU and
+  GPU paths, with and without temporal antialiasing, with and without
+  reflection probes); GPU-presentation, TAA, LOD, virtual-geometry and web
+  smokes pass.
 
 ## Alternatives and evidence
 

@@ -408,14 +408,17 @@ impl ShadowPipelines {
             immediate_size: 0,
         });
         let compute = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&compute_layout),
-                module: &module,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+            crate::pipelines::compute(
+                device,
+                &wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&compute_layout),
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                },
+            )
         };
         let select = compute("select_casters");
         let count = compute("count_casters");
@@ -440,14 +443,17 @@ impl ShadowPipelines {
                 bind_group_layouts: &[Some(&skinned_layout)],
                 immediate_size: 0,
             });
-        let select_skinned = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("select_skinned"),
-            layout: Some(&skinned_pipeline_layout),
-            module: &module,
-            entry_point: Some("select_skinned"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let select_skinned = crate::pipelines::compute(
+            device,
+            &wgpu::ComputePipelineDescriptor {
+                label: Some("select_skinned"),
+                layout: Some(&skinned_pipeline_layout),
+                module: &module,
+                entry_point: Some("select_skinned"),
+                compilation_options: Default::default(),
+                cache: None,
+            },
+        );
         let view_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/shadow-view-layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -519,50 +525,53 @@ impl ShadowPipelines {
                 bind_group_layouts: layouts,
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &module,
-                    entry_point: Some(entry_point),
-                    compilation_options: Default::default(),
-                    buffers,
-                },
-                // Both faces cast: open and single-sided meshes shadow too.
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: SHADOW_FORMAT,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(if clear {
-                        wgpu::CompareFunction::Always
-                    } else {
-                        wgpu::CompareFunction::Less
-                    }),
-                    stencil: Default::default(),
-                    // Receiver planes (decision 028) keep lit surfaces off
-                    // their own depth; a unit of bias covers the sun shafts'
-                    // plain comparisons.
-                    bias: if clear {
-                        Default::default()
-                    } else {
-                        wgpu::DepthBiasState {
-                            constant: 1,
-                            slope_scale: 0.0,
-                            clamp: 0.0,
-                        }
+            crate::pipelines::render(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&layout),
+                    vertex: wgpu::VertexState {
+                        module: &module,
+                        entry_point: Some(entry_point),
+                        compilation_options: Default::default(),
+                        buffers,
                     },
-                }),
-                multisample: wgpu::MultisampleState::default(),
-                // Only masked casters test texels; the rest write depth alone.
-                fragment: masked.then_some(wgpu::FragmentState {
-                    module: &module,
-                    entry_point: Some("fs_masked"),
-                    compilation_options: Default::default(),
-                    targets: &[],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+                    // Both faces cast: open and single-sided meshes shadow too.
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: SHADOW_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(if clear {
+                            wgpu::CompareFunction::Always
+                        } else {
+                            wgpu::CompareFunction::Less
+                        }),
+                        stencil: Default::default(),
+                        // Receiver planes (decision 028) keep lit surfaces off
+                        // their own depth; a unit of bias covers the sun shafts'
+                        // plain comparisons.
+                        bias: if clear {
+                            Default::default()
+                        } else {
+                            wgpu::DepthBiasState {
+                                constant: 1,
+                                slope_scale: 0.0,
+                                clamp: 0.0,
+                            }
+                        },
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    // Only masked casters test texels; the rest write depth alone.
+                    fragment: masked.then_some(wgpu::FragmentState {
+                        module: &module,
+                        entry_point: Some("fs_masked"),
+                        compilation_options: Default::default(),
+                        targets: &[],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            )
         };
         let affine = pipeline(
             "engine/shadow-affine",

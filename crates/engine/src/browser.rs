@@ -178,6 +178,13 @@ pub struct FrameStats {
     pub reflection_probes: u32,
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
+    /// Pipelines the renderer has created, and those the last frame created
+    /// (decision 049): 0 once everything the scene draws is compiled.
+    pub pipelines: u32,
+    pub pipelines_created: u32,
+    /// Whether the GPU may still be compiling pipelines earlier frames
+    /// created, read when the stats are.
+    pub pipelines_compiling: bool,
     /// Clusters and triangles virtual geometry drew for the camera and into
     /// shadow maps, the camera's clusters occlusion culling left undrawn,
     /// and selections dropped while its storage grew (decision 044), read
@@ -289,6 +296,13 @@ pub struct BrowserStats {
     pub reflection_probes: u32,
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
+    /// Pipelines the renderer has created, and those the last frame created
+    /// (decision 049): 0 once everything the scene draws is compiled.
+    pub pipelines: u32,
+    pub pipelines_created: u32,
+    /// Whether the GPU may still be compiling pipelines earlier frames
+    /// created, read when the stats are.
+    pub pipelines_compiling: bool,
     /// Clusters and triangles virtual geometry drew for the camera and into
     /// shadow maps, the camera's clusters occlusion culling left undrawn,
     /// and selections dropped while its storage grew (decision 044), read
@@ -387,6 +401,9 @@ impl From<FrameStats> for BrowserStats {
             reflection_probes: stats.reflection_probes,
             reflection_probe_faces: stats.reflection_probe_faces,
             dropped_reflection_probes: stats.dropped_reflection_probes,
+            pipelines: stats.pipelines,
+            pipelines_created: stats.pipelines_created,
+            pipelines_compiling: stats.pipelines_compiling,
             virtual_clusters: stats.virtual_clusters,
             virtual_triangles: stats.virtual_triangles,
             virtual_shadow_clusters: stats.virtual_shadow_clusters,
@@ -780,6 +797,9 @@ impl BrowserApp {
             reflection_probes: rendered.reflection_probes,
             reflection_probe_faces: rendered.reflection_probe_faces,
             dropped_reflection_probes: rendered.dropped_reflection_probes,
+            pipelines: rendered.pipelines,
+            pipelines_created: rendered.pipelines_created,
+            pipelines_compiling: false,
             virtual_clusters: rendered.virtual_clusters,
             virtual_triangles: rendered.virtual_triangles,
             virtual_shadow_clusters: rendered.virtual_shadow_clusters,
@@ -802,7 +822,10 @@ impl BrowserApp {
     }
 
     pub fn stats(&self) -> FrameStats {
-        self.stats
+        FrameStats {
+            pipelines_compiling: self.renderer.pipelines_compiling(),
+            ..self.stats
+        }
     }
 
     /// GPU residency reflects the last valid render boundary, not queue completion.

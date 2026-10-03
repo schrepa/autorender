@@ -728,44 +728,47 @@ mod gpu {
             buffers.push(crate::browser::extra_layout());
         }
         let targets = FORMATS.map(|format| Some(wgpu::ColorTargetState::from(format)));
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/impostor-bake"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some(&vertex),
-                compilation_options: Default::default(),
-                buffers: &buffers,
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            // Nearer the frame's viewer is greater, as with reversed depth.
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: BAKE_DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLES,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(&fragment),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
+        crate::pipelines::render(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("engine/impostor-bake"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some(&vertex),
+                    compilation_options: Default::default(),
+                    buffers: &buffers,
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                     ..Default::default()
                 },
-                targets: &targets,
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
+                // Nearer the frame's viewer is greater, as with reversed depth.
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: BAKE_DEPTH,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLES,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(&fragment),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: &constants,
+                        ..Default::default()
+                    },
+                    targets: &targets,
+                }),
+                multiview_mask: None,
+                cache: None,
+            },
+        )
     }
 
     /// An impostor draw pipeline: `layout` binds the camera, the impostors'
@@ -805,49 +808,52 @@ mod gpu {
             ],
         };
         let constants = [("SURFACE_IS_SRGB", if canvas.is_srgb() { 1.0 } else { 0.0 })];
-        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("engine/impostors"),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some(vertex),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: 8,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
-                })],
-            },
-            // Mirrored poses turn cards around.
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(fragment),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: if targets == ImpostorTargets::Canvas {
-                        &constants
-                    } else {
-                        &[]
-                    },
+        crate::pipelines::render(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("engine/impostors"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some(vertex),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: 8,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
+                    })],
+                },
+                // Mirrored poses turn cards around.
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: None,
                     ..Default::default()
                 },
-                targets: &color_targets,
-            }),
-            multiview_mask: None,
-            cache: None,
-        })
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(fragment),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: if targets == ImpostorTargets::Canvas {
+                            &constants
+                        } else {
+                            &[]
+                        },
+                        ..Default::default()
+                    },
+                    targets: &color_targets,
+                }),
+                multiview_mask: None,
+                cache: None,
+            },
+        )
     }
 }
 

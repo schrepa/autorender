@@ -90,6 +90,10 @@ pub struct RenderStats {
     pub reflection_probes: u32,
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
+    /// Pipelines the renderer has created, and those this frame created
+    /// (decision 049): 0 once everything the scene draws is compiled.
+    pub pipelines: u32,
+    pub pipelines_created: u32,
     /// Clusters and triangles virtual geometry (decision 044) drew for the
     /// camera and into shadow maps, the camera's clusters occlusion culling
     /// left undrawn, and selections dropped while their storage grew, read
@@ -155,6 +159,8 @@ mod impostors;
 mod lights;
 #[cfg(any(target_arch = "wasm32", test))]
 mod particles;
+#[cfg(target_arch = "wasm32")]
+mod pipelines;
 #[cfg(any(target_arch = "wasm32", test))]
 mod probes;
 #[cfg(any(target_arch = "wasm32", test))]

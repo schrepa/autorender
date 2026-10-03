@@ -261,7 +261,9 @@ level of detail ([decision 047](adr-047-levels-of-detail.md)),
 `render.dropped_impostors` the impostors baked and the draw groups left
 without one, and `memory.gpu_impostor_bytes` their arrays
 ([decision 048](adr-048-impostors.md)); `render.triangles` counts the
-triangles the camera's mesh draws submitted. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
+triangles the camera's mesh draws submitted, and `render.pipelines_created`
+the pipelines a frame created ([decision 049](adr-049-pipeline-preparation.md)),
+0 once everything the scene draws is compiled. Ambient occlusion and bloom ([decision 021](adr-021-ambient-occlusion-and-bloom.md))
 add `ambient_occlusion` (the samples), `effects_filter` (the
 half-resolution filter of the occlusion and the sun shafts), `bloom` (every
 level down and up, and the scene levels reflections read, which its passes

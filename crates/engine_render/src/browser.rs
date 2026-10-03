@@ -1,6 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
@@ -308,6 +311,12 @@ pub struct Renderer {
     impostors: ImpostorAtlas,
     impostor_records: Vec<ImpostorRecord>,
     dropped_impostors: u32,
+    // Pipelines created so far (decision 049); frames that created some,
+    // and the latest of those whose submitted work the GPU completed, which
+    // their compiles precede.
+    pipelines: u32,
+    pipeline_frames: u64,
+    pipelines_compiled: Arc<AtomicU64>,
     // Occlusion culling of GPU-presented frames (decision 040), on unless
     // turned off, and its depth pyramid.
     occlusion_culling: bool,
@@ -851,6 +860,9 @@ impl Renderer {
             impostors,
             impostor_records: Vec::new(),
             dropped_impostors: 0,
+            pipelines: 0,
+            pipeline_frames: 0,
+            pipelines_compiled: Arc::new(AtomicU64::new(0)),
             occlusion_culling: true,
             subpixel_culling: true,
             depth_pyramid: None,
@@ -1978,6 +1990,12 @@ impl Renderer {
             affine,
         };
         self.ensure_variants(opaque_kind, transparent_kind);
+        // Reflection probes (decision 043) capture once their slots stand
+        // still: their pipelines are prepared with the first frame that has
+        // probes, not in the middle of play (decision 049).
+        if gpu_mode && affine && !probe_list.is_empty() {
+            self.ensure_probe_pipelines(PassKind::Probe { lit: lit_frame });
+        }
         // Impostors (decision 048): this frame's records, group and pipeline.
         let impostor_pass = if gpu_mode
             && self
@@ -2826,6 +2844,17 @@ impl Renderer {
         let virtual_stats = virtual_frame
             .then(|| self.virtual_geometry.stats())
             .flatten();
+        let pipelines_created = crate::pipelines::take_created();
+        self.pipelines = self.pipelines.saturating_add(pipelines_created);
+        if pipelines_created > 0 {
+            // Pipelines compile before the work submitted after them runs:
+            // this frame's completion ends their compiles (decision 049).
+            self.pipeline_frames += 1;
+            let (compiled, frame) = (Arc::clone(&self.pipelines_compiled), self.pipeline_frames);
+            self.queue.on_submitted_work_done(move || {
+                compiled.fetch_max(frame, Ordering::Relaxed);
+            });
+        }
         let stats = RenderStats {
             draw_calls: self.plan.batches.len() as u32,
             upload_bytes: camera_upload_bytes
@@ -2929,6 +2958,8 @@ impl Renderer {
             reflection_probes: self.probes.slots.ready(),
             reflection_probe_faces: probe_faces,
             dropped_reflection_probes: dropped_probes.min(u64::from(u32::MAX)) as u32,
+            pipelines: self.pipelines,
+            pipelines_created,
             virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
             virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
@@ -3054,6 +3085,10 @@ impl Renderer {
             engine_profile::counter(
                 "render.dropped_impostors",
                 f64::from(stats.dropped_impostors),
+            );
+            engine_profile::counter(
+                "render.pipelines_created",
+                f64::from(stats.pipelines_created),
             );
             engine_profile::counter(
                 "memory.gpu_impostor_bytes",
@@ -3992,8 +4027,9 @@ impl Renderer {
             constants,
         } = self.virtual_stages(kind, variant, false);
         let targets = &targets[..];
-        self.device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        crate::pipelines::render(
+            &self.device,
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("engine/virtual-meshes"),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
@@ -4030,7 +4066,8 @@ impl Renderer {
                 }),
                 multiview_mask: None,
                 cache: None,
-            })
+            },
+        )
     }
 
     /// The stages of `kind`'s virtual geometry pipelines for material
@@ -4173,8 +4210,9 @@ impl Renderer {
                     immediate_size: 0,
                 });
             let pipeline = |double_sided: bool| {
-                self.device
-                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                crate::pipelines::render(
+                    &self.device,
+                    &wgpu::RenderPipelineDescriptor {
                         label: Some("engine/visibility"),
                         layout: Some(&layout),
                         vertex: wgpu::VertexState {
@@ -4208,7 +4246,8 @@ impl Renderer {
                         }),
                         multiview_mask: None,
                         cache: None,
-                    })
+                    },
+                )
             };
             self.visibility_pipelines = Some([pipeline(false), pipeline(true)]);
         }
@@ -4261,8 +4300,9 @@ impl Renderer {
             targets,
             constants,
         } = self.virtual_stages(kind, variant, true);
-        self.device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        crate::pipelines::render(
+            &self.device,
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("engine/visibility-resolve"),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
@@ -4291,7 +4331,8 @@ impl Renderer {
                 }),
                 multiview_mask: None,
                 cache: None,
-            })
+            },
+        )
     }
 
     /// The visibility buffer's groups (decision 045): its pass's per current
@@ -4527,6 +4568,13 @@ impl Renderer {
         self.materials.is_texture_resident(handle)
     }
 
+    /// Whether pipelines created by earlier frames may still be compiling:
+    /// the GPU has not yet completed the last frame that created some
+    /// (decision 049).
+    pub fn pipelines_compiling(&self) -> bool {
+        self.pipelines_compiled.load(Ordering::Relaxed) < self.pipeline_frames
+    }
+
     fn residency_stats(&self) -> RenderStats {
         let (resident_textures, resident_texture_bytes, _) = self.materials.texture_totals();
         RenderStats {
@@ -4534,6 +4582,7 @@ impl Renderer {
             resident_mesh_bytes: self.meshes.values().map(|mesh| mesh.byte_len).sum(),
             resident_textures,
             resident_texture_bytes,
+            pipelines: self.pipelines,
             ..RenderStats::default()
         }
     }
@@ -4683,37 +4732,40 @@ pub(crate) fn sky_pipeline(
         immediate_size: 0,
     });
     let constants = surface_srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("engine/sky"),
-        layout: Some(&layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some("vs_sky"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        primitive: wgpu::PrimitiveState::default(),
-        // On the far plane: it shows where nothing was drawn.
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some(fragment),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
-                ..Default::default()
+    crate::pipelines::render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some("engine/sky"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some("vs_sky"),
+                compilation_options: Default::default(),
+                buffers: &[],
             },
-            targets,
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+            primitive: wgpu::PrimitiveState::default(),
+            // On the far plane: it shows where nothing was drawn.
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(fragment),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
+                    ..Default::default()
+                },
+                targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
 }
 
 /// Fragment stage of a mesh pipeline: entry point, color targets and
@@ -4774,49 +4826,52 @@ fn mesh_pipeline(
     } else {
         2
     };
-    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("engine/instanced-meshes"),
-        layout: Some(layout),
-        vertex: wgpu::VertexState {
-            module: shader,
-            entry_point: Some(&vertex_entry),
-            compilation_options: Default::default(),
-            buffers: if affine {
-                &affine_layouts[..streams]
-            } else {
-                &full_layouts[..streams]
+    crate::pipelines::render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some("engine/instanced-meshes"),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some(&vertex_entry),
+                compilation_options: Default::default(),
+                buffers: if affine {
+                    &affine_layouts[..streams]
+                } else {
+                    &full_layouts[..streams]
+                },
             },
-        },
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: if fragment.mirrored {
-                wgpu::FrontFace::Cw
-            } else {
-                wgpu::FrontFace::Ccw
-            },
-            cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(fragment.depth_write),
-            depth_compare: Some(wgpu::CompareFunction::Greater),
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: shader,
-            entry_point: Some(&fragment_entry),
-            compilation_options: wgpu::PipelineCompilationOptions {
-                constants: &constants,
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: if fragment.mirrored {
+                    wgpu::FrontFace::Cw
+                } else {
+                    wgpu::FrontFace::Ccw
+                },
+                cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
-            targets: fragment.targets,
-        }),
-        multiview_mask: None,
-        cache: None,
-    })
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(fragment.depth_write),
+                depth_compare: Some(wgpu::CompareFunction::Greater),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(&fragment_entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &constants,
+                    ..Default::default()
+                },
+                targets: fragment.targets,
+            }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
 }
 
 /// Mesh pipelines shading local lights (decision 023): canvas and scene
