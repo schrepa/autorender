@@ -5,6 +5,7 @@
 //! reflections (decision 025) walk after the opaque pass.
 
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
+use crate::profiling::Span;
 
 const GROUP: u32 = 8;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -211,25 +212,14 @@ impl DepthPyramid {
     }
 
     /// Records every level's reduction, level zero from the depth buffer.
-    /// With `timestamp` (a query set and index), the pass writes it when it
-    /// begins.
-    pub(crate) fn encode(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        timestamp: Option<(&wgpu::QuerySet, u32)>,
-    ) {
+    /// With `span`, the pass begins it.
+    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, span: Option<Span<'_>>) {
         let Some((_, levels)) = &self.levels else {
             return;
         };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/depth-pyramid"),
-            timestamp_writes: timestamp.map(|(query_set, index)| {
-                wgpu::ComputePassTimestampWrites {
-                    query_set,
-                    beginning_of_pass_write_index: Some(index),
-                    end_of_pass_write_index: None,
-                }
-            }),
+            timestamp_writes: span.map(|span| span.compute_part(true, false)),
         });
         for (level, (group, (width, height))) in levels.passes.iter().enumerate() {
             pass.set_pipeline(if level == 0 { &self.first } else { &self.down });

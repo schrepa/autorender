@@ -19,6 +19,7 @@ use crate::cached::Cached;
 use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::gpu_data::{POST_SHADER, PostUniform, SHAFTS_SHADER};
 use crate::pipelines::{Fillers, Fullscreen, Slot, filled_group, fullscreen, group_layout};
+use crate::profiling::{GpuProfiler, Span};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -64,9 +65,6 @@ const POST_BINDINGS: &[(u32, Slot)] = &[
     (14, Slot::Filtered),
     (15, Slot::Filtered),
 ];
-/// Queries of the occlusion and shaft filter past occlusion's first: the
-/// profiler's `effects_filter` entry.
-pub(crate) const EFFECTS_FILTER_QUERY: u32 = 30;
 /// Blurred half-resolution levels of the scene rough reflections read.
 const SCENE_LEVELS: u32 = 6;
 
@@ -648,18 +646,16 @@ impl PostPass {
     /// camera group `camera` of the main passes) and the filter of occlusion
     /// and shafts after the opaque and transparent passes. Frames with bloom
     /// and reflections blur the scene levels reflections read in the bloom's
-    /// passes down. With `timestamps` (a query set and its first index),
-    /// occlusion's samples write queries `first` and `first + 1`, bloom
-    /// (with those scene levels) `first + 2` and `first + 3`, reflections
-    /// (their depth pyramid, any scene levels left, trace and filter)
-    /// `first + 6` and `first + 7`, shafts `first + 8` and `first + 9` and the
-    /// filter `first + EFFECTS_FILTER_QUERY` and the one after.
+    /// passes down. `profiler` times occlusion's samples
+    /// (`ambient_occlusion`), bloom with those scene levels (`bloom`),
+    /// reflections from their depth pyramid to their filter (`reflections`),
+    /// shafts (`sun_shafts`) and the filter (`effects_filter`).
     pub(crate) fn encode_effects(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: PostFrame,
         camera: &wgpu::BindGroup,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
+        profiler: &GpuProfiler,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
         if frame.occlusion
@@ -670,7 +666,7 @@ impl PostPass {
                 "engine/post-occlusion",
                 &targets.raw_occlusion,
                 wgpu::LoadOp::Clear(wgpu::Color::RED),
-                timestamps.map(|(set, first)| (set, Some(first), Some(first + 1))),
+                profiler.span("ambient_occlusion").map(Span::render),
             );
             pass.set_pipeline(&self.occlusion);
             pass.set_bind_group(0, group, &[]);
@@ -682,7 +678,7 @@ impl PostPass {
         // Bloom first: with reflections, its passes down also blur the scene
         // for rough reflections.
         let levels_done = if frame.bloom {
-            self.encode_bloom(encoder, reflecting, timestamps)
+            self.encode_bloom(encoder, reflecting, profiler)
         } else {
             0
         };
@@ -690,8 +686,7 @@ impl PostPass {
             && let Some(group) = self.reflections_group.get()
             && let Some(filter) = self.filter_group.get()
         {
-            self.nearest
-                .encode(encoder, timestamps.map(|(set, first)| (set, first + 6)));
+            self.nearest.encode(encoder, profiler.span("reflections"));
             // The scene blurred down its levels for rough reflections, past
             // those the bloom's passes wrote.
             for (view, group) in targets
@@ -728,7 +723,9 @@ impl PostPass {
                 "engine/post-reflections-filter",
                 &targets.reflections,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                timestamps.map(|(set, first)| (set, None, Some(first + 7))),
+                profiler
+                    .span("reflections")
+                    .map(|span| span.render_part(false, true)),
             );
             pass.set_pipeline(&self.reflections_filter);
             pass.set_bind_group(0, filter, &[]);
@@ -742,7 +739,7 @@ impl PostPass {
                 "engine/post-shafts",
                 &targets.shafts,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                timestamps.map(|(set, first)| (set, Some(first + 8), Some(first + 9))),
+                profiler.span("sun_shafts").map(Span::render),
             );
             pass.set_pipeline(&self.shafts);
             pass.set_bind_group(0, camera, &[]);
@@ -759,13 +756,7 @@ impl PostPass {
                 "engine/post-effects-filter",
                 &targets.occlusion,
                 wgpu::LoadOp::Clear(wgpu::Color::RED),
-                timestamps.map(|(set, first)| {
-                    (
-                        set,
-                        Some(first + EFFECTS_FILTER_QUERY),
-                        Some(first + EFFECTS_FILTER_QUERY + 1),
-                    )
-                }),
+                profiler.span("effects_filter").map(Span::render),
             );
             pass.set_pipeline(&self.effects_filter);
             pass.set_bind_group(0, group, &[]);
@@ -780,13 +771,15 @@ impl PostPass {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         scene_levels: bool,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
+        profiler: &GpuProfiler,
     ) -> usize {
         let targets = self.targets.as_ref().expect("sized in begin");
         let levels = targets.bloom.len();
+        // The first pass down begins the span, the last pass up ends it.
+        let span = profiler.span("bloom");
         let timed = |first: bool, last: bool| {
-            timestamps
-                .map(|(set, index)| (set, first.then_some(index + 2), last.then_some(index + 3)))
+            span.filter(|_| first || last)
+                .map(|span| span.render_part(first, last))
         };
         let shared = if scene_levels {
             targets.scene_level_views.len().min(levels)
@@ -802,17 +795,7 @@ impl PostPass {
                         Some(cleared(&targets.bloom[level])),
                     ],
                     depth_stencil_attachment: None,
-                    timestamp_writes: timed(level == 0, levels == 1).and_then(
-                        |(query_set, begin, end)| {
-                            (begin.is_some() || end.is_some()).then_some(
-                                wgpu::RenderPassTimestampWrites {
-                                    query_set,
-                                    beginning_of_pass_write_index: begin,
-                                    end_of_pass_write_index: end,
-                                },
-                            )
-                        },
-                    ),
+                    timestamp_writes: timed(level == 0, levels == 1),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -865,13 +848,14 @@ impl PostPass {
     }
 
     /// Records the composite of a frame without temporal antialiasing into
-    /// `canvas` with operations `ops`.
+    /// `canvas` with operations `ops`, timed by `profiler`
+    /// (`post_composite`).
     pub(crate) fn encode_composite(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::TextureView,
         ops: wgpu::Operations<wgpu::Color>,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
+        profiler: &GpuProfiler,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -883,13 +867,7 @@ impl PostPass {
                 ops,
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: timestamps.map(|(query_set, first)| {
-                wgpu::RenderPassTimestampWrites {
-                    query_set,
-                    beginning_of_pass_write_index: Some(first),
-                    end_of_pass_write_index: Some(first + 1),
-                }
-            }),
+            timestamp_writes: profiler.span("post_composite").map(Span::render),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -1080,7 +1058,7 @@ fn fullscreen_pass<'e>(
     label: &str,
     view: &wgpu::TextureView,
     load: wgpu::LoadOp<wgpu::Color>,
-    timestamps: Option<(&wgpu::QuerySet, Option<u32>, Option<u32>)>,
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
 ) -> wgpu::RenderPass<'e> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
@@ -1094,13 +1072,7 @@ fn fullscreen_pass<'e>(
             },
         })],
         depth_stencil_attachment: None,
-        timestamp_writes: timestamps.and_then(|(query_set, begin, end)| {
-            (begin.is_some() || end.is_some()).then_some(wgpu::RenderPassTimestampWrites {
-                query_set,
-                beginning_of_pass_write_index: begin,
-                end_of_pass_write_index: end,
-            })
-        }),
+        timestamp_writes,
         occlusion_query_set: None,
         multiview_mask: None,
     })

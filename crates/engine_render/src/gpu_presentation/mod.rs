@@ -27,6 +27,7 @@ use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::{FLAG_PHASE1, FLAG_PHASE2, FLAG_VISIBLE, PresentationFrame, frustum_uniform};
 use crate::mesh_arena::Ids;
+use crate::profiling::{GpuProfiler, Span};
 use crate::staging::Prestaged;
 
 use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
@@ -37,36 +38,25 @@ use layouts::Shaders;
 use probes::{ProbeFaces, Stillness};
 use totals::Totals;
 
-/// Presentation stages a profiling capture times as separate passes: the
-/// previous-pose shift, parent composition, culling, scanning (group sums
-/// and draw arguments) and scattering of visible slots.
-#[cfg_attr(not(feature = "profiling"), allow(dead_code))]
-pub(crate) const STAGE_COUNT: usize = 5;
-const SHIFT: usize = 0;
-const COMPOSE: usize = 1;
-const CULL: usize = 2;
-const SCAN: usize = 3;
-const SCATTER: usize = 4;
-
-/// Timestamp queries of one frame's presentation stages: stage `s` writes
-/// query `2 + 2s` when its pass begins and `3 + 2s` when it ends.
-#[derive(Clone, Copy)]
-pub(crate) struct StageStamps<'a> {
-    query_set: &'a wgpu::QuerySet,
+/// The stages of a frame's compute pass, which profiling captures time as
+/// separate passes: parent composition, culling, scanning (group sums and
+/// draw arguments) and the scatter of visible slots.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Compose,
+    Cull,
+    Scan,
+    Scatter,
 }
 
-impl<'a> StageStamps<'a> {
-    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
-    pub(crate) fn new(query_set: &'a wgpu::QuerySet) -> Self {
-        Self { query_set }
-    }
-
-    fn writes(self, stage: usize) -> wgpu::ComputePassTimestampWrites<'a> {
-        let begin = 2 + 2 * stage as u32;
-        wgpu::ComputePassTimestampWrites {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: Some(begin),
-            end_of_pass_write_index: Some(begin + 1),
+impl Stage {
+    /// The profiler's span of the stage.
+    fn span(self) -> &'static str {
+        match self {
+            Self::Compose => "presentation_compose",
+            Self::Cull => "presentation_cull",
+            Self::Scan => "presentation_scan",
+            Self::Scatter => "presentation_scatter",
         }
     }
 }
@@ -102,8 +92,6 @@ pub(crate) struct GpuPrepared {
     pub prestaged: bool,
     /// Inputs gathered ahead of their due frame were held, not applied.
     pub held: bool,
-    /// Stages timed in their own passes (bit per stage), for profiling.
-    pub timed: u8,
 }
 
 /// What GPU presentation needs of a plan batch: its mesh's index count,
@@ -365,8 +353,8 @@ impl GpuPresentationPass {
     /// writes the frame uniform. Large node uploads record copies into
     /// `staging`'s encoder, submitted before the frame. Culling writes
     /// displayed poses into the frame's pose buffer and tests them against
-    /// `view`; with `stamps` (profiling captures) a shift of previous poses
-    /// is timed.
+    /// `view`. Profiling captures time a shift of previous poses
+    /// (`presentation_shift`).
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -374,7 +362,7 @@ impl GpuPresentationPass {
         staging: Staging<'_>,
         inputs: &PresentationInputs<'_>,
         view: &CullingView,
-        stamps: Option<StageStamps<'_>>,
+        profiler: &GpuProfiler,
     ) -> GpuPrepared {
         let PresentationInputs {
             frame,
@@ -407,11 +395,8 @@ impl GpuPresentationPass {
         if let Some(gather) = self.nodes.gather(gpu, held) {
             prepared.full_node_upload = gather.since.is_none();
             if gather.shift {
-                self.submit_shift(device, queue, stamps);
+                self.submit_shift(device, queue, profiler);
                 prepared.shifted = true;
-                if stamps.is_some() {
-                    prepared.timed |= 1 << SHIFT;
-                }
             }
             let upload = self.nodes.upload(device, queue, staging, gpu, gather.since);
             prepared.node_upload_bytes = upload.bytes;
@@ -434,12 +419,7 @@ impl GpuPresentationPass {
     /// Copies the last current poses into previous slots, submitted at once:
     /// queued writes and staged copies of this gather take effect at the
     /// next submission, after it.
-    fn submit_shift(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        stamps: Option<StageStamps<'_>>,
-    ) {
+    fn submit_shift(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, profiler: &GpuProfiler) {
         let groups = self
             .node_groups
             .get_or_insert_with(self.nodes.generation(), || {
@@ -451,7 +431,7 @@ impl GpuPresentationPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/presentation-shift"),
-                timestamp_writes: stamps.map(|stamps| stamps.writes(SHIFT)),
+                timestamp_writes: profiler.span("presentation_shift").map(Span::compute),
             });
             pass.set_pipeline(&self.shaders.pipelines.shift_previous);
             pass.set_bind_group(0, &groups.shift_previous, &[]);
@@ -647,20 +627,19 @@ impl GpuPresentationPass {
     }
 
     /// Records blending, composition, culling and compaction in one compute
-    /// pass. With `stamps` (profiling captures) each stage gets its own timed
-    /// pass instead; returns the stages timed, one bit each.
+    /// pass; profiling captures time each stage in its own pass instead.
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        stamps: Option<StageStamps<'_>>,
-    ) -> u8 {
+        profiler: &GpuProfiler,
+    ) {
         let (Some(nodes), Some(compact), Some(posed)) = (
             self.node_groups.get(),
             self.compact_groups.get(),
             self.pose_groups[self.poses.0].get(),
         ) else {
-            return 0;
+            return;
         };
         let pipelines = &self.shaders.pipelines;
         let candidates = self.groups.count();
@@ -671,8 +650,8 @@ impl GpuPresentationPass {
             encoder.clear_buffer(&self.occlusion_counts, 0, None);
         }
         // Dispatches of each stage, in order.
-        let record = |pass: &mut wgpu::ComputePass<'_>, stage: usize| match stage {
-            COMPOSE => {
+        let record = |pass: &mut wgpu::ComputePass<'_>, stage: Stage| match stage {
+            Stage::Compose => {
                 pass.set_pipeline(&pipelines.compose_parents);
                 pass.set_bind_group(0, &nodes.compose_parents, &[]);
                 for (level, &(start, end)) in self.nodes.level_ranges().iter().enumerate() {
@@ -682,7 +661,7 @@ impl GpuPresentationPass {
                     }
                 }
             }
-            CULL => {
+            Stage::Cull => {
                 // Skinned slots' palettes, from the composed parents.
                 if joints != 0 {
                     pass.set_pipeline(&pipelines.skin_palette);
@@ -716,35 +695,33 @@ impl GpuPresentationPass {
                 pass.set_bind_group(0, &compact[PHASE_ONE], &[]);
                 pass.dispatch_workgroups(candidates.div_ceil(SCAN_GROUP), 1, 1);
             }
-            SCAN => {
+            Stage::Scan => {
                 pass.set_pipeline(&pipelines.scan_groups);
                 pass.set_bind_group(0, &compact[PHASE_ONE], &[]);
                 pass.dispatch_workgroups(1, 1, 1);
                 pass.set_pipeline(&pipelines.batch_args);
                 pass.dispatch_workgroups(self.groups.batch_count().div_ceil(ARGS_GROUP), 1, 1);
             }
-            _ => {
+            Stage::Scatter => {
                 pass.set_pipeline(&pipelines.scatter);
                 pass.set_bind_group(0, &compact[PHASE_ONE], &[]);
                 pass.dispatch_workgroups(candidates.div_ceil(SCAN_GROUP), 1, 1);
             }
         };
         let stages = [
-            (COMPOSE, !self.nodes.level_ranges().is_empty()),
-            (CULL, candidates != 0 || joints != 0),
-            (SCAN, candidates != 0),
-            (SCATTER, candidates != 0),
+            (Stage::Compose, !self.nodes.level_ranges().is_empty()),
+            (Stage::Cull, candidates != 0 || joints != 0),
+            (Stage::Scan, candidates != 0),
+            (Stage::Scatter, candidates != 0),
         ];
-        let mut timed = 0;
-        if let Some(stamps) = stamps {
+        if profiler.capturing() {
             for (stage, runs) in stages {
                 if runs {
                     let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                         label: Some("engine/presentation-stage"),
-                        timestamp_writes: Some(stamps.writes(stage)),
+                        timestamp_writes: profiler.span(stage.span()).map(Span::compute),
                     });
                     record(&mut pass, stage);
-                    timed |= 1 << stage;
                 }
             }
         } else {
@@ -772,21 +749,20 @@ impl GpuPresentationPass {
                 self.totals.read_back(device, encoder);
             }
         }
-        timed
     }
 
     /// Occlusion culling (decision 040) after phase one drew and `pyramid`
     /// (its view and generation) holds its depths: tests every
     /// frustum-visible candidate, then compacts phase two's draws, and reads
-    /// back both phases' totals and the hidden count. With `timestamp` (a
-    /// query set and index), the pass writes it when it ends.
+    /// back both phases' totals and the hidden count. With `span`, the pass
+    /// ends it.
     pub(crate) fn encode_occlusion(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         pyramid: (&wgpu::TextureView, u64),
         poses: &wgpu::Buffer,
-        timestamp: Option<(&wgpu::QuerySet, u32)>,
+        span: Option<Span<'_>>,
     ) {
         if !self.occlusion {
             return;
@@ -819,13 +795,7 @@ impl GpuPresentationPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/presentation-occlusion"),
-                timestamp_writes: timestamp.map(|(query_set, index)| {
-                    wgpu::ComputePassTimestampWrites {
-                        query_set,
-                        beginning_of_pass_write_index: None,
-                        end_of_pass_write_index: Some(index),
-                    }
-                }),
+                timestamp_writes: span.map(|span| span.compute_part(false, true)),
             });
             pass.set_pipeline(&self.shaders.pipelines.occlusion_test);
             pass.set_bind_group(0, group, &[]);

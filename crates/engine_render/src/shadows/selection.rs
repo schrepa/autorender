@@ -12,6 +12,7 @@ use super::{GROUP, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source
 use crate::browser::FramePoses;
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
+use crate::profiling::{GpuProfiler, Span};
 use crate::shadow_fit::TILE_WORDS;
 
 const READBACKS: usize = 3;
@@ -405,9 +406,8 @@ impl Selection {
         }
     }
 
-    /// Records caster selection of `frame` with `groups` caster groups.
-    /// With `timestamps` (a query set and its first index), the selection
-    /// pass writes queries `first` and `first + 1`; returns whether it did.
+    /// Records caster selection of `frame` with `groups` caster groups,
+    /// timed by `profiler` (`shadow_select`).
     pub(super) fn encode(
         &mut self,
         device: &wgpu::Device,
@@ -415,9 +415,8 @@ impl Selection {
         pipelines: &ShadowPipelines,
         frame: &ShadowFrame,
         groups: usize,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
-    ) -> bool {
-        let mut timed = false;
+        profiler: &GpuProfiler,
+    ) {
         if frame.source != Source::Snapshot {
             // Instance counts start at zero every frame.
             encoder.copy_buffer_to_buffer(
@@ -432,13 +431,7 @@ impl Selection {
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("engine/shadow-select"),
-                    timestamp_writes: timestamps.map(|(query_set, first)| {
-                        wgpu::ComputePassTimestampWrites {
-                            query_set,
-                            beginning_of_pass_write_index: Some(first),
-                            end_of_pass_write_index: Some(first + 1),
-                        }
-                    }),
+                    timestamp_writes: profiler.span("shadow_select").map(Span::compute),
                 });
                 pass.set_pipeline(&pipelines.select);
                 pass.set_bind_group(0, group, &[]);
@@ -454,7 +447,6 @@ impl Selection {
                 }
                 pass.set_pipeline(&pipelines.count);
                 pass.dispatch_workgroups(1, 1, 1);
-                timed = timestamps.is_some();
             }
         }
         if frame.read_dirty {
@@ -466,7 +458,6 @@ impl Selection {
                 encoder.clear_buffer(&dirty, 0, Some(TILE_WORDS as u64 * 4));
             }
         }
-        timed
     }
 
     fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&DirtyReadback> {

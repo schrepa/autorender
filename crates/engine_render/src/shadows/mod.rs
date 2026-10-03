@@ -36,6 +36,7 @@ use crate::batches::BatchPlan;
 use crate::browser::FramePoses;
 use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
+use crate::profiling::GpuProfiler;
 use crate::shadow_fit::{KeptMap, LightBasis, Refresh};
 
 use casters::CasterGroups;
@@ -171,15 +172,6 @@ struct Caster<'m> {
     skin: Option<&'m wgpu::Buffer>,
     material: Option<&'m wgpu::BindGroup>,
     index: usize,
-}
-
-/// What [`ShadowPass::encode_maps`] recorded.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct ShadowEncoded {
-    /// Passes timed (bit 0 selection, bit 1 depth maps).
-    pub timed: u16,
-    /// Indexed draws, one per mesh group and map drawn.
-    pub draws: u32,
 }
 
 /// One frame's shadow work, from [`ShadowPass::prepare`].
@@ -516,42 +508,42 @@ impl ShadowPass {
         })
     }
 
-    /// Records caster selection of `frame`. With `timestamps` (a query set
-    /// and its first index), the selection pass writes queries `first` and
-    /// `first + 1`. Returns the profiler effects it timed.
+    /// Records caster selection of `frame`, timed by `profiler`
+    /// (`shadow_select`).
     pub(crate) fn encode_selection(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         frame: &ShadowFrame,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
-    ) -> u16 {
+        profiler: &GpuProfiler,
+    ) {
         let (Some(pipelines), Some(_)) = (&self.pipelines, self.maps.textures()) else {
-            return 0;
+            return;
         };
-        u16::from(self.selection.encode(
+        self.selection.encode(
             device,
             encoder,
             pipelines,
             frame,
             self.casters.groups().len(),
-            timestamps,
-        ))
+            profiler,
+        );
     }
 
     /// Records the depth passes of `frame` from `sources`, after
-    /// [`Self::encode_selection`] and virtual geometry's selection. With
-    /// `timestamps` (a query set and its first index), the depth passes
-    /// write their effects' queries.
+    /// [`Self::encode_selection`] and virtual geometry's selection, timed by
+    /// `profiler` (`shadow_near` from the first cascade to the last,
+    /// `shadow_moving` and `shadow_kept`); returns the indexed draws, one per
+    /// mesh group and map drawn.
     pub(crate) fn encode_maps(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: &ShadowFrame,
         sources: &MapSources<'_>,
-        timestamps: Option<(&wgpu::QuerySet, u32)>,
-    ) -> ShadowEncoded {
+        profiler: &GpuProfiler,
+    ) -> u32 {
         let (Some(pipelines), Some(maps)) = (&self.pipelines, self.maps.textures()) else {
-            return ShadowEncoded::default();
+            return 0;
         };
         let MapSources {
             plan,
@@ -560,7 +552,6 @@ impl ShadowPass {
             materials,
             virtual_draw,
         } = sources;
-        let mut timed = u16::from(timestamps.is_some()) << 1;
         let draws = Cell::new(0_u32);
         let groups = self.casters.groups();
         let group_count = groups.len() as u64;
@@ -703,28 +694,19 @@ impl ShadowPass {
             }
         };
         // Profiled frames time the near cascades together, the moving map and
-        // the kept map (effects 11, 12 and 13 of the profiler).
+        // the kept map.
         let last_cascade = (frame.cascades as usize).saturating_sub(1);
         let writes = |map: usize| {
-            timestamps.and_then(|(query_set, first)| {
-                let (effect, begin, end) = match map {
-                    MOVING_MAP => (12, true, true),
-                    KEPT_MAP => (13, true, true),
-                    cascade => (11, cascade == 0, cascade == last_cascade),
-                };
-                let base = first + 2 * effect;
-                (begin || end).then_some(wgpu::RenderPassTimestampWrites {
-                    query_set,
-                    beginning_of_pass_write_index: begin.then_some(base),
-                    end_of_pass_write_index: end.then_some(base + 1),
-                })
-            })
+            let (span, begin, end) = match map {
+                MOVING_MAP => ("shadow_moving", true, true),
+                KEPT_MAP => ("shadow_kept", true, true),
+                cascade => ("shadow_near", cascade == 0, cascade == last_cascade),
+            };
+            (begin || end)
+                .then(|| profiler.span(span))
+                .flatten()
+                .map(|span| span.render_part(begin, end))
         };
-        if timestamps.is_some() {
-            timed |= u16::from(frame.cascades > 0) << 11
-                | 1 << 12
-                | u16::from(frame.refresh.is_some()) << 13;
-        }
         // Each near cascade in use (map and view matrix `cascade`), then the
         // moving map.
         let cascades = (0..frame.cascades as usize).map(|cascade| {
@@ -769,10 +751,7 @@ impl ShadowPass {
             pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
             draw_selected(&mut pass, KEPT_MAP);
         }
-        ShadowEncoded {
-            timed,
-            draws: draws.get(),
-        }
+        draws.get()
     }
 
     /// Requests maps of dirty tiles recorded in the frame just submitted.

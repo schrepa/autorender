@@ -33,6 +33,8 @@ impl Renderer {
         }
         let mut used = [false; FACES];
         let mut drawn = 0;
+        // Profiling captures time every face captured as one span.
+        let mut timed = false;
         while drawn < faces {
             let Some((cube, face, probe)) = self.probes.slots.next_face(probes) else {
                 break;
@@ -41,6 +43,10 @@ impl Renderer {
                 break;
             }
             used[face] = true;
+            if !timed && let Some(span) = self.profiler.span("probe_captures") {
+                span.mark(encoder, false);
+                timed = true;
+            }
             let view_projection = face_view_projection(probe.center, face);
             let camera = CameraUniform::probe(view_projection, probe.center, seconds);
             self.queue
@@ -146,6 +152,9 @@ impl Renderer {
             if self.probes.slots.face_drawn() {
                 self.environment.finish(encoder, cube);
             }
+        }
+        if timed && let Some(span) = self.profiler.span("probe_captures") {
+            span.mark(encoder, true);
         }
         drawn
     }

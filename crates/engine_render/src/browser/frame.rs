@@ -103,9 +103,6 @@ pub(super) struct FrameState<'s> {
     pub(super) snapshot: &'s RenderSnapshot,
     pub(super) retained: Option<&'s RenderFrame<'s>>,
     pub(super) kind: FrameKind,
-    /// The profiler's query slot (profiling builds).
-    #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
-    pub(super) query_slot: Option<usize>,
     pub(super) assets: AssetUploads,
     pub(super) packing: Packing,
     pub(super) writes: Writes,
@@ -119,12 +116,10 @@ pub(super) struct FrameState<'s> {
     pub(super) shape: FrameShape,
 }
 
-/// What encoding counted: the profiler's timed effects, shadow draws,
-/// reflection probe faces, and the render graph's kept and culled passes
-/// (decision 050).
+/// What encoding counted: shadow draws, reflection probe faces, and the
+/// render graph's kept and culled passes (decision 050).
 #[derive(Default)]
 pub(super) struct EncodeReport {
-    pub(super) effects_timed: u32,
     pub(super) shadow_draws: u32,
     pub(super) probe_faces: u32,
     pub(super) passes: u32,
@@ -155,10 +150,8 @@ impl Renderer {
         let packing = self.pack_instances(snapshot, retained, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let writes = self.write_frame_data(snapshot, retained, kind, &packing);
-        #[cfg(feature = "profiling")]
-        let query_slot = self.profiler.reserve(&self.device);
-        #[cfg(not(feature = "profiling"))]
-        let query_slot = None;
+        // Profiling captures time this frame's passes from here.
+        self.profiler.begin_frame(&self.device);
         let features = self.prepare_features(
             snapshot,
             retained,
@@ -166,7 +159,6 @@ impl Renderer {
             kind,
             &packing.temporal_frame,
             &writes.lighting,
-            query_slot,
         );
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -191,7 +183,6 @@ impl Renderer {
             snapshot,
             retained,
             kind,
-            query_slot,
             assets,
             packing,
             writes,
@@ -223,14 +214,7 @@ impl Renderer {
             self.encode_pass(node, &state, &mut encoder, &view, &mut report);
         }
         self.graph = graph;
-        #[cfg(feature = "profiling")]
-        {
-            if self.profiler.effect_queries(state.query_slot).is_some() {
-                self.profiler
-                    .timed_effects(state.query_slot, report.effects_timed);
-            }
-            self.profiler.resolve(state.query_slot, &mut encoder);
-        }
+        self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
         self.submit_frame(&mut state, frame, encoder);
         Ok(self.frame_stats(&state, &report))
@@ -700,7 +684,6 @@ impl Renderer {
     /// with occlusion culling, shadows, environment maps and reflection
     /// probes, local lights, screen effects, transparency and particles,
     /// and decals.
-    #[allow(clippy::too_many_arguments)]
     fn prepare_features<'s>(
         &mut self,
         snapshot: &'s RenderSnapshot,
@@ -709,13 +692,12 @@ impl Renderer {
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
         lighting: &LightingUniform,
-        query_slot: Option<usize>,
     ) -> Features<'s> {
         let PresentationPrep {
             input_copies,
             occlusion,
             gpu_prepared,
-        } = self.prepare_presentation(snapshot, retained, gpu, kind, temporal_frame, query_slot);
+        } = self.prepare_presentation(snapshot, retained, gpu, kind, temporal_frame);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         let (environment_encoder, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
@@ -746,7 +728,6 @@ impl Renderer {
     /// Occlusion culling's depth pyramid and GPU presentation's inputs
     /// (decision 014); returns the input copies to submit first, the
     /// occlusion viewport and levels, and what presentation prepared.
-    #[allow(clippy::too_many_arguments)]
     fn prepare_presentation(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -754,7 +735,6 @@ impl Renderer {
         gpu: Option<&engine_core::GpuPresentation<'_>>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
-        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] query_slot: Option<usize>,
     ) -> PresentationPrep {
         let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
 
@@ -856,10 +836,6 @@ impl Renderer {
             // previous frame's poses.
             let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
             let (ring, poses) = self.instances.presentation_inputs(parity);
-            #[cfg(feature = "profiling")]
-            let stamps = self.profiler.stage_stamps(query_slot);
-            #[cfg(not(feature = "profiling"))]
-            let stamps = None;
             Some(self.gpu_presentation.prepare(
                 &self.device,
                 &self.queue,
@@ -876,15 +852,11 @@ impl Renderer {
                     poses,
                 },
                 &view,
-                stamps,
+                &self.profiler,
             ))
         } else {
             None
         };
-        #[cfg(feature = "profiling")]
-        if let Some(prepared) = &gpu_prepared {
-            self.profiler.timed_stages(query_slot, prepared.timed);
-        }
         PresentationPrep {
             input_copies,
             occlusion,
@@ -1400,11 +1372,11 @@ impl Renderer {
         report: &mut EncodeReport,
     ) {
         match node.pass() {
-            Pass::Presentation => self.encode_presentation(encoder, state.query_slot),
-            Pass::ShadowSelect => self.encode_shadow_selection(state, encoder, report),
-            Pass::VirtualSelect => self.encode_cluster_selection(state, encoder, report),
+            Pass::Presentation => self.encode_presentation(encoder),
+            Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
+            Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
-            Pass::Lights => self.encode_light_binning(state, encoder, report),
+            Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::Opaque { phase } => {
                 self.encode_opaque(state, encoder, view, node, usize::from(phase));
             }
@@ -1415,14 +1387,14 @@ impl Renderer {
             Pass::Resolve { phase } => {
                 self.encode_visibility_resolve(state, encoder, view, node, usize::from(phase));
             }
-            Pass::OcclusionTest => self.encode_occlusion_test(state, encoder, report),
-            Pass::Decals => self.encode_decals(state, encoder, view, node, report),
-            Pass::Transparent => self.encode_transparent(state, encoder, view, node, report),
+            Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
+            Pass::Decals => self.encode_decals(state, encoder, view, node),
+            Pass::Transparent => self.encode_transparent(state, encoder, view, node),
             Pass::TransparentComposite => {
-                self.encode_transparent_composite(state, encoder, view, node, report);
+                self.encode_transparent_composite(state, encoder, view, node);
             }
-            Pass::Effects => self.encode_screen_effects(state, encoder, report),
-            Pass::Composite => self.encode_composite(state, encoder, view, node, report),
+            Pass::Effects => self.encode_screen_effects(state, encoder),
+            Pass::Composite => self.encode_composite(encoder, view, node),
             Pass::TemporalResolve => self.encode_temporal_resolve(state, encoder, view, node),
             Pass::ProbeCaptures => self.encode_probes(state, encoder, report),
         }
@@ -1530,18 +1502,9 @@ impl Renderer {
 
     /// GPU presentation's blending, composition, culling and compaction
     /// (decision 014).
-    fn encode_presentation(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] query_slot: Option<usize>,
-    ) {
-        #[cfg(feature = "profiling")]
-        let stamps = self.profiler.stage_stamps(query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let stamps = None;
-        let _timed = self.gpu_presentation.encode(&self.device, encoder, stamps);
-        #[cfg(feature = "profiling")]
-        self.profiler.timed_stages(query_slot, _timed);
+    fn encode_presentation(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        self.gpu_presentation
+            .encode(&self.device, encoder, &self.profiler);
     }
 
     /// Shadow caster selection (decision 020).
@@ -1549,41 +1512,27 @@ impl Renderer {
         &mut self,
         state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
     ) {
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let shadow_frame = state
             .features
             .shadow_frame
             .as_ref()
             .expect("planned with shadows");
-        report.effects_timed |= u32::from(self.shadows.encode_selection(
-            &self.device,
-            encoder,
-            shadow_frame,
-            effect_queries,
-        ));
+        self.shadows
+            .encode_selection(&self.device, encoder, shadow_frame, &self.profiler);
     }
 
     /// Virtual geometry's cluster selection (decision 044) for the camera
     /// and the shadow maps.
-    fn encode_cluster_selection(
-        &mut self,
-        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
-    ) {
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
-        timestamp_pass(encoder, effect_queries, VIRTUAL_SELECTION, false);
+    fn encode_cluster_selection(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let span = self.profiler.span("virtual_selection");
+        if let Some(span) = span {
+            span.mark(encoder, false);
+        }
         self.virtual_draws.pass.encode(&self.device, encoder);
-        timestamp_pass(encoder, effect_queries, VIRTUAL_SELECTION, true);
-        report.effects_timed |= u32::from(effect_queries.is_some()) << VIRTUAL_SELECTION;
+        if let Some(span) = span {
+            span.mark(encoder, true);
+        }
     }
 
     /// The shadow maps (decisions 020 and 028), with the clusters virtual
@@ -1600,15 +1549,11 @@ impl Renderer {
             .shadow_frame
             .as_ref()
             .expect("planned with shadows");
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let meshes = &self.meshes;
         let arena = &self.mesh_arena;
         let (virtual_geometry, shadow_bins) =
             (&self.virtual_draws.pass, &self.virtual_draws.shadow_bins);
-        let encoded = self.shadows.encode_maps(
+        report.shadow_draws = self.shadows.encode_maps(
             encoder,
             shadow_frame,
             &MapSources {
@@ -1631,31 +1576,19 @@ impl Renderer {
                         })
                 },
             },
-            effect_queries,
+            &self.profiler,
         );
-        report.effects_timed |= u32::from(encoded.timed);
-        report.shadow_draws = encoded.draws;
     }
 
     /// Light binning (decision 023).
-    fn encode_light_binning(
-        &mut self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
-    ) {
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+    fn encode_light_binning(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         if let (Some(frame), Some(lights)) = (&state.features.light_frame, self.lights.as_mut()) {
             lights.encode(
                 &self.device,
                 encoder,
                 frame,
-                effect_queries.map(|(set, first)| (set, first + 14)),
+                self.profiler.span("light_bins"),
             );
-            report.effects_timed |= u32::from(effect_queries.is_some()) << 7;
         }
     }
 
@@ -1678,23 +1611,13 @@ impl Renderer {
             _ => self.virtual_draws.phase_two,
         }
         .filter(|_| state.virtual_frame);
-        // Profiled frames time both phases as one opaque span.
-        #[cfg(feature = "profiling")]
-        let timestamp_writes = self
-            .profiler
-            .writes(state.query_slot)
-            .map(|mut writes| {
-                if phase != 0 {
-                    writes.beginning_of_pass_write_index = None;
-                }
-                if phase + 1 != phases || resolve_phase {
-                    writes.end_of_pass_write_index = None;
-                }
-                writes
-            })
-            .filter(timestamps_written);
-        #[cfg(not(feature = "profiling"))]
-        let timestamp_writes = None;
+        // Profiled frames time both phases as one opaque span, which the
+        // visibility buffer's last resolve ends when it resolves this phase.
+        let (begins, ends) = (phase == 0, phase + 1 == phases && !resolve_phase);
+        let timestamp_writes = (begins || ends)
+            .then(|| self.profiler.span("opaque_meshes"))
+            .flatten()
+            .map(|span| span.render_part(begins, ends));
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/opaque-meshes"),
@@ -1723,14 +1646,12 @@ impl Renderer {
         &mut self,
         state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
     ) {
         let virtual_frame = state.virtual_frame;
         let temporal_frame = &state.packing.temporal_frame;
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
+        // One span from the pyramid's reduction to the test's compaction or
+        // the virtual retest.
+        let span = self.profiler.span("occlusion");
         if let Some((pyramid, generation)) =
             self.culling.pyramid.as_ref().and_then(DepthPyramid::view)
         {
@@ -1738,14 +1659,11 @@ impl Renderer {
                 .as_ref()
                 .is_some_and(|frame| frame.parity == 1);
             let poses = self.instances.poses(usize::from(odd));
-            let timed = |index: u32, begin: bool| {
-                effect_queries.map(|(set, first)| (set, first + 2 * index + u32::from(!begin)))
-            };
             self.culling
                 .pyramid
                 .as_ref()
                 .expect("viewed above")
-                .encode(encoder, timed(14, true));
+                .encode(encoder, span);
             // The camera's clusters the last frame's pyramid hid
             // (decision 044) are retested against this frame's within
             // the same span.
@@ -1754,13 +1672,14 @@ impl Renderer {
                 encoder,
                 (pyramid, generation),
                 poses,
-                timed(14, false).filter(|_| !virtual_frame),
+                span.filter(|_| !virtual_frame),
             );
             if virtual_frame {
                 self.virtual_draws.pass.encode_retest(&self.device, encoder);
-                timestamp_pass(encoder, effect_queries, 14, true);
+                if let Some(span) = span {
+                    span.mark(encoder, true);
+                }
             }
-            report.effects_timed |= u32::from(effect_queries.is_some()) << 14;
         }
     }
 
@@ -1993,20 +1912,11 @@ impl Renderer {
         let (_, resolve_groups) = self.visibility.groups.get().expect("built above");
         let bins = self.virtual_draws.bins.len();
         let (current, previous) = self.pose_parities(state);
-        #[cfg(feature = "profiling")]
-        let timestamp_writes = self
-            .profiler
-            .writes(state.query_slot)
-            .map(|mut writes| {
-                writes.beginning_of_pass_write_index = None;
-                if phase + 1 != phases {
-                    writes.end_of_pass_write_index = None;
-                }
-                writes
-            })
-            .filter(timestamps_written);
-        #[cfg(not(feature = "profiling"))]
-        let timestamp_writes = None;
+        // The last resolve ends the opaque span.
+        let timestamp_writes = (phase + 1 == phases)
+            .then(|| self.profiler.span("opaque_meshes"))
+            .flatten()
+            .map(|span| span.render_part(false, true));
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/visibility-resolve"),
@@ -2049,24 +1959,18 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-        report: &mut EncodeReport,
     ) {
         let features = &state.features;
         let decals = self.decals.as_ref().expect("planned with decals");
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/decals"),
             color_attachments: &colors[..count],
             depth_stencil_attachment: None,
-            timestamp_writes: effect_writes(effect_queries, 8),
+            timestamp_writes: self.profiler.span("decals").map(Span::render),
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        report.effects_timed |= u32::from(effect_queries.is_some()) << 8;
         decals.draw(
             &mut pass,
             &self.camera.group,
@@ -2087,7 +1991,6 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-        report: &mut EncodeReport,
     ) {
         let FrameKind {
             affine,
@@ -2105,10 +2008,6 @@ impl Renderer {
         );
         let (transparent_draws, refraction) = (features.transparent_draws, features.refraction);
         let lit = light_frame.as_ref().zip(self.lights.as_ref());
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         // Read-only depth: surfaces behind the opaque ones stay hidden, and
         // particles sample it.
         let (colors, count) = self.color_attachments(node, view);
@@ -2116,11 +2015,10 @@ impl Renderer {
             label: Some("engine/transparent-accumulation"),
             color_attachments: &colors[..count],
             depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: effect_writes(effect_queries, 9),
+            timestamp_writes: self.profiler.span("transparent").map(Span::render),
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        report.effects_timed |= u32::from(effect_queries.is_some()) << 9;
         if transparent_draws && instance_count > 0 {
             // Glass reads the opaque color the pass draws over.
             let camera_group = match self.camera.refraction_group() {
@@ -2194,28 +2092,25 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-        report: &mut EncodeReport,
     ) {
         let transparent = self
             .transparent
             .as_ref()
             .expect("planned with transparency");
         let post = state.shape.targets != Targets::Canvas;
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/transparent-composite"),
             color_attachments: &colors[..count],
             depth_stencil_attachment: self.depth_attachment(node),
-            timestamp_writes: effect_writes(effect_queries, 10),
+            timestamp_writes: self
+                .profiler
+                .span("transparent_composite")
+                .map(Span::render),
             occlusion_query_set: None,
             multiview_mask: None,
         });
         transparent.composite(&mut pass, post);
-        report.effects_timed |= u32::from(effect_queries.is_some()) << 10;
         if let (Some(frame), Some(particles)) =
             (&state.features.particle_frame, self.particles.as_ref())
         {
@@ -2225,48 +2120,25 @@ impl Renderer {
 
     /// The screen effects (decision 021): ambient occlusion, bloom,
     /// reflections and sun shafts after the opaque and transparent passes.
-    fn encode_screen_effects(
-        &self,
-        state: &FrameState<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        report: &mut EncodeReport,
-    ) {
+    fn encode_screen_effects(&self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         let post_frame = state.features.post_frame.expect("planned with effects");
         let post = self.post.as_ref().expect("post frames create it");
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
-        let queries = effect_queries.map(|(set, first)| (set, first + 4));
-        post.encode_effects(encoder, post_frame, &self.camera.group, queries);
-        report.effects_timed |= u32::from(post_frame.occlusion) << 2
-            | u32::from(post_frame.bloom) << 3
-            | u32::from(post_frame.reflections) << 5
-            | u32::from(post_frame.shafts) << 6
-            | u32::from(post_frame.occlusion || post_frame.shafts) << 17;
+        post.encode_effects(encoder, post_frame, &self.camera.group, &self.profiler);
     }
 
     /// The screen effects' composite into the canvas (decision 021).
     fn encode_composite(
         &self,
-        #[cfg_attr(not(feature = "profiling"), allow(unused_variables))] state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-        report: &mut EncodeReport,
     ) {
         let post = self.post.as_ref().expect("post frames create it");
-        #[cfg(feature = "profiling")]
-        let effect_queries = self.profiler.effect_queries(state.query_slot);
-        #[cfg(not(feature = "profiling"))]
-        let effect_queries: Option<(&wgpu::QuerySet, u32)> = None;
         let (_, canvas) = node
             .colors()
             .next()
             .expect("the composite draws the canvas");
-        let queries = effect_queries.map(|(set, first)| (set, first + 8));
-        post.encode_composite(encoder, view, color_operations(canvas), queries);
-        report.effects_timed |= 1 << 4;
+        post.encode_composite(encoder, view, color_operations(canvas), &self.profiler);
     }
 
     /// Temporal antialiasing's resolve into the canvas and the next history
@@ -2288,16 +2160,16 @@ impl Renderer {
             ops.next().expect("the canvas"),
             ops.next().expect("the history"),
         ];
-        #[cfg(not(feature = "profiling"))]
-        let writes = None;
-        #[cfg(feature = "profiling")]
-        let writes = self.profiler.resolve_writes(state.query_slot);
         self.temporal
             .as_ref()
             .expect("temporal frames create it")
-            .encode_resolve(encoder, view, frame, ops, writes);
-        #[cfg(feature = "profiling")]
-        self.profiler.timed_resolve(state.query_slot);
+            .encode_resolve(
+                encoder,
+                view,
+                frame,
+                ops,
+                self.profiler.span("taa_resolve").map(Span::render),
+            );
     }
 
     /// Reflection probe captures (decision 043) after the frame's own
@@ -2318,17 +2190,6 @@ impl Renderer {
         let odd = temporal_frame
             .as_ref()
             .is_some_and(|frame| frame.parity == 1);
-        #[cfg(feature = "profiling")]
-        let timed = self.profiler.effect_queries(state.query_slot).is_some();
-        #[cfg(not(feature = "profiling"))]
-        let timed = false;
-        #[cfg(feature = "profiling")]
-        timestamp_pass(
-            encoder,
-            self.profiler.effect_queries(state.query_slot),
-            PROBE_CAPTURES,
-            false,
-        );
         let faces = self.encode_probe_captures(
             encoder,
             probe_list,
@@ -2339,14 +2200,6 @@ impl Renderer {
                 .as_ref()
                 .map(|frame| (frame, &snapshot.local_lights)),
         );
-        #[cfg(feature = "profiling")]
-        timestamp_pass(
-            encoder,
-            self.profiler.effect_queries(state.query_slot),
-            PROBE_CAPTURES,
-            true,
-        );
-        report.effects_timed |= u32::from(timed && faces != 0) << PROBE_CAPTURES;
         report.probe_faces = faces;
     }
 
@@ -2369,8 +2222,6 @@ impl Renderer {
             .take()
             .expect("prepared with the frame");
         let temporal_frame = &state.packing.temporal_frame;
-        #[cfg(feature = "profiling")]
-        let query_slot = state.query_slot;
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
         // Staged pose/input copies precede the passes that read them.
@@ -2396,8 +2247,7 @@ impl Renderer {
         if let (Some(frame), Some(pass)) = (&temporal_frame, &mut self.temporal) {
             pass.submitted(frame);
         }
-        #[cfg(feature = "profiling")]
-        self.profiler.map_after_submit(query_slot);
+        self.profiler.submitted();
         self.queue.present(frame);
         drop(profile_submit);
     }
@@ -2435,17 +2285,4 @@ fn store_operation(ops: Ops) -> wgpu::StoreOp {
     } else {
         wgpu::StoreOp::Discard
     }
-}
-
-/// Timestamp writes of effect `index` of the profiler's `EFFECTS` from
-/// `queries`, the profiler's effect queries.
-fn effect_writes(
-    queries: Option<(&wgpu::QuerySet, u32)>,
-    index: u32,
-) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-    queries.map(|(query_set, first)| wgpu::RenderPassTimestampWrites {
-        query_set,
-        beginning_of_pass_write_index: Some(first + 2 * index),
-        end_of_pass_write_index: Some(first + 2 * index + 1),
-    })
 }
