@@ -22,6 +22,7 @@ use crate::gpu_data::{
 };
 use crate::gpu_uploads::{changed_ranges, listed_ranges, whole_stream};
 use crate::mesh_arena::Ids;
+use crate::pipelines::{Fillers, Slot, filled_group, group_layout};
 use crate::staging::{self, Prestaged, Segment, Staged, StagingRing};
 use crate::uploads::UploadRange;
 
@@ -77,6 +78,124 @@ const MAX_COEFFICIENT: f32 = 1.0e15;
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
 
+// The passes' shared layouts (decision 049): each lists every binding its
+// passes read, by presentation.wgsl's numbers, within the eight storage
+// buffers per stage WebGPU guarantees.
+use Slot::{Read, Texture, Uniform, Write};
+// Parent composition, and skinned slots' palettes from the composed parents.
+const COMPOSE_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (1, Read),
+    (2, Read),
+    (3, Read),
+    (4, Write),
+    (5, Read),
+    (15, Read),
+    (16, Read),
+    (17, Write),
+];
+const CULL_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (1, Read),
+    (2, Read),
+    (3, Read),
+    (4, Write),
+    (7, Read),
+    (8, Write),
+    (9, Write),
+    (14, Read),
+];
+// The occlusion test, reflection probe culling and still frame count, and
+// the previous-pose shift.
+const TEST_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (2, Read),
+    (7, Read),
+    (8, Write),
+    (9, Write),
+    (13, Write),
+    (14, Read),
+    (18, Texture),
+    (19, Write),
+    (23, Write),
+];
+// Group sums, their scan, draw arguments and the scatter of visible slots:
+// one group per compaction binds all four.
+const COMPACT_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (6, Read),
+    (7, Read),
+    (9, Write),
+    (10, Write),
+    (11, Write),
+    (12, Write),
+    (19, Write),
+    (24, Write),
+];
+const SKIN_BOUNDS_BINDINGS: &[(u32, Slot)] = &[
+    (0, Uniform),
+    (7, Read),
+    (8, Write),
+    (9, Write),
+    (17, Write),
+    (20, Read),
+    (21, Read),
+    (22, Write),
+];
+
+// A shared layout: its bindings, group layout and pipeline layout.
+struct Family {
+    bindings: &'static [(u32, Slot)],
+    group: wgpu::BindGroupLayout,
+    pipeline: wgpu::PipelineLayout,
+}
+
+impl Family {
+    fn new(
+        device: &wgpu::Device,
+        label: &str,
+        bindings: &'static [(u32, Slot)],
+        level: Option<&wgpu::BindGroupLayout>,
+    ) -> Self {
+        let group = group_layout(device, label, wgpu::ShaderStages::COMPUTE, bindings);
+        let groups = [Some(&group), level];
+        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: if level.is_some() {
+                &groups
+            } else {
+                &groups[..1]
+            },
+            immediate_size: 0,
+        });
+        Self {
+            bindings,
+            group,
+            pipeline,
+        }
+    }
+
+    // A group of this layout holding `entries`, filled where they leave
+    // bindings out.
+    fn group(
+        &self,
+        device: &wgpu::Device,
+        fillers: &Fillers,
+        label: &str,
+        entries: &[wgpu::BindGroupEntry<'_>],
+    ) -> wgpu::BindGroup {
+        filled_group(device, label, &self.group, self.bindings, entries, fillers)
+    }
+}
+
+struct Families {
+    compose: Family,
+    cull: Family,
+    tests: Family,
+    compact: Family,
+    skin_bounds: Family,
+}
+
 struct Pipelines {
     shift_previous: wgpu::ComputePipeline,
     compose_parents: wgpu::ComputePipeline,
@@ -101,16 +220,10 @@ struct BindGroups {
     skin: [Option<wgpu::BindGroup>; 2],
     // Skinned slots' bounds (decision 036), per pose and palette buffer.
     skin_bounds: [Option<wgpu::BindGroup>; 2],
-    sum_groups: wgpu::BindGroup,
-    scan_groups: wgpu::BindGroup,
-    batch_args: wgpu::BindGroup,
-    scatter: wgpu::BindGroup,
+    compact: wgpu::BindGroup,
     // Phase two of occlusion culling (decision 040): the same compaction
     // over its own uniform, draw arguments and visible IDs.
-    sum_groups2: wgpu::BindGroup,
-    scan_groups2: wgpu::BindGroup,
-    batch_args2: wgpu::BindGroup,
-    scatter2: wgpu::BindGroup,
+    compact2: wgpu::BindGroup,
     // Slots' still frames for reflection probes (decision 043) while they
     // are counted, per pose buffer.
     count_still: [Option<wgpu::BindGroup>; 2],
@@ -123,10 +236,7 @@ type ProbeGroupsKey = (u64, Option<u64>, usize);
 // One reflection probe cube face's cull and compaction (decision 043).
 struct ProbeGroups {
     cull: wgpu::BindGroup,
-    sum_groups: wgpu::BindGroup,
-    scan_groups: wgpu::BindGroup,
-    batch_args: wgpu::BindGroup,
-    scatter: wgpu::BindGroup,
+    compact: wgpu::BindGroup,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -199,9 +309,11 @@ pub(crate) struct BatchMeta {
 
 pub(crate) struct GpuPresentationPass {
     pipelines: Pipelines,
+    families: Families,
+    fillers: Fillers,
     frame: wgpu::Buffer,
     levels: wgpu::Buffer,
-    // One group per depth level: auto layouts have no dynamic offsets.
+    // One group per depth level of parent composition.
     level_groups: Vec<wgpu::BindGroup>,
     node_capacity: usize,
     // Current poses in slots [0, node_capacity), previous poses after them.
@@ -348,12 +460,50 @@ impl GpuPresentationPass {
             label: Some("engine/presentation.wgsl"),
             source: wgpu::ShaderSource::Wgsl(PRESENTATION_SHADER.into()),
         });
-        let pipeline = |entry: &str| {
+        let level_layout = group_layout(
+            device,
+            "engine/presentation-level-layout",
+            wgpu::ShaderStages::COMPUTE,
+            &[(0, Uniform)],
+        );
+        let families = Families {
+            compose: Family::new(
+                device,
+                "engine/presentation-compose-layout",
+                COMPOSE_BINDINGS,
+                Some(&level_layout),
+            ),
+            cull: Family::new(
+                device,
+                "engine/presentation-cull-layout",
+                CULL_BINDINGS,
+                None,
+            ),
+            tests: Family::new(
+                device,
+                "engine/presentation-test-layout",
+                TEST_BINDINGS,
+                None,
+            ),
+            compact: Family::new(
+                device,
+                "engine/presentation-compact-layout",
+                COMPACT_BINDINGS,
+                None,
+            ),
+            skin_bounds: Family::new(
+                device,
+                "engine/presentation-skin-bounds-layout",
+                SKIN_BOUNDS_BINDINGS,
+                None,
+            ),
+        };
+        let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute(
                 device,
                 &wgpu::ComputePipelineDescriptor {
                     label: Some(entry),
-                    layout: None,
+                    layout: Some(&family.pipeline),
                     module: &module,
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
@@ -362,18 +512,18 @@ impl GpuPresentationPass {
             )
         };
         let pipelines = Pipelines {
-            shift_previous: pipeline("shift_previous"),
-            compose_parents: pipeline("compose_parents"),
-            cull: pipeline("cull"),
-            skin_palette: pipeline("skin_palette"),
-            skin_bounds: pipeline("skin_bounds_pass"),
-            sum_groups: pipeline("sum_groups"),
-            scan_groups: pipeline("scan_groups"),
-            batch_args: pipeline("batch_args"),
-            scatter: pipeline("scatter"),
-            occlusion_test: pipeline("occlusion_test"),
-            count_still: pipeline("count_still"),
-            probe_cull: pipeline("probe_cull"),
+            shift_previous: pipeline("shift_previous", &families.tests),
+            compose_parents: pipeline("compose_parents", &families.compose),
+            cull: pipeline("cull", &families.cull),
+            skin_palette: pipeline("skin_palette", &families.compose),
+            skin_bounds: pipeline("skin_bounds_pass", &families.skin_bounds),
+            sum_groups: pipeline("sum_groups", &families.compact),
+            scan_groups: pipeline("scan_groups", &families.compact),
+            batch_args: pipeline("batch_args", &families.compact),
+            scatter: pipeline("scatter", &families.compact),
+            occlusion_test: pipeline("occlusion_test", &families.tests),
+            count_still: pipeline("count_still", &families.tests),
+            probe_cull: pipeline("probe_cull", &families.tests),
         };
         let uniform = |label| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -392,7 +542,6 @@ impl GpuPresentationPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let level_layout = pipelines.compose_parents.get_bind_group_layout(1);
         let level_groups = (0..LEVELS as u64)
             .map(|level| {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -412,6 +561,8 @@ impl GpuPresentationPass {
         let empty = |label| storage(device, label, 0, wgpu::BufferUsages::empty());
         Self {
             pipelines,
+            families,
+            fillers: Fillers::new(device),
             frame,
             levels,
             level_groups,
@@ -833,14 +984,6 @@ impl GpuPresentationPass {
             }
             return;
         }
-        let group = |pipeline: &wgpu::ComputePipeline, label, entries: &[wgpu::BindGroupEntry]| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(label),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries,
-            })
-        };
-        let pipelines = &self.pipelines;
         let mut cull = [None, None];
         cull[index] = Some(self.cull_group(device, poses));
         let mut skin = [None, None];
@@ -850,13 +993,19 @@ impl GpuPresentationPass {
         let mut count_still = [None, None];
         count_still[index] = self.count_still_group(device, poses);
         self.bind_groups = Some(BindGroups {
-            shift_previous: group(
-                &pipelines.shift_previous,
+            shift_previous: self.families.tests.group(
+                device,
+                &self.fillers,
                 "engine/presentation-shift-group",
-                &[entry(2, &self.info), entry(13, &self.locals)],
+                &[
+                    entry(0, &self.frame),
+                    entry(2, &self.info),
+                    entry(13, &self.locals),
+                ],
             ),
-            compose_parents: group(
-                &pipelines.compose_parents,
+            compose_parents: self.families.compose.group(
+                device,
+                &self.fillers,
                 "engine/presentation-compose-group",
                 &[
                     entry(0, &self.frame),
@@ -870,86 +1019,53 @@ impl GpuPresentationPass {
             cull,
             skin,
             skin_bounds,
-            sum_groups: group(
-                &pipelines.sum_groups,
-                "engine/presentation-sum-group",
-                &[
-                    entry(0, &self.frame),
-                    entry(9, &self.scan),
-                    entry(19, &self.occlusion_counts),
-                ],
+            compact: self.compact_group(
+                device,
+                "engine/presentation-compact-group",
+                &self.frame,
+                &self.draws,
+                &self.visible_ids,
+                &self.impostor_ids,
             ),
-            scan_groups: group(
-                &pipelines.scan_groups,
-                "engine/presentation-scan-group",
-                &[entry(0, &self.frame), entry(9, &self.scan)],
-            ),
-            batch_args: group(
-                &pipelines.batch_args,
-                "engine/presentation-args-group",
-                &[
-                    entry(0, &self.frame),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(12, &self.draws),
-                    entry(19, &self.occlusion_counts),
-                ],
-            ),
-            scatter: group(
-                &pipelines.scatter,
-                "engine/presentation-scatter-group",
-                &[
-                    entry(0, &self.frame),
-                    entry(6, &self.candidates),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(11, &self.visible_ids),
-                    entry(24, &self.impostor_ids),
-                ],
-            ),
-            sum_groups2: group(
-                &pipelines.sum_groups,
-                "engine/presentation-sum-group2",
-                &[
-                    entry(0, &self.frame_phase2),
-                    entry(9, &self.scan),
-                    entry(19, &self.occlusion_counts),
-                ],
-            ),
-            scan_groups2: group(
-                &pipelines.scan_groups,
-                "engine/presentation-scan-group2",
-                &[entry(0, &self.frame_phase2), entry(9, &self.scan)],
-            ),
-            batch_args2: group(
-                &pipelines.batch_args,
-                "engine/presentation-args-group2",
-                &[
-                    entry(0, &self.frame_phase2),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(12, &self.draws2),
-                    entry(19, &self.occlusion_counts),
-                ],
-            ),
-            scatter2: group(
-                &pipelines.scatter,
-                "engine/presentation-scatter-group2",
-                &[
-                    entry(0, &self.frame_phase2),
-                    entry(6, &self.candidates),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(11, &self.visible_ids2),
-                    entry(24, &self.impostor_ids2),
-                ],
+            compact2: self.compact_group(
+                device,
+                "engine/presentation-compact-group2",
+                &self.frame_phase2,
+                &self.draws2,
+                &self.visible_ids2,
+                &self.impostor_ids2,
             ),
             count_still,
         });
+    }
+
+    // A compaction's group: its uniform, draw arguments, visible IDs and
+    // impostor instances.
+    fn compact_group(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        frame: &wgpu::Buffer,
+        draws: &wgpu::Buffer,
+        visible_ids: &wgpu::Buffer,
+        impostor_ids: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        self.families.compact.group(
+            device,
+            &self.fillers,
+            label,
+            &[
+                entry(0, frame),
+                entry(6, &self.candidates),
+                entry(7, &self.batches),
+                entry(9, &self.scan),
+                entry(10, &self.batch_bases),
+                entry(11, visible_ids),
+                entry(12, draws),
+                entry(19, &self.occlusion_counts),
+                entry(24, impostor_ids),
+            ],
+        )
     }
 
     // Counting slots' still frames over `poses` while probes need them.
@@ -959,25 +1075,27 @@ impl GpuPresentationPass {
         poses: &wgpu::Buffer,
     ) -> Option<wgpu::BindGroup> {
         (self.still_slots != 0).then(|| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/presentation-count-still-group"),
-                layout: &self.pipelines.count_still.get_bind_group_layout(0),
-                entries: &[
+            self.families.tests.group(
+                device,
+                &self.fillers,
+                "engine/presentation-count-still-group",
+                &[
                     entry(0, &self.frame),
                     entry(8, poses),
                     entry(9, &self.scan),
                     entry(14, &self.slot_candidates),
                     entry(23, &self.still_frames),
                 ],
-            })
+            )
         })
     }
 
     fn cull_group(&self, device: &wgpu::Device, poses: &wgpu::Buffer) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/presentation-cull-group"),
-            layout: &self.pipelines.cull.get_bind_group_layout(0),
-            entries: &[
+        self.families.cull.group(
+            device,
+            &self.fillers,
+            "engine/presentation-cull-group",
+            &[
                 entry(0, &self.frame),
                 entry(1, &self.locals),
                 entry(2, &self.info),
@@ -988,14 +1106,15 @@ impl GpuPresentationPass {
                 entry(9, &self.scan),
                 entry(14, &self.slot_candidates),
             ],
-        })
+        )
     }
 
     fn skin_group(&self, device: &wgpu::Device, palette: &wgpu::Buffer) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/presentation-skin-group"),
-            layout: &self.pipelines.skin_palette.get_bind_group_layout(0),
-            entries: &[
+        self.families.compose.group(
+            device,
+            &self.fillers,
+            "engine/presentation-skin-group",
+            &[
                 entry(0, &self.frame),
                 entry(1, &self.locals),
                 entry(2, &self.info),
@@ -1005,7 +1124,7 @@ impl GpuPresentationPass {
                 entry(16, &self.inverse_binds),
                 entry(17, palette),
             ],
-        })
+        )
     }
 
     fn skin_bounds_group(
@@ -1015,10 +1134,11 @@ impl GpuPresentationPass {
         palette: &wgpu::Buffer,
         colors: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("engine/presentation-skin-bounds-group"),
-            layout: &self.pipelines.skin_bounds.get_bind_group_layout(0),
-            entries: &[
+        self.families.skin_bounds.group(
+            device,
+            &self.fillers,
+            "engine/presentation-skin-bounds-group",
+            &[
                 entry(0, &self.frame),
                 entry(7, &self.batches),
                 entry(8, poses),
@@ -1028,7 +1148,7 @@ impl GpuPresentationPass {
                 entry(21, &self.skinned),
                 entry(22, &self.skin_bounds),
             ],
-        })
+        )
     }
 
     /// Uploads skinned slots' joints (decision 036) when they changed.
@@ -1645,6 +1765,8 @@ impl GpuPresentationPass {
                             .expect("bound in prepare"),
                         &[],
                     );
+                    // The shared layout's level group, which palettes ignore.
+                    pass.set_bind_group(1, &self.level_groups[0], &[]);
                     pass.dispatch_workgroups(self.joint_count.div_ceil(JOINT_GROUP), 1, 1);
                 }
                 // Flags in slot order, then their sums in draw-group order.
@@ -1680,20 +1802,19 @@ impl GpuPresentationPass {
                     pass.dispatch_workgroups(self.skinned_count.div_ceil(SKINNED_GROUP), 1, 1);
                 }
                 pass.set_pipeline(&self.pipelines.sum_groups);
-                pass.set_bind_group(0, &groups.sum_groups, &[]);
+                pass.set_bind_group(0, &groups.compact, &[]);
                 pass.dispatch_workgroups(self.candidate_count.div_ceil(SCAN_GROUP), 1, 1);
             }
             SCAN => {
                 pass.set_pipeline(&self.pipelines.scan_groups);
-                pass.set_bind_group(0, &groups.scan_groups, &[]);
+                pass.set_bind_group(0, &groups.compact, &[]);
                 pass.dispatch_workgroups(1, 1, 1);
                 pass.set_pipeline(&self.pipelines.batch_args);
-                pass.set_bind_group(0, &groups.batch_args, &[]);
                 pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
             }
             _ => {
                 pass.set_pipeline(&self.pipelines.scatter);
-                pass.set_bind_group(0, &groups.scatter, &[]);
+                pass.set_bind_group(0, &groups.compact, &[]);
                 pass.dispatch_workgroups(self.candidate_count.div_ceil(SCAN_GROUP), 1, 1);
             }
         };
@@ -1793,10 +1914,11 @@ impl GpuPresentationPass {
             .as_ref()
             .is_none_or(|(built, _)| *built != key)
         {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/presentation-occlusion-group"),
-                layout: &self.pipelines.occlusion_test.get_bind_group_layout(0),
-                entries: &[
+            let group = self.families.tests.group(
+                device,
+                &self.fillers,
+                "engine/presentation-occlusion-group",
+                &[
                     entry(0, &self.frame),
                     entry(7, &self.batches),
                     entry(8, poses),
@@ -1808,7 +1930,7 @@ impl GpuPresentationPass {
                     },
                     entry(19, &self.occlusion_counts),
                 ],
-            });
+            );
             self.occlusion_group = Some((key, group));
         }
         let workgroups = self.candidate_count.div_ceil(GROUP);
@@ -1833,16 +1955,13 @@ impl GpuPresentationPass {
             // Phase two's compaction over its own mask and outputs.
             let scan_workgroups = self.candidate_count.div_ceil(SCAN_GROUP);
             pass.set_pipeline(&self.pipelines.sum_groups);
-            pass.set_bind_group(0, &groups.sum_groups2, &[]);
+            pass.set_bind_group(0, &groups.compact2, &[]);
             pass.dispatch_workgroups(scan_workgroups, 1, 1);
             pass.set_pipeline(&self.pipelines.scan_groups);
-            pass.set_bind_group(0, &groups.scan_groups2, &[]);
             pass.dispatch_workgroups(1, 1, 1);
             pass.set_pipeline(&self.pipelines.batch_args);
-            pass.set_bind_group(0, &groups.batch_args2, &[]);
             pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
             pass.set_pipeline(&self.pipelines.scatter);
-            pass.set_bind_group(0, &groups.scatter2, &[]);
             pass.dispatch_workgroups(scan_workgroups, 1, 1);
         }
         encoder.copy_buffer_to_buffer(&self.scan, self.total_offset(), &self.totals, 4, 4);
@@ -2049,16 +2168,13 @@ impl GpuPresentationPass {
         pass.dispatch_workgroups(workgroups, 1, 1);
         let scan_workgroups = self.candidate_count.div_ceil(SCAN_GROUP);
         pass.set_pipeline(&self.pipelines.sum_groups);
-        pass.set_bind_group(0, &groups.sum_groups, &[]);
+        pass.set_bind_group(0, &groups.compact, &[]);
         pass.dispatch_workgroups(scan_workgroups, 1, 1);
         pass.set_pipeline(&self.pipelines.scan_groups);
-        pass.set_bind_group(0, &groups.scan_groups, &[]);
         pass.dispatch_workgroups(1, 1, 1);
         pass.set_pipeline(&self.pipelines.batch_args);
-        pass.set_bind_group(0, &groups.batch_args, &[]);
         pass.dispatch_workgroups(self.batch_count.div_ceil(ARGS_GROUP), 1, 1);
         pass.set_pipeline(&self.pipelines.scatter);
-        pass.set_bind_group(0, &groups.scatter, &[]);
         pass.dispatch_workgroups(scan_workgroups, 1, 1);
         true
     }
@@ -2070,17 +2186,11 @@ impl GpuPresentationPass {
         poses: &wgpu::Buffer,
     ) -> ProbeGroups {
         let frame = &self.frame_probes[face];
-        let group = |pipeline: &wgpu::ComputePipeline, entries: &[wgpu::BindGroupEntry]| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("engine/presentation-probe-group"),
-                layout: &pipeline.get_bind_group_layout(0),
-                entries,
-            })
-        };
-        let pipelines = &self.pipelines;
         ProbeGroups {
-            cull: group(
-                &pipelines.probe_cull,
+            cull: self.families.tests.group(
+                device,
+                &self.fillers,
+                "engine/presentation-probe-group",
                 &[
                     entry(0, frame),
                     entry(7, &self.batches),
@@ -2090,42 +2200,14 @@ impl GpuPresentationPass {
                     entry(23, &self.still_frames),
                 ],
             ),
-            sum_groups: group(
-                &pipelines.sum_groups,
-                &[
-                    entry(0, frame),
-                    entry(9, &self.scan),
-                    entry(19, &self.occlusion_counts),
-                ],
-            ),
-            scan_groups: group(
-                &pipelines.scan_groups,
-                &[entry(0, frame), entry(9, &self.scan)],
-            ),
-            batch_args: group(
-                &pipelines.batch_args,
-                &[
-                    entry(0, frame),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(12, &self.draws_probe),
-                    // Probe faces count no triangles.
-                    entry(19, &self.occlusion_counts),
-                ],
-            ),
-            scatter: group(
-                &pipelines.scatter,
-                &[
-                    entry(0, frame),
-                    entry(6, &self.candidates),
-                    entry(7, &self.batches),
-                    entry(9, &self.scan),
-                    entry(10, &self.batch_bases),
-                    entry(11, &self.visible_ids_probe),
-                    // Probe faces draw no impostors.
-                    entry(24, &self.impostor_ids),
-                ],
+            // Probe faces count no triangles and draw no impostors.
+            compact: self.compact_group(
+                device,
+                "engine/presentation-probe-compact-group",
+                frame,
+                &self.draws_probe,
+                &self.visible_ids_probe,
+                &self.impostor_ids,
             ),
         }
     }
