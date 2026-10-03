@@ -412,7 +412,8 @@ mod gpu {
             };
             self.ensure_layers(device, encoder, self.layers.extent());
             let targets = self.targets.get_or_insert_with(|| bake_targets(device));
-            let variant = source.variant.with_extended(source.extended);
+            // Bakes are rare: uber variants (decision 049).
+            let variant = source.variant.with_extended(source.extended).uber();
             let pipeline = self.bake_pipelines.entry(variant).or_insert_with(|| {
                 bake_pipeline(device, shader, &self.bake_pipeline_layout, variant)
             });

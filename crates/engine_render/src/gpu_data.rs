@@ -452,7 +452,8 @@ pub(crate) struct MaterialUniform {
     /// the second texture coordinates as bits in map order.
     pub params: [f32; 4],
     /// Transmission (decision 038): its share, index of refraction and
-    /// thickness; w unused.
+    /// thickness; w the material's variant bits as `f32` bits, which uber
+    /// pipelines read (decision 049).
     pub volume: [f32; 4],
 }
 
@@ -509,7 +510,7 @@ impl MaterialUniform {
             transmission.factor,
             transmission.ior,
             transmission.thickness,
-            0.0,
+            f32::from_bits(Variant::of(material).bits()),
         ];
         uniform
     }
@@ -557,6 +558,9 @@ impl Variant {
     const OCCLUSION_MAP: u16 = 256;
     const EMISSIVE_MAP: u16 = 512;
     const PACKED_OCCLUSION: u16 = 1024;
+    // Passes drawn rarely (decision 049) read the map bits from the
+    // material uniform: their pipelines key on pipeline state alone.
+    const UBER: u16 = 2048;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -601,8 +605,25 @@ impl Variant {
         Self(bits)
     }
 
+    /// This variant for a pass that reads map presence from the material
+    /// uniform (decision 049): only what its pipeline state needs, vertex
+    /// streams, culling, alpha masking and transmission.
+    pub(crate) fn uber(self) -> Self {
+        let state = Self::EXTENDED
+            | Self::SKINNED
+            | Self::ALPHA_MASK
+            | Self::DOUBLE_SIDED
+            | Self::TRANSMISSION;
+        Self(self.0 & state | Self::UBER)
+    }
+
+    /// The bits the material uniform carries (`volume.w`).
+    pub(crate) fn bits(self) -> u32 {
+        u32::from(self.0)
+    }
+
     /// Fragment override constants.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 9] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 10] {
         let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("MATERIAL_MAPS", set(Self::MAPS)),
@@ -614,6 +635,7 @@ impl Variant {
             ("OCCLUSION_MAP", set(Self::OCCLUSION_MAP)),
             ("EMISSIVE_MAP", set(Self::EMISSIVE_MAP)),
             ("PACKED_OCCLUSION", set(Self::PACKED_OCCLUSION)),
+            ("UBER_MATERIALS", set(Self::UBER)),
         ]
     }
 
@@ -1446,6 +1468,44 @@ mod tests {
     }
 
     #[test]
+    fn uber_variants_keep_pipeline_state_and_read_bits_from_the_uniform() {
+        let mut library = AssetLibrary::default();
+        let texture = library
+            .insert_texture(engine_core::Texture::new(1, 1, vec![255; 4]).unwrap())
+            .unwrap();
+        let map = engine_core::TextureRef::new(texture);
+        let masked = Material::new([1.0; 4])
+            .unwrap()
+            .with_normal_texture(map, 1.0)
+            .unwrap()
+            .with_metallic_roughness_texture(map)
+            .unwrap()
+            .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
+            .unwrap()
+            .with_double_sided(true);
+        let variant = Variant::of(&masked).with_extended(true);
+        let uber = variant.uber();
+        // Pipeline state stays; map presence moves to the uniform.
+        assert!(uber.extended() && uber.alpha_mask() && uber.double_sided());
+        assert_eq!(uber, Variant::of(&masked).uber().with_extended(true));
+        let other = Material::new([1.0; 4])
+            .unwrap()
+            .with_emissive_texture(map)
+            .unwrap()
+            .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
+            .unwrap()
+            .with_double_sided(true);
+        assert_eq!(Variant::of(&other).with_extended(true).uber(), uber);
+        let constants = uber.constants();
+        assert_eq!(constants[9], ("UBER_MATERIALS", 1.0));
+        assert_eq!(variant.constants()[9], ("UBER_MATERIALS", 0.0));
+        // The uniform carries the material's own bits.
+        let uniform = MaterialUniform::new(&masked);
+        assert_eq!(uniform.volume[3].to_bits(), Variant::of(&masked).bits());
+        assert_eq!(MaterialUniform::DEFAULT.volume[3].to_bits(), 0);
+    }
+
+    #[test]
     fn material_variants_keep_plain_and_base_color_materials_basic() {
         let mut library = AssetLibrary::default();
         let texture = library
@@ -1469,11 +1529,11 @@ mod tests {
             constants(Variant::of(
                 &plain.with_base_color_texture(transformed).unwrap()
             )),
-            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert_eq!(
             constants(Variant::of(&plain.with_normal_texture(map, 1.0).unwrap())),
-            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         // Only the maps a material has are sampled; occlusion packed in the
         // metallic-roughness texture is read from its sample.
@@ -1484,7 +1544,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             constants(Variant::of(&packed)),
-            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0]
         );
         let separate = plain
             .with_metallic_roughness_texture(map)
@@ -1495,7 +1555,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             constants(Variant::of(&separate)),
-            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
         );
         let masked = plain
             .with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 })
@@ -1503,7 +1563,7 @@ mod tests {
             .with_double_sided(true);
         assert_eq!(
             constants(Variant::of(&masked)),
-            [1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            [1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert!(Variant::of(&masked).double_sided());
         // The visibility buffer (decision 045) leaves masked materials to
@@ -1517,7 +1577,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             constants(Variant::of(&glass)),
-            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert_eq!(
             Variant::of(&plain.with_opacity(0.5).unwrap()),
@@ -1535,10 +1595,13 @@ mod tests {
         assert!(clear.is_transparent() && clear.has_maps());
         assert_eq!(
             constants(Variant::of(&clear)),
-            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+            [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         );
         assert!(Variant::of(&clear).transmission());
-        assert_eq!(MaterialUniform::new(&clear).volume, [0.9, 1.33, 0.25, 0.0]);
+        let volume = MaterialUniform::new(&clear).volume;
+        assert_eq!(volume[..3], [0.9, 1.33, 0.25]);
+        // The fourth lane carries the variant bits (decision 049).
+        assert_eq!(volume[3].to_bits(), Variant::of(&clear).bits());
         assert!(
             plain
                 .with_transmission(engine_core::Transmission {
