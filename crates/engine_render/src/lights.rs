@@ -154,6 +154,7 @@ mod gpu {
     use crate::browser::FramePoses;
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
+    use crate::profiling::Span;
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum ReadbackState {
@@ -524,27 +525,20 @@ mod gpu {
         /// Records this frame's binning: clears the clusters, counts every
         /// light's clusters, gives the clusters their list ranges, fills the
         /// lists and copies the totals for read-back.
-        /// With `timestamps` (a query set and two indices), the binning pass
-        /// writes its begin and end queries.
+        /// With `span`, the binning pass is timed.
         pub(crate) fn encode(
             &mut self,
             device: &wgpu::Device,
             encoder: &mut wgpu::CommandEncoder,
             frame: &LightFrame,
-            timestamps: Option<(&wgpu::QuerySet, u32)>,
+            span: Option<Span<'_>>,
         ) {
             encoder.clear_buffer(&self.counts, 0, None);
             encoder.clear_buffer(&self.totals, 0, None);
             {
                 let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("engine/light-binning"),
-                    timestamp_writes: timestamps.map(|(query_set, first)| {
-                        wgpu::ComputePassTimestampWrites {
-                            query_set,
-                            beginning_of_pass_write_index: Some(first),
-                            end_of_pass_write_index: Some(first + 1),
-                        }
-                    }),
+                    timestamp_writes: span.map(Span::compute),
                 });
                 // LIGHTS lights per workgroup, in rows of at most 65,535.
                 let workgroups = frame.count.div_ceil(LIGHTS);

@@ -215,6 +215,19 @@ of previous poses, submitted before the frame's uploads and not included in
 `presentation_compute`. Splitting the stages adds pass boundaries, so compare
 per-stage samples within captures rather than with uncaptured frames.
 
+GPU samples are named spans. A pass times itself by asking the renderer's
+`GpuProfiler` for `span(name)` and writing that span's begin, end or both
+(`Span::render`, `compute`, `render_part`, `compute_part`, or `mark` from an
+empty pass around work recorded elsewhere); asking for the same name again
+in one frame returns the same span, so one span can cover several passes, as
+`opaque_meshes` covers both drawing phases and `shadow_near` every cascade.
+Each captured frame allocates two queries per span it asks for, so a pass
+asks only when it will write both the begin and the end. Builds without the
+`profiling` feature compile a stand-in that returns no spans, so passes
+never need conditional compilation. The report lists `opaque_meshes`, then
+`presentation_compute`, every other span in the order the frame recorded
+it, `shadow_maps` and the frame's GPU span, gap and interval.
+
 Temporally antialiased frames ([decision 017](adr-017-temporal-antialiasing.md))
 add a `taa_resolve` GPU sample for the full-screen resolve; their
 `opaque_meshes` also writes the motion target. They report `render.taa`,

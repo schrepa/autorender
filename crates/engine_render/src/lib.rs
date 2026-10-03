@@ -198,7 +198,7 @@ mod mesh_arena;
 mod mipmaps;
 #[cfg(target_arch = "wasm32")]
 mod post;
-#[cfg(all(target_arch = "wasm32", feature = "profiling"))]
+#[cfg(target_arch = "wasm32")]
 mod profiling;
 #[cfg(target_arch = "wasm32")]
 mod shadows;

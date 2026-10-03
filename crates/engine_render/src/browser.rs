@@ -28,6 +28,7 @@ use crate::particles::ParticlePass;
 use crate::pipelines::PipelineCounts;
 use crate::post::PostPass;
 use crate::probes::{FACES, ProbePass, face_view_projection};
+use crate::profiling::{GpuProfiler, Span};
 use crate::retained_uploads::RetainedUploads;
 use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
@@ -296,8 +297,9 @@ pub struct Renderer {
     gpu_frame: bool,
     // The only callback-shared state is a rare error message, never ECS data.
     failure: Arc<Mutex<Option<String>>>,
-    #[cfg(feature = "profiling")]
-    profiler: crate::profiling::GpuProfiler,
+    // Times the frame's passes during profiling captures (a stand-in that
+    // records nothing in other builds).
+    profiler: GpuProfiler,
 }
 
 impl Renderer {
@@ -430,8 +432,7 @@ impl Renderer {
         }
 
         let gpu_presentation = GpuPresentationPass::new(&device);
-        #[cfg(feature = "profiling")]
-        let profiler = crate::profiling::GpuProfiler::new(
+        let profiler = GpuProfiler::new(
             required_features.contains(wgpu::Features::TIMESTAMP_QUERY),
             f64::from(queue.get_timestamp_period()),
         );
@@ -487,7 +488,6 @@ impl Renderer {
             graph: Default::default(),
             gpu_frame: false,
             failure,
-            #[cfg(feature = "profiling")]
             profiler,
         })
     }
@@ -661,42 +661,6 @@ impl Renderer {
             pipelines: self.pipeline_counts.created(),
             ..RenderStats::default()
         }
-    }
-}
-
-/// Whether a pass's timestamp writes write any query: passes of a span
-/// between its first and last write none, and WebGPU refuses writes naming
-/// neither.
-#[cfg(feature = "profiling")]
-fn timestamps_written(writes: &wgpu::RenderPassTimestampWrites<'_>) -> bool {
-    writes.beginning_of_pass_write_index.is_some() || writes.end_of_pass_write_index.is_some()
-}
-
-/// Reflection probe captures' entry in the profiler's effects (decision 043).
-const PROBE_CAPTURES: u32 = 15;
-/// Virtual geometry's cluster selection entry in the profiler's effects
-/// (decision 044).
-const VIRTUAL_SELECTION: u32 = 16;
-
-/// Writes query `first + 2 * effect` (or the next one at its `end`) of
-/// `queries`, the profiler's effect queries, from an empty pass: effects of
-/// many passes are timed from one before them to one after.
-fn timestamp_pass(
-    encoder: &mut wgpu::CommandEncoder,
-    queries: Option<(&wgpu::QuerySet, u32)>,
-    effect: u32,
-    end: bool,
-) {
-    if let Some((query_set, first)) = queries {
-        let query = first + 2 * effect;
-        drop(encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("engine/effect-timestamp"),
-            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                query_set,
-                beginning_of_pass_write_index: (!end).then_some(query),
-                end_of_pass_write_index: end.then_some(query + 1),
-            }),
-        }));
     }
 }
 
