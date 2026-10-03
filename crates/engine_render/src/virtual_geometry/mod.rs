@@ -2,7 +2,7 @@
 //! clusters and pages in one arena, and each frame's selection of the
 //! clusters every view draws (`virtual_geometry.wgsl`). The camera's
 //! clusters go to per-material bins the opaque pass draws 128 triangles a
-//! cluster from (`meshes.wgsl`'s `vs_virtual`); each shadow map drawn every
+//! cluster from (`meshes/vertex.wgsl`'s `vs_virtual`); each shadow map drawn every
 //! frame (decision 020) selects its casters' clusters into a bin of its own,
 //! drawn into the map by `vs_shadow`.
 //!

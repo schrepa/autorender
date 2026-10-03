@@ -202,7 +202,7 @@ still draw normally with zero camera/instance
 uploads. Newly resident meshes also
 initialize their own vertex/index buffers; newly resident textures use queue
 writes with tightly packed rows (no 256-byte buffer-copy row padding). Vertex attributes, column-major
-uniform bytes, and `meshes.wgsl` are co-located; byte-cast eligibility is not used
+uniform bytes, and the mesh shader (`meshes/*.wgsl`) are co-located; byte-cast eligibility is not used
 as evidence of WGSL layout. Each vertex is 32 bytes and each index is 4 bytes.
 
 Instance staging and the GPU instance buffer grow geometrically within the

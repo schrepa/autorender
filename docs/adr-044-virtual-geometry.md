@@ -179,7 +179,7 @@ each bin with one `draw_indirect` call:
 - one instance per selected cluster, from an instance-stepped stream of
   those pairs.
 
-`meshes.wgsl`'s `vs_virtual` and `vs_virtual_temporal` read the local index
+`meshes/vertex.wgsl`'s `vs_virtual` and `vs_virtual_temporal` read the local index
 and the stored vertex from the pages and dequantize them. They move the
 corners past a cluster's own triangles outside the view. Fragment stages
 are those of ordinary meshes. Received shadows, local lights, reflections,

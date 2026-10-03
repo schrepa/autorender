@@ -420,7 +420,7 @@ impl Renderer {
         let virtual_draws = VirtualDraws::new(&device);
         let visibility = VisibilityDraws::new(&device);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/meshes.wgsl"),
+            label: Some("engine/meshes"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
         let instances = Instances::new(&device);
