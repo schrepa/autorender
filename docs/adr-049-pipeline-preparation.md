@@ -163,6 +163,11 @@ Stress Lab Metro, Intel Xe-LPG:
     remain, about 3.7 s of the replays in Firefox.
   - Chrome: playable after about 15 s before; 6.8 s with the loading gate,
     with no stall after.
+  - With every step (7b449a7): Firefox playable after 10.5-10.9 s against
+    13.2-14.2 s for the loading gate with workgroups of 64 (three alternating
+    cold runs each), no frame over 100 ms in the 10 s after; Chrome after
+    5.8-6.2 s. Firefox's GPU process still compiles serially for about 8 s:
+    21 distinct layouts (about 3.2 s) and 72 pipelines.
 - Every step kept captures pixel-identical (overview and close view, CPU and
   GPU paths, with and without temporal antialiasing, with and without
   reflection probes); GPU-presentation, TAA, LOD, virtual-geometry and web
