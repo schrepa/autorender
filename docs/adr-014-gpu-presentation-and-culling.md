@@ -3,7 +3,7 @@
 Status: adopted. Ordinary interpolated browser frames blend, compose, validate
 and cull displayed poses on the GPU. The CPU presentation pass of decisions 008,
 012 and 013 remains the exact reference for captures, previews, inspection,
-public snapshots and every non-browser consumer. Authoritative simulation,
+owned snapshots and every non-browser consumer. Authoritative simulation,
 collision and gameplay reads are unchanged.
 
 ## Context

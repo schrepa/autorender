@@ -386,19 +386,6 @@ fn vs_affine(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @built
     return project(vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point)));
 }
 
-@vertex
-fn vs_full(
-    @location(0) position: vec3<f32>,
-    @location(2) model_0: vec4<f32>,
-    @location(3) model_1: vec4<f32>,
-    @location(4) model_2: vec4<f32>,
-    @location(5) model_3: vec4<f32>,
-) -> @builtin(position) vec4<f32> {
-    let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
-    let world = model * vec4<f32>(position, 1.0);
-    return project(world.xyz / world.w);
-}
-
 // A triangle over the whole map at the far depth: cleared regions of the
 // kept map, bounded by the scissor.
 @vertex
@@ -447,21 +434,6 @@ fn vs_affine_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
     let point = vec4<f32>(position, 1.0);
     let clip = project(vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point)));
     return masked_output(clip, uv, slot_colors[slot].color);
-}
-
-@vertex
-fn vs_full_masked(
-    @location(0) position: vec3<f32>,
-    @location(7) uv: vec2<f32>,
-    @location(2) model_0: vec4<f32>,
-    @location(3) model_1: vec4<f32>,
-    @location(4) model_2: vec4<f32>,
-    @location(5) model_3: vec4<f32>,
-    @location(6) color: vec2<u32>,
-) -> MaskedOutput {
-    let model = mat4x4<f32>(model_0, model_1, model_2, model_3);
-    let world = model * vec4<f32>(position, 1.0);
-    return masked_output(project(world.xyz / world.w), uv, color);
 }
 
 // A slot's world position of a vertex with joints and weights (decision

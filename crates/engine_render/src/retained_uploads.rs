@@ -1,5 +1,4 @@
-//! Revision-driven uploads for core-owned affine frames. Public snapshots use
-//! the independent exact-byte cache because callers may mutate any field.
+//! Revision-driven uploads of retained frames' slot poses and colors.
 //!
 //! Poses need no packing here: core keeps every slot's pose in the upload
 //! layout (`RenderFrame::pose_rows`) and this cache only selects changed slots.
@@ -229,6 +228,7 @@ impl RetainedUploads {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gpu_data::pose_data;
     use engine_core::{AssetLibrary, Mesh};
     use glam::{Mat4, Vec3};
 
@@ -252,7 +252,10 @@ mod tests {
     fn retained_channels_update_independently_across_skipped_frames() {
         let mut source = records(3_000);
         // Core's pose rows: rewritten exactly when a slot's pose stamp advances.
-        let mut rows: Vec<PoseData> = source.iter().map(PoseData::from).collect();
+        let mut rows: Vec<PoseData> = source
+            .iter()
+            .map(|instance| pose_data(instance.model))
+            .collect();
         let mut pose_stamps = vec![1; source.len()];
         let mut color_stamps = vec![1; source.len()];
         let mut cache = RetainedUploads::default();
@@ -275,7 +278,7 @@ mod tests {
         // Intermediate extractions were never rendered: revision equality,
         // not adjacency of frame sequence numbers, determines GPU dirtiness.
         source[2_900].model = Mat4::from_translation(Vec3::X);
-        rows[2_900] = PoseData::from(&source[2_900]);
+        rows[2_900] = pose_data(source[2_900].model);
         pose_stamps[2_900] = 8;
         key.poses = 8;
         let change = cache.prepare_records(&source, key, &pose_stamps, &color_stamps, &mut colors);
@@ -299,7 +302,7 @@ mod tests {
         for (index, instance) in source.iter().enumerate() {
             assert_eq!(
                 bytemuck::bytes_of(&gpu_poses[index]),
-                bytemuck::bytes_of(&PoseData::from(instance))
+                bytemuck::bytes_of(&pose_data(instance.model))
             );
             assert_eq!(
                 bytemuck::bytes_of(&gpu_colors[index]),

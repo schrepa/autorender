@@ -42,8 +42,9 @@ GPU and keep no complete per-node pose buffer.
   indices and weights) and always the second stream (decision 034). Their
   draws through retained slots use skinned pipeline variants: entry points
   that blend the palette matrices (linear blend skinning) for skinned slots
-  and use the pose for rigid slots of the same mesh. Owned snapshots draw
-  every mesh rigidly.
+  and use the pose for rigid slots of the same mesh. Owned snapshots drew
+  every mesh rigidly; since 2026-10-03 they copy a frame's joints and skin
+  offsets.
 - **Bounds.** Joints place skinned vertices anywhere, so meshes with joints
   never enter the kept shadow map (decision 020), and their temporally
   antialiased frames (decision 017) always read the previous frame's palette

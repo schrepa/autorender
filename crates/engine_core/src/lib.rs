@@ -26,7 +26,6 @@ mod scene;
 mod skin;
 mod transform_edits;
 mod virtual_geometry;
-mod visibility_cache;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
 pub use atmosphere::Atmosphere;
@@ -87,11 +86,6 @@ use bevy_ecs::{
 };
 use clock::FixedClock;
 use interpolation::InterpolationState;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
-use visibility_cache::VisibilityCache;
 
 type RenderQuery = QueryState<
     (
@@ -178,11 +172,6 @@ pub struct Engine {
     frustum_culling: bool,
     render_query: RenderQuery,
     cube_mesh: MeshHandle,
-    extracted_meshes: HashSet<MeshHandle>,
-    // The first material of each binding (decision 031) this extraction met.
-    extracted_bindings: HashMap<MaterialBinding, MaterialHandle>,
-    extracted_textures: HashSet<TextureHandle>,
-    visibility: VisibilityCache,
     retained: retained_render::RetainedRender,
     // Local lights (decision 023) and particle emitters (decision 026) of
     // each extraction.
@@ -284,10 +273,6 @@ impl Engine {
             frustum_culling: config.frustum_culling,
             render_query,
             cube_mesh,
-            extracted_meshes: HashSet::new(),
-            extracted_bindings: HashMap::new(),
-            extracted_textures: HashSet::new(),
-            visibility: VisibilityCache::default(),
             retained: retained_render::RetainedRender::default(),
             lights,
             particles,
@@ -597,25 +582,29 @@ impl Engine {
         self.app.world().resource::<PresentationState>()
     }
 
-    /// Copies renderable instances into a reusable, owned CPU snapshot.
+    /// Copies the CPU-prepared frame [`Self::extract_frame`] prepares into a
+    /// reusable, owned CPU snapshot that borrows nothing.
     ///
-    /// Extraction retains vector capacity and copies at most the configured
-    /// instance budget, in ECS iteration order. `dropped_instances` reports the
-    /// visible remainder. Invalid transforms skip before asset checks. Missing
-    /// assets skip the entity and increment
-    /// `missing_assets`; `Mesh3d` takes precedence over `Cube`. Each referenced
-    /// mesh and texture used by an emitted or culled instance is retained once
-    /// via `Arc`, without copying payloads. Culled sources preserve existing GPU
-    /// residency but do not request uploads on their own. Sources used only by
-    /// invalid, missing-asset or dropped entities are not retained. Removing
-    /// library assets later does not invalidate this snapshot. GPU record
+    /// The snapshot keeps its vector capacity. Its instances are the frame's
+    /// visible ones within the configured instance budget, in ECS iteration
+    /// order, with their displayed models; `dropped_instances` reports the
+    /// visible remainder. Invalid transforms skip before asset checks.
+    /// Missing assets skip the entity and increment `missing_assets`;
+    /// `Mesh3d` takes precedence over `Cube`; meshes with joints never cull.
+    /// Each mesh, material with maps and texture used by an emitted or culled
+    /// instance is listed once via `Arc`, without copying payloads, so
+    /// removing library assets later does not invalidate this snapshot.
+    /// Culled sources preserve existing GPU residency but do not request
+    /// uploads on their own. Joints, decals, particle emitters and reflection
+    /// probes are the frame's; local lights are in world space. GPU record
     /// conversion and uploads belong to the renderer.
     pub fn extract(&mut self, aspect: f32, snapshot: &mut RenderSnapshot) {
         self.extract_with_presentation(aspect, snapshot, PresentationMode::Current)
             .expect("current presentation is always valid");
     }
 
-    /// Extracts current or interpolated display matrices without changing gameplay.
+    /// [`Self::extract`] of current or interpolated display matrices, without
+    /// changing gameplay.
     ///
     /// Opt-in local poses are captured around fixed ticks; descendants inherit
     /// their displayed ancestors. Culling and instance extraction use the same
@@ -627,150 +616,7 @@ impl Engine {
         snapshot: &mut RenderSnapshot,
         mode: PresentationMode,
     ) -> Result<(), InterpolationError> {
-        let _profile = engine_profile::span("cpu", "extraction");
-        mode.validate()?;
-        self.complete_pending_tick();
-        self.refresh_transforms();
-        interpolation::prepare(self.app.world_mut(), mode);
-        let world = self.app.world();
-        snapshot.view_projection = world.resource::<Camera>().view_projection(aspect);
-        effects::extract_lighting(world, snapshot);
-        self.lights.extract_owned(world, snapshot);
-        self.particles.extract(world, snapshot, false);
-        snapshot.instances.clear();
-        snapshot.joints.clear();
-        snapshot.meshes.clear();
-        snapshot.materials.clear();
-        snapshot.textures.clear();
-        snapshot.dropped_instances = 0;
-        snapshot.missing_assets = 0;
-        snapshot.invalid_transforms = 0;
-        snapshot.visible_instances = 0;
-        snapshot.culled_instances = 0;
-        self.extracted_meshes.clear();
-        self.extracted_bindings.clear();
-        self.extracted_textures.clear();
-        let assets = world.resource::<AssetLibrary>();
-        let instances = self.render_query.iter(world);
-        let total = instances.len();
-        snapshot.render_candidates = total;
-        self.visibility
-            .begin(snapshot.view_projection, self.frustum_culling, total);
-        let count = total.min(self.max_render_instances);
-        if snapshot.instances.capacity() < count {
-            snapshot.instances.reserve_exact(count);
-        }
-        let extraction_loop = engine_profile::span("cpu", "extraction_scan_assets_culling_copy");
-        let globals = world.resource::<GlobalTransforms>();
-        let presented = world.resource::<PresentedTransforms>();
-        for (entity, has_transform, cube, mesh3d, tint) in instances {
-            let model = if has_transform
-                && globals
-                    .get(entity)
-                    .is_some_and(|global| global.matrix().is_some())
-            {
-                presented.get(entity).and_then(|pose| pose.matrix())
-            } else {
-                None
-            };
-            let Some(model) = model else {
-                snapshot.invalid_transforms += 1;
-                continue;
-            };
-            let (handle, color, mapped, surface) = if let Some(mesh3d) = mesh3d {
-                let Some(material) = assets.material(mesh3d.material) else {
-                    snapshot.missing_assets += 1;
-                    continue;
-                };
-                (
-                    mesh3d.mesh,
-                    material.color(),
-                    material.has_maps().then_some((mesh3d.material, material)),
-                    material.surface(),
-                )
-            } else if let Some(cube) = cube {
-                let [r, g, b, _] = cube.color;
-                (self.cube_mesh, [r, g, b, 1.0], None, Surface::MATTE)
-            } else {
-                continue;
-            };
-            let color = tint.map_or(color, |tint| tint.apply(color));
-            let Some(mesh) = assets.mesh(handle) else {
-                snapshot.missing_assets += 1;
-                continue;
-            };
-            // Materials with maps need every texture they read.
-            if mapped.is_some_and(|(_, material)| {
-                material
-                    .textures()
-                    .any(|texture| assets.texture(texture).is_none())
-            }) {
-                snapshot.missing_assets += 1;
-                continue;
-            }
-            let culled = self.visibility.outside(handle, model, mesh.bounds());
-            if culled {
-                snapshot.culled_instances += 1;
-            } else {
-                snapshot.visible_instances += 1;
-                if snapshot.instances.len() == self.max_render_instances {
-                    snapshot.dropped_instances += 1;
-                    continue;
-                }
-            }
-            if self.extracted_meshes.insert(handle) {
-                snapshot.meshes.push(RenderMesh {
-                    handle,
-                    mesh: Arc::clone(mesh),
-                });
-            }
-            // Materials with equal bindings draw as their first one.
-            let bound = mapped.map(|(material_handle, material)| {
-                let binding = material.binding().expect("materials with maps bind");
-                *self.extracted_bindings.entry(binding).or_insert_with(|| {
-                    snapshot.materials.push(RenderMaterial {
-                        handle: material_handle,
-                        material: *material,
-                    });
-                    for texture in material.textures() {
-                        if self.extracted_textures.insert(texture) {
-                            snapshot.textures.push(RenderTexture {
-                                handle: texture,
-                                texture: Arc::clone(
-                                    assets.texture(texture).expect("checked above"),
-                                ),
-                            });
-                        }
-                    }
-                    material_handle
-                })
-            });
-            if !culled {
-                snapshot.instances.push(RenderInstance {
-                    mesh: handle,
-                    material: bound,
-                    model,
-                    color,
-                    surface,
-                    skin: None,
-                });
-            }
-        }
-        drop(extraction_loop);
-        self.visibility.finish();
-        // Decals (decision 039) draw their prepared matrices.
-        self.decals
-            .extract(world, snapshot, decals::DecalPoses::Owned);
-        // Reflection probes (decision 043) capture from their authoritative
-        // poses.
-        self.probes.extract(world, snapshot);
-        engine_profile::counter("extraction.candidates", total as f64);
-        engine_profile::counter("extraction.instances", snapshot.instances.len() as f64);
-        engine_profile::counter("extraction.culled", snapshot.culled_instances as f64);
-        engine_profile::counter(
-            "extraction.instance_capacity_bytes",
-            (snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,
-        );
+        self.extract_frame(aspect, mode)?.copy_to(snapshot);
         Ok(())
     }
 

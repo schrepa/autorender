@@ -249,7 +249,7 @@ pub struct RenderInstance {
     pub color: [f32; 4],
     /// The material's surface response; cubes are [`Surface::MATTE`].
     pub surface: Surface,
-    /// Skinned retained instances (decision 036): the offset in
+    /// Skinned instances (decision 036): the offset in
     /// [`RenderSnapshot::joints`] of the first joint of their palette, which
     /// then positions their vertices instead of `model`. `None` draws rigidly.
     pub skin: Option<u32>,
@@ -329,8 +329,7 @@ pub struct RenderSnapshot {
     pub instances: Vec<RenderInstance>,
     /// Joint palettes of skinned instances (decision 036), each a skin's
     /// joints in order from its instance's [`RenderInstance::skin`] offset,
-    /// followed by decals' poses (decision 039). Retained frames only; owned
-    /// snapshots draw every mesh rigidly.
+    /// followed by decals' poses (decision 039).
     pub joints: Vec<crate::RenderJoint>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;

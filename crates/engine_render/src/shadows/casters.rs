@@ -1,11 +1,10 @@
 //! Each frame's caster groups (decision 020): one per mesh and masked
-//! material, of the plan's batches (GPU-presented frames and public
-//! snapshots) or of a CPU-prepared frame's casters, each with its ID region
-//! in every map.
+//! material, of the plan's batches (GPU-presented frames) or of a
+//! CPU-prepared frame's casters, each with its ID region in every map.
 
 use std::collections::{HashMap, HashSet};
 
-use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot};
+use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame};
 
 use super::Source;
 use crate::batches::BatchPlan;
@@ -66,7 +65,7 @@ pub(super) struct CasterGroups {
     groups: Vec<ShadowGroup>,
     // Casters per map: every group's capacity.
     total: u32,
-    // Group of each plan batch (GPU-presented frames and public snapshots).
+    // Group of each plan batch (GPU-presented frames).
     batch_groups: Vec<u32>,
     // Source kind and stamps, and whether virtual geometry draws.
     key: Option<(u8, u64, u64, bool)>,
@@ -83,7 +82,7 @@ impl CasterGroups {
             total: 0,
             batch_groups: Vec::new(),
             key: None,
-            source: Source::Snapshot,
+            source: Source::Listed,
             listed: Vec::new(),
             records: Vec::new(),
         }
@@ -108,13 +107,6 @@ impl CasterGroups {
         self.batch_groups.get(index).copied().unwrap_or(0)
     }
 
-    /// The group of plan batch `index`; none for transparent batches.
-    pub(super) fn group_of_batch(&self, index: usize) -> Option<&ShadowGroup> {
-        self.batch_groups
-            .get(index)
-            .and_then(|&group| self.groups.get(group as usize))
-    }
-
     /// Forgets the groups while shadows are off.
     pub(super) fn clear(&mut self) {
         self.groups.clear();
@@ -123,27 +115,21 @@ impl CasterGroups {
     }
 
     /// Plans this frame's groups, one per mesh and masked material: of the
-    /// plan's batches (GPU-presented frames when `gpu`, and public snapshots)
-    /// or of `frame`'s casters (CPU-prepared frames). Returns whether they
-    /// changed.
-    pub(super) fn plan(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        plan: &BatchPlan,
-        frame: Option<&RenderFrame<'_>>,
-        gpu: bool,
-    ) -> bool {
-        // Retained frames draw virtual geometry (decision 044) where it is
-        // enabled.
-        let clustered = frame.is_some() && snapshot.environment.virtual_geometry.enabled;
-        let (source, key) = match frame {
-            Some(frame) if gpu => (
+    /// plan's batches (GPU-presented frames when `gpu`) or of `frame`'s
+    /// casters (CPU-prepared frames). Returns whether they changed.
+    pub(super) fn plan(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) -> bool {
+        let snapshot = frame.snapshot();
+        // Virtual geometry (decision 044) draws where it is enabled.
+        let clustered = snapshot.environment.virtual_geometry.enabled;
+        let (source, key) = if gpu {
+            (
                 Source::Presented,
                 (0, frame.identity(), frame.source_revision(), clustered),
-            ),
+            )
+        } else {
             // Both stamps only grow: a source change (such as a slot turning
             // transparent) regroups casters too.
-            Some(frame) => (
+            (
                 Source::Listed,
                 (
                     1,
@@ -151,12 +137,10 @@ impl CasterGroups {
                     frame.caster_revision().max(frame.source_revision()),
                     clustered,
                 ),
-            ),
-            None => (Source::Snapshot, (2, 0, 0, false)),
+            )
         };
         self.source = source;
-        // Public snapshots may change their sources between any two frames.
-        if self.key == Some(key) && source != Source::Snapshot {
+        if self.key == Some(key) {
             return false;
         }
         self.key = Some(key);
@@ -174,14 +158,14 @@ impl CasterGroups {
         let key = |mesh, material: Option<MaterialHandle>| {
             (mesh, material.filter(|material| masked.contains(material)))
         };
-        if let Some(frame) = frame.filter(|_| !gpu) {
+        if !gpu {
             let sources: HashMap<MeshHandle, usize> = snapshot
                 .meshes
                 .iter()
                 .enumerate()
                 .map(|(index, source)| (source.handle, index))
                 .collect();
-            let instances = &frame.snapshot().instances;
+            let instances = &snapshot.instances;
             self.listed.clear();
             for &slot in frame.casters() {
                 // Transparent surfaces cast no shadow (decision 026).

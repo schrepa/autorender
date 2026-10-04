@@ -58,9 +58,10 @@ releases its targets. The Stress Lab accepts `?taa=on`.
 
 - Only frames from `BrowserApp::frame` with GPU presentation are temporal.
   Development steps, renders, `present`/`capture` previews (including
-  `gpu: true`), CPU-presented frames (`?presentation=cpu`) and public snapshots
-  (`Renderer::render`) are exact and never jittered; captures are bit-identical
-  with the setting on or off.
+  `gpu: true`) and CPU-presented frames (`?presentation=cpu`) are exact and
+  never jittered, as were public snapshots (`Renderer::render`) until that
+  path was removed on 2026-10-03; captures are bit-identical with the setting
+  on or off.
 - Converged still views are smoother and stable: in the Chrome smoke test
   (`web/scripts/taa-smoke.mjs`), per-pixel total variation falls from 47.0 to
   26.9 while 8×8 block averages stay within one level of the exact image, and

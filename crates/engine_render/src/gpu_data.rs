@@ -181,9 +181,8 @@ impl LightingUniform {
 }
 
 /// A surface (decision 019) as four unsigned 8-bit fractions: roughness,
-/// metalness, emission over [`Surface::MAX_EMISSION`], and ripples. Public
-/// snapshots may carry any values: out-of-range ones clamp and NaN reads as
-/// matte.
+/// metalness, emission over [`Surface::MAX_EMISSION`], and ripples. Any
+/// values pack: out-of-range ones clamp and NaN reads as matte.
 pub(crate) fn pack_surface(surface: Surface) -> u32 {
     let unit = |value: f32, fallback: f32, max: f32| {
         let value = if value.is_nan() { fallback } else { value };
@@ -222,56 +221,20 @@ pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-/// Vertex attributes, NOT a uniform/storage struct: columns at offsets
-/// 0/16/32/48, packed color and opacity at 64 ([`pack_color`]) and the
-/// packed surface at 72, with explicit 80-byte instance stride.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct InstanceData {
-    pub model: [[f32; 4]; 4],
-    pub color: [u32; 2],
-    pub surface: u32,
-    pub flags: u32,
-}
+/// A slot pose as WGSL `Rows` reads it: core's three aligned affine rows at
+/// storage offsets 0/16/32, with a 48-byte stride and the implicit final row
+/// [0, 0, 0, 1]. Frames upload `RenderFrame::pose_rows` as they are.
+pub(crate) type PoseData = engine_core::PoseRows;
 
-impl From<&RenderInstance> for InstanceData {
-    fn from(instance: &RenderInstance) -> Self {
-        Self {
-            model: instance.model.to_cols_array_2d(),
-            color: pack_color(instance.color),
-            surface: pack_surface(instance.surface),
-            flags: 0,
-        }
-    }
-}
-
-/// Three aligned affine rows at storage offsets 0/16/32, with a 48-byte stride.
-/// Only engine-owned frames establish the implicit final row [0, 0, 0, 1].
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct PoseData {
-    pub rows: [[f32; 4]; 3],
-}
-
-// Retained frames upload core's `PoseRows` bytes directly as these records.
-const _: () = assert!(size_of::<PoseData>() == size_of::<engine_core::PoseRows>());
-
-impl From<Mat4> for PoseData {
-    fn from(m: Mat4) -> Self {
-        Self {
-            rows: [
-                [m.x_axis.x, m.y_axis.x, m.z_axis.x, m.w_axis.x],
-                [m.x_axis.y, m.y_axis.y, m.z_axis.y, m.w_axis.y],
-                [m.x_axis.z, m.y_axis.z, m.z_axis.z, m.w_axis.z],
-            ],
-        }
-    }
-}
-
-impl From<&RenderInstance> for PoseData {
-    fn from(instance: &RenderInstance) -> Self {
-        Self::from(instance.model)
-    }
+/// `model`'s pose rows, as core writes them.
+#[cfg(test)]
+pub(crate) fn pose_data(model: Mat4) -> PoseData {
+    let rows = model.transpose();
+    [
+        rows.x_axis.to_array(),
+        rows.y_axis.to_array(),
+        rows.z_axis.to_array(),
+    ]
 }
 
 /// Separate per-instance color, opacity and packed surface; unchanged colors
@@ -1035,9 +998,6 @@ mod tests {
         assert_eq!(std::mem::offset_of!(CameraUniform, position), 192);
         assert_eq!(std::mem::offset_of!(CameraUniform, jitter), 208);
         assert_eq!(size_of::<LightingUniform>(), 176);
-        assert_eq!(size_of::<InstanceData>(), 80);
-        assert_eq!(std::mem::offset_of!(InstanceData, color), 64);
-        assert_eq!(std::mem::offset_of!(InstanceData, surface), 72);
         assert_eq!(std::mem::offset_of!(ColorData, surface), 8);
         assert_eq!(size_of::<PoseData>(), 48);
         assert_eq!(size_of::<ColorData>(), 16);
@@ -1058,8 +1018,7 @@ mod tests {
             material: None,
             skin: None,
         };
-        let upload = InstanceData::from(&instance);
-        assert_eq!(upload.model[3], [2.0, 3.0, 4.0, 1.0]);
+        let upload = ColorData::from(&instance);
         assert_eq!(upload.color, pack_color([0.1, 0.2, 0.3, 1.0]));
         // Four 16-bit fractions: red and green, then blue and opacity.
         assert_eq!(
@@ -1071,32 +1030,21 @@ mod tests {
             [0xffff << 16, 0xffff << 16]
         );
         assert_eq!(upload.surface, 51 | 255 << 8 | 64 << 16);
-        assert_eq!(ColorData::from(&instance).surface, upload.surface);
         let affine = Mat4::from_scale_rotation_translation(
             Vec3::new(-2.0, 0.5, 3.0),
             Quat::from_rotation_y(0.7),
             Vec3::new(2.0, 3.0, 4.0),
         ) * Mat4::from_quat(Quat::from_rotation_z(0.4));
-        let pose = PoseData::from(&RenderInstance {
-            model: affine,
-            ..instance
-        });
+        let pose = pose_data(affine);
         // Reconstruct exactly as vs_affine does. This retains shear/reflection.
         let reconstructed = Mat4::from_cols(
-            pose.rows[0].into(),
-            pose.rows[1].into(),
-            pose.rows[2].into(),
+            pose[0].into(),
+            pose[1].into(),
+            pose[2].into(),
             glam::Vec4::W,
         )
         .transpose();
         assert_eq!(reconstructed, affine);
-        // Public snapshots retain all four rows even for a projective matrix.
-        let projective = Mat4::perspective_rh(0.8, 1.5, 0.1, 100.0);
-        let full = InstanceData::from(&RenderInstance {
-            model: projective,
-            ..instance
-        });
-        assert_eq!(full.model, projective.to_cols_array_2d());
         let vertex = Vertex::from(&MeshVertex {
             position: [1.0, 2.0, 3.0],
             normal: [0.0, 1.0, 0.0],

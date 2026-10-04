@@ -141,9 +141,9 @@ pub struct RenderDecal {
     /// World matrix of the decal's box: its prepared pose, or its
     /// authoritative pose on GPU-presented frames.
     pub model: Mat4,
-    /// Retained frames: the decal's entry in [`RenderSnapshot::joints`],
-    /// whose palette holds its displayed pose (GPU-presented frames compose
-    /// it as they do slots'). Owned snapshots draw `model`.
+    /// The decal's entry in [`RenderSnapshot::joints`], whose palette holds
+    /// its displayed pose (GPU-presented frames compose it as they do
+    /// slots'); `None` draws `model`.
     pub joint: Option<u32>,
     /// Its material when it has maps, listed in
     /// [`RenderSnapshot::decal_materials`]; `None` draws from `color` alone.
@@ -157,16 +157,6 @@ pub struct RenderDecal {
     /// Cosine of the fade angle: surfaces whose normals turn further from
     /// the box's +y fade.
     pub fade: f32,
-}
-
-/// Where a frame's decal poses come from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DecalPoses {
-    /// Owned snapshots draw each decal's prepared matrix.
-    Owned,
-    /// Retained frames list each decal's pose among the joints: prepared
-    /// matrices, or on `gpu` frames the nodes the GPU composes.
-    Retained { gpu: bool },
 }
 
 /// Decal records of each frame.
@@ -187,15 +177,10 @@ impl DecalExtraction {
         }
     }
 
-    /// Fills the snapshot's decals and their materials and textures from
-    /// `poses`; retained frames append their poses to the joints. Beyond a
-    /// budget the nearest win.
-    pub(crate) fn extract(
-        &mut self,
-        world: &World,
-        snapshot: &mut RenderSnapshot,
-        poses: DecalPoses,
-    ) {
+    /// Fills the snapshot's decals and their materials and textures, and
+    /// appends their poses to the joints: prepared matrices, or on `gpu`
+    /// frames the nodes the GPU composes. Beyond a budget the nearest win.
+    pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.decals;
         snapshot.decals.clear();
@@ -209,7 +194,6 @@ impl DecalExtraction {
         let presented = world.resource::<PresentedTransforms>();
         let assets = world.resource::<AssetLibrary>();
         let eye = snapshot.camera_position;
-        let gpu = poses == DecalPoses::Retained { gpu: true };
         self.candidates.clear();
         for (position, (entity, decal)) in self.query.iter(world).enumerate() {
             if !decal.is_usable() {
@@ -284,17 +268,12 @@ impl DecalExtraction {
                     }
                 }
             }
-            let joint = match poses {
-                DecalPoses::Owned => None,
-                DecalPoses::Retained { gpu } => {
-                    snapshot.joints.push(RenderJoint {
-                        node,
-                        inverse_bind: IDENTITY_ROWS,
-                        matrix: if gpu { IDENTITY_ROWS } else { pose_rows(model) },
-                    });
-                    Some(snapshot.joints.len() as u32 - 1)
-                }
-            };
+            snapshot.joints.push(RenderJoint {
+                node,
+                inverse_bind: IDENTITY_ROWS,
+                matrix: if gpu { IDENTITY_ROWS } else { pose_rows(model) },
+            });
+            let joint = Some(snapshot.joints.len() as u32 - 1);
             let mut color = material.color();
             color[3] *= decal.opacity;
             snapshot.decals.push(RenderDecal {

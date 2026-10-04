@@ -13,9 +13,6 @@ use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 /// What kind of frame this is, decided before any GPU work.
 #[derive(Clone, Copy)]
 pub(super) struct FrameKind {
-    /// Retained slots of a core frame, not a public snapshot's instance
-    /// records.
-    pub(super) affine: bool,
     /// Presented on the GPU (decision 014).
     pub(super) gpu_mode: bool,
     /// Temporally antialiased (decision 017).
@@ -101,7 +98,7 @@ pub(super) struct Passes {
 /// Everything a frame's encoding, submission and stats read.
 pub(super) struct FrameState<'s> {
     pub(super) snapshot: &'s RenderSnapshot,
-    pub(super) retained: Option<&'s RenderFrame<'s>>,
+    pub(super) frame: RenderFrame<'s>,
     pub(super) kind: FrameKind,
     pub(super) assets: AssetUploads,
     pub(super) packing: Packing,
@@ -129,32 +126,31 @@ pub(super) struct EncodeReport {
 impl Renderer {
     pub(super) fn render_inner(
         &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
+        frame: RenderFrame<'_>,
         display: bool,
     ) -> Result<RenderStats, JsValue> {
+        let snapshot = frame.snapshot();
         let _profile = engine_profile::span("render", "render_snapshot");
         if let Ok(failure) = self.failure.lock()
             && let Some(message) = failure.as_ref()
         {
             return Err(JsValue::from_str(message));
         }
-        let (kind, gpu) = self.plan_frame(snapshot, retained, display)?;
+        let (kind, gpu) = self.plan_frame(frame, display)?;
         if self.display.suspended {
             return Ok(self.residency_stats());
         }
-        let Some(frame) = self.display.acquire(&self.device, &mut self.depth)? else {
+        let Some(surface) = self.display.acquire(&self.device, &mut self.depth)? else {
             return Ok(self.residency_stats());
         };
         let assets = self.upload_assets(snapshot, kind);
-        let packing = self.pack_instances(snapshot, retained, kind);
+        let packing = self.pack_instances(frame, kind);
         let profile_writes = engine_profile::span("render", "queue_writes");
-        let writes = self.write_frame_data(snapshot, retained, kind, &packing);
+        let writes = self.write_frame_data(frame, kind, &packing);
         // Profiling captures time this frame's passes from here.
         self.profiler.begin_frame(&self.device);
         let features = self.prepare_features(
-            snapshot,
-            retained,
+            frame,
             gpu.as_ref(),
             kind,
             &packing.temporal_frame,
@@ -162,7 +158,7 @@ impl Renderer {
         );
         drop(profile_writes);
         let profile_encoding = engine_profile::span("render", "command_encoding");
-        let view = frame
+        let view = surface
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self
@@ -181,7 +177,7 @@ impl Renderer {
         let shape = self.frame_shape(kind, &packing, &features, (virtual_frame, resolving));
         let mut state = FrameState {
             snapshot,
-            retained,
+            frame,
             kind,
             assets,
             packing,
@@ -216,7 +212,7 @@ impl Renderer {
         self.graph = graph;
         self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
-        self.submit_frame(&mut state, frame, encoder);
+        self.submit_frame(&mut state, surface, encoder);
         Ok(self.frame_stats(&state, &report))
     }
 
@@ -225,20 +221,17 @@ impl Renderer {
     /// inputs.
     fn plan_frame<'f>(
         &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'f>>,
+        frame: RenderFrame<'f>,
         display: bool,
     ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), JsValue> {
+        let snapshot = frame.snapshot();
         {
             let _profile = engine_profile::span("render", "batch_plan");
-            let planned = if let Some(frame) = retained {
-                self.plan.prepare_frame(frame)
-            } else {
-                self.plan.prepare(snapshot)
-            };
-            planned.map_err(|error| js_error("Invalid render snapshot", error))?;
+            self.plan
+                .prepare_frame(&frame)
+                .map_err(|error| js_error("Invalid render frame", error))?;
         }
-        let gpu = retained.and_then(|frame| frame.gpu());
+        let gpu = frame.gpu();
         let gpu_mode = gpu.is_some();
         if self.gpu_frame && !gpu_mode {
             // GPU frames wrote poses and skipped the slot-ID stream; CPU frames
@@ -263,8 +256,7 @@ impl Renderer {
         // Shadow draw groups (decision 020): CPU-prepared frames also draw
         // culled casters, whose meshes stay resident and upload with the
         // batches' meshes.
-        self.shadows
-            .plan_groups(snapshot, &self.plan, retained, gpu_mode);
+        self.shadows.plan_groups(&self.plan, frame, gpu_mode);
         let shadow_meshes: BTreeSet<MeshHandle> = self
             .shadows
             .groups()
@@ -293,7 +285,6 @@ impl Renderer {
         drop(profile_residency);
         Ok((
             FrameKind {
-                affine: retained.is_some(),
                 gpu_mode,
                 temporal,
                 instance_count: self.plan.ordered_instances.len(),
@@ -428,39 +419,26 @@ impl Renderer {
 
     /// Sizes instance, pose, color and palette storage for the frame, begins
     /// its temporal antialiasing, and packs the records to upload.
-    fn pack_instances(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
-        kind: FrameKind,
-    ) -> Packing {
+    fn pack_instances(&mut self, frame: RenderFrame<'_>, kind: FrameKind) -> Packing {
         let FrameKind {
-            gpu_mode,
-            temporal,
-            instance_count,
-            ..
+            gpu_mode, temporal, ..
         } = kind;
+        let snapshot = frame.snapshot();
 
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
-        let affine = retained.is_some();
-        let payload_count = if affine {
-            snapshot.instances.len()
-        } else {
-            instance_count
-        };
-        // Joint palettes (decision 036) grow with the frame's joints.
-        let joints = if affine { snapshot.joints.len() } else { 0 };
-        if self
-            .instances
-            .reserve(&self.device, affine, payload_count, joints, temporal)
-        {
-            self.uploads.invalidate_instances();
-        }
-        let temporal_frame: Option<TemporalFrame> = match (self.temporal.as_mut(), retained) {
-            (Some(pass), Some(frame)) if temporal => Some(pass.begin(
+        // Every slot, and joint palettes (decision 036) as many as the
+        // frame's joints.
+        self.instances.reserve(
+            &self.device,
+            snapshot.instances.len(),
+            snapshot.joints.len(),
+            temporal,
+        );
+        let temporal_frame: Option<TemporalFrame> = match self.temporal.as_mut() {
+            Some(pass) if temporal => Some(pass.begin(
                 &self.device,
                 &self.queue,
-                frame,
+                &frame,
                 self.display.size(),
                 self.instances.generation,
             )),
@@ -469,72 +447,42 @@ impl Renderer {
         // Pose/color buffers retain core slot positions. Only compact IDs follow
         // changing visibility and mesh/texture grouping, so order changes never
         // shift payload records or force otherwise unchanged colors to upload.
-        let slot_key = retained.map(|frame| (frame.identity(), frame.structure_revision()));
-        let write_slots = affine
-            && !gpu_mode
+        let slot_key = Some((frame.identity(), frame.structure_revision()));
+        let write_slots = !gpu_mode
             && self
                 .instances
                 .stage_slots(&self.device, &self.plan.ordered_instances, slot_key);
-        let (repacked, poses_repacked, colors_repacked, full_upload, fallback) =
-            if let Some(frame) = retained {
-                if self.instances.color_staging.capacity() < self.instances.capacity {
-                    self.instances.color_staging.reserve_exact(
-                        self.instances.capacity - self.instances.color_staging.len(),
-                    );
-                }
-                let prepared = self
-                    .instances
-                    .retained_uploads
-                    .prepare(frame, &mut self.instances.color_staging);
-                (
-                    prepared.repacked,
-                    prepared.poses_repacked,
-                    prepared.colors_repacked,
-                    prepared.full_upload,
-                    prepared.fallback,
-                )
-            } else {
-                if self.instances.staging.capacity() < self.instances.capacity {
-                    self.instances
-                        .staging
-                        .reserve_exact(self.instances.capacity - self.instances.staging.len());
-                }
-                let prepared = self.uploads.prepare_instances(
-                    &snapshot.instances,
-                    &self.plan.ordered_instances,
-                    &mut self.instances.staging,
-                );
-                debug_assert_eq!(prepared.write, !self.uploads.instance_ranges().is_empty());
-                (
-                    prepared.repacked,
-                    prepared.repacked,
-                    prepared.repacked,
-                    prepared.full_upload,
-                    prepared.fallback,
-                )
-            };
+        if self.instances.color_staging.capacity() < self.instances.capacity {
+            self.instances
+                .color_staging
+                .reserve_exact(self.instances.capacity - self.instances.color_staging.len());
+        }
+        let prepared = self
+            .instances
+            .retained_uploads
+            .prepare(&frame, &mut self.instances.color_staging);
         drop(profile_packing);
         Packing {
             temporal_frame,
             write_slots,
             slot_key,
-            repacked,
-            poses_repacked,
-            colors_repacked,
-            full_upload,
-            fallback,
+            repacked: prepared.repacked,
+            poses_repacked: prepared.poses_repacked,
+            colors_repacked: prepared.colors_repacked,
+            full_upload: prepared.full_upload,
+            fallback: prepared.fallback,
         }
     }
 
     /// Writes the camera and lighting uniforms and the frame's changed
-    /// poses, colors, palettes, slots or instance records.
+    /// poses, colors, palettes and slot IDs.
     fn write_frame_data(
         &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
+        frame: RenderFrame<'_>,
         kind: FrameKind,
         packing: &Packing,
     ) -> Writes {
+        let snapshot = frame.snapshot();
         let gpu_mode = kind.gpu_mode;
         let temporal_frame = &packing.temporal_frame;
         let (write_slots, slot_key) = (packing.write_slots, packing.slot_key);
@@ -563,111 +511,93 @@ impl Renderer {
             &snapshot.environment.refraction,
         );
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
-        let mut instance_upload_bytes = 0_u64;
-        let mut pose_upload_bytes = 0_u64;
         let mut color_upload_bytes = 0_u64;
         let mut slot_upload_bytes = 0_u64;
-        let instance_write_ranges;
         // Large pose uploads copy into a persistently mapped staging buffer
         // and a GPU copy submitted before this frame's draws.
         let mut staged_poses = None;
-        if let Some(frame) = retained {
-            // GPU-presented frames write poses on the GPU.
-            let pose_ranges = if gpu_mode {
-                &[][..]
-            } else {
-                self.instances.retained_uploads.pose_ranges()
-            };
-            instance_write_ranges = pose_ranges.len()
-                + self.instances.retained_uploads.color_ranges().len()
-                + usize::from(write_slots);
-            // Core keeps each slot's pose in this upload layout.
-            let pose_rows: &[u8] = bytemuck::cast_slice(frame.pose_rows());
-            let stride = size_of::<PoseData>();
-            pose_upload_bytes = pose_ranges
-                .iter()
-                .map(|range| ((range.end - range.start) * stride) as u64)
-                .sum();
-            let mut staged = false;
-            if pose_upload_bytes as usize >= staging::MIN_STAGED_BYTES {
-                let mut encoder =
-                    self.device
-                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                            label: Some("engine/pose-staging-copies"),
-                        });
-                let outcome = self.instances.pose_uploads.record(
-                    &self.device,
-                    &mut encoder,
-                    &self.instances.buffer,
-                    pose_rows,
-                    stride,
-                    pose_ranges,
-                );
-                staged = outcome == staging::Staged::Recorded;
-                engine_profile::counter("render.pose_staged", f64::from(u8::from(staged)));
-                engine_profile::counter(
-                    "render.pose_staging_unavailable",
-                    f64::from(u8::from(!staged)),
-                );
-                staged_poses = staged.then(|| encoder.finish());
-            }
-            if !staged {
-                for range in pose_ranges {
-                    self.queue.write_buffer(
-                        &self.instances.buffer,
-                        (range.start * stride) as u64,
-                        &pose_rows[range.start * stride..range.end * stride],
-                    );
-                }
-            }
-            for range in self.instances.retained_uploads.color_ranges() {
-                let records = &self.instances.color_staging[range.start..range.end];
-                self.queue.write_buffer(
-                    self.instances.colors(),
-                    (range.start * size_of::<ColorData>()) as u64,
-                    bytemuck::cast_slice(records),
-                );
-                color_upload_bytes += std::mem::size_of_val(records) as u64;
-            }
-            // CPU-prepared frames upload skinned slots' palettes (decision
-            // 036); GPU-presented ones compute them.
-            if !gpu_mode && !snapshot.joints.is_empty() {
-                self.instances.palette_staging.clear();
-                self.instances
-                    .palette_staging
-                    .extend(snapshot.joints.iter().map(|joint| joint.matrix));
-                self.queue.write_buffer(
-                    &self.instances.palettes[0],
-                    0,
-                    bytemuck::cast_slice(&self.instances.palette_staging),
-                );
-                pose_upload_bytes +=
-                    std::mem::size_of_val(&self.instances.palette_staging[..]) as u64;
-            }
-            if write_slots {
-                self.queue.write_buffer(
-                    self.instances.slots(),
-                    0,
-                    bytemuck::cast_slice(&self.instances.slot_staging),
-                );
-                slot_upload_bytes = (self.instances.slot_staging.len() * size_of::<u32>()) as u64;
-            }
-            instance_upload_bytes = pose_upload_bytes + color_upload_bytes + slot_upload_bytes;
-            self.instances.retained_uploads.commit();
-            self.instances.slot_revision = slot_key;
+        // GPU-presented frames write poses on the GPU.
+        let pose_ranges = if gpu_mode {
+            &[][..]
         } else {
-            instance_write_ranges = self.uploads.instance_ranges().len();
-            for range in self.uploads.instance_ranges() {
-                let records = &self.instances.staging[range.start..range.end];
+            self.instances.retained_uploads.pose_ranges()
+        };
+        let instance_write_ranges = pose_ranges.len()
+            + self.instances.retained_uploads.color_ranges().len()
+            + usize::from(write_slots);
+        // Core keeps each slot's pose in this upload layout.
+        let pose_rows: &[u8] = bytemuck::cast_slice(frame.pose_rows());
+        let stride = size_of::<PoseData>();
+        let mut pose_upload_bytes: u64 = pose_ranges
+            .iter()
+            .map(|range| ((range.end - range.start) * stride) as u64)
+            .sum();
+        let mut staged = false;
+        if pose_upload_bytes as usize >= staging::MIN_STAGED_BYTES {
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/pose-staging-copies"),
+                });
+            let outcome = self.instances.pose_uploads.record(
+                &self.device,
+                &mut encoder,
+                &self.instances.buffer,
+                pose_rows,
+                stride,
+                pose_ranges,
+            );
+            staged = outcome == staging::Staged::Recorded;
+            engine_profile::counter("render.pose_staged", f64::from(u8::from(staged)));
+            engine_profile::counter(
+                "render.pose_staging_unavailable",
+                f64::from(u8::from(!staged)),
+            );
+            staged_poses = staged.then(|| encoder.finish());
+        }
+        if !staged {
+            for range in pose_ranges {
                 self.queue.write_buffer(
                     &self.instances.buffer,
-                    (range.start * size_of::<InstanceData>()) as u64,
-                    bytemuck::cast_slice(records),
+                    (range.start * stride) as u64,
+                    &pose_rows[range.start * stride..range.end * stride],
                 );
-                instance_upload_bytes += std::mem::size_of_val(records) as u64;
             }
-            self.uploads.commit_instances();
         }
+        for range in self.instances.retained_uploads.color_ranges() {
+            let records = &self.instances.color_staging[range.start..range.end];
+            self.queue.write_buffer(
+                self.instances.colors(),
+                (range.start * size_of::<ColorData>()) as u64,
+                bytemuck::cast_slice(records),
+            );
+            color_upload_bytes += std::mem::size_of_val(records) as u64;
+        }
+        // CPU-prepared frames upload skinned slots' palettes (decision
+        // 036); GPU-presented ones compute them.
+        if !gpu_mode && !snapshot.joints.is_empty() {
+            self.instances.palette_staging.clear();
+            self.instances
+                .palette_staging
+                .extend(snapshot.joints.iter().map(|joint| joint.matrix));
+            self.queue.write_buffer(
+                &self.instances.palettes[0],
+                0,
+                bytemuck::cast_slice(&self.instances.palette_staging),
+            );
+            pose_upload_bytes += std::mem::size_of_val(&self.instances.palette_staging[..]) as u64;
+        }
+        if write_slots {
+            self.queue.write_buffer(
+                self.instances.slots(),
+                0,
+                bytemuck::cast_slice(&self.instances.slot_staging),
+            );
+            slot_upload_bytes = (self.instances.slot_staging.len() * size_of::<u32>()) as u64;
+        }
+        let instance_upload_bytes = pose_upload_bytes + color_upload_bytes + slot_upload_bytes;
+        self.instances.retained_uploads.commit();
+        self.instances.slot_revision = slot_key;
         Writes {
             lighting,
             camera_bytes: camera_upload_bytes,
@@ -686,27 +616,26 @@ impl Renderer {
     /// and decals.
     fn prepare_features<'s>(
         &mut self,
-        snapshot: &'s RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
+        frame: RenderFrame<'s>,
         gpu: Option<&engine_core::GpuPresentation<'_>>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
         lighting: &LightingUniform,
     ) -> Features<'s> {
+        let snapshot = frame.snapshot();
         let PresentationPrep {
             input_copies,
             occlusion,
             gpu_prepared,
-        } = self.prepare_presentation(snapshot, retained, gpu, kind, temporal_frame);
+        } = self.prepare_presentation(frame, gpu, kind, temporal_frame);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
         let (environment_encoder, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
-        let light_frame = self.prepare_lights(snapshot, retained, kind, temporal_frame);
+        let light_frame = self.prepare_lights(frame, kind, temporal_frame);
         let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
         let (transparent_draws, particle_frame, transparency) =
             self.prepare_transparency(snapshot, temporal_frame, post_frame);
-        let decal_frame =
-            self.prepare_decals(snapshot, kind, temporal_frame, &light_frame, post_frame);
+        let decal_frame = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
         Features {
             input_copies,
             occlusion,
@@ -730,13 +659,13 @@ impl Renderer {
     /// occlusion viewport and levels, and what presentation prepared.
     fn prepare_presentation(
         &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
+        frame: RenderFrame<'_>,
         gpu: Option<&engine_core::GpuPresentation<'_>>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
     ) -> PresentationPrep {
-        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+        let gpu_mode = kind.gpu_mode;
+        let snapshot = frame.snapshot();
 
         let mut input_copies = None;
         // Occlusion culling (decision 040): the depth pyramid of this frame's
@@ -760,14 +689,14 @@ impl Renderer {
         };
         // Batches drawing virtual geometry (decision 044) instead of their
         // fallback meshes, by the arena and whether it draws.
-        let virtual_enabled = affine && snapshot.environment.virtual_geometry.enabled;
+        let virtual_enabled = snapshot.environment.virtual_geometry.enabled;
         let arena = self
             .virtual_draws
             .pass
             .arena()
             .map_or(0, |(_, generation)| generation);
         let virtual_key = arena * 2 + u64::from(virtual_enabled);
-        let gpu_prepared = if let (Some(frame), Some(gpu)) = (retained, gpu) {
+        let gpu_prepared = if let Some(gpu) = gpu {
             let meshes = &self.meshes;
             let arena = &self.mesh_arena;
             let shadows = &self.shadows;
@@ -844,7 +773,7 @@ impl Renderer {
                     copies: &mut input_copies,
                 },
                 &PresentationInputs {
-                    frame,
+                    frame: &frame,
                     gpu,
                     plan: &self.plan,
                     batch_meta: &batch_meta,
@@ -871,7 +800,7 @@ impl Renderer {
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
     ) -> Option<ShadowFrame> {
-        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+        let gpu_mode = kind.gpu_mode;
 
         // Shadow maps (decision 020) select from this frame's poses.
         let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
@@ -914,7 +843,7 @@ impl Renderer {
             &ShadowInputs {
                 snapshot,
                 presented: gpu_mode.then(|| self.gpu_presentation.shadow_inputs()),
-                poses: affine.then(|| self.instances.frame_poses(parity)),
+                poses: self.instances.frame_poses(parity),
                 slot_capacity: self.instances.capacity,
                 mesh_layout: self.mesh_layout,
                 placement: &placement,
@@ -981,12 +910,12 @@ impl Renderer {
     /// Local lights (decision 023), binned from the frame's poses.
     fn prepare_lights(
         &mut self,
-        snapshot: &RenderSnapshot,
-        retained: Option<&RenderFrame<'_>>,
+        frame: RenderFrame<'_>,
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
     ) -> Option<LightFrame> {
-        let (affine, temporal) = (kind.affine, kind.temporal);
+        let temporal = kind.temporal;
+        let snapshot = frame.snapshot();
 
         // Local lights (decision 023): binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
@@ -1004,14 +933,14 @@ impl Renderer {
                 );
             }
             let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-            let poses = affine.then(|| self.instances.frame_poses(parity));
+            let poses = self.instances.frame_poses(parity);
             lights.prepare(
                 device,
                 &self.queue,
                 snapshot,
                 self.display.size(),
                 poses,
-                retained.map(|frame| (frame.identity(), frame.lights_revision())),
+                (frame.identity(), frame.lights_revision()),
             )
         } else {
             None
@@ -1132,16 +1061,12 @@ impl Renderer {
     fn prepare_decals(
         &mut self,
         snapshot: &RenderSnapshot,
-        kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
         light_frame: &Option<LightFrame>,
         post_frame: Option<PostFrame>,
     ) -> Option<DecalFrame> {
-        let affine = kind.affine;
-
         // Decals (decision 039) cover the opaque surfaces the depth buffer
-        // holds; retained frames read their displayed poses from the joint
-        // palette.
+        // holds and read their displayed poses from the joint palette.
         let decal_lights = light_frame
             .as_ref()
             .and(self.lights.as_ref())
@@ -1158,7 +1083,7 @@ impl Renderer {
                 snapshot,
                 (
                     &self.instances.palettes[parity],
-                    affine.then_some((self.instances.generation, parity)),
+                    (self.instances.generation, parity),
                 ),
                 &self.depth.view,
                 self.depth.generation,
@@ -1187,7 +1112,7 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         features: &Features<'_>,
     ) -> Passes {
-        let (affine, gpu_mode) = (kind.affine, kind.gpu_mode);
+        let gpu_mode = kind.gpu_mode;
         let (light_frame, post_frame, probe_list) = (
             &features.light_frame,
             features.post_frame,
@@ -1197,13 +1122,13 @@ impl Renderer {
         // Pipelines of the material variants (decision 031) this frame draws.
         let lit_frame = light_frame.is_some() && self.lights.is_some();
         let targets = self.frame_targets(temporal_frame, post_frame);
-        let opaque_kind = PassKind::opaque(targets, lit_frame, affine);
-        let transparent_kind = PassKind::transparent(lit_frame, affine);
+        let opaque_kind = PassKind::opaque(targets, lit_frame);
+        let transparent_kind = PassKind::transparent(lit_frame);
         self.ensure_variants(opaque_kind, transparent_kind);
         // Reflection probes (decision 043) capture once their slots stand
         // still: their pipelines are prepared with the first frame that has
         // probes, not in the middle of play (decision 049).
-        if gpu_mode && affine && !probe_list.is_empty() {
+        if gpu_mode && !probe_list.is_empty() {
             self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
         // Impostors (decision 048): this frame's records, group and pipeline.
@@ -1237,7 +1162,6 @@ impl Renderer {
         opaque_kind: PassKind,
     ) -> (bool, bool) {
         let FrameKind {
-            affine,
             gpu_mode,
             instance_count,
             ..
@@ -1251,16 +1175,12 @@ impl Renderer {
         let rasterized = temporal_frame
             .as_ref()
             .map_or(snapshot.view_projection, |temporal| temporal.rasterized);
-        let virtual_frame = affine
-            && self.prepare_virtual(
-                snapshot,
-                gpu_mode,
-                odd,
-                (rasterized, occlusion.map(|(_, _, levels)| levels)),
-            );
-        if !affine {
-            self.virtual_draws.drawn.clear();
-        }
+        let virtual_frame = self.prepare_virtual(
+            snapshot,
+            gpu_mode,
+            odd,
+            (rasterized, occlusion.map(|(_, _, levels)| levels)),
+        );
         if virtual_frame {
             self.ensure_virtual_pipelines(opaque_kind);
             self.ensure_virtual_pose_groups();
@@ -1332,7 +1252,7 @@ impl Renderer {
                 reflections: frame.reflections,
                 shafts: frame.shafts,
             }),
-            probes: kind.gpu_mode && kind.affine && !features.probe_list.is_empty(),
+            probes: kind.gpu_mode && !features.probe_list.is_empty(),
         }
     }
 
@@ -1559,8 +1479,6 @@ impl Renderer {
             encoder,
             shadow_frame,
             &MapSources {
-                plan: &self.plan,
-                instances: &self.instances.buffer,
                 meshes: &|mesh| {
                     meshes
                         .get(&mesh)
@@ -1696,9 +1614,7 @@ impl Renderer {
         phase: usize,
         virtual_first: Option<usize>,
     ) {
-        let FrameKind {
-            affine, gpu_mode, ..
-        } = state.kind;
+        let gpu_mode = state.kind.gpu_mode;
         let Passes {
             opaque_kind,
             impostor_pass,
@@ -1718,24 +1634,17 @@ impl Renderer {
         pass.set_bind_group(0, &self.camera.group, &[]);
         if let Some((_, lights)) = lit {
             pass.set_bind_group(3, lights.fragment_group(), &[]);
-            if !affine {
-                pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
-            }
         }
-        if affine {
-            pass.set_bind_group(
-                2,
-                temporal_pass.map_or_else(
-                    || self.instances.pose_group(0),
-                    |(frame, temporal)| temporal.pose_group(frame),
-                ),
-                &[],
-            );
-            if !gpu_mode {
-                pass.set_vertex_buffer(1, self.instances.slots().slice(..));
-            }
-        } else {
-            pass.set_vertex_buffer(1, self.instances.buffer.slice(..));
+        pass.set_bind_group(
+            2,
+            temporal_pass.map_or_else(
+                || self.instances.pose_group(0),
+                |(frame, temporal)| temporal.pose_group(frame),
+            ),
+            &[],
+        );
+        if !gpu_mode {
+            pass.set_vertex_buffer(1, self.instances.slots().slice(..));
         }
         let mut bound = None;
         let mut bindings = Bindings::default();
@@ -1750,7 +1659,7 @@ impl Renderer {
             // Every planned source was validated and uploaded above.
             let mesh = &self.meshes[&batch.mesh];
             let (group, variant) = self.materials.binding(batch.material);
-            let skinned = mesh.skinned && affine;
+            let skinned = mesh.skinned;
             let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
             if bound != Some(variant) {
                 pass.set_pipeline(&self.mesh_pipelines.variants[&(opaque_kind, variant)]);
@@ -1995,7 +1904,6 @@ impl Renderer {
         node: &Node,
     ) {
         let FrameKind {
-            affine,
             gpu_mode,
             instance_count,
             ..
@@ -2030,18 +1938,11 @@ impl Renderer {
             pass.set_bind_group(0, camera_group, &[]);
             if let Some((_, lights)) = lit {
                 pass.set_bind_group(3, lights.fragment_group(), &[]);
-                if !affine {
-                    pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
-                }
             }
-            if affine {
-                let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
-                pass.set_bind_group(2, self.instances.pose_group(parity), &[]);
-                if !gpu_mode {
-                    pass.set_vertex_buffer(1, self.instances.slots().slice(..));
-                }
-            } else {
-                pass.set_vertex_buffer(1, self.instances.buffer.slice(..));
+            let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
+            pass.set_bind_group(2, self.instances.pose_group(parity), &[]);
+            if !gpu_mode {
+                pass.set_vertex_buffer(1, self.instances.slots().slice(..));
             }
             let mut bound = None;
             let mut bindings = Bindings::default();
@@ -2051,7 +1952,7 @@ impl Renderer {
                 }
                 let mesh = &self.meshes[&batch.mesh];
                 let (group, variant) = self.materials.binding(batch.material);
-                let skinned = mesh.skinned && affine;
+                let skinned = mesh.skinned;
                 let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
                 if bound != Some(variant) {
                     pass.set_pipeline(&self.mesh_pipelines.variants[&(transparent_kind, variant)]);

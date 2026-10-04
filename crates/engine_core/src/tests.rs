@@ -391,23 +391,26 @@ fn mixed_mesh_extraction_deduplicates_sources_and_mesh3d_overrides_cube() {
             .color,
         [0.1, 0.3, 0.8, 1.0]
     );
-    let assets = engine.app.world().resource::<AssetLibrary>();
-    assert_eq!(std::sync::Arc::strong_count(assets.mesh(plane).unwrap()), 2);
     assert_eq!(snapshot.missing_assets, 0);
-    let mesh_storage = snapshot.meshes.as_ptr();
-    engine.extract(1.0, &mut snapshot);
-    assert_eq!(snapshot.meshes.as_ptr(), mesh_storage);
-    assert_eq!(
+    // Each snapshot holds one reference per source, not one per instance.
+    let references = |engine: &Engine| {
         std::sync::Arc::strong_count(
             engine
                 .app
                 .world()
                 .resource::<AssetLibrary>()
                 .mesh(plane)
-                .unwrap()
-        ),
-        2
-    );
+                .unwrap(),
+        )
+    };
+    let held = references(&engine);
+    let mut other = RenderSnapshot::default();
+    engine.extract(1.0, &mut other);
+    assert_eq!(references(&engine), held + 1);
+    let mesh_storage = snapshot.meshes.as_ptr();
+    engine.extract(1.0, &mut snapshot);
+    assert_eq!(snapshot.meshes.as_ptr(), mesh_storage);
+    assert_eq!(references(&engine), held + 1);
 }
 
 #[test]
@@ -475,17 +478,21 @@ fn textures_are_retained_once_and_missing_dependencies_skip_whole_entities() {
             .iter()
             .all(|instance| instance.material == Some(material))
     );
-    assert_eq!(
+    // Each snapshot holds one reference per texture, not one per instance.
+    let references = |engine: &Engine| {
         std::sync::Arc::strong_count(
             engine
                 .app
                 .world()
                 .resource::<AssetLibrary>()
                 .texture(texture)
-                .unwrap()
-        ),
-        2
-    );
+                .unwrap(),
+        )
+    };
+    let held = references(&engine);
+    let mut other = RenderSnapshot::default();
+    engine.extract(1.0, &mut other);
+    assert_eq!(references(&engine), held + 1);
     let storage = old.textures.as_ptr();
     engine.extract(1.0, &mut old);
     assert_eq!(old.textures.as_ptr(), storage);
@@ -1903,8 +1910,10 @@ fn decals_extract_their_materials_poses_and_the_nearest_win_the_budget() {
         .unwrap();
     assert_eq!(far.blend, DecalBlend::Multiply);
     assert_eq!(far.color, [0.5, 0.25, 1.0, 0.5]);
-    assert_eq!(far.joint, None);
     assert_eq!(far.model.w_axis.z, -40.0);
+    // Its pose is listed among the joints (decision 039).
+    let joint = snapshot.joints[far.joint.unwrap() as usize];
+    assert_eq!(joint.matrix[2][3], -40.0);
     assert!((far.fade - 0.5).abs() < 1.0e-5);
     // Mapped materials and their textures are listed once, apart from the
     // instances'.

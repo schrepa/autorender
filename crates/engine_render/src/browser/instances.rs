@@ -1,26 +1,23 @@
-//! Instance storage (decisions 013 and 014): public snapshots' instance
-//! records, or retained slots' poses and colors at their core slot
-//! positions, the slot IDs CPU-prepared frames draw, joint palettes
-//! (decision 036), and the pose buffer temporal frames alternate with
-//! (decision 017). Storage grows with the frame's instances up to what one
-//! binding holds.
+//! Instance storage (decisions 013 and 014): retained slots' poses and
+//! colors at their core slot positions, the slot IDs CPU-prepared frames
+//! draw, joint palettes (decision 036), and the pose buffer temporal frames
+//! alternate with (decision 017). Storage grows with the frame's slots up to
+//! what one binding holds.
 
 use super::*;
 use crate::bindings::RETAINED_POSES;
 
 pub(super) struct Instances {
-    // Most instances this GPU's instance, pose and shadow buffers hold.
+    // Most slots this GPU's pose and shadow buffers hold.
     pub(super) limit: usize,
     pub(super) capacity: usize,
-    // Public instance records, or retained slots' poses.
+    // Slot poses, which upload straight from `RenderFrame::pose_rows`.
     pub(super) buffer: wgpu::Buffer,
-    pub(super) staging: Vec<InstanceData>,
-    colors: Option<wgpu::Buffer>,
-    // Retained poses upload straight from `RenderFrame::pose_rows`.
+    colors: wgpu::Buffer,
     pub(super) color_staging: Vec<ColorData>,
     // Group 2 of retained mesh pipelines: poses, colors and palettes.
     pub(super) pose_layout: wgpu::BindGroupLayout,
-    pose_group: Option<wgpu::BindGroup>,
+    pose_group: wgpu::BindGroup,
     // Temporal frames cull into this buffer and `buffer` in turn; odd
     // frames' pose group, for pose storage generation `.0`.
     alternate: Option<wgpu::Buffer>,
@@ -33,8 +30,6 @@ pub(super) struct Instances {
     pub(super) slot_capacity: usize,
     pub(super) slot_staging: Vec<u32>,
     pub(super) slot_revision: Option<(u64, u64)>,
-    // Whether storage holds retained slots rather than public records.
-    affine: bool,
     // Joint palettes of skinned slots (decision 036), one per pose buffer,
     // with room for `palette_capacity` joints.
     pub(super) palettes: [wgpu::Buffer; 2],
@@ -46,27 +41,28 @@ pub(super) struct Instances {
 
 impl Instances {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        // Instances: what the largest per-instance storage (poses, colors,
-        // six shadow ID lists) holds within one binding, below the moving
-        // flag of visible IDs.
+        // Slots: what the largest per-slot storage (poses, colors, six
+        // shadow ID lists) holds within one binding, below the moving flag
+        // of visible IDs.
         let binding = device
             .limits()
             .max_storage_buffer_binding_size
             .min(device.limits().max_buffer_size);
-        let record = size_of::<InstanceData>()
-            .max(size_of::<PoseData>())
-            .max(6 * size_of::<u32>()) as u64;
+        let record = size_of::<PoseData>().max(6 * size_of::<u32>()) as u64;
         let limit = (binding / record).min(u64::from(crate::gpu_data::MOVED_SLOT)) as usize;
         let pose_layout = crate::pipelines::layout(device, &RETAINED_POSES);
+        let buffer = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<PoseData>());
+        let colors = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<ColorData>());
+        let palettes = [0, 1].map(|_| create_storage_buffer(device, 1, size_of::<PoseData>()));
+        let pose_group = pose_group(device, &pose_layout, &buffer, &colors, &palettes[0]);
         Self {
             limit,
             capacity: INITIAL_CAPACITY,
-            buffer: create_instance_buffer(device, INITIAL_CAPACITY, size_of::<InstanceData>()),
-            staging: Vec::with_capacity(INITIAL_CAPACITY),
-            colors: None,
+            buffer,
+            colors,
             color_staging: Vec::new(),
             pose_layout,
-            pose_group: None,
+            pose_group,
             alternate: None,
             alternate_group: Cached::default(),
             generation: 0,
@@ -74,8 +70,7 @@ impl Instances {
             slot_capacity: 0,
             slot_staging: Vec::new(),
             slot_revision: None,
-            affine: false,
-            palettes: [0, 1].map(|_| create_storage_buffer(device, 1, size_of::<PoseData>())),
+            palettes,
             palette_capacity: 1,
             palette_staging: Vec::new(),
             retained_uploads: RetainedUploads::default(),
@@ -83,36 +78,23 @@ impl Instances {
         }
     }
 
-    /// Sizes storage for a frame of `payload_count` records (retained slots
-    /// when `affine`) and `joints` palette entries, with the alternate pose
-    /// buffer of `temporal` frames. Returns whether the record buffer was
-    /// replaced, so uploads must write it whole.
+    /// Sizes storage for a frame of `payload_count` slots and `joints`
+    /// palette entries, with the alternate pose buffer of `temporal` frames.
     pub(super) fn reserve(
         &mut self,
         device: &wgpu::Device,
-        affine: bool,
         payload_count: usize,
         joints: usize,
         temporal: bool,
-    ) -> bool {
-        let layout_changed = self.affine != affine;
+    ) {
         let grew = payload_count > self.capacity;
-        if layout_changed {
-            self.affine = affine;
-            // A caller switching contracts replaces the old staging layout;
-            // do not retain a second full population of instance payloads.
-            self.staging = Vec::new();
-            self.color_staging = Vec::new();
-            self.retained_uploads = RetainedUploads::default();
-            self.pose_uploads.clear();
-            self.slots = None;
-            self.slot_capacity = 0;
-            self.slot_staging = Vec::new();
-            self.slot_revision = None;
-        }
         if grew {
             self.capacity = payload_count.next_power_of_two().min(self.limit);
             engine_profile::counter("render.instance_buffer_growth", 1.0);
+            self.buffer = create_storage_buffer(device, self.capacity, size_of::<PoseData>());
+            self.colors = create_storage_buffer(device, self.capacity, size_of::<ColorData>());
+            self.retained_uploads.invalidate();
+            self.alternate = None;
         }
         // Joint palettes (decision 036) grow with the frame's joints.
         let palettes_grew = joints > self.palette_capacity;
@@ -122,28 +104,14 @@ impl Instances {
                 create_storage_buffer(device, self.palette_capacity, size_of::<PoseData>())
             });
         }
-        let replaced = grew || layout_changed;
-        if replaced {
-            self.buffer = if affine {
-                create_storage_buffer(device, self.capacity, size_of::<PoseData>())
-            } else {
-                create_instance_buffer(device, self.capacity, size_of::<InstanceData>())
-            };
-            self.colors = affine
-                .then(|| create_storage_buffer(device, self.capacity, size_of::<ColorData>()));
-            self.retained_uploads.invalidate();
-            self.alternate = None;
-        }
-        if replaced || palettes_grew {
-            self.pose_group = self.colors.as_ref().map(|colors| {
-                pose_group(
-                    device,
-                    &self.pose_layout,
-                    &self.buffer,
-                    colors,
-                    &self.palettes[0],
-                )
-            });
+        if grew || palettes_grew {
+            self.pose_group = pose_group(
+                device,
+                &self.pose_layout,
+                &self.buffer,
+                &self.colors,
+                &self.palettes[0],
+            );
             self.generation += 1;
         }
         if temporal && self.alternate.is_none() {
@@ -154,7 +122,6 @@ impl Instances {
             ));
             self.generation += 1;
         }
-        replaced
     }
 
     /// Stages the slot IDs of a CPU-prepared retained frame drawing
@@ -223,7 +190,7 @@ impl Instances {
         let poses = FramePoses {
             buffers: [Some(&self.buffer), self.alternate.as_ref()],
             palettes: [&self.palettes[0], &self.palettes[1]],
-            colors: self.colors.as_ref().expect("affine color buffer"),
+            colors: &self.colors,
             parity,
             generation: self.generation,
         };
@@ -258,7 +225,7 @@ impl Instances {
 
     /// Retained slots' colors.
     pub(super) fn colors(&self) -> &wgpu::Buffer {
-        self.colors.as_ref().expect("affine color buffer")
+        &self.colors
     }
 
     /// Slot IDs of CPU-prepared retained frames.
@@ -272,7 +239,7 @@ impl Instances {
         if parity == 1 {
             self.alternate_group.get().expect("prepared this frame")
         } else {
-            self.pose_group.as_ref().expect("retained pose bindings")
+            &self.pose_group
         }
     }
 
@@ -351,15 +318,6 @@ fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) 
         label: Some("engine/retained-instance-storage"),
         size: (capacity * stride) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
-fn create_instance_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/instance-buffer"),
-        size: (capacity * stride) as u64,
-        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     })
 }

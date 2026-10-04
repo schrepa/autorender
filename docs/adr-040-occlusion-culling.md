@@ -42,8 +42,8 @@ The test only hides instances behind what this frame drew, so frames draw
 exactly what they would without it: captures of GPU-presented frames match
 the CPU reference pixel for pixel. Only which phase draws an instance
 changes; near-coplanar instances keep drawing in phase one, in the same order
-as without the test. CPU-presented frames, public snapshots and frames with
-an instance budget draw in one phase, as before. Shadow maps select casters
+as without the test. CPU-presented frames and frames with an instance budget
+draw in one phase, as before (as did public snapshots until 2026-10-03). Shadow maps select casters
 without it: hidden instances still cast shadows.
 
 ## Observable behavior

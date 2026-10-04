@@ -25,7 +25,7 @@ use crate::{
     RenderJoint, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface,
     TextureHandle, Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
-    decals::{DecalExtraction, DecalPoses},
+    decals::DecalExtraction,
     hierarchy::ChangeWindow,
     probes::ProbeExtraction,
     skin::SkinExtraction,
@@ -188,6 +188,96 @@ impl<'a> RenderFrame<'a> {
     /// Per-slot stamps of color or surface changes.
     pub fn color_changes(self) -> &'a [u64] {
         &self.owner.color_changes
+    }
+
+    /// Copies this CPU-prepared frame into `snapshot`, reusing its capacity:
+    /// the visible instances in submission order with their displayed
+    /// models, local lights in world space (those on slots without a valid
+    /// pose count as dropped), and every other record as the frame holds it.
+    pub(crate) fn copy_to(self, snapshot: &mut RenderSnapshot) {
+        let RenderSnapshot {
+            view_projection,
+            camera_position,
+            elapsed_seconds,
+            environment,
+            lights,
+            dropped_lights,
+            emitters,
+            dropped_particles,
+            decals,
+            decal_materials,
+            decal_textures,
+            dropped_decals,
+            reflection_probes,
+            dropped_reflection_probes,
+            instances,
+            joints,
+            meshes,
+            materials,
+            textures,
+            render_candidates,
+            visible_instances,
+            culled_instances,
+            dropped_instances,
+            missing_assets,
+            invalid_transforms,
+        } = self.snapshot();
+        snapshot.view_projection = *view_projection;
+        snapshot.camera_position = *camera_position;
+        snapshot.elapsed_seconds = *elapsed_seconds;
+        snapshot.environment = *environment;
+        snapshot.lights.clear();
+        snapshot.dropped_lights = *dropped_lights;
+        for light in lights {
+            let Some(slot) = light.slot else {
+                snapshot.lights.push(*light);
+                continue;
+            };
+            let model = self
+                .owner
+                .pose_indices
+                .get(slot as usize)
+                .and_then(|&index| self.poses.prepared_matrix(index as usize));
+            let Some(model) = model else {
+                snapshot.dropped_lights += 1;
+                continue;
+            };
+            snapshot.lights.push(crate::RenderLight {
+                position: model.transform_point3(light.position),
+                direction: model.transform_vector3(light.direction).normalize_or_zero(),
+                slot: None,
+                ..*light
+            });
+        }
+        snapshot.emitters.clone_from(emitters);
+        snapshot.dropped_particles = *dropped_particles;
+        snapshot.decals.clone_from(decals);
+        snapshot.decal_materials.clone_from(decal_materials);
+        snapshot.decal_textures.clone_from(decal_textures);
+        snapshot.dropped_decals = *dropped_decals;
+        snapshot.reflection_probes.clone_from(reflection_probes);
+        snapshot.dropped_reflection_probes = *dropped_reflection_probes;
+        snapshot.instances.clear();
+        snapshot
+            .instances
+            .extend(self.visible_indices().iter().map(|&slot| RenderInstance {
+                model: self.model(slot),
+                ..instances[slot]
+            }));
+        snapshot.joints.clone_from(joints);
+        snapshot.meshes.clone_from(meshes);
+        snapshot.materials.clone_from(materials);
+        snapshot.textures.clone_from(textures);
+        snapshot.render_candidates = *render_candidates;
+        snapshot.visible_instances = *visible_instances;
+        snapshot.culled_instances = *culled_instances;
+        snapshot.dropped_instances = *dropped_instances;
+        snapshot.missing_assets = *missing_assets;
+        snapshot.invalid_transforms = *invalid_transforms;
+        engine_profile::counter(
+            "extraction.instance_capacity_bytes",
+            (snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,
+        );
     }
 }
 
@@ -652,7 +742,7 @@ impl RetainedRender {
                 .filter(|&index| frames[index].mesh != NO_SOURCE)
                 .map(|index| index as u32)
         };
-        lights.extract_retained(
+        lights.extract(
             world,
             &mut self.snapshot,
             slot_of,
@@ -806,7 +896,7 @@ impl RetainedRender {
         decals: &mut DecalExtraction,
         gpu: bool,
     ) {
-        decals.extract(world, &mut self.snapshot, DecalPoses::Retained { gpu });
+        decals.extract(world, &mut self.snapshot, gpu);
         let listed = &self.snapshot.joints[self.skin_joints.min(self.snapshot.joints.len())..];
         if listed != self.decal_joints.as_slice() {
             self.decal_joints.clear();

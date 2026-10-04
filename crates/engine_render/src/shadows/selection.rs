@@ -422,46 +422,42 @@ impl Selection {
         groups: usize,
         profiler: &GpuProfiler,
     ) {
-        if frame.source != Source::Snapshot {
-            // Instance counts start at zero every frame.
-            encoder.copy_buffer_to_buffer(
-                &self.args_template,
-                0,
-                &self.args,
-                0,
-                MAPS as u64 * groups as u64 * DRAW_ARGS_BYTES,
-            );
-            if let Some(group) = self.select_group.get()
-                && frame.candidates != 0
+        // Instance counts start at zero every frame.
+        encoder.copy_buffer_to_buffer(
+            &self.args_template,
+            0,
+            &self.args,
+            0,
+            MAPS as u64 * groups as u64 * DRAW_ARGS_BYTES,
+        );
+        if let Some(group) = self.select_group.get()
+            && frame.candidates != 0
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/shadow-select"),
+                timestamp_writes: profiler.span("shadow_select").map(Span::compute),
+            });
+            pass.set_pipeline(&pipelines.select);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
+            // Skinned casters by their palette bounds (decision 036).
+            if frame.skinned != 0
+                && let Some(skinned) = self.skinned_group.get()
             {
-                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("engine/shadow-select"),
-                    timestamp_writes: profiler.span("shadow_select").map(Span::compute),
-                });
-                pass.set_pipeline(&pipelines.select);
+                pass.set_pipeline(&pipelines.select_skinned);
+                pass.set_bind_group(0, skinned, &[]);
+                pass.dispatch_workgroups(frame.skinned.div_ceil(SKINNED_GROUP), 1, 1);
                 pass.set_bind_group(0, group, &[]);
-                pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
-                // Skinned casters by their palette bounds (decision 036).
-                if frame.skinned != 0
-                    && let Some(skinned) = self.skinned_group.get()
-                {
-                    pass.set_pipeline(&pipelines.select_skinned);
-                    pass.set_bind_group(0, skinned, &[]);
-                    pass.dispatch_workgroups(frame.skinned.div_ceil(SKINNED_GROUP), 1, 1);
-                    pass.set_bind_group(0, group, &[]);
-                }
-                pass.set_pipeline(&pipelines.count);
-                pass.dispatch_workgroups(1, 1, 1);
             }
+            pass.set_pipeline(&pipelines.count);
+            pass.dispatch_workgroups(1, 1, 1);
         }
-        if frame.read_dirty {
-            let dirty = self.dirty.clone();
-            if let Some(readback) = self.idle_readback(device) {
-                encoder.copy_buffer_to_buffer(&dirty, 0, &readback.buffer, 0, READBACK_BYTES);
-                readback.state.set(ReadbackState::Recorded);
-                // Unread tiles stay until a readback copies them.
-                encoder.clear_buffer(&dirty, 0, Some(TILE_WORDS as u64 * 4));
-            }
+        let dirty = self.dirty.clone();
+        if let Some(readback) = self.idle_readback(device) {
+            encoder.copy_buffer_to_buffer(&dirty, 0, &readback.buffer, 0, READBACK_BYTES);
+            readback.state.set(ReadbackState::Recorded);
+            // Unread tiles stay until a readback copies them.
+            encoder.clear_buffer(&dirty, 0, Some(TILE_WORDS as u64 * 4));
         }
     }
 

@@ -1,6 +1,6 @@
 // Mesh vertex stages: poses and skinning, virtual geometry's clusters and
 // the visibility pass (decisions 036, 044 and 045), and the vertex entry
-// points of public instances, retained slots and temporal frames.
+// points of slots and temporal frames.
 
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(pose.row_0, pose.row_1, pose.row_2,
@@ -20,12 +20,6 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
     let shift = vec2<f32>(select(-fold, fold, encoded.x >= 0.0),
         select(-fold, fold, encoded.y >= 0.0));
     return vec3<f32>(encoded - shift, z);
-}
-
-fn vertex_main(input: VertexInput) -> VertexOutput {
-    let model = mat4x4<f32>(input.model_0, input.model_1, input.model_2, input.model_3);
-    return transform_vertex(input.position, input.normal, input.color, input.surface,
-        input.uv, model);
 }
 
 fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
@@ -153,11 +147,6 @@ fn fs_visibility(input: VisibilityOutput) -> @location(0) vec2<u32> {
 }
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
-    return vertex_main(input);
-}
-
-@vertex
 fn vs_affine(input: AffineVertexInput) -> VertexOutput {
     return vertex_affine(input);
 }
@@ -198,12 +187,6 @@ fn extended_output(vertex: VertexOutput, color: vec4<f32>, uv1: vec2<f32>) -> Ex
     output.color = color;
     output.uv1 = uv1;
     return output;
-}
-
-@vertex
-fn vs_main_extended(input: VertexInput, @location(9) color: vec4<f32>,
-        @location(10) uv1: vec2<f32>) -> ExtendedOutput {
-    return extended_output(vertex_main(input), color, uv1);
 }
 
 @vertex

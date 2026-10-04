@@ -101,7 +101,7 @@ impl Renderer {
     /// pipeline drawing them in the opaque pass of `kind`; returns its key,
     /// `None` when impostors cannot draw.
     pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {
-        let targets = kind.targets().filter(|_| kind.affine)?;
+        let targets = kind.targets()?;
         let lit = kind.lit;
         if !self
             .impostors

@@ -211,8 +211,9 @@ pub struct RenderLight {
     /// Cosines of the inner and outer cone half-angles; `[-2, -2]` for
     /// point lights.
     pub cone: [f32; 2],
-    /// Retained frames: the renderable slot whose displayed pose carries this
-    /// light. Renderers transform `position` and `direction` by that pose.
+    /// Frames: the renderable slot whose displayed pose carries this light.
+    /// Renderers transform `position` and `direction` by that pose. Owned
+    /// snapshots ([`crate::Engine::extract`]) hold every light in world space.
     pub slot: Option<u32>,
 }
 
@@ -288,33 +289,15 @@ impl LightExtraction {
         }
     }
 
-    /// Owned snapshots: every usable light in world space, from the poses
-    /// prepared for this extraction.
-    pub(crate) fn extract_owned(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        self.last_scan = None;
-        self.extract(world, snapshot, |_| None, None, false);
-    }
-
-    /// Retained frames: lights on entities that own slot `slot_of(entity)`
-    /// stay in that slot's model space. `source_revision` changes when slot
-    /// ownership does; `gpu` frames read authoritative poses for the others.
-    pub(crate) fn extract_retained(
+    /// Lights on entities that own slot `slot_of(entity)` stay in that slot's
+    /// model space. `source_revision` changes when slot ownership does; `gpu`
+    /// frames read authoritative poses for the others.
+    pub(crate) fn extract(
         &mut self,
         world: &World,
         snapshot: &mut RenderSnapshot,
         slot_of: impl Fn(Entity) -> Option<u32>,
         source_revision: u64,
-        gpu: bool,
-    ) {
-        self.extract(world, snapshot, slot_of, Some(source_revision), gpu);
-    }
-
-    fn extract(
-        &mut self,
-        world: &World,
-        snapshot: &mut RenderSnapshot,
-        slot_of: impl Fn(Entity) -> Option<u32>,
-        source_revision: Option<u64>,
         gpu: bool,
     ) {
         // Extracted sanitized with the environment, before this.
@@ -329,8 +312,7 @@ impl LightExtraction {
         let this_run = world.read_change_tick();
         let mut count = 0;
         let mut changed = self.last_scan.is_none()
-            || source_revision.is_none()
-            || self.source_revision != source_revision
+            || self.source_revision != Some(source_revision)
             || self.settings != Some(settings);
         for (_, light) in self.query.iter(world) {
             count += 1;
@@ -355,7 +337,7 @@ impl LightExtraction {
                 self.lights.push((entity, *light, slot));
             }
             self.count = count;
-            self.source_revision = source_revision;
+            self.source_revision = Some(source_revision);
             self.settings = Some(settings);
             self.last_scan = Some(this_run);
         } else if self.world_lights.is_empty()

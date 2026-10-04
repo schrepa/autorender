@@ -779,29 +779,24 @@ mod tests {
         let mut all = Vec::new();
         for lit in [false, true] {
             let lights = lit.then_some(&LIGHT_SHADING);
-            // Mesh variants: camera and material, the pass's poses (an
-            // empty group where lights follow) and the lights.
-            for affine in [false, true] {
-                for targets in TARGETS {
-                    let kind = PassKind::opaque(targets, lit, affine);
-                    let poses = match kind.slots() {
-                        entries::Slots::Temporal => Some(&TEMPORAL_POSES),
-                        entries::Slots::Retained => Some(&RETAINED_POSES),
-                        entries::Slots::Instances => None,
-                    };
-                    all.push(mesh_variant(kind, poses, lights));
-                }
-                let kind = PassKind::transparent(lit, affine);
-                let poses = affine.then_some(&RETAINED_POSES);
+            // Mesh variants: camera and material, the pass's poses and the
+            // lights.
+            for targets in TARGETS {
+                let kind = PassKind::opaque(targets, lit);
+                let poses = match kind.slots() {
+                    entries::Slots::Temporal => &TEMPORAL_POSES,
+                    entries::Slots::Retained => &RETAINED_POSES,
+                };
                 all.push(mesh_variant(kind, poses, lights));
             }
             all.push(mesh_variant(
-                PassKind::probe(lit),
-                Some(&RETAINED_POSES),
+                PassKind::transparent(lit),
+                &RETAINED_POSES,
                 lights,
             ));
+            all.push(mesh_variant(PassKind::probe(lit), &RETAINED_POSES, lights));
             for targets in TARGETS {
-                let kind = PassKind::opaque(targets, lit, true);
+                let kind = PassKind::opaque(targets, lit);
                 // Virtual geometry's clusters (decision 044) shade as the
                 // opaque passes' fragments.
                 all.push(pipelines(
@@ -858,16 +853,18 @@ mod tests {
     /// Mesh variants of `kind` for every vertex stream.
     fn mesh_variant(
         kind: PassKind,
-        poses: Option<&'static Table>,
+        poses: &'static Table,
         lights: Option<&'static Table>,
     ) -> Pipelines {
         let mut entries = vec![kind.fragment_entry(false), kind.fragment_entry(true)];
-        entries
-            .extend([Streams::Basic, Streams::Extended].map(|streams| kind.vertex_entry(streams)));
-        if kind.affine {
-            entries.push(kind.vertex_entry(Streams::Skinned));
-        }
-        pipelines(&entries, &[Some(&CAMERA), Some(&MATERIAL), poses, lights])
+        entries.extend(
+            [Streams::Basic, Streams::Extended, Streams::Skinned]
+                .map(|streams| kind.vertex_entry(streams)),
+        );
+        pipelines(
+            &entries,
+            &[Some(&CAMERA), Some(&MATERIAL), Some(poses), lights],
+        )
     }
 
     /// Every shader with its pipelines.
@@ -942,10 +939,6 @@ mod tests {
                             "fs_masked",
                         ],
                         &[Some(&SHADOW_VIEW), Some(&SHADOW_POSES), Some(&MATERIAL)],
-                    ),
-                    pipelines(
-                        &["vs_full", "vs_full_masked"],
-                        &[Some(&SHADOW_VIEW), None, Some(&MATERIAL)],
                     ),
                 ],
             ),

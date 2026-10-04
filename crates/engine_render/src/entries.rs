@@ -15,22 +15,18 @@ pub(crate) enum MeshPass {
     Probe,
 }
 
-/// What a mesh pipeline draws: its pass, whether it shades local lights
-/// (decision 023), and whether it draws retained slots (`affine`);
-/// temporal frames and probe faces always do.
+/// What a mesh pipeline draws: its pass and whether it shades local lights
+/// (decision 023).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PassKind {
     pub pass: MeshPass,
     pub lit: bool,
-    pub affine: bool,
 }
 
-/// Where a mesh pipeline's instances come from: public instance records,
-/// retained slots, or retained slots of temporal frames, which also pose
-/// them as the previous frame did (decision 017).
+/// Where a mesh pipeline's slots are posed: as the frame poses them, or
+/// in temporal frames also as the previous frame did (decision 017).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Slots {
-    Instances,
     Retained,
     Temporal,
 }
@@ -38,7 +34,7 @@ pub(crate) enum Slots {
 /// The vertex streams a mesh draws from beyond positions, normals and
 /// coordinates: none, a second one of colors and second coordinates
 /// (decision 034), or that and a skin stream of joints and weights
-/// (decision 036; retained slots only).
+/// (decision 036).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Streams {
     Basic,
@@ -47,19 +43,17 @@ pub(crate) enum Streams {
 }
 
 impl PassKind {
-    pub(crate) fn opaque(targets: Targets, lit: bool, affine: bool) -> Self {
+    pub(crate) fn opaque(targets: Targets, lit: bool) -> Self {
         Self {
             pass: MeshPass::Opaque(targets),
             lit,
-            affine: affine || targets == Targets::Temporal,
         }
     }
 
-    pub(crate) fn transparent(lit: bool, affine: bool) -> Self {
+    pub(crate) fn transparent(lit: bool) -> Self {
         Self {
             pass: MeshPass::Transparent,
             lit,
-            affine,
         }
     }
 
@@ -67,7 +61,6 @@ impl PassKind {
         Self {
             pass: MeshPass::Probe,
             lit,
-            affine: true,
         }
     }
 
@@ -79,23 +72,18 @@ impl PassKind {
         }
     }
 
-    /// Where this pass's instances come from.
+    /// How this pass poses its slots.
     pub(crate) fn slots(self) -> Slots {
         if self.targets() == Some(Targets::Temporal) {
             Slots::Temporal
-        } else if self.affine {
-            Slots::Retained
         } else {
-            Slots::Instances
+            Slots::Retained
         }
     }
 
-    /// The vertex stage drawing meshes of `streams` in this pass; public
-    /// instances never skin.
+    /// The vertex stage drawing meshes of `streams` in this pass.
     pub(crate) fn vertex_entry(self, streams: Streams) -> &'static str {
         match (self.slots(), streams) {
-            (Slots::Instances, Streams::Basic) => "vs_main",
-            (Slots::Instances, Streams::Extended | Streams::Skinned) => "vs_main_extended",
             (Slots::Retained, Streams::Basic) => "vs_affine",
             (Slots::Retained, Streams::Extended) => "vs_affine_extended",
             (Slots::Retained, Streams::Skinned) => "vs_affine_skinned",
@@ -227,10 +215,8 @@ mod tests {
     fn pass_kinds() -> Vec<PassKind> {
         let mut kinds = Vec::new();
         for lit in [false, true] {
-            for affine in [false, true] {
-                kinds.extend(TARGETS.map(|targets| PassKind::opaque(targets, lit, affine)));
-                kinds.push(PassKind::transparent(lit, affine));
-            }
+            kinds.extend(TARGETS.map(|targets| PassKind::opaque(targets, lit)));
+            kinds.push(PassKind::transparent(lit));
             kinds.push(PassKind::probe(lit));
         }
         kinds
@@ -295,22 +281,18 @@ mod tests {
     #[test]
     fn passes_draw_their_slots() {
         assert_eq!(
-            PassKind::opaque(Targets::Post, false, false).slots(),
-            Slots::Instances
-        );
-        assert_eq!(
-            PassKind::opaque(Targets::Post, false, true).slots(),
+            PassKind::opaque(Targets::Post, false).slots(),
             Slots::Retained
         );
-        // Temporal frames and probe faces draw retained slots.
+        // Temporal frames also pose slots as the previous frame did.
         assert_eq!(
-            PassKind::opaque(Targets::Temporal, true, false).slots(),
+            PassKind::opaque(Targets::Temporal, true).slots(),
             Slots::Temporal
         );
         assert_eq!(PassKind::probe(false).slots(), Slots::Retained);
         assert_eq!(
-            PassKind::transparent(false, false).vertex_entry(Streams::Skinned),
-            "vs_main_extended"
+            PassKind::transparent(false).vertex_entry(Streams::Skinned),
+            "vs_affine_skinned"
         );
     }
 }
