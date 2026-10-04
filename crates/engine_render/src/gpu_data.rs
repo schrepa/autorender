@@ -705,7 +705,17 @@ pub(crate) struct ShadowCullUniform {
     /// Skinned slots `select_skinned` visits on GPU-presented frames.
     pub skinned: u32,
     pub pad: [u32; 2],
+    /// Inward world planes (`xyz . p + w >= 0` inside) bounding where
+    /// casters can darken each near cascade's receivers, then the moving
+    /// map's: their part of the view swept toward the sun; unused planes
+    /// pass everything.
+    pub planes: [[[f32; 4]; CASTER_PLANES]; MAX_CASCADES + 1],
 }
+
+/// Planes of a map's caster volume ([`ShadowCullUniform::planes`]): the
+/// view frustum's sides, near and far planes, and the receivers' first and
+/// last view depths, those facing the sun.
+pub(crate) const CASTER_PLANES: usize = 8;
 
 /// WGSL `Post` uniform of `effects.wgsl` (decisions 021, 024 and 025): 240
 /// bytes.
