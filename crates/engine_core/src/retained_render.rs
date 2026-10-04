@@ -39,6 +39,17 @@ type SourceStamps = SystemState<(
     Query<'static, 'static, Ref<'static, Tint>>,
 )>;
 
+/// Whether any `T` changed within the window `components` last ran over.
+fn changed_in_window<T: Component>(components: &Query<'_, '_, Ref<'static, T>>) -> bool {
+    components
+        .contiguous_iter()
+        .expect("render sources use dense table storage")
+        .any(|tables| {
+            let (_, ticks) = ContiguousRef::split(tables);
+            ChangeWindow::new(ticks.last_run(), ticks.this_run()).any(ticks.changed())
+        })
+}
+
 static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
 
 /// An affine model matrix as its transposed top three rows: row `r` holds the
@@ -516,11 +527,9 @@ pub(crate) struct RetainedRender {
     caster_revision: u64,
     lights_revision: u64,
     joints_revision: u64,
-    // Joints the skins listed, which decals' joints follow, and the decals'
-    // joints of the last frame.
-    skin_joints: usize,
-    decal_joints: Vec<RenderJoint>,
     snapshot: RenderSnapshot,
+    // The engine's cube, which `Cube` components draw.
+    cube_mesh: MeshHandle,
     // Owner of each slot; None for free slots. Parallel to `frames`.
     owners: Vec<Option<Entity>>,
     frames: Vec<SlotFrame>,
@@ -547,6 +556,9 @@ pub(crate) struct RetainedRender {
     frustum: Option<Frustum>,
     culling: bool,
     budget: usize,
+    // Instances whose assets were missing at the last instance pass: frames
+    // that skip the pass keep its count, which decals' add to.
+    missing_sources: usize,
     // Mode of the last preparation, and the hierarchy topology its candidate
     // node indices belong to when it was GPU-presented.
     gpu: bool,
@@ -554,21 +566,31 @@ pub(crate) struct RetainedRender {
     source_stamps: Option<SourceStamps>,
     // Tints at the last source scan (removals change no tick).
     tint_count: Option<usize>,
-    // Slots given a joint palette by the last skin extraction, and scratch
-    // for the next one's (slot, offset) pairs.
-    skinned: Vec<usize>,
-    skin_scratch: Vec<(usize, u32)>,
-    // What the last GPU-presented skin extraction read (each skinned
-    // entity's slot and mesh, in query order; the asset, topology and
-    // validity revisions) and the change tick it saw: while all match and no
-    // skin changed, its joints stand.
-    skin_inputs: Vec<(Entity, usize, Option<MeshHandle>)>,
-    skin_key: Option<((u64, u64), u64, u64)>,
-    skin_tick: Tick,
 }
 
-impl Default for RetainedRender {
-    fn default() -> Self {
+/// What one instance pass changed and counted.
+#[derive(Default)]
+struct Pass {
+    structure_changed: bool,
+    sources_changed: bool,
+    casters_changed: bool,
+    // Slots submitted and listed as casters so far, and owned slots visited.
+    submitted: usize,
+    casters: usize,
+    seen: usize,
+    // Profile counters.
+    resolved: usize,
+    poses: usize,
+    colors: usize,
+    culling_tests: usize,
+    culling_interior: usize,
+    culling_reused: usize,
+}
+
+impl RetainedRender {
+    /// Records that draw `Cube` components with `cube_mesh`, frustum cull
+    /// when `culling`, and submit at most `budget` instances a frame.
+    pub(crate) fn new(cube_mesh: MeshHandle, culling: bool, budget: usize) -> Self {
         let identity = NEXT_STREAM
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("render stream identities exhausted");
@@ -582,9 +604,8 @@ impl Default for RetainedRender {
             caster_revision: 0,
             lights_revision: 0,
             joints_revision: 0,
-            skin_joints: 0,
-            decal_joints: Vec::new(),
             snapshot: RenderSnapshot::default(),
+            cube_mesh,
             owners: Vec::new(),
             frames: Vec::new(),
             visited: Vec::new(),
@@ -602,22 +623,25 @@ impl Default for RetainedRender {
             last_scan: None,
             view: None,
             frustum: None,
-            culling: false,
-            budget: 0,
+            culling,
+            budget,
+            missing_sources: 0,
             gpu: false,
             gpu_topology: None,
             source_stamps: None,
             tint_count: None,
-            skinned: Vec::new(),
-            skin_scratch: Vec::new(),
-            skin_inputs: Vec::new(),
-            skin_key: None,
-            skin_tick: Tick::new(0),
         }
     }
-}
 
-impl RetainedRender {
+    /// Frustum culling of the frames prepared from now on.
+    pub(crate) fn set_culling(&mut self, enabled: bool) {
+        self.culling = enabled;
+    }
+
+    pub(crate) fn culling(&self) -> bool {
+        self.culling
+    }
+
     /// `poses` must be the store read by the latest [`Self::prepare`].
     pub(crate) fn frame<'a>(
         &'a self,
@@ -637,7 +661,6 @@ impl RetainedRender {
         row: usize,
         world: &World,
         globals: &GlobalTransforms,
-        cube: MeshHandle,
     ) -> Option<usize> {
         if let Some(Some((cached_entity, index))) = self.query_slots.get(row)
             && *cached_entity == entity
@@ -699,7 +722,7 @@ impl RetainedRender {
                 self.frames.push(SlotFrame::NEW);
                 // Retained frames read poses through `pose_indices`.
                 self.snapshot.instances.push(RenderInstance {
-                    mesh: cube,
+                    mesh: self.cube_mesh,
                     material: None,
                     model: Mat4::IDENTITY,
                     color: [1.0; 4],
@@ -772,12 +795,12 @@ impl RetainedRender {
                 globals.topology_revision,
                 globals.validity_epoch(),
             );
-            let mut inputs = std::mem::take(&mut self.skin_inputs);
+            let mut inputs = std::mem::take(&mut skins.inputs);
             let previous = inputs.len();
-            let mut changed = self.skin_key != Some(key);
+            let mut changed = skins.key != Some(key);
             let mut count = 0;
             for (entity, skin) in skins.query.iter(world) {
-                changed |= skin.last_changed().is_newer_than(self.skin_tick, this_run);
+                changed |= skin.last_changed().is_newer_than(skins.tick, this_run);
                 let input = match self.entities.get(&entity) {
                     Some(&slot) => (entity, slot, Some(self.snapshot.instances[slot].mesh)),
                     None => (entity, usize::MAX, None),
@@ -793,24 +816,24 @@ impl RetainedRender {
             }
             changed |= count != previous;
             inputs.truncate(count);
-            self.skin_inputs = inputs;
-            self.skin_tick = this_run;
+            skins.inputs = inputs;
+            skins.tick = this_run;
             if !changed {
                 // Last frame's decals follow the skins' joints: they list
                 // theirs again.
-                self.snapshot.joints.truncate(self.skin_joints);
-                engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
+                self.snapshot.joints.truncate(skins.joints);
+                engine_profile::counter("extraction.skinned", skins.skinned.len() as f64);
                 engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
                 return;
             }
-            self.skin_key = Some(key);
+            skins.key = Some(key);
         } else {
             // CPU-prepared joints carry this frame's poses.
-            self.skin_key = None;
+            skins.key = None;
         }
         let joints = &mut self.snapshot.joints;
         joints.clear();
-        let mut next = std::mem::take(&mut self.skin_scratch);
+        let mut next = std::mem::take(&mut skins.scratch);
         next.clear();
         for (entity, skin) in skins.query.iter(world) {
             let Some(&slot) = self.entities.get(&entity) else {
@@ -857,11 +880,11 @@ impl RetainedRender {
             next.push((slot, base as u32));
         }
         next.sort_unstable_by_key(|&(slot, _)| slot);
-        self.skin_joints = joints.len();
+        skins.joints = joints.len();
         self.joints_revision += 1;
         let sequence = self.sequence;
         let mut changed = false;
-        for &slot in &self.skinned {
+        for &slot in &skins.skinned {
             if next.binary_search_by_key(&slot, |&(slot, _)| slot).is_err()
                 && let Some(record) = self.snapshot.instances.get_mut(slot)
                 && record.skin.take().is_some()
@@ -870,7 +893,7 @@ impl RetainedRender {
                 changed = true;
             }
         }
-        self.skinned.clear();
+        skins.skinned.clear();
         for &(slot, base) in &next {
             let record = &mut self.snapshot.instances[slot];
             if record.skin != Some(base) {
@@ -878,13 +901,13 @@ impl RetainedRender {
                 self.color_changes[slot] = sequence;
                 changed = true;
             }
-            self.skinned.push(slot);
+            skins.skinned.push(slot);
         }
         if changed {
             self.color_revision = sequence;
         }
-        self.skin_scratch = next;
-        engine_profile::counter("extraction.skinned", self.skinned.len() as f64);
+        skins.scratch = next;
+        engine_profile::counter("extraction.skinned", skins.skinned.len() as f64);
         engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
     }
 
@@ -896,11 +919,7 @@ impl RetainedRender {
         decals: &mut DecalExtraction,
         gpu: bool,
     ) {
-        decals.extract(world, &mut self.snapshot, gpu);
-        let listed = &self.snapshot.joints[self.skin_joints.min(self.snapshot.joints.len())..];
-        if listed != self.decal_joints.as_slice() {
-            self.decal_joints.clear();
-            self.decal_joints.extend_from_slice(listed);
+        if decals.extract(world, &mut self.snapshot, gpu) {
             self.joints_revision += 1;
         }
     }
@@ -931,32 +950,11 @@ impl RetainedRender {
         // A removed tint changes no tick: the count reveals it, and an
         // insertion elsewhere in the same window changes a tick.
         let tint_count = tints.iter().len();
-        let mut changed = self.tint_count != Some(tint_count);
+        let changed = self.tint_count != Some(tint_count)
+            || changed_in_window(&tints)
+            || changed_in_window(&meshes)
+            || changed_in_window(&cubes);
         self.tint_count = Some(tint_count);
-        for tints in tints
-            .contiguous_iter()
-            .expect("Tint uses dense table storage")
-        {
-            let (_, ticks) = ContiguousRef::split(tints);
-            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
-            changed |= window.any(ticks.changed());
-        }
-        for meshes in meshes
-            .contiguous_iter()
-            .expect("Mesh3d uses dense table storage")
-        {
-            let (_, ticks) = ContiguousRef::split(meshes);
-            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
-            changed |= window.any(ticks.changed());
-        }
-        for cubes in cubes
-            .contiguous_iter()
-            .expect("Cube uses dense table storage")
-        {
-            let (_, ticks) = ContiguousRef::split(cubes);
-            let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
-            changed |= window.any(ticks.changed());
-        }
         stamps.meta_mut().set_last_run(world.read_change_tick());
         changed
     }
@@ -973,15 +971,15 @@ impl RetainedRender {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// The instance pass: admits and retires slots, resolves their sources
+    /// and, on CPU-prepared frames, reads their prepared poses and culls
+    /// them. GPU-presented frames list candidates for the GPU instead, and
+    /// keep the last pass's records while nothing structural changed.
     pub(crate) fn prepare(
         &mut self,
         world: &World,
         query: &mut RenderQuery,
-        cube_mesh: MeshHandle,
         aspect: f32,
-        culling: bool,
-        budget: usize,
         gpu: bool,
     ) {
         let _profile = engine_profile::span("cpu", "extraction_retained_updates_culling");
@@ -989,7 +987,6 @@ impl RetainedRender {
             .sequence
             .checked_add(1)
             .expect("render sequence exhausted");
-        let sequence = self.sequence;
         if self.gpu && !gpu {
             // GPU frames neither culled nor prepared CPU poses. Recompute both
             // for every slot, and their rows, on the first CPU frame after them.
@@ -998,8 +995,6 @@ impl RetainedRender {
                 frame.pose_revision = 0;
             }
         }
-        self.culling = culling;
-        self.budget = budget;
         let globals = world.resource::<GlobalTransforms>();
         let stamps_changed = gpu && self.sources_changed(world);
         let scan_tick = world.read_change_tick();
@@ -1014,9 +1009,8 @@ impl RetainedRender {
             self.sources.clear();
             self.asset_revision = Some(revision);
         }
-        self.sources.mesh_used.fill(false);
-        self.sources.material_used.fill(false);
         let view = world.resource::<Camera>().view_projection(aspect);
+        self.snapshot.view_projection = view;
         crate::effects::extract_lighting(world, &mut self.snapshot);
         let total = query.iter(world).len();
         if gpu
@@ -1030,67 +1024,30 @@ impl RetainedRender {
             // Same renderables, sources, assets and node indices: candidates,
             // slots and colors are unchanged, and the GPU culls. Only the camera
             // moves on to this frame.
-            self.snapshot.view_projection = view;
+            self.snapshot.missing_assets = self.missing_sources;
             engine_profile::counter("extraction.gpu_structure_reused", 1.0);
             return;
         }
         engine_profile::counter("extraction.gpu_structure_reused", 0.0);
-        let view_key = (view.to_cols_array().map(f32::to_bits), culling);
-        let view_changed = !gpu && self.view != Some(view_key);
-        if view_changed {
-            self.view = Some(view_key);
-            self.frustum = culling.then(|| Frustum::new(view)).flatten();
-        }
-        let hint_count = total.min(MAX_TRANSFORM_NODES);
-        if self.query_slots.capacity() < hint_count {
-            self.query_slots
-                .reserve_exact(hint_count.saturating_sub(self.query_slots.len()));
-        }
-        self.query_slots.resize(hint_count, None);
-        // GPU frames list every candidate; the GPU applies the budget.
-        let output_bound = if gpu { total } else { total.min(budget) }.min(MAX_TRANSFORM_NODES);
-        if self.visible.capacity() < output_bound {
-            self.visible
-                .reserve_exact(output_bound.saturating_sub(self.visible.len()));
-        }
-        self.snapshot.view_projection = view;
-        self.snapshot.render_candidates = total;
-        self.snapshot.visible_instances = 0;
-        self.snapshot.culled_instances = 0;
-        self.snapshot.invalid_transforms = 0;
-        self.snapshot.missing_assets = 0;
-        self.snapshot.dropped_instances = 0;
+        let view_changed = !gpu && self.set_view(view);
+        self.begin_pass(total, gpu);
         let presented = world.resource::<PresentedTransforms>();
-        let mut structure_changed = assets_changed;
-        let mut sources_changed = assets_changed;
-        let mut submitted = 0;
-        let mut casters = 0;
-        let mut casters_changed = false;
-        let mut seen = 0;
-        let mut resolved_count = 0;
-        let mut pose_count = 0;
-        let mut color_count = 0;
-        let mut culling_tests = 0;
-        let mut culling_interior = 0;
-        let mut culling_reused = 0;
-        // Slots can only be admitted up to the query size during this pass.
-        let visited_words = (self.owners.len() + total)
-            .min(MAX_TRANSFORM_NODES)
-            .div_ceil(64);
-        self.visited.clear();
-        self.visited.resize(visited_words, 0);
+        let mut pass = Pass {
+            structure_changed: assets_changed,
+            sources_changed: assets_changed,
+            ..Pass::default()
+        };
         for (row, (entity, has_transform, cube, mesh3d, tint)) in query.iter(world).enumerate() {
             if !has_transform {
                 self.snapshot.invalid_transforms += 1;
                 continue;
             }
-            let Some(index) = self.slot(entity, row, world, globals, cube_mesh) else {
+            let Some(index) = self.slot(entity, row, world, globals) else {
                 self.snapshot.invalid_transforms += 1;
                 continue;
             };
             self.visited[index / 64] |= 1 << (index % 64);
-            seen += 1;
-            let frame = &mut self.frames[index];
+            pass.seen += 1;
             let source = SourceKey::new(
                 cube.as_ref().map(|value| value.last_changed()),
                 mesh3d.as_ref().map(|value| value.last_changed()),
@@ -1098,195 +1055,291 @@ impl RetainedRender {
             );
             // Every live slot is (re)resolved when assets change or the window
             // ages; new owners start from an unknown source key.
-            let source_changed = aged || assets_changed || frame.source != source;
+            let source_changed = aged || assets_changed || self.frames[index].source != source;
             if source_changed {
-                let record = &mut self.snapshot.instances[index];
-                resolved_count += 1;
-                frame.source = source;
+                self.frames[index].source = source;
                 let resolved = self.sources.resolve(
                     assets,
-                    cube_mesh,
+                    self.cube_mesh,
                     cube.as_deref(),
                     mesh3d.as_deref(),
                     tint.as_deref(),
                 );
-                frame.mesh = resolved
-                    .as_ref()
-                    .map_or(NO_SOURCE, |value| value.mesh_index as u32);
-                frame.material = resolved
-                    .as_ref()
-                    .and_then(|value| value.material_index)
-                    .map_or(NO_SOURCE, |material| material as u32);
-                if let Some(ResolvedSource {
-                    mesh,
-                    material,
-                    color,
-                    surface,
-                    ..
-                }) = resolved
-                {
-                    // Opacity decides the pass of materials without maps
-                    // (decision 026): switching between opaque and
-                    // transparent regroups draws. Materials are immutable,
-                    // so their alpha modes change only with their handles.
-                    let keys_changed = record.mesh != mesh
-                        || record.material != material
-                        || (record.color[3] < 1.0) != (color[3] < 1.0);
-                    structure_changed |= keys_changed;
-                    sources_changed |= keys_changed;
-                    record.mesh = mesh;
-                    record.material = material;
-                    let surface_bits = |surface: Surface| {
-                        [
-                            surface.roughness,
-                            surface.metalness,
-                            surface.emission,
-                            surface.ripples,
-                        ]
-                        .map(f32::to_bits)
-                    };
-                    if self.color_changes[index] == 0
-                        || record.color.map(f32::to_bits) != color.map(f32::to_bits)
-                        || surface_bits(record.surface) != surface_bits(surface)
-                    {
-                        record.color = color;
-                        record.surface = surface;
-                        self.color_changes[index] = sequence;
-                        color_count += 1;
-                    }
-                }
+                self.apply_source(index, resolved, &mut pass);
             }
             if gpu {
-                // Node indices only; blending, validity and culling run on the
-                // GPU. Invalid admitted nodes stay candidates and are hidden there.
-                let mut hint = TransformIndex(self.pose_indices[index] as usize);
-                let Some((global, _)) = globals.get_indexed_with_revision(entity, &mut hint) else {
-                    self.snapshot.invalid_transforms += 1;
-                    continue;
-                };
-                self.pose_indices[index] = hint.0 as u32;
-                // Counters partition candidates as on the CPU path; here
-                // `visible_instances` counts valid listed candidates before
-                // GPU culling.
-                if global.matrix().is_none() {
-                    self.snapshot.invalid_transforms += 1;
-                } else if frame.mesh == NO_SOURCE {
-                    self.snapshot.missing_assets += 1;
-                } else {
-                    self.snapshot.visible_instances += 1;
-                }
-                if frame.mesh == NO_SOURCE {
-                    continue;
-                }
-                if let Some(previous) = self.visible.get_mut(submitted) {
-                    structure_changed |= *previous != index;
-                    *previous = index;
-                } else {
-                    self.visible.push(index);
-                    structure_changed = true;
-                }
-                submitted += 1;
-                self.sources.mesh_used[frame.mesh as usize] = true;
-                if frame.material != NO_SOURCE {
-                    self.sources.material_used[frame.material as usize] = true;
-                }
-                continue;
-            }
-            // extract_frame prepared presentation from this same refreshed
-            // hierarchy immediately before this pass. Every admitted display
-            // is valid exactly when its authoritative pose is valid, so the
-            // presented read alone keeps the authoritative validity gate.
-            // The slot's pose index is the store hint; it is validated against
-            // the full Entity before use.
-            let mut hint = TransformIndex(self.pose_indices[index] as usize);
-            let pose = presented.get_indexed(entity, &mut hint);
-            debug_assert_eq!(
-                pose.map(|pose| pose.matrix().is_some()),
-                globals.get(entity).map(|global| global.matrix().is_some()),
-                "presented validity must match the authoritative boundary"
-            );
-            let Some((model, pose_revision)) =
-                pose.and_then(|pose| Some((pose.matrix()?, pose.revision())))
-            else {
-                self.snapshot.invalid_transforms += 1;
-                continue;
-            };
-            // Frames read the prepared pose through this validated index
-            // instead of copying the matrix here.
-            self.pose_indices[index] = hint.0 as u32;
-            let pose_changed = frame.pose_revision != pose_revision
-                || pose_revision == 0
-                || pose_revision == u64::MAX;
-            if pose_changed {
-                frame.pose_revision = pose_revision;
-                self.pose_changes[index] = sequence;
-                // Written with the stamp while the matrix is at hand, so no
-                // later pass re-reads the presented store to repack it.
-                self.pose_rows[index] = pose_rows(model);
-                pose_count += 1;
-            }
-            if frame.mesh == NO_SOURCE {
-                self.snapshot.missing_assets += 1;
-                continue;
-            }
-            // Culled or visible, the slot casts shadows.
-            if let Some(previous) = self.casters.get_mut(casters) {
-                casters_changed |= *previous != index;
-                *previous = index;
+                self.list_candidate(entity, index, globals, &mut pass);
             } else {
-                self.casters.push(index);
-                casters_changed = true;
-            }
-            casters += 1;
-            if view_changed || pose_changed || source_changed {
-                let bounds = self.sources.bounds[frame.mesh as usize];
-                let skinned = self.sources.skinned[frame.mesh as usize];
-                frame.outside = !skinned
-                    && self.frustum.as_ref().is_some_and(|frustum| {
-                        culling_tests += 1;
-                        let classification = frustum.classify(model, bounds);
-                        culling_interior += usize::from(classification == Classification::Interior);
-                        classification.outside()
-                    });
-            } else if self.frustum.is_some() {
-                culling_reused += 1;
-            }
-            if frame.outside {
-                self.snapshot.culled_instances += 1;
-            } else {
-                self.snapshot.visible_instances += 1;
-                if submitted == budget {
-                    self.snapshot.dropped_instances += 1;
-                    continue;
-                }
-                if let Some(previous) = self.visible.get_mut(submitted) {
-                    structure_changed |= *previous != index;
-                    *previous = index;
-                } else {
-                    self.visible.push(index);
-                    structure_changed = true;
-                }
-                submitted += 1;
-            }
-            self.sources.mesh_used[frame.mesh as usize] = true;
-            if frame.material != NO_SOURCE {
-                self.sources.material_used[frame.material as usize] = true;
+                self.cull(
+                    entity,
+                    index,
+                    (presented, globals),
+                    view_changed || source_changed,
+                    &mut pass,
+                );
             }
         }
-        if submitted != self.visible.len() {
-            self.visible.truncate(submitted);
-            structure_changed = true;
+        self.finish_pass(pass, assets_changed, gpu, globals.topology_revision);
+    }
+
+    /// Whether the camera's view or culling changed since the last
+    /// CPU-prepared frame, whose frustum then follows them.
+    fn set_view(&mut self, view: Mat4) -> bool {
+        let key = (view.to_cols_array().map(f32::to_bits), self.culling);
+        if self.view == Some(key) {
+            return false;
         }
-        if !gpu && casters != self.casters.len() {
-            self.casters.truncate(casters);
-            casters_changed = true;
+        self.view = Some(key);
+        self.frustum = self.culling.then(|| Frustum::new(view)).flatten();
+        true
+    }
+
+    /// Sizes the pass's scratch for `total` renderables and clears its
+    /// counts.
+    fn begin_pass(&mut self, total: usize, gpu: bool) {
+        let hint_count = total.min(MAX_TRANSFORM_NODES);
+        if self.query_slots.capacity() < hint_count {
+            self.query_slots
+                .reserve_exact(hint_count.saturating_sub(self.query_slots.len()));
         }
-        if casters_changed {
+        self.query_slots.resize(hint_count, None);
+        // GPU frames list every candidate; the GPU applies the budget.
+        let output_bound =
+            if gpu { total } else { total.min(self.budget) }.min(MAX_TRANSFORM_NODES);
+        if self.visible.capacity() < output_bound {
+            self.visible
+                .reserve_exact(output_bound.saturating_sub(self.visible.len()));
+        }
+        self.snapshot.render_candidates = total;
+        self.snapshot.visible_instances = 0;
+        self.snapshot.culled_instances = 0;
+        self.snapshot.invalid_transforms = 0;
+        self.snapshot.missing_assets = 0;
+        self.snapshot.dropped_instances = 0;
+        self.sources.mesh_used.fill(false);
+        self.sources.material_used.fill(false);
+        // Slots can only be admitted up to the query size during this pass.
+        let visited_words = (self.owners.len() + total)
+            .min(MAX_TRANSFORM_NODES)
+            .div_ceil(64);
+        self.visited.clear();
+        self.visited.resize(visited_words, 0);
+    }
+
+    /// Records slot `index`'s newly resolved source: its mesh, material,
+    /// color and surface, or none while its assets are missing.
+    #[inline]
+    fn apply_source(&mut self, index: usize, resolved: Option<ResolvedSource>, pass: &mut Pass) {
+        pass.resolved += 1;
+        let frame = &mut self.frames[index];
+        frame.mesh = resolved
+            .as_ref()
+            .map_or(NO_SOURCE, |value| value.mesh_index as u32);
+        frame.material = resolved
+            .as_ref()
+            .and_then(|value| value.material_index)
+            .map_or(NO_SOURCE, |material| material as u32);
+        let Some(ResolvedSource {
+            mesh,
+            material,
+            color,
+            surface,
+            ..
+        }) = resolved
+        else {
+            return;
+        };
+        let record = &mut self.snapshot.instances[index];
+        // Opacity decides the pass of materials without maps (decision 026):
+        // switching between opaque and transparent regroups draws. Materials
+        // are immutable, so their alpha modes change only with their handles.
+        let keys_changed = record.mesh != mesh
+            || record.material != material
+            || (record.color[3] < 1.0) != (color[3] < 1.0);
+        pass.structure_changed |= keys_changed;
+        pass.sources_changed |= keys_changed;
+        record.mesh = mesh;
+        record.material = material;
+        let surface_bits = |surface: Surface| {
+            [
+                surface.roughness,
+                surface.metalness,
+                surface.emission,
+                surface.ripples,
+            ]
+            .map(f32::to_bits)
+        };
+        if self.color_changes[index] == 0
+            || record.color.map(f32::to_bits) != color.map(f32::to_bits)
+            || surface_bits(record.surface) != surface_bits(surface)
+        {
+            record.color = color;
+            record.surface = surface;
+            self.color_changes[index] = self.sequence;
+            pass.colors += 1;
+        }
+    }
+
+    /// Lists slot `index` as a GPU-presented candidate by its node index;
+    /// blending, validity and culling run on the GPU, which hides invalid
+    /// admitted nodes.
+    #[inline]
+    fn list_candidate(
+        &mut self,
+        entity: Entity,
+        index: usize,
+        globals: &GlobalTransforms,
+        pass: &mut Pass,
+    ) {
+        let mut hint = TransformIndex(self.pose_indices[index] as usize);
+        let Some((global, _)) = globals.get_indexed_with_revision(entity, &mut hint) else {
+            self.snapshot.invalid_transforms += 1;
+            return;
+        };
+        self.pose_indices[index] = hint.0 as u32;
+        let frame = self.frames[index];
+        // Counters partition candidates as on the CPU path; here
+        // `visible_instances` counts valid listed candidates before GPU
+        // culling.
+        if global.matrix().is_none() {
+            self.snapshot.invalid_transforms += 1;
+        } else if frame.mesh == NO_SOURCE {
+            self.snapshot.missing_assets += 1;
+        } else {
+            self.snapshot.visible_instances += 1;
+        }
+        if frame.mesh == NO_SOURCE {
+            return;
+        }
+        self.submit(index, pass);
+        self.mark_used(frame);
+    }
+
+    /// Reads slot `index`'s prepared pose and culls it, classifying it again
+    /// when its pose changed or `reclassify` (a new view or source).
+    #[inline]
+    fn cull(
+        &mut self,
+        entity: Entity,
+        index: usize,
+        (presented, globals): (&PresentedTransforms, &GlobalTransforms),
+        reclassify: bool,
+        pass: &mut Pass,
+    ) {
+        // extract_frame prepared presentation from this same refreshed
+        // hierarchy immediately before this pass. Every admitted display
+        // is valid exactly when its authoritative pose is valid, so the
+        // presented read alone keeps the authoritative validity gate.
+        // The slot's pose index is the store hint; it is validated against
+        // the full Entity before use.
+        let mut hint = TransformIndex(self.pose_indices[index] as usize);
+        let pose = presented.get_indexed(entity, &mut hint);
+        debug_assert_eq!(
+            pose.map(|pose| pose.matrix().is_some()),
+            globals.get(entity).map(|global| global.matrix().is_some()),
+            "presented validity must match the authoritative boundary"
+        );
+        let Some((model, pose_revision)) =
+            pose.and_then(|pose| Some((pose.matrix()?, pose.revision())))
+        else {
+            self.snapshot.invalid_transforms += 1;
+            return;
+        };
+        // Frames read the prepared pose through this validated index
+        // instead of copying the matrix here.
+        self.pose_indices[index] = hint.0 as u32;
+        let frame = &mut self.frames[index];
+        let pose_changed =
+            frame.pose_revision != pose_revision || pose_revision == 0 || pose_revision == u64::MAX;
+        if pose_changed {
+            frame.pose_revision = pose_revision;
+            self.pose_changes[index] = self.sequence;
+            // Written with the stamp while the matrix is at hand, so no
+            // later pass re-reads the presented store to repack it.
+            self.pose_rows[index] = pose_rows(model);
+            pass.poses += 1;
+        }
+        if frame.mesh == NO_SOURCE {
+            self.snapshot.missing_assets += 1;
+            return;
+        }
+        // Culled or visible, the slot casts shadows.
+        if let Some(previous) = self.casters.get_mut(pass.casters) {
+            pass.casters_changed |= *previous != index;
+            *previous = index;
+        } else {
+            self.casters.push(index);
+            pass.casters_changed = true;
+        }
+        pass.casters += 1;
+        if reclassify || pose_changed {
+            let bounds = self.sources.bounds[frame.mesh as usize];
+            let skinned = self.sources.skinned[frame.mesh as usize];
+            frame.outside = !skinned
+                && self.frustum.as_ref().is_some_and(|frustum| {
+                    pass.culling_tests += 1;
+                    let classification = frustum.classify(model, bounds);
+                    pass.culling_interior +=
+                        usize::from(classification == Classification::Interior);
+                    classification.outside()
+                });
+        } else if self.frustum.is_some() {
+            pass.culling_reused += 1;
+        }
+        let frame = *frame;
+        if frame.outside {
+            self.snapshot.culled_instances += 1;
+        } else {
+            self.snapshot.visible_instances += 1;
+            if pass.submitted == self.budget {
+                self.snapshot.dropped_instances += 1;
+                return;
+            }
+            self.submit(index, pass);
+        }
+        self.mark_used(frame);
+    }
+
+    /// Appends slot `index` to the submission order.
+    #[inline]
+    fn submit(&mut self, index: usize, pass: &mut Pass) {
+        if let Some(previous) = self.visible.get_mut(pass.submitted) {
+            pass.structure_changed |= *previous != index;
+            *previous = index;
+        } else {
+            self.visible.push(index);
+            pass.structure_changed = true;
+        }
+        pass.submitted += 1;
+    }
+
+    /// Marks the mesh and material of a listed or culled slot as used.
+    #[inline]
+    fn mark_used(&mut self, frame: SlotFrame) {
+        self.sources.mesh_used[frame.mesh as usize] = true;
+        if frame.material != NO_SOURCE {
+            self.sources.material_used[frame.material as usize] = true;
+        }
+    }
+
+    /// Retires the slots the pass did not visit, publishes the sources
+    /// used, and advances the revisions of what changed.
+    fn finish_pass(&mut self, mut pass: Pass, assets_changed: bool, gpu: bool, topology: u64) {
+        if pass.submitted != self.visible.len() {
+            self.visible.truncate(pass.submitted);
+            pass.structure_changed = true;
+        }
+        if !gpu && pass.casters != self.casters.len() {
+            self.casters.truncate(pass.casters);
+            pass.casters_changed = true;
+        }
+        let sequence = self.sequence;
+        if pass.casters_changed {
             self.caster_revision = sequence;
         }
         // Each entity owns one slot and visits it at most once, so equal counts
         // prove every owned slot was visited.
-        if seen != self.entities.len() {
+        if pass.seen != self.entities.len() {
             self.free
                 .reserve_exact(self.owners.len().saturating_sub(self.free.len()));
             for (index, owner) in self.owners.iter_mut().enumerate() {
@@ -1296,38 +1349,40 @@ impl RetainedRender {
                     self.entities.remove(&entity);
                     self.frames[index].mesh = NO_SOURCE;
                     self.free.push(index);
-                    structure_changed = true;
-                    sources_changed = true;
+                    pass.structure_changed = true;
+                    pass.sources_changed = true;
                 }
             }
             self.forget_freed_rows();
         }
         let ownership_changed = self.sources.publish(&mut self.snapshot, assets_changed);
-        structure_changed |= ownership_changed;
-        sources_changed |= ownership_changed;
-        if structure_changed {
+        if pass.structure_changed || ownership_changed {
             self.structure_revision = sequence;
         }
-        if sources_changed {
+        if pass.sources_changed || ownership_changed {
             self.source_revision = sequence;
         }
-        if pose_count != 0 {
+        if pass.poses != 0 {
             self.pose_revision = sequence;
         }
-        if color_count != 0 {
+        if pass.colors != 0 {
             self.color_revision = sequence;
         }
         self.gpu = gpu;
-        self.gpu_topology = gpu.then_some(globals.topology_revision);
-        engine_profile::counter("extraction.candidates", total as f64);
-        engine_profile::counter("extraction.instances", submitted as f64);
+        self.gpu_topology = gpu.then_some(topology);
+        self.missing_sources = self.snapshot.missing_assets;
+        engine_profile::counter(
+            "extraction.candidates",
+            self.snapshot.render_candidates as f64,
+        );
+        engine_profile::counter("extraction.instances", pass.submitted as f64);
         engine_profile::counter("extraction.culled", self.snapshot.culled_instances as f64);
-        engine_profile::counter("extraction.retained_resolved", resolved_count as f64);
-        engine_profile::counter("extraction.retained_pose_updates", pose_count as f64);
-        engine_profile::counter("extraction.retained_color_updates", color_count as f64);
-        engine_profile::counter("extraction.culling_tests", culling_tests as f64);
-        engine_profile::counter("extraction.culling_interior", culling_interior as f64);
-        engine_profile::counter("extraction.culling_reused", culling_reused as f64);
+        engine_profile::counter("extraction.retained_resolved", pass.resolved as f64);
+        engine_profile::counter("extraction.retained_pose_updates", pass.poses as f64);
+        engine_profile::counter("extraction.retained_color_updates", pass.colors as f64);
+        engine_profile::counter("extraction.culling_tests", pass.culling_tests as f64);
+        engine_profile::counter("extraction.culling_interior", pass.culling_interior as f64);
+        engine_profile::counter("extraction.culling_reused", pass.culling_reused as f64);
         engine_profile::counter(
             "extraction.instance_capacity_bytes",
             (self.snapshot.instances.capacity() * size_of::<RenderInstance>()) as f64,

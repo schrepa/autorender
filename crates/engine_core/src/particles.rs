@@ -20,8 +20,9 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::RenderSnapshot;
 use crate::environment::{InvalidSetting, check_budget};
-use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
+use crate::extraction::{Nearest, Poses};
 
 /// Most particles one emitter keeps alive (its rate times its lifetime): a
 /// validity bound far above real effects. Frames draw every emitter unless
@@ -208,6 +209,7 @@ pub(crate) struct ParticleExtraction {
     // This frame's usable emitters: squared distance to the eye, entity,
     // world pose and settings.
     candidates: Vec<(f32, Entity, Mat4, ParticleEmitter)>,
+    nearest: Nearest,
 }
 
 impl ParticleExtraction {
@@ -217,6 +219,7 @@ impl ParticleExtraction {
             motion: HashMap::new(),
             extraction: 0,
             candidates: Vec::new(),
+            nearest: Nearest::default(),
         }
     }
 
@@ -232,8 +235,7 @@ impl ParticleExtraction {
             self.motion.clear();
             return;
         }
-        let globals = world.resource::<GlobalTransforms>();
-        let presented = world.resource::<PresentedTransforms>();
+        let poses = Poses::of(world, gpu);
         let eye = snapshot.camera_position;
         self.candidates.clear();
         let mut wanted = 0_u64;
@@ -241,12 +243,7 @@ impl ParticleExtraction {
             if !emitter.is_usable() {
                 continue;
             }
-            let model: Option<Mat4> = if gpu {
-                globals.get(entity).and_then(|pose| pose.matrix())
-            } else {
-                presented.get(entity).and_then(|pose| pose.matrix())
-            };
-            let Some(model) = model else {
+            let Some(model) = poses.model(entity) else {
                 continue;
             };
             wanted += u64::from(emitter.capacity());
@@ -254,24 +251,24 @@ impl ParticleExtraction {
             self.candidates.push((distance, entity, model, *emitter));
         }
         let budget = settings.max_particles.map(u64::from);
-        if budget.is_some_and(|budget| wanted > budget) {
-            self.candidates.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        }
         let time = snapshot.elapsed_seconds;
         let mut total = 0_u64;
         self.extraction += 1;
         let extraction = self.extraction;
-        for &(_, entity, model, emitter) in &self.candidates {
+        let candidates = &self.candidates;
+        let motion = &mut self.motion;
+        let mut emit = |position: usize| {
+            let (_, entity, model, emitter) = candidates[position];
             let count = emitter.capacity();
             if budget.is_some_and(|budget| total + u64::from(count) > budget) {
                 snapshot.dropped_particles += count as usize;
-                continue;
+                return;
             }
             total += u64::from(count);
             let origin = model.transform_point3(emitter.offset);
             // Velocity from the origin's travel since the previous frame;
             // paused frames keep the last one.
-            let velocity = match self.motion.get(&entity) {
+            let velocity = match motion.get(&entity) {
                 Some(&(last, at, velocity, _)) => {
                     let elapsed = time - at;
                     if elapsed > 1.0e-4 && elapsed < 0.5 {
@@ -284,8 +281,7 @@ impl ParticleExtraction {
                 }
                 None => Vec3::ZERO,
             };
-            self.motion
-                .insert(entity, (origin, time, velocity, extraction));
+            motion.insert(entity, (origin, time, velocity, extraction));
             snapshot.emitters.push(RenderEmitter {
                 origin,
                 velocity: if velocity.is_finite() {
@@ -300,6 +296,14 @@ impl ParticleExtraction {
                 emitter,
                 count,
             });
+        };
+        if budget.is_some_and(|budget| wanted > budget) {
+            // Beyond the budget the nearest emitters win, nearest first.
+            self.nearest
+                .nearest_first(candidates.iter().map(|candidate| candidate.0), usize::MAX)
+                .for_each(&mut emit);
+        } else {
+            (0..candidates.len()).for_each(&mut emit);
         }
         if self.motion.len() > snapshot.emitters.len() {
             self.motion.retain(|_, motion| motion.3 == extraction);

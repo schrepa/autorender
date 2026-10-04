@@ -5,7 +5,7 @@ use bevy_ecs::change_detection::{ContiguousRef, MAX_CHANGE_AGE, Tick};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use glam::{Mat4, Vec4};
-use std::{collections::HashMap, fmt};
+use std::{collections::HashMap, convert::Infallible, fmt};
 
 mod global;
 pub(crate) mod tracking;
@@ -189,26 +189,12 @@ pub fn set_parents(
             affected: replacements.contains_key(&entity),
         });
     }
-    let mut path = Vec::new();
-    for start in 0..nodes.len() {
-        if nodes[start].state == State::Complete {
-            continue;
-        }
-        path.clear();
-        let mut cursor = Some(start);
-        while let Some(index) = cursor {
-            if nodes[index].state != State::Pending {
-                break;
-            }
-            nodes[index].state = State::Visiting;
-            path.push(index);
-            cursor = nodes[index]
-                .parent
-                .and_then(|parent| indices.get(&parent).copied());
-        }
-        while let Some(index) = path.pop() {
-            let node = &nodes[index];
-            let (depth, inherited) = match node.parent {
+    complete_parents_first(
+        &mut nodes,
+        &mut Vec::new(),
+        |node| node.parent.and_then(|parent| indices.get(&parent).copied()),
+        |nodes, index| {
+            let (depth, inherited) = match nodes[index].parent {
                 None => (Ok(0), false),
                 Some(parent) => match indices.get(&parent) {
                     None => (
@@ -239,12 +225,12 @@ pub fn set_parents(
             let node = &mut nodes[index];
             node.depth = depth;
             node.affected |= inherited;
-            node.state = State::Complete;
             if node.affected {
                 depth?;
             }
-        }
-    }
+            Ok(())
+        },
+    )?;
     for &(child, parent) in changes {
         let mut entity = world.entity_mut(child);
         if let Some(parent) = parent {
@@ -493,6 +479,56 @@ enum State {
     Pending,
     Visiting,
     Complete,
+}
+
+/// A node [`complete_parents_first`] walks.
+trait Walked {
+    fn state(&mut self) -> &mut State;
+}
+
+impl Walked for RelationshipNode {
+    fn state(&mut self) -> &mut State {
+        &mut self.state
+    }
+}
+
+impl Walked for Link {
+    fn state(&mut self) -> &mut State {
+        &mut self.state
+    }
+}
+
+/// Completes every pending node of `nodes` once, parents first, by walking
+/// each one's chain of `parent`s (scratch `path`): `complete(nodes, index)`
+/// runs after the node's parent completed or, when the chain cycles, while
+/// it is still visited. Stops at `complete`'s first error.
+fn complete_parents_first<N: Walked, E>(
+    nodes: &mut [N],
+    path: &mut Vec<usize>,
+    parent: impl Fn(&N) -> Option<usize>,
+    mut complete: impl FnMut(&mut [N], usize) -> Result<(), E>,
+) -> Result<(), E> {
+    for start in 0..nodes.len() {
+        if *nodes[start].state() == State::Complete {
+            continue;
+        }
+        path.clear();
+        let mut cursor = Some(start);
+        while let Some(index) = cursor {
+            let node = &mut nodes[index];
+            if *node.state() != State::Pending {
+                break;
+            }
+            *node.state() = State::Visiting;
+            path.push(index);
+            cursor = parent(node);
+        }
+        while let Some(index) = path.pop() {
+            complete(nodes, index)?;
+            *nodes[index].state() = State::Complete;
+        }
+    }
+    Ok(())
 }
 
 /// Canonical authoritative world poses from the latest propagation boundary.
@@ -1431,38 +1467,29 @@ impl GlobalTransforms {
                 .and_then(|parent| self.indices.get(&parent))
                 .map_or(NO_NODE, |&index| index as u32);
         }
-        for start in 0..self.links.len() {
-            if self.links[start].state == State::Complete {
-                continue;
-            }
-            self.path.clear();
-            let mut cursor = Some(start);
-            while let Some(index) = cursor {
-                if self.links[index].state != State::Pending {
-                    break;
-                }
-                self.links[index].state = State::Visiting;
-                self.path.push(index);
-                cursor = self.links[index].parent();
-            }
-            while let Some(index) = self.path.pop() {
-                let depth = match self.sources[index].parent {
+        let (sources, order) = (&self.sources, &mut self.order);
+        let Ok(()) = complete_parents_first(
+            &mut self.links,
+            &mut self.path,
+            Link::parent,
+            |links, index| -> Result<(), Infallible> {
+                let depth = match sources[index].parent {
                     None => Some(0),
-                    Some(_) => self.links[index].parent().and_then(|parent| {
-                        let parent = &self.links[parent];
+                    Some(_) => links[index].parent().and_then(|parent| {
+                        let parent = &links[parent];
                         (parent.state == State::Complete
                             && parent.topology_valid
                             && usize::from(parent.depth) < MAX_HIERARCHY_DEPTH)
                             .then_some(parent.depth + 1)
                     }),
                 };
-                let link = &mut self.links[index];
+                let link = &mut links[index];
                 link.topology_valid = depth.is_some();
                 link.depth = depth.unwrap_or(0);
-                link.state = State::Complete;
-                self.order.push(index);
-            }
-        }
+                order.push(index);
+                Ok(())
+            },
+        );
         // Only valid ancestry enters child traversal. Cycles and their dependent
         // branches remain invalid until a structural edit repairs them.
         for index in 0..self.links.len() {

@@ -12,6 +12,7 @@ mod decals;
 mod effects;
 mod entity_indices;
 mod environment;
+mod extraction;
 mod hierarchy;
 mod input;
 mod interpolation;
@@ -168,10 +169,7 @@ pub struct Engine {
     /// engine resources intact; replacing the world invalidates cached queries.
     pub app: App,
     clock: FixedClock,
-    max_render_instances: usize,
-    frustum_culling: bool,
     render_query: RenderQuery,
-    cube_mesh: MeshHandle,
     retained: retained_render::RetainedRender,
     // Local lights (decision 023) and particle emitters (decision 026) of
     // each extraction.
@@ -181,15 +179,36 @@ pub struct Engine {
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
     plugins_finalized: bool,
-    // A fixed tick whose first stage ran ahead of its due frame (see
-    // `Self::run_ahead`), and completed ticks the clock has not yet counted.
-    tick_in_flight: bool,
-    ticks_ahead: u32,
-    // A tick `Self::run_ahead` completed before its due frame: GPU frames keep
-    // presenting the previous interval until the clock counts it.
-    tick_ahead_hidden: bool,
-    // GPU inputs of that tick were gathered when it completed.
-    gathered_ahead: bool,
+    tick_ahead: TickAhead,
+}
+
+/// The fixed tick [`Engine::run_ahead`] ran ahead of its due frame, if any:
+/// at most one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TickAhead {
+    None,
+    /// Its first stage ran; its second runs when it is due or completes early.
+    InFlight,
+    /// Completed before its due frame, which the clock counts it in: GPU
+    /// frames keep presenting the previous interval meanwhile. `gathered`:
+    /// its GPU inputs were gathered when it completed.
+    Hidden {
+        gathered: bool,
+    },
+    /// Completed before its due frame, and presented.
+    Revealed,
+}
+
+impl TickAhead {
+    /// While GPU frames present the previous interval (a tick in flight, or
+    /// completed and hidden): whether a hidden tick's inputs were gathered.
+    fn presents_previous(self) -> Option<bool> {
+        match self {
+            Self::InFlight => Some(false),
+            Self::Hidden { gathered } => Some(gathered),
+            Self::None | Self::Revealed => None,
+        }
+    }
 }
 
 impl Engine {
@@ -269,21 +288,19 @@ impl Engine {
         Self {
             app,
             clock,
-            max_render_instances: config.max_render_instances,
-            frustum_culling: config.frustum_culling,
             render_query,
-            cube_mesh,
-            retained: retained_render::RetainedRender::default(),
+            retained: retained_render::RetainedRender::new(
+                cube_mesh,
+                config.frustum_culling,
+                config.max_render_instances,
+            ),
             lights,
             particles,
             skins,
             decals,
             probes,
             plugins_finalized: false,
-            tick_in_flight: false,
-            ticks_ahead: 0,
-            tick_ahead_hidden: false,
-            gathered_ahead: false,
+            tick_ahead: TickAhead::None,
         }
     }
 
@@ -330,10 +347,7 @@ impl Engine {
     pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, DevStepError> {
         DevStepError::validate(ticks)?;
         self.finalize_plugins();
-        self.complete_pending_tick();
-        self.ticks_ahead = 0;
-        self.tick_ahead_hidden = false;
-        self.gathered_ahead = false;
+        self.forget_ticks_ahead();
         self.clock.reset();
         let delta_seconds = (f64::from(ticks) * self.clock.step_seconds()).min(0.25);
         self.run_frame(ticks, delta_seconds);
@@ -346,22 +360,25 @@ impl Engine {
 
     fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64) {
         let _profile = engine_profile::span("cpu", "simulation_frame");
-        // Ticks completed ahead of the clock count against the due ticks.
-        let ahead = fixed_steps.min(self.ticks_ahead);
-        self.ticks_ahead -= ahead;
-        if self.ticks_ahead == 0 {
-            self.tick_ahead_hidden = false;
-            self.gathered_ahead = false;
-        }
-        let mut fixed_steps = fixed_steps - ahead;
-        // The first due tick is the one whose first stage already ran.
-        if self.tick_in_flight && fixed_steps > 0 {
-            self.finish_pending_tick();
-            fixed_steps -= 1;
+        let mut fixed_steps = fixed_steps;
+        if fixed_steps > 0 {
+            match self.tick_ahead {
+                TickAhead::None => {}
+                // The first due tick is the one whose first stage already ran.
+                TickAhead::InFlight => {
+                    self.finish_pending_tick();
+                    fixed_steps -= 1;
+                }
+                // A tick completed ahead of the clock counts as the first.
+                TickAhead::Hidden { .. } | TickAhead::Revealed => {
+                    self.tick_ahead = TickAhead::None;
+                    fixed_steps -= 1;
+                }
+            }
         }
         // Boundaries while a tick is in flight would do its remaining
         // propagation early; its second stage refreshes when it is due.
-        if !self.tick_in_flight {
+        if self.tick_ahead != TickAhead::InFlight {
             self.refresh_transforms();
         }
         {
@@ -377,7 +394,7 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
-        if !self.tick_in_flight {
+        if self.tick_ahead != TickAhead::InFlight {
             self.refresh_transforms();
         }
         self.app.world_mut().clear_trackers();
@@ -403,14 +420,16 @@ impl Engine {
     /// unchanged.
     pub fn run_ahead(&mut self, predicted_delta_seconds: f64) -> bool {
         self.finalize_plugins();
-        if self.ticks_ahead != 0 {
-            return false;
-        }
+        let in_flight = match self.tick_ahead {
+            TickAhead::None => false,
+            TickAhead::InFlight => true,
+            TickAhead::Hidden { .. } | TickAhead::Revealed => return false,
+        };
         let predicted = clock::sanitize_delta(predicted_delta_seconds).min(0.25);
         let accumulator = self.clock.accumulator_seconds();
         let step = self.clock.step_seconds();
         // Within a quarter frame of due counts as due at that frame.
-        if self.tick_in_flight {
+        if in_flight {
             if accumulator + predicted * 1.25 < step {
                 return false;
             }
@@ -419,7 +438,8 @@ impl Engine {
             // this lighter frame: the due frame finds them current and only
             // presents.
             let _profile = engine_profile::span("cpu", "gather_ahead");
-            self.gathered_ahead = interpolation::gather_ahead(self.app.world_mut());
+            let gathered = interpolation::gather_ahead(self.app.world_mut());
+            self.tick_ahead = TickAhead::Hidden { gathered };
             return true;
         }
         if accumulator + predicted * 2.25 < step {
@@ -427,13 +447,14 @@ impl Engine {
         }
         let _profile = engine_profile::span("cpu", "fixed_tick_begin");
         self.begin_fixed_tick();
-        self.tick_in_flight = true;
+        self.tick_ahead = TickAhead::InFlight;
         true
     }
 
     /// Whether a tick started by [`Self::run_ahead`] awaits its second stage.
-    pub fn tick_in_flight(&self) -> bool {
-        self.tick_in_flight
+    #[cfg(test)]
+    pub(crate) fn tick_in_flight(&self) -> bool {
+        self.tick_ahead == TickAhead::InFlight
     }
 
     /// Completes a tick started by [`Self::run_ahead`] now, before it is due;
@@ -442,24 +463,34 @@ impl Engine {
     /// them present the completed tick instead. Exact extraction, stepping and
     /// suspension call this themselves.
     pub fn complete_pending_tick(&mut self) {
-        if self.tick_in_flight {
+        if self.tick_ahead == TickAhead::InFlight {
             self.finish_pending_tick();
-            self.ticks_ahead += 1;
-            self.tick_ahead_hidden = true;
+            self.tick_ahead = TickAhead::Hidden { gathered: false };
         }
+    }
+
+    /// Completes a tick in flight, which the clock then no longer owes:
+    /// steps and clock resets count ticks from now.
+    fn forget_ticks_ahead(&mut self) {
+        self.complete_pending_tick();
+        self.tick_ahead = TickAhead::None;
     }
 
     /// Lets GPU frames present ticks completed ahead of the clock, e.g. for an
     /// explicit preview of the latest completed interval. Ordinary frames then
     /// continue from that interval.
     pub fn reveal_ticks_ahead(&mut self) {
-        self.tick_ahead_hidden = false;
-        self.gathered_ahead = false;
+        if let TickAhead::Hidden { .. } = self.tick_ahead {
+            self.tick_ahead = TickAhead::Revealed;
+        }
     }
 
     /// Whether a completed tick awaits the frame the clock makes it due in.
     pub fn tick_completed_ahead(&self) -> bool {
-        self.ticks_ahead != 0
+        matches!(
+            self.tick_ahead,
+            TickAhead::Hidden { .. } | TickAhead::Revealed
+        )
     }
 
     /// GPU presentation's current poses — the hierarchy's cached locals in
@@ -478,7 +509,7 @@ impl Engine {
 
     fn finish_pending_tick(&mut self) {
         let _profile = engine_profile::span("cpu", "fixed_tick_end");
-        self.tick_in_flight = false;
+        self.tick_ahead = TickAhead::None;
         self.finish_fixed_tick();
     }
 
@@ -547,10 +578,7 @@ impl Engine {
     /// Discards the fractional accumulator after suspension without rewinding
     /// simulation ticks or elapsed time. The host should also reset its clock.
     pub fn reset_clock(&mut self) {
-        self.complete_pending_tick();
-        self.ticks_ahead = 0;
-        self.tick_ahead_hidden = false;
-        self.gathered_ahead = false;
+        self.forget_ticks_ahead();
         self.clock.reset();
         reset_all_interpolation(self.app.world_mut());
         self.app.world_mut().resource_mut::<ActionInput>().clear();
@@ -570,11 +598,11 @@ impl Engine {
 
     /// Enables or disables culling without advancing gameplay or replacing assets.
     pub fn set_frustum_culling(&mut self, enabled: bool) {
-        self.frustum_culling = enabled;
+        self.retained.set_culling(enabled);
     }
 
     pub fn frustum_culling(&self) -> bool {
-        self.frustum_culling
+        self.retained.culling()
     }
 
     /// Metadata for the last prepared extraction, independent of GPU completion.
@@ -635,31 +663,7 @@ impl Engine {
         self.complete_pending_tick();
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), mode);
-        self.retained.prepare(
-            self.app.world(),
-            &mut self.render_query,
-            self.cube_mesh,
-            aspect,
-            self.frustum_culling,
-            self.max_render_instances,
-            false,
-        );
-        self.retained.extract_lights_and_particles(
-            self.app.world(),
-            &mut self.lights,
-            &mut self.particles,
-            false,
-        );
-        self.retained
-            .extract_skins(self.app.world(), &mut self.skins, false);
-        self.retained
-            .extract_decals(self.app.world(), &mut self.decals, false);
-        self.retained
-            .extract_probes(self.app.world(), &mut self.probes);
-        Ok(self.retained.frame(
-            self.app.world().resource::<PresentedTransforms>(),
-            self.app.world().resource::<GlobalTransforms>(),
-        ))
+        Ok(self.extract_retained(aspect, false))
     }
 
     /// Prepares a retained frame whose interpolated display poses are blended,
@@ -679,44 +683,49 @@ impl Engine {
     ) -> Result<RenderFrame<'_>, InterpolationError> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
-        if self.tick_in_flight || self.tick_ahead_hidden {
+        if let Some(gathered) = self.tick_ahead.presents_previous() {
             // Mid-tick state, and a tick completed before it is due, are not
             // gathered: present the previous interval's inputs at this fraction.
             // Inputs already gathered ahead for the completed tick are held:
             // consumers keep presenting the inputs they applied before.
-            interpolation::present_gpu_fraction(self.app.world_mut(), alpha, self.gathered_ahead);
+            interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);
         }
-        self.retained.ensure_source_scan(self.app.world_mut());
-        self.retained.prepare(
-            self.app.world(),
-            &mut self.render_query,
-            self.cube_mesh,
-            aspect,
-            self.frustum_culling,
-            self.max_render_instances,
-            true,
-        );
+        Ok(self.extract_retained(aspect, true))
+    }
+
+    /// The retained frame of the poses just prepared: its instances, lights,
+    /// particles, joints, decals and reflection probes. `gpu` frames leave
+    /// poses and culling to the GPU and skip the instance pass while
+    /// nothing structural changed.
+    fn extract_retained(&mut self, aspect: f32, gpu: bool) -> RenderFrame<'_> {
+        if gpu {
+            self.retained.ensure_source_scan(self.app.world_mut());
+        }
+        let world = self.app.world();
+        self.retained
+            .prepare(world, &mut self.render_query, aspect, gpu);
         self.retained.extract_lights_and_particles(
-            self.app.world(),
+            world,
             &mut self.lights,
             &mut self.particles,
-            true,
+            gpu,
         );
-        self.retained
-            .extract_skins(self.app.world(), &mut self.skins, true);
-        self.retained
-            .extract_decals(self.app.world(), &mut self.decals, true);
-        self.retained
-            .extract_probes(self.app.world(), &mut self.probes);
-        // Later source edits must be newer than the stamp window just consumed.
-        self.app.world_mut().increment_change_tick();
-        Ok(self.retained.frame(
-            self.app.world().resource::<PresentedTransforms>(),
-            self.app.world().resource::<GlobalTransforms>(),
-        ))
+        self.retained.extract_skins(world, &mut self.skins, gpu);
+        self.retained.extract_decals(world, &mut self.decals, gpu);
+        self.retained.extract_probes(world, &mut self.probes);
+        if gpu {
+            // Later source edits must be newer than the stamp window just
+            // consumed.
+            self.app.world_mut().increment_change_tick();
+        }
+        let world = self.app.world();
+        self.retained.frame(
+            world.resource::<PresentedTransforms>(),
+            world.resource::<GlobalTransforms>(),
+        )
     }
 
     /// CPU-prepares [`PresentedTransforms`] for the last GPU-presented frame,
@@ -725,7 +734,7 @@ impl Engine {
     /// or once a tick, refresh or reset changed that frame's inputs; then
     /// [`PresentationState::gpu_pending`] stays true. O(nodes).
     pub fn prepare_presented_transforms(&mut self) -> bool {
-        if self.tick_in_flight || self.tick_ahead_hidden {
+        if self.tick_ahead.presents_previous().is_some() {
             // The frame's inputs predate the in-flight or early tick's changes.
             return false;
         }

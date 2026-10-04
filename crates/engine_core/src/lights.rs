@@ -23,7 +23,8 @@ use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
-use crate::{GlobalTransforms, PresentedTransforms, RenderSnapshot};
+use crate::extraction::{Nearest, Poses};
+use crate::{GlobalTransforms, RenderSnapshot};
 
 /// The cone of a spot light.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -268,8 +269,10 @@ pub(crate) struct LightExtraction {
     // Indices into `lights` of those without a slot: their world poses are
     // read every frame.
     world_lights: Vec<usize>,
-    // Distance-sorted selection scratch when lights exceed the budget.
+    // Lights with an authoritative pose, by distance, when lights exceed the
+    // budget: their distance and index.
     ranked: Vec<(f32, usize)>,
+    nearest: Nearest,
     // Advances whenever an extraction rewrites the snapshot's lights.
     pub(crate) revision: u64,
 }
@@ -285,6 +288,7 @@ impl LightExtraction {
             lights: Vec::new(),
             world_lights: Vec::new(),
             ranked: Vec::new(),
+            nearest: Nearest::default(),
             revision: 0,
         }
     }
@@ -350,14 +354,7 @@ impl LightExtraction {
         }
         self.revision += 1;
         let globals = world.resource::<GlobalTransforms>();
-        let presented = world.resource::<PresentedTransforms>();
-        let world_model = |entity: Entity| {
-            if gpu {
-                globals.get(entity).and_then(|pose| pose.matrix())
-            } else {
-                presented.get(entity).and_then(|pose| pose.matrix())
-            }
-        };
+        let poses = Poses::of(world, gpu);
         let budget = settings
             .max_lights
             .map_or(usize::MAX, |budget| budget as usize);
@@ -374,19 +371,15 @@ impl LightExtraction {
                     - light.range * light.range;
                 self.ranked.push((distance, index));
             }
-            let keep = budget.min(self.ranked.len());
-            if keep < self.ranked.len() {
-                self.ranked
-                    .select_nth_unstable_by(keep, |a, b| a.0.total_cmp(&b.0));
-            }
-            snapshot.dropped_lights = self.lights.len() - keep;
-            self.ranked.truncate(keep);
-            self.ranked.sort_unstable_by_key(|&(_, index)| index);
-            for &(_, index) in &self.ranked {
-                let (entity, light, slot) = &self.lights[index];
+            let kept = self
+                .nearest
+                .kept_in_order(self.ranked.iter().map(|&(distance, _)| distance), budget);
+            snapshot.dropped_lights = self.lights.len() - kept.len();
+            for position in kept {
+                let (entity, light, slot) = &self.lights[self.ranked[position].1];
                 let model = match slot {
                     Some(_) => None,
-                    None => match world_model(*entity) {
+                    None => match poses.model(*entity) {
                         Some(model) => Some(model),
                         None => continue,
                     },
@@ -400,7 +393,7 @@ impl LightExtraction {
         for (entity, light, slot) in &self.lights {
             let model = match slot {
                 Some(_) => None,
-                None => match world_model(*entity) {
+                None => match poses.model(*entity) {
                     Some(model) => Some(model),
                     None => {
                         snapshot.dropped_lights += 1;
