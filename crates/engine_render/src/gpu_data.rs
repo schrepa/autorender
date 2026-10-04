@@ -668,6 +668,8 @@ pub(crate) struct ShadowUniform {
     /// Distance where shadows are gone, the normal offset (world units) of
     /// far lookups and the far maps' steepest receiver plane; w unused.
     pub offsets: [f32; 4],
+    /// Texels a side of the near cascades and the far maps; zw unused.
+    pub sizes: [f32; 4],
 }
 
 /// WGSL `Cull` uniform of `shadows.wgsl`: 240 bytes. Each draw group's ID

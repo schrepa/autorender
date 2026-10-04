@@ -559,7 +559,7 @@ impl PostPass {
                 encoder,
                 "engine/post-occlusion",
                 &targets.raw_occlusion,
-                wgpu::LoadOp::Clear(wgpu::Color::RED),
+                wgpu::LoadOp::Load,
                 profiler.span("ambient_occlusion").map(Span::render),
             );
             pass.set_pipeline(&self.occlusion);
@@ -632,7 +632,7 @@ impl PostPass {
                 encoder,
                 "engine/post-shafts",
                 &targets.shafts,
-                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                wgpu::LoadOp::Load,
                 profiler.span("sun_shafts").map(Span::render),
             );
             pass.set_pipeline(&self.shafts);
@@ -649,7 +649,7 @@ impl PostPass {
                 encoder,
                 "engine/post-effects-filter",
                 &targets.occlusion,
-                wgpu::LoadOp::Clear(wgpu::Color::RED),
+                wgpu::LoadOp::Load,
                 profiler.span("effects_filter").map(Span::render),
             );
             pass.set_pipeline(&self.effects_filter);
@@ -685,8 +685,8 @@ impl PostPass {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("engine/post-levels"),
                     color_attachments: &[
-                        Some(cleared(&targets.scene_level_views[level])),
-                        Some(cleared(&targets.bloom[level])),
+                        Some(overwritten(&targets.scene_level_views[level])),
+                        Some(overwritten(&targets.bloom[level])),
                     ],
                     depth_stencil_attachment: None,
                     timestamp_writes: timed(level == 0, levels == 1),
@@ -707,7 +707,7 @@ impl PostPass {
                 encoder,
                 "engine/post-bloom",
                 &targets.bloom[0],
-                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                wgpu::LoadOp::Load,
                 timed(true, levels == 1),
             );
             pass.set_pipeline(&self.bloom_first);
@@ -719,7 +719,7 @@ impl PostPass {
                 encoder,
                 "engine/post-bloom",
                 &targets.bloom[level],
-                wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                wgpu::LoadOp::Load,
                 None,
             );
             pass.set_pipeline(&self.bloom_down);
@@ -907,14 +907,15 @@ impl PostPass {
     }
 }
 
-/// An attachment of `view` cleared to black and stored.
-fn cleared(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
+/// An attachment of `view` that a full-screen pass writes whole: loaded,
+/// as nothing needs clearing, and stored.
+fn overwritten(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
     wgpu::RenderPassColorAttachment {
         view,
         depth_slice: None,
         resolve_target: None,
         ops: wgpu::Operations {
-            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            load: wgpu::LoadOp::Load,
             store: wgpu::StoreOp::Store,
         },
     }
