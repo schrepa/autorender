@@ -5,8 +5,8 @@ use wasm_bindgen::prelude::*;
 use std::collections::HashMap;
 
 use crate::{
-    FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, lamp_intensity,
-    look, set_view, stress_observation, stress_shafts,
+    FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, look, set_view,
+    stress_observation, stress_shafts,
 };
 
 /// Files workloads read, by name: the dense scene's virtual meshes
@@ -161,7 +161,7 @@ impl StressGame {
             probes,
         ] = on;
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
-        let lamps = lamp_intensity(scene, &self.look).map_err(js_error)?;
+        let (_, lamps) = look(scene, &self.look).map_err(js_error)?;
         let world = self.app.engine.app.world_mut();
         world.resource_mut::<Shadows>().enabled = shadows;
         world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
@@ -211,8 +211,7 @@ impl StressGame {
     /// `night` or `day`.
     pub fn set_look(&mut self, name: &str) -> Result<(), JsValue> {
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
-        let atmosphere = look(scene, name).map_err(js_error)?;
-        let lamps = lamp_intensity(scene, name).map_err(js_error)?;
+        let (atmosphere, lamps) = look(scene, name).map_err(js_error)?;
         self.app.engine.app.insert_resource(atmosphere);
         if let Some(mut local) = self
             .app
@@ -227,6 +226,8 @@ impl StressGame {
         Ok(())
     }
 
+    /// One frame at `timestamp`; like Orbit, the Stress Lab reads no action
+    /// buttons, so it takes the host's input axes only.
     #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
@@ -238,9 +239,6 @@ impl StressGame {
         up: f32,
         yaw: f32,
         pitch: f32,
-        _held: u32,
-        _pressed: u32,
-        _released: u32,
     ) -> Result<(), JsValue> {
         self.app
             .engine
@@ -415,6 +413,14 @@ impl StressGame {
 fn development_tools() -> engine::dev_browser::DevBrowser {
     use engine::dev::InspectorDescriptor;
     let mut development = engine::dev_browser::DevBrowser::default();
+    // Scenes and fields come from the types; the schema adds their ranges.
+    let fields = serde_json::to_value(StressConfig::default())
+        .expect("configuration contains finite integer values");
+    let required: Vec<&String> = fields
+        .as_object()
+        .expect("a configuration serializes as an object")
+        .keys()
+        .collect();
     development.tools.register_resource::<StressConfig>(
         InspectorDescriptor::new("StressConfig", "Applied deterministic stress workload; changes rebuild its runtime", serde_json::json!({
             "type":"object", "additionalProperties":false,
@@ -428,11 +434,9 @@ fn development_tools() -> engine::dev_browser::DevBrowser {
                 "dense_colliders":{"type":"boolean"},
                 "queries_per_tick":{"type":"integer","minimum":0,"maximum":512},
                 "mesh_variety":{"enum":[1,8,32,64]}, "textured":{"type":"boolean"}, "culling":{"type":"boolean"},
-                "scene":{"enum":["field","city","metro","dense"]}, "compressed_textures":{"type":"boolean"}
+                "scene":{"enum":StressScene::ALL}, "compressed_textures":{"type":"boolean"}
             },
-            "required":["seed","renderables","moving_percent","hierarchy","interpolation","colliders",
-                "sensor_percent","dense_colliders","queries_per_tick","mesh_variety","textured","culling",
-                "scene","compressed_textures"]
+            "required":required
         })),
         |config| serde_json::to_value(config).expect("configuration contains finite integer values"),
     ).expect("stress inspector registration is valid");

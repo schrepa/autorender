@@ -20,6 +20,11 @@ pub enum StressScene {
     Dense,
 }
 
+impl StressScene {
+    /// Every scene, in menu order.
+    pub const ALL: [Self; 4] = [Self::Field, Self::City, Self::Metro, Self::Dense];
+}
+
 /// Configuration changes rebuild the owned workload outside the frame loop.
 /// Configurations without `scene` build the tower field.
 #[derive(Resource, Clone, Debug, Deserialize, Serialize)]

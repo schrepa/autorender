@@ -12,7 +12,9 @@ use engine::prelude::*;
 use crate::scene::{Motion, Workload, hash};
 use crate::{StressConfig, StressFile};
 
-/// The files the page fetches for this scene, from `stress/dense/`.
+/// The files the page fetches for this scene, from `stress/dense/`: the ones
+/// `tools/vgbuild`'s `dense_assets` writes (it lists them again, with their
+/// generators, and never depends on this game).
 pub const FILES: [&str; 4] = [
     "boulder-a.evg",
     "boulder-b.evg",

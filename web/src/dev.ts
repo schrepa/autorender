@@ -1,14 +1,8 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
 import type { Runtime } from "./host";
-import { BenchmarkError, type BenchmarkOptions, readRendering, sampleBenchmark } from "./benchmark.ts";
+import { BenchmarkError, type BenchmarkOptions, type Reply, readRendering, sampleBenchmark } from "./benchmark.ts";
 
 type Command = { op: string; [field: string]: unknown };
-type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
-type Reply = {
-  version?: number; ok: boolean; observation?: Observation;
-  result?: Record<string, unknown>;
-  error?: { code: string; path: string; message: string };
-};
 interface Host {
   game: Runtime;
   signal: AbortSignal;

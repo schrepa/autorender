@@ -4,6 +4,7 @@ import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressFiles, StressGame } from "../pkg/stress_lab";
 import { fetchVirtualPrefix } from "./virtual-mesh";
+import { adapterFeatures } from "./adapter";
 import "./stress.css";
 
 type Scene = "field" | "city" | "metro" | "dense";
@@ -13,7 +14,6 @@ type Config = {
   queries_per_tick: number; mesh_variety: number; textured: boolean; culling: boolean; scene: Scene;
   compressed_textures: boolean;
 };
-const scenes: Scene[] = ["field", "city", "metro", "dense"];
 type Snapshot = {
   version: number; generation: number; frame: string; tick: string; config: Config;
   renderables: number; transform_nodes: number; moving_nodes: number; sensor_nodes: number;
@@ -28,6 +28,9 @@ const el = <T extends HTMLElement = HTMLElement>(id: string) => document.getElem
 const choice = (id: string) => el<HTMLSelectElement>(id);
 const number = (id: string) => Number(el<HTMLInputElement>(id).value);
 const checked = (id: string) => el<HTMLInputElement>(id).checked;
+/** The values select `id` offers: the page's one list of scenes, looks and effects. */
+const options = (id: string) => [...choice(id).options].map(option => option.value);
+const scenes = options("scene-select") as Scene[];
 const format = (value: number) => value.toLocaleString("en-US");
 const ms = (value: number) => `${value.toFixed(2)} ms`;
 const bytes = (value: number) => `${(value / 1048576).toFixed(2)} MiB`;
@@ -84,6 +87,20 @@ const listenerOptions = { signal: listeners.signal };
 const intervals: number[] = [], chart: [number, number, number][] = [];
 
 function snapshot(runtime: StressGame): Snapshot { return JSON.parse(runtime.stress_stats()) as Snapshot; }
+/** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
+function runMetadata(data: Snapshot, canvas: [number, number]) {
+  return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
+    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors,
+    look: choice("look").value, effects: choice("effects").value,
+    build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
+    start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity, scroll: [scrollX, scrollY] };
+}
+/** Offers JSON `text` as the download `name`. */
+function download(text: string, name: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const anchor = document.createElement("a"); anchor.href = url; anchor.download = name;
+  anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function notice(text: string, error = false) {
   el("notice").textContent = text; el("notice").dataset.error = String(error);
 }
@@ -137,10 +154,7 @@ function readConfig(): Config {
 /** Whether the adapter samples BC7, which compressed metro textures need. */
 let blockCompression: boolean | undefined;
 async function detectBlockCompression(): Promise<boolean> {
-  type Adapter = { features: ReadonlySet<string> };
-  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(options?: { powerPreference?: string }): Promise<Adapter | null> } }).gpu;
-  const adapter = await gpu?.requestAdapter({ powerPreference: "high-performance" }).catch(() => null);
-  return adapter?.features.has("texture-compression-bc") ?? false;
+  return (await adapterFeatures()).has("texture-compression-bc");
 }
 /** `config` with compressed textures off where BC7 is unavailable. */
 function supported(config: Config): Config {
@@ -241,13 +255,13 @@ const lod = params.get("lod") === "off" ? "off" : "on";
 // ?impostors=off draws no impostors (decision 048), only mesh levels.
 const impostors = params.get("impostors") === "off" ? "off" : "on";
 // ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
-const initialLook = ["golden", "dusk", "night", "day"].includes(params.get("look") ?? "") ? params.get("look")! : "scene";
+const initialLook = options("look").includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
 // no-lights, no-shafts, no-reflections, no-particles, no-refraction and
 // no-probes, turns effects off.
-const effectNames = ["shadows", "occlusion", "bloom", "lights", "shafts", "reflections", "particles", "refraction", "probes"];
+const effectsOff = options("effects").filter(value => value.startsWith("no-"));
 const requestedEffects = params.get("effects") ?? "all";
-const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectNames.some(name => token === `no-${name}`))
+const initialEffects = requestedEffects === "none" || requestedEffects.split(",").every(token => effectsOff.includes(token))
   ? requestedEffects : "all";
 if (params.has("config")) {
   try {
@@ -331,12 +345,8 @@ boot({
           },
           metadata() {
             const data = snapshot(runtime);
-            return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-              culling: data.config.culling, resolution_scale: number("resolution"), canvas: host.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors, look: choice("look").value, effects: choice("effects").value,
-              build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
-              start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity,
-              viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
-              scroll: [scrollX, scrollY], diagnostics_at_start: data };
+            return { ...runMetadata(data, host.size()), viewport: [innerWidth, innerHeight], device_pixel_ratio: devicePixelRatio,
+              diagnostics_at_start: data };
           },
           memory: () => wasmMemory,
           changed: lock,
@@ -402,13 +412,7 @@ el("record").addEventListener("click", () => {
   if (profiler?.busy) { notice("Finish the detailed profile before recording a baseline.", true); return; }
   if (!game || !controls || controls.busy() || controls.paused()) { notice("Resume the scene before recording.", true); return; }
   try {
-    const data = snapshot(game);
-    recorder.start({ config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-      culling: data.config.culling, resolution_scale: number("resolution"), canvas: controls.size(), presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors, look: choice("look").value, effects: choice("effects").value,
-      build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
-      start_frame: data.frame, start_tick: data.tick, workload: activeTitle,
-      scroll: [window.scrollX, window.scrollY],
-      wasm: wasmIdentity,
+    recorder.start({ ...runMetadata(snapshot(game), controls.size()),
       instrumentation: "Demo phase timers are enabled. While recording, small aggregate Rust observations are serialized once per frame. CPU stage timers exclude this host work; RAF intervals include it. GPU execution time is not measured." });
     recordStarted = performance.now(); lastDiagnostic = -Infinity; lock();
     notice("Recording the current workload. Camera input is temporarily locked.");
@@ -434,18 +438,12 @@ el("profile-export").addEventListener("click", () => {
       el("profile-status").textContent = "Export exceeds the 32 MiB limit. The capture is retained; start a shorter capture or request fewer events through the agent.";
       return;
     }
-    const url = URL.createObjectURL(new Blob([serialized], { type: "application/json" }));
-    const anchor = document.createElement("a"); anchor.href = url;
-    anchor.download = `stress-profile-${value.complete ? "complete" : "incomplete"}-${value.started_at.replaceAll(":", "-")}.json`;
-    anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+    download(serialized, `stress-profile-${value.complete ? "complete" : "incomplete"}-${value.started_at.replaceAll(":", "-")}.json`);
   } catch (error) { notice(String(error), true); }
 }, listenerOptions);
 el("export").addEventListener("click", () => {
   if (!report) return;
-  const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
-  const anchor = document.createElement("a"); anchor.href = url;
-  anchor.download = `stress-${report.complete ? "complete" : "incomplete"}-${report.started_at.replaceAll(":", "-")}.json`;
-  anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  download(JSON.stringify(report, null, 2), `stress-${report.complete ? "complete" : "incomplete"}-${report.started_at.replaceAll(":", "-")}.json`);
 }, listenerOptions);
 el("share").addEventListener("click", async () => {
   if (!game) return;

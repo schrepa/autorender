@@ -57,7 +57,8 @@ pub fn create_workload_with(
         engine.app.add_plugins(CollisionPlugin);
     }
     engine.app.insert_resource(config.clone());
-    engine.app.insert_resource(look(config.scene, "scene")?);
+    let (atmosphere, lamps) = look(config.scene, "scene")?;
+    engine.app.insert_resource(atmosphere);
     engine.app.init_resource::<FrameMetrics>();
     let world = engine.app.world_mut();
     let (moving_nodes, bounds) = match config.scene {
@@ -109,7 +110,7 @@ pub fn create_workload_with(
     world.insert_resource(Reflections::default());
     world.insert_resource(LocalLights {
         distance: 220.0,
-        intensity: lamp_intensity(config.scene, "scene")?,
+        intensity: lamps,
         ..LocalLights::default()
     });
     if collision_enabled {
@@ -461,38 +462,32 @@ pub fn stress_shafts() -> SunShafts {
     }
 }
 
-/// Street lamp brightness under the lighting preset `name`: off by day.
-pub fn lamp_intensity(scene: StressScene, name: &str) -> Result<f32, String> {
-    Ok(match name {
-        "scene" => match scene {
-            StressScene::Field => 1.0,
-            StressScene::City | StressScene::Metro => 0.35,
-            StressScene::Dense => 0.0,
-        },
-        "golden" => 0.35,
-        "dusk" => 0.8,
-        "night" => 1.0,
-        "day" => 0.0,
-        _ => return Err("look must be scene, golden, dusk, night or day".into()),
-    })
-}
+/// A lighting preset: its name, atmosphere and street lamp brightness.
+type Look = (&'static str, fn() -> Atmosphere, f32);
 
-/// The lighting preset `name`: `golden`, `dusk`, `night` or `day`, or
-/// `scene` for the scene's own (night over the tower field, golden hour over
-/// the city).
-pub fn look(scene: StressScene, name: &str) -> Result<Atmosphere, String> {
-    Ok(match name {
-        "scene" => match scene {
-            StressScene::Field => Atmosphere::night(),
-            StressScene::City | StressScene::Metro => Atmosphere::golden_hour(),
-            StressScene::Dense => Atmosphere::day(),
-        },
-        "golden" => Atmosphere::golden_hour(),
-        "dusk" => Atmosphere::dusk(),
-        "night" => Atmosphere::night(),
-        "day" => Atmosphere::day(),
-        _ => return Err("look must be scene, golden, dusk, night or day".into()),
-    })
+/// The lighting presets; lamps are off by day.
+const LOOKS: [Look; 4] = [
+    ("golden", Atmosphere::golden_hour, 0.35),
+    ("dusk", Atmosphere::dusk, 0.8),
+    ("night", Atmosphere::night, 1.0),
+    ("day", Atmosphere::day, 0.0),
+];
+
+/// The lighting preset `name` and its street lamp brightness: `golden`,
+/// `dusk`, `night` or `day`, or `scene` for the scene's own (night over the
+/// tower field, golden hour over the city, day over dense geometry).
+pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String> {
+    let name = match (name, scene) {
+        ("scene", StressScene::Field) => "night",
+        ("scene", StressScene::City | StressScene::Metro) => "golden",
+        ("scene", StressScene::Dense) => "day",
+        _ => name,
+    };
+    LOOKS
+        .iter()
+        .find(|(look, ..)| *look == name)
+        .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
+        .ok_or_else(|| "look must be scene, golden, dusk, night or day".into())
 }
 
 pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {

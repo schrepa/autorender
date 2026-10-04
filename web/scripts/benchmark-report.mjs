@@ -1,4 +1,6 @@
 /** Pure validation and comparison of bounded browser benchmark reports. */
+import { percentiles } from "../src/statistics.ts";
+
 export const REPORT_VERSION = 1;
 export const SUITE = "browser-engine-culling-v1";
 export const MAX_REPORT_BYTES = 2 * 1024 * 1024;
@@ -57,15 +59,10 @@ export function parseArguments(args) {
   return options;
 }
 
-/** Linear interpolation over sorted values; used for repeat medians/spread. */
+/** Percentiles of repeat measurements: their medians and spread. */
 export function statistics(values) {
   if (!values.length || values.some(value => !Number.isFinite(value) || value < 0)) throw failure("invalid_measurement", "$", "Measurements must be a nonempty array of finite nonnegative numbers.");
-  const sorted = [...values].sort((a, b) => a - b);
-  const percentile = p => {
-    const index = (sorted.length - 1) * p, lower = Math.floor(index), upper = Math.ceil(index);
-    return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
-  };
-  return { min: sorted[0], median: percentile(0.5), p95: percentile(0.95), p99: percentile(0.99), max: sorted.at(-1) };
+  return percentiles(values);
 }
 
 function nonnegative(value, path) {

@@ -598,8 +598,8 @@ fn node_room(renderables: u32) -> u32 {
 }
 
 /// Moving and static renderables of `config`'s city, and its radius in
-/// blocks.
-fn budget(config: &StressConfig) -> (u32, u32, f32) {
+/// blocks of `per_block` static renderables each.
+pub(crate) fn budget(config: &StressConfig, per_block: f32) -> (u32, u32, f32) {
     let moving = config.renderables / 100 * config.moving_percent
         + (config.renderables % 100).min(config.moving_percent);
     let dense = if config.dense_colliders {
@@ -609,20 +609,21 @@ fn budget(config: &StressConfig) -> (u32, u32, f32) {
     };
     let static_total = config.renderables - moving - dense.min(config.renderables - moving);
     let radius = math::max(
-        (math::max(static_total as f32, moving as f32 * 0.5) / PER_BLOCK / PI).sqrt(),
+        (math::max(static_total as f32, moving as f32 * 0.5) / per_block / PI).sqrt(),
         1.0,
     );
     (moving, static_total, radius)
 }
 
-fn river_row(radius: f32) -> Option<i32> {
+/// The block row the river runs along, for cities wide enough to have one.
+pub(crate) fn river_row(radius: f32) -> Option<i32> {
     (radius >= 4.0).then(|| (radius * 0.45).round() as i32)
 }
 
 /// A street-level view across the river toward the core, or from an
 /// avenue when the city has no river.
 pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config);
+    let (_, _, radius) = budget(config, PER_BLOCK);
     match river_row(radius) {
         Some(row) => (
             Vec3::new(-PERIOD * 0.5, 14.0, row as f32 * PERIOD + PERIOD * 0.5),
@@ -633,7 +634,7 @@ pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
 }
 
 fn plan(config: &StressConfig) -> City {
-    let (moving, static_total, radius) = budget(config);
+    let (moving, static_total, radius) = budget(config, PER_BLOCK);
     // The core, and a few secondary downtowns in the outer half.
     let mut centers = vec![(Vec2::ZERO, radius * 0.32, 1.0)];
     let mut rng = Rng::new(config.seed ^ 0x5c1, 0, 0);
@@ -1596,16 +1597,17 @@ fn traffic(city: &mut City, config: &StressConfig) {
     }
 }
 
-/// A random street loop around one or two blocks.
-fn street_loop(city: &City, rng: &mut Rng) -> (Vec3, Vec2) {
-    let (bx, bz) = if city.blocks.is_empty() {
-        let reach = city.radius.ceil() as i32;
+/// A random street loop around one or two of `blocks` (any block within
+/// `radius` when there are none): its center and half extents.
+pub(crate) fn street_loop(blocks: &[(i32, i32, f32)], radius: f32, rng: &mut Rng) -> (Vec3, Vec2) {
+    let (bx, bz) = if blocks.is_empty() {
+        let reach = radius.ceil() as i32;
         (
             rng.below(2 * reach as u32 + 1) as i32 - reach,
             rng.below(2 * reach as u32 + 1) as i32 - reach,
         )
     } else {
-        let (bx, bz, _) = city.blocks[rng.below(city.blocks.len() as u32) as usize];
+        let (bx, bz, _) = blocks[rng.below(blocks.len() as u32) as usize];
         (bx, bz)
     };
     let (wide, deep) = (1 + rng.below(2), 1 + rng.below(2));
@@ -1621,7 +1623,7 @@ fn street_loop(city: &City, rng: &mut Rng) -> (Vec3, Vec2) {
 }
 
 fn vehicle(city: &mut City, rng: &mut Rng, bus: bool) {
-    let (center, half) = street_loop(city, rng);
+    let (center, half) = street_loop(&city.blocks, city.radius, rng);
     let direction = rng.sign();
     // Counterclockwise traffic keeps to the outer lane, clockwise to the inner.
     let lane = direction * 1.1;
@@ -1656,7 +1658,7 @@ fn vehicle(city: &mut City, rng: &mut Rng, bus: bool) {
 }
 
 fn drone(city: &mut City, rng: &mut Rng) {
-    let (center, _) = street_loop(city, rng);
+    let (center, _) = street_loop(&city.blocks, city.radius, rng);
     let downtown = center.length() < city.radius * PERIOD * 0.3;
     let height = if downtown {
         rng.range(40.0, 130.0)
