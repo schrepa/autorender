@@ -37,7 +37,7 @@ fading), and gameplay changes it every frame.
 
 ## Observable behavior
 
-- Tints reach public snapshots, CPU-prepared and GPU-presented retained
+- Tints reach owned snapshots, CPU-prepared and GPU-presented retained
   frames when inserted, changed or removed.
 - A replaced material draws from the next extraction on both paths, including
   one that gains a texture.

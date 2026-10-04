@@ -74,7 +74,7 @@ probes, impostor bakes when a draw group first draws as an impostor. The
 passes only look pipelines up. Nothing is built for features or modes no
 frame has run, layouts included: mesh pipeline layouts are created with the
 first variant needing each, public snapshots' shadow casters with the first
-snapshot frame.
+snapshot frame (until those were removed on 2026-10-03).
 
 ### Warm-up behind the loading screen
 

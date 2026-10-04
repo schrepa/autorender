@@ -157,7 +157,7 @@ struct Clusters {
     grid: vec4<f32>,
     // Tiles across and down, depth slices, and the per-cluster budget.
     counts: vec4<u32>,
-    // Lights, 1 when slot poses are bound, and the listed entries' capacity.
+    // Lights, an unused word, and the listed entries' capacity.
     lights: vec4<u32>,
 }
 struct Light {
@@ -175,21 +175,9 @@ struct Light {
 @group(3) @binding(2) var<storage, read> cluster_ranges: array<vec2<u32>>;
 @group(3) @binding(3) var<storage, read> cluster_lights: array<u32>;
 
-// Mesh vertices carry octahedral normals (`octahedral_normal`) in 24 bytes.
-struct VertexInput {
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec2<f32>,
-    @location(2) model_0: vec4<f32>,
-    @location(3) model_1: vec4<f32>,
-    @location(4) model_2: vec4<f32>,
-    @location(5) model_3: vec4<f32>,
-    // Four 16-bit color fractions, as slots store them.
-    @location(6) color: vec2<u32>,
-    @location(7) uv: vec2<f32>,
-    @location(8) surface: u32,
-}
-
-// Visibility and batching reorder only this four-byte slot ID stream.
+// Mesh vertices, which carry octahedral normals (`octahedral_normal`) in 24
+// bytes, and the four-byte slot ID stream, the only one visibility and
+// batching reorder.
 struct AffineVertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec2<f32>,

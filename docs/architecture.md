@@ -38,7 +38,8 @@ the same.
 Derived pose values are no longer ECS components. Gameplay writes local poses;
 agent pose projections and exact/fractional capture semantics retain their
 existing schemas and boundaries. Borrowed retained render frames carry validated
-change provenance while public owned snapshots remain supported. Stable GPU
+change provenance; since 2026-10-03 renderers draw only them, and owned snapshots
+copy a frame for inspection and tests. Stable GPU
 pose/color slots and a compact visible-ID stream preserve uploads independently
 of draw grouping. Dense interpolation uses bounded four-pose SIMD blocks before
 parent-first composition.
@@ -107,19 +108,19 @@ operations.
 
 ## Ownership and compatibility
 
-`engine` composes `engine_core` and `engine_render`. The renderer consumes core snapshots. Core imports neither rendering nor browser APIs. Platform glue is a module inside the façade until it needs a separate reusable interface. The demo imports the façade only. Host tools never become Wasm runtime dependencies.
+`engine` composes `engine_core` and `engine_render`. The renderer consumes core render frames. Core imports neither rendering nor browser APIs. Platform glue is a module inside the façade until it needs a separate reusable interface. The demo imports the façade only. Host tools never become Wasm runtime dependencies.
 
 The gameplay SDK is explicitly based on Bevy ECS and `bevy_app` 0.19.1. Components, queries, resources, entities, systems, and plugins are intentionally public Bevy types. We own the browser lifecycle, renderer, and scene contracts. We do not fork Bevy or promise compatibility with arbitrary Bevy plugins. `App::empty()` runs our named schedules, not Bevy's default `Main` schedule. Plugins register synchronously before the first frame; their finish/cleanup hooks are startup hooks. Duplicate plugin registration follows Bevy's unique-plugin checks. Runtime plugin removal is not supported.
 
-Dependency versions and Rust are pinned, with Cargo/npm lockfiles. glam is patched with a vendored copy whose only change routes `f32` sine and cosine to the engine's branch-free `engine_math` ([engine math](math.md)). wgpu 30.0.1 handles WebGPU; generated wasm-bindgen 0.2.127 declarations define the browser boundary. The initial WebGPU profile requests no optional GPU features. The renderer and browser resources stay on one main thread; there is no shared-memory Wasm or cross-origin-isolation requirement.
+Dependency versions and Rust are pinned, with Cargo/npm lockfiles. glam is patched with a vendored copy whose only change routes `f32` sine and cosine to the engine's branch-free `engine_math` ([engine math](math.md)). wgpu 30.0.1 handles WebGPU; generated wasm-bindgen 0.2.127 declarations define the browser boundary. The renderer requests optional GPU features only where the adapter offers them (compressed texture formats, `indirect-first-instance`, and timestamp queries in profiling builds), so none is required. The renderer and browser resources stay on one main thread; there is no shared-memory Wasm or cross-origin-isolation requirement.
 
 ## Frame contract
 
 1. The host accumulates bounded held-key state and pointer deltas, and sends one owned input value per animation frame. There is no per-entity JavaScript traffic. Pointer motion is summed and clamped, not queued indefinitely. Discrete press/release event APIs are not implemented.
 2. Rust computes elapsed time and runs `FixedSimulation` at 60 Hz, at most five ticks per frame. Commands apply at each schedule boundary. Extra whole ticks are discarded while the fractional remainder is kept. Counters report discarded time. Negative/nonfinite elapsed values are sanitized.
 3. `Presentation` runs once after simulation. `FrameTime` caps its delta at 250 ms. Systems with dependencies must use explicit ordering. The demo camera uses this phase; cube motion uses fixed simulation.
-4. Extraction copies transforms/colors into a reusable, owned snapshot, every visible instance unless `EngineConfig::max_render_instances` sets a budget (decision 029). Overflow is counted. Rendering cannot borrow the gameplay world. The available interpolation fraction is not yet used by this demo.
-5. Rendering converts records into reusable staging storage, writes a camera uniform and one instance buffer, encodes a depth-tested instanced draw, and submits without GPU readback. WGSL and GPU record definitions live together. Buffer capacity grows geometrically within a hard limit.
+4. Extraction prepares a borrowed `RenderFrame` of stable slots (decision 013): CPU-prepared frames interpolate and cull on the CPU, GPU-presented frames (decision 014) leave blending, composition and culling to the GPU. Every visible instance draws unless `EngineConfig::max_render_instances` sets a budget (decision 029); overflow is counted. The frame borrows the engine until rendering ends, so the world cannot change meanwhile.
+5. Rendering uploads only changed slot poses, colors and IDs, rewrites the camera and lighting uniforms when they change, records the frame's passes through its render graph (decision 050) and submits. Read-backs (visible counts, profiling) arrive a few frames late; nothing waits on the GPU. WGSL and GPU record definitions live together. Storage grows geometrically up to the device's binding limits.
 
 Pause, focus loss, and hidden-page transitions release held inputs and reset the timing baseline. Visibility resumption does not simulate time spent suspended. A zero-sized renderer skips submission. Surface resizing recreates depth storage; surface loss/outdated status is reconfigured and device loss enters an explicit failed state.
 

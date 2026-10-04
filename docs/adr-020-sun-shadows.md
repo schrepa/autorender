@@ -69,7 +69,8 @@ stays.
 
 CPU-prepared retained frames list every caster, culled or not
 (`RenderFrame::casters`), and draw them all into the near and moving maps.
-Public snapshots draw their own instances, which are visible ones.
+Public snapshots drew their own instances, which are visible ones, until the
+renderer stopped drawing them on 2026-10-03.
 
 ## Observable behavior
 
@@ -98,8 +99,8 @@ Otherwise none yet: to be measured with decisions 019 and 021. Memory at the def
 Changing the sun redraws the kept map whole each time: animating it every
 frame costs a full static caster pass per frame. A fixed region is sharpest
 when `bounds` fit the scene; without them the map follows the camera and
-spends resolution behind it. Public snapshots lack shadows of casters
-outside the view. Only one directional light casts shadows; lamps and
+spends resolution behind it. Public snapshots lacked shadows of casters
+outside the view until they stopped being drawn. Only one directional light casts shadows; lamps and
 emissive surfaces do not.
 
 ## Alternatives and evidence

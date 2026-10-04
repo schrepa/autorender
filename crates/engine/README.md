@@ -2,7 +2,7 @@
 
 Owner: engine composition. Public entry points: `prelude`, core reexports, and `browser::BrowserApp` on Wasm.
 
-Gameplay uses the explicitly Bevy-based core API. `BrowserApp` owns one core runtime, reusable render snapshot, renderer, timing baseline, and last diagnostic record on the browser main thread. The browser supplies input once per frame. GPU and DOM types are confined to the browser module; no JavaScript memory views escape Rust.
+Gameplay uses the explicitly Bevy-based core API. `BrowserApp` owns one core runtime, renderer, timing baseline, and last diagnostic record on the browser main thread; each frame lends the renderer the core's retained render frame. The browser supplies input once per frame. GPU and DOM types are confined to the browser module; no JavaScript memory views escape Rust.
 
 Dependencies: core, scene, and collision everywhere; renderer, wasm-bindgen, and web-sys on Wasm. Suspension resets the clock/input without disposing the scene. Errors propagate to the host, which stops animation and displays a reload message. Stats report CPU timings and cumulative dropped simulation time; they do not measure GPU execution.
 

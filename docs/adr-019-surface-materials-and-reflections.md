@@ -25,7 +25,7 @@ advances the slot's color stamp.
 The renderer packs a surface into four 8-bit fractions in the fourth word of
 each slot's 16-byte color record (`[r, g, b, surface]`), so the record size,
 its uploads and its change tracking are unchanged; public instance records
-keep their 80-byte stride.
+kept their 80-byte stride until they were removed on 2026-10-03.
 
 Each fragment:
 
@@ -69,8 +69,7 @@ by default); versions 1 to 4 keep their meaning.
   lamps their own surfaces, and facade textures mask emission to lit
   windows; the tower field varies roughness and metalness and lights every
   fourth tower's stripes.
-- The renderer clamps surfaces of public snapshots into range and reads NaN
-  as matte.
+- The renderer clamps surfaces into range and reads NaN as matte.
 
 ## Measurements
 

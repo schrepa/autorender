@@ -1,4 +1,4 @@
-//! WebGPU rendering of owned snapshots, without access to the gameplay world.
+//! WebGPU rendering of engine frames, without access to the gameplay world.
 //!
 //! The browser renderer owns one canvas and all its GPU resources. CPU upload
 //! records and WGSL live together; ordinary gameplay never handles GPU objects.

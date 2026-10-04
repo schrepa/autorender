@@ -46,9 +46,9 @@ pub(crate) struct ClusterUniform {
     /// Tiles across and down, depth slices, and the per-cluster budget
     /// ([`NO_BUDGET`] without one).
     pub counts: [u32; 4],
-    /// Lights, 1 when slot poses are bound, the entries the cluster lists'
-    /// storage holds, and 1 when only lights without a slot or on still
-    /// slots are binned (reflection probe faces, decision 043).
+    /// Lights, an unused word, the entries the cluster lists' storage holds,
+    /// and 1 when only lights without a slot or on still slots are binned
+    /// (reflection probe faces, decision 043).
     pub lights: [u32; 4],
 }
 
@@ -68,7 +68,6 @@ impl ClusterUniform {
         height: u32,
         distance: f32,
         lights: u32,
-        poses: bool,
         budget: Option<u32>,
         capacity: u32,
     ) -> Self {
@@ -109,7 +108,7 @@ impl ClusterUniform {
                 -start.log2() * slice_scale,
             ],
             counts: [TILES_X, TILES_Y, SLICES, budget.unwrap_or(NO_BUDGET)],
-            lights: [lights, u32::from(poses), capacity, 0],
+            lights: [lights, 0, capacity, 0],
         }
     }
 }
@@ -201,11 +200,8 @@ mod gpu {
         // Entries `indices` holds.
         index_capacity: u64,
         totals: wgpu::Buffer,
-        no_poses: wgpu::Buffer,
         staged: Vec<LightInput>,
-        uploaded: Vec<LightInput>,
-        // The retained stream and light revision the inputs hold, when a
-        // retained frame uploaded them.
+        // The retained stream and light revision the inputs hold.
         uploaded_revision: Option<(u64, u64)>,
         // Binning groups over (pose generation, pose buffer) and the storage
         // generation of this pass's own buffers they were built with.
@@ -288,9 +284,7 @@ mod gpu {
                     TOTALS_BYTES,
                     wgpu::BufferUsages::COPY_SRC,
                 ),
-                no_poses: storage(device, "engine/light-no-poses", 48, none),
                 staged: Vec::new(),
-                uploaded: Vec::new(),
                 uploaded_revision: None,
                 compute_groups: Vec::new(),
                 fragment_group: Cached::default(),
@@ -331,18 +325,18 @@ mod gpu {
             .sum()
         }
 
-        /// Uploads `snapshot`'s lights when they changed and writes this frame's
-        /// clusters for a `size` frame; `None` when it shades no local lights.
-        /// Slot lights read `poses`; without them (public snapshots) lights are
-        /// in world space.
+        /// Uploads `snapshot`'s lights when their `revision` (retained stream
+        /// and light revision) changed and writes this frame's clusters for a
+        /// `size` frame; `None` when it shades no local lights. Slot lights
+        /// read `poses`.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
             size: (u32, u32),
-            poses: Option<FramePoses<'_>>,
-            revision: Option<(u64, u64)>,
+            poses: FramePoses<'_>,
+            revision: (u64, u64),
         ) -> Option<LightFrame> {
             if !snapshot.environment.local_lights.active() || snapshot.lights.is_empty() {
                 return None;
@@ -362,26 +356,16 @@ mod gpu {
                     self.capacity as u64 * LIGHT_BYTES,
                     wgpu::BufferUsages::empty(),
                 );
-                self.uploaded.clear();
                 self.uploaded_revision = None;
                 self.buffers_generation += 1;
             }
-            // Retained frames name their lights' revision: unchanged lights
-            // skip staging. Owned snapshots compare their inputs' bytes.
-            if revision.is_none() || revision != self.uploaded_revision {
+            // Unchanged lights skip staging.
+            if self.uploaded_revision != Some(revision) {
                 self.staged.clear();
                 self.staged
                     .extend(snapshot.lights.iter().map(LightInput::from));
-                let bytes: &[u8] = bytemuck::cast_slice(&self.staged);
-                if revision.is_some() || bytes != bytemuck::cast_slice::<_, u8>(&self.uploaded) {
-                    queue.write_buffer(&self.inputs, 0, bytes);
-                    if revision.is_some() {
-                        self.uploaded.clear();
-                    } else {
-                        self.uploaded.clone_from(&self.staged);
-                    }
-                }
-                self.uploaded_revision = revision;
+                queue.write_buffer(&self.inputs, 0, bytemuck::cast_slice(&self.staged));
+                self.uploaded_revision = Some(revision);
             }
             // List storage grows to what the lists needed when last read
             // back, and to a first guess of a few dozen clusters per light,
@@ -409,7 +393,6 @@ mod gpu {
                 size.1,
                 snapshot.environment.local_lights.distance,
                 count as u32,
-                poses.is_some(),
                 snapshot.environment.local_lights.lights_per_cluster,
                 self.index_capacity.min(u64::from(u32::MAX)) as u32,
             );
@@ -417,11 +400,7 @@ mod gpu {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);
             }
-            let key = poses
-                .as_ref()
-                .map_or((0, usize::MAX, self.buffers_generation), |poses| {
-                    (poses.generation, poses.parity, self.buffers_generation)
-                });
+            let key = (poses.generation, poses.parity, self.buffers_generation);
             let group = match self
                 .compute_groups
                 .iter()
@@ -433,7 +412,6 @@ mod gpu {
                     self.compute_groups.retain(|((generation, _, buffers), _)| {
                         *generation == key.0 && *buffers == key.2
                     });
-                    let pose_buffer = poses.as_ref().map_or(&self.no_poses, FramePoses::current);
                     let group = crate::pipelines::group(
                         device,
                         "engine/light-binning-group",
@@ -442,7 +420,7 @@ mod gpu {
                         &[
                             entry("clusters", &self.uniform),
                             entry("inputs", &self.inputs),
-                            entry("poses", pose_buffer),
+                            entry("poses", poses.current()),
                             entry("lights", &self.lights),
                             entry("counts", &self.counts),
                             entry("indices", &self.indices),
@@ -554,7 +532,6 @@ mod gpu {
                 size,
                 settings.distance,
                 frame.count,
-                true,
                 settings.lights_per_cluster,
                 self.index_capacity.min(u64::from(u32::MAX)) as u32,
             );
@@ -716,7 +693,7 @@ mod tests {
             far: 800.0,
         };
         let view_projection = camera.view_projection(1.6);
-        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, None, 4096);
+        let uniform = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, None, 4096);
         let forward = (target - eye).normalize();
         let point = Vec3::new(10.0, -3.0, -40.0);
         let depth = Vec3::from_slice(&uniform.depth[..3]).dot(point) + uniform.depth[3];
@@ -732,15 +709,14 @@ mod tests {
         assert!((slice(800.0) - SLICES as f32).abs() < 1.0e-2);
         assert_eq!(uniform.grid[..2], [100.0, 100.0]);
         assert_eq!(uniform.counts, [TILES_X, TILES_Y, SLICES, NO_BUDGET]);
-        assert_eq!(uniform.lights, [7, 1, 4096, 0]);
-        let budgeted =
-            ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, true, Some(32), 4096);
+        assert_eq!(uniform.lights, [7, 0, 4096, 0]);
+        let budgeted = ClusterUniform::new(view_projection, 1600, 900, 1.0e9, 7, Some(32), 4096);
         assert_eq!(budgeted.counts[3], 32);
         // Without usable planes the clusters span [0.1, 1000].
-        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, false, None, 1);
+        let flat = ClusterUniform::new(Mat4::IDENTITY, 10, 10, 1.0e9, 1, None, 1);
         assert_eq!(flat.projection[3], 1000.0);
         // Light fades out by its distance, before the far plane.
-        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, true, None, 1);
+        let near = ClusterUniform::new(view_projection, 1600, 900, 120.0, 7, None, 1);
         assert_eq!(near.projection[3], 120.0);
     }
 
@@ -859,16 +835,8 @@ mod binning_tests {
             near: 0.1,
             far: 2000.0,
         };
-        let uniform = ClusterUniform::new(
-            camera.view_projection(1.6),
-            1600,
-            1000,
-            220.0,
-            1,
-            true,
-            None,
-            1,
-        );
+        let uniform =
+            ClusterUniform::new(camera.view_projection(1.6), 1600, 1000, 220.0, 1, None, 1);
         // A lamp's 10-unit reach, 60 units away, touches a few dozen of the
         // 3456 clusters; the loose screen box around it holds far more.
         let clusters = covered(&uniform, Vec3::new(300.0, 4.0, 290.0), 10.0);

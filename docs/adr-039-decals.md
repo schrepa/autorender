@@ -38,8 +38,8 @@ fill it.
 - **Poses.** Retained frames list each decal's pose after the skins' joints
   (decision 036): CPU-prepared frames upload its prepared matrix, and
   GPU-presented frames compose its displayed pose as they do slots', so a
-  decal on a moving object stays on it. Owned snapshots draw each decal's
-  prepared matrix.
+  decal on a moving object stays on it. Owned snapshots drew each decal's
+  prepared matrix; since 2026-10-03 they copy a frame's decals and joints.
 - **Optional, with a budget.** `Decals { enabled, max_decals }` is inserted
   by default and draws every decal; `max_decals` (decision 029) keeps the
   nearest and counts the rest in `dropped_decals`, as do decals beyond the

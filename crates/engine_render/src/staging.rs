@@ -114,12 +114,6 @@ impl Segment<'_> {
 }
 
 impl StagingRing {
-    /// Buffers stay tied to the destination they last copied into; replacing
-    /// that storage drops them (their copies were already submitted).
-    pub(crate) fn clear(&mut self) {
-        self.buffers.clear();
-    }
-
     /// Copy `ranges` of `records` into one mapped staging buffer at packed
     /// offsets and record GPU copies to the same offsets of `destination`.
     /// Returns `NoMappedBuffer` without side effects when none is ready.

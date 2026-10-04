@@ -1,7 +1,7 @@
 //! The depth pipelines of shadow maps (decisions 020 and 031): caster
-//! selection's compute passes, retained casters plain, masked and skinned,
-//! public snapshots' casters from full instance matrices, and the clear of
-//! kept-map tiles, with the view matrices and selection uniform they read.
+//! selection's compute passes, slot casters plain, masked and skinned, and
+//! the clear of kept-map tiles, with the view matrices and selection uniform
+//! they read.
 
 use super::{FAR_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
@@ -17,19 +17,10 @@ pub(super) struct ShadowPipelines {
     // Skinned casters of GPU-presented frames (decision 036).
     pub(super) select_skinned: wgpu::ComputePipeline,
     pub(super) skinned_layout: wgpu::BindGroupLayout,
-    pub(super) affine: wgpu::RenderPipeline,
-    // Alpha-masked casters (decision 031), with a material group.
-    pub(super) affine_masked: wgpu::RenderPipeline,
-    // Retained casters of meshes with joints (decision 036), plain and
-    // masked, which read a skin stream and the joint palettes.
-    pub(super) affine_skinned: wgpu::RenderPipeline,
-    pub(super) affine_masked_skinned: wgpu::RenderPipeline,
-    // Public snapshots' casters from full instance matrices, plain and
-    // masked, created with the first frame drawing a snapshot (decision
-    // 049), from the module and view layout kept for them.
-    pub(super) full: Option<[wgpu::RenderPipeline; 2]>,
-    pub(super) module: wgpu::ShaderModule,
-    pub(super) view_layout: wgpu::BindGroupLayout,
+    // Slot casters by `masked + 2 * skinned`: plain; alpha-masked (decision
+    // 031), with a material group; and of meshes with joints (decision 036),
+    // which read a skin stream and the joint palettes.
+    pub(super) casters: [wgpu::RenderPipeline; 4],
     pub(super) clear: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
     pub(super) view_group: wgpu::BindGroup,
@@ -106,13 +97,11 @@ fn caster_pipeline(
 }
 
 impl ShadowPipelines {
-    /// `vertex_stride` and `instance_stride` are the renderer's mesh vertex
-    /// and public instance record sizes.
-    /// `layout`: the vertex and instance strides and the texture coordinate
-    /// offset in a vertex.
+    /// `layout`: the renderer's mesh vertex stride and the texture
+    /// coordinate offset in a vertex.
     pub(super) fn new(
         device: &wgpu::Device,
-        (vertex_stride, _, uv_offset): (u64, u64, u64),
+        (vertex_stride, uv_offset): (u64, u64),
         material_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -191,7 +180,7 @@ impl ShadowPipelines {
                 masked,
             )
         };
-        let affine = pipeline(
+        let plain = pipeline(
             "engine/shadow-affine",
             &[Some(&view_layout), Some(&pose_layout)],
             "vs_affine",
@@ -206,7 +195,7 @@ impl ShadowPipelines {
             false,
             false,
         );
-        let affine_masked = pipeline(
+        let masked = pipeline(
             "engine/shadow-affine-masked",
             &[
                 Some(&view_layout),
@@ -230,7 +219,7 @@ impl ShadowPipelines {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &slot_attributes,
         };
-        let affine_skinned = pipeline(
+        let skinned = pipeline(
             "engine/shadow-affine-skinned",
             &[Some(&view_layout), Some(&pose_layout)],
             "vs_affine_skinned",
@@ -242,7 +231,7 @@ impl ShadowPipelines {
             false,
             false,
         );
-        let affine_masked_skinned = pipeline(
+        let masked_skinned = pipeline(
             "engine/shadow-affine-masked-skinned",
             &[
                 Some(&view_layout),
@@ -296,90 +285,12 @@ impl ShadowPipelines {
             select_layout,
             select_skinned,
             skinned_layout,
-            affine,
-            affine_masked,
-            affine_skinned,
-            affine_masked_skinned,
-            full: None,
-            module,
-            view_layout,
+            casters: [plain, masked, skinned, masked_skinned],
             clear,
             view_buffer,
             view_group,
             pose_layout,
             cull,
         }
-    }
-}
-
-impl ShadowPipelines {
-    /// Creates the public snapshots' casters, plain and masked, unless
-    /// created. `layout` and `material_layout` are as for [`Self::new`].
-    pub(super) fn ensure_full(
-        &mut self,
-        device: &wgpu::Device,
-        (vertex_stride, instance_stride, uv_offset): (u64, u64, u64),
-        material_layout: &wgpu::BindGroupLayout,
-    ) {
-        if self.full.is_some() {
-            return;
-        }
-        let vertex_attributes = wgpu::vertex_attr_array![0 => Float32x3];
-        let masked_vertex_attributes = [
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x3,
-                offset: 0,
-                shader_location: 0,
-            },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
-                offset: uv_offset,
-                shader_location: 7,
-            },
-        ];
-        let model_attributes = wgpu::vertex_attr_array![
-            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4
-        ];
-        // Columns and the packed color of public instance records.
-        let masked_model_attributes = wgpu::vertex_attr_array![
-            2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2
-        ];
-        let vertices = |attributes| wgpu::VertexBufferLayout {
-            array_stride: vertex_stride,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes,
-        };
-        let instances = |attributes| wgpu::VertexBufferLayout {
-            array_stride: instance_stride,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes,
-        };
-        let full = caster_pipeline(
-            device,
-            &self.module,
-            "engine/shadow-full",
-            &[Some(&self.view_layout)],
-            "vs_full",
-            &[
-                Some(vertices(&vertex_attributes)),
-                Some(instances(&model_attributes)),
-            ],
-            false,
-            false,
-        );
-        let full_masked = caster_pipeline(
-            device,
-            &self.module,
-            "engine/shadow-full-masked",
-            &[Some(&self.view_layout), None, Some(material_layout)],
-            "vs_full_masked",
-            &[
-                Some(vertices(&masked_vertex_attributes)),
-                Some(instances(&masked_model_attributes)),
-            ],
-            false,
-            true,
-        );
-        self.full = Some([full, full_masked]);
     }
 }

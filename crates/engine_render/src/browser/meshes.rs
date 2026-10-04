@@ -1,19 +1,19 @@
-//! Mesh pipelines: the vertex streams of meshes and instances, each pass
-//! kind's material variants (decision 031) over their layouts, the sky,
-//! and the opaque drawing order (decision 046).
+//! Mesh pipelines: the vertex streams of meshes and slots, each pass kind's
+//! material variants (decision 031) over their layouts, the sky, and the
+//! opaque drawing order (decision 046).
 
 use super::*;
 use crate::bindings::EMPTY;
 use crate::entries::{self, Slots};
 
-/// Mesh pipelines (decision 049): their layouts by `mesh_layout_index`,
-/// created with the first variant needing each (temporal frames' come with
-/// the temporal pass); every pass kind's material variants, whose BASIC
-/// entries are the base pipelines; the sky by its targets, built when a pass
-/// first draws it; and the empty group lit public-instance pipelines bind as
-/// group 2.
+/// Mesh pipelines (decision 049): their layouts, unlit and lit, created with
+/// the first variant needing each (temporal frames' come with the temporal
+/// pass); every pass kind's material variants, whose BASIC entries are the
+/// base pipelines; the sky by its targets, built when a pass first draws it;
+/// and the empty group pipelines skipping a group bind (the visibility pass,
+/// impostor bakes).
 pub(super) struct MeshPipelines {
-    pub(super) layouts: [Option<wgpu::PipelineLayout>; 4],
+    pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
     pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
     sky: [Option<wgpu::RenderPipeline>; 4],
     pub(super) empty_layout: wgpu::BindGroupLayout,
@@ -77,8 +77,6 @@ pub(super) struct DrawOrder {
 // Position, octahedral normal and texture coordinates.
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Snorm16x2, 7 => Float32x2];
-// Columns, packed color and packed surface of public instance records.
-const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4, 5 => Float32x4, 6 => Uint32x2, 8 => Uint32];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
 // Vertex color and second texture coordinates (decision 034).
 const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
@@ -113,8 +111,8 @@ pub(crate) fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     })
 }
 
-/// Mesh vertices and the slot ID stream of retained frames.
-pub(super) fn affine_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
+/// Mesh vertices and the slot ID stream of CPU-prepared frames.
+pub(super) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
     [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -137,11 +135,10 @@ impl Renderer {
             } else {
                 opaque
             };
-            // Only retained slots skin (decision 036).
             let mesh = self.meshes.get(&batch.mesh);
             let variant = variant
                 .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-                .with_skinned(kind.affine && mesh.is_some_and(|mesh| mesh.skinned));
+                .with_skinned(mesh.is_some_and(|mesh| mesh.skinned));
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
             {
@@ -188,15 +185,14 @@ impl Renderer {
     }
 
     /// The pipeline layout of `kind`'s mesh variants unless created: the
-    /// camera and material groups, retained slots' poses for affine passes
-    /// (an empty group otherwise where lights follow), and the lights' group
+    /// camera and material groups, the slots' poses, and the lights' group
     /// for lit ones (decision 023). Temporal frames have their own.
     pub(super) fn ensure_mesh_layout(&mut self, kind: PassKind) {
         if kind.targets() == Some(Targets::Temporal) {
             return;
         }
-        let (lit, affine) = (kind.lit, kind.affine);
-        let index = mesh_layout_index(lit, affine);
+        let lit = kind.lit;
+        let index = usize::from(lit);
         if self.mesh_pipelines.layouts[index].is_some() {
             return;
         }
@@ -209,14 +205,10 @@ impl Renderer {
         let groups = [
             Some(&self.camera.layout),
             Some(self.materials.layout()),
-            Some(if affine {
-                &self.instances.pose_layout
-            } else {
-                &self.mesh_pipelines.empty_layout
-            }),
+            Some(&self.instances.pose_layout),
             lights,
         ];
-        let count = if lit { 4 } else { 2 + usize::from(affine) };
+        let count = if lit { 4 } else { 3 };
         self.mesh_pipelines.layouts[index] = Some(self.device.create_pipeline_layout(
             &wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/mesh-pipeline-layout"),
@@ -233,7 +225,7 @@ impl Renderer {
             let temporal = self.temporal.as_ref().expect("temporal frames create it");
             temporal.mesh_layout(kind.lit)
         } else {
-            self.mesh_pipelines.layouts[mesh_layout_index(kind.lit, kind.affine)]
+            self.mesh_pipelines.layouts[usize::from(kind.lit)]
                 .as_ref()
                 .expect("created with the variant")
         };
@@ -359,10 +351,9 @@ fn mesh_pipeline(
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
     // Extended meshes (decision 034) read a third vertex buffer through
-    // their own entry points; skinned slots' meshes (decision 036) a fourth.
-    let affine = kind.slots() != Slots::Instances;
+    // their own entry points; skinned meshes (decision 036) a fourth.
     let extended = variant.extended();
-    let skinned = affine && variant.skinned();
+    let skinned = variant.skinned();
     let streams = if skinned {
         Streams::Skinned
     } else if extended {
@@ -372,17 +363,8 @@ fn mesh_pipeline(
     };
     let vertex_entry = kind.vertex_entry(streams);
     let fragment_entry = kind.fragment_entry(extended);
-    let full_layouts = [
-        vertex_layout(),
-        Some(wgpu::VertexBufferLayout {
-            array_stride: size_of::<InstanceData>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &INSTANCE_ATTRIBUTES,
-        }),
-        extra_layout(),
-    ];
-    let [mesh, slot_ids] = affine_layouts();
-    let affine_layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
+    let [mesh, slot_ids] = slot_layouts();
+    let layouts = [mesh, slot_ids, extra_layout(), skin_layout()];
     let buffers = match streams {
         Streams::Skinned => 4,
         Streams::Extended => 3,
@@ -402,11 +384,7 @@ fn mesh_pipeline(
                 module: shader,
                 entry_point: Some(vertex_entry),
                 compilation_options: Default::default(),
-                buffers: if affine {
-                    &affine_layouts[..buffers]
-                } else {
-                    &full_layouts[..buffers]
-                },
+                buffers: &layouts[..buffers],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -439,10 +417,4 @@ fn mesh_pipeline(
             cache: None,
         },
     )
-}
-
-/// The index in `mesh_layouts` of the mesh pipeline layout of lit and
-/// affine passes.
-fn mesh_layout_index(lit: bool, affine: bool) -> usize {
-    usize::from(lit) * 2 + usize::from(affine)
 }

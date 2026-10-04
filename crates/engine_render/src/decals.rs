@@ -23,8 +23,9 @@ pub(crate) struct DecalData {
 }
 
 impl DecalData {
-    /// `palette`: whether the frame's joint palette holds decals' poses.
-    pub(crate) fn new(decal: &RenderDecal, palette: bool) -> Self {
+    /// A decal's record, reading its pose from the frame's joint palette
+    /// where it holds one.
+    pub(crate) fn new(decal: &RenderDecal) -> Self {
         let rows = decal.model.transpose();
         Self {
             model: [
@@ -39,7 +40,7 @@ impl DecalData {
                 decal.surface.metalness,
                 decal.surface.emission,
             ],
-            pose: [decal.joint.filter(|_| palette).unwrap_or(NO_POSE), 0, 0, 0],
+            pose: [decal.joint.unwrap_or(NO_POSE), 0, 0, 0],
         }
     }
 }
@@ -56,7 +57,6 @@ pub(crate) struct DecalRun {
 /// holds), and their runs; returns the decals that did not fit.
 pub(crate) fn pack_decals(
     decals: &[RenderDecal],
-    palette: bool,
     room: usize,
     records: &mut Vec<DecalData>,
     runs: &mut Vec<DecalRun>,
@@ -66,7 +66,7 @@ pub(crate) fn pack_decals(
     let fitting = &decals[..decals.len().min(room)];
     for decal in fitting {
         let index = records.len() as u32;
-        records.push(DecalData::new(decal, palette));
+        records.push(DecalData::new(decal));
         match runs.last_mut() {
             Some(run) if run.material == decal.material && run.blend == decal.blend => {
                 run.records.end = index + 1;
@@ -150,17 +150,16 @@ mod gpu {
         }
 
         /// Uploads `snapshot`'s decals when they changed; `None` when the
-        /// frame draws none. With `palette` (the joint palette of retained
-        /// frames and its pose generation and parity), decals read their
-        /// displayed poses there. `depth` is the depth buffer of
-        /// `depth_generation`.
+        /// frame draws none. Decals read their displayed poses from
+        /// `palette` (the frame's joint palette and its pose generation and
+        /// parity). `depth` is the depth buffer of `depth_generation`.
         #[allow(clippy::too_many_arguments)]
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
-            palette: (&wgpu::Buffer, Option<(u64, usize)>),
+            palette: (&wgpu::Buffer, (u64, usize)),
             depth: &wgpu::TextureView,
             depth_generation: u64,
         ) -> Option<DecalFrame> {
@@ -172,14 +171,8 @@ mod gpu {
                 .max_storage_buffer_binding_size
                 .min(limits.max_buffer_size);
             let room = (binding / size_of::<DecalData>() as u64) as usize;
-            let (palette, pose_key) = palette;
-            let dropped = pack_decals(
-                &snapshot.decals,
-                pose_key.is_some(),
-                room,
-                &mut self.staging,
-                &mut self.runs,
-            );
+            let (palette, (generation, parity)) = palette;
+            let dropped = pack_decals(&snapshot.decals, room, &mut self.staging, &mut self.runs);
             if self.staging.is_empty() {
                 return None;
             }
@@ -193,7 +186,6 @@ mod gpu {
                 queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&self.staging));
                 self.uploaded.clone_from(&self.staging);
             }
-            let (generation, parity) = pose_key.unwrap_or((u64::MAX, 0));
             let key = (depth_generation, self.buffer_generation, generation, parity);
             if self.group.stale(&key) {
                 let group = crate::pipelines::group(
@@ -383,16 +375,19 @@ mod tests {
 
     #[test]
     fn records_carry_rows_color_and_palette_entries() {
-        let record = DecalData::new(&decal(None, DecalBlend::Alpha, 7), true);
+        let record = DecalData::new(&decal(None, DecalBlend::Alpha, 7));
         assert_eq!(record.model[0], [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(record.model[1], [0.0, 1.0, 0.0, 2.0]);
         assert_eq!(record.model[2], [0.0, 0.0, 1.0, 3.0]);
         assert_eq!(record.color, [1.0, 0.5, 0.25, 0.75]);
         assert_eq!(record.params[0], 0.5);
         assert_eq!(record.pose[0], 7);
-        // Owned snapshots draw their own matrices.
-        let owned = DecalData::new(&decal(None, DecalBlend::Alpha, 7), false);
-        assert_eq!(owned.pose[0], NO_POSE);
+        // Decals without a palette entry draw their own matrices.
+        let own = DecalData::new(&RenderDecal {
+            joint: None,
+            ..decal(None, DecalBlend::Alpha, 7)
+        });
+        assert_eq!(own.pose[0], NO_POSE);
     }
 
     #[test]
@@ -411,11 +406,11 @@ mod tests {
             decal(None, DecalBlend::Multiply, 4),
         ];
         let (mut records, mut runs) = (Vec::new(), Vec::new());
-        assert_eq!(pack_decals(&decals, true, 16, &mut records, &mut runs), 0);
+        assert_eq!(pack_decals(&decals, 16, &mut records, &mut runs), 0);
         assert_eq!(records.len(), 5);
         let ranges: Vec<_> = runs.iter().map(|run| run.records.clone()).collect();
         assert_eq!(ranges, [0..2, 2..3, 3..5]);
-        assert_eq!(pack_decals(&decals, true, 2, &mut records, &mut runs), 3);
+        assert_eq!(pack_decals(&decals, 2, &mut records, &mut runs), 3);
         assert_eq!(records.len(), 2);
         assert_eq!(runs.len(), 1);
     }

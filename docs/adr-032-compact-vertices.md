@@ -28,7 +28,8 @@ constant per object.
   the world normal and world position, and color, opacity and surface pass
   as one flat `vec3<u32>` exactly as slots store them (four 16-bit color
   fractions and the packed surface); fragments unpack them. Public instance
-  records read their packed color as `Uint32x2`.
+  records read their packed color as `Uint32x2` until they were removed on
+  2026-10-03.
 - **Cheaper normal transform.** Normals still transform by the cofactor
   matrix of the basis rescaled to a largest component of 1, but without the
   second rescale: those cofactors stay within [-2, 2], and the final

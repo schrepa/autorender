@@ -20,9 +20,9 @@ struct Clusters {
     // Tiles across and down, depth slices, and the per-cluster budget
     // (0xffffffff without one).
     counts: vec4<u32>,
-    // Lights, 1 when slot poses are bound, the entries `indices` holds, and
-    // 1 when only lights without a slot or on still slots are binned
-    // (reflection probe faces, decision 043).
+    // Lights, an unused word, the entries `indices` holds, and 1 when only
+    // lights without a slot or on still slots are binned (reflection probe
+    // faces, decision 043).
     lights: vec4<u32>,
 }
 
@@ -131,7 +131,7 @@ fn place(index: u32, fill: bool) -> LightBox {
     let input = inputs[index];
     var position = input.position;
     var direction = input.direction;
-    if input.slot != NO_SLOT && clusters.lights.y != 0u {
+    if input.slot != NO_SLOT {
         let rows = poses[input.slot];
         position = transformed(rows, vec4<f32>(position, 1.0));
         let turned = transformed(rows, vec4<f32>(direction, 0.0));

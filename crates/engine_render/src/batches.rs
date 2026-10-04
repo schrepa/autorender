@@ -59,17 +59,6 @@ pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialH
     }
 }
 
-/// An instance's draw-group identity before source resolution: a material's
-/// alpha mode is fixed with its handle, so only unmapped instances need
-/// their opacity class.
-fn instance_key(instance: &RenderInstance) -> (MeshHandle, Option<MaterialHandle>, bool) {
-    (
-        instance.mesh,
-        instance.material,
-        instance.material.is_none() && instance.color[3] < 1.0,
-    )
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SnapshotError {
     /// More instances than this GPU's instance buffers hold.
@@ -137,15 +126,13 @@ impl fmt::Display for SnapshotError {
 }
 
 /// Indices avoid moving gameplay records. Counting scatter groups opaque draws
-/// by mesh/material while preserving source order within each group, including
-/// coherent static/moving runs. Exact keys retain ordering across pose/color
-/// edits; source validation still runs on every snapshot. Changed keys take
-/// O(N * (log M + log T) + M * T + M log M + T log T);
-/// unchanged keys take O(N + M log M + T log T + B log(M + T)) for B batches.
-/// Certified frames additionally retain one draw-group ID per stable slot;
-/// visibility-only changes scatter compact IDs without per-instance key lookup.
-/// Draw groups get compact IDs for the mesh, material and opacity combinations
-/// in use, so no mesh or material count bounds them.
+/// by mesh/material while preserving slot order within each group, including
+/// coherent static/moving runs. A frame of the same retained structure and
+/// sources reuses the previous order; every other frame validates its sources.
+/// Each stable slot keeps one draw-group ID for its frame's source epoch, so
+/// visibility-only changes scatter compact IDs without per-instance key
+/// lookup. Draw groups get compact IDs for the mesh, material and opacity
+/// combinations in use, so no mesh or material count bounds them.
 #[derive(Default)]
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
@@ -163,7 +150,6 @@ pub(crate) struct BatchPlan {
     mesh_handles: Vec<MeshHandle>,
     material_handles: Vec<MaterialHandle>,
     texture_handles: Vec<TextureHandle>,
-    instance_keys: Vec<(MeshHandle, Option<MaterialHandle>, bool)>,
     // Rebuild scratch: one draw group per admitted instance and one cursor
     // per group in use.
     instance_buckets: Vec<u32>,
@@ -183,8 +169,8 @@ pub(crate) struct BatchPlan {
     order_reused: bool,
     retained_structure: Option<(u64, u64)>,
     retained_sources: Option<(u64, u64)>,
-    // Stable-slot mapping belongs only to a certified core frame/source epoch.
-    // Never-visible slots resolve lazily; public snapshots cannot populate it.
+    // Each slot's draw group for one core frame/source epoch; never-visible
+    // slots resolve lazily.
     slot_buckets: Vec<u32>,
     slot_mapping_reused: bool,
     key_resolutions: usize,
@@ -200,20 +186,17 @@ impl BatchPlan {
         }
     }
 
-    /// Validate before any GPU cache changes, then produce contiguous draw ranges.
+    /// Plans every instance of `snapshot` as a frame with every slot visible
+    /// and a fresh slot mapping.
+    #[cfg(test)]
     pub fn prepare(&mut self, snapshot: &RenderSnapshot) -> Result<(), SnapshotError> {
-        if self.retained_structure.take().is_some() {
-            // Trusted frames do not populate the public per-record key cache.
-            // Even an empty public snapshot must rebuild the previous draws.
-            self.valid = false;
-        }
+        self.retained_structure = None;
         self.retained_sources = None;
-        self.slot_buckets.clear();
+        self.valid = false;
         self.slot_mapping_reused = false;
         self.key_resolutions = 0;
-        if let Err(error) = self.prepare_inner(snapshot, None, false) {
-            // Never expose a mixture of a previous valid plan and partially
-            // prepared source/range data. Capacity remains available for retry.
+        let all: Vec<usize> = (0..snapshot.instances.len()).collect();
+        if let Err(error) = self.prepare_inner(snapshot, &all, false) {
             self.invalidate();
             return Err(error);
         }
@@ -221,7 +204,8 @@ impl BatchPlan {
         Ok(())
     }
 
-    /// Only a core-owned frame can certify retained keys, sources and membership.
+    /// Validates `frame`'s sources before any GPU cache changes, then
+    /// produces contiguous draw ranges of its visible slots.
     pub fn prepare_frame(&mut self, frame: &RenderFrame<'_>) -> Result<(), SnapshotError> {
         let key = (frame.identity(), frame.structure_revision());
         let source_key = (frame.identity(), frame.source_revision());
@@ -238,11 +222,8 @@ impl BatchPlan {
             }
             self.order_reused = true;
         } else {
-            // A different retained stream/order cannot reuse positional keys.
             self.valid = false;
-            if let Err(error) =
-                self.prepare_inner(snapshot, Some(frame.visible_indices()), reuse_slots)
-            {
+            if let Err(error) = self.prepare_inner(snapshot, frame.visible_indices(), reuse_slots) {
                 self.invalidate();
                 return Err(error);
             }
@@ -286,8 +267,6 @@ impl BatchPlan {
                 + (self.material_handles.capacity() + self.transparent_materials.capacity())
                     * size_of::<MaterialHandle>()
                 + self.texture_handles.capacity() * size_of::<TextureHandle>()
-                + self.instance_keys.capacity()
-                    * size_of::<(MeshHandle, Option<MaterialHandle>, bool)>()
                 + group_scratch_bytes;
             engine_profile::counter("memory.batch_plan_capacity_bytes", capacity_bytes as f64);
             engine_profile::counter(
@@ -307,7 +286,6 @@ impl BatchPlan {
         self.slot_buckets.clear();
         self.group_ids.clear();
         self.group_keys.clear();
-        self.instance_keys.clear();
         self.instance_buckets.clear();
         self.bucket_cursors.clear();
         self.ordered_instances.clear();
@@ -323,13 +301,15 @@ impl BatchPlan {
         self.texture_handles.clear();
     }
 
+    /// Plans the `selected` slots of `snapshot`, keeping their draw groups
+    /// with `reuse_slot_mapping`.
     fn prepare_inner(
         &mut self,
         snapshot: &RenderSnapshot,
-        selected: Option<&[usize]>,
+        selected: &[usize],
         reuse_slot_mapping: bool,
     ) -> Result<(), SnapshotError> {
-        let instance_count = selected.map_or(snapshot.instances.len(), <[usize]>::len);
+        let instance_count = selected.len();
         let profile_validation = engine_profile::span("render", "batch_source_validation");
         self.source_indices.clear();
         self.material_source_indices.clear();
@@ -411,7 +391,7 @@ impl BatchPlan {
             }
         }
         drop(profile_sources);
-        if selected.is_some() && !reuse_slot_mapping {
+        if !reuse_slot_mapping {
             // Budget/source validation precedes any per-slot cache growth.
             // Group IDs start over with the slots that refer to them.
             self.group_ids.clear();
@@ -421,39 +401,10 @@ impl BatchPlan {
             self.slot_buckets
                 .resize(snapshot.instances.len(), UNMAPPED_BUCKET);
         }
-        let reused = {
-            let _profile_keys = engine_profile::span("render", "batch_key_comparison");
-            self.valid
-                && self.instance_keys.len() == instance_count
-                && self
-                    .instance_keys
-                    .iter()
-                    .zip(selected_instances(snapshot, selected))
-                    .all(|(&key, (_, instance))| key == instance_key(instance))
-        };
         self.used_material_sources.clear();
         self.used_material_sources
             .resize(snapshot.materials.len(), false);
-        if !reused {
-            self.group_instances(snapshot, selected)?;
-        } else {
-            let _profile_references = engine_profile::span("render", "batch_source_references");
-            for batch in &mut self.batches {
-                // Sources are public mutable snapshot inputs. Unchanged keys
-                // still re-resolve after a source list reorder or replacement.
-                let (source_index, material_index) = Self::resolve_sources(
-                    snapshot,
-                    &self.source_indices,
-                    &self.material_source_indices,
-                    batch.mesh,
-                    batch.material,
-                )?;
-                batch.source_index = source_index;
-                if let Some(index) = material_index {
-                    self.used_material_sources[index] = true;
-                }
-            }
-        }
+        self.group_instances(snapshot, selected)?;
         // Textures of the used materials.
         self.used_texture_sources.clear();
         self.used_texture_sources
@@ -478,17 +429,7 @@ impl BatchPlan {
                 self.texture_sources.push(index);
             }
         }
-        if !reused {
-            self.instance_keys.clear();
-            if selected.is_none() {
-                self.instance_keys.reserve_exact(instance_count);
-                self.instance_keys.extend(
-                    selected_instances(snapshot, selected)
-                        .map(|(_, instance)| instance_key(instance)),
-                );
-            }
-        }
-        self.order_reused = reused;
+        self.order_reused = false;
         self.valid = true;
         Ok(())
     }
@@ -496,23 +437,14 @@ impl BatchPlan {
     fn group_instances(
         &mut self,
         snapshot: &RenderSnapshot,
-        selected: Option<&[usize]>,
+        selected: &[usize],
     ) -> Result<(), SnapshotError> {
         let _profile = engine_profile::span("render", "batch_instance_group");
-        if selected.is_none() {
-            // Public snapshots keep no slot mapping, so no IDs either.
-            self.group_ids.clear();
-            self.group_keys.clear();
-        }
         self.instance_buckets.clear();
-        let instance_count = selected.map_or(snapshot.instances.len(), <[usize]>::len);
-        self.instance_buckets.reserve_exact(instance_count);
-        for (slot, instance) in selected_instances(snapshot, selected) {
-            let cached = if selected.is_some() {
-                self.slot_buckets[slot]
-            } else {
-                UNMAPPED_BUCKET
-            };
+        self.instance_buckets.reserve_exact(selected.len());
+        for &slot in selected {
+            let instance = &snapshot.instances[slot];
+            let cached = self.slot_buckets[slot];
             let group = if cached != UNMAPPED_BUCKET {
                 cached
             } else {
@@ -539,9 +471,7 @@ impl BatchPlan {
                 if group == next {
                     self.group_keys.push(key);
                 }
-                if selected.is_some() {
-                    self.slot_buckets[slot] = group;
-                }
+                self.slot_buckets[slot] = group;
                 group
             };
             self.instance_buckets.push(group);
@@ -588,29 +518,14 @@ impl BatchPlan {
             }
         }
         self.ordered_instances.clear();
-        self.ordered_instances.reserve_exact(instance_count);
-        self.ordered_instances.resize(instance_count, 0);
-        for (index, &bucket) in self.instance_buckets.iter().enumerate() {
+        self.ordered_instances.reserve_exact(selected.len());
+        self.ordered_instances.resize(selected.len(), 0);
+        for (&slot, &bucket) in selected.iter().zip(&self.instance_buckets) {
             let cursor = &mut self.bucket_cursors[bucket as usize];
-            self.ordered_instances[*cursor] = selected.map_or(index, |indices| indices[index]);
+            self.ordered_instances[*cursor] = slot;
             *cursor += 1;
         }
         Ok(())
-    }
-
-    fn resolve_sources(
-        snapshot: &RenderSnapshot,
-        mesh_indices: &[usize],
-        material_indices: &[usize],
-        mesh: MeshHandle,
-        material: Option<MaterialHandle>,
-    ) -> Result<(usize, Option<usize>), SnapshotError> {
-        let (mesh_rank, material_rank) =
-            Self::source_ranks(snapshot, mesh_indices, material_indices, mesh, material)?;
-        Ok((
-            mesh_indices[mesh_rank],
-            material_rank.map(|rank| material_indices[rank]),
-        ))
     }
 
     fn source_ranks(
@@ -663,16 +578,6 @@ impl BatchPlan {
     }
 }
 
-fn selected_instances<'a>(
-    snapshot: &'a RenderSnapshot,
-    selected: Option<&'a [usize]>,
-) -> impl Iterator<Item = (usize, &'a RenderInstance)> {
-    (0..selected.map_or(snapshot.instances.len(), <[usize]>::len)).map(move |position| {
-        let index = selected.map_or(position, |indices| indices[position]);
-        (index, &snapshot.instances[index])
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::BTreeMap, sync::Arc};
@@ -686,7 +591,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retained_visible_slots_and_public_snapshots_do_not_share_revision_trust() {
+    fn retained_visible_slots_regroup_without_resolving_slot_keys() {
         use engine_core::{Cube, Engine, PresentationMode, Transform};
         let mut engine = Engine::default();
         engine.set_frustum_culling(false);
@@ -752,32 +657,6 @@ mod tests {
         assert!(!plan.slot_mapping_reused);
         assert_eq!(plan.key_resolutions, 1);
         assert_eq!(plan.batches[0].instances, 0..1);
-        let empty = RenderSnapshot {
-            view_projection: frame.snapshot().view_projection,
-            meshes: frame.snapshot().meshes.clone(),
-            ..Default::default()
-        };
-        plan.prepare(&empty).unwrap();
-        assert!(plan.ordered_instances.is_empty() && plan.batches.is_empty());
-        plan.prepare_frame(&frame).unwrap();
-        // A caller-owned snapshot can reuse the exact source records yet is
-        // still mutable; it must never acquire the engine frame's certificate.
-        let mut public = RenderSnapshot {
-            view_projection: frame.snapshot().view_projection,
-            instances: vec![frame.snapshot().instances[frame.visible_indices()[0]]],
-            meshes: frame.snapshot().meshes.clone(),
-            materials: frame.snapshot().materials.clone(),
-            textures: frame.snapshot().textures.clone(),
-            ..Default::default()
-        };
-        plan.prepare(&public).unwrap();
-        public.meshes.clear();
-        assert!(matches!(
-            plan.prepare(&public),
-            Err(SnapshotError::MissingMesh { .. })
-        ));
-        plan.prepare_frame(&frame).unwrap();
-        assert!(!plan.order_reused);
         plan.prepare_frame(&frame).unwrap();
         assert!(plan.order_reused);
     }
@@ -959,60 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn static_cache_pose_color_and_camera_edits_retain_batch_order_ranges_and_storage() {
-        let first = mesh();
-        let second = mesh();
-        let (source_material, source_texture) = textured();
-        let handles = [second.handle, first.handle, second.handle, first.handle];
-        let mut scene = snapshot(vec![first, second], &handles);
-        scene.instances[1].material = Some(source_material.handle);
-        scene.instances[3].material = Some(source_material.handle);
-        scene.materials.push(source_material);
-        scene.textures.push(source_texture);
-        let mut plan = BatchPlan::default();
-        plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
-        let order = plan.ordered_instances.clone();
-        let ranges: Vec<_> = plan
-            .batches
-            .iter()
-            .map(|batch| (batch.mesh, batch.material, batch.instances.clone()))
-            .collect();
-        let storage = (
-            plan.ordered_instances.as_ptr(),
-            plan.batches.as_ptr(),
-            plan.instance_keys.as_ptr(),
-        );
-        for step in 1..=3 {
-            for (index, instance) in scene.instances.iter_mut().enumerate() {
-                instance.model = Mat4::from_translation(glam::Vec3::Y * (index + step) as f32);
-                instance.color[0] = step as f32 * 0.1;
-            }
-            scene.view_projection = Mat4::from_scale(glam::Vec3::splat(step as f32));
-            plan.prepare(&scene).unwrap();
-            assert!(plan.order_reused);
-            assert_eq!(plan.ordered_instances, order);
-            assert_eq!(
-                plan.batches
-                    .iter()
-                    .map(|batch| (batch.mesh, batch.material, batch.instances.clone()))
-                    .collect::<Vec<_>>(),
-                ranges
-            );
-            assert_eq!(
-                (
-                    plan.ordered_instances.as_ptr(),
-                    plan.batches.as_ptr(),
-                    plan.instance_keys.as_ptr(),
-                ),
-                storage
-            );
-            assert_complete_plan(&plan, &scene);
-        }
-    }
-
-    #[test]
-    fn static_cache_source_reorders_key_changes_and_scene_replacement_keep_mappings_current() {
+    fn source_reorders_key_changes_and_scene_replacement_keep_mappings_current() {
         let first = mesh();
         let second = mesh();
         let (first_material, first_texture) = textured();
@@ -1033,24 +859,19 @@ mod tests {
         scene.materials.swap(0, 1);
         scene.textures.swap(0, 1);
         plan.prepare(&scene).unwrap();
-        assert!(plan.order_reused);
         assert_complete_plan(&plan, &scene);
         scene.instances.swap(0, 1);
         plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
         scene.instances[0].mesh = handles[0];
         plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
         scene.instances[0].material = Some(material_handles[0]);
         plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
 
         scene.instances.clear();
         plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
         assert_complete_plan(&plan, &scene);
         assert!(plan.contains_mesh(handles[0]));
         assert!(plan.contains_material(material_handles[0]));
@@ -1059,7 +880,6 @@ mod tests {
         scene.materials.clear();
         scene.textures.clear();
         plan.prepare(&scene).unwrap();
-        assert!(plan.order_reused);
         assert!(!plan.contains_mesh(handles[0]));
         assert!(!plan.contains_material(material_handles[0]));
         assert!(!plan.contains_texture(texture_handles[0]));
@@ -1072,7 +892,6 @@ mod tests {
         scene.materials.push(replacement_material);
         scene.textures.push(replacement_texture);
         plan.prepare(&scene).unwrap();
-        assert!(!plan.order_reused);
         assert!(plan.contains_mesh(replacement_handle));
         assert!(plan.contains_material(replacement_material.handle));
         assert!(!plan.contains_mesh(handles[0]));
@@ -1082,7 +901,7 @@ mod tests {
     }
 
     #[test]
-    fn static_cache_failed_prepares_clear_partial_plans_and_valid_retries_rebuild() {
+    fn failed_prepares_clear_partial_plans_and_valid_retries_rebuild() {
         let source = mesh();
         let (source_material, source_texture) = textured();
         let handle = source.handle;
@@ -1151,7 +970,6 @@ mod tests {
             assert!(plan.batches.is_empty());
             assert!(plan.material_sources.is_empty());
             assert!(plan.texture_sources.is_empty());
-            assert!(plan.instance_keys.is_empty());
             assert!(!plan.contains_mesh(handle));
             assert!(!plan.contains_material(material_handle));
             assert!(!plan.contains_texture(texture_handle));
@@ -1164,10 +982,8 @@ mod tests {
             scene.instances[1].mesh = handle;
             plan.instance_limit = None;
             plan.prepare(&scene).unwrap();
-            assert!(!plan.order_reused);
+            assert!(plan.valid);
             assert_complete_plan(&plan, &scene);
-            plan.prepare(&scene).unwrap();
-            assert!(plan.order_reused);
         }
     }
 
@@ -1222,9 +1038,16 @@ mod tests {
         );
         assert_complete_plan(&plan, &snapshot);
         // Its color's opacity is not part of its draw group.
+        let groups = |plan: &BatchPlan| {
+            plan.batches
+                .iter()
+                .map(|batch| (batch.transparent, batch.material, batch.instances.clone()))
+                .collect::<Vec<_>>()
+        };
+        let before = groups(&plan);
         snapshot.instances[0].color[3] = 1.0;
         plan.prepare(&snapshot).unwrap();
-        assert!(plan.order_reused);
+        assert_eq!(groups(&plan), before);
     }
 
     #[test]

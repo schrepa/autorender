@@ -16,8 +16,8 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, InstanceData, LOD_LEVELS, LightingUniform,
-    PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, LOD_LEVELS, LightingUniform, PoseData,
+    SHADER, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
@@ -155,10 +155,10 @@ struct Culling {
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
 ///
-/// Opaque instances are sorted by mesh/material into reusable CPU upload storage.
+/// Visible slots are grouped by mesh and material into reusable draw ranges.
 /// Immutable assets upload once per residency lifetime; unused asset resources
-/// retire at each valid render boundary, even when suspended.
-/// Instance buffers grow geometrically, up to 100,000.
+/// retire at each valid render boundary, even when suspended. Slot storage
+/// grows geometrically up to what one storage binding holds.
 /// Model transforms must be finite, nonsingular, and preserve triangle winding.
 pub struct Renderer {
     device: wgpu::Device,
@@ -178,8 +178,7 @@ pub struct Renderer {
     // The frame's draw batches, and the opaque ones' drawing order.
     plan: BatchPlan,
     draw_order: DrawOrder,
-    // Instance records or retained slots' poses, colors and palettes, and
-    // the reuse of uploaded public records and camera.
+    // Slots' poses, colors and palettes, and the camera bytes last written.
     instances: Instances,
     uploads: UploadCache,
     // The mesh shader, the main passes' first group, and the pipelines of
@@ -328,7 +327,6 @@ impl Renderer {
             &device,
             (
                 size_of::<Vertex>() as u64,
-                size_of::<InstanceData>() as u64,
                 std::mem::offset_of!(Vertex, uv) as u64,
             ),
             materials.layout(),
@@ -428,19 +426,13 @@ impl Renderer {
         self.display.resize(width, height);
     }
 
-    /// Submit one opaque instanced draw per mesh/texture pair. Lost/outdated surfaces recover on a later
-    /// frame; device loss and validation errors permanently fail this renderer.
-    /// Snapshot budget/source errors return before uploads or cache changes.
-    pub fn render(&mut self, snapshot: &RenderSnapshot) -> Result<RenderStats, JsValue> {
-        self.instances.retained_uploads.invalidate();
-        self.render_inner(snapshot, None, false)
-    }
-
-    /// Render a borrowed core-owned frame using retained structural/pose revisions.
-    /// Untrusted public snapshots remain on the full-matrix validated path above.
-    /// The frame is exact: never jittered or blended with earlier frames.
+    /// Renders a borrowed core frame using its retained structural and pose
+    /// revisions. Lost or outdated surfaces recover on a later frame; device
+    /// loss and validation errors permanently fail this renderer, and frame
+    /// source errors return before uploads or cache changes. The frame is
+    /// exact: never jittered or blended with earlier frames.
     pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
-        self.render_inner(frame.snapshot(), Some(&frame), false)
+        self.render_inner(frame, false)
     }
 
     /// [`Self::render_frame`] for ordinary display frames. With temporal
@@ -448,7 +440,7 @@ impl Renderer {
     /// jitter and blend with the reprojected output of the previous display
     /// frame (decision 017). Any other frame ends that history.
     pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
-        self.render_inner(frame.snapshot(), Some(&frame), true)
+        self.render_inner(frame, true)
     }
 
     /// Enables temporal antialiasing of GPU-presented display frames, creating
@@ -559,12 +551,6 @@ impl Renderer {
     #[cfg(feature = "profiling")]
     pub fn profile_report(&mut self) -> serde_json::Value {
         self.profiler.report()
-    }
-
-    /// Whether this immutable handle currently has GPU buffers. This observes
-    /// residency, not completion of submitted GPU work, and never waits/readbacks.
-    pub fn is_mesh_resident(&self, handle: MeshHandle) -> bool {
-        self.meshes.contains_key(&handle)
     }
 
     /// Whether this immutable texture currently has uploaded GPU storage.

@@ -43,11 +43,12 @@ and sub-app execution are not implicit extension points in this milestone.
    commands. `FrameTime` supplies frame deltas for camera movement and one-time
    pointer input. The host owns clearing or replacing frame input deltas.
    Transform propagation follows presentation, including frames with no fixed tick.
-5. `Engine::extract(aspect, &mut snapshot)` culls mesh bounds and copies owned
-   instance data. Each source used by emitted or culled instances is retained
-   once through `Arc`; the caller then submits this to the
-   renderer. It first refreshes derived transforms to include paused direct edits.
-   No world borrow survives extraction.
+5. `Engine::extract_frame(aspect, mode)` culls mesh bounds and lends the
+   renderer a `RenderFrame` of stable slots (`extract_gpu_frame` leaves culling
+   to the GPU). It first refreshes derived transforms to include paused direct
+   edits. `Engine::extract(aspect, &mut snapshot)` copies such a frame into an
+   owned `RenderSnapshot` that no world borrow outlives; each source used by
+   emitted or culled instances is retained once through `Arc`.
 
 Fixed simulation defaults to 60 Hz and at most five ticks per frame. Excess
 whole ticks are discarded while the fractional remainder survives. A frame report
@@ -89,9 +90,9 @@ default ([decision 029](../../docs/adr-029-budgets-and-device-limits.md));
 `max_render_instances` sets one, and zero emits no instances while counters and
 retention of culled sources still run.
 Visible overflow is counted in `RenderSnapshot::dropped_instances`.
-Extraction queries cache ECS metadata, copy only up to the instance budget, and
-reuse snapshot vectors and private asset-deduplication sets. Ordering follows ECS iteration and is
-not a persistent priority guarantee. Snapshot storage belongs to its caller;
+Extraction queries cache ECS metadata and reuse the frame's slot storage; owned
+snapshots reuse their vectors. Ordering follows ECS iteration and is not a
+persistent priority guarantee. Snapshot storage belongs to its caller;
 CPU-to-GPU conversion and upload storage belong to the renderer.
 
 The ordinary browser path uses `Engine::extract_frame(aspect, mode)`, returning a
@@ -112,8 +113,11 @@ and 16-byte colors have separate update streams, while grouped 4-byte slot IDs
 select draws. Visibility, grouping and source metadata changes do not require
 rewriting unchanged colors. Retained slot capacity includes inactive entries;
 only `visible_indices().len()` is the submitted instance count.
-The public owned-snapshot methods remain valid for independent snapshots that
-must outlive later world edits. See [decision 013](../../docs/adr-013-canonical-poses-and-retained-rendering.md).
+Renderers draw frames only. `Engine::extract` copies a CPU-prepared frame into an
+owned snapshot for consumers that must outlive later world edits, such as
+inspection and tests: its instances are the visible slots with their displayed
+models, and its local lights are in world space. See
+[decision 013](../../docs/adr-013-canonical-poses-and-retained-rendering.md).
 
 `Engine::extract_gpu_frame(aspect, alpha)` prepares an interpolated frame for
 GPU presentation ([decision 014](../../docs/adr-014-gpu-presentation-and-culling.md)).
@@ -309,15 +313,13 @@ A world-space interior test first accepts boxes proven strictly inside all six
 planes; only intersecting or unproven boxes need the transformed-plane test.
 Decisions are identical to the transformed-plane test alone.
 
-Extraction retains visibility results for its valid input rows.
-Exact model bits and immutable mesh handles reuse a result only while the camera
-matrix and culling mode match. Query reordering or entity replacement is safe:
-reuse depends on equal geometric inputs, not entity identity. Asset lookups still
-run before reuse, so removed dependencies cannot remain visible from the cache.
-Output snapshots are rebuilt as owned data, including when a caller changes or
-replaces its previous snapshot. The cache holds weak handles and matrix bits,
-adds one entry record per input row, and retains capacity after removals. Profiling
-reports its capacity and the number of culling tests performed/reused.
+Frames retain each slot's culling result and test it again only when the camera
+matrix or culling mode, the slot's pose or its source changes; asset changes
+resolve every slot's source again, so removed dependencies cannot stay visible.
+Meshes with joints ([decision 036](../../docs/adr-036-skinning.md)) never cull
+on the CPU, since their joints place their vertices; GPU-presented frames cull
+them by their palettes' bounds. Profiling reports the culling tests performed,
+proven interior and reused.
 
 The support test uses a conservative margin of 32 f32 epsilons times a bound on
 absolute model/projection products, with an absolute floor. Geometry or matrix

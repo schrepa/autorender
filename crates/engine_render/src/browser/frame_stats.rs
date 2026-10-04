@@ -16,7 +16,7 @@ impl Renderer {
             instance_count,
             ..
         } = state.kind;
-        let (snapshot, retained) = (state.snapshot, state.retained);
+        let (snapshot, frame) = (state.snapshot, state.frame);
         let (virtual_frame, resolving) = (state.virtual_frame, state.resolving);
         let (shadow_draws, probe_faces) = (report.shadow_draws, report.probe_faces);
         let features = &state.features;
@@ -67,13 +67,11 @@ impl Renderer {
                 + texture_upload_bytes,
             // GPU-culled frames report the latest read-back visible count
             // within the budget the GPU applied.
-            instances: match (retained, gpu_visible) {
-                (Some(frame), Some(visible)) if gpu_mode => {
+            instances: match gpu_visible {
+                Some(visible) if gpu_mode => {
                     visible.min(frame.instance_budget().min(u32::MAX as usize) as u32)
                 }
-                (Some(frame), None) if gpu_mode => {
-                    instance_count.min(frame.instance_budget()) as u32
-                }
+                None if gpu_mode => instance_count.min(frame.instance_budget()) as u32,
                 _ => instance_count as u32,
             },
             gpu_visible,
@@ -198,7 +196,6 @@ impl Renderer {
         virtual_stats: Option<crate::virtual_geometry::VirtualStats>,
     ) {
         let FrameKind {
-            affine,
             gpu_mode,
             instance_count,
             ..
@@ -242,7 +239,6 @@ impl Renderer {
             engine_profile::counter("render.pose_write_bytes", pose_upload_bytes as f64);
             engine_profile::counter("render.color_write_bytes", color_upload_bytes as f64);
             engine_profile::counter("render.instance_id_write_bytes", slot_upload_bytes as f64);
-            engine_profile::counter("render.retained_frame", f64::from(u8::from(affine)));
             engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
             engine_profile::counter("render.taa", f64::from(u8::from(temporal_frame.is_some())));
             engine_profile::counter(
@@ -470,13 +466,11 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.render_upload_range_bytes",
-                (UploadCache::range_scratch_bytes() + RetainedUploads::range_scratch_bytes())
-                    as f64,
+                RetainedUploads::range_scratch_bytes() as f64,
             );
             engine_profile::counter(
                 "memory.render_staging_capacity_bytes",
-                (self.instances.staging.capacity() * size_of::<InstanceData>()
-                    + self.instances.color_staging.capacity() * size_of::<ColorData>()
+                (self.instances.color_staging.capacity() * size_of::<ColorData>()
                     + self.instances.slot_staging.capacity() * size_of::<u32>()
                     + self.vertex_staging.capacity() * size_of::<Vertex>()) as f64,
             );
@@ -486,12 +480,7 @@ impl Renderer {
             );
             engine_profile::counter(
                 "memory.gpu_instance_buffer_bytes",
-                (self.instances.capacity
-                    * if affine {
-                        size_of::<PoseData>() + size_of::<ColorData>()
-                    } else {
-                        size_of::<InstanceData>()
-                    }
+                (self.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
                     + self.instances.slot_capacity * size_of::<u32>()) as f64,
             );
             engine_profile::counter("render.upload_bytes", stats.upload_bytes as f64);

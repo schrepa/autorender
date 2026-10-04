@@ -28,8 +28,9 @@ jittered on temporally antialiased frames.
 Every triangle of such an instance lies within its bounds, so it could
 produce no fragment: output stays pixel-identical. Undrawn instances still
 count as visible, cast shadows and take part in occlusion culling's next
-frame (decision 040) as before. CPU-presented frames, public snapshots and
-frames with an instance budget draw them, as before.
+frame (decision 040) as before. CPU-presented frames and frames with an
+instance budget draw them, as before (as did public snapshots until
+2026-10-03).
 
 ## Observable behavior
 

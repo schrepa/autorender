@@ -151,8 +151,8 @@ reports slot owner/frame-state, visit-mask, query-hint, visibility-index,
 free-slot, change-stamp and pose-row Vec capacities; it excludes HashMap/source-pool
 and allocator overhead. `extraction.instance_capacity_bytes` reports the retained
 `RenderInstance` Vec capacity, including inactive slots, not visible instance
-count. Public owned snapshots remain available; distinguish their extraction
-path from retained frames when comparing work. See
+count. `Engine::extract` copies a CPU-prepared frame into an owned snapshot,
+work on top of the frame's own extraction. See
 [decision 013](adr-013-canonical-poses-and-retained-rendering.md).
 
 On the retained path, GPU storage uses core slot indices: each affine pose is
@@ -173,8 +173,7 @@ finished the frame that copied from it, a few frames later when the GPU limits
 the frame rate). Queue-write time moves between browsers
 with this path: Firefox copies large `writeBuffer` calls through new shared
 memory, while Chrome's `writeBuffer` is already cheap.
-`render.retained_frame` distinguishes this path from public snapshots' validated
-80-byte instance records. Visibility or metadata changes can rebuild grouping
+Visibility or metadata changes can rebuild grouping
 and the ID stream without rewriting unchanged colors. Slot capacity, including
 inactive entries, can exceed the submitted count.
 
@@ -342,8 +341,7 @@ accepted by the cheap interior proof; the remaining tests ran the transformed-pl
 support test. `render.instances_repacked` counts staging
 records rewritten; `render.camera_write_bytes` and `render.instance_write_bytes`
 report actual queue writes. `render.instance_write_ranges` counts instance queue
-calls. Public snapshots allow at most 32 ranges; retained frames allow at most
-32 pose ranges, 32 color ranges and one ID-stream write.
+calls: at most 32 pose ranges, 32 color ranges and one ID-stream write.
 `render.instance_full_upload` identifies full channel writes, and
 `render.instance_upload_fallback` identifies fragmentation/density/call-cost
 fallbacks. Fresh buffers, changed stored-slot counts and uncommitted retries force
@@ -352,8 +350,8 @@ only visible membership does not change the stored-slot count. Group rebuilds
 use `batch_instance_group`
 instead of the old `batch_instance_sort` scope; source order is stable within each
 mesh/texture group. An unchanged rendered frame can report zero upload bytes
-while continuing to issue draws. Visibility and batch cache capacities appear in
-memory counters; upload reuse retains the existing staging vector.
+while continuing to issue draws. Batch plan capacities appear in memory
+counters, and color staging keeps its vector.
 `memory.render_upload_range_bytes` is included in `memory.render_upload_cache_bytes`,
 and `memory.batch_group_scratch_bytes` is included in `memory.batch_plan_capacity_bytes`.
 These counters distinguish work avoided from work merely moved into input scans.

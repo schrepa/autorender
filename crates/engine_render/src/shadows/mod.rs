@@ -9,9 +9,9 @@
 //! holds every other caster and is redrawn every frame. One compute pass
 //! selects each map's casters from every candidate, visible or culled, into
 //! indirect draws per mesh; on GPU-presented frames it also keeps each
-//! slot's stillness and marks dirty tiles, read back a few frames later. CPU-prepared frames draw
-//! every caster into the moving map and leave the kept map unread; public
-//! snapshots draw their instances without selection. Casters with virtual
+//! slot's stillness and marks dirty tiles, read back a few frames later.
+//! CPU-prepared frames draw every caster into the moving map and leave the
+//! kept map unread. Casters with virtual
 //! geometry (decision 044) are selected into the maps drawn every frame,
 //! whose clusters virtual geometry selects and draws after its own
 //! selection: [`ShadowPass::encode_selection`], then
@@ -87,10 +87,8 @@ pub(crate) struct VirtualShadowView {
 enum Source {
     /// GPU presentation's candidates, batches and flags.
     Presented,
-    /// Every caster of a CPU-prepared retained frame.
+    /// Every caster of a CPU-prepared frame.
     Listed,
-    /// The instances of a public snapshot, drawn from the instance buffer.
-    Snapshot,
 }
 
 /// Inputs of GPU-presented frames' selection, from GPU presentation.
@@ -141,32 +139,30 @@ impl CasterDraw {
 }
 
 /// What a frame's shadows select from: its snapshot, GPU presentation's
-/// buffers on GPU-presented frames, the pose storage of retained frames and
-/// the slots it holds, the mesh arena layout (decision 046) and each mesh's
-/// placement in it.
+/// buffers on GPU-presented frames, the frame's pose storage and the slots
+/// it holds, the mesh arena layout (decision 046) and each mesh's placement
+/// in it.
 pub(crate) struct ShadowInputs<'a> {
     pub snapshot: &'a RenderSnapshot,
     pub presented: Option<Presented<'a>>,
-    pub poses: Option<FramePoses<'a>>,
+    pub poses: FramePoses<'a>,
     pub slot_capacity: usize,
     pub mesh_layout: u64,
     pub placement: &'a dyn Fn(MeshHandle) -> CasterDraw,
 }
 
-/// What depth passes draw: the plan's batches from public snapshots'
-/// `instances`, each mesh's uploaded draw (and whether it is skinned), each
-/// masked material's group, and the clusters of a map's virtual casters
-/// (decision 044), drawn last in its pass, which returns its draws.
+/// What depth passes draw: each mesh's uploaded draw (and whether it is
+/// skinned), each masked material's group, and the clusters of a map's
+/// virtual casters (decision 044), drawn last in its pass, which returns its
+/// draws.
 pub(crate) struct MapSources<'a> {
-    pub plan: &'a BatchPlan,
-    pub instances: &'a wgpu::Buffer,
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
 }
 
-/// A retained caster group as depth passes draw it: its pipeline choice
-/// (masked, skinned), mesh, joints stream, material and group index.
+/// A caster group as depth passes draw it: its pipeline choice (masked,
+/// skinned), mesh, joints stream, material and group index.
 struct Caster<'m> {
     choice: usize,
     draw: MeshDraw<'m>,
@@ -177,7 +173,6 @@ struct Caster<'m> {
 
 /// One frame's shadow work, from [`ShadowPass::prepare`].
 pub(crate) struct ShadowFrame {
-    source: Source,
     candidates: u32,
     // Skinned slots selected by their palette bounds (GPU-presented frames).
     skinned: u32,
@@ -185,7 +180,6 @@ pub(crate) struct ShadowFrame {
     cascades: u32,
     refresh: Option<Refresh>,
     pose_index: usize,
-    read_dirty: bool,
 }
 
 impl ShadowFrame {
@@ -209,9 +203,9 @@ pub(crate) struct ShadowPass {
     // Created with the first frame that has shadows: games without them
     // never compile them.
     pipelines: Option<ShadowPipelines>,
-    // Vertex and instance strides and the texture coordinate offset, and the
-    // material group layout of masked casters.
-    layout: (u64, u64, u64),
+    // Vertex stride and texture coordinate offset, and the material group
+    // layout of masked casters.
+    layout: (u64, u64),
     material_layout: wgpu::BindGroupLayout,
     maps: ShadowMaps,
     kept: KeptMap,
@@ -225,12 +219,12 @@ pub(crate) struct ShadowPass {
 
 impl ShadowPass {
     /// The bindings the main passes read; pipelines follow with the first
-    /// frame that has shadows. `layout`: the renderer's mesh vertex and
-    /// public instance record strides and the texture coordinate offset in
-    /// a vertex; `material_layout`, the mesh material group.
+    /// frame that has shadows. `layout`: the renderer's mesh vertex stride
+    /// and the texture coordinate offset in a vertex; `material_layout`, the
+    /// mesh material group.
     pub(crate) fn new(
         device: &wgpu::Device,
-        layout: (u64, u64, u64),
+        layout: (u64, u64),
         material_layout: &wgpu::BindGroupLayout,
     ) -> Self {
         Self {
@@ -309,21 +303,14 @@ impl ShadowPass {
     }
 
     /// Plans this frame's draw groups, one per mesh: of the plan's batches
-    /// (GPU-presented frames and public snapshots) or of `frame`'s casters
-    /// (CPU-prepared frames). Call before mesh uploads, which must include
-    /// every group's mesh.
-    pub(crate) fn plan_groups(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        plan: &BatchPlan,
-        frame: Option<&RenderFrame<'_>>,
-        gpu: bool,
-    ) {
-        if !snapshot.environment.shadows.enabled {
+    /// (GPU-presented frames) or of `frame`'s casters (CPU-prepared frames).
+    /// Call before mesh uploads, which must include every group's mesh.
+    pub(crate) fn plan_groups(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) {
+        if !frame.snapshot().environment.shadows.enabled {
             self.casters.clear();
             return;
         }
-        if self.casters.plan(snapshot, plan, frame, gpu) {
+        if self.casters.plan(plan, frame, gpu) {
             self.selection.groups_changed();
             if self.casters.source() == Source::Presented {
                 // Removed casters leave their kept shadows: redraw every tile.
@@ -359,12 +346,9 @@ impl ShadowPass {
             return None;
         }
         let source = self.casters.source();
-        let pipelines = self.pipelines.get_or_insert_with(|| {
+        self.pipelines.get_or_insert_with(|| {
             ShadowPipelines::new(device, self.layout, &self.material_layout)
         });
-        if source == Source::Snapshot {
-            pipelines.ensure_full(device, self.layout, &self.material_layout);
-        }
         if self
             .maps
             .ensure(device, settings.resolution, settings.cascades)
@@ -436,80 +420,72 @@ impl ShadowPass {
             (_, Source::Listed) => (self.casters.listed.len() as u32, 0),
             _ => (0, 0),
         };
-        if source != Source::Snapshot {
-            let cull = regions.selection(
-                snapshot,
-                &settings,
-                refresh,
-                classify,
-                SelectionCounts {
-                    candidates,
-                    skinned,
-                    groups: self.casters.groups().len() as u32,
-                    capacity: self.selection.id_capacity as u32,
-                    virtual_geometry: self
-                        .casters
-                        .groups()
-                        .iter()
-                        .any(|group| group.virtual_geometry),
-                },
-                &mut self.virtual_views,
-            );
-            queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
-        }
+        let cull = regions.selection(
+            snapshot,
+            &settings,
+            refresh,
+            classify,
+            SelectionCounts {
+                candidates,
+                skinned,
+                groups: self.casters.groups().len() as u32,
+                capacity: self.selection.id_capacity as u32,
+                virtual_geometry: self
+                    .casters
+                    .groups()
+                    .iter()
+                    .any(|group| group.virtual_geometry),
+            },
+            &mut self.virtual_views,
+        );
+        queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
         self.maps
             .write_uniform(queue, regions.lookup_uniform(&settings, classify));
         // Bindings: poses of this frame, and the selection inputs.
-        if let Some(poses) = poses {
-            if self
-                .pose_groups
-                .as_ref()
-                .is_none_or(|(generation, groups)| {
-                    *generation != poses.generation || groups[poses.parity].is_none()
+        if self
+            .pose_groups
+            .as_ref()
+            .is_none_or(|(generation, groups)| {
+                *generation != poses.generation || groups[poses.parity].is_none()
+            })
+        {
+            let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {
+                buffer.map(|buffer| {
+                    crate::pipelines::group(
+                        device,
+                        "engine/shadow-pose-group",
+                        &SHADOW_POSES,
+                        &pipelines.pose_layout,
+                        &[
+                            entry("slot_poses", buffer),
+                            entry("slot_colors", poses.colors),
+                            entry("slot_palette", palette),
+                        ],
+                    )
                 })
-            {
-                let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {
-                    buffer.map(|buffer| {
-                        crate::pipelines::group(
-                            device,
-                            "engine/shadow-pose-group",
-                            &SHADOW_POSES,
-                            &pipelines.pose_layout,
-                            &[
-                                entry("slot_poses", buffer),
-                                entry("slot_colors", poses.colors),
-                                entry("slot_palette", palette),
-                            ],
-                        )
-                    })
-                };
-                self.pose_groups = Some((
-                    poses.generation,
-                    [
-                        group(poses.buffers[0], poses.palettes[0]),
-                        group(poses.buffers[1], poses.palettes[1]),
-                    ],
-                ));
-            }
-            if source != Source::Snapshot {
-                self.selection.bind(
-                    device,
-                    pipelines,
-                    source,
-                    presented.as_ref(),
-                    poses,
-                    skinned,
-                );
-            }
+            };
+            self.pose_groups = Some((
+                poses.generation,
+                [
+                    group(poses.buffers[0], poses.palettes[0]),
+                    group(poses.buffers[1], poses.palettes[1]),
+                ],
+            ));
         }
-        Some(ShadowFrame {
+        self.selection.bind(
+            device,
+            pipelines,
             source,
+            presented.as_ref(),
+            poses,
+            skinned,
+        );
+        Some(ShadowFrame {
             candidates,
             skinned,
             cascades: regions.near().len() as u32,
             refresh,
-            pose_index: poses.as_ref().map_or(0, |poses| poses.parity),
-            read_dirty: source != Source::Snapshot,
+            pose_index: poses.parity,
         })
     }
 
@@ -551,8 +527,6 @@ impl ShadowPass {
             return 0;
         };
         let MapSources {
-            plan,
-            instances,
             meshes,
             materials,
             virtual_draw,
@@ -569,30 +543,7 @@ impl ShadowPass {
             .pose_groups
             .as_ref()
             .and_then(|(_, groups)| groups[frame.pose_index].as_ref());
-        // Masked groups switch to the masked pipeline and their material.
-        let bind_material = |pass: &mut wgpu::RenderPass<'_>,
-                             masked: &mut bool,
-                             material: Option<MaterialHandle>,
-                             pipelines: [&wgpu::RenderPipeline; 2]| {
-            let group = material.map(materials);
-            if group.is_some() != *masked {
-                *masked = group.is_some();
-                pass.set_pipeline(pipelines[usize::from(*masked)]);
-            }
-            if let Some(Some(group)) = group {
-                pass.set_bind_group(2, group, &[]);
-            }
-            // A masked material without a binding draws nothing.
-            group.is_none_or(|group| group.is_some())
-        };
-        // Plain, masked, skinned and masked skinned retained casters.
-        let selected = [
-            &pipelines.affine,
-            &pipelines.affine_masked,
-            &pipelines.affine_skinned,
-            &pipelines.affine_masked_skinned,
-        ];
-        // Retained casters in pipeline, vertex buffer and material order,
+        // Casters in pipeline, vertex buffer and material order,
         // which passes switch once per run: depth alone is written, so the
         // order changes no texel. Virtual geometry draws its casters'
         // clusters (decision 044), and masked materials without bindings
@@ -636,13 +587,13 @@ impl ShadowPass {
             let Some(pose_group) = pose_group else {
                 return;
             };
-            pass.set_pipeline(&pipelines.affine);
+            pass.set_pipeline(&pipelines.casters[0]);
             pass.set_bind_group(1, pose_group, &[]);
             let mut bound = 0;
             let mut bindings = Bindings::default();
             for caster in &casters {
                 if caster.choice != bound {
-                    pass.set_pipeline(selected[caster.choice]);
+                    pass.set_pipeline(&pipelines.casters[caster.choice]);
                     bound = caster.choice;
                 }
                 if let Some(material) = caster.material {
@@ -667,36 +618,6 @@ impl ShadowPass {
                 draws.set(draws.get() + 1);
             }
             draws.set(draws.get() + virtual_draw(pass, map));
-        };
-        let draw_snapshot = |pass: &mut wgpu::RenderPass<'_>| {
-            let full = pipelines
-                .full
-                .as_ref()
-                .expect("prepared for snapshot frames");
-            pass.set_pipeline(&full[0]);
-            pass.set_vertex_buffer(1, instances.slice(..));
-            let mut masked = false;
-            let mut bindings = Bindings::default();
-            for (index, batch) in plan.batches.iter().enumerate() {
-                // Transparent surfaces cast no shadow (decision 026).
-                let Some(group) = self.casters.group_of_batch(index) else {
-                    continue;
-                };
-                let Some((draw, _)) = meshes(batch.mesh) else {
-                    continue;
-                };
-                if !bind_material(pass, &mut masked, group.material, [&full[0], &full[1]]) {
-                    continue;
-                }
-                bindings.vertex(pass, 0, draw.vertices);
-                bindings.index(pass, draw.indices);
-                pass.draw_indexed(
-                    draw.index_range(),
-                    draw.base_vertex,
-                    batch.instances.clone(),
-                );
-                draws.set(draws.get() + 1);
-            }
         };
         // Profiled frames time the near cascades together, the moving map and
         // the kept map.
@@ -724,11 +645,7 @@ impl ShadowPass {
         for (map, view, offset) in cascades.chain([(MOVING_MAP, &maps.moving, FAR_VIEW)]) {
             let mut pass = map_pass(encoder, view, wgpu::LoadOp::Clear(1.0), writes(map));
             pass.set_bind_group(0, &pipelines.view_group, &[offset as u32]);
-            if frame.source == Source::Snapshot {
-                draw_snapshot(&mut pass);
-            } else {
-                draw_selected(&mut pass, map);
-            }
+            draw_selected(&mut pass, map);
         }
         if let Some(refresh) = frame.refresh {
             let whole = refresh == Refresh::Whole;

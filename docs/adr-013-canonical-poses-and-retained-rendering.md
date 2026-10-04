@@ -144,6 +144,16 @@ remain renderer-owned. Public snapshots retain their validated 80-byte instance
 upload path; the compact affine representation is reserved for trusted core
 frames.
 
+Update (2026-10-03): no browser path drew owned snapshots, so the renderer
+stopped accepting them. `extract` and `extract_with_presentation` now copy a
+CPU-prepared frame: its visible slots with their displayed models, its joints,
+decals, emitters and probes, and its local lights in world space. Meshes with
+joints therefore never cull in owned snapshots, as in CPU-prepared frames. The 80-byte instance
+records, their exact-byte upload cache, their vertex entry points, the
+full-matrix shadow casters and core's separate owned extraction pass and
+visibility cache were removed. Slot storage is now bounded by what one storage
+binding holds of 48-byte poses rather than of 80-byte records.
+
 [Decision 014](adr-014-gpu-presentation-and-culling.md) adds GPU-presented
 retained frames for ordinary interpolated browser rendering. They keep these
 slots, colors and pose storage, but list every candidate, leave `model()` and
