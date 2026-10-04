@@ -150,9 +150,12 @@ impl<T> Storage<T> {
 pub struct AssetLibrary {
     id: u64,
     revision: u64,
+    // Advances with every material replacement; each material keeps the
+    // value of its last one (0 until replaced).
+    material_revision: u64,
     budget: AssetBudget,
     meshes: Storage<Arc<Mesh>>,
-    materials: Storage<Material>,
+    materials: Storage<(Material, u64)>,
     textures: Storage<Arc<Texture>>,
     clips: Storage<Arc<AnimationClip>>,
     resident_bytes: usize,
@@ -187,6 +190,7 @@ impl AssetLibrary {
         Self {
             id,
             revision: 0,
+            material_revision: 0,
             budget,
             meshes: Storage::default(),
             materials: Storage::default(),
@@ -220,14 +224,18 @@ impl AssetLibrary {
             });
         }
         self.reserve_bytes(size_of::<Material>())?;
-        Ok(MaterialHandle(self.materials.insert(self.id, material)))
+        Ok(MaterialHandle(
+            self.materials.insert(self.id, (material, 0)),
+        ))
     }
 
     /// Replaces live material `handle` in place, keeping the handle
     /// (decision 033): objects using it draw with `material` from their next
-    /// extraction. Its textures must be live in this library. Renderers
-    /// re-resolve every object when a library changes, so prefer per-object
-    /// tints (`engine_core::Tint`) for frequent color changes.
+    /// extraction. Its textures must be live in this library. This advances
+    /// [`Self::material_revision`] and the material's
+    /// [`Self::material_version`], not [`Self::revision`]: renderers
+    /// re-resolve only the objects using it. Prefer per-object tints
+    /// (`engine_core::Tint`) for frequent color changes.
     pub fn replace_material(
         &mut self,
         handle: MaterialHandle,
@@ -243,8 +251,8 @@ impl AssetLibrary {
             .materials
             .get_mut(self.id, handle.0)
             .ok_or(AssetError::InvalidMaterialHandle)?;
-        *slot = material;
-        self.revision = self.revision.saturating_add(1);
+        self.material_revision = self.material_revision.saturating_add(1);
+        *slot = (material, self.material_revision);
         Ok(())
     }
 
@@ -289,15 +297,34 @@ impl AssetLibrary {
         self.meshes.get(self.id, handle.0)
     }
 
-    /// Opaque library identity and successful mutation revision. Immutable
-    /// asset lookups may be retained until this token changes. An exhausted
-    /// revision (`u64::MAX`) must always be treated as uncacheable.
+    /// Opaque library identity and successful mutation revision: insertions
+    /// and removals. Asset lookups may be retained until this token changes,
+    /// material contents only while [`Self::material_revision`] stands too.
+    /// An exhausted revision (`u64::MAX`) must always be treated as
+    /// uncacheable.
     pub fn revision(&self) -> (u64, u64) {
         (self.id, self.revision)
     }
 
+    /// Advances with every [`Self::replace_material`]: compare each retained
+    /// material's [`Self::material_version`] to find the replaced ones. An
+    /// exhausted value (`u64::MAX`) must always be treated as uncacheable.
+    pub fn material_revision(&self) -> u64 {
+        self.material_revision
+    }
+
     pub fn material(&self, handle: MaterialHandle) -> Option<&Material> {
-        self.materials.get(self.id, handle.0)
+        self.materials
+            .get(self.id, handle.0)
+            .map(|(material, _)| material)
+    }
+
+    /// The [`Self::material_revision`] of live material `handle`'s last
+    /// replacement, 0 until replaced.
+    pub fn material_version(&self, handle: MaterialHandle) -> Option<u64> {
+        self.materials
+            .get(self.id, handle.0)
+            .map(|&(_, version)| version)
     }
 
     pub fn texture(&self, handle: TextureHandle) -> Option<&Arc<Texture>> {

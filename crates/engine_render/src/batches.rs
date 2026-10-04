@@ -38,7 +38,7 @@ impl Hasher for KeyHasher {
 /// Draw group keys to their compact IDs.
 type GroupIds = HashMap<u64, u32, BuildHasherDefault<KeyHasher>>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
@@ -137,6 +137,11 @@ impl fmt::Display for SnapshotError {
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
     pub batches: Vec<DrawBatch>,
+    // The previous rebuild's order and batches, and a generation that
+    // advances when a rebuild changes them.
+    previous_order: Vec<usize>,
+    previous_batches: Vec<DrawBatch>,
+    generation: u64,
     source_indices: Vec<usize>,
     material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
@@ -258,7 +263,13 @@ impl BatchPlan {
         }
     }
 
+    /// Advances whenever the draw order or batches change.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
+
     fn invalidate(&mut self) {
+        self.generation += 1;
         self.valid = false;
         self.order_reused = false;
         self.retained_structure = None;
@@ -386,7 +397,12 @@ impl BatchPlan {
         self.used_material_sources.clear();
         self.used_material_sources
             .resize(snapshot.materials.len(), false);
+        std::mem::swap(&mut self.ordered_instances, &mut self.previous_order);
+        std::mem::swap(&mut self.batches, &mut self.previous_batches);
         self.group_instances(snapshot, selected)?;
+        if self.ordered_instances != self.previous_order || self.batches != self.previous_batches {
+            self.generation += 1;
+        }
         // Textures of the used materials.
         self.used_texture_sources.clear();
         self.used_texture_sources
