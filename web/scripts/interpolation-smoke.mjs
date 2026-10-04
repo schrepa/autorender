@@ -1,17 +1,10 @@
 /** Real Chrome interpolation contracts. The disposable scene exists only in routed responses. */
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { createHash } from "node:crypto";
+import { artifacts, commander, devUrl, differentPixels, launch, near, openPaused, routedScene } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
-const url = new URL("playground.html", base);
-url.searchParams.set("engine_dev", "1");
-if (process.env.ENGINE_BUILD) url.searchParams.set("engine_build", process.env.ENGINE_BUILD);
-const output = fileURLToPath(new URL(`../../artifacts/interpolation-smoke-${randomUUID()}/`, import.meta.url));
+const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
+const output = await artifacts("interpolation-smoke");
 const camera = { position: [1.3, 0.8, 2.4], target: [0, 0.3, 0], vertical_fov_radians: Math.PI / 3, near: 0.1, far: 30 };
 const fixture = {
   version: 4, id: "interpolation-fixture", revision: 1,
@@ -24,44 +17,22 @@ const fixture = {
     { id: "floor", transform: { translation: [0, -0.5, 0] }, collider: { shape: { kind: "cuboid", half_extents: [500, 0.5, 500] }, memberships: 1, filter: 2, sensor: false } },
   ],
 };
-let served = structuredClone(fixture), revision = fixture.revision;
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true, args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(20_000);
-const errors = [], checks = [];
+const { browser, page, errors } = await launch({ timeout: 20_000 });
+const checks = [];
 const bindingUrls = new Set();
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
+const scene = routedScene(page, fixture);
 page.on("response", response => {
   if (response.request().resourceType() === "script" && new URL(response.url()).pathname.endsWith("/playground.js")) bindingUrls.add(response.url());
 });
 let suiteTimer;
 
-async function command(op, fields = {}, expectedOk = true) {
-  let timer;
-  try {
-    const reply = await Promise.race([
-      page.evaluate(command => window.__engineDev.request(command), { op, ...fields }),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${op} timed out; its mutation was not retried`)), 10_000); }),
-    ]);
-    assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-    return reply;
-  } finally { clearTimeout(timer); }
-}
+// The page has stalled in native WebGPU on some runs: a command that does
+// not answer within ten seconds fails rather than hangs the suite.
+const command = commander(page, { deadline: 10_000 });
 
 async function inspect(id, component) {
   const reply = await command("inspect", { entity: id, component });
   return reply.result.entity.components[component];
-}
-
-function near(actual, expected, message, epsilon = 0.00005) {
-  assert.equal(actual?.length, expected.length, message);
-  actual.forEach((value, index) => assert.ok(Number.isFinite(value) && Math.abs(value - expected[index]) <= epsilon,
-    `${message}[${index}]: ${value} != ${expected[index]}`));
 }
 
 async function authority() {
@@ -93,11 +64,7 @@ function presentation(reply, mode, alpha) {
 }
 
 async function reload(document) {
-  served = structuredClone(document);
-  served.revision = revision + 1;
-  const reply = await command("reload", { expected_revision: String(revision), revision: String(served.revision) });
-  revision = served.revision;
-  assert.equal(reply.observation.scene.revision, String(revision));
+  const reply = await scene.reload(command, document);
   assert.equal(reply.result.rendering.invalid_transforms, 0);
   presentation(reply, "current", 1);
   return reply;
@@ -126,38 +93,12 @@ async function capture(name, alpha) {
   return { png: bytes.toString("base64"), hash: createHash("sha256").update(bytes).digest("hex"), reply };
 }
 
-async function changedPixels(first, second) {
-  return page.evaluate(async images => {
-    const pixels = await Promise.all(images.map(async png => {
-      const image = new Image(); image.src = `data:image/png;base64,${png}`; await image.decode();
-      const canvas = document.createElement("canvas"); canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d"); context.drawImage(image, 0, 0);
-      return context.getImageData(0, 0, image.width, image.height);
-    }));
-    if (pixels[0].width !== pixels[1].width || pixels[0].height !== pixels[1].height) throw new Error("Canvas dimensions changed");
-    let changed = 0;
-    for (let offset = 0; offset < pixels[0].data.length; offset += 4) {
-      if ([0, 1, 2, 3].some(channel => pixels[0].data[offset + channel] !== pixels[1].data[offset + channel])) changed++;
-    }
-    return changed;
-  }, [first.png, second.png]);
-}
+const changedPixels = async (first, second) => (await differentPixels(page, [first.png, second.png], { alpha: true })).changed;
 
 try {
   suiteTimer = setTimeout(() => { void browser.close(); }, 120_000);
-  await page.route("**/scenes/playground.scene.json", route => route.fulfill({ json: served }));
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 30_000 });
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));
-    // This rejection occurs before dispatch; uncertain mutations are never retried.
-    if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
-    assert.equal(reply.ok, true, JSON.stringify(reply));
-    assert.equal(reply.observation.tick, "0");
-    break;
-  }
-  await mkdir(output, { recursive: true });
+  await scene.route();
+  assert.equal((await openPaused(page, url, { timeout: 30_000 })).observation.tick, "0");
   assert.equal(bindingUrls.size, 1, "The ordinary-frame check must use the exact loaded game bindings.");
   const ordinaryFrames = await page.evaluate(async ({ moduleUrl, fixture }) => {
     const { PlaygroundGame, SceneFileSet } = await import(moduleUrl);
@@ -285,10 +226,11 @@ try {
   }
   assert.ok(history.every(value => ["history_nodes", "history_capacity", "history_bytes", "presentation_scratch_bytes"].every(field => value[field] === history[0][field])), "Repeated replacements must not grow retained presentation storage.");
   const preserved = await authority(), preservedPreview = await inspect("player", "PresentedTransform");
-  served = structuredClone(fixture); served.revision = revision + 1; served.entities[1].parent = "missing";
-  const rejected = await command("reload", { expected_revision: String(revision), revision: String(served.revision) }, false);
+  const orphaned = structuredClone(fixture); orphaned.revision = scene.revision + 1; orphaned.entities[1].parent = "missing";
+  scene.serve(orphaned);
+  const rejected = await command("reload", { expected_revision: String(scene.revision), revision: String(orphaned.revision) }, false);
   assert.equal(rejected.error.code, "unknown_parent");
-  assert.equal(rejected.observation.scene.revision, String(revision));
+  assert.equal(rejected.observation.scene.revision, String(scene.revision));
   assert.deepEqual(await authority(), preserved);
   assert.deepEqual(await inspect("player", "PresentedTransform"), preservedPreview);
   checks.push("reload_resets_history", "repeated_reload_bounded_storage", "rejected_reload_preserves_preview");

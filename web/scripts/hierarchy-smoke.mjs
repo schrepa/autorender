@@ -1,59 +1,23 @@
 /** Real browser hierarchy/prefab checks. All scene changes stay in routed responses. */
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { createHash } from "node:crypto";
+import {
+  artifacts, base, commander, devUrl, launch, near as nearly, openPaused, residency, routedScene,
+} from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
-const url = new URL("playground.html", base);
-url.searchParams.set("engine_dev", "1");
+const url = devUrl("playground.html");
 const sourceUrl = new URL("scenes/playground.scene.json", base);
-const output = fileURLToPath(new URL(`../../artifacts/hierarchy-smoke-${randomUUID()}/`, import.meta.url));
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH
-    ? { executablePath: resolve(process.env.BROWSER_PATH) }
-    : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(30_000);
-const errors = [];
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
-
-async function command(op, fields = {}, expectedOk = true) {
-  const reply = await page.evaluate(command => window.__engineDev.request(command), { op, ...fields });
-  assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-  return reply;
-}
+const output = await artifacts("hierarchy-smoke");
+const { browser, page, errors } = await launch({ width: 1440, height: 1000 });
+const command = commander(page);
 
 async function inspect(id, component) {
   const reply = await command("inspect", { entity: id, component });
   return reply.result.entity.components[component];
 }
 
-function residency(reply) {
-  const { result } = reply;
-  return {
-    meshes: result.meshes, materials: result.materials, textures: result.textures,
-    cpu: result.resident_cpu_bytes, textureCpu: result.texture_cpu_bytes,
-    gpuMeshes: result.rendering.resident_meshes, meshGpu: result.rendering.resident_mesh_bytes,
-    gpuTextures: result.rendering.resident_textures, textureGpu: result.rendering.resident_texture_bytes,
-  };
-}
-
-function near(actual, expected, message, epsilon = 0.0002) {
-  assert.equal(actual.length, expected.length, message);
-  actual.forEach((value, index) => {
-    assert.ok(Number.isFinite(value) && Math.abs(value - expected[index]) <= epsilon,
-      `${message}[${index}]: ${value} != ${expected[index]}`);
-  });
-}
+// Matrices compose here in JavaScript doubles: allow a little more.
+const near = (actual, expected, message) => nearly(actual, expected, message, 0.0002);
 
 function localMatrix({ translation: [tx, ty, tz], rotation: [x, y, z, w], scale: [sx, sy, sz] }) {
   // Independent column-major TRS composition from the public quaternion view.
@@ -102,27 +66,11 @@ try {
   // with a nonuniform placement scale must retain shear in the complete matrix.
   const tilted = prefab.entities.find(entity => entity.id === "lantern");
   tilted.transform = { ...tilted.transform, rotation_degrees: [17, 31, -9] };
-  let served = fixture;
-  let activeRevision = fixture.revision;
-  await page.route("**/scenes/playground.scene.json", route => route.fulfill({ json: served }));
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 60_000 });
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));
-    // This response rejects before dispatch, so only this startup rejection is retried.
-    if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
-    assert.equal(reply.ok, true, JSON.stringify(reply).slice(0, 4000));
-    assert.equal(reply.result.paused, true);
-    break;
-  }
-  await mkdir(output, { recursive: true });
+  const scene = routedScene(page, fixture);
+  await scene.route();
+  assert.equal((await openPaused(page, url)).result.paused, true);
   async function reload(document) {
-    served = structuredClone(document);
-    served.revision = activeRevision + 1;
-    const reply = await command("reload", { expected_revision: String(activeRevision), revision: String(served.revision) });
-    activeRevision = served.revision;
-    assert.equal(reply.observation.scene.revision, String(activeRevision));
+    const reply = await scene.reload(command, document);
     assert.equal(reply.result.rendering.invalid_transforms, 0);
     return reply;
   }
@@ -192,13 +140,14 @@ try {
   const progress = (await command("inspect", { component: "GameProgress" })).result.value;
   const invalid = [];
   for (const kind of ["cycle", "missing_parent", "qualified_id_collision"]) {
-    served = structuredClone(fixture);
-    served.revision = activeRevision + 1;
-    if (kind === "cycle") served.entities.find(entity => entity.id === "west-lantern").parent = "west-lantern.lantern";
-    if (kind === "missing_parent") served.entities.find(entity => entity.id === "player-accessory").parent = "absent-parent";
-    if (kind === "qualified_id_collision") served.entities.push({ id: "west-lantern.lantern" });
-    const failed = await command("reload", { expected_revision: String(activeRevision), revision: String(served.revision) }, false);
-    assert.equal(failed.observation.scene.revision, String(activeRevision));
+    const broken = structuredClone(fixture);
+    broken.revision = scene.revision + 1;
+    if (kind === "cycle") broken.entities.find(entity => entity.id === "west-lantern").parent = "west-lantern.lantern";
+    if (kind === "missing_parent") broken.entities.find(entity => entity.id === "player-accessory").parent = "absent-parent";
+    if (kind === "qualified_id_collision") broken.entities.push({ id: "west-lantern.lantern" });
+    scene.serve(broken);
+    const failed = await command("reload", { expected_revision: String(scene.revision), revision: String(broken.revision) }, false);
+    assert.equal(failed.observation.scene.revision, String(scene.revision));
     assert.equal(failed.observation.tick, playerState.observation.tick);
     assert.equal(failed.error.code, { cycle: "hierarchy_cycle", missing_parent: "unknown_parent", qualified_id_collision: "duplicate_id" }[kind]);
     assert.ok(failed.error.path.startsWith("$"));

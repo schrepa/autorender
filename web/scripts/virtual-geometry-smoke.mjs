@@ -1,13 +1,10 @@
 /** Virtual geometry (decision 044) in the Stress Lab's dense scene, in real Chrome. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { access, mkdir, readFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { access, readFile, stat } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
 const denseFiles = fileURLToPath(new URL("../public/stress/dense/manifest.json", import.meta.url));
 try {
   await access(denseFiles);
@@ -25,22 +22,9 @@ const cameras = [
   { label: "street", position: [6, 2.2, 14], target: [-4, 1.4, -6] },
   { label: "ground", position: [-20, 1.2, -30], target: [40, 0.5, -80] },
 ];
-const url = new URL("stress.html", base);
-url.searchParams.set("engine_dev", "1");
-url.searchParams.set("config", JSON.stringify(config));
-const output = fileURLToPath(new URL(`../../artifacts/virtual-geometry-smoke-${randomUUID()}/`, import.meta.url));
-await mkdir(output, { recursive: true });
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(180_000);
-const errors = [];
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
+const url = devUrl("stress.html", { config });
+const output = await artifacts("virtual-geometry-smoke");
+const { browser, page, errors } = await launch({ timeout: 180_000 });
 // Bytes of virtual mesh files fetched: prefixes at load, pages as views
 // stream them.
 let fetchedBytes = 0;
@@ -54,14 +38,7 @@ const manifest = JSON.parse(await readFile(denseFiles, "utf8"));
 let fileBytes = 0;
 for (const name of manifest.meshes) fileBytes += (await stat(new URL(name, pathToFileURL(denseFiles)))).size;
 
-async function command(op, fields = {}, expectedOk = true) {
-  for (;;) {
-    const reply = await page.evaluate(command => window.__engineDev.request(command), { op, ...fields });
-    if (reply?.error?.code === "command_busy") { await delay(50); continue; }
-    assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-    return reply;
-  }
-}
+const command = commander(page);
 
 // Frames of `gpu` presentation until streaming settles, and the last one's
 // rendering counters. Counts are read back a few frames late, so they must
@@ -91,36 +68,9 @@ async function capture(name, gpu, budget = false) {
   return { rendering: reply.result.rendering, png: bytes.toString("base64") };
 }
 
-// Pixels whose largest channel difference exceeds the tolerance.
-async function differentPixels(images, tolerance) {
-  return page.evaluate(async ({ images, tolerance }) => {
-    const pixels = await Promise.all(images.map(async png => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${png}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      return context.getImageData(0, 0, image.width, image.height);
-    }));
-    let changed = 0;
-    for (let offset = 0; offset < pixels[0].data.length; offset += 4) {
-      if ([0, 1, 2].some(channel => Math.abs(pixels[0].data[offset + channel] - pixels[1].data[offset + channel]) > tolerance)) changed++;
-    }
-    return { changed, total: pixels[0].width * pixels[0].height };
-  }, { images, tolerance });
-}
 
 try {
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 120_000 });
-  for (let attempt = 0; ; attempt++) {
-    const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));
-    if (reply.ok) break;
-    assert.ok(attempt < 200, `pause: ${JSON.stringify(reply)}`);
-    await delay(100);
-  }
+  await openPaused(page, url, { timeout: 120_000 });
 
   // The page loaded only the files' prefixes; views stream the rest.
   const loadedBytes = await fetched();
@@ -140,7 +90,7 @@ try {
     // references draw every selected cluster: both show the same pixels.
     const cpu = await capture(`${camera.label}-cpu`, false);
     const gpu = await capture(`${camera.label}-gpu`, true);
-    const pixels = await differentPixels([cpu.png, gpu.png], 8);
+    const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
     // Both resolve through the visibility buffer (decision 045); shading as
     // clusters draw instead shows the same surfaces.
@@ -149,7 +99,7 @@ try {
     const forward = await capture(`${camera.label}-forward`, true);
     await command("environment", { virtual_geometry: { visibility_buffer: true } });
     assert.equal(forward.rendering.visibility_buffer, false);
-    const forwardPixels = await differentPixels([gpu.png, forward.png], 8);
+    const forwardPixels = await differentPixels(page, [gpu.png, forward.png], { tolerance: 8 });
     assert.ok(forwardPixels.changed <= forwardPixels.total * 0.001,
       `${camera.label}: ${forwardPixels.changed} of ${forwardPixels.total} pixels differ from forward shading`);
     const rendering = gpu.rendering;
@@ -181,7 +131,7 @@ try {
   assert.ok(ground.instances < reference.rendering.instances, `the plan holds only what it sees: ${JSON.stringify(ground)}`);
   await command("camera", { position: last.position, target: last.target, vertical_fov_radians: 0.96, near: 0.1, far: 5000 });
   const rebuilt = await capture(`${last.label}-rebuilt`, false);
-  const rebuiltPixels = await differentPixels([reference.png, rebuilt.png], 8);
+  const rebuiltPixels = await differentPixels(page, [reference.png, rebuilt.png], { tolerance: 8 });
   assert.ok(rebuiltPixels.changed <= rebuiltPixels.total * 0.001, `rebuilt arena: ${rebuiltPixels.changed} pixels differ`);
   streamed.rebuilt = { resident_pages: rebuilt.rendering.virtual_resident_pages, changed_pixels: rebuiltPixels.changed };
 
@@ -190,7 +140,7 @@ try {
   await command("environment", { virtual_geometry: { max_resident_pages: 8 } });
   const budgetCpu = await capture("budget-cpu", false, true);
   const budgetGpu = await capture("budget-gpu", true, true);
-  const budgetPixels = await differentPixels([budgetCpu.png, budgetGpu.png], 8);
+  const budgetPixels = await differentPixels(page, [budgetCpu.png, budgetGpu.png], { tolerance: 8 });
   assert.ok(budgetPixels.changed <= budgetPixels.total * 0.001, `budget: ${budgetPixels.changed} pixels differ`);
   const budgeted = budgetGpu.rendering;
   assert.ok(budgeted.virtual_resident_pages <= 8 && budgeted.virtual_clusters > 0, JSON.stringify(budgeted));
