@@ -95,10 +95,10 @@ impl SceneFiles {
     ) -> Result<Texture, SceneError> {
         if let Some((format, width, height, levels)) = self.compressed.get(uri) {
             if !alpha {
-                return Err(SceneError::new(
-                    "version_required",
+                return Err(crate::versions::version_required(
                     path,
-                    "compressed textures require scene version 8; set version to 8 and increment revision",
+                    "compressed textures",
+                    8,
                 ));
             }
             return Texture::compressed(*format, *width, *height, levels.clone())

@@ -48,7 +48,7 @@ fn collider_round_trip_defaults_and_legacy_versions_are_explicit() {
         let error = SceneDocument::from_json(&value.to_string()).unwrap_err();
         assert_eq!(
             (error.code, error.path.as_str()),
-            ("version_required", "$.version")
+            ("version_required", "$.entities[0].collider")
         );
         let legacy = json!({"version":version,"id":"old","revision":1,"materials":[],"meshes":[],"entities":[]});
         assert!(document(legacy).entities.is_empty());

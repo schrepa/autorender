@@ -19,6 +19,7 @@ mod material;
 mod probe;
 mod texture;
 mod validation;
+mod versions;
 
 pub use animation::{
     SceneAnimation, SceneChannel, SceneInterpolation, ScenePlayer, SceneProperty, SceneSkin,
@@ -46,6 +47,7 @@ pub use material::{
 };
 pub use probe::SceneReflectionProbe;
 pub use texture::SceneTexture;
+pub use versions::version_features;
 
 #[cfg(test)]
 mod animation_tests;

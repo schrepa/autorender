@@ -7,8 +7,7 @@ use engine_core::{
 };
 
 use crate::{
-    MeshSource, SCENE_VERSION, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
-    SceneObject, SceneTransform,
+    MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles, SceneTransform,
     animation::{PreparedPlayer, PreparedSkin},
     decal::PreparedDecal,
     hierarchy::ExpandedObject,
@@ -18,21 +17,47 @@ use crate::{
 pub(crate) struct PreparedScene {
     /// Validated.
     pub environment: Option<crate::SceneEnvironment>,
-    pub colliders: Vec<Option<engine_collision::Collider>>,
-    pub lights: Vec<Option<LocalLight>>,
-    pub emitters: Vec<Option<ParticleEmitter>>,
-    pub tints: Vec<Option<Tint>>,
-    pub decals: Vec<Option<PreparedDecal>>,
-    pub probes: Vec<Option<ReflectionProbe>>,
+    /// The components of each expanded entity, parallel to `entities`.
+    pub components: Vec<PreparedEntity>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
     pub clips: Vec<AnimationClip>,
-    pub players: Vec<Option<PreparedPlayer>>,
     pub skin_binds: Vec<Arc<[Mat4]>>,
-    pub skins: Vec<Option<PreparedSkin>>,
+}
+
+/// An expanded entity's validated components besides its transform, mesh
+/// and material.
+pub(crate) struct PreparedEntity {
+    pub collider: Option<engine_collision::Collider>,
+    pub light: Option<LocalLight>,
+    pub emitter: Option<ParticleEmitter>,
+    pub tint: Option<Tint>,
+    pub decal: Option<PreparedDecal>,
+    pub probe: Option<ReflectionProbe>,
+    pub player: Option<PreparedPlayer>,
+    pub skin: Option<PreparedSkin>,
+}
+
+/// Resolves an ID a clip target or skin joint names, from an entity's
+/// placement first, to an expanded entity index.
+type Resolve<'a> = dyn Fn(&ExpandedObject, &str) -> Option<usize> + 'a;
+
+/// A document's animation and skin IDs, and each skin's inverse bind
+/// matrices.
+struct Rigs<'a> {
+    animation_ids: BTreeSet<&'a str>,
+    skin_ids: BTreeSet<&'a str>,
+    skin_binds: Vec<Arc<[Mat4]>>,
+}
+
+/// A document's CPU assets, in source order.
+struct CpuAssets {
+    textures: Vec<Texture>,
+    meshes: Vec<Mesh>,
+    materials: Vec<PreparedMaterial>,
 }
 
 impl SceneDocument {
@@ -85,272 +110,7 @@ impl SceneDocument {
     /// `files`: `None` validates structure only, reading referenced files as
     /// placeholders.
     pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, SceneError> {
-        if !(1..=SCENE_VERSION).contains(&self.version) {
-            return Err(SceneError::new(
-                "unsupported_version",
-                "$.version",
-                format!(
-                    "expected version 1 through {SCENE_VERSION}; found {}",
-                    self.version
-                ),
-            ));
-        }
-        if self.version < 8
-            && let Some((index, field)) =
-                self.materials
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, material)| {
-                        material.version_eight_field().map(|field| (index, field))
-                    })
-        {
-            return Err(SceneError::new(
-                "version_required",
-                format!("$.materials[{index}].{field}"),
-                "glTF material maps, texture settings, emissive colors, alpha modes and double-sided materials require scene version 8; set version to 8 and increment revision",
-            ));
-        }
-        if self.version < 8 {
-            let decal = |entity: &crate::SceneObject| entity.decal.is_some();
-            let path = if let Some(index) = self.entities.iter().position(decal) {
-                Some(format!("$.entities[{index}].decal"))
-            } else {
-                self.prefabs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(prefab, definition)| {
-                        definition
-                            .entities
-                            .iter()
-                            .position(decal)
-                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}].decal"))
-                    })
-            };
-            if let Some(path) = path {
-                return Err(SceneError::new(
-                    "version_required",
-                    path,
-                    "decals require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-            let probe = |entity: &crate::SceneObject| entity.reflection_probe.is_some();
-            let path = if let Some(index) = self.entities.iter().position(probe) {
-                Some(format!("$.entities[{index}].reflection_probe"))
-            } else {
-                self.prefabs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(prefab, definition)| {
-                        definition.entities.iter().position(probe).map(|index| {
-                            format!("$.prefabs[{prefab}].entities[{index}].reflection_probe")
-                        })
-                    })
-            };
-            if let Some(path) = path {
-                return Err(SceneError::new(
-                    "version_required",
-                    path,
-                    "reflection probes require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-            let tinted = |entity: &crate::SceneObject| entity.tint.is_some();
-            let path = if let Some(index) = self.entities.iter().position(tinted) {
-                Some(format!("$.entities[{index}].tint"))
-            } else {
-                self.prefabs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(prefab, definition)| {
-                        definition
-                            .entities
-                            .iter()
-                            .position(tinted)
-                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}].tint"))
-                    })
-            };
-            if let Some(path) = path {
-                return Err(SceneError::new(
-                    "version_required",
-                    path,
-                    "object tints require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-            if let Some(index) = self
-                .meshes
-                .iter()
-                .position(|mesh| mesh.source.has_vertex_extras())
-            {
-                return Err(SceneError::new(
-                    "version_required",
-                    format!("$.meshes[{index}].source.vertices"),
-                    "vertex colors, second texture coordinates, joints and weights require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-            if let Some(section) = self
-                .environment
-                .as_ref()
-                .and_then(|environment| environment.section_since(8))
-            {
-                return Err(SceneError::new(
-                    "version_required",
-                    format!("$.environment.{section}"),
-                    "refraction, decal and reflection probe settings require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-            let animated =
-                |entity: &SceneObject| entity.animation.is_some() || entity.skin.is_some();
-            let path = if !self.animations.is_empty() {
-                Some("$.animations".to_owned())
-            } else if !self.skins.is_empty() {
-                Some("$.skins".to_owned())
-            } else if let Some(index) = self.entities.iter().position(animated) {
-                Some(format!("$.entities[{index}]"))
-            } else {
-                self.prefabs
-                    .iter()
-                    .enumerate()
-                    .find_map(|(prefab, definition)| {
-                        definition
-                            .entities
-                            .iter()
-                            .position(animated)
-                            .map(|index| format!("$.prefabs[{prefab}].entities[{index}]"))
-                    })
-            };
-            if let Some(path) = path {
-                return Err(SceneError::new(
-                    "version_required",
-                    path,
-                    "animations and skins require scene version 8; set version to 8 and increment revision",
-                ));
-            }
-        }
-        if self.version < 7 {
-            let version_seven = |path: String| {
-                SceneError::new(
-                    "version_required",
-                    path,
-                    "image and buffer files require scene version 7; set version to 7 and increment revision",
-                )
-            };
-            if let Some(index) = self
-                .textures
-                .iter()
-                .position(|texture| texture.uri.is_some())
-            {
-                return Err(version_seven(format!("$.textures[{index}].uri")));
-            }
-            if let Some(index) = self
-                .meshes
-                .iter()
-                .position(|mesh| matches!(mesh.source, MeshSource::Buffer { .. }))
-            {
-                return Err(version_seven(format!("$.meshes[{index}].source")));
-            }
-        }
-        if self.version < 6 {
-            let version_six = |path: String, what: &str| {
-                SceneError::new(
-                    "version_required",
-                    path,
-                    format!(
-                        "{what} require scene version 6; set version to 6 and increment revision"
-                    ),
-                )
-            };
-            if let Some(section) = self
-                .environment
-                .as_ref()
-                .and_then(|environment| environment.version_six_field())
-            {
-                return Err(version_six(
-                    format!("$.environment.{section}"),
-                    "grading, shadow cascade, local light, particle, sun shaft and reflection settings",
-                ));
-            }
-            if let Some(index) = self
-                .materials
-                .iter()
-                .position(|material| material.opacity.is_some())
-            {
-                return Err(version_six(
-                    format!("$.materials[{index}].opacity"),
-                    "material opacities",
-                ));
-            }
-            if let Some(index) = self
-                .entities
-                .iter()
-                .position(|entity| entity.light.is_some() || entity.particles.is_some())
-            {
-                return Err(version_six(
-                    format!("$.entities[{index}]"),
-                    "entity lights and particles",
-                ));
-            }
-            if self
-                .prefabs
-                .iter()
-                .flat_map(|prefab| &prefab.entities)
-                .any(|entity| entity.light.is_some() || entity.particles.is_some())
-            {
-                return Err(version_six(
-                    "$.prefabs".to_owned(),
-                    "entity lights and particles",
-                ));
-            }
-        }
-        if self.version < 5 && self.environment.is_some() {
-            return Err(SceneError::new(
-                "version_required",
-                "$.environment",
-                "scene environments require scene version 5; set version to 5 and increment revision",
-            ));
-        }
-        if self.version < 5
-            && let Some(index) = self
-                .materials
-                .iter()
-                .position(|material| material.surface.is_some())
-        {
-            return Err(SceneError::new(
-                "version_required",
-                format!("$.materials[{index}].surface"),
-                "material surfaces require scene version 5; set version to 5 and increment revision",
-            ));
-        }
-        if self.version < 4
-            && self
-                .entities
-                .iter()
-                .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities))
-                .any(|entity| entity.collider.is_some())
-        {
-            return Err(SceneError::new(
-                "version_required",
-                "$.version",
-                "colliders require scene version 4; set version to 4 and increment revision",
-            ));
-        }
-        if self.version == 1 && (!self.textures.is_empty() || self.materials.iter().any(|material| material.texture.is_some())
-            || self.meshes.iter().any(|mesh| matches!(&mesh.source, MeshSource::Inline {vertices,..} if vertices.iter().any(|vertex| vertex.uv != [0.0;2])))) {
-            return Err(SceneError::new("version_required", "$.version", "textures and UV data require scene version 2; set version to 2 and increment revision"));
-        }
-        if self.version < 3
-            && (!self.prefabs.is_empty()
-                || self.entities.iter().any(|entity| {
-                    entity.parent.is_some()
-                        || entity.prefab.is_some()
-                        || entity.mesh.is_none()
-                        || entity.material.is_none()
-                }))
-        {
-            return Err(SceneError::new(
-                "version_required",
-                "$.version",
-                "hierarchies, prefabs and transform-only nodes require scene version 3; set version to 3 and increment revision",
-            ));
-        }
+        self.check_version()?;
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
@@ -372,6 +132,61 @@ impl SceneDocument {
             }
         }
         let expanded = self.expand(&mesh_ids, &material_ids)?;
+        let rigs = self.prepare_rigs()?;
+        let entity_indices: HashMap<&str, usize> = expanded
+            .entities
+            .iter()
+            .enumerate()
+            .map(|(index, entity)| (entity.source.id.as_str(), index))
+            .collect();
+        // Targets and joints name local IDs of the entity's placement first,
+        // then scene IDs.
+        let resolve = |entity: &ExpandedObject, id: &str| {
+            entity
+                .prefab_instance
+                .as_ref()
+                .and_then(|instance| entity_indices.get(format!("{instance}.{id}").as_str()))
+                .or_else(|| entity_indices.get(id))
+                .copied()
+        };
+        let components = expanded
+            .entities
+            .iter()
+            .map(|entity| self.prepare_entity(entity, &resolve, &rigs))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let CpuAssets {
+            textures,
+            meshes,
+            materials,
+        } = self.prepare_assets(files)?;
+        self.check_skin_joints(&expanded.entities, &components, &meshes)?;
+        let clips = self
+            .animations
+            .iter()
+            .enumerate()
+            .map(|(index, animation)| animation.clip(&format!("$.animations[{index}]"), files))
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(environment) = &self.environment {
+            environment.validate("$.environment")?;
+        }
+        Ok(PreparedScene {
+            environment: self.environment,
+            components,
+            meshes,
+            materials,
+            textures,
+            transforms: expanded.transforms,
+            entities: expanded.entities,
+            clips,
+            skin_binds: rigs.skin_binds,
+        })
+    }
+
+    /// Animation and skin sources (decisions 035 and 036): their unique IDs,
+    /// names, targets and joints, the clips and skins prefab definitions
+    /// name, and each skin's inverse bind matrices.
+    fn prepare_rigs(&self) -> Result<Rigs<'_>, SceneError> {
         let animation_ids = unique_ids(
             self.animations
                 .iter()
@@ -418,197 +233,17 @@ impl SceneDocument {
                 }
             }
         }
-        let entity_indices: HashMap<&str, usize> = expanded
-            .entities
-            .iter()
-            .enumerate()
-            .map(|(index, entity)| (entity.source.id.as_str(), index))
-            .collect();
-        // Targets and joints name local IDs of the entity's placement first,
-        // then scene IDs.
-        let resolve = |entity: &ExpandedObject, id: &str| {
-            entity
-                .prefab_instance
-                .as_ref()
-                .and_then(|instance| entity_indices.get(format!("{instance}.{id}").as_str()))
-                .or_else(|| entity_indices.get(id))
-                .copied()
-        };
-        let players = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                let Some(player) = &entity.source.animation else {
-                    return Ok(None);
-                };
-                let path = format!("{}.animation", entity.path);
-                reference(&player.clip, &animation_ids, &format!("{path}.clip"))?;
-                if !player.speed.is_finite() || player.speed.abs() > 1000.0 {
-                    return Err(SceneError::new(
-                        "invalid_animation",
-                        format!("{path}.speed"),
-                        "speed must be finite and within ±1000",
-                    ));
-                }
-                if !player.time.is_finite() || player.time < 0.0 {
-                    return Err(SceneError::new(
-                        "invalid_animation",
-                        format!("{path}.time"),
-                        "time must be finite and not negative",
-                    ));
-                }
-                let clip = self
-                    .animations
-                    .iter()
-                    .position(|animation| animation.id == player.clip)
-                    .expect("referenced clip exists");
-                let targets = self.animations[clip]
-                    .targets
-                    .iter()
-                    .map(|target| {
-                        resolve(entity, target).ok_or_else(|| {
-                            SceneError::new(
-                                "unknown_reference",
-                                format!("{path}.clip"),
-                                format!(
-                                    "target '{target}' of animation '{}' matches no entity of this placement or scene",
-                                    player.clip
-                                ),
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Some(PreparedPlayer {
-                    clip,
-                    targets,
-                    speed: player.speed,
-                    looping: player.looping,
-                    time: player.time,
-                }))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let skins = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                let Some(id) = &entity.source.skin else {
-                    return Ok(None);
-                };
-                let path = format!("{}.skin", entity.path);
-                reference(id, &skin_ids, &path)?;
-                if entity.source.mesh.is_none() {
-                    return Err(SceneError::new(
-                        "invalid_skin",
-                        path,
-                        "a skin deforms its entity's mesh; give the entity a mesh and material",
-                    ));
-                }
-                let skin = self
-                    .skins
-                    .iter()
-                    .position(|skin| skin.id == *id)
-                    .expect("referenced skin exists");
-                let joints = self.skins[skin]
-                    .joints
-                    .iter()
-                    .map(|joint| {
-                        resolve(entity, joint).ok_or_else(|| {
-                            SceneError::new(
-                                "unknown_reference",
-                                path.clone(),
-                                format!(
-                                    "joint '{joint}' of skin '{id}' matches no entity of this placement or scene"
-                                ),
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(Some(PreparedSkin { skin, joints }))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let colliders = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .collider
-                    .map(|collider| collider.runtime(&format!("{}.collider", entity.path)))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let lights = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .light
-                    .map(|light| light.runtime(&format!("{}.light", entity.path)))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let emitters = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .particles
-                    .map(|emitter| emitter.runtime(&format!("{}.particles", entity.path)))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Rigs {
+            animation_ids,
+            skin_ids,
+            skin_binds,
+        })
+    }
 
-        let tints = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .tint
-                    .map(|tint| {
-                        if tint.iter().all(|factor| (0.0..=1.0).contains(factor)) {
-                            Ok(Tint(tint))
-                        } else {
-                            Err(SceneError::new(
-                                "invalid_tint",
-                                format!("{}.tint", entity.path),
-                                "tint factors must be finite and in [0, 1]",
-                            ))
-                        }
-                    })
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let decals = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .decal
-                    .as_ref()
-                    .map(|decal| decal.prepare(&format!("{}.decal", entity.path), &self.materials))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let probes = expanded
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .reflection_probe
-                    .map(|probe| probe.runtime(&format!("{}.reflection_probe", entity.path)))
-                    .transpose()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Build every CPU asset before acquiring a mutable world resource.
-        // Invalid late assets cannot leave earlier ones resident.
+    /// Every CPU texture, mesh and material, built before a world resource
+    /// is borrowed: an invalid late asset cannot leave earlier ones
+    /// resident. `files` as for [`Self::prepare`].
+    fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, SceneError> {
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
             if let MeshSource::Inline { vertices, .. } = &mesh.source {
                 let path = format!("$.meshes[{mesh_index}].source");
@@ -647,8 +282,22 @@ impl SceneDocument {
                 material.prepare(&format!("$.materials[{index}]"), self.version)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for (entity, skin) in expanded.entities.iter().zip(&skins) {
-            let (Some(skin), Some(mesh)) = (skin, &entity.source.mesh) else {
+        Ok(CpuAssets {
+            textures,
+            meshes,
+            materials,
+        })
+    }
+
+    /// Refuses a skin with fewer joints than its entity's mesh names.
+    fn check_skin_joints(
+        &self,
+        entities: &[ExpandedObject],
+        components: &[PreparedEntity],
+        meshes: &[Mesh],
+    ) -> Result<(), SceneError> {
+        for (entity, component) in entities.iter().zip(components) {
+            let (Some(skin), Some(mesh)) = (&component.skin, &entity.source.mesh) else {
                 continue;
             };
             let mesh = &meshes[self
@@ -669,33 +318,153 @@ impl SceneDocument {
                 ));
             }
         }
-        let clips = self
+        Ok(())
+    }
+
+    /// The components of expanded entity `entity`, validated, with clip
+    /// targets and skin joints resolved by `resolve`.
+    fn prepare_entity(
+        &self,
+        entity: &ExpandedObject,
+        resolve: &Resolve<'_>,
+        rigs: &Rigs<'_>,
+    ) -> Result<PreparedEntity, SceneError> {
+        let (source, path) = (&entity.source, &entity.path);
+        let tint = |tint: [f32; 4]| {
+            if tint.iter().all(|factor| (0.0..=1.0).contains(factor)) {
+                Ok(Tint(tint))
+            } else {
+                Err(SceneError::new(
+                    "invalid_tint",
+                    format!("{path}.tint"),
+                    "tint factors must be finite and in [0, 1]",
+                ))
+            }
+        };
+        Ok(PreparedEntity {
+            player: self.prepare_player(entity, resolve, &rigs.animation_ids)?,
+            skin: self.prepare_skin(entity, resolve, &rigs.skin_ids)?,
+            collider: source
+                .collider
+                .map(|collider| collider.runtime(&format!("{path}.collider")))
+                .transpose()?,
+            light: source
+                .light
+                .map(|light| light.runtime(&format!("{path}.light")))
+                .transpose()?,
+            emitter: source
+                .particles
+                .map(|emitter| emitter.runtime(&format!("{path}.particles")))
+                .transpose()?,
+            tint: source.tint.map(tint).transpose()?,
+            decal: source
+                .decal
+                .as_ref()
+                .map(|decal| decal.prepare(&format!("{path}.decal"), &self.materials))
+                .transpose()?,
+            probe: source
+                .reflection_probe
+                .map(|probe| probe.runtime(&format!("{path}.reflection_probe")))
+                .transpose()?,
+        })
+    }
+
+    /// The animation player of `entity`, its targets resolved by `resolve`.
+    fn prepare_player(
+        &self,
+        entity: &ExpandedObject,
+        resolve: &Resolve<'_>,
+        animation_ids: &BTreeSet<&str>,
+    ) -> Result<Option<PreparedPlayer>, SceneError> {
+        let Some(player) = &entity.source.animation else {
+            return Ok(None);
+        };
+        let path = format!("{}.animation", entity.path);
+        reference(&player.clip, animation_ids, &format!("{path}.clip"))?;
+        if !player.speed.is_finite() || player.speed.abs() > 1000.0 {
+            return Err(SceneError::new(
+                "invalid_animation",
+                format!("{path}.speed"),
+                "speed must be finite and within ±1000",
+            ));
+        }
+        if !player.time.is_finite() || player.time < 0.0 {
+            return Err(SceneError::new(
+                "invalid_animation",
+                format!("{path}.time"),
+                "time must be finite and not negative",
+            ));
+        }
+        let clip = self
             .animations
             .iter()
-            .enumerate()
-            .map(|(index, animation)| animation.clip(&format!("$.animations[{index}]"), files))
+            .position(|animation| animation.id == player.clip)
+            .expect("referenced clip exists");
+        let targets = self.animations[clip]
+            .targets
+            .iter()
+            .map(|target| {
+                resolve(entity, target).ok_or_else(|| {
+                    SceneError::new(
+                        "unknown_reference",
+                        format!("{path}.clip"),
+                        format!(
+                            "target '{target}' of animation '{}' matches no entity of this placement or scene",
+                            player.clip
+                        ),
+                    )
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        if let Some(environment) = &self.environment {
-            environment.validate("$.environment")?;
+        Ok(Some(PreparedPlayer {
+            clip,
+            targets,
+            speed: player.speed,
+            looping: player.looping,
+            time: player.time,
+        }))
+    }
+
+    /// The skin of `entity`, its joints resolved by `resolve`.
+    fn prepare_skin(
+        &self,
+        entity: &ExpandedObject,
+        resolve: &Resolve<'_>,
+        skin_ids: &BTreeSet<&str>,
+    ) -> Result<Option<PreparedSkin>, SceneError> {
+        let Some(id) = &entity.source.skin else {
+            return Ok(None);
+        };
+        let path = format!("{}.skin", entity.path);
+        reference(id, skin_ids, &path)?;
+        if entity.source.mesh.is_none() {
+            return Err(SceneError::new(
+                "invalid_skin",
+                path,
+                "a skin deforms its entity's mesh; give the entity a mesh and material",
+            ));
         }
-        Ok(PreparedScene {
-            environment: self.environment,
-            colliders,
-            lights,
-            emitters,
-            tints,
-            decals,
-            probes,
-            meshes,
-            materials,
-            textures,
-            transforms: expanded.transforms,
-            entities: expanded.entities,
-            clips,
-            players,
-            skin_binds,
-            skins,
-        })
+        let skin = self
+            .skins
+            .iter()
+            .position(|skin| skin.id == *id)
+            .expect("referenced skin exists");
+        let joints = self.skins[skin]
+            .joints
+            .iter()
+            .map(|joint| {
+                resolve(entity, joint).ok_or_else(|| {
+                    SceneError::new(
+                        "unknown_reference",
+                        path.clone(),
+                        format!(
+                            "joint '{joint}' of skin '{id}' matches no entity of this placement or scene"
+                        ),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Some(PreparedSkin { skin, joints }))
     }
 
     fn validate_camera(&self) -> Result<(), SceneError> {
