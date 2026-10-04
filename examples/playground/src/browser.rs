@@ -18,10 +18,13 @@ impl PlaygroundGame {
         files: SceneFileSet,
     ) -> Result<Self, JsValue> {
         console_error_panic_hook::set_once();
+        // The browser compiles the renderer's pipelines while the scene
+        // loads.
+        let starting = BrowserApp::start(canvas).await?;
         let mut engine = Engine::default();
         let game = Playground::new(&mut engine, source, files.files()).map_err(scene_error)?;
         Ok(Self {
-            app: BrowserApp::new(canvas, engine).await?,
+            app: starting.finish(engine).await?,
             game,
             #[cfg(feature = "dev")]
             development: development_tools(),

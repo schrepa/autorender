@@ -3,6 +3,8 @@
 //! passes read within the eight storage buffers per stage WebGPU guarantees,
 //! and passes skipping some bind fillers there.
 
+use std::cell::OnceCell;
+
 use crate::bindings::{
     PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_LEVEL,
     PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
@@ -10,28 +12,33 @@ use crate::bindings::{
 use crate::gpu_data::PRESENTATION_SHADER;
 use crate::pipelines::{Family, Fillers, layout};
 
-/// The passes' shared layouts.
+/// The passes' shared layouts; skinned slots' bounds (decision 036) have
+/// theirs created with the first frame drawing skinned slots.
 pub(super) struct Families {
     pub(super) compose: Family,
     pub(super) cull: Family,
     pub(super) tests: Family,
     pub(super) compact: Family,
-    pub(super) skin_bounds: Family,
+    skin_bounds: OnceCell<Family>,
 }
 
+/// The pipelines every frame runs, and those only some scenes do, created
+/// with the first frame that runs them (decision 049): skinned slots'
+/// palettes and bounds (decision 036) and reflection probes' still frames
+/// and culling (decision 043).
 pub(super) struct Pipelines {
     pub(super) shift_previous: wgpu::ComputePipeline,
     pub(super) compose_parents: wgpu::ComputePipeline,
     pub(super) cull: wgpu::ComputePipeline,
-    pub(super) skin_palette: wgpu::ComputePipeline,
-    pub(super) skin_bounds: wgpu::ComputePipeline,
     pub(super) sum_groups: wgpu::ComputePipeline,
     pub(super) scan_groups: wgpu::ComputePipeline,
     pub(super) batch_args: wgpu::ComputePipeline,
     pub(super) scatter: wgpu::ComputePipeline,
     pub(super) occlusion_test: wgpu::ComputePipeline,
-    pub(super) count_still: wgpu::ComputePipeline,
-    pub(super) probe_cull: wgpu::ComputePipeline,
+    skin_palette: OnceCell<wgpu::ComputePipeline>,
+    skin_bounds: OnceCell<wgpu::ComputePipeline>,
+    count_still: OnceCell<wgpu::ComputePipeline>,
+    probe_cull: OnceCell<wgpu::ComputePipeline>,
 }
 
 /// The pipelines, their layouts and the fillers of bindings passes skip,
@@ -41,6 +48,7 @@ pub(super) struct Shaders {
     pub(super) families: Families,
     pub(super) level_layout: wgpu::BindGroupLayout,
     fillers: Fillers,
+    module: wgpu::ShaderModule,
 }
 
 impl Shaders {
@@ -55,7 +63,7 @@ impl Shaders {
             cull: Family::new(device, &PRESENTATION_CULL, &[]),
             tests: Family::new(device, &PRESENTATION_TESTS, &[]),
             compact: Family::new(device, &PRESENTATION_COMPACT, &[]),
-            skin_bounds: Family::new(device, &PRESENTATION_SKIN_BOUNDS, &[]),
+            skin_bounds: OnceCell::new(),
         };
         let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
@@ -64,22 +72,71 @@ impl Shaders {
             shift_previous: pipeline("shift_previous", &families.tests),
             compose_parents: pipeline("compose_parents", &families.compose),
             cull: pipeline("cull", &families.cull),
-            skin_palette: pipeline("skin_palette", &families.compose),
-            skin_bounds: pipeline("skin_bounds_pass", &families.skin_bounds),
             sum_groups: pipeline("sum_groups", &families.compact),
             scan_groups: pipeline("scan_groups", &families.compact),
             batch_args: pipeline("batch_args", &families.compact),
             scatter: pipeline("scatter", &families.compact),
             occlusion_test: pipeline("occlusion_test", &families.tests),
-            count_still: pipeline("count_still", &families.tests),
-            probe_cull: pipeline("probe_cull", &families.tests),
+            skin_palette: OnceCell::new(),
+            skin_bounds: OnceCell::new(),
+            count_still: OnceCell::new(),
+            probe_cull: OnceCell::new(),
         };
         Self {
             pipelines,
             families,
             level_layout,
             fillers: Fillers::new(device),
+            module,
         }
+    }
+
+    /// The layout of skinned slots' bounds.
+    pub(super) fn skin_bounds_family(&self, device: &wgpu::Device) -> &Family {
+        self.families
+            .skin_bounds
+            .get_or_init(|| Family::new(device, &PRESENTATION_SKIN_BOUNDS, &[]))
+    }
+
+    fn lazy<'a>(
+        &self,
+        device: &wgpu::Device,
+        cell: &'a OnceCell<wgpu::ComputePipeline>,
+        family: &Family,
+        entry: &str,
+    ) -> &'a wgpu::ComputePipeline {
+        cell.get_or_init(|| {
+            crate::pipelines::compute_entry(device, &family.pipeline, &self.module, entry)
+        })
+    }
+
+    /// Skinned slots' palettes (decision 036).
+    pub(super) fn skin_palette(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        let family = &self.families.compose;
+        self.lazy(device, &self.pipelines.skin_palette, family, "skin_palette")
+    }
+
+    /// Skinned slots' bounds from their palettes (decision 036).
+    pub(super) fn skin_bounds(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        let family = self.skin_bounds_family(device);
+        self.lazy(
+            device,
+            &self.pipelines.skin_bounds,
+            family,
+            "skin_bounds_pass",
+        )
+    }
+
+    /// Reflection probes' count of slots' still frames (decision 043).
+    pub(super) fn count_still(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        let family = &self.families.tests;
+        self.lazy(device, &self.pipelines.count_still, family, "count_still")
+    }
+
+    /// The culling of reflection probe faces (decision 043).
+    pub(super) fn probe_cull(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
+        let family = &self.families.tests;
+        self.lazy(device, &self.pipelines.probe_cull, family, "probe_cull")
     }
 
     /// A group of `family`'s layout binding `resources` by name, filled

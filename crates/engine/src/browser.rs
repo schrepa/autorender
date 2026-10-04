@@ -1,6 +1,6 @@
 //! Coarse frame boundary between the TypeScript host and Rust engine.
 use engine_core::{Engine, FrameReport, InputState, PresentationMode};
-use engine_render::Renderer;
+use engine_render::{Renderer, StartingRenderer};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
@@ -181,13 +181,43 @@ enum FrameKind {
     Preview { alpha: f32, gpu: bool },
 }
 
+/// A [`BrowserApp`] whose renderer's startup pipelines may still compile:
+/// build the engine meanwhile, then [`Self::finish`].
+pub struct StartingApp {
+    renderer: StartingRenderer,
+    performance: web_sys::Performance,
+}
+
+impl StartingApp {
+    /// The app running `engine`, once the renderer's startup pipelines passed
+    /// validation.
+    pub async fn finish(self, engine: Engine) -> Result<BrowserApp, JsValue> {
+        let renderer = self.renderer.finish().await?;
+        Ok(BrowserApp::with(engine, renderer, self.performance))
+    }
+}
+
 impl BrowserApp {
     pub async fn new(canvas: HtmlCanvasElement, engine: Engine) -> Result<Self, JsValue> {
+        Self::start(canvas).await?.finish(engine).await
+    }
+
+    /// Starts the renderer of `canvas` before the engine exists: the browser
+    /// compiles its startup pipelines while the caller builds the engine for
+    /// [`StartingApp::finish`].
+    pub async fn start(canvas: HtmlCanvasElement) -> Result<StartingApp, JsValue> {
         let performance = web_sys::window()
             .and_then(|window| window.performance())
             .ok_or_else(|| JsValue::from_str("A browser performance clock is required."))?;
-        let renderer = Renderer::new(canvas).await?;
-        Ok(Self {
+        let renderer = Renderer::start(canvas).await?;
+        Ok(StartingApp {
+            renderer,
+            performance,
+        })
+    }
+
+    fn with(engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
+        Self {
             engine,
             renderer,
             last_timestamp_ms: None,
@@ -199,7 +229,7 @@ impl BrowserApp {
             gpu_inputs_stale: false,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
-        })
+        }
     }
 
     /// Selects GPU blending, composition and culling for ordinary interpolated

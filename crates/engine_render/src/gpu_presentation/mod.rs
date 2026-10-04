@@ -177,13 +177,14 @@ struct NodeGroups {
 struct PoseGroups {
     cull: wgpu::BindGroup,
     skin: wgpu::BindGroup,
-    skin_bounds: wgpu::BindGroup,
+    skin_bounds: Option<wgpu::BindGroup>,
     count_still: Option<wgpu::BindGroup>,
 }
 
-// Node, draw group, joint and still frame storage generations and the pose
-// storage generation that one pose buffer's groups bind.
-type PoseKey = (u64, u64, u64, u64, u64);
+// Node, draw group, joint and still frame storage generations, the pose
+// storage generation that one pose buffer's groups bind, and whether
+// candidates include skinned slots.
+type PoseKey = (u64, u64, u64, u64, u64, bool);
 
 // The occlusion test group's pose buffer index, depth pyramid generation,
 // draw group generation and pose storage generation.
@@ -472,6 +473,7 @@ impl GpuPresentationPass {
             joints.generation(),
             stillness.generation(),
             poses.generation,
+            groups.skinned_count() != 0,
         );
         pose_groups[poses.parity].get_or_insert_with(key, || {
             let current = poses.current();
@@ -509,20 +511,22 @@ impl GpuPresentationPass {
                         entry("palette", palette),
                     ],
                 ),
-                skin_bounds: group(
-                    &shaders.families.skin_bounds,
-                    "engine/presentation-skin-bounds-group",
-                    &[
-                        entry("frame", frame),
-                        entry("batches", &groups.batches),
-                        entry("poses", current),
-                        entry("scan", &groups.scan),
-                        entry("palette", palette),
-                        entry("slot_colors", poses.colors),
-                        entry("skinned", &groups.skinned),
-                        entry("skin_bounds", &groups.skin_bounds),
-                    ],
-                ),
+                skin_bounds: (groups.skinned_count() != 0).then(|| {
+                    group(
+                        shaders.skin_bounds_family(device),
+                        "engine/presentation-skin-bounds-group",
+                        &[
+                            entry("frame", frame),
+                            entry("batches", &groups.batches),
+                            entry("poses", current),
+                            entry("scan", &groups.scan),
+                            entry("palette", palette),
+                            entry("slot_colors", poses.colors),
+                            entry("skinned", &groups.skinned),
+                            entry("skin_bounds", &groups.skin_bounds),
+                        ],
+                    )
+                }),
                 count_still: stillness.kept().then(|| {
                     group(
                         &shaders.families.tests,
@@ -624,7 +628,8 @@ impl GpuPresentationPass {
         ) else {
             return;
         };
-        let pipelines = &self.shaders.pipelines;
+        let shaders = &self.shaders;
+        let pipelines = &shaders.pipelines;
         let candidates = self.groups.count();
         let joints = self.joints.count();
         let skinned = self.groups.skinned_count();
@@ -647,7 +652,7 @@ impl GpuPresentationPass {
             Stage::Cull => {
                 // Skinned slots' palettes, from the composed parents.
                 if joints != 0 {
-                    pass.set_pipeline(&pipelines.skin_palette);
+                    pass.set_pipeline(shaders.skin_palette(device));
                     pass.set_bind_group(0, &posed.skin, &[]);
                     // The shared layout's level group, which palettes ignore.
                     pass.set_bind_group(1, self.nodes.level_group(0), &[]);
@@ -664,14 +669,14 @@ impl GpuPresentationPass {
                     .as_ref()
                     .filter(|_| self.stillness.counting())
                 {
-                    pass.set_pipeline(&pipelines.count_still);
+                    pass.set_pipeline(shaders.count_still(device));
                     pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(workgroups, 1, 1);
                 }
                 // Skinned slots' bounds from their palettes, culled.
-                if skinned != 0 {
-                    pass.set_pipeline(&pipelines.skin_bounds);
-                    pass.set_bind_group(0, &posed.skin_bounds, &[]);
+                if let Some(group) = posed.skin_bounds.as_ref().filter(|_| skinned != 0) {
+                    pass.set_pipeline(shaders.skin_bounds(device));
+                    pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(skinned.div_ceil(SKINNED_GROUP), 1, 1);
                 }
                 pass.set_pipeline(&pipelines.sum_groups);
