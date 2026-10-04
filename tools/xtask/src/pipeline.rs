@@ -127,23 +127,25 @@ pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
     run(root, "cargo", &arguments)?;
     for (_, name) in CLIENTS {
         let artifact = format!("target/{WASM_TARGET}/release/{name}.wasm");
-        run(
-            root,
-            "wasm-bindgen",
-            &[
-                &artifact,
-                "--target",
-                "web",
-                "--out-dir",
-                if development {
-                    "web/pkg-dev"
-                } else {
-                    "web/pkg"
-                },
-                "--out-name",
-                name,
-            ],
-        )?;
+        let mut arguments = vec![
+            artifact.as_str(),
+            "--target",
+            "web",
+            "--out-dir",
+            if development {
+                "web/pkg-dev"
+            } else {
+                "web/pkg"
+            },
+            "--out-name",
+            name,
+        ];
+        // Function names are a fifth of a module: development builds keep
+        // them for stack traces and profiles.
+        if !development {
+            arguments.push("--remove-name-section");
+        }
+        run(root, "wasm-bindgen", &arguments)?;
     }
     Ok(())
 }

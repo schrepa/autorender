@@ -267,6 +267,10 @@ impl StressGame {
     pub fn stress_stats(&self) -> String {
         stress_observation(&self.app.engine, self.generation).to_string()
     }
+    /// [`crate::stress_sample`]: a recording's per-frame workload numbers.
+    pub fn frame_sample(&self) -> Vec<f64> {
+        crate::stress_sample(&self.app.engine).to_vec()
+    }
     pub fn set_view(&mut self, view: &str) -> Result<(), JsValue> {
         set_view(&mut self.app.engine, view).map_err(js_error)
     }
