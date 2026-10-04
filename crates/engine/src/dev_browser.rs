@@ -3,9 +3,10 @@
 //! Calls are synchronous between browser frames. Input is a temporary batch,
 //! replaced by each input command and consumed only by explicit stepping.
 use crate::{ActionInput, DevStepError, InputState, browser::BrowserApp};
-use engine_dev::{BrowserControl, DevTools};
+use engine_dev::{BrowserControl, DevError, DevTools};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
+use wasm_bindgen::JsValue;
 
 const MAX_COMMAND_BYTES: usize = 16 * 1024;
 
@@ -58,82 +59,77 @@ impl DevBrowser {
         };
         // Commands observe and control completed ticks only.
         app.engine.complete_pending_tick();
-        let control_op = request
-            .get("op")
-            .and_then(Value::as_str)
-            .is_some_and(|op| BrowserControl::OPS.contains(&op));
-        if !control_op {
-            let response = self.tools.execute(&mut app.engine, scene, source);
-            if request.get("op").and_then(Value::as_str) != Some("assets") {
-                return response;
-            }
-            let mut envelope: Value =
-                serde_json::from_str(&response).expect("development response is JSON");
-            if envelope["ok"] == true
-                && let (Some(scene), Some(rows)) =
-                    (scene, envelope["result"]["texture_assets"].as_array_mut())
-            {
-                // These bounded rows and IDs were generated from the same instance.
-                for (row, (_, handle)) in rows.iter_mut().zip(scene.textures()) {
-                    row["gpu_resident"] = json!(app.texture_resident(handle));
-                }
-            }
-            let response = envelope.to_string();
-            if response.len() > engine_dev::MAX_RESPONSE_BYTES {
-                return self.error(
-                    app,
-                    scene,
-                    "response_too_large",
-                    "$",
-                    "asset response exceeds 64 KiB",
-                );
-            }
+        let op = request.get("op").and_then(Value::as_str);
+        if !op.is_some_and(|op| BrowserControl::OPS.contains(&op)) {
+            let assets = op == Some("assets");
+            return self.tools_request(app, scene, source, assets);
+        }
+        match self.control(app, request, (width, height)) {
+            Ok(result) => self.result(app, scene, result),
+            Err(error) => self.error(app, scene, error.code, &error.path, &error.message),
+        }
+    }
+
+    /// A request the development tools answer; `assets` replies list each
+    /// texture's GPU residency too.
+    fn tools_request(
+        &mut self,
+        app: &mut BrowserApp,
+        scene: Option<&SceneInstance>,
+        source: &str,
+        assets: bool,
+    ) -> String {
+        let response = self.tools.execute(&mut app.engine, scene, source);
+        if !assets {
             return response;
         }
-        let control: BrowserControl = match serde_json::from_value(request) {
-            Ok(control) => control,
-            Err(error) => {
-                return self.error(app, scene, "invalid_request", "$", &error.to_string());
+        let mut envelope: Value =
+            serde_json::from_str(&response).expect("development response is JSON");
+        if envelope["ok"] == true
+            && let (Some(scene), Some(rows)) =
+                (scene, envelope["result"]["texture_assets"].as_array_mut())
+        {
+            // These bounded rows and IDs were generated from the same instance.
+            for (row, (_, handle)) in rows.iter_mut().zip(scene.textures()) {
+                row["gpu_resident"] = json!(app.texture_resident(handle));
             }
-        };
-        if let Err(error) = control.validate() {
-            return self.error(app, scene, error.code, &error.path, &error.message);
         }
+        let response = envelope.to_string();
+        if response.len() > engine_dev::MAX_RESPONSE_BYTES {
+            return self.error(
+                app,
+                scene,
+                "response_too_large",
+                "$",
+                "asset response exceeds 64 KiB",
+            );
+        }
+        response
+    }
+
+    /// Runs the browser control `request` on a `size` canvas: its result.
+    fn control(
+        &mut self,
+        app: &mut BrowserApp,
+        request: Value,
+        (width, height): (u32, u32),
+    ) -> Result<Value, DevError> {
+        let control: BrowserControl = serde_json::from_value(request)
+            .map_err(|error| DevError::new("invalid_request", "$", error.to_string()))?;
+        control.validate()?;
         match control {
             BrowserControl::Present { alpha, gpu, .. } => {
-                let alpha = match engine_dev::validated_presentation_alpha(alpha) {
-                    Ok(alpha) => alpha,
-                    Err(error) => {
-                        return self.error(app, scene, error.code, &error.path, &error.message);
-                    }
-                };
-                match app.dev_present(alpha, width, height, gpu) {
-                    Ok(()) => self.result(app, scene, json!({"temporary":true,"rendered":true})),
-                    Err(error) => self.error(
-                        app,
-                        scene,
-                        "render_failed",
-                        "$",
-                        &format!("presentation prepared before render failed: {error:?}"),
-                    ),
-                }
+                let alpha = engine_dev::validated_presentation_alpha(alpha)?;
+                rendered(
+                    app.dev_present(alpha, width, height, gpu),
+                    "presentation prepared",
+                )?;
+                Ok(json!({"temporary":true,"rendered":true}))
             }
             BrowserControl::Culling { enabled, .. } => {
                 app.engine.set_frustum_culling(enabled);
-                match app.dev_render(width, height) {
-                    Ok(()) => self.result(
-                        app,
-                        scene,
-                        json!({"temporary":true,"culling_enabled":enabled}),
-                    ),
-                    Err(error) => self.error(
-                        app,
-                        scene,
-                        "render_failed",
-                        "$",
-                        &format!("culling changed before render failed: {error:?}"),
-                    ),
-                }
+                rendered(app.dev_render(width, height), "culling changed")?;
+                Ok(json!({"temporary":true,"culling_enabled":enabled}))
             }
             BrowserControl::Camera {
                 position,
@@ -143,18 +139,13 @@ impl DevBrowser {
                 far,
                 ..
             } => {
-                let camera = match engine_dev::validated_camera(
+                let camera = engine_dev::validated_camera(
                     position,
                     target,
                     vertical_fov_radians,
                     near,
                     far,
-                ) {
-                    Ok(camera) => camera,
-                    Err(error) => {
-                        return self.error(app, scene, error.code, &error.path, &error.message);
-                    }
-                };
+                )?;
                 let world = app.engine.app.world_mut();
                 if let Some(mut controller) =
                     world.get_resource_mut::<crate::camera::FlyCameraController>()
@@ -162,18 +153,8 @@ impl DevBrowser {
                     controller.align_to(&camera);
                 }
                 world.insert_resource(camera);
-                match app.dev_render(width, height) {
-                    Ok(()) => {
-                        self.result(app, scene, json!({"temporary":true,"camera_changed":true}))
-                    }
-                    Err(error) => self.error(
-                        app,
-                        scene,
-                        "render_failed",
-                        "$",
-                        &format!("camera changed before render failed: {error:?}"),
-                    ),
-                }
+                rendered(app.dev_render(width, height), "camera changed")?;
+                Ok(json!({"temporary":true,"camera_changed":true}))
             }
             BrowserControl::Environment {
                 atmosphere,
@@ -208,25 +189,10 @@ impl DevBrowser {
                     virtual_geometry,
                     level_of_detail,
                 };
-                if let Err(error) = environment.validate("$") {
-                    return self.error(app, scene, error.code, &error.path, &error.message);
-                }
+                environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
-                let changed = environment.sections();
-                match app.dev_render(width, height) {
-                    Ok(()) => self.result(
-                        app,
-                        scene,
-                        json!({"temporary":true,"environment_changed":changed}),
-                    ),
-                    Err(error) => self.error(
-                        app,
-                        scene,
-                        "render_failed",
-                        "$",
-                        &format!("environment changed before render failed: {error:?}"),
-                    ),
-                }
+                rendered(app.dev_render(width, height), "environment changed")?;
+                Ok(json!({"temporary":true,"environment_changed":environment.sections()}))
             }
             BrowserControl::Input {
                 forward,
@@ -239,7 +205,20 @@ impl DevBrowser {
                 released,
                 ..
             } => {
-                let batch = InputBatch {
+                if [forward, right, up]
+                    .iter()
+                    .any(|v| !v.is_finite() || v.abs() > 1.0)
+                    || [yaw, pitch]
+                        .iter()
+                        .any(|v| !v.is_finite() || v.abs() > 1000.0)
+                {
+                    return Err(DevError::new(
+                        "invalid_input",
+                        "$",
+                        "axes must be in [-1, 1]; look deltas in [-1000, 1000]",
+                    ));
+                }
+                self.input = InputBatch {
                     forward,
                     right,
                     up,
@@ -249,32 +228,11 @@ impl DevBrowser {
                     pressed,
                     released,
                 };
-                if [batch.forward, batch.right, batch.up]
-                    .iter()
-                    .any(|v| !v.is_finite() || v.abs() > 1.0)
-                    || [batch.yaw, batch.pitch]
-                        .iter()
-                        .any(|v| !v.is_finite() || v.abs() > 1000.0)
-                {
-                    return self.error(
-                        app,
-                        scene,
-                        "invalid_input",
-                        "$",
-                        "axes must be in [-1, 1]; look deltas in [-1000, 1000]",
-                    );
-                }
-                self.input = batch;
-                self.result(
-                    app,
-                    scene,
-                    json!({"temporary":true,"applies_on":"next_step"}),
-                )
+                Ok(json!({"temporary":true,"applies_on":"next_step"}))
             }
             BrowserControl::Step { ticks, .. } => {
-                if let Err(error) = DevStepError::validate(ticks) {
-                    return self.error(app, scene, "invalid_step", "$.ticks", &error.to_string());
-                }
+                DevStepError::validate(ticks)
+                    .map_err(|error| DevError::new("invalid_step", "$.ticks", error.to_string()))?;
                 app.engine
                     .app
                     .world_mut()
@@ -292,30 +250,27 @@ impl DevBrowser {
                 self.input.released = 0;
                 self.input.yaw = 0.0;
                 self.input.pitch = 0.0;
-                match app.dev_step(ticks, width, height, input) {
-                    Ok(()) => self.result(app, scene, json!({"ticks":ticks,"temporary":true})),
-                    Err(error) => self.error(
-                        app,
-                        scene,
+                app.dev_step(ticks, width, height, input).map_err(|error| {
+                    DevError::new(
                         "render_failed",
                         "$",
-                        &format!("simulation may have advanced: {error:?}"),
-                    ),
-                }
+                        format!("simulation may have advanced: {error:?}"),
+                    )
+                })?;
+                Ok(json!({"ticks":ticks,"temporary":true}))
             }
-            BrowserControl::Render { .. } => match app.dev_render(width, height) {
-                Ok(()) => self.result(app, scene, json!({"rendered":true})),
-                Err(error) => self.error(app, scene, "render_failed", "$", &format!("{error:?}")),
-            },
+            BrowserControl::Render { .. } => {
+                app.dev_render(width, height)
+                    .map_err(|error| DevError::new("render_failed", "$", format!("{error:?}")))?;
+                Ok(json!({"rendered":true}))
+            }
             // The browser host runs these: it receives them validated, with
             // their defaults.
             control @ (BrowserControl::Benchmark { .. }
             | BrowserControl::Pause { .. }
             | BrowserControl::Resume { .. }
             | BrowserControl::Capture { .. }
-            | BrowserControl::Reload { .. }) => {
-                self.result(app, scene, json!({ "control": control }))
-            }
+            | BrowserControl::Reload { .. }) => Ok(json!({ "control": control })),
         }
     }
 
@@ -359,4 +314,15 @@ impl DevBrowser {
         ))
         .expect("development tools serialize an object envelope")
     }
+}
+
+/// What rendering after `what` came to: a development error when it failed.
+fn rendered(outcome: Result<(), JsValue>, what: &str) -> Result<(), DevError> {
+    outcome.map_err(|error| {
+        DevError::new(
+            "render_failed",
+            "$",
+            format!("{what} before render failed: {error:?}"),
+        )
+    })
 }

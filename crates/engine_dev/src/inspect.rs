@@ -94,12 +94,23 @@ impl Default for DevTools {
         let mut tools = Self {
             inspectors: BTreeMap::new(),
         };
-        tools.register_component::<Transform>(
+        tools.register_poses(&schemas);
+        tools.register_components(&schemas);
+        tools.register_animation(&schemas);
+        tools.register_environment(&schemas);
+        tools
+    }
+}
+
+impl DevTools {
+    /// Local, world and presented poses, and the hierarchy.
+    fn register_poses(&mut self, schemas: &Value) {
+        self.register_component::<Transform>(
             InspectorDescriptor::new("Transform", "Local transform relative to Parent, or world transform for a root. Quaternion is normalized XYZW; authored scale is positive and nonsingular.", schemas["Transform"].clone())
                 .with_default(transform_value(&Transform::default())),
             transform_value,
         ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::new("GlobalTransform", "Derived world transform, refreshed before inspection. Column-major matrix preserves shear; invalid hierarchies return null matrix and translation and skip rendering.", schemas["GlobalTransform"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
@@ -114,11 +125,11 @@ impl Default for DevTools {
                 }))
             }),
         }).expect("built-in descriptor is bounded");
-        tools.register_component::<InterpolateTransform>(
+        self.register_component::<InterpolateTransform>(
             InspectorDescriptor::new("InterpolateTransform", "Opt-in marker for fixed-tick interpolation of this local transform. Descendants inherit the presented parent matrix. Gameplay and authored transforms remain authoritative.", schemas["InterpolateTransform"].clone()),
             |_| json!(InterpolateTransformView { enabled: true }),
         ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::new("PresentedTransform", "Last extracted world matrix, including interpolated ancestors; column-major and preserves shear. Inspection does not recompute it, except to materialize the exact CPU reference of a GPU-presented frame while its inputs are unchanged. Null until extracted or when the presented branch is invalid. See PresentationState for actual mode, alpha and gpu_pending.", schemas["PresentedTransform"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
@@ -133,21 +144,11 @@ impl Default for DevTools {
                 }))
             }),
         }).expect("built-in descriptor is bounded");
-        tools.register_resource::<PresentationState>(
+        self.register_resource::<PresentationState>(
             InspectorDescriptor::new("PresentationState", "Last prepared extraction's frame/tick and actual mode/fraction; null frame/tick before extraction. Current mode uses alpha one. History counters measure bounded storage. gpu_pending marks a GPU-presented extraction whose CPU poses are not materialized. Inspection prepares presentation only to materialize such a frame; this is not GPU submission/completion or total process memory.", schemas["PresentationState"].clone()),
             presentation_value,
         ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Collider", "Local cuboid/sphere, symmetric layer filters and sensor flag. Current authoritative world admission and refreshed collision-cache status are independent of visibility and interpolation.", schemas["Collider"].clone()),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())),
-            read: Box::new(|world, entity, _scene| crate::collision::collider_value(world, entity?)),
-        }).expect("built-in descriptor is bounded");
-        tools.register_resource::<CollisionWorld>(
-            InspectorDescriptor::new("CollisionWorld", "Authoritative spatial cache refreshed for inspection without advancing clocks or committing sensor events. Includes source frame/tick, cache revision, completeness, invalid/overflow counts and query budgets. Memory counts are cache payload, not process totals.", schemas["CollisionWorld"].clone()),
-            crate::collision::world_value,
-        ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::new("Hierarchy", "Current parent and source prefab metadata. IDs are authored IDs, never runtime handles. Use inspect with parent to page direct children.", schemas["Hierarchy"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Transform>(entity).is_some())),
@@ -169,12 +170,26 @@ impl Default for DevTools {
                 }))
             }),
         }).expect("built-in descriptor is bounded");
-        tools.register_resource::<Camera>(
+    }
+
+    /// Collision, the camera, meshes and the components entities carry.
+    fn register_components(&mut self, schemas: &Value) {
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Collider", "Local cuboid/sphere, symmetric layer filters and sensor flag. Current authoritative world admission and refreshed collision-cache status are independent of visibility and interpolation.", schemas["Collider"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Collider>(entity).is_some())),
+            read: Box::new(|world, entity, _scene| crate::collision::collider_value(world, entity?)),
+        }).expect("built-in descriptor is bounded");
+        self.register_resource::<CollisionWorld>(
+            InspectorDescriptor::new("CollisionWorld", "Authoritative spatial cache refreshed for inspection without advancing clocks or committing sensor events. Includes source frame/tick, cache revision, completeness, invalid/overflow counts and query budgets. Memory counts are cache payload, not process totals.", schemas["CollisionWorld"].clone()),
+            crate::collision::world_value,
+        ).expect("built-in descriptor is bounded");
+        self.register_resource::<Camera>(
             InspectorDescriptor::new("Camera", "Right-handed Y-up perspective. Lens distances use world units; 0 < near < far; FOV is in radians.", schemas["Camera"].clone())
                 .with_default(camera_value(&Camera::default())),
             camera_value,
         ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::new("Mesh3d", "Resolved immutable mesh/material readiness. Missing assets skip rendering. This view contains no persistent runtime handles.", schemas["Mesh3d"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Mesh3d>(entity).is_some())),
@@ -202,9 +217,92 @@ impl Default for DevTools {
                 }))
             }),
         }).expect("built-in descriptor is bounded");
+        self.register_component::<LocalLight>(
+            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
+                .with_default(json!(SceneLight::default())),
+            |light| json!(SceneLight::from(light)),
+        ).expect("built-in descriptor is bounded");
+        self.register_component::<Tint>(
+            InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
+                .with_default(json!(Tint::WHITE.0)),
+            |tint| json!(tint.0),
+        ).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity (decision 039) as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())),
+            read: Box::new(|world, entity, scene| {
+                let decal = world.get::<Decal>(entity?)?;
+                let assets = world.get_resource::<AssetLibrary>();
+                let material = scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == decal.material).map(|(id, _)| id.to_owned()));
+                let field = SceneDecal::from_runtime(decal, material.clone().unwrap_or_default());
+                Some(json!(DecalView {
+                    material,
+                    material_alive: assets.is_some_and(|assets| assets.material(decal.material).is_some()),
+                    blend: field.blend,
+                    opacity: field.opacity,
+                    fade_degrees: field.fade_degrees,
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        self.register_component::<ReflectionProbe>(
+            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity (decision 043) as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
+            |probe| json!(SceneReflectionProbe::from(probe)),
+        ).expect("built-in descriptor is bounded");
+        self.register_component::<ParticleEmitter>(
+            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
+                .with_default(json!(SceneEmitter::default())),
+            |emitter| json!(SceneEmitter::from(emitter)),
+        ).expect("built-in descriptor is bounded");
+    }
+
+    /// Animation players and skins (decisions 035 and 036), naming clips and
+    /// entities by their authored IDs.
+    fn register_animation(&mut self, schemas: &Value) {
+        // Animation (decisions 035 and 036): players and skins name clips
+        // and entities by their authored IDs.
+        let authored = |world: &World, entity: Option<Entity>| {
+            entity
+                .and_then(|entity| world.get::<SceneEntity>(entity))
+                .map(|source| source.authored_id.clone())
+        };
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player (decision 035) as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())),
+            read: Box::new(move |world, entity, scene| {
+                let player = world.get::<AnimationPlayer>(entity?)?;
+                let clip = world.get_resource::<AssetLibrary>().and_then(|assets| assets.clip(player.clip));
+                Some(json!(AnimationPlayerView {
+                    clip: scene.and_then(|scene| scene.clips().find(|(_, handle)| *handle == player.clip).map(|(id, _)| id.to_owned())),
+                    clip_alive: clip.is_some(),
+                    duration: clip.map(|clip| clip.duration()),
+                    time: player.time,
+                    speed: player.speed,
+                    looping: player.looping,
+                    targets: player.targets.iter().map(|&target| authored(world, target)).collect(),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh (decision 036), as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())),
+            read: Box::new(move |world, entity, _scene| {
+                let skin = world.get::<Skin>(entity?)?;
+                Some(json!(SkinView {
+                    joints: skin.joints.iter().map(|&joint| authored(world, Some(joint))).collect(),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+    }
+
+    /// The look (decision 022): the atmosphere, every effect section and the
+    /// whole environment.
+    fn register_environment(&mut self, schemas: &Value) {
         // The environment (decision 022): each resource serializes as its
         // scene section, so values copy into controls and v5 scenes as is.
-        tools.register_resource::<Atmosphere>(
+        self.register_resource::<Atmosphere>(
             InspectorDescriptor::new("Atmosphere", "Sun, sky colors, fog and grade of every frame (decision 018), every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.", schemas["Atmosphere"].clone())
                 .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
             |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
@@ -228,89 +326,15 @@ impl Default for DevTools {
             }
         }
         SceneEnvironment::default().visit(&mut Sections {
-            tools: &mut tools,
-            schemas: &schemas,
+            tools: self,
+            schemas,
         });
-        tools.register_component::<LocalLight>(
-            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
-                .with_default(json!(SceneLight::default())),
-            |light| json!(SceneLight::from(light)),
-        ).expect("built-in descriptor is bounded");
-        tools.register_component::<Tint>(
-            InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
-                .with_default(json!(Tint::WHITE.0)),
-            |tint| json!(tint.0),
-        ).expect("built-in descriptor is bounded");
-        // Animation (decisions 035 and 036): players and skins name clips
-        // and entities by their authored IDs.
-        let authored = |world: &World, entity: Option<Entity>| {
-            entity
-                .and_then(|entity| world.get::<SceneEntity>(entity))
-                .map(|source| source.authored_id.clone())
-        };
-        tools.insert(Inspector {
-            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player (decision 035) as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())),
-            read: Box::new(move |world, entity, scene| {
-                let player = world.get::<AnimationPlayer>(entity?)?;
-                let clip = world.get_resource::<AssetLibrary>().and_then(|assets| assets.clip(player.clip));
-                Some(json!(AnimationPlayerView {
-                    clip: scene.and_then(|scene| scene.clips().find(|(_, handle)| *handle == player.clip).map(|(id, _)| id.to_owned())),
-                    clip_alive: clip.is_some(),
-                    duration: clip.map(|clip| clip.duration()),
-                    time: player.time,
-                    speed: player.speed,
-                    looping: player.looping,
-                    targets: player.targets.iter().map(|&target| authored(world, target)).collect(),
-                }))
-            }),
-        }).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh (decision 036), as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())),
-            read: Box::new(move |world, entity, _scene| {
-                let skin = world.get::<Skin>(entity?)?;
-                Some(json!(SkinView {
-                    joints: skin.joints.iter().map(|&joint| authored(world, Some(joint))).collect(),
-                }))
-            }),
-        }).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity (decision 039) as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())),
-            read: Box::new(|world, entity, scene| {
-                let decal = world.get::<Decal>(entity?)?;
-                let assets = world.get_resource::<AssetLibrary>();
-                let material = scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == decal.material).map(|(id, _)| id.to_owned()));
-                let field = SceneDecal::from_runtime(decal, material.clone().unwrap_or_default());
-                Some(json!(DecalView {
-                    material,
-                    material_alive: assets.is_some_and(|assets| assets.material(decal.material).is_some()),
-                    blend: field.blend,
-                    opacity: field.opacity,
-                    fade_degrees: field.fade_degrees,
-                }))
-            }),
-        }).expect("built-in descriptor is bounded");
-        tools.register_component::<ReflectionProbe>(
-            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity (decision 043) as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
-            |probe| json!(SceneReflectionProbe::from(probe)),
-        ).expect("built-in descriptor is bounded");
-        tools.register_component::<ParticleEmitter>(
-            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
-                .with_default(json!(SceneEmitter::default())),
-            |emitter| json!(SceneEmitter::from(emitter)),
-        ).expect("built-in descriptor is bounded");
-        tools.insert(Inspector {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off.", schemas["Environment"].clone()),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
         }).expect("built-in descriptor is bounded");
-        tools
     }
 }
 

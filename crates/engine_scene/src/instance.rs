@@ -11,7 +11,7 @@ use engine_core::{
     propagate_transforms, set_parents,
 };
 
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneError, SceneFiles, validation::PreparedScene};
 
 /// Authored identity retained for game setup and development inspection.
 ///
@@ -206,141 +206,16 @@ impl SceneDocument {
         world: &mut World,
         files: &SceneFiles,
     ) -> Result<SceneInstance, SceneError> {
-        let prepared = self.prepare(Some(files))?;
-        let mut owned = OwnedAssets::default();
-        {
-            let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
-                SceneError::new(
-                    "missing_asset_library",
-                    "$",
-                    "install AssetLibrary in the world before instantiating a scene",
-                )
-            })?;
-            // A refused asset leaves none of this document's assets resident.
-            let inserted = (|| {
-                insert_each(prepared.meshes, &mut owned.meshes, "meshes", |mesh| {
-                    assets.insert_mesh(mesh)
-                })?;
-                insert_each(
-                    prepared.textures,
-                    &mut owned.textures,
-                    "textures",
-                    |texture| assets.insert_texture(texture),
-                )?;
-                let texture_lookup: BTreeMap<_, _> = self
-                    .textures
-                    .iter()
-                    .zip(&owned.textures)
-                    .map(|(source, handle)| (source.id.as_str(), *handle))
-                    .collect();
-                insert_each(
-                    prepared.materials,
-                    &mut owned.materials,
-                    "materials",
-                    |material| assets.insert_material(material.material(|id| texture_lookup[id])),
-                )?;
-                insert_each(prepared.clips, &mut owned.clips, "animations", |clip| {
-                    assets.insert_clip(clip)
-                })
-            })();
-            if let Err(error) = inserted {
-                owned.remove(&mut assets);
-                return Err(error);
-            }
-        }
-        let mesh_lookup: BTreeMap<_, _> = self
-            .meshes
-            .iter()
-            .zip(&owned.meshes)
-            .map(|(source, handle)| (source.id.as_str(), *handle))
-            .collect();
-        let material_lookup: BTreeMap<_, _> = self
-            .materials
-            .iter()
-            .zip(&owned.materials)
-            .map(|(source, handle)| (source.id.as_str(), *handle))
-            .collect();
-        let mut entities = BTreeMap::new();
-        let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for ((expanded, transform), component) in prepared
+        let mut prepared = self.prepare(Some(files))?;
+        let owned = self.insert_assets(world, &mut prepared)?;
+        let spawned = self.spawn(world, &prepared, &owned);
+        attach_rigs(world, &prepared, &owned, &spawned);
+        let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
-            .zip(prepared.transforms)
-            .zip(&prepared.components)
-        {
-            let source = &expanded.source;
-            let mut entity = world.spawn((
-                transform,
-                SceneEntity {
-                    scene_id: self.id.clone(),
-                    authored_id: source.id.clone(),
-                    name: source.name.clone(),
-                    tags: source.tags.clone(),
-                    authored_parent: source.parent.clone(),
-                    prefab_id: expanded.prefab_id.clone(),
-                    prefab_instance: expanded.prefab_instance.clone(),
-                    prefab_local_id: expanded.prefab_local_id.clone(),
-                },
-            ));
-            if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
-                entity.insert(Mesh3d {
-                    mesh: mesh_lookup[mesh.as_str()],
-                    material: material_lookup[material.as_str()],
-                });
-            }
-            if let Some(collider) = component.collider {
-                entity.insert(collider);
-            }
-            if let Some(light) = component.light {
-                entity.insert(light);
-            }
-            if let Some(emitter) = component.emitter {
-                entity.insert(emitter);
-            }
-            if let Some(tint) = component.tint {
-                entity.insert(tint);
-            }
-            if let Some(decal) = &component.decal {
-                entity.insert(decal.runtime(owned.materials[decal.material]));
-            }
-            if let Some(probe) = component.probe {
-                entity.insert(probe);
-            }
-            spawned.push(entity.id());
-            entities.insert(source.id.clone(), entity.id());
-        }
-        // Players and skins name entities spawned above; animated targets
-        // present smoothly between fixed ticks.
-        for (component, &entity) in prepared.components.iter().zip(&spawned) {
-            let Some(player) = &component.player else {
-                continue;
-            };
-            for &target in &player.targets {
-                world
-                    .entity_mut(spawned[target])
-                    .insert(InterpolateTransform);
-            }
-            world.entity_mut(entity).insert(AnimationPlayer {
-                clip: owned.clips[player.clip],
-                targets: player
-                    .targets
-                    .iter()
-                    .map(|&target| Some(spawned[target]))
-                    .collect(),
-                time: player.time,
-                speed: player.speed,
-                looping: player.looping,
-            });
-        }
-        for (component, &entity) in prepared.components.iter().zip(&spawned) {
-            let Some(skin) = &component.skin else {
-                continue;
-            };
-            world.entity_mut(entity).insert(Skin::new(
-                skin.joints.iter().map(|&joint| spawned[joint]).collect(),
-                prepared.skin_binds[skin.skin].clone(),
-            ));
-        }
+            .zip(&spawned)
+            .map(|(expanded, &entity)| (expanded.source.id.clone(), entity))
+            .collect();
         let parents: Vec<_> = prepared
             .entities
             .iter()
@@ -392,5 +267,168 @@ impl SceneDocument {
                 .map(|animation| animation.id.clone())
                 .collect(),
         })
+    }
+
+    /// Inserts `prepared`'s meshes, textures, materials and clips: a refused
+    /// one leaves none of this document's assets resident.
+    fn insert_assets(
+        &self,
+        world: &mut World,
+        prepared: &mut PreparedScene,
+    ) -> Result<OwnedAssets, SceneError> {
+        let mut owned = OwnedAssets::default();
+        let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
+            SceneError::new(
+                "missing_asset_library",
+                "$",
+                "install AssetLibrary in the world before instantiating a scene",
+            )
+        })?;
+        let inserted = (|| {
+            insert_each(
+                std::mem::take(&mut prepared.meshes),
+                &mut owned.meshes,
+                "meshes",
+                |mesh| assets.insert_mesh(mesh),
+            )?;
+            insert_each(
+                std::mem::take(&mut prepared.textures),
+                &mut owned.textures,
+                "textures",
+                |texture| assets.insert_texture(texture),
+            )?;
+            let texture_lookup: BTreeMap<_, _> = self
+                .textures
+                .iter()
+                .zip(&owned.textures)
+                .map(|(source, handle)| (source.id.as_str(), *handle))
+                .collect();
+            insert_each(
+                std::mem::take(&mut prepared.materials),
+                &mut owned.materials,
+                "materials",
+                |material| assets.insert_material(material.material(|id| texture_lookup[id])),
+            )?;
+            insert_each(
+                std::mem::take(&mut prepared.clips),
+                &mut owned.clips,
+                "animations",
+                |clip| assets.insert_clip(clip),
+            )
+        })();
+        if let Err(error) = inserted {
+            owned.remove(&mut assets);
+            return Err(error);
+        }
+        Ok(owned)
+    }
+
+    /// Spawns each expanded entity with its transform, identity, mesh and
+    /// components; returns them in expanded order.
+    fn spawn(
+        &self,
+        world: &mut World,
+        prepared: &PreparedScene,
+        owned: &OwnedAssets,
+    ) -> Vec<Entity> {
+        let mesh_lookup: BTreeMap<_, _> = self
+            .meshes
+            .iter()
+            .zip(&owned.meshes)
+            .map(|(source, handle)| (source.id.as_str(), *handle))
+            .collect();
+        let material_lookup: BTreeMap<_, _> = self
+            .materials
+            .iter()
+            .zip(&owned.materials)
+            .map(|(source, handle)| (source.id.as_str(), *handle))
+            .collect();
+        let mut spawned = Vec::with_capacity(prepared.entities.len());
+        for ((expanded, &transform), component) in prepared
+            .entities
+            .iter()
+            .zip(&prepared.transforms)
+            .zip(&prepared.components)
+        {
+            let source = &expanded.source;
+            let mut entity = world.spawn((
+                transform,
+                SceneEntity {
+                    scene_id: self.id.clone(),
+                    authored_id: source.id.clone(),
+                    name: source.name.clone(),
+                    tags: source.tags.clone(),
+                    authored_parent: source.parent.clone(),
+                    prefab_id: expanded.prefab_id.clone(),
+                    prefab_instance: expanded.prefab_instance.clone(),
+                    prefab_local_id: expanded.prefab_local_id.clone(),
+                },
+            ));
+            if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
+                entity.insert(Mesh3d {
+                    mesh: mesh_lookup[mesh.as_str()],
+                    material: material_lookup[material.as_str()],
+                });
+            }
+            if let Some(collider) = component.collider {
+                entity.insert(collider);
+            }
+            if let Some(light) = component.light {
+                entity.insert(light);
+            }
+            if let Some(emitter) = component.emitter {
+                entity.insert(emitter);
+            }
+            if let Some(tint) = component.tint {
+                entity.insert(tint);
+            }
+            if let Some(decal) = &component.decal {
+                entity.insert(decal.runtime(owned.materials[decal.material]));
+            }
+            if let Some(probe) = component.probe {
+                entity.insert(probe);
+            }
+            spawned.push(entity.id());
+        }
+        spawned
+    }
+}
+
+/// Gives the `spawned` entities their animation players and skins, which
+/// name other spawned entities; animated targets present smoothly between
+/// fixed ticks.
+fn attach_rigs(
+    world: &mut World,
+    prepared: &PreparedScene,
+    owned: &OwnedAssets,
+    spawned: &[Entity],
+) {
+    for (component, &entity) in prepared.components.iter().zip(spawned) {
+        if let Some(player) = &component.player {
+            for &target in &player.targets {
+                world
+                    .entity_mut(spawned[target])
+                    .insert(InterpolateTransform);
+            }
+            world.entity_mut(entity).insert(AnimationPlayer {
+                clip: owned.clips[player.clip],
+                targets: player
+                    .targets
+                    .iter()
+                    .map(|&target| Some(spawned[target]))
+                    .collect(),
+                time: player.time,
+                speed: player.speed,
+                looping: player.looping,
+            });
+        }
+    }
+    for (component, &entity) in prepared.components.iter().zip(spawned) {
+        if let Some(skin) = &component.skin {
+            world.entity_mut(entity).insert(Skin::new(
+                skin.joints.iter().map(|&joint| spawned[joint]).collect(),
+                prepared.skin_binds[skin.skin].clone(),
+            ));
+        }
     }
 }
