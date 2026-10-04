@@ -63,6 +63,8 @@ struct Input {
     // Validated store index hint, never an identity.
     hint: TransformIndex,
     status: ColliderStatus,
+    // Its entry's index while active (u32::MAX otherwise).
+    entry: u32,
 }
 
 /// The collider's authoritative pose and output revision, read through a
@@ -96,6 +98,9 @@ pub struct CollisionWorld {
     inputs: Vec<Input>,
     statuses: HashMap<Entity, ColliderStatus>,
     entries: Vec<Entry>,
+    // The entries of the rebuild before, whose unchanged colliders keep
+    // their shapes.
+    previous_entries: Vec<Entry>,
     bounds: Vec<Bounds>,
     bvh: Bvh,
     narrow: NarrowScratch,
@@ -111,6 +116,7 @@ impl FromWorld for CollisionWorld {
             inputs: Vec::new(),
             statuses: HashMap::new(),
             entries: Vec::new(),
+            previous_entries: Vec::new(),
             bounds: Vec::new(),
             bvh: Bvh::default(),
             narrow: NarrowScratch::default(),
@@ -177,11 +183,15 @@ impl CollisionWorld {
             return self.report;
         }
         let _rebuild = engine_profile::span("collision", "cache_rebuild");
+        // Under the same configuration, colliders whose shape and pose
+        // revision stand keep their entries' shapes.
+        let reuse = self.report.revision != 0 && config == self.config;
         self.config = config;
         self.report.revision = self.report.revision.saturating_add(1);
         self.report.colliders = count;
         self.report.invalid_colliders = 0;
         self.report.overflow_colliders = count.saturating_sub(limit);
+        std::mem::swap(&mut self.entries, &mut self.previous_entries);
         self.entries.clear();
         self.bounds.clear();
         // Inputs are rewritten in place so unchanged membership and statuses
@@ -194,15 +204,30 @@ impl CollisionWorld {
         self.bounds.reserve_exact(admitted);
         let configuration_valid = config.validate().is_ok();
         for (index, (entity, collider, local)) in colliders.iter().take(limit).enumerate() {
-            let mut hint = self
+            let previous = self
                 .inputs
                 .get(index)
-                .filter(|old| old.entity == entity)
-                .map_or_else(TransformIndex::default, |old| old.hint);
+                .copied()
+                .filter(|old| old.entity == entity);
+            let mut hint = previous.map_or_else(TransformIndex::default, |old| old.hint);
             let (matrix, revision) = read_pose(globals, entity, local.is_some(), &mut hint);
-            let affine = matrix
-                .and_then(|matrix| AffineShape::new(collider.shape(), matrix).ok())
-                .filter(|_| configuration_valid);
+            // Equal revisions certify equal matrix bits: the same shape.
+            let kept = previous
+                .filter(|old| {
+                    reuse
+                        && old.status == ColliderStatus::Active
+                        && old.collider == *collider
+                        && old.revision == revision
+                        && revision.is_some_and(|revision| revision != u64::MAX)
+                })
+                .and_then(|old| self.previous_entries.get(old.entry as usize))
+                .map(|entry| entry.affine);
+            let affine = kept.or_else(|| {
+                matrix
+                    .and_then(|matrix| AffineShape::new(collider.shape(), matrix).ok())
+                    .filter(|_| configuration_valid)
+            });
+            let entry = self.entries.len() as u32;
             let status = if let Some(affine) = affine {
                 self.entries.push(Entry {
                     entity,
@@ -221,6 +246,11 @@ impl CollisionWorld {
                 revision,
                 hint,
                 status,
+                entry: if status == ColliderStatus::Active {
+                    entry
+                } else {
+                    u32::MAX
+                },
             };
             if let Some(old) = self.inputs.get_mut(index) {
                 statuses_changed |= old.entity != entity || old.status != status;
@@ -241,7 +271,7 @@ impl CollisionWorld {
         self.report.active_colliders = self.entries.len();
         self.report.bvh_nodes = self.bvh.len();
         self.report.cache_bytes = self.inputs.capacity() * size_of::<Input>()
-            + self.entries.capacity() * size_of::<Entry>()
+            + (self.entries.capacity() + self.previous_entries.capacity()) * size_of::<Entry>()
             + self.bounds.capacity() * size_of::<Bounds>()
             + self.bvh.bytes();
         self.report.complete = configuration_valid
