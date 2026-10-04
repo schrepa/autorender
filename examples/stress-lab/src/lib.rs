@@ -23,6 +23,37 @@ use engine::prelude::*;
 static ALLOCATOR: engine::profiling::TrackingAllocator<std::alloc::System> =
     engine::profiling::TrackingAllocator::new(std::alloc::System);
 
+/// What a recording samples of [`stress_observation`] every frame, without
+/// its JSON: collision sync, sensor, query and animation milliseconds;
+/// active, invalid and overflowing colliders and collision completeness;
+/// sensor pairs, candidates and completeness; query calls, hits and errors.
+/// Flags are 1 or 0.
+pub fn stress_sample(engine: &Engine) -> [f64; 14] {
+    use engine::collision::SensorEvents;
+    let world = engine.app.world();
+    let collision = world.get_resource::<CollisionWorld>();
+    let report = collision.map(CollisionWorld::report);
+    let events = world.get_resource::<SensorEvents>();
+    let metrics = world.resource::<FrameMetrics>();
+    let flag = |value: bool| f64::from(u8::from(value));
+    [
+        metrics.sync_pre_ms + metrics.sync_post_ms,
+        metrics.sensor_ms,
+        metrics.queries_ms,
+        metrics.animation_ms,
+        report.map_or(0.0, |report| report.active_colliders as f64),
+        report.map_or(0.0, |report| report.invalid_colliders as f64),
+        report.map_or(0.0, |report| report.overflow_colliders as f64),
+        flag(report.is_none_or(|report| report.complete)),
+        events.map_or(0.0, |events| events.pairs().len() as f64),
+        events.map_or(0.0, |events| events.candidate_pairs() as f64),
+        flag(events.is_none_or(SensorEvents::complete)),
+        metrics.query_calls as f64,
+        metrics.query_hits as f64,
+        metrics.query_errors as f64,
+    ]
+}
+
 /// Small observations are serialized only when the host polls, never per entity.
 pub fn stress_observation(engine: &Engine, generation: u32) -> serde_json::Value {
     use engine::collision::{CollisionReport, SensorEvents};

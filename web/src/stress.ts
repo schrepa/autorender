@@ -68,11 +68,13 @@ async function denseFiles(): Promise<StressFiles | undefined> {
   if (denseSupplied || !filesClass || !prefixBytes) return undefined;
   const files = new filesClass();
   try {
-    // Each file's prefix: the renderer streams the other pages from its URL.
-    for (const name of JSON.parse(filesClass.dense_names()) as string[]) {
-      const url = new URL(`${import.meta.env.BASE_URL}stress/dense/${name}`, location.href).href;
-      files.add_streamed(name, await fetchVirtualPrefix(url, prefixBytes), url);
-    }
+    // Each file's prefix, fetched together: the renderer streams the other
+    // pages from its URL.
+    const names = JSON.parse(filesClass.dense_names()) as string[];
+    const urls = names.map(name => new URL(`${import.meta.env.BASE_URL}stress/dense/${name}`, location.href).href);
+    const prefix = prefixBytes;
+    const prefixes = await Promise.all(urls.map(url => fetchVirtualPrefix(url, prefix)));
+    names.forEach((name, index) => files.add_streamed(name, prefixes[index], urls[index]));
   } catch (error) {
     files.free();
     throw new Error(`${String(error)} Build the files with \`cargo run -p engine_vgbuild --release --bin dense_assets\`.`);
@@ -150,6 +152,27 @@ function readConfig(): Config {
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
     scene: choice("scene-select").value as Scene, compressed_textures: checked("compressed") };
+}
+/** One fingerprint of the module, taken in the background at startup,
+ * outside measurement windows: exports made before it ends carry none.
+ * Production filenames and managed generation URLs are immutable; do not
+ * rebuild during a run. */
+async function fingerprintWasm() {
+  const wasmUrl = performance.getEntriesByType("resource").map(entry => entry.name)
+    .find(name => name.includes("stress_lab") && new URL(name).pathname.endsWith(".wasm"));
+  if (!wasmUrl) return;
+  wasmIdentity.url = wasmUrl;
+  try {
+    const maximumBytes = (import.meta.env.MODE === "profiling" ? 64 : 8) * 1024 * 1024;
+    const response = await fetch(wasmUrl, { cache: "force-cache" });
+    if (response.ok && Number(response.headers.get("content-length") ?? 0) <= maximumBytes) {
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength <= maximumBytes) {
+        const hash = await crypto.subtle.digest("SHA-256", buffer);
+        wasmIdentity.sha256 = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
+      }
+    }
+  } catch { /* A missing optional fingerprint remains explicit in the export. */ }
 }
 /** Whether the adapter samples BC7, which compressed metro textures need. */
 let blockCompression: boolean | undefined;
@@ -289,27 +312,12 @@ boot({
     const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;
     prefixBytes = virtual_prefix_bytes;
+    // The adapter's features arrive while the module compiles.
+    const compression = detectBlockCompression();
     const initialized = await init();
     wasmMemory = (initialized as { memory?: WebAssembly.Memory }).memory;
-    // One startup fingerprint outside measurement windows. Production filenames
-    // and managed generation URLs are immutable; do not rebuild during a run.
-    const wasmUrl = performance.getEntriesByType("resource").map(entry => entry.name)
-      .find(name => name.includes("stress_lab") && new URL(name).pathname.endsWith(".wasm"));
-    if (wasmUrl) {
-      wasmIdentity.url = wasmUrl;
-      try {
-        const maximumBytes = (import.meta.env.MODE === "profiling" ? 64 : 8) * 1024 * 1024;
-        const response = await fetch(wasmUrl, { cache: "force-cache" });
-        if (response.ok && Number(response.headers.get("content-length") ?? 0) <= maximumBytes) {
-          const buffer = await response.arrayBuffer();
-          if (buffer.byteLength <= maximumBytes) {
-            const hash = await crypto.subtle.digest("SHA-256", buffer);
-            wasmIdentity.sha256 = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
-          }
-        }
-      } catch { /* A missing optional fingerprint remains explicit in the export. */ }
-    }
-    blockCompression = await detectBlockCompression();
+    void fingerprintWasm();
+    blockCompression = await compression;
     activeConfig = supported(activeConfig);
     return StressGame.create(canvas, JSON.stringify(activeConfig),
       activeConfig.scene === "dense" ? await denseFiles() : undefined);
@@ -377,21 +385,23 @@ boot({
     }
     previousTimestamp = timestamp;
     if (!recorder.active) return;
-    const stats = readStats(runtime), data = snapshot(runtime);
+    // The workload's numbers without its full snapshot, read every 250 ms.
+    const stats = readStats(runtime);
+    const [syncMs, sensorMs, queriesMs, animationMs, activeColliders, invalidColliders, overflowColliders, collisionComplete,
+      sensorPairs, sensorCandidates, sensorComplete, queryCalls, queryHits, queryErrors] = runtime.frame_sample();
     recorder.sample({ timestamp, simulation_ms: stats.simulation_ms, extraction_ms: stats.extraction_ms, render_ms: stats.render_ms,
       dropped_seconds: stats.dropped_seconds,
-      phases_ms: { collision_sync: data.timings.sync_pre_ms + data.timings.sync_post_ms, sensors: data.timings.sensor_ms,
-        queries: data.timings.queries_ms, animation: data.timings.animation_ms },
+      phases_ms: { collision_sync: syncMs, sensors: sensorMs, queries: queriesMs, animation: animationMs },
       counters: { instances: stats.instances, candidates: stats.render_candidates, visible: stats.visible_instances, culled: stats.culled_instances,
         draws: stats.draw_calls, upload_bytes: stats.upload_bytes, fixed_steps: stats.fixed_steps, missing_assets: stats.missing_assets,
         invalid_transforms: stats.invalid_transforms, dropped_instances: stats.dropped_instances, culling: stats.culling_enabled,
         gpu_mesh_bytes: stats.resident_mesh_bytes, gpu_texture_bytes: stats.resident_texture_bytes,
         mesh_upload_bytes: stats.mesh_upload_bytes, texture_upload_bytes: stats.texture_upload_bytes,
-        colliders: data.collision.active_colliders, collision_complete: data.collision.complete, invalid_colliders: data.collision.invalid_colliders,
-        overflow_colliders: data.collision.overflow_colliders, sensor_complete: data.collision.sensor_complete, sensor_pairs: data.collision.sensor_pairs,
-        sensor_candidates: data.collision.sensor_candidates, query_calls: data.queries.calls, query_hits: data.queries.hits, query_errors: data.queries.errors },
+        colliders: activeColliders, collision_complete: collisionComplete === 1, invalid_colliders: invalidColliders,
+        overflow_colliders: overflowColliders, sensor_complete: sensorComplete === 1, sensor_pairs: sensorPairs,
+        sensor_candidates: sensorCandidates, query_calls: queryCalls, query_hits: queryHits, query_errors: queryErrors },
     });
-    if (timestamp - lastDiagnostic >= 250) { recorder.diagnostic(timestamp, data); lastDiagnostic = timestamp; }
+    if (timestamp - lastDiagnostic >= 250) { recorder.diagnostic(timestamp, snapshot(runtime)); lastDiagnostic = timestamp; }
   },
 });
 
