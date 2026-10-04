@@ -142,6 +142,8 @@ pub(crate) struct BatchPlan {
     previous_order: Vec<usize>,
     previous_batches: Vec<DrawBatch>,
     generation: u64,
+    // Advances with every rebuild of the source lists.
+    rebuilds: u64,
     source_indices: Vec<usize>,
     material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
@@ -268,6 +270,12 @@ impl BatchPlan {
         self.generation
     }
 
+    /// Advances whenever the plan rebuilds: its meshes, materials and
+    /// textures may differ.
+    pub(crate) fn rebuilds(&self) -> u64 {
+        self.rebuilds
+    }
+
     fn invalidate(&mut self) {
         self.generation += 1;
         self.valid = false;
@@ -302,6 +310,7 @@ impl BatchPlan {
         selected: &[usize],
         reuse_slot_mapping: bool,
     ) -> Result<(), SnapshotError> {
+        self.rebuilds += 1;
         let instance_count = selected.len();
         let profile_validation = engine_profile::span("render", "batch_source_validation");
         self.source_indices.clear();

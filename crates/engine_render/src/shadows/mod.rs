@@ -37,7 +37,7 @@ use crate::bindings::SHADOW_POSES;
 use crate::browser::FramePoses;
 use crate::buffers::entry;
 use crate::cached::Cached;
-use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES};
+use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES, ShadowCullUniform};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
 use crate::shadow_fit::{KeptMap, LightBasis, Refresh};
@@ -212,6 +212,14 @@ pub(crate) struct ShadowPass {
     pose_groups: Cached<u64, [Option<wgpu::BindGroup>; 2]>,
     // Maps drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
+    // Advances whenever the caster groups change.
+    groups_generation: u64,
+    // The caster groups, mesh layout and map errors (bits) the draw
+    // arguments' template was last updated for.
+    template_key: Option<(u64, u64, [u32; MAPS])>,
+    // The view matrices and cull uniform last written.
+    written_views: Option<Vec<f32>>,
+    written_cull: Option<ShadowCullUniform>,
 }
 
 impl ShadowPass {
@@ -234,7 +242,16 @@ impl ShadowPass {
             selection: Selection::new(device),
             pose_groups: Cached::default(),
             virtual_views: Vec::new(),
+            groups_generation: 0,
+            template_key: None,
+            written_views: None,
+            written_cull: None,
         }
+    }
+
+    /// Advances whenever the caster groups change.
+    pub(crate) fn groups_generation(&self) -> u64 {
+        self.groups_generation
     }
 
     /// Advances when the map views bound by [`Self::entries`] change.
@@ -304,10 +321,14 @@ impl ShadowPass {
     /// Call before mesh uploads, which must include every group's mesh.
     pub(crate) fn plan_groups(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) {
         if !frame.snapshot().environment.shadows.enabled {
+            if !self.casters.groups().is_empty() {
+                self.groups_generation += 1;
+            }
             self.casters.clear();
             return;
         }
         if self.casters.plan(plan, frame, gpu) {
+            self.groups_generation += 1;
             self.selection.groups_changed();
             if self.casters.source() == Source::Presented {
                 // Removed casters leave their kept shadows: redraw every tile.
@@ -379,39 +400,49 @@ impl ShadowPass {
         // mesh placement at the level of detail each map draws it at.
         self.selection
             .ensure_outputs(device, self.casters.groups().len(), self.casters.total());
-        let draws: Vec<CasterDraw> = self
-            .casters
-            .groups()
-            .iter()
-            .map(|group| (inputs.placement)(group.mesh))
-            .collect();
-        let levels: Vec<u8> = regions
-            .errors()
-            .iter()
-            .flat_map(|&error| draws.iter().map(move |draw| draw.level_within(error)))
-            .collect();
-        let update = self.selection.update_template(
-            device,
-            queue,
-            &self.casters,
-            levels,
-            |index, level| draws[index].range(level),
+        // The template follows the groups, their meshes' placement and the
+        // maps' errors.
+        let errors = regions.errors();
+        let template_key = (
+            self.groups_generation,
             inputs.mesh_layout,
+            errors.map(f32::to_bits),
         );
-        if update.kept_levels {
-            // Casters drawn at other levels than the kept map holds redraw it
-            // whole.
-            self.kept.invalidate();
-        }
-        if update.dirty_replaced {
-            self.kept.dirty_all();
+        if self.template_key != Some(template_key) {
+            self.template_key = Some(template_key);
+            let draws: Vec<CasterDraw> = self
+                .casters
+                .groups()
+                .iter()
+                .map(|group| (inputs.placement)(group.mesh))
+                .collect();
+            let levels: Vec<u8> = errors
+                .iter()
+                .flat_map(|&error| draws.iter().map(move |draw| draw.level_within(error)))
+                .collect();
+            let update = self.selection.update_template(
+                device,
+                queue,
+                &self.casters,
+                levels,
+                |index, level| draws[index].range(level),
+                inputs.mesh_layout,
+            );
+            if update.kept_levels {
+                // Casters drawn at other levels than the kept map holds redraw
+                // it whole.
+                self.kept.invalidate();
+            }
+            if update.dirty_replaced {
+                self.kept.dirty_all();
+            }
         }
         let pipelines = self.pipelines.as_ref().expect("created above");
-        queue.write_buffer(
-            &pipelines.view_buffer,
-            0,
-            bytemuck::cast_slice(&regions.view_matrices()),
-        );
+        let views = regions.view_matrices();
+        if self.written_views.as_deref() != Some(&views[..]) {
+            queue.write_buffer(&pipelines.view_buffer, 0, bytemuck::cast_slice(&views));
+            self.written_views = Some(views.to_vec());
+        }
         let (candidates, skinned) = match (presented, source) {
             (Some(presented), Source::Presented) => (presented.count, presented.skinned_count),
             (_, Source::Listed) => (self.casters.listed.len() as u32, 0),
@@ -435,7 +466,13 @@ impl ShadowPass {
             },
             &mut self.virtual_views,
         );
-        queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
+        if self
+            .written_cull
+            .is_none_or(|written| bytemuck::bytes_of(&written) != bytemuck::bytes_of(&cull))
+        {
+            queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
+            self.written_cull = Some(cull);
+        }
         self.maps
             .write_uniform(queue, regions.lookup_uniform(&settings, classify));
         // Bindings: poses of this frame, and the selection inputs.

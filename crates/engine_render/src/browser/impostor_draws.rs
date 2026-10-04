@@ -24,6 +24,30 @@ impl Renderer {
         gpu_mode: bool,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
+        // Records follow the plan, mesh residency, material groups, the
+        // settings and the atlas.
+        let settings = snapshot.environment.level_of_detail;
+        let key = |renderer: &Self| {
+            (
+                renderer.structure_key(),
+                settings,
+                gpu_mode,
+                renderer.impostors.atlas.generation(),
+            )
+        };
+        if self.structure_keys.impostors == Some(key(self)) {
+            return;
+        }
+        self.prepare_impostor_records(snapshot, gpu_mode, encoder);
+        self.structure_keys.impostors = Some(key(self));
+    }
+
+    fn prepare_impostor_records(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        gpu_mode: bool,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) {
         self.impostors.records.clear();
         self.impostors.dropped = 0;
         let (meshes, materials, plan) = (&self.meshes, &self.materials, &self.plan);

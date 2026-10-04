@@ -231,7 +231,9 @@ impl DepthPyramid {
         });
         for (index, level) in levels.passes.iter().enumerate() {
             let (width, height) = level.written;
-            pass.set_pipeline(if index == 0 { &self.first } else { &self.down });
+            if index < 2 {
+                pass.set_pipeline(if index == 0 { &self.first } else { &self.down });
+            }
             pass.set_bind_group(0, &level.group, &[]);
             pass.dispatch_workgroups(width.div_ceil(GROUP), height.div_ceil(GROUP), 1);
         }
