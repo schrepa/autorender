@@ -188,13 +188,25 @@ impl Renderer {
                     bin,
                     shadow_view.view_offset,
                 ));
-                views.push(VirtualView {
-                    planes: shadow_view.planes,
-                    min_distance: shadow_view.min_distance.unwrap_or(VIRTUAL_NEAREST),
-                    unseen_error: snapshot.environment.virtual_geometry.pixel_error
-                        * shadow_view.texel,
-                    cone: Cone::Along(shadow_view.direction),
-                    ..camera
+                views.push(match shadow_view.error {
+                    // Errors project from beyond any distance: within
+                    // `error` everywhere, whatever the camera sees.
+                    Some(error) => VirtualView {
+                        planes: shadow_view.planes,
+                        min_distance: KEPT_DISTANCE,
+                        threshold: error * camera.projection / KEPT_DISTANCE,
+                        unseen_error: 0.0,
+                        cone: Cone::Along(shadow_view.direction),
+                        ..camera
+                    },
+                    None => VirtualView {
+                        planes: shadow_view.planes,
+                        min_distance: shadow_view.min_distance.unwrap_or(VIRTUAL_NEAREST),
+                        unseen_error: snapshot.environment.virtual_geometry.pixel_error
+                            * shadow_view.texel,
+                        cone: Cone::Along(shadow_view.direction),
+                        ..camera
+                    },
                 });
             }
         }
@@ -423,6 +435,9 @@ pub(super) struct VirtualStages {
 /// The smallest distance virtual geometry's errors project from (decision
 /// 044): a guard for the eye's own position.
 pub(super) const VIRTUAL_NEAREST: f32 = 0.05;
+/// The distance a kept map's view (decision 020) projects every error
+/// from, beyond any scene's: errors then compare in world units.
+const KEPT_DISTANCE: f32 = 1.0e7;
 
 /// Selected clusters of virtual geometry (decision 044): visible ID and
 /// cluster, one entry per instance.

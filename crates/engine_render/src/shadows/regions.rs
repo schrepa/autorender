@@ -243,6 +243,7 @@ impl Regions {
                     texel: region.texel(self.near_resolution()),
                     direction: basis.rows[2],
                     view_offset: (index as u64 * VIEW_STRIDE) as u32,
+                    error: None,
                 });
             }
             virtual_views.push(VirtualShadowView {
@@ -252,7 +253,29 @@ impl Regions {
                 texel: far.texel(self.resolution),
                 direction: basis.rows[2],
                 view_offset: FAR_VIEW as u32,
+                error: None,
             });
+            // The kept map holds still casters whatever the camera sees: on
+            // frames redrawing it, their clusters within the error its other
+            // casters draw with (half a texel), in the region redrawn.
+            if classify && refresh.is_some() {
+                let mut kept = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
+                for (slot, plane) in
+                    kept.iter_mut()
+                        .zip(region_planes(basis, refresh_rect, far.depth[1]))
+                {
+                    *slot = plane;
+                }
+                virtual_views.push(VirtualShadowView {
+                    map: KEPT_MAP,
+                    planes: kept,
+                    min_distance: None,
+                    texel: far.texel(self.resolution),
+                    direction: basis.rows[2],
+                    view_offset: FAR_VIEW as u32,
+                    error: Some(self.errors()[KEPT_MAP]),
+                });
+            }
         }
         ShadowCullUniform {
             light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],

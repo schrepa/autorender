@@ -278,9 +278,8 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     // Batches drawing virtual geometry (decision 044, flag 2) cast the
-    // clusters each map's view selects: never kept, as the camera's detail
-    // changes with it.
-    let clustered = batch.bounds_max.w == 2.0;
+    // clusters each map's view selects; the kept map's are its own detail,
+    // whatever the camera sees.
     // Joints place meshes with joints (decision 036), wherever their slot
     // is: GPU-presented frames select them by their palette bounds
     // (`select_skinned`); others cast them into every map drawn each frame.
@@ -311,7 +310,7 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     // Non-finite bounds fail every comparison and cast nothing.
     var moving = true;
     var kept = false;
-    if classify && !clustered {
+    if classify {
         let key = pose_key(pose, batch.group);
         let state = stillness[candidate.slot];
         var count = state.y & 0xffu;

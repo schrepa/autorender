@@ -11,9 +11,10 @@
 //! indirect draws per mesh; on GPU-presented frames it also keeps each
 //! slot's stillness and marks dirty tiles, read back a few frames later.
 //! CPU-prepared frames draw every caster into the moving map and leave the
-//! kept map unread. Casters with virtual
-//! geometry (decision 044) are selected into the maps drawn every frame,
-//! whose clusters virtual geometry selects and draws after its own
+//! kept map unread. Casters with virtual geometry (decision 044) are
+//! selected like the others; virtual geometry selects their clusters for
+//! each map drawn, as the camera sees them in the maps drawn every frame
+//! and within half a texel in the kept map, and draws them after its own
 //! selection: [`ShadowPass::encode_selection`], then
 //! [`ShadowPass::encode_maps`].
 //!
@@ -72,8 +73,10 @@ pub(crate) const VIRTUAL_SHADOW_PLANES: usize = 12;
 /// geometry selects (decision 044): its planes around where casters can
 /// darken visible receivers (unused ones hold everything), the camera
 /// distance its receivers start at (`None` at the camera), its texel's
-/// world size, the direction it looks along (away from the sun) and the
-/// offset of its view matrix.
+/// world size, the direction it looks along (away from the sun), the
+/// offset of its view matrix, and the world error its clusters keep
+/// whatever the camera sees (the kept map's), or `None` to project errors
+/// as the camera sees them.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VirtualShadowView {
     pub map: usize,
@@ -82,6 +85,7 @@ pub(crate) struct VirtualShadowView {
     pub texel: f32,
     pub direction: Vec3,
     pub view_offset: u32,
+    pub error: Option<f32>,
 }
 
 /// Where this frame's casters come from.
