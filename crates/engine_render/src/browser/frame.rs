@@ -256,30 +256,35 @@ impl Renderer {
         // culled casters, whose meshes stay resident and upload with the
         // batches' meshes.
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);
-        let shadow_meshes: BTreeSet<MeshHandle> = self
-            .shadows
-            .groups()
-            .iter()
-            .map(|group| group.mesh)
-            .collect();
         // Supplied sources keep residency across culling; uploads below follow
         // only emitted draw batches, shadow casters and referenced textures.
-        let (plan, arena) = (&self.plan, &mut self.mesh_arena);
-        let resident = self.meshes.len();
-        self.meshes.retain(|handle, mesh| {
-            let keep = plan.contains_mesh(*handle) || shadow_meshes.contains(handle);
-            if !keep && let Ok(placement) = mesh.placement {
-                arena.remove(placement);
+        // Residency changes only with the plan's sources or the casters.
+        let residency = (self.plan.rebuilds(), self.shadows.groups_generation());
+        if self.structure_keys.residency != Some(residency) {
+            self.structure_keys.residency = Some(residency);
+            let shadow_meshes: BTreeSet<MeshHandle> = self
+                .shadows
+                .groups()
+                .iter()
+                .map(|group| group.mesh)
+                .collect();
+            let (plan, arena) = (&self.plan, &mut self.mesh_arena);
+            let resident = self.meshes.len();
+            self.meshes.retain(|handle, mesh| {
+                let keep = plan.contains_mesh(*handle) || shadow_meshes.contains(handle);
+                if !keep && let Ok(placement) = mesh.placement {
+                    arena.remove(placement);
+                }
+                keep
+            });
+            if self.meshes.len() != resident {
+                self.mesh_layout += 1;
             }
-            keep
-        });
-        if self.meshes.len() != resident {
-            self.mesh_layout += 1;
+            let meshes = &self.meshes;
+            self.virtual_draws
+                .pass
+                .retain(|handle| meshes.contains_key(&handle));
         }
-        let meshes = &self.meshes;
-        self.virtual_draws
-            .pass
-            .retain(|handle| meshes.contains_key(&handle));
         self.materials.retain(&self.plan, snapshot);
         drop(profile_residency);
         Ok((
@@ -300,6 +305,14 @@ impl Renderer {
 
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mut mesh_upload_bytes = 0_u64;
+        // Every batch's and caster's mesh is resident unless the plan, the
+        // casters or residency changed since the last upload.
+        let uploads = (
+            self.plan.rebuilds(),
+            self.shadows.groups_generation(),
+            self.mesh_layout,
+        );
+        let mesh_uploads = self.structure_keys.uploads != Some(uploads);
         let sources = self
             .plan
             .batches
@@ -310,7 +323,8 @@ impl Renderer {
                     .groups()
                     .iter()
                     .map(|group| (group.mesh, group.source_index)),
-            );
+            )
+            .filter(|_| mesh_uploads);
         for (handle, source_index) in sources {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
                 let source = &snapshot.meshes[source_index].mesh;
@@ -381,6 +395,13 @@ impl Renderer {
                     self.virtual_draws.pass.insert(handle, geometry);
                 }
             }
+        }
+        if mesh_uploads {
+            self.structure_keys.uploads = Some((
+                self.plan.rebuilds(),
+                self.shadows.groups_generation(),
+                self.mesh_layout,
+            ));
         }
         self.virtual_draws.pass.upload(
             &self.device,
@@ -644,7 +665,7 @@ impl Renderer {
             occlusion,
             gpu_prepared,
             shadow_frame,
-            environment_encoder: Some(environment_encoder),
+            environment_encoder,
             probe_list,
             dropped_probes,
             light_frame,
@@ -862,7 +883,7 @@ impl Renderer {
         snapshot: &'s RenderSnapshot,
         lighting: &LightingUniform,
     ) -> (
-        wgpu::CommandEncoder,
+        Option<wgpu::CommandEncoder>,
         &'s [engine_core::RenderReflectionProbe],
         u64,
     ) {
@@ -876,7 +897,7 @@ impl Renderer {
         } else {
             &[]
         };
-        let most_cubes = (self.device.limits().max_texture_array_layers / FACES as u32).max(1);
+        let most_cubes = (self.display.max_layers / FACES as u32).max(1);
         let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
         let cubes = if wanted_cubes == 1 {
             1
@@ -885,20 +906,24 @@ impl Renderer {
         } else {
             self.environment.cubes()
         };
-        let mut environment_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("engine/environment-encoder"),
-                });
-        let lost = self.environment.ensure(
-            &self.device,
-            &mut environment_encoder,
-            probe_settings.resolution,
-            cubes,
-        );
-        let sky_changed = self
+        // Frames whose maps and sky stand record nothing here.
+        let mut environment_encoder = self
             .environment
-            .encode_sky(&mut environment_encoder, lighting);
+            .needs_encoding(probe_settings.resolution, cubes, lighting)
+            .then(|| {
+                self.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("engine/environment-encoder"),
+                    })
+            });
+        let (lost, sky_changed) = match environment_encoder.as_mut() {
+            Some(encoder) => (
+                self.environment
+                    .ensure(&self.device, encoder, probe_settings.resolution, cubes),
+                self.environment.encode_sky(encoder, lighting),
+            ),
+            None => (false, false),
+        };
         self.probes
             .slots
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
@@ -2107,11 +2132,7 @@ impl Renderer {
         let mip_encoder = state.assets.encoder.take();
         let staged_poses = state.writes.staged_poses.take();
         let input_copies = state.features.input_copies.take();
-        let environment_encoder = state
-            .features
-            .environment_encoder
-            .take()
-            .expect("prepared with the frame");
+        let environment_encoder = state.features.environment_encoder.take();
         let temporal_frame = &state.packing.temporal_frame;
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
@@ -2122,7 +2143,8 @@ impl Renderer {
                 .into_iter()
                 .chain(staged_poses)
                 .chain(input_copies.map(wgpu::CommandEncoder::finish))
-                .chain([environment_encoder.finish(), encoder.finish()]),
+                .chain(environment_encoder.map(wgpu::CommandEncoder::finish))
+                .chain([encoder.finish()]),
         );
         self.instances.pose_uploads.after_submit();
         if gpu_mode {

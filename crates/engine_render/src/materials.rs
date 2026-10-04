@@ -52,6 +52,8 @@ pub(crate) struct MaterialStore {
     // both color and data uploads once per color space.
     textures: BTreeMap<(TextureHandle, bool), GpuTexture>,
     materials: BTreeMap<MaterialHandle, GpuMaterial>,
+    // Advances whenever a material's group is built or dropped.
+    generation: u64,
     defaults: Defaults,
     mips: MipGenerator,
 }
@@ -102,6 +104,7 @@ impl MaterialStore {
             samplers,
             textures: BTreeMap::new(),
             materials: BTreeMap::new(),
+            generation: 0,
             defaults: Defaults {
                 _textures: textures,
                 white_srgb,
@@ -134,8 +137,12 @@ impl MaterialStore {
                 .iter()
                 .any(|source| source.handle == *handle)
         };
+        let count = self.materials.len();
         self.materials
             .retain(|handle, _| plan.contains_material(*handle) || decal_material(handle));
+        if self.materials.len() != count {
+            self.generation += 1;
+        }
         self.textures
             .retain(|(handle, _), _| plan.contains_texture(*handle) || decal_texture(handle));
     }
@@ -212,6 +219,7 @@ impl MaterialStore {
             }
             let gpu = self.create_material(device, material, source.version);
             self.materials.insert(source.handle, gpu);
+            self.generation += 1;
         }
         (bytes, levels)
     }
@@ -248,6 +256,11 @@ impl MaterialStore {
             variant: Variant::of(material),
             version,
         }
+    }
+
+    /// Advances whenever a material's group or variant may have changed.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// The mip generator textures and impostors (decision 048) share.

@@ -113,9 +113,14 @@ mod gpu {
         staging: Vec<DecalData>,
         uploaded: Vec<DecalData>,
         runs: Vec<DecalRun>,
-        // Keyed by the depth buffer, record buffer and palette they bind.
-        group: Cached<(u64, u64, u64, usize), wgpu::BindGroup>,
+        // Per pose buffer parity (temporal frames alternate them), keyed by
+        // the depth buffer, record buffer and palette they bind, and the
+        // parity this frame binds.
+        groups: [Cached<(u64, u64, u64), wgpu::BindGroup>; 2],
+        parity: usize,
         buffer_generation: u64,
+        // Records a storage binding holds, read once.
+        room: usize,
     }
 
     impl DecalPass {
@@ -123,6 +128,10 @@ mod gpu {
             // Group 2 beside the mesh poses' bindings: the joint palette
             // (decision 036) holds retained frames' decal poses.
             let layout = crate::pipelines::layout(device, &DECALS);
+            let limits = device.limits();
+            let binding = limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size);
             Self {
                 layout,
                 pipeline_layouts: [None, None],
@@ -137,8 +146,10 @@ mod gpu {
                 staging: Vec::new(),
                 uploaded: Vec::new(),
                 runs: Vec::new(),
-                group: Cached::default(),
+                groups: Default::default(),
+                parity: 0,
                 buffer_generation: 0,
+                room: (binding / size_of::<DecalData>() as u64) as usize,
             }
         }
 
@@ -163,11 +174,7 @@ mod gpu {
             if !snapshot.environment.decals.enabled || snapshot.decals.is_empty() {
                 return None;
             }
-            let limits = device.limits();
-            let binding = limits
-                .max_storage_buffer_binding_size
-                .min(limits.max_buffer_size);
-            let room = (binding / size_of::<DecalData>() as u64) as usize;
+            let room = self.room;
             let (palette, (generation, parity)) = palette;
             let dropped = pack_decals(&snapshot.decals, room, &mut self.staging, &mut self.runs);
             if self.staging.is_empty() {
@@ -188,8 +195,9 @@ mod gpu {
                 queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&self.staging));
                 self.uploaded.clone_from(&self.staging);
             }
-            let key = (depth_generation, self.buffer_generation, generation, parity);
-            if self.group.stale(&key) {
+            let key = (depth_generation, self.buffer_generation, generation);
+            self.parity = parity;
+            if self.groups[parity].stale(&key) {
                 let group = crate::pipelines::group(
                     device,
                     "engine/decal-group",
@@ -201,7 +209,7 @@ mod gpu {
                         ("decal_depth", crate::pipelines::view(depth)),
                     ],
                 );
-                self.group.set(key, group);
+                self.groups[parity].set(key, group);
             }
             Some(DecalFrame {
                 drawn: self.staging.len() as u32,
@@ -259,7 +267,11 @@ mod gpu {
             post: bool,
         ) {
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(2, self.group.get().expect("prepared this frame"), &[]);
+            pass.set_bind_group(
+                2,
+                self.groups[self.parity].get().expect("prepared this frame"),
+                &[],
+            );
             if let Some(lights) = lights {
                 pass.set_bind_group(3, lights, &[]);
             }

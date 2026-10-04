@@ -190,6 +190,12 @@ impl Environment {
         !kept
     }
 
+    /// Whether [`Self::ensure`] with `size` and `cubes` or
+    /// [`Self::encode_sky`] with `lighting` would record commands.
+    pub(crate) fn needs_encoding(&self, size: u32, cubes: u32, lighting: &LightingUniform) -> bool {
+        self.maps.size != size || self.maps.cubes != cubes || self.drawn != Some(sky(lighting))
+    }
+
     /// Records the sky map's redraw when `lighting`'s sky differs from the
     /// one it holds; returns whether it did.
     pub(crate) fn encode_sky(
@@ -197,13 +203,7 @@ impl Environment {
         encoder: &mut wgpu::CommandEncoder,
         lighting: &LightingUniform,
     ) -> bool {
-        let sky = [
-            lighting.sun,
-            lighting.sun_color,
-            lighting.zenith,
-            lighting.horizon,
-            lighting.ground,
-        ];
+        let sky = sky(lighting);
         if self.drawn == Some(sky) {
             return false;
         }
@@ -386,4 +386,15 @@ fn face_pass(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, group, &[]);
     pass.draw(0..3, item..item + 1);
+}
+
+/// The parts of `lighting` the sky map draws from.
+fn sky(lighting: &LightingUniform) -> [[f32; 4]; 5] {
+    [
+        lighting.sun,
+        lighting.sun_color,
+        lighting.zenith,
+        lighting.horizon,
+        lighting.ground,
+    ]
 }

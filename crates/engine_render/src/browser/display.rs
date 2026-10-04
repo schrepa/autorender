@@ -10,6 +10,8 @@ pub(super) struct Display {
     canvas: HtmlCanvasElement,
     configuration: wgpu::SurfaceConfiguration,
     pub(super) max_dimension: u32,
+    // Layers a texture array holds, read once.
+    pub(super) max_layers: u32,
     pub(super) suspended: bool,
     reconfigure_next_frame: bool,
 }
@@ -22,7 +24,7 @@ impl Display {
         surface: wgpu::Surface<'static>,
         canvas: HtmlCanvasElement,
         adapter: &wgpu::Adapter,
-        max_dimension: u32,
+        (max_dimension, max_layers): (u32, u32),
     ) -> Result<Self, JsValue> {
         let extent = clamped_extent(canvas.width(), canvas.height(), max_dimension);
         let (width, height) = extent.unwrap_or((1, 1));
@@ -39,6 +41,7 @@ impl Display {
             canvas,
             configuration,
             max_dimension,
+            max_layers,
             suspended: extent.is_none(),
             reconfigure_next_frame: false,
         })

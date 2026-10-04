@@ -83,7 +83,10 @@ pub(super) struct Selection {
     generation: u64,
     // Selection bindings, and skinned selection's (decision 036), by the
     // inputs they were built for.
-    select_group: Cached<SelectKey, wgpu::BindGroup>,
+    // Per pose buffer parity (temporal frames alternate them), and the
+    // parity this frame binds.
+    select_groups: [Cached<SelectKey, wgpu::BindGroup>; 2],
+    select_parity: usize,
     skinned_group: Cached<(u64, u64), wgpu::BindGroup>,
     readbacks: ReadbackRing<()>,
     // Dirty tiles read back and not yet taken, and the latest caster totals
@@ -122,7 +125,8 @@ impl Selection {
                 .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
             regions_in_args: false,
             generation: 0,
-            select_group: Cached::default(),
+            select_groups: Default::default(),
+            select_parity: 0,
             skinned_group: Cached::default(),
             readbacks: ReadbackRing::new("engine/shadow-dirty-readback"),
             read_back: Rc::new(Cell::new([0; TILE_WORDS])),
@@ -343,7 +347,8 @@ impl Selection {
             poses: poses.generation,
             pose_index: poses.parity,
         };
-        if self.select_group.stale(&key) {
+        self.select_parity = poses.parity;
+        if self.select_groups[poses.parity].stale(&key) {
             let pose_buffer = poses.buffers[poses.parity].expect("the frame's pose buffer");
             let (candidate_buffer, batch_buffer, flag_buffer) = match presented {
                 Some(presented) if source == Source::Presented => {
@@ -368,7 +373,7 @@ impl Selection {
                     entry("counters", &self.dirty),
                 ],
             );
-            self.select_group.set(key, group);
+            self.select_groups[poses.parity].set(key, group);
         }
         if let Some(presented) = presented.filter(|_| skinned != 0) {
             let key = (self.generation, presented.generation);
@@ -413,7 +418,7 @@ impl Selection {
             0,
             MAPS as u64 * groups as u64 * DRAW_ARGS_BYTES,
         );
-        if let Some(group) = self.select_group.get()
+        if let Some(group) = self.select_groups[self.select_parity].get()
             && frame.candidates != 0
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

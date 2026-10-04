@@ -183,26 +183,30 @@ impl Renderer {
     /// Creates the pipelines of the plan's material variants for this frame's
     /// opaque and transparent passes, and the opaque pass's sky.
     pub(super) fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
-        let mut missing = Vec::new();
-        for batch in &self.plan.batches {
-            let kind = if batch.transparent {
-                transparent
-            } else {
-                opaque
-            };
-            let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
-            if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
-                && !missing.contains(&(kind, variant))
-            {
-                missing.push((kind, variant));
+        let key = (self.structure_key(), opaque, transparent);
+        if self.structure_keys.variants != Some(key) {
+            let mut missing = Vec::new();
+            for batch in &self.plan.batches {
+                let kind = if batch.transparent {
+                    transparent
+                } else {
+                    opaque
+                };
+                let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
+                if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
+                    && !missing.contains(&(kind, variant))
+                {
+                    missing.push((kind, variant));
+                }
             }
-        }
-        for (kind, variant) in missing {
-            self.ensure_mesh_layout(kind);
-            let pipeline = self.create_variant(kind, variant);
-            self.mesh_pipelines
-                .variants
-                .insert((kind, variant), pipeline);
+            for (kind, variant) in missing {
+                self.ensure_mesh_layout(kind);
+                let pipeline = self.create_variant(kind, variant);
+                self.mesh_pipelines
+                    .variants
+                    .insert((kind, variant), pipeline);
+            }
+            self.structure_keys.variants = Some(key);
         }
         // The opaque pass ends with the sky of its targets.
         if let Some(targets) = opaque.targets() {
@@ -313,6 +317,11 @@ impl Renderer {
     /// so passes then switch pipelines and bind groups once per run rather
     /// than per batch.
     pub(super) fn order_draws(&mut self) {
+        let key = self.structure_key();
+        if self.structure_keys.order == Some(key) {
+            return;
+        }
+        self.structure_keys.order = Some(key);
         let mut keys = std::mem::take(&mut self.draw_order.keys);
         keys.clear();
         keys.extend(

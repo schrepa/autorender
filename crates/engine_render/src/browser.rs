@@ -153,6 +153,29 @@ struct Culling {
     pyramid: Option<DepthPyramid>,
 }
 
+/// The plan's draws, the mesh layout and the material groups: what a frame's
+/// structure-only work reads.
+type StructureKey = (u64, u64, u64);
+
+/// What per-frame work reading only the frame's structure last ran for;
+/// work whose key stands keeps its results.
+#[derive(Default)]
+struct StructureKeys {
+    // The opaque draw order.
+    order: Option<StructureKey>,
+    // The material variants' pipelines of the opaque and transparent passes,
+    // and of reflection probe faces (decision 043).
+    variants: Option<(StructureKey, PassKind, PassKind)>,
+    probes: Option<(StructureKey, PassKind)>,
+    // Impostor records (decision 048), by the level of detail settings,
+    // whether the frame was GPU-presented and the atlas generation.
+    impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
+    // Mesh residency: the plan's rebuild and the caster groups' generation
+    // it was retired for, and those with the mesh layout it uploaded for.
+    residency: Option<(u64, u64)>,
+    uploads: Option<(u64, u64, u64)>,
+}
+
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
 ///
 /// Visible slots are grouped by mesh and material into reusable draw ranges.
@@ -178,6 +201,7 @@ pub struct Renderer {
     // The frame's draw batches, and the opaque ones' drawing order.
     plan: BatchPlan,
     draw_order: DrawOrder,
+    structure_keys: StructureKeys,
     // Slots' poses, colors and palettes, and the camera bytes last written.
     instances: Instances,
     uploads: UploadCache,
@@ -348,8 +372,17 @@ impl Renderer {
             }
         }));
 
-        let max_dimension = device.limits().max_texture_dimension_2d;
-        let display = Display::new(instance, surface, canvas, &adapter, max_dimension)?;
+        let device_limits = device.limits();
+        let display = Display::new(
+            instance,
+            surface,
+            canvas,
+            &adapter,
+            (
+                device_limits.max_texture_dimension_2d,
+                device_limits.max_texture_array_layers,
+            ),
+        )?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         display.configure(&device);
         let depth = DepthTarget::new(&device, display.size());
@@ -420,6 +453,7 @@ impl Renderer {
             materials,
             plan: BatchPlan::with_instance_limit(instances.limit),
             draw_order: DrawOrder::default(),
+            structure_keys: StructureKeys::default(),
             instances,
             uploads: UploadCache::default(),
             mesh_shader: shader,
@@ -458,6 +492,15 @@ impl Renderer {
             renderer,
             validation,
         })
+    }
+
+    /// The frame's structure as structure-only work reads it.
+    fn structure_key(&self) -> StructureKey {
+        (
+            self.plan.generation(),
+            self.mesh_layout,
+            self.materials.generation(),
+        )
     }
 
     /// Resize in physical pixels, preserving aspect ratio within device limits.

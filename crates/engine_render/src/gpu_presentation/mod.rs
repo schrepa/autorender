@@ -217,7 +217,8 @@ pub(crate) struct GpuPresentationPass {
     // buffer (temporally antialiased frames alternate two).
     node_groups: Cached<u64, NodeGroups>,
     compact_groups: Cached<u64, [wgpu::BindGroup; 2]>,
-    occlusion_group: Cached<OcclusionKey, wgpu::BindGroup>,
+    // Per pose buffer (temporal frames alternate them).
+    occlusion_groups: [Cached<OcclusionKey, wgpu::BindGroup>; 2],
     pose_groups: [Cached<PoseKey, PoseGroups>; 2],
 }
 
@@ -263,7 +264,7 @@ impl GpuPresentationPass {
             poses: (0, 0),
             node_groups: Cached::default(),
             compact_groups: Cached::default(),
-            occlusion_group: Cached::default(),
+            occlusion_groups: Default::default(),
             pose_groups: Default::default(),
         }
     }
@@ -761,7 +762,7 @@ impl GpuPresentationPass {
         let (index, generation) = self.poses;
         let key = (index, pyramid.1, self.groups.generation(), generation);
         let groups = &self.groups;
-        let group = self.occlusion_group.get_or_insert_with(key, || {
+        let group = self.occlusion_groups[index].get_or_insert_with(key, || {
             self.shaders.group(
                 device,
                 &self.shaders.families.tests,

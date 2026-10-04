@@ -150,6 +150,11 @@ impl Renderer {
     /// opaque meshes.
     pub(super) fn ensure_probe_pipelines(&mut self, kind: PassKind) {
         self.ensure_sky(SkyTargets::Probe);
+        let key = (self.structure_key(), kind);
+        if self.structure_keys.probes == Some(key) {
+            return;
+        }
+        self.structure_keys.probes = Some(key);
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {

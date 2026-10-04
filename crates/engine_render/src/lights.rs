@@ -186,6 +186,8 @@ mod gpu {
         indices: wgpu::Buffer,
         // Entries `indices` holds.
         index_capacity: u64,
+        // What one storage binding holds, read once.
+        binding_limit: u64,
         totals: wgpu::Buffer,
         staged: Vec<LightInput>,
         // The retained stream and light revision the inputs hold.
@@ -245,6 +247,7 @@ mod gpu {
                 ranges: storage(device, "engine/light-cluster-ranges", CLUSTERS * 8, none),
                 indices: storage(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
                 index_capacity: CLUSTERS,
+                binding_limit: device.limits().max_storage_buffer_binding_size,
                 totals: storage(
                     device,
                     "engine/light-totals",
@@ -338,7 +341,7 @@ mod gpu {
             // back, and to a first guess of a few dozen clusters per light,
             // within what one storage binding holds; until then, entries
             // beyond it are lost and counted.
-            let binding = device.limits().max_storage_buffer_binding_size / 4;
+            let binding = self.binding_limit / 4;
             let needed = self
                 .totals_read
                 .get()
