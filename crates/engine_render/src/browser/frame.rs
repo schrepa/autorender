@@ -632,8 +632,12 @@ impl Renderer {
             self.prepare_environment(snapshot, lighting);
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
         let (post_frame, refraction) = self.prepare_post(snapshot, temporal_frame);
-        let (transparent_draws, particle_frame, transparency) =
-            self.prepare_transparency(snapshot, temporal_frame, post_frame);
+        let (transparent_draws, particle_frame, transparency) = self.prepare_transparency(
+            snapshot,
+            (frame.identity(), frame.emitters_revision()),
+            temporal_frame,
+            post_frame,
+        );
         let decal_frame = self.prepare_decals(snapshot, temporal_frame, &light_frame, post_frame);
         Features {
             input_copies,
@@ -998,9 +1002,11 @@ impl Renderer {
 
     /// Transparent surfaces and particles (decision 026); returns whether
     /// transparent batches draw, the particles, and whether either does.
+    /// `emitters` is the frame's stream identity and emitters revision.
     fn prepare_transparency(
         &mut self,
         snapshot: &RenderSnapshot,
+        emitters: (u64, u64),
         temporal_frame: &Option<TemporalFrame>,
         post_frame: Option<PostFrame>,
     ) -> (bool, Option<ParticleFrame>, bool) {
@@ -1024,6 +1030,7 @@ impl Renderer {
                     device,
                     &self.queue,
                     snapshot,
+                    emitters,
                     self.display.size(),
                     &self.depth.view,
                     self.depth.generation,

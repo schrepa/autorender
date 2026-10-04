@@ -119,11 +119,11 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
         + emitter.acceleration * (0.5 * age * age);
     let velocity = launch + emitter.acceleration * age;
     let size = mix(emitter.size.x, emitter.size.y, life) * (0.8 + 0.4 * r3);
-    let corners = array<vec2<f32>, 6>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
-        vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+    // One strip: the triangles (0, 1, 2) and (2, 1, 3).
+    let corners = array<vec2<f32>, 4>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
     );
-    let corner = corners[vertex % 6u];
+    let corner = corners[vertex % 4u];
     var along_x = particles.right.xyz * (size * 0.5);
     var along_y = particles.up.xyz * (size * 0.5);
     if emitter.stretch > 0.0 {
@@ -148,6 +148,12 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     return output;
 }
 
+// Whether this fragment lies outside the round billboard, which covers it
+// with nothing: fragment shaders discard it before reading depth.
+fn outside(input: ParticleOutput) -> bool {
+    return dot(input.corner, input.corner) >= 1.0;
+}
+
 // Coverage of the round billboard at this fragment, fading where it meets
 // opaque surfaces (soft particles).
 fn coverage(input: ParticleOutput) -> f32 {
@@ -165,6 +171,9 @@ fn coverage(input: ParticleOutput) -> f32 {
 
 @fragment
 fn fs_particle(input: ParticleOutput) -> TransparentTargets {
+    if outside(input) {
+        discard;
+    }
     let alpha = input.color.a * coverage(input);
     if alpha <= 1.0e-3 {
         discard;
@@ -187,6 +196,9 @@ fn added(input: ParticleOutput) -> vec3<f32> {
 
 @fragment
 fn fs_particle_add(input: ParticleOutput) -> @location(0) vec4<f32> {
+    if outside(input) {
+        discard;
+    }
     return vec4<f32>(encoded(grade(added(input))), 0.0);
 }
 
@@ -198,6 +210,9 @@ struct AddedTargets {
 // Screen-effect frames: the light also glows (decision 021).
 @fragment
 fn fs_particle_add_post(input: ParticleOutput) -> AddedTargets {
+    if outside(input) {
+        discard;
+    }
     let light = added(input);
     var targets: AddedTargets;
     targets.color = vec4<f32>(grade(light), 0.0);

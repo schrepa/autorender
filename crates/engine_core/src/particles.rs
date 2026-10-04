@@ -11,18 +11,17 @@
 //! frame's dropped particles; without a budget only the GPU's buffer limits
 //! bound them.
 
-use std::collections::HashMap;
-
 use bevy_ecs::{
+    entity::EntityHashMap,
     prelude::{Component, Entity, Resource, World},
     query::QueryState,
 };
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::RenderSnapshot;
 use crate::environment::{InvalidSetting, check_budget};
 use crate::extraction::{Nearest, Poses};
+use crate::{RenderSnapshot, TransformIndex};
 
 /// Most particles one emitter keeps alive (its rate times its lifetime): a
 /// validity bound far above real effects. Frames draw every emitter unless
@@ -202,31 +201,49 @@ pub struct RenderEmitter {
 /// Emitter records of each frame and the motion of their origins.
 pub(crate) struct ParticleExtraction {
     query: QueryState<(Entity, &'static ParticleEmitter)>,
+    // Pose store hints of the query's emitters, by position.
+    hints: Vec<TransformIndex>,
     // Last origin, presentation time and velocity of each emitter, and the
     // extraction that saw it.
-    motion: HashMap<Entity, (Vec3, f32, Vec3, u64)>,
+    motion: EntityHashMap<(Vec3, f32, Vec3, u64)>,
     extraction: u64,
     // This frame's usable emitters: squared distance to the eye, entity,
     // world pose and settings.
     candidates: Vec<(f32, Entity, Mat4, ParticleEmitter)>,
     nearest: Nearest,
+    // The emitters of the last frame, and a revision that advances when a
+    // frame's differ from them.
+    previous: Vec<RenderEmitter>,
+    pub(crate) revision: u64,
 }
 
 impl ParticleExtraction {
     pub(crate) fn new(world: &mut World) -> Self {
         Self {
             query: world.query::<(Entity, &ParticleEmitter)>(),
-            motion: HashMap::new(),
+            hints: Vec::new(),
+            motion: EntityHashMap::default(),
             extraction: 0,
             candidates: Vec::new(),
             nearest: Nearest::default(),
+            previous: Vec::new(),
+            revision: 0,
         }
     }
 
     /// Fills the snapshot's emitters from poses prepared for this frame, or
-    /// authoritative poses on `gpu` frames. Beyond a particle budget, the
-    /// emitters nearest the camera win.
+    /// authoritative poses on `gpu` frames, and advances the revision when
+    /// they changed. Beyond a particle budget, the emitters nearest the
+    /// camera win.
     pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
+        self.fill(world, snapshot, gpu);
+        if snapshot.emitters != self.previous {
+            self.revision += 1;
+            self.previous.clone_from(&snapshot.emitters);
+        }
+    }
+
+    fn fill(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.particles;
         snapshot.emitters.clear();
@@ -239,11 +256,14 @@ impl ParticleExtraction {
         let eye = snapshot.camera_position;
         self.candidates.clear();
         let mut wanted = 0_u64;
-        for (entity, emitter) in self.query.iter(world) {
+        for (position, (entity, emitter)) in self.query.iter(world).enumerate() {
             if !emitter.is_usable() {
                 continue;
             }
-            let Some(model) = poses.model(entity) else {
+            if self.hints.len() <= position {
+                self.hints.resize(position + 1, TransformIndex::default());
+            }
+            let Some(model) = poses.model_indexed(entity, &mut self.hints[position]) else {
                 continue;
             };
             wanted += u64::from(emitter.capacity());

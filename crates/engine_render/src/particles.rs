@@ -93,16 +93,14 @@ impl ParticleUniform {
 
 /// Emitter records in draw order: alpha emitters first, then additive ones,
 /// with the instances of each, up to `room` particles (what the GPU's
-/// bindings hold); returns the alpha particle count and the particles of
-/// emitters that did not fit.
+/// bindings hold); returns the alpha and total particle counts and the
+/// particles of emitters that did not fit.
 pub(crate) fn pack_emitters(
     emitters: &[RenderEmitter],
     records: &mut Vec<EmitterData>,
-    owners: &mut Vec<u32>,
     room: u64,
-) -> (u32, u64) {
+) -> (u32, u32, u64) {
     records.clear();
-    owners.clear();
     let mut first = 0_u32;
     let mut alpha = 0;
     let mut dropped = 0;
@@ -115,16 +113,30 @@ pub(crate) fn pack_emitters(
                 dropped += u64::from(emitter.count);
                 continue;
             }
-            let index = records.len() as u32;
             records.push(EmitterData::new(emitter, first));
-            owners.extend(std::iter::repeat_n(index, emitter.count as usize));
             first += emitter.count;
         }
         if blend == ParticleBlend::Alpha {
             alpha = first;
         }
     }
-    (alpha, dropped)
+    (alpha, first, dropped)
+}
+
+/// The emitter of each instance of `records`.
+fn pack_owners(records: &[EmitterData], owners: &mut Vec<u32>) {
+    owners.clear();
+    for (index, record) in records.iter().enumerate() {
+        owners.extend(std::iter::repeat_n(index as u32, record.count as usize));
+    }
+}
+
+/// Whether `a` and `b` give their emitters the same instances.
+fn same_instances(a: &[EmitterData], b: &[EmitterData]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(a, b)| a.first == b.first && a.count == b.count)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -159,10 +171,15 @@ mod gpu {
         written: Option<ParticleUniform>,
         emitters: wgpu::Buffer,
         owners: wgpu::Buffer,
+        // Particles a storage binding holds, an owner entry each.
+        room: u64,
         records: Vec<EmitterData>,
         uploaded: Vec<EmitterData>,
         owner_staging: Vec<u32>,
-        uploaded_owners: Vec<u32>,
+        // The render stream and emitters revision the uploads were packed
+        // from, and that packing's alpha, total and dropped particles.
+        packed: Option<(u64, u64)>,
+        counts: (u32, u32, u64),
         group: Cached<(u64, u64), wgpu::BindGroup>,
         buffers_generation: u64,
     }
@@ -177,6 +194,11 @@ mod gpu {
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
             let layout = crate::pipelines::layout(device, &PARTICLES);
+            let limits = device.limits();
+            let room = limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size)
+                / 4;
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("engine/particle-pipeline-layout"),
                 bind_group_layouts: &[Some(camera_layout), Some(&layout)],
@@ -221,10 +243,12 @@ mod gpu {
                     4,
                     wgpu::BufferUsages::empty(),
                 ),
+                room,
                 records: Vec::new(),
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
-                uploaded_owners: Vec::new(),
+                packed: None,
+                counts: (0, 0, 0),
                 group: Cached::default(),
                 buffers_generation: 0,
             }
@@ -234,14 +258,17 @@ mod gpu {
             self.emitters.size() + self.owners.size()
         }
 
-        /// Uploads `snapshot`'s emitters when they changed; `None` when the
-        /// frame draws no particles. `depth` is the depth buffer of
+        /// Uploads `snapshot`'s emitters when `emitters` (the render stream
+        /// identity and its emitters revision) changed; `None` when the frame
+        /// draws no particles. `depth` is the depth buffer of
         /// `depth_generation`, sampled for soft particles.
+        #[allow(clippy::too_many_arguments)]
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
             snapshot: &RenderSnapshot,
+            emitters: (u64, u64),
             size: (u32, u32),
             depth: &wgpu::TextureView,
             depth_generation: u64,
@@ -249,51 +276,13 @@ mod gpu {
             if !snapshot.environment.particles.enabled || snapshot.emitters.is_empty() {
                 return None;
             }
-            // One owner entry per particle and one record per emitter, within
-            // what a storage binding holds.
-            let limits = device.limits();
-            let binding = limits
-                .max_storage_buffer_binding_size
-                .min(limits.max_buffer_size);
-            let (alpha, dropped) = pack_emitters(
-                &snapshot.emitters,
-                &mut self.records,
-                &mut self.owner_staging,
-                binding / 4,
-            );
-            let total = self.owner_staging.len() as u32;
+            if self.packed != Some(emitters) {
+                self.pack(device, queue, snapshot);
+                self.packed = Some(emitters);
+            }
+            let (alpha, total, dropped) = self.counts;
             if total == 0 {
                 return None;
-            }
-            let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
-            if ensure_storage(
-                device,
-                &mut self.emitters,
-                "engine/particle-emitters",
-                emitter_bytes,
-                wgpu::BufferUsages::empty(),
-            ) {
-                self.uploaded.clear();
-                self.buffers_generation += 1;
-            }
-            let owner_bytes = u64::from(total) * 4;
-            if ensure_storage(
-                device,
-                &mut self.owners,
-                "engine/particle-owners",
-                owner_bytes,
-                wgpu::BufferUsages::empty(),
-            ) {
-                self.uploaded_owners.clear();
-                self.buffers_generation += 1;
-            }
-            if self.records != self.uploaded {
-                queue.write_buffer(&self.emitters, 0, bytemuck::cast_slice(&self.records));
-                self.uploaded.clone_from(&self.records);
-            }
-            if self.owner_staging != self.uploaded_owners {
-                queue.write_buffer(&self.owners, 0, bytemuck::cast_slice(&self.owner_staging));
-                self.uploaded_owners.clone_from(&self.owner_staging);
             }
             let uniform = ParticleUniform::new(snapshot.view_projection, size.0, size.1);
             if self.written != Some(uniform) {
@@ -321,6 +310,47 @@ mod gpu {
                 total,
                 dropped,
             })
+        }
+
+        /// Packs and uploads the snapshot's emitter records, one owner entry
+        /// per particle and one record per emitter, within what a storage
+        /// binding holds: owners only when emitters' instances changed.
+        fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
+            self.counts = pack_emitters(&snapshot.emitters, &mut self.records, self.room);
+            let total = self.counts.1;
+            if total == 0 {
+                return;
+            }
+            let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
+            if ensure_storage(
+                device,
+                &mut self.emitters,
+                "engine/particle-emitters",
+                emitter_bytes,
+                wgpu::BufferUsages::empty(),
+            ) {
+                self.uploaded.clear();
+                self.buffers_generation += 1;
+            }
+            let owner_bytes = u64::from(total) * 4;
+            let owners_replaced = ensure_storage(
+                device,
+                &mut self.owners,
+                "engine/particle-owners",
+                owner_bytes,
+                wgpu::BufferUsages::empty(),
+            );
+            if owners_replaced {
+                self.buffers_generation += 1;
+            }
+            if owners_replaced || !same_instances(&self.records, &self.uploaded) {
+                pack_owners(&self.records, &mut self.owner_staging);
+                queue.write_buffer(&self.owners, 0, bytemuck::cast_slice(&self.owner_staging));
+            }
+            if self.records != self.uploaded {
+                queue.write_buffer(&self.emitters, 0, bytemuck::cast_slice(&self.records));
+                self.uploaded.clone_from(&self.records);
+            }
         }
 
         /// Creates the additive pipeline into the canvas or, with `post`, the
@@ -397,7 +427,7 @@ mod gpu {
             pass.set_pipeline(&self.alpha);
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
-            pass.draw(0..6, 0..frame.alpha);
+            pass.draw(0..4, 0..frame.alpha);
         }
 
         /// Draws additive particles into the frame's color; call
@@ -415,7 +445,7 @@ mod gpu {
             pass.set_pipeline(self.additive[usize::from(post)].as_ref().expect("ensured"));
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
-            pass.draw(0..6, frame.alpha..frame.total);
+            pass.draw(0..4, frame.alpha..frame.total);
         }
     }
 
@@ -436,7 +466,11 @@ mod gpu {
                 module,
                 vertex: "vs_particle",
                 buffers: &[],
-                primitive: wgpu::PrimitiveState::default(),
+                // One four-vertex strip per instance.
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
                 // Reversed depth (decision 042).
                 depth: Some(wgpu::DepthStencilState {
                     format: depth_format,
