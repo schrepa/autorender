@@ -23,9 +23,12 @@
 // every coarser group made from it); otherwise the clusters it was made
 // into draw in its place and it is requested. Groups drawn are marked used.
 //
-// Every view projects errors as the camera sees them, so shadow maps cast
-// the surfaces the camera draws and nothing shadows itself for want of the
-// same detail. A shadow view projects distances below the nearest of its
+// Every view but the kept shadow map's projects errors as the camera sees
+// them, so shadow maps cast the surfaces the camera draws and nothing
+// shadows itself for want of the same detail. The kept map (decision 020)
+// holds still casters whatever the camera sees: its view projects every
+// error from beyond any distance, keeping its clusters within half its
+// texel, the error its other casters draw with. A shadow view projects distances below the nearest of its
 // receivers as that distance: casters closer to the camera only shadow
 // receivers farther away, where coarser detail does not show. Where the
 // camera sees none of a sphere, nothing there receives shadows on screen:
