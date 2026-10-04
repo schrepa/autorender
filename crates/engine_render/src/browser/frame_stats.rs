@@ -2,6 +2,7 @@
 
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
+use crate::gpu_presentation::GpuPrepared;
 
 /// A profile counter read from a frame's stats; `None` records nothing.
 type StatCounter = (&'static str, fn(&RenderStats) -> Option<f64>);
@@ -311,212 +312,217 @@ impl Renderer {
         gpu_visible: Option<u32>,
         virtual_stats: Option<crate::virtual_geometry::VirtualStats>,
     ) {
+        if !engine_profile::active() {
+            return;
+        }
+        stat_counters(stats, &STAT_COUNTERS);
+        if state.features.light_frame.is_some() {
+            stat_counters(stats, &LIGHT_COUNTERS);
+        }
+        if virtual_stats.is_some() {
+            stat_counters(stats, &VIRTUAL_COUNTERS);
+        }
+        self.upload_counters(state);
+        if let Some(prepared) = &state.features.gpu_prepared {
+            gpu_counters(prepared, gpu_visible);
+        }
+        self.memory_counters(stats);
+    }
+
+    /// What the frame wrote and repacked, and which passes it ran.
+    fn upload_counters(&self, state: &FrameState<'_>) {
         let FrameKind {
             gpu_mode,
             instance_count,
             ..
         } = state.kind;
-        let features = &state.features;
-        let (shadow_frame, gpu_prepared) = (&features.shadow_frame, &features.gpu_prepared);
-        let temporal_frame = &state.packing.temporal_frame;
-        let mip_levels = state.assets.mip_levels;
-        let writes = &state.writes;
-        let (camera_upload_bytes, instance_upload_bytes) =
-            (writes.camera_bytes, writes.instance_bytes);
-        let (pose_upload_bytes, color_upload_bytes, slot_upload_bytes) =
-            (writes.pose_bytes, writes.color_bytes, writes.slot_bytes);
-        let instance_write_ranges = writes.ranges;
-        let packing = &state.packing;
-        let (repacked, poses_repacked, colors_repacked) = (
-            packing.repacked,
-            packing.poses_repacked,
-            packing.colors_repacked,
+        let (writes, packing) = (&state.writes, &state.packing);
+        engine_profile::counter("render.instance_capacity", self.instances.capacity as f64);
+        engine_profile::counter(
+            "render.texture_mip_levels",
+            f64::from(state.assets.mip_levels),
         );
-        let (full_upload, fallback) = (packing.full_upload, packing.fallback);
-
-        if engine_profile::active() {
-            stat_counters(stats, &STAT_COUNTERS);
-            if state.features.light_frame.is_some() {
-                stat_counters(stats, &LIGHT_COUNTERS);
-            }
-            if virtual_stats.is_some() {
-                stat_counters(stats, &VIRTUAL_COUNTERS);
-            }
-            engine_profile::counter("render.instance_capacity", self.instances.capacity as f64);
-            engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
-            engine_profile::counter("render.camera_write_bytes", camera_upload_bytes as f64);
-            engine_profile::counter("render.instance_write_bytes", instance_upload_bytes as f64);
-            engine_profile::counter("render.pose_write_bytes", pose_upload_bytes as f64);
-            engine_profile::counter("render.color_write_bytes", color_upload_bytes as f64);
-            engine_profile::counter("render.instance_id_write_bytes", slot_upload_bytes as f64);
-            engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
-            engine_profile::counter("render.taa", f64::from(u8::from(temporal_frame.is_some())));
+        engine_profile::counter("render.camera_write_bytes", writes.camera_bytes as f64);
+        engine_profile::counter("render.instance_write_bytes", writes.instance_bytes as f64);
+        engine_profile::counter("render.pose_write_bytes", writes.pose_bytes as f64);
+        engine_profile::counter("render.color_write_bytes", writes.color_bytes as f64);
+        engine_profile::counter("render.instance_id_write_bytes", writes.slot_bytes as f64);
+        engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
+        engine_profile::counter(
+            "render.taa",
+            f64::from(u8::from(packing.temporal_frame.is_some())),
+        );
+        engine_profile::counter(
+            "render.shadow_refresh",
+            state
+                .features
+                .shadow_frame
+                .as_ref()
+                .map_or(0.0, |frame| f64::from(frame.refresh_kind())),
+        );
+        engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
+        if let Some(frame) = &packing.temporal_frame {
             engine_profile::counter(
-                "render.shadow_refresh",
-                shadow_frame
-                    .as_ref()
-                    .map_or(0.0, |frame| f64::from(frame.refresh_kind())),
-            );
-            engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
-            engine_profile::counter(
-                "memory.gpu_shadow_bytes",
-                self.shadows.capacity_bytes() as f64,
+                "render.taa_history",
+                f64::from(u8::from(frame.history_valid)),
             );
             engine_profile::counter(
-                "memory.gpu_post_bytes",
-                self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_environment_bytes",
-                (self.environment.capacity_bytes() + self.probes.capacity_bytes()) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_virtual_bytes",
-                (self.virtual_draws.pass.capacity_bytes()
-                    + self
-                        .visibility
-                        .buffer
-                        .as_ref()
-                        .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_light_bytes",
-                self.lights.as_ref().map_or(0, LightPass::capacity_bytes) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_impostor_bytes",
-                self.impostors.atlas.capacity_bytes() as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_transparent_bytes",
-                (self
-                    .transparent
-                    .as_ref()
-                    .map_or(0, TransparentPass::capacity_bytes)
-                    + self
-                        .particles
-                        .as_ref()
-                        .map_or(0, ParticlePass::capacity_bytes)
-                    + self.decals.as_ref().map_or(0, DecalPass::capacity_bytes))
-                    as f64,
-            );
-            if let Some(frame) = &temporal_frame {
-                engine_profile::counter(
-                    "render.taa_history",
-                    f64::from(u8::from(frame.history_valid)),
-                );
-                engine_profile::counter(
-                    "render.taa_object_motion",
-                    f64::from(u8::from(frame.motion_valid)),
-                );
-            }
-            engine_profile::counter(
-                "memory.gpu_temporal_bytes",
-                (self
-                    .temporal
-                    .as_ref()
-                    .map_or(0, TemporalPass::capacity_bytes)
-                    + self.instances.alternate_bytes()) as f64,
-            );
-            if let Some(prepared) = &gpu_prepared {
-                engine_profile::counter("render.gpu_candidates", f64::from(prepared.candidates));
-                engine_profile::counter(
-                    "render.gpu_node_upload_bytes",
-                    prepared.node_upload_bytes as f64,
-                );
-                engine_profile::counter(
-                    "render.gpu_group_upload_bytes",
-                    prepared.group_upload_bytes as f64,
-                );
-                engine_profile::counter(
-                    "render.gpu_full_node_upload",
-                    f64::from(u8::from(prepared.full_node_upload)),
-                );
-                engine_profile::counter(
-                    "render.gpu_node_upload_staged",
-                    f64::from(u8::from(prepared.staged)),
-                );
-                engine_profile::counter("render.gpu_parent_levels", prepared.parent_levels as f64);
-                engine_profile::counter("render.gpu_shift", f64::from(u8::from(prepared.shifted)));
-                engine_profile::counter("render.gpu_blend", f64::from(u8::from(prepared.blend)));
-                engine_profile::counter(
-                    "render.gpu_current_prestaged",
-                    f64::from(u8::from(prepared.prestaged)),
-                );
-                engine_profile::counter("render.gpu_held", f64::from(u8::from(prepared.held)));
-                if let Some(visible) = gpu_visible {
-                    engine_profile::counter("render.gpu_visible_readback", f64::from(visible));
-                }
-            }
-            engine_profile::counter(
-                "memory.gpu_presentation_bytes",
-                (self.gpu_presentation.capacity_bytes()
-                    + self
-                        .culling
-                        .pyramid
-                        .as_ref()
-                        .map_or(0, DepthPyramid::capacity_bytes)) as f64,
-            );
-            engine_profile::counter("render.instance_write_ranges", instance_write_ranges as f64);
-            engine_profile::counter(
-                "render.instance_full_upload",
-                f64::from(u8::from(full_upload)),
-            );
-            engine_profile::counter(
-                "render.instance_upload_fallback",
-                f64::from(u8::from(fallback)),
-            );
-            engine_profile::counter(
-                "render.camera_upload_reused",
-                f64::from(u8::from(camera_upload_bytes == 0)),
-            );
-            engine_profile::counter(
-                "render.instance_upload_reused",
-                f64::from(u8::from(instance_count != 0 && instance_upload_bytes == 0)),
-            );
-            engine_profile::counter("render.instances_repacked", repacked as f64);
-            engine_profile::counter("render.poses_repacked", poses_repacked as f64);
-            engine_profile::counter("render.colors_repacked", colors_repacked as f64);
-            engine_profile::counter(
-                "memory.render_upload_cache_bytes",
-                (size_of::<UploadCache>() + self.instances.retained_uploads.capacity_bytes())
-                    as f64,
-            );
-            engine_profile::counter(
-                "memory.render_upload_range_bytes",
-                RetainedUploads::range_scratch_bytes() as f64,
-            );
-            engine_profile::counter(
-                "memory.render_staging_capacity_bytes",
-                (self.instances.color_staging.capacity() * size_of::<ColorData>()
-                    + self.instances.slot_staging.capacity() * size_of::<u32>()
-                    + self.vertex_staging.capacity() * size_of::<Vertex>()) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_pose_staging_bytes",
-                self.instances.pose_uploads.capacity_bytes() as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_instance_buffer_bytes",
-                (self.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
-                    + self.instances.slot_capacity * size_of::<u32>()) as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_mesh_payload_bytes",
-                stats.resident_mesh_bytes as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_mesh_arena_bytes",
-                self.mesh_arena.capacity_bytes() as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_texture_payload_bytes",
-                stats.resident_texture_bytes as f64,
-            );
-            engine_profile::counter(
-                "memory.gpu_texture_mip_bytes",
-                self.materials.texture_totals().2 as f64,
+                "render.taa_object_motion",
+                f64::from(u8::from(frame.motion_valid)),
             );
         }
+        engine_profile::counter("render.instance_write_ranges", writes.ranges as f64);
+        engine_profile::counter(
+            "render.instance_full_upload",
+            f64::from(u8::from(packing.full_upload)),
+        );
+        engine_profile::counter(
+            "render.instance_upload_fallback",
+            f64::from(u8::from(packing.fallback)),
+        );
+        engine_profile::counter(
+            "render.camera_upload_reused",
+            f64::from(u8::from(writes.camera_bytes == 0)),
+        );
+        engine_profile::counter(
+            "render.instance_upload_reused",
+            f64::from(u8::from(instance_count != 0 && writes.instance_bytes == 0)),
+        );
+        engine_profile::counter("render.instances_repacked", packing.repacked as f64);
+        engine_profile::counter("render.poses_repacked", packing.poses_repacked as f64);
+        engine_profile::counter("render.colors_repacked", packing.colors_repacked as f64);
+    }
+
+    /// The renderer's GPU and CPU storage, by part.
+    fn memory_counters(&self, stats: &RenderStats) {
+        engine_profile::counter(
+            "memory.gpu_shadow_bytes",
+            self.shadows.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_post_bytes",
+            self.post.as_ref().map_or(0, PostPass::capacity_bytes) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_environment_bytes",
+            (self.environment.capacity_bytes() + self.probes.capacity_bytes()) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_virtual_bytes",
+            (self.virtual_draws.pass.capacity_bytes()
+                + self
+                    .visibility
+                    .buffer
+                    .as_ref()
+                    .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_light_bytes",
+            self.lights.as_ref().map_or(0, LightPass::capacity_bytes) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_impostor_bytes",
+            self.impostors.atlas.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_transparent_bytes",
+            (self
+                .transparent
+                .as_ref()
+                .map_or(0, TransparentPass::capacity_bytes)
+                + self
+                    .particles
+                    .as_ref()
+                    .map_or(0, ParticlePass::capacity_bytes)
+                + self.decals.as_ref().map_or(0, DecalPass::capacity_bytes)) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_temporal_bytes",
+            (self
+                .temporal
+                .as_ref()
+                .map_or(0, TemporalPass::capacity_bytes)
+                + self.instances.alternate_bytes()) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_presentation_bytes",
+            (self.gpu_presentation.capacity_bytes()
+                + self
+                    .culling
+                    .pyramid
+                    .as_ref()
+                    .map_or(0, DepthPyramid::capacity_bytes)) as f64,
+        );
+        engine_profile::counter(
+            "memory.render_upload_cache_bytes",
+            (size_of::<UploadCache>() + self.instances.retained_uploads.capacity_bytes()) as f64,
+        );
+        engine_profile::counter(
+            "memory.render_upload_range_bytes",
+            RetainedUploads::range_scratch_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.render_staging_capacity_bytes",
+            (self.instances.color_staging.capacity() * size_of::<ColorData>()
+                + self.instances.slot_staging.capacity() * size_of::<u32>()
+                + self.vertex_staging.capacity() * size_of::<Vertex>()) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_pose_staging_bytes",
+            self.instances.pose_uploads.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_instance_buffer_bytes",
+            (self.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
+                + self.instances.slot_capacity * size_of::<u32>()) as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_mesh_payload_bytes",
+            stats.resident_mesh_bytes as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_mesh_arena_bytes",
+            self.mesh_arena.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_texture_payload_bytes",
+            stats.resident_texture_bytes as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_texture_mip_bytes",
+            self.materials.texture_totals().2 as f64,
+        );
+    }
+}
+
+/// What GPU presentation gathered and uploaded for the frame.
+fn gpu_counters(prepared: &GpuPrepared, gpu_visible: Option<u32>) {
+    engine_profile::counter("render.gpu_candidates", f64::from(prepared.candidates));
+    engine_profile::counter(
+        "render.gpu_node_upload_bytes",
+        prepared.node_upload_bytes as f64,
+    );
+    engine_profile::counter(
+        "render.gpu_group_upload_bytes",
+        prepared.group_upload_bytes as f64,
+    );
+    engine_profile::counter(
+        "render.gpu_full_node_upload",
+        f64::from(u8::from(prepared.full_node_upload)),
+    );
+    engine_profile::counter(
+        "render.gpu_node_upload_staged",
+        f64::from(u8::from(prepared.staged)),
+    );
+    engine_profile::counter("render.gpu_parent_levels", prepared.parent_levels as f64);
+    engine_profile::counter("render.gpu_shift", f64::from(u8::from(prepared.shifted)));
+    engine_profile::counter("render.gpu_blend", f64::from(u8::from(prepared.blend)));
+    engine_profile::counter(
+        "render.gpu_current_prestaged",
+        f64::from(u8::from(prepared.prestaged)),
+    );
+    engine_profile::counter("render.gpu_held", f64::from(u8::from(prepared.held)));
+    if let Some(visible) = gpu_visible {
+        engine_profile::counter("render.gpu_visible_readback", f64::from(visible));
     }
 }
