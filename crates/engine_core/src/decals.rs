@@ -19,8 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_budget};
 use crate::{
-    AssetLibrary, GlobalTransforms, MaterialHandle, PresentedTransforms, RenderJoint,
-    RenderMaterial, RenderSnapshot, RenderTexture, Surface, TransformIndex,
+    AssetLibrary, MaterialHandle, RenderJoint, RenderMaterial, RenderSnapshot, RenderTexture,
+    Surface, TransformIndex,
+    extraction::{Nearest, Poses},
     retained_render::{IDENTITY_ROWS, pose_rows},
 };
 
@@ -166,6 +167,9 @@ pub(crate) struct DecalExtraction {
     // This frame's usable decals: squared distance to the eye, world pose,
     // presentation node (GPU frames) and component.
     candidates: Vec<(f32, Mat4, u32, Decal)>,
+    nearest: Nearest,
+    // The joints the last extraction listed.
+    joints: Vec<RenderJoint>,
 }
 
 impl DecalExtraction {
@@ -174,13 +178,33 @@ impl DecalExtraction {
             query: world.query::<(Entity, &Decal)>(),
             hints: Vec::new(),
             candidates: Vec::new(),
+            nearest: Nearest::default(),
+            joints: Vec::new(),
         }
     }
 
     /// Fills the snapshot's decals and their materials and textures, and
     /// appends their poses to the joints: prepared matrices, or on `gpu`
     /// frames the nodes the GPU composes. Beyond a budget the nearest win.
-    pub(crate) fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
+    /// Returns whether the joints they listed changed since the last call.
+    pub(crate) fn extract(
+        &mut self,
+        world: &World,
+        snapshot: &mut RenderSnapshot,
+        gpu: bool,
+    ) -> bool {
+        let first = snapshot.joints.len();
+        self.list(world, snapshot, gpu);
+        let listed = &snapshot.joints[first..];
+        if listed == self.joints.as_slice() {
+            return false;
+        }
+        self.joints.clear();
+        self.joints.extend_from_slice(listed);
+        true
+    }
+
+    fn list(&mut self, world: &World, snapshot: &mut RenderSnapshot, gpu: bool) {
         // Extracted sanitized with the environment, before this.
         let settings = snapshot.environment.decals;
         snapshot.decals.clear();
@@ -190,8 +214,7 @@ impl DecalExtraction {
         if !settings.enabled {
             return;
         }
-        let globals = world.resource::<GlobalTransforms>();
-        let presented = world.resource::<PresentedTransforms>();
+        let poses = Poses::of(world, gpu);
         let assets = world.resource::<AssetLibrary>();
         let eye = snapshot.camera_position;
         self.candidates.clear();
@@ -203,31 +226,24 @@ impl DecalExtraction {
                 self.hints.resize(position + 1, TransformIndex::default());
             }
             let hint = &mut self.hints[position];
-            let model = if gpu {
-                globals
-                    .get_indexed(entity, hint)
-                    .and_then(|pose| pose.matrix())
-            } else {
-                presented
-                    .get_indexed(entity, hint)
-                    .and_then(|pose| pose.matrix())
-            };
-            let Some(model) = model else {
+            let Some(model) = poses.model_indexed(entity, hint) else {
                 continue;
             };
             let node = if gpu { hint.0 as u32 } else { u32::MAX };
             let distance = model.w_axis.truncate().distance_squared(eye);
             self.candidates.push((distance, model, node, *decal));
         }
-        if let Some(budget) = settings.max_decals
-            && self.candidates.len() > budget as usize
+        let kept = settings
+            .max_decals
+            .map_or(usize::MAX, |budget| budget as usize);
+        snapshot.dropped_decals = self.candidates.len().saturating_sub(kept);
+        // Beyond the budget the nearest win; kept decals blend in their order.
+        let candidates = &self.candidates;
+        for position in self
+            .nearest
+            .kept_in_order(candidates.iter().map(|candidate| candidate.0), kept)
         {
-            // Stable: equally near decals keep their order.
-            self.candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-            snapshot.dropped_decals = self.candidates.len() - budget as usize;
-            self.candidates.truncate(budget as usize);
-        }
-        for &(_, model, node, decal) in &self.candidates {
+            let (_, model, node, decal) = candidates[position];
             let Some(material) = assets.material(decal.material) else {
                 snapshot.missing_assets += 1;
                 continue;

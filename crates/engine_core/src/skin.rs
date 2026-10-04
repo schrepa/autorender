@@ -4,13 +4,13 @@
 use std::sync::Arc;
 
 use bevy_ecs::{
-    change_detection::Ref,
+    change_detection::{Ref, Tick},
     prelude::{Component, Entity, World},
     query::QueryState,
 };
 use glam::Mat4;
 
-use crate::{PoseRows, TransformIndex};
+use crate::{MeshHandle, PoseRows, TransformIndex};
 
 /// Deforms this entity's mesh by the displayed world poses of `joints`, as
 /// glTF skins do (decision 036).
@@ -64,10 +64,24 @@ pub struct RenderJoint {
     pub matrix: PoseRows,
 }
 
-/// Skinned entities' query and per-joint transform store hints.
+/// Skinned entities' query, per-joint transform store hints, and what the
+/// last extraction listed.
 pub(crate) struct SkinExtraction {
     pub(crate) query: QueryState<(Entity, Ref<'static, Skin>)>,
     pub(crate) hints: Vec<TransformIndex>,
+    // Joints the skins listed, which decals' joints follow.
+    pub(crate) joints: usize,
+    // Slots given a joint palette by the last extraction, and scratch for
+    // the next one's (slot, offset) pairs.
+    pub(crate) skinned: Vec<usize>,
+    pub(crate) scratch: Vec<(usize, u32)>,
+    // What the last GPU-presented extraction read (each skinned entity's
+    // slot and mesh, in query order; the asset, topology and validity
+    // revisions) and the change tick it saw: while all match and no skin
+    // changed, its joints stand.
+    pub(crate) inputs: Vec<(Entity, usize, Option<MeshHandle>)>,
+    pub(crate) key: Option<((u64, u64), u64, u64)>,
+    pub(crate) tick: Tick,
 }
 
 impl SkinExtraction {
@@ -75,6 +89,12 @@ impl SkinExtraction {
         Self {
             query: world.query::<(Entity, Ref<Skin>)>(),
             hints: Vec::new(),
+            joints: 0,
+            skinned: Vec::new(),
+            scratch: Vec::new(),
+            inputs: Vec::new(),
+            key: None,
+            tick: Tick::new(0),
         }
     }
 }

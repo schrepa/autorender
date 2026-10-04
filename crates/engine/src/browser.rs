@@ -166,6 +166,21 @@ pub struct BrowserApp {
     profile_frame: u64,
 }
 
+/// What a submitted frame shows. Only development controls submit exact
+/// frames and previews.
+#[derive(Clone, Copy)]
+#[cfg_attr(not(feature = "dev"), allow(dead_code))]
+enum FrameKind {
+    /// An ordinary frame at fraction `alpha` of the fixed tick: GPU-presented
+    /// unless the game opted out, and blended by temporal antialiasing.
+    Display { alpha: f32 },
+    /// The exact current state: steps, renders and captures.
+    Exact,
+    /// Fraction `alpha` of the latest completed tick, presented on the GPU
+    /// when `gpu`, else exactly.
+    Preview { alpha: f32, gpu: bool },
+}
+
 impl BrowserApp {
     pub async fn new(canvas: HtmlCanvasElement, engine: Engine) -> Result<Self, JsValue> {
         let performance = web_sys::window()
@@ -283,11 +298,9 @@ impl BrowserApp {
             height,
             simulation_ms,
             report,
-            PresentationMode::Interpolated {
+            FrameKind::Display {
                 alpha: report.interpolation,
             },
-            self.gpu_presentation,
-            true,
         )?;
         // After submission, so the GPU draws this frame while the next tick's
         // first stage runs; the frame interval predicts the next one.
@@ -336,15 +349,7 @@ impl BrowserApp {
             .step_fixed(ticks)
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
         let simulation_ms = self.performance.now() - start;
-        self.render_frame(
-            width,
-            height,
-            simulation_ms,
-            report,
-            PresentationMode::Current,
-            false,
-            false,
-        )
+        self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)
     }
 
     /// Extracts and submits current state without running either schedule.
@@ -356,15 +361,7 @@ impl BrowserApp {
     pub fn dev_render(&mut self, width: u32, height: u32) -> Result<(), JsValue> {
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        self.render_frame(
-            width,
-            height,
-            0.0,
-            FrameReport::default(),
-            PresentationMode::Current,
-            false,
-            false,
-        )
+        self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)
     }
 
     /// Render a selected fraction of the last fixed tick without running schedules.
@@ -395,9 +392,7 @@ impl BrowserApp {
             height,
             0.0,
             FrameReport::default(),
-            PresentationMode::Interpolated { alpha },
-            gpu,
-            false,
+            FrameKind::Preview { alpha, gpu },
         )
     }
 
@@ -419,18 +414,13 @@ impl BrowserApp {
         };
     }
 
-    /// `display` marks ordinary frames, which temporal antialiasing may
-    /// blend; others render exactly.
-    #[allow(clippy::too_many_arguments)]
     fn render_frame(
         &mut self,
         width: u32,
         height: u32,
         simulation_ms: f64,
         report: FrameReport,
-        presentation: PresentationMode,
-        gpu: bool,
-        display: bool,
+        kind: FrameKind,
     ) -> Result<(), JsValue> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
@@ -439,6 +429,11 @@ impl BrowserApp {
         let before_extraction = self.performance.now();
         let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
+        let gpu = match kind {
+            FrameKind::Display { .. } => self.gpu_presentation,
+            FrameKind::Exact => false,
+            FrameKind::Preview { gpu, .. } => gpu,
+        };
         if gpu && self.gpu_inputs_stale {
             // The renderer missed a gather. Current poses are the hierarchy's
             // own locals, so an earlier interval can no longer be uploaded:
@@ -446,15 +441,18 @@ impl BrowserApp {
             self.engine.complete_pending_tick();
             self.engine.reveal_ticks_ahead();
         }
-        let frame = match presentation {
-            PresentationMode::Interpolated { alpha } if gpu => {
+        let frame = match kind {
+            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } if gpu => {
                 self.engine.extract_gpu_frame(aspect, alpha)
             }
-            mode => self.engine.extract_frame(aspect, mode),
+            FrameKind::Display { alpha } | FrameKind::Preview { alpha, .. } => self
+                .engine
+                .extract_frame(aspect, PresentationMode::Interpolated { alpha }),
+            FrameKind::Exact => self.engine.extract_frame(aspect, PresentationMode::Current),
         }
         .map_err(|error| JsValue::from_str(&error.to_string()))?;
         let after_extraction = self.performance.now();
-        let rendered = if display {
+        let rendered = if let FrameKind::Display { .. } = kind {
             self.renderer.render_display_frame(frame)?
         } else {
             self.renderer.render_frame(frame)?

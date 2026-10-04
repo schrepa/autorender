@@ -1757,6 +1757,33 @@ fn gpu_frames_list_decal_joints_once_after_standing_skins() {
 }
 
 #[test]
+fn gpu_frames_keeping_their_instances_count_missing_decal_assets_once() {
+    let mut engine = Engine::default();
+    let world = engine.app.world_mut();
+    let material = {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        let material = assets
+            .insert_material(Material::new([1.0; 4]).unwrap())
+            .unwrap();
+        assets.remove_material(material);
+        material
+    };
+    world.spawn((Transform::default(), Cube { color: [1.0; 4] }));
+    world.spawn((
+        Transform {
+            translation: Vec3::new(0.0, 0.0, -5.0),
+            ..Default::default()
+        },
+        Decal::new(material),
+    ));
+    // Later frames skip the instance pass; each counts the decal once.
+    for _ in 0..4 {
+        let frame = engine.extract_gpu_frame(1.0, 1.0).unwrap();
+        assert_eq!(frame.snapshot().missing_assets, 1);
+    }
+}
+
+#[test]
 fn skins_with_too_few_joints_draw_rigidly_and_skinned_meshes_never_cull() {
     let (mut engine, [_, _, skinned]) = skinned_world(1);
     let frame = engine

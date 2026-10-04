@@ -42,8 +42,9 @@ fill it.
   prepared matrix; since 2026-10-03 they copy a frame's decals and joints.
 - **Optional, with a budget.** `Decals { enabled, max_decals }` is inserted
   by default and draws every decal; `max_decals` (decision 029) keeps the
-  nearest and counts the rest in `dropped_decals`, as do decals beyond the
-  GPU's storage binding. Removing the resource or disabling it draws none.
+  nearest, which blend in their own order as without a budget, and counts
+  the rest in `dropped_decals`, as do decals beyond the GPU's storage
+  binding. Removing the resource or disabling it draws none.
   Frames without decals create nothing and keep the depth buffer
   discardable as before.
 - **Authoring and agents.** Scene version 8 entities take `decal`

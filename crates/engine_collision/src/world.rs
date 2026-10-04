@@ -268,16 +268,14 @@ impl CollisionWorld {
         let ray = ray.normalized()?;
         self.ready()?;
         let mut nearest: Option<RayHit> = None;
-        let mut candidates = 0;
-        for index in self
-            .bvh
-            .query_profiled(|bounds| bounds.ray(ray), &mut broad)
-        {
-            candidate(&mut candidates, self.config.max_query_candidates)?;
-            let entry = self.entries[index];
-            if !filter.accepts(entry.entity, entry.collider) {
-                continue;
-            }
+        for entry in candidates(
+            (&self.bvh, &self.entries),
+            self.config.max_query_candidates,
+            |bounds| bounds.ray(ray),
+            filter,
+            &mut broad,
+        ) {
+            let entry = entry?;
             if let Some((distance, normal, started_inside)) =
                 precise.measure(|| entry.affine.ray(ray))
             {
@@ -312,16 +310,14 @@ impl CollisionWorld {
             let ray = ray.normalized()?;
             self.ready()?;
             self.validate_limit(limit)?;
-            let mut candidates = 0;
-            for index in self
-                .bvh
-                .query_profiled(|bounds| bounds.ray(ray), &mut broad)
-            {
-                candidate(&mut candidates, self.config.max_query_candidates)?;
-                let entry = self.entries[index];
-                if !filter.accepts(entry.entity, entry.collider) {
-                    continue;
-                }
+            for entry in candidates(
+                (&self.bvh, &self.entries),
+                self.config.max_query_candidates,
+                |bounds| bounds.ray(ray),
+                filter,
+                &mut broad,
+            ) {
+                let entry = entry?;
                 if let Some((distance, normal, started_inside)) =
                     precise.measure(|| entry.affine.ray(ray))
                 {
@@ -368,16 +364,14 @@ impl CollisionWorld {
             let shape = AffineShape::new(shape, matrix)?;
             self.ready()?;
             self.validate_limit(limit)?;
-            let mut candidates = 0;
-            for index in self
-                .bvh
-                .query_profiled(|bounds| bounds.overlaps(shape.bounds), &mut broad)
-            {
-                candidate(&mut candidates, self.config.max_query_candidates)?;
-                let entry = self.entries[index];
-                if !filter.accepts(entry.entity, entry.collider) {
-                    continue;
-                }
+            for entry in candidates(
+                (&self.bvh, &self.entries),
+                self.config.max_query_candidates,
+                |bounds| bounds.overlaps(shape.bounds),
+                filter,
+                &mut broad,
+            ) {
+                let entry = entry?;
                 if precise.measure(|| intersects(&shape, &entry.affine))? {
                     if output.len() == limit {
                         return Err(CollisionError::ResultBudget);
@@ -413,16 +407,14 @@ impl CollisionWorld {
             .swept(displacement)
             .expanded(options.target_distance);
         let mut nearest: Option<ShapeHit> = None;
-        let mut candidates = 0;
-        for index in self
-            .bvh
-            .query_profiled(|bounds| bounds.overlaps(swept), &mut broad)
-        {
-            candidate(&mut candidates, self.config.max_query_candidates)?;
-            let entry = self.entries[index];
-            if !filter.accepts(entry.entity, entry.collider) {
-                continue;
-            }
+        for entry in candidates(
+            (&self.bvh, &self.entries),
+            self.config.max_query_candidates,
+            |bounds| bounds.overlaps(swept),
+            filter,
+            &mut broad,
+        ) {
+            let entry = entry?;
             if let Some((fraction, point, normal, started_overlapping)) = precise.measure(|| {
                 self.narrow
                     .cast(&shape, &entry.affine, displacement, options)
@@ -537,6 +529,28 @@ impl CollisionWorld {
         self.next_pairs.clear();
         events.committed_tick = Some(tick);
     }
+}
+
+/// The entries a query visits: those of the tree whose bounds pass `test`,
+/// in tree order, that `filter` accepts. Visiting more than `limit`
+/// candidates, filtered ones included, is an error.
+fn candidates<'a>(
+    (bvh, entries): (&'a Bvh, &'a [Entry]),
+    limit: usize,
+    test: impl Fn(Bounds) -> bool + 'a,
+    filter: QueryFilter,
+    broad: &'a mut engine_profile::Aggregate,
+) -> impl Iterator<Item = Result<Entry, CollisionError>> + 'a {
+    let mut count = 0;
+    bvh.query_profiled(test, broad).filter_map(move |index| {
+        if let Err(error) = candidate(&mut count, limit) {
+            return Some(Err(error));
+        }
+        let entry = entries[index];
+        filter
+            .accepts(entry.entity, entry.collider)
+            .then_some(Ok(entry))
+    })
 }
 
 fn candidate(count: &mut usize, limit: usize) -> Result<(), CollisionError> {
