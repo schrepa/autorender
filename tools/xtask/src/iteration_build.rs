@@ -17,7 +17,9 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::process::{WASM_BINDGEN_VERSION, WASM_TARGET};
+use crate::process::{
+    CLIENTS, WASM_TARGET, check_wasm_bindgen, client_crates, client_dev_features, client_packages,
+};
 
 const MAX_LINE_BYTES: usize = 256 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
@@ -25,7 +27,6 @@ const MAX_DIAGNOSTICS: usize = 100;
 const MAX_DIAGNOSTIC_BYTES: usize = 256 * 1024;
 const MAX_SPANS: usize = 8;
 const MAX_CHILDREN: usize = 8;
-const PACKAGES: [&str; 3] = ["orbit_demo", "playground", "stress_lab"];
 
 /// Compile all development clients and generate bindings into a new directory.
 /// `output` must be an unused direct child of `root/web/pkg-iterations`.
@@ -66,40 +67,19 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     report["build"]["output"] = json!(output);
 
     report["build"]["stage"] = json!("toolchain");
-    let version = capture(
-        Command::new("wasm-bindgen")
-            .arg("--version")
-            .current_dir(&root),
-        false,
-    )
-    .map_err(|message| ("bindgen_unavailable", "wasm-bindgen".into(), message))?;
-    let expected = format!("wasm-bindgen {WASM_BINDGEN_VERSION}");
-    if !version.status.success() || version.stdout.text.trim() != expected {
-        return Err((
-            "bindgen_version",
-            "wasm-bindgen".into(),
-            format!(
-                "expected {expected}, found {:?}; install wasm-bindgen-cli --version {WASM_BINDGEN_VERSION} --locked",
-                version.stdout.text.trim()
-            ),
-        ));
-    }
+    check_wasm_bindgen(&root).map_err(|(code, message)| (code, "wasm-bindgen".into(), message))?;
 
     report["build"]["stage"] = json!("cargo");
     let target_dir = root.join("target/iteration-wasm");
+    let features = client_dev_features();
     let compiled = capture(
         Command::new("cargo")
             .current_dir(&root)
+            .arg("build")
+            .args(client_packages())
             .args([
-                "build",
-                "-p",
-                "orbit-demo",
-                "-p",
-                "playground",
-                "-p",
-                "stress-lab",
                 "--features",
-                "orbit-demo/dev,playground/dev,stress-lab/dev",
+                &features,
                 "--target",
                 WASM_TARGET,
                 "--release",
@@ -116,9 +96,9 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     // Validate all compiler artifacts before admitting any generated bindings.
     // The dedicated target directory keeps ordinary dev/lint builds from
     // replacing a compiled artifact while wasm-bindgen reads it.
-    let mut artifacts = Vec::with_capacity(PACKAGES.len());
+    let mut artifacts = Vec::with_capacity(CLIENTS.len());
     let artifact_root = target_dir.join(WASM_TARGET).join("release");
-    for package in PACKAGES {
+    for package in client_crates() {
         let expected = artifact_root.join(format!("{package}.wasm"));
         let artifact = compiled.stdout.artifacts.get(package).ok_or_else(|| {
             (
@@ -154,7 +134,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
         )
     })?;
     report["build"]["stage"] = json!("bindings");
-    let mut packages = Vec::with_capacity(PACKAGES.len());
+    let mut packages = Vec::with_capacity(CLIENTS.len());
     for (package, artifact) in artifacts {
         let generated = capture(
             Command::new("wasm-bindgen")
@@ -409,7 +389,7 @@ impl ParsedOutput {
             Some("compiler-artifact") => {
                 if let Some(name) = value["target"]["name"]
                     .as_str()
-                    .filter(|name| PACKAGES.contains(name))
+                    .filter(|name| client_crates().contains(name))
                     && let Some(files) = value["filenames"].as_array()
                     && let Some(wasm) = files
                         .iter()

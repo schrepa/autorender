@@ -19,7 +19,33 @@ pub fn repository_root() -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot locate the workspace above tools/xtask".to_owned())
 }
 
-pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
+/// The browser clients: each one's Cargo package and Wasm crate name.
+pub const CLIENTS: [(&str, &str); 3] = [
+    ("orbit-demo", "orbit_demo"),
+    ("playground", "playground"),
+    ("stress-lab", "stress_lab"),
+];
+
+/// `-p PACKAGE` for every client.
+pub fn client_packages<'a>() -> impl Iterator<Item = &'a str> {
+    CLIENTS.into_iter().flat_map(|(package, _)| ["-p", package])
+}
+
+/// Every client's Wasm crate name.
+pub fn client_crates() -> [&'static str; 3] {
+    CLIENTS.map(|(_, name)| name)
+}
+
+/// Every client's `dev` feature, as `--features` takes them.
+pub fn client_dev_features() -> String {
+    CLIENTS
+        .map(|(package, _)| format!("{package}/dev"))
+        .join(",")
+}
+
+/// Whether wasm-bindgen is the version the bindings need: otherwise an error
+/// code (`bindgen_unavailable` or `bindgen_version`) and how to fix it.
+pub fn check_wasm_bindgen(root: &Path) -> Result<(), (&'static str, String)> {
     let install = format!(
         "install the matching CLI with `cargo install wasm-bindgen-cli --version {WASM_BINDGEN_VERSION} --locked` and ensure it is on PATH"
     );
@@ -27,23 +53,35 @@ pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
         .arg("--version")
         .current_dir(root)
         .output()
-        .map_err(|error| format!("cannot run wasm-bindgen: {error}; {install}"))?;
+        .map_err(|error| {
+            (
+                "bindgen_unavailable",
+                format!("cannot run wasm-bindgen: {error}; {install}"),
+            )
+        })?;
     if !output.status.success() {
-        return Err(format!(
-            "wasm-bindgen --version failed ({}): {}; {install}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+        return Err((
+            "bindgen_unavailable",
+            format!(
+                "wasm-bindgen --version failed ({}): {}; {install}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         ));
     }
     let version = String::from_utf8_lossy(&output.stdout);
     let expected = format!("wasm-bindgen {WASM_BINDGEN_VERSION}");
     if version.trim() != expected {
-        return Err(format!(
-            "expected {expected}, found {:?}; {install}",
-            version.trim()
+        return Err((
+            "bindgen_version",
+            format!("expected {expected}, found {:?}; {install}", version.trim()),
         ));
     }
     Ok(())
+}
+
+pub fn verify_wasm_bindgen(root: &Path) -> Result<(), String> {
+    check_wasm_bindgen(root).map_err(|(_, message)| message)
 }
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {

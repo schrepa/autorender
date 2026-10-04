@@ -33,7 +33,6 @@ jobs:
           key: ${{ runner.os }}-rust-1.98.1-${{ hashFiles('Cargo.lock') }}
       - name: Install matching Wasm binding generator
         run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
-      - run: cargo xtask assets
       - run: cargo xtask lint
       - run: cargo xtask test
       - run: cargo xtask build
