@@ -215,6 +215,36 @@ pub(crate) fn caster_planes(
         .collect()
 }
 
+/// The plane past which receivers at least `distance` from `eye` lie in the
+/// view frustum of `view_projection`: view depth beyond `distance` times
+/// the cosine of the frustum's widest ray. `None` unless it faces
+/// `toward_sun`, for casters behind it can shadow past it, or for an
+/// unusable projection.
+pub(crate) fn receivers_from(
+    view_projection: Mat4,
+    eye: Vec3,
+    distance: f32,
+    toward_sun: Vec3,
+) -> Option<Vec4> {
+    let inverse = view_projection.inverse();
+    let unproject = |x: f32, y: f32, z: f32| {
+        let point = inverse * Vec4::new(x, y, z, 1.0);
+        point.truncate() / point.w
+    };
+    let direction =
+        (unproject(0.0, 0.0, FAR_DEPTH) - unproject(0.0, 0.0, NEAR_DEPTH)).try_normalize()?;
+    if direction.dot(toward_sun) < 0.0 {
+        return None;
+    }
+    let mut cosine = 1.0_f32;
+    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        let ray = (unproject(x, y, FAR_DEPTH) - eye).try_normalize()?;
+        cosine = math::min(cosine, ray.dot(direction));
+    }
+    let plane = direction.extend(-direction.dot(eye) - distance * cosine);
+    (cosine > 0.0 && plane.is_finite()).then_some(plane)
+}
+
 /// Tiles across each side of the kept far map (decision 020): kept casters
 /// that move mark the tiles under them dirty, and frames redraw them.
 pub(crate) const TILES: u32 = 16;

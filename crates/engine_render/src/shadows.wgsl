@@ -43,7 +43,13 @@ struct Cull {
     skinned: u32,
     pad0: u32,
     pad1: u32,
+    // Inward world planes bounding where casters can darken each near
+    // cascade's receivers, then the moving map's (MOVING_VOLUME): their
+    // part of the view swept toward the sun. Unused planes pass all.
+    planes: array<array<vec4<f32>, 8>, 5>,
 }
+
+const MOVING_VOLUME: u32 = 4u;
 
 struct Candidate {
     slot: u32,
@@ -173,6 +179,18 @@ fn pose_key(pose: Rows, group: u32) -> u32 {
 
 fn overlaps(rectangle: vec4<f32>, low: vec3<f32>, high: vec3<f32>, depth: f32) -> bool {
     return all(high.xy >= rectangle.xy) && all(low.xy <= rectangle.zw) && low.z <= depth;
+}
+
+// Whether the world box `center` +- `half` reaches inside every plane of
+// caster volume `volume`.
+fn within(volume: u32, center: vec3<f32>, half: vec3<f32>) -> bool {
+    for (var index = 0u; index < 8u; index++) {
+        let plane = cull.planes[volume][index];
+        if dot(plane.xyz, center) + dot(abs(plane.xyz), half) + plane.w < 0.0 {
+            return false;
+        }
+    }
+    return true;
 }
 
 fn group_start(group: u32) -> u32 {
@@ -329,12 +347,14 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         }
     }
     for (var cascade = 0u; cascade < cull.cascades; cascade++) {
-        if overlaps(cull.near[cascade], low, high, cull.near_depths[cascade]) {
+        if overlaps(cull.near[cascade], low, high, cull.near_depths[cascade])
+            && within(cascade, world_center, world_half) {
             append(cascade, batch.group, candidate.slot);
         }
     }
     if moving {
-        if overlaps(cull.moving, low, high, cull.depths.w) {
+        if overlaps(cull.moving, low, high, cull.depths.w)
+            && within(MOVING_VOLUME, world_center, world_half) {
             append(MOVING_MAP, batch.group, candidate.slot);
         }
     }

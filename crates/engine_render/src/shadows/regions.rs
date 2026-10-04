@@ -2,15 +2,20 @@
 //! far region the moving and kept maps share, and the near cascades in use,
 //! with what caster selection and lookups read about them.
 
-use engine_core::{Shadows, glam::Vec3, math};
+use engine_core::{
+    Shadows,
+    glam::{Vec3, Vec4},
+    math,
+};
 
 use super::{
     FAR_VIEW, KEPT_MAP, MAPS, MOVING_MAP, REFRESH, STILLNESS, VIEW_STRIDE, VIRTUAL_SHADOW_PLANES,
     VirtualShadowView,
 };
-use crate::gpu_data::{MAX_CASCADES, ShadowCullUniform, ShadowUniform};
+use crate::gpu_data::{CASTER_PLANES, MAX_CASCADES, ShadowCullUniform, ShadowUniform};
 use crate::shadow_fit::{
-    LightBasis, MapRegion, Refresh, TILES, caster_planes, frustum_footprint, view_sphere,
+    LightBasis, MapRegion, Refresh, TILES, caster_planes, frustum_footprint, receivers_from,
+    view_sphere,
 };
 
 // Lookups move this many texels along the surface normal. Receiver planes
@@ -187,6 +192,29 @@ impl Regions {
             settings.distance
         };
         let (moving_rect, moving_depth) = selection(far_reach, far, far.texel(self.resolution));
+        // Where casters can darken a map's receivers: the part of the view
+        // they lie in, from `start` (radially) to `reach`, swept toward the
+        // sun, widened like the regions. Receivers pick a cascade by their
+        // distance, and read the next one across the last tenth of its
+        // reach; any of them may read the far maps.
+        let toward_sun = -basis.rows[2];
+        let volume = |start: Option<f32>, reach: f32, texel: f32| {
+            let margin = Vec4::new(0.0, 0.0, 0.0, texel * (NORMAL_OFFSET_TEXELS + 2.0));
+            let swept = caster_planes(snapshot.view_projection, eye, reach, toward_sun);
+            let first = start
+                .and_then(|start| receivers_from(snapshot.view_projection, eye, start, toward_sun));
+            let mut planes = [[0.0, 0.0, 0.0, 1.0]; CASTER_PLANES];
+            for (slot, plane) in planes.iter_mut().zip(swept.iter().chain(first.iter())) {
+                *slot = (*plane + margin).to_array();
+            }
+            planes
+        };
+        let mut planes = [[[0.0, 0.0, 0.0, 1.0]; CASTER_PLANES]; MAX_CASCADES + 1];
+        for (index, (reach, region)) in near.iter().enumerate() {
+            let start = index.checked_sub(1).map(|previous| near[previous].0 * 0.9);
+            planes[index] = volume(start, *reach, region.texel(self.near_resolution()));
+        }
+        planes[MAX_CASCADES] = volume(None, far_reach, far.texel(self.resolution));
         // Maps drawn every frame select virtual casters' clusters within
         // the same regions (decision 044). A cascade's receivers start
         // where the previous one hands over to it, across its last
@@ -250,6 +278,7 @@ impl Regions {
             cascades: near.len() as u32,
             skinned: counts.skinned,
             pad: [0; 2],
+            planes,
         }
     }
 
