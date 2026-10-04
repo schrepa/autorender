@@ -362,19 +362,33 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
 
 // Totals of this frame's casters of the near cascades together, the moving
 // map and the kept map, read back with the dirty tiles for profiling
-// counters.
-@compute @workgroup_size(1)
-fn count_casters() {
+// counters: each of a workgroup's lanes sums some draws.
+const COUNT_LANES: u32 = 256u;
+var<workgroup> cast_totals: array<atomic<u32>, 3>;
+
+@compute @workgroup_size(256)
+fn count_casters(@builtin(local_invocation_index) lane: u32) {
+    if lane < 3u {
+        atomicStore(&cast_totals[lane], 0u);
+    }
+    workgroupBarrier();
+    // Every lane sums every 256th draw, of the near cascades, the moving
+    // map or the kept map.
     var totals = vec3<u32>(0u);
-    for (var map = 0u; map < MAPS; map++) {
-        var total = 0u;
-        for (var group = 0u; group < cull.groups; group++) {
-            total += atomicLoad(&args[map * cull.groups + group].instance_count);
-        }
-        totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)] += total;
+    let draws = MAPS * cull.groups;
+    for (var draw = lane; draw < draws; draw += COUNT_LANES) {
+        let map = draw / cull.groups;
+        totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)]
+            += atomicLoad(&args[draw].instance_count);
     }
     for (var index = 0u; index < 3u; index++) {
-        atomicStore(&counters.dirty[TILE_WORDS + index], totals[index]);
+        if totals[index] != 0u {
+            atomicAdd(&cast_totals[index], totals[index]);
+        }
+    }
+    workgroupBarrier();
+    if lane < 3u {
+        atomicStore(&counters.dirty[TILE_WORDS + lane], atomicLoad(&cast_totals[lane]));
     }
 }
 

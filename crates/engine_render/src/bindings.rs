@@ -720,8 +720,12 @@ pub(crate) const PYRAMID_FIRST: Table = Table {
     bindings: &[
         texture(0, "source_depth", Depth, D2, C),
         bind(2, "target_level", Kind::StorageR32Float, C),
+        uniform_of(3, "extent", PYRAMID_EXTENT_BYTES, C),
     ],
 };
+
+/// A pyramid level's `Extent` of `depth_pyramid.wgsl`.
+pub(crate) const PYRAMID_EXTENT_BYTES: usize = 16;
 
 /// Each further level from the one above it.
 pub(crate) const PYRAMID_DOWN: Table = Table {
@@ -729,6 +733,7 @@ pub(crate) const PYRAMID_DOWN: Table = Table {
     bindings: &[
         texture(1, "source_level", Unfilterable, D2, C),
         bind(2, "target_level", Kind::StorageR32Float, C),
+        uniform_of(3, "extent", PYRAMID_EXTENT_BYTES, C),
     ],
 };
 
