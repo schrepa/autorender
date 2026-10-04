@@ -6,6 +6,8 @@
 
 use engine_core::glam::Vec3;
 
+use crate::buffers::storage;
+
 use super::{
     CAMERA, COUNTERS, CameraTests, Cone, MAX_VIEWS, NONE, TEST_PREVIOUS, TEST_SUBPIXEL,
     UNIFORM_BYTES, VIEW_FLOATS, VISIBLE_BYTES, VirtualBatch, VirtualView,
@@ -15,20 +17,6 @@ use super::{
 const START_QUEUE: u64 = 1 << 16;
 const START_BIN: u64 = 1 << 14;
 const START_RETEST: u64 = 1 << 14;
-
-fn storage(
-    device: &wgpu::Device,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: bytes.max(16).next_multiple_of(16),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-        mapped_at_creation: false,
-    })
-}
 
 pub(super) struct SelectionStorage {
     pub(super) uniform: wgpu::Buffer,
@@ -67,12 +55,7 @@ impl SelectionStorage {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let none = wgpu::BufferUsages::empty();
         Self {
-            uniform: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("engine/virtual-frame"),
-                size: UNIFORM_BYTES,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            uniform: crate::buffers::uniform(device, "engine/virtual-frame", UNIFORM_BYTES),
             batches: [
                 storage(device, "engine/virtual-camera-batches", 32, none),
                 storage(device, "engine/virtual-shadow-batches", 32, none),

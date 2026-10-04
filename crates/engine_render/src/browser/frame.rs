@@ -113,14 +113,14 @@ pub(super) struct FrameState<'s> {
     pub(super) shape: FrameShape,
 }
 
-/// What encoding counted: shadow draws, reflection probe faces, and the
-/// render graph's kept and culled passes (decision 050).
+/// What encoding counted: the opaque passes' draws, shadow draws,
+/// reflection probe faces, and the render graph's passes (decision 050).
 #[derive(Default)]
 pub(super) struct EncodeReport {
+    pub(super) draws: u32,
     pub(super) shadow_draws: u32,
     pub(super) probe_faces: u32,
     pub(super) passes: u32,
-    pub(super) culled_passes: u32,
 }
 
 impl Renderer {
@@ -203,7 +203,6 @@ impl Renderer {
         }
         let mut report = EncodeReport {
             passes: graph.kept(),
-            culled_passes: graph.culled(),
             ..EncodeReport::default()
         };
         for node in graph.kept_passes() {
@@ -1300,7 +1299,12 @@ impl Renderer {
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::Opaque { phase } => {
-                self.encode_opaque(state, encoder, view, node, usize::from(phase));
+                let draws = self.encode_opaque(state, encoder, view, node, usize::from(phase));
+                // Phase two (decision 040) issues phase one's draws again for
+                // the instances its test revealed: count each once.
+                if phase == 0 {
+                    report.draws += draws;
+                }
             }
             Pass::VisibilityIds { phase } => {
                 self.encode_visibility_ids(state, encoder, view, node, usize::from(phase));
@@ -1311,7 +1315,9 @@ impl Renderer {
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::Decals => self.encode_decals(state, encoder, view, node),
-            Pass::Transparent => self.encode_transparent(state, encoder, view, node),
+            Pass::Transparent => {
+                report.draws += self.encode_transparent(state, encoder, view, node);
+            }
             Pass::TransparentComposite => {
                 self.encode_transparent_composite(state, encoder, view, node);
             }
@@ -1514,7 +1520,7 @@ impl Renderer {
 
     /// The opaque pass of `phase` (two around the occlusion test, decision
     /// 040), with the sky after the last one unless the visibility buffer
-    /// resolves it (decision 045).
+    /// resolves it (decision 045); returns its draws, the sky's aside.
     fn encode_opaque(
         &self,
         state: &FrameState<'_>,
@@ -1522,7 +1528,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
         phase: usize,
-    ) {
+    ) -> u32 {
         let phases = usize::from(state.shape.phases);
         let resolve_phase = state.shape.resolves[phase];
         // The first of this phase's camera bins (decision 044).
@@ -1547,15 +1553,18 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if state.kind.instance_count > 0 {
-            self.draw_opaque(state, &mut pass, phase, virtual_first);
-        }
+        let draws = if state.kind.instance_count > 0 {
+            self.draw_opaque(state, &mut pass, phase, virtual_first)
+        } else {
+            0
+        };
         // Last, so depth testing leaves the sky only uncovered pixels.
         if phase + 1 == phases && !resolve_phase {
             pass.set_pipeline(self.sky_pipeline(state));
             pass.set_bind_group(0, &self.camera.group, &[]);
             pass.draw(0..3, 0..1);
         }
+        draws
     }
 
     /// Occlusion culling's test between the opaque phases (decision 040): the
@@ -1606,14 +1615,14 @@ impl Renderer {
     /// The opaque meshes of `phase` (GPU-presented frames draw each level of
     /// detail's visible slots, decision 047), the impostors' cards (decision
     /// 048), and virtual geometry's bins the visibility buffer leaves to
-    /// forward drawing (decision 044).
+    /// forward drawing (decision 044); returns the draws.
     fn draw_opaque(
         &self,
         state: &FrameState<'_>,
         pass: &mut wgpu::RenderPass<'_>,
         phase: usize,
         virtual_first: Option<usize>,
-    ) {
+    ) -> u32 {
         let gpu_mode = state.kind.gpu_mode;
         let Passes {
             opaque_kind,
@@ -1646,8 +1655,8 @@ impl Renderer {
         if !gpu_mode {
             pass.set_vertex_buffer(1, self.instances.slots().slice(..));
         }
-        let mut bound = None;
-        let mut bindings = Bindings::default();
+        let mut draws = 0;
+        let mut binds = BatchBinds::default();
         for &index in &self.draw_order.order {
             let index = index as usize;
             let batch = &self.plan.batches[index];
@@ -1656,40 +1665,22 @@ impl Renderer {
             if self.virtual_draws.drawn.get(index) == Some(&true) {
                 continue;
             }
-            // Every planned source was validated and uploaded above.
-            let mesh = &self.meshes[&batch.mesh];
-            let (group, variant) = self.materials.binding(batch.material);
-            let skinned = mesh.skinned;
-            let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
-            if bound != Some(variant) {
-                pass.set_pipeline(&self.mesh_pipelines.variants[&(opaque_kind, variant)]);
-                bound = Some(variant);
-            }
-            bindings.group(pass, 1, group);
-            let draw = mesh.draw(&self.mesh_arena);
-            bindings.vertex(pass, 0, draw.vertices);
-            if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
-                bindings.vertex(pass, 2, extras);
-            }
-            if let Some(skin) = draw.skin.filter(|_| skinned) {
-                bindings.vertex(pass, 3, skin);
-            }
-            bindings.index(pass, draw.indices);
+            let (mesh, draw) = self.bind_batch(pass, &mut binds, (opaque_kind, false), batch);
             if gpu_mode {
                 // Visible slots of this group, compacted and counted
                 // on the GPU, each level of detail (decision 047)
                 // with its own.
-                let virtual_geometry = self.virtual_draws.drawn.get(index) == Some(&true);
-                for level in 0..lod_levels(batch, mesh, virtual_geometry) {
+                for level in 0..lod_levels(batch, mesh, false) {
                     // An empty level draws nothing.
                     if level > 0 && mesh.lods[level - 1].1 == 0 {
                         continue;
                     }
-                    let (ids, draws, offset) = self
+                    let (ids, args, offset) = self
                         .gpu_presentation
                         .draw_source(batch, index, phase, level);
-                    bindings.ids(pass, 1, ids);
-                    pass.draw_indexed_indirect(draws, offset);
+                    binds.bindings.ids(pass, 1, ids);
+                    pass.draw_indexed_indirect(args, offset);
+                    draws += 1;
                 }
             } else {
                 pass.draw_indexed(
@@ -1697,6 +1688,7 @@ impl Renderer {
                     draw.base_vertex,
                     batch.instances.clone(),
                 );
+                draws += 1;
             }
         }
         // Impostors (decision 048): every draw group's cards in one
@@ -1713,6 +1705,7 @@ impl Renderer {
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, ids.slice(..));
             pass.draw_indirect(args, offset);
+            draws += 1;
         }
         // Virtual geometry (decision 044): each bin's selected
         // clusters, in phase one, then each bin's twin of clusters
@@ -1741,8 +1734,10 @@ impl Renderer {
                 let (stream, args, offset) = self.virtual_draws.pass.bin_source(first_bin + bin);
                 pass.set_vertex_buffer(0, stream);
                 pass.draw_indirect(args, offset);
+                draws += 1;
             }
         }
+        draws
     }
 
     /// The triangle IDs of `phase`'s camera bins the visibility buffer
@@ -1895,14 +1890,15 @@ impl Renderer {
         );
     }
 
-    /// Transparent surfaces and alpha particles accumulated (decision 026).
+    /// Transparent surfaces and alpha particles accumulated (decision 026);
+    /// returns the surfaces' draws.
     fn encode_transparent(
         &self,
         state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         node: &Node,
-    ) {
+    ) -> u32 {
         let FrameKind {
             gpu_mode,
             instance_count,
@@ -1929,6 +1925,7 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        let mut draws = 0;
         if transparent_draws && instance_count > 0 {
             // Glass reads the opaque color the pass draws over.
             let camera_group = match self.camera.refraction_group() {
@@ -1944,35 +1941,17 @@ impl Renderer {
             if !gpu_mode {
                 pass.set_vertex_buffer(1, self.instances.slots().slice(..));
             }
-            let mut bound = None;
-            let mut bindings = Bindings::default();
+            let mut binds = BatchBinds::default();
             for (index, batch) in self.plan.batches.iter().enumerate() {
                 if !batch.transparent {
                     continue;
                 }
-                let mesh = &self.meshes[&batch.mesh];
-                let (group, variant) = self.materials.binding(batch.material);
-                let skinned = mesh.skinned;
-                let variant = variant.with_extended(mesh.extended).with_skinned(skinned);
-                if bound != Some(variant) {
-                    pass.set_pipeline(&self.mesh_pipelines.variants[&(transparent_kind, variant)]);
-                    bound = Some(variant);
-                }
-                bindings.group(&mut pass, 1, group);
-                let draw = mesh.draw(&self.mesh_arena);
-                bindings.vertex(&mut pass, 0, draw.vertices);
-                if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
-                    bindings.vertex(&mut pass, 2, extras);
-                }
-                if let Some(skin) = draw.skin.filter(|_| skinned) {
-                    bindings.vertex(&mut pass, 3, skin);
-                }
-                bindings.index(&mut pass, draw.indices);
+                let (_, draw) =
+                    self.bind_batch(&mut pass, &mut binds, (transparent_kind, false), batch);
                 if gpu_mode {
-                    let (ids, draws, offset) =
-                        self.gpu_presentation.draw_source(batch, index, 0, 0);
-                    bindings.ids(&mut pass, 1, ids);
-                    pass.draw_indexed_indirect(draws, offset);
+                    let (ids, args, offset) = self.gpu_presentation.draw_source(batch, index, 0, 0);
+                    binds.bindings.ids(&mut pass, 1, ids);
+                    pass.draw_indexed_indirect(args, offset);
                 } else {
                     pass.draw_indexed(
                         draw.index_range(),
@@ -1980,11 +1959,13 @@ impl Renderer {
                         batch.instances.clone(),
                     );
                 }
+                draws += 1;
             }
         }
         if let (Some(frame), Some(particles)) = (particle_frame, self.particles.as_ref()) {
             particles.draw_alpha(&mut pass, &self.camera.group, frame);
         }
+        draws
     }
 
     /// The accumulated transparent surfaces composited over the frame's

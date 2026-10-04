@@ -142,12 +142,11 @@ impl TemporalPass {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/taa-resolve-uniform"),
-            size: size_of::<ResolveUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = crate::buffers::uniform(
+            device,
+            "engine/taa-resolve-uniform",
+            size_of::<ResolveUniform>() as u64,
+        );
         Self {
             mesh_layout,
             lit_layout: None,
@@ -412,21 +411,15 @@ impl TemporalPass {
 
     fn create_targets(&self, device: &wgpu::Device, (width, height): (u32, u32)) -> Targets {
         let texture = |label, format| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+            crate::targets::texture_2d(
+                device,
+                label,
+                (width, height),
+                1,
+                1,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+                crate::targets::RENDER_TARGET,
+            )
         };
         let textures = [
             texture("engine/taa-motion", MOTION_FORMAT),

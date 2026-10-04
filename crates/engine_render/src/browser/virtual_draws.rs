@@ -348,45 +348,35 @@ impl Renderer {
             constants,
         } = self.virtual_stages(kind, variant, false);
         let targets = &targets[..];
-        crate::pipelines::render(
+        crate::pipelines::geometry(
             &self.device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/virtual-meshes"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: &self.mesh_shader,
-                    entry_point: Some(vertex),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: crate::virtual_geometry::VISIBLE_BYTES,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &VIRTUAL_ATTRIBUTES,
-                    })],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/virtual-meshes",
+                layout,
+                module: &self.mesh_shader,
+                vertex,
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: crate::virtual_geometry::VISIBLE_BYTES,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &VIRTUAL_ATTRIBUTES,
+                })],
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
+                depth: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(true),
                     depth_compare: Some(wgpu::CompareFunction::Greater),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.mesh_shader,
-                    entry_point: Some(fragment),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: fragment,
+                    constants: &constants,
                     targets,
                 }),
-                multiview_mask: None,
-                cache: None,
             },
         )
     }

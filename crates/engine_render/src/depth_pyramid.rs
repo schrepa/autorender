@@ -5,6 +5,7 @@
 //! reflections (decision 025) walk after the opaque pass.
 
 use crate::bindings::{PYRAMID_DOWN, PYRAMID_FIRST};
+use crate::cached::Cached;
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::profiling::Span;
 
@@ -35,7 +36,8 @@ pub(crate) struct DepthPyramid {
     // and of the levels after it, which read the level below.
     first_layout: wgpu::BindGroupLayout,
     down_layout: wgpu::BindGroupLayout,
-    levels: Option<(u64, Levels)>,
+    // The levels, by the depth buffer generation they reduce.
+    levels: Cached<u64, Levels>,
     // Advances with every rebuilt texture, for the groups that bind it.
     generation: u64,
 }
@@ -68,14 +70,14 @@ impl DepthPyramid {
             down: pipeline(down, &down_layout),
             first_layout,
             down_layout,
-            levels: None,
+            levels: Cached::default(),
             generation: 0,
         }
     }
 
     /// Releases the levels; the next `prepare` recreates them.
     pub(crate) fn release(&mut self) {
-        self.levels = None;
+        self.levels.clear();
     }
 
     /// Prepares the pyramid of the `size` depth buffer `depth` of generation
@@ -87,10 +89,11 @@ impl DepthPyramid {
         depth_generation: u64,
         (width, height): (u32, u32),
     ) -> u32 {
-        if let Some((built, levels)) = &self.levels
-            && *built == depth_generation
-        {
-            return levels.passes.len() as u32;
+        if !self.levels.stale(&depth_generation) {
+            return self
+                .levels
+                .get()
+                .map_or(0, |levels| levels.passes.len() as u32);
         }
         // Power-of-two levels halve exactly: an odd level's last row or
         // column would otherwise fall outside every texel of the next.
@@ -101,20 +104,15 @@ impl DepthPyramid {
             height.div_ceil(2).max(1).next_power_of_two(),
         );
         let count = mip_levels(base.0, base.1);
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/depth-pyramid"),
-            size: wgpu::Extent3d {
-                width: base.0,
-                height: base.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: count,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let texture = crate::targets::texture_2d(
+            device,
+            "engine/depth-pyramid",
+            (base.0, base.1),
+            1,
+            count,
+            FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
         let level_view = |level: u32| {
             texture.create_view(&wgpu::TextureViewDescriptor {
                 base_mip_level: level,
@@ -159,14 +157,14 @@ impl DepthPyramid {
             })
             .collect();
         let full = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.levels = Some((
+        self.levels.set(
             depth_generation,
             Levels {
                 _texture: texture,
                 full,
                 passes,
             },
-        ));
+        );
         self.generation += 1;
         count
     }
@@ -174,7 +172,7 @@ impl DepthPyramid {
     /// Records every level's reduction, level zero from the depth buffer.
     /// With `span`, the pass begins it.
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, span: Option<Span<'_>>) {
-        let Some((_, levels)) = &self.levels else {
+        let Some(levels) = self.levels.get() else {
             return;
         };
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -191,12 +189,12 @@ impl DepthPyramid {
     /// Every level, and its generation.
     pub(crate) fn view(&self) -> Option<(&wgpu::TextureView, u64)> {
         self.levels
-            .as_ref()
-            .map(|(_, levels)| (&levels.full, self.generation))
+            .get()
+            .map(|levels| (&levels.full, self.generation))
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.levels.as_ref().map_or(0, |(_, levels)| {
+        self.levels.get().map_or(0, |levels| {
             levels
                 .passes
                 .iter()

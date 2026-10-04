@@ -28,6 +28,7 @@ use engine_core::{MeshHandle, VirtualMesh};
 
 use crate::bindings::VIRTUAL_SHADOW;
 use crate::browser::FramePoses;
+use crate::buffers::entry;
 use crate::cached::Cached;
 use crate::gpu_data::VIRTUAL_SHADER;
 use crate::shadows::VIRTUAL_SHADOW_PLANES as PLANES;
@@ -211,27 +212,17 @@ pub(crate) struct VirtualGeometryPass {
     no_pyramid: wgpu::TextureView,
 }
 
-// A buffer bound whole as binding `name`.
-fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
-    (name, buffer.as_entire_binding())
-}
-
 impl VirtualGeometryPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let no_pyramid = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/virtual-no-pyramid"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let no_pyramid = crate::targets::texture_2d(
+            device,
+            "engine/virtual-no-pyramid",
+            (1, 1),
+            1,
+            1,
+            wgpu::TextureFormat::R32Float,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
         let no_pyramid_view = no_pyramid.create_view(&Default::default());
         Self {
             arena: VirtualArena::new(),

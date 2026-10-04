@@ -172,6 +172,50 @@ pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLay
     })
 }
 
+/// A shared layout (decision 049): its table (`crate::bindings`), group
+/// layout, and the pipeline layout of passes binding it first, then `more`.
+pub(crate) struct Family {
+    table: &'static Table,
+    group: wgpu::BindGroupLayout,
+    pub(crate) pipeline: wgpu::PipelineLayout,
+}
+
+impl Family {
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        table: &'static Table,
+        more: &[&wgpu::BindGroupLayout],
+    ) -> Self {
+        let group = layout(device, table);
+        let groups: Vec<Option<&wgpu::BindGroupLayout>> = std::iter::once(&group)
+            .chain(more.iter().copied())
+            .map(Some)
+            .collect();
+        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(table.label),
+            bind_group_layouts: &groups,
+            immediate_size: 0,
+        });
+        Self {
+            table,
+            group,
+            pipeline,
+        }
+    }
+
+    /// A group of this layout binding `resources` by name, filled where
+    /// they leave bindings out.
+    pub(crate) fn group(
+        &self,
+        device: &wgpu::Device,
+        label: &str,
+        resources: &[(&str, wgpu::BindingResource<'_>)],
+        fillers: &Fillers,
+    ) -> wgpu::BindGroup {
+        filled_group(device, label, self.table, &self.group, resources, fillers)
+    }
+}
+
 /// A texture view as a binding's resource.
 pub(crate) fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(view)
@@ -213,22 +257,16 @@ impl Fillers {
             })
         };
         let texture = |label, format| {
-            device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: 1,
-                        height: 1,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
+            crate::targets::texture_2d(
+                device,
+                label,
+                (1, 1),
+                1,
+                1,
+                format,
+                wgpu::TextureUsages::TEXTURE_BINDING,
+            )
+            .create_view(&Default::default())
         };
         Self {
             uniform: buffer(
@@ -370,6 +408,61 @@ pub(crate) fn compute_entry(
     )
 }
 
+/// A single-sample pipeline drawing geometry: `vertex` of `module` reading
+/// `buffers`, rasterized by `primitive`, with an optional depth test and an
+/// optional fragment stage of the same module.
+pub(crate) struct Geometry<'a> {
+    pub label: &'a str,
+    pub layout: &'a wgpu::PipelineLayout,
+    pub module: &'a wgpu::ShaderModule,
+    pub vertex: &'a str,
+    pub buffers: &'a [Option<wgpu::VertexBufferLayout<'a>>],
+    pub primitive: wgpu::PrimitiveState,
+    pub depth: Option<wgpu::DepthStencilState>,
+    pub fragment: Option<Fragment<'a>>,
+}
+
+/// A fragment stage: its entry point, pipeline constants and color targets.
+pub(crate) struct Fragment<'a> {
+    pub entry: &'a str,
+    pub constants: &'a [(&'a str, f64)],
+    pub targets: &'a [Option<wgpu::ColorTargetState>],
+}
+
+/// The pipeline of `geometry`, counted like every other.
+pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::RenderPipeline {
+    render(
+        device,
+        &wgpu::RenderPipelineDescriptor {
+            label: Some(geometry.label),
+            layout: Some(geometry.layout),
+            vertex: wgpu::VertexState {
+                module: geometry.module,
+                entry_point: Some(geometry.vertex),
+                compilation_options: Default::default(),
+                buffers: geometry.buffers,
+            },
+            primitive: geometry.primitive,
+            depth_stencil: geometry.depth.clone(),
+            multisample: wgpu::MultisampleState::default(),
+            fragment: geometry
+                .fragment
+                .as_ref()
+                .map(|fragment| wgpu::FragmentState {
+                    module: geometry.module,
+                    entry_point: Some(fragment.entry),
+                    compilation_options: wgpu::PipelineCompilationOptions {
+                        constants: fragment.constants,
+                        ..Default::default()
+                    },
+                    targets: fragment.targets,
+                }),
+            multiview_mask: None,
+            cache: None,
+        },
+    )
+}
+
 /// A pass drawing one triangle over its whole target: no vertex buffers,
 /// entry points `vertex` and `fragment` of `module` with pipeline
 /// `constants`, color `targets` and an optional depth test.
@@ -386,31 +479,21 @@ pub(crate) struct Fullscreen<'a> {
 
 /// The pipeline of a fullscreen pass.
 pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
-    render(
+    geometry(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some(pass.label),
-            layout: Some(pass.layout),
-            vertex: wgpu::VertexState {
-                module: pass.module,
-                entry_point: Some(pass.vertex),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
+        &Geometry {
+            label: pass.label,
+            layout: pass.layout,
+            module: pass.module,
+            vertex: pass.vertex,
+            buffers: &[],
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: pass.depth.clone(),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: pass.module,
-                entry_point: Some(pass.fragment),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: pass.constants,
-                    ..Default::default()
-                },
+            depth: pass.depth.clone(),
+            fragment: Some(Fragment {
+                entry: pass.fragment,
+                constants: pass.constants,
                 targets: pass.targets,
             }),
-            multiview_mask: None,
-            cache: None,
         },
     )
 }

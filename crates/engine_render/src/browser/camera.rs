@@ -39,40 +39,18 @@ impl CameraBindings {
         environment: &Environment,
         probes: &ProbePass,
     ) -> Self {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/camera-uniform"),
-            size: size_of::<CameraUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let buffer = crate::buffers::uniform(
+            device,
+            "engine/camera-uniform",
+            size_of::<CameraUniform>() as u64,
+        );
         let layout = crate::pipelines::layout(device, &CAMERA);
-        let refraction_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/refraction-fallback"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            refraction_texture.as_image_copy(),
-            &[255; 4],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
+        let refraction_texture = crate::targets::texel(
+            device,
+            queue,
+            "engine/refraction-fallback",
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            [255; 4],
         );
         let refraction_fallback =
             refraction_texture.create_view(&wgpu::TextureViewDescriptor::default());

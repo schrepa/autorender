@@ -314,10 +314,10 @@ fn pose_group(
 }
 
 fn create_storage_buffer(device: &wgpu::Device, capacity: usize, stride: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/retained-instance-storage"),
-        size: (capacity * stride) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::buffers::storage(
+        device,
+        "engine/slot-storage",
+        (capacity * stride) as u64,
+        wgpu::BufferUsages::empty(),
+    )
 }

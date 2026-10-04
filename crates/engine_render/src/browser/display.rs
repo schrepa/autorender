@@ -140,21 +140,16 @@ pub(super) struct DepthTarget {
 
 impl DepthTarget {
     pub(super) fn new(device: &wgpu::Device, (width, height): (u32, u32)) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
+        let texture = crate::targets::texture_2d(
+            device,
+            "engine/depth",
+            (width, height),
+            1,
+            1,
+            DEPTH_FORMAT,
             // Ambient occlusion (decision 021) samples it after the opaque pass.
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+            crate::targets::RENDER_TARGET,
+        );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
             _texture: texture,

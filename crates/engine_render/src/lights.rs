@@ -24,8 +24,6 @@ const NO_SLOT: u32 = u32::MAX;
 const LIGHTS: u32 = 8;
 /// Bytes of a binned light (WGSL `Light`).
 pub(crate) const LIGHT_BYTES: u64 = 48;
-#[cfg(target_arch = "wasm32")]
-const READBACKS: usize = 3;
 // Three counters, padded.
 #[cfg(target_arch = "wasm32")]
 const TOTALS_BYTES: u64 = 16;
@@ -152,21 +150,10 @@ mod gpu {
     use super::*;
     use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
     use crate::browser::FramePoses;
+    use crate::buffers::{ReadbackRing, entry, storage};
     use crate::cached::Cached;
     use crate::gpu_data::LIGHT_SHADER;
     use crate::profiling::Span;
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum ReadbackState {
-        Idle,
-        Recorded,
-        Pending,
-    }
-
-    struct Readback {
-        buffer: wgpu::Buffer,
-        state: Rc<Cell<ReadbackState>>,
-    }
 
     /// A frame's binned lights.
     pub(crate) struct LightFrame {
@@ -216,30 +203,11 @@ mod gpu {
         probe_current: usize,
         no_still: wgpu::Buffer,
         buffers_generation: u64,
-        readbacks: Vec<Readback>,
+        readbacks: ReadbackRing<()>,
         // Lights that reached a cluster, cluster entries lost to the budget
         // or the storage, and the entries the lists needed, read back a few
         // frames late.
         totals_read: Rc<Cell<Option<[u32; 3]>>>,
-    }
-
-    fn storage(
-        device: &wgpu::Device,
-        label: &str,
-        bytes: u64,
-        extra: wgpu::BufferUsages,
-    ) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes.max(16).next_multiple_of(16),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-            mapped_at_creation: false,
-        })
-    }
-
-    // A buffer bound whole as binding `name`.
-    fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
-        (name, buffer.as_entire_binding())
     }
 
     impl LightPass {
@@ -264,12 +232,11 @@ mod gpu {
                 fill: pipeline("bin_lights"),
                 compute_layout,
                 fragment_layout,
-                uniform: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("engine/light-clusters-uniform"),
-                    size: size_of::<ClusterUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
+                uniform: crate::buffers::uniform(
+                    device,
+                    "engine/light-clusters-uniform",
+                    size_of::<ClusterUniform>() as u64,
+                ),
                 written: None,
                 inputs: storage(device, "engine/light-inputs", 64, none),
                 lights: storage(device, "engine/lights", LIGHT_BYTES, none),
@@ -293,7 +260,7 @@ mod gpu {
                 probe_current: 0,
                 no_still: storage(device, "engine/light-no-still", 16, none),
                 buffers_generation: 0,
-                readbacks: Vec::new(),
+                readbacks: ReadbackRing::new("engine/light-totals-readback"),
                 totals_read: Rc::new(Cell::new(None)),
             }
         }
@@ -488,11 +455,8 @@ mod gpu {
                 pass.set_pipeline(&self.fill);
                 pass.dispatch_workgroups(columns, rows, 1);
             }
-            if let Some(index) = self.idle_readback(device) {
-                let readback = &self.readbacks[index];
-                encoder.copy_buffer_to_buffer(&self.totals, 0, &readback.buffer, 0, TOTALS_BYTES);
-                readback.state.set(ReadbackState::Recorded);
-            }
+            self.readbacks
+                .record(device, encoder, &self.totals, TOTALS_BYTES, ());
         }
 
         /// Records the binning of reflection probe cube face `face` (decision
@@ -517,12 +481,11 @@ mod gpu {
             if self.probe_uniforms.is_empty() {
                 self.probe_uniforms = (0..6)
                     .map(|_| {
-                        device.create_buffer(&wgpu::BufferDescriptor {
-                            label: Some("engine/light-clusters-probe"),
-                            size: size_of::<ClusterUniform>() as u64,
-                            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                            mapped_at_creation: false,
-                        })
+                        crate::buffers::uniform(
+                            device,
+                            "engine/light-clusters-probe",
+                            size_of::<ClusterUniform>() as u64,
+                        )
                     })
                     .collect();
             }
@@ -618,57 +581,12 @@ mod gpu {
             &self.probe_groups[self.probe_current].1[face].1
         }
 
-        fn idle_readback(&mut self, device: &wgpu::Device) -> Option<usize> {
-            if let Some(index) = self
-                .readbacks
-                .iter()
-                .position(|readback| readback.state.get() == ReadbackState::Idle)
-            {
-                return Some(index);
-            }
-            if self.readbacks.len() == READBACKS {
-                return None;
-            }
-            self.readbacks.push(Readback {
-                buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("engine/light-totals-readback"),
-                    size: TOTALS_BYTES,
-                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
-                state: Rc::new(Cell::new(ReadbackState::Idle)),
-            });
-            Some(self.readbacks.len() - 1)
-        }
-
         /// Requests maps of totals recorded in the frame just submitted.
         pub(crate) fn after_submit(&mut self) {
-            for readback in &self.readbacks {
-                if readback.state.get() != ReadbackState::Recorded {
-                    continue;
-                }
-                readback.state.set(ReadbackState::Pending);
-                let state = Rc::clone(&readback.state);
-                let totals = Rc::clone(&self.totals_read);
-                let buffer = readback.buffer.clone();
-                readback
-                    .buffer
-                    .slice(..)
-                    .map_async(wgpu::MapMode::Read, move |result| {
-                        if result.is_ok() {
-                            if let Ok(view) = buffer.slice(..).get_mapped_range() {
-                                let word = |index: usize| {
-                                    view.get(index * 4..index * 4 + 4).map_or(0, |bytes| {
-                                        u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
-                                    })
-                                };
-                                totals.set(Some([word(0), word(1), word(2)]));
-                            }
-                            buffer.unmap();
-                        }
-                        state.set(ReadbackState::Idle);
-                    });
-            }
+            let totals = Rc::clone(&self.totals_read);
+            self.readbacks.after_submit(move |words, ()| {
+                totals.set(Some([words.get(0), words.get(1), words.get(2)]));
+            });
         }
     }
 }

@@ -47,20 +47,20 @@ fn caster_pipeline(
         bind_group_layouts: layouts,
         immediate_size: 0,
     });
-    crate::pipelines::render(
+    crate::pipelines::geometry(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some(label),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module,
-                entry_point: Some(entry_point),
-                compilation_options: Default::default(),
-                buffers,
-            },
+        &crate::pipelines::Geometry {
+            label,
+            layout: &layout,
+            module,
+            vertex: entry_point,
+            buffers,
             // Both faces cast: open and single-sided meshes shadow too.
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
+            // Receiver planes (decision 028) keep lit surfaces off
+            // their own depth; a unit of bias covers the sun shafts'
+            // plain comparisons.
+            depth: Some(wgpu::DepthStencilState {
                 format: SHADOW_FORMAT,
                 depth_write_enabled: Some(true),
                 depth_compare: Some(if clear {
@@ -69,9 +69,6 @@ fn caster_pipeline(
                     wgpu::CompareFunction::Less
                 }),
                 stencil: Default::default(),
-                // Receiver planes (decision 028) keep lit surfaces off
-                // their own depth; a unit of bias covers the sun shafts'
-                // plain comparisons.
                 bias: if clear {
                     Default::default()
                 } else {
@@ -82,16 +79,12 @@ fn caster_pipeline(
                     }
                 },
             }),
-            multisample: wgpu::MultisampleState::default(),
             // Only masked casters test texels; the rest write depth alone.
-            fragment: masked.then_some(wgpu::FragmentState {
-                module,
-                entry_point: Some("fs_masked"),
-                compilation_options: Default::default(),
+            fragment: masked.then_some(crate::pipelines::Fragment {
+                entry: "fs_masked",
+                constants: &[],
                 targets: &[],
             }),
-            multiview_mask: None,
-            cache: None,
         },
     )
 }
@@ -253,12 +246,8 @@ impl ShadowPipelines {
             true,
             false,
         );
-        let view_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/shadow-views"),
-            size: FAR_VIEW + VIEW_STRIDE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let view_buffer =
+            crate::buffers::uniform(device, "engine/shadow-views", FAR_VIEW + VIEW_STRIDE);
         let view_group = group(
             device,
             "engine/shadow-view-group",
@@ -273,12 +262,11 @@ impl ShadowPipelines {
                 }),
             )],
         );
-        let cull = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/shadow-select-uniform"),
-            size: size_of::<ShadowCullUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let cull = crate::buffers::uniform(
+            device,
+            "engine/shadow-select-uniform",
+            size_of::<ShadowCullUniform>() as u64,
+        );
         Self {
             select,
             count,

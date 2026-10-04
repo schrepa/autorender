@@ -468,23 +468,18 @@ mod gpu {
             }
             let capacity = grown_layers(layers, device.limits().max_texture_array_layers);
             let textures = FORMATS.map(|format| {
-                device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("engine/impostor-array"),
-                    size: wgpu::Extent3d {
-                        width: IMPOSTOR_SIZE,
-                        height: IMPOSTOR_SIZE,
-                        depth_or_array_layers: capacity,
-                    },
-                    mip_level_count: IMPOSTOR_LEVELS,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
+                crate::targets::texture_2d(
+                    device,
+                    "engine/impostor-array",
+                    (IMPOSTOR_SIZE, IMPOSTOR_SIZE),
+                    capacity,
+                    IMPOSTOR_LEVELS,
                     format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::RENDER_ATTACHMENT
                         | wgpu::TextureUsages::COPY_SRC
                         | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                })
+                )
             });
             if let Some(old) = &self.arrays {
                 for (from, to) in old.textures.iter().zip(&textures) {
@@ -730,43 +725,36 @@ mod gpu {
         let vertex = crate::entries::impostor_vertex(targets);
         let fragment = crate::entries::impostor_fragment(targets, lit);
         let color_targets = targets.color_targets(canvas);
-        crate::pipelines::render(
+        crate::pipelines::geometry(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/impostors"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some(vertex),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: 8,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
-                    })],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/impostors",
+                layout,
+                module: shader,
+                vertex,
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 8,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
+                })],
                 // Mirrored poses turn cards around.
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: None,
                     ..Default::default()
                 },
-                depth_stencil: Some(wgpu::DepthStencilState {
+                depth: Some(wgpu::DepthStencilState {
                     format: depth,
                     depth_write_enabled: Some(true),
                     depth_compare: Some(wgpu::CompareFunction::Greater),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some(fragment),
-                    compilation_options: Default::default(),
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: fragment,
+                    constants: &[],
                     targets: &color_targets,
                 }),
-                multiview_mask: None,
-                cache: None,
             },
         )
     }

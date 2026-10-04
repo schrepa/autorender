@@ -238,12 +238,7 @@ pub(crate) struct ProbePass {
 impl ProbePass {
     pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
         let cameras = std::array::from_fn(|_| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("engine/probe-camera"),
-                size: camera_bytes,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
+            crate::buffers::uniform(device, "engine/probe-camera", camera_bytes)
         });
         Self {
             slots: ProbeSlots {
@@ -252,7 +247,7 @@ impl ProbePass {
             },
             cameras,
             depth: Cached::default(),
-            words: words_buffer(device, 2),
+            words: crate::buffers::storage(device, GRID_LABEL, 32, wgpu::BufferUsages::empty()),
             staging: Vec::new(),
             generation: 0,
         }
@@ -276,20 +271,15 @@ impl ProbePass {
         format: wgpu::TextureFormat,
     ) -> &wgpu::TextureView {
         if self.depth.stale(&size) {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("engine/probe-depth"),
-                size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+            let texture = crate::targets::texture_2d(
+                device,
+                "engine/probe-depth",
+                (size, size),
+                1,
+                1,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.depth.set(size, view);
         }
@@ -303,8 +293,13 @@ impl ProbePass {
         };
         grid_words(&ready, &mut self.staging);
         let bytes = (self.staging.len() * 16) as u64;
-        if bytes > self.words.size() {
-            self.words = words_buffer(device, self.staging.len().next_power_of_two());
+        if crate::buffers::ensure_storage(
+            device,
+            &mut self.words,
+            GRID_LABEL,
+            bytes,
+            wgpu::BufferUsages::empty(),
+        ) {
             self.generation += 1;
         }
         queue.write_buffer(&self.words, 0, bytemuck::cast_slice(&self.staging));
@@ -320,14 +315,7 @@ impl ProbePass {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn words_buffer(device: &wgpu::Device, words: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("engine/probe-grid"),
-        size: (words.max(2) * 16) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
+const GRID_LABEL: &str = "engine/probe-grid";
 
 /// The view-projection of cube face `face` (in WebGPU's sampling order and
 /// orientation) seen from `center`, with reversed depth (decision 042). Cube

@@ -56,37 +56,8 @@ pub(crate) struct MaterialStore {
 impl MaterialStore {
     pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let layout = crate::pipelines::layout(device, &MATERIAL);
-        let texel = |label, format, pixel: [u8; 4]| {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            queue.write_texture(
-                texture.as_image_copy(),
-                &pixel,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: Some(1),
-                },
-                wgpu::Extent3d {
-                    width: 1,
-                    height: 1,
-                    depth_or_array_layers: 1,
-                },
-            );
-            texture
-        };
+        let texel =
+            |label, format, pixel| crate::targets::texel(device, queue, label, format, pixel);
         let textures = [
             texel(
                 "engine/white-srgb",
@@ -455,24 +426,19 @@ fn create_compressed(
     } else {
         (1, 1)
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("engine/compressed-texture"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: levels.len().max(1) as u32,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: if supported {
+    let texture = crate::targets::texture_2d(
+        device,
+        "engine/compressed-texture",
+        (width, height),
+        1,
+        levels.len().max(1) as u32,
+        if supported {
             format
         } else {
             wgpu::TextureFormat::Rgba8Unorm
         },
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+    );
     if !supported {
         queue.write_texture(
             texture.as_image_copy(),
@@ -553,24 +519,23 @@ fn create_texture(
     if levels > 1 {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(if srgb {
+    let texture = crate::targets::texture_2d(
+        device,
+        if srgb {
             "engine/color-texture"
         } else {
             "engine/data-texture"
-        }),
-        size: extent,
-        mip_level_count: levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: if srgb {
+        },
+        (extent.width, extent.height),
+        extent.depth_or_array_layers,
+        levels,
+        if srgb {
             wgpu::TextureFormat::Rgba8UnormSrgb
         } else {
             wgpu::TextureFormat::Rgba8Unorm
         },
         usage,
-        view_formats: &[],
-    });
+    );
     // Queue writes accept tightly packed rows; no 256-byte buffer-copy padding.
     queue.write_texture(
         texture.as_image_copy(),

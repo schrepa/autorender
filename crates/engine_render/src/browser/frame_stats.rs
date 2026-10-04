@@ -3,6 +3,125 @@
 use super::frame::{EncodeReport, FrameKind, FrameState};
 use super::*;
 
+/// A profile counter read from a frame's stats; `None` records nothing.
+type StatCounter = (&'static str, fn(&RenderStats) -> Option<f64>);
+
+/// Counters of every frame's stats.
+const STAT_COUNTERS: [StatCounter; 24] = [
+    ("render.instances", |stats| Some(stats.instances.into())),
+    ("render.draw_calls", |stats| Some(stats.draw_calls.into())),
+    ("render.upload_bytes", |stats| {
+        Some(stats.upload_bytes as f64)
+    }),
+    ("render.mesh_upload_bytes", |stats| {
+        Some(stats.mesh_upload_bytes as f64)
+    }),
+    ("render.texture_upload_bytes", |stats| {
+        Some(stats.texture_upload_bytes as f64)
+    }),
+    ("render.shadow_draws", |stats| {
+        Some(stats.shadow_draws.into())
+    }),
+    ("render.shadow_near_casters", |stats| {
+        stats.shadow_near_casters.map(f64::from)
+    }),
+    ("render.shadow_moving_casters", |stats| {
+        stats.shadow_moving_casters.map(f64::from)
+    }),
+    ("render.shadow_kept_casters", |stats| {
+        stats.shadow_kept_casters.map(f64::from)
+    }),
+    ("render.ambient_occlusion", |stats| {
+        Some(u8::from(stats.ambient_occlusion).into())
+    }),
+    ("render.bloom", |stats| Some(u8::from(stats.bloom).into())),
+    ("render.transparent_draws", |stats| {
+        Some(stats.transparent_draws.into())
+    }),
+    ("render.particles", |stats| Some(stats.particles.into())),
+    ("render.decals", |stats| Some(stats.decals.into())),
+    ("render.impostors", |stats| Some(stats.impostors.into())),
+    ("render.dropped_impostors", |stats| {
+        Some(stats.dropped_impostors.into())
+    }),
+    ("render.pipelines_created", |stats| {
+        Some(stats.pipelines_created.into())
+    }),
+    ("render.occluded_instances", |stats| {
+        stats.occluded_instances.map(f64::from)
+    }),
+    ("render.subpixel_instances", |stats| {
+        stats.subpixel_instances.map(f64::from)
+    }),
+    ("render.triangles", |stats| stats.triangles.map(f64::from)),
+    ("render.lod0_instances", |stats| {
+        stats.lod0_instances.map(f64::from)
+    }),
+    ("render.lod1_instances", |stats| {
+        stats.lod1_instances.map(f64::from)
+    }),
+    ("render.lod2_instances", |stats| {
+        stats.lod2_instances.map(f64::from)
+    }),
+    ("render.impostor_instances", |stats| {
+        stats.impostor_instances.map(f64::from)
+    }),
+];
+
+/// Counters of frames that shade local lights (decision 023).
+const LIGHT_COUNTERS: [StatCounter; 3] = [
+    ("render.local_lights", |stats| {
+        Some(stats.local_lights.into())
+    }),
+    ("render.lights_visible", |stats| {
+        stats.lights_visible.map(f64::from)
+    }),
+    ("render.light_cluster_overflow", |stats| {
+        stats.light_cluster_overflow.map(f64::from)
+    }),
+];
+
+/// Counters of frames that read virtual geometry's selection back
+/// (decision 044).
+const VIRTUAL_COUNTERS: [StatCounter; 9] = [
+    ("render.virtual_clusters", |stats| {
+        Some(stats.virtual_clusters.into())
+    }),
+    ("render.virtual_triangles", |stats| {
+        Some(stats.virtual_triangles.into())
+    }),
+    ("render.virtual_shadow_triangles", |stats| {
+        Some(stats.virtual_shadow_triangles.into())
+    }),
+    ("render.virtual_occluded_clusters", |stats| {
+        Some(stats.virtual_occluded_clusters.into())
+    }),
+    ("render.virtual_resident_pages", |stats| {
+        Some(stats.virtual_resident_pages.into())
+    }),
+    ("render.virtual_loading_pages", |stats| {
+        Some(stats.virtual_loading_pages.into())
+    }),
+    ("render.virtual_missing_pages", |stats| {
+        Some(stats.virtual_missing_pages.into())
+    }),
+    ("render.dropped_virtual_pages", |stats| {
+        Some(stats.dropped_virtual_pages.into())
+    }),
+    ("render.dropped_virtual", |stats| {
+        Some(stats.dropped_virtual.into())
+    }),
+];
+
+/// Records `counters` of `stats`.
+fn stat_counters(stats: &RenderStats, counters: &[StatCounter]) {
+    for (name, read) in counters {
+        if let Some(value) = read(stats) {
+            engine_profile::counter(name, value);
+        }
+    }
+}
+
 impl Renderer {
     /// The frame's stats, after submission (read-backs arrive a few frames
     /// late), and its profile counters while a capture runs.
@@ -60,7 +179,7 @@ impl Renderer {
             .as_ref()
             .and(self.lights.as_ref().and_then(LightPass::totals));
         let stats = RenderStats {
-            draw_calls: self.plan.batches.len() as u32,
+            draw_calls: report.draws,
             upload_bytes: camera_upload_bytes
                 + instance_upload_bytes
                 + mesh_upload_bytes
@@ -168,7 +287,6 @@ impl Renderer {
             pipelines: self.pipeline_counts.created(),
             pipelines_created,
             passes: report.passes,
-            culled_passes: report.culled_passes,
             virtual_clusters: virtual_stats.map_or(0, |stats| stats.clusters),
             virtual_triangles: virtual_stats.map_or(0, |stats| stats.triangles),
             virtual_shadow_clusters: virtual_stats.map_or(0, |stats| stats.shadow_clusters),
@@ -181,16 +299,14 @@ impl Renderer {
             dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
             ..self.residency_stats()
         };
-        self.profile_counters(state, report, &stats, gpu_visible, virtual_stats);
+        self.profile_counters(state, &stats, gpu_visible, virtual_stats);
         stats
     }
 
     /// The frame's profile counters while a capture runs.
-    #[allow(clippy::too_many_arguments)]
     fn profile_counters(
         &self,
         state: &FrameState<'_>,
-        report: &EncodeReport,
         stats: &RenderStats,
         gpu_visible: Option<u32>,
         virtual_stats: Option<crate::virtual_geometry::VirtualStats>,
@@ -200,19 +316,10 @@ impl Renderer {
             instance_count,
             ..
         } = state.kind;
-        let shadow_draws = report.shadow_draws;
         let features = &state.features;
-        let (shadow_frame, post_frame, gpu_prepared) = (
-            &features.shadow_frame,
-            features.post_frame,
-            &features.gpu_prepared,
-        );
+        let (shadow_frame, gpu_prepared) = (&features.shadow_frame, &features.gpu_prepared);
         let temporal_frame = &state.packing.temporal_frame;
-        let (mesh_upload_bytes, texture_upload_bytes, mip_levels) = (
-            state.assets.mesh_bytes,
-            state.assets.texture_bytes,
-            state.assets.mip_levels,
-        );
+        let mip_levels = state.assets.mip_levels;
         let writes = &state.writes;
         let (camera_upload_bytes, instance_upload_bytes) =
             (writes.camera_bytes, writes.instance_bytes);
@@ -228,11 +335,14 @@ impl Renderer {
         let (full_upload, fallback) = (packing.full_upload, packing.fallback);
 
         if engine_profile::active() {
+            stat_counters(stats, &STAT_COUNTERS);
+            if state.features.light_frame.is_some() {
+                stat_counters(stats, &LIGHT_COUNTERS);
+            }
+            if virtual_stats.is_some() {
+                stat_counters(stats, &VIRTUAL_COUNTERS);
+            }
             engine_profile::counter("render.instance_capacity", self.instances.capacity as f64);
-            engine_profile::counter("render.instances", f64::from(stats.instances));
-            engine_profile::counter("render.draw_calls", self.plan.batches.len() as f64);
-            engine_profile::counter("render.mesh_upload_bytes", mesh_upload_bytes as f64);
-            engine_profile::counter("render.texture_upload_bytes", texture_upload_bytes as f64);
             engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_upload_bytes as f64);
             engine_profile::counter("render.instance_write_bytes", instance_upload_bytes as f64);
@@ -248,20 +358,6 @@ impl Renderer {
                     .map_or(0.0, |frame| f64::from(frame.refresh_kind())),
             );
             engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
-            engine_profile::counter("render.shadow_draws", f64::from(shadow_draws));
-            if let Some([near, moving, kept]) = self.shadows.caster_counts() {
-                engine_profile::counter("render.shadow_near_casters", f64::from(near));
-                engine_profile::counter("render.shadow_moving_casters", f64::from(moving));
-                engine_profile::counter("render.shadow_kept_casters", f64::from(kept));
-            }
-            engine_profile::counter(
-                "render.ambient_occlusion",
-                f64::from(u8::from(post_frame.is_some_and(|frame| frame.occlusion))),
-            );
-            engine_profile::counter(
-                "render.bloom",
-                f64::from(u8::from(post_frame.is_some_and(|frame| frame.bloom))),
-            );
             engine_profile::counter(
                 "memory.gpu_shadow_bytes",
                 self.shadows.capacity_bytes() as f64,
@@ -283,92 +379,14 @@ impl Renderer {
                         .as_ref()
                         .map_or(0, VisibilityBuffer::capacity_bytes)) as f64,
             );
-            if let Some(virtual_stats) = virtual_stats {
-                engine_profile::counter(
-                    "render.virtual_clusters",
-                    f64::from(virtual_stats.clusters),
-                );
-                engine_profile::counter(
-                    "render.virtual_triangles",
-                    f64::from(virtual_stats.triangles),
-                );
-                engine_profile::counter(
-                    "render.virtual_shadow_triangles",
-                    f64::from(virtual_stats.shadow_triangles),
-                );
-                engine_profile::counter(
-                    "render.virtual_occluded_clusters",
-                    f64::from(virtual_stats.occluded),
-                );
-                engine_profile::counter(
-                    "render.virtual_resident_pages",
-                    f64::from(virtual_stats.resident_pages),
-                );
-                engine_profile::counter(
-                    "render.virtual_loading_pages",
-                    f64::from(virtual_stats.loading_pages),
-                );
-                engine_profile::counter(
-                    "render.virtual_missing_pages",
-                    f64::from(virtual_stats.missing_pages),
-                );
-                engine_profile::counter(
-                    "render.dropped_virtual_pages",
-                    f64::from(virtual_stats.dropped_pages),
-                );
-                engine_profile::counter("render.dropped_virtual", f64::from(virtual_stats.dropped));
-            }
-            if state.features.light_frame.is_some() {
-                engine_profile::counter("render.local_lights", f64::from(stats.local_lights));
-                if let (Some(visible), Some(overflow)) =
-                    (stats.lights_visible, stats.light_cluster_overflow)
-                {
-                    engine_profile::counter("render.lights_visible", f64::from(visible));
-                    engine_profile::counter("render.light_cluster_overflow", f64::from(overflow));
-                }
-            }
             engine_profile::counter(
                 "memory.gpu_light_bytes",
                 self.lights.as_ref().map_or(0, LightPass::capacity_bytes) as f64,
             );
             engine_profile::counter(
-                "render.transparent_draws",
-                f64::from(stats.transparent_draws),
-            );
-            engine_profile::counter("render.particles", f64::from(stats.particles));
-            engine_profile::counter("render.decals", f64::from(stats.decals));
-            engine_profile::counter("render.impostors", f64::from(stats.impostors));
-            engine_profile::counter(
-                "render.dropped_impostors",
-                f64::from(stats.dropped_impostors),
-            );
-            engine_profile::counter(
-                "render.pipelines_created",
-                f64::from(stats.pipelines_created),
-            );
-            engine_profile::counter(
                 "memory.gpu_impostor_bytes",
                 self.impostors.atlas.capacity_bytes() as f64,
             );
-            if let Some(occluded) = stats.occluded_instances {
-                engine_profile::counter("render.occluded_instances", f64::from(occluded));
-            }
-            if let Some(subpixel) = stats.subpixel_instances {
-                engine_profile::counter("render.subpixel_instances", f64::from(subpixel));
-            }
-            if let Some(triangles) = stats.triangles {
-                engine_profile::counter("render.triangles", f64::from(triangles));
-            }
-            for (name, count) in [
-                ("render.lod0_instances", stats.lod0_instances),
-                ("render.lod1_instances", stats.lod1_instances),
-                ("render.lod2_instances", stats.lod2_instances),
-                ("render.impostor_instances", stats.impostor_instances),
-            ] {
-                if let Some(count) = count {
-                    engine_profile::counter(name, f64::from(count));
-                }
-            }
             engine_profile::counter(
                 "memory.gpu_transparent_bytes",
                 (self
@@ -483,7 +501,6 @@ impl Renderer {
                 (self.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
                     + self.instances.slot_capacity * size_of::<u32>()) as f64,
             );
-            engine_profile::counter("render.upload_bytes", stats.upload_bytes as f64);
             engine_profile::counter(
                 "memory.gpu_mesh_payload_bytes",
                 stats.resident_mesh_bytes as f64,

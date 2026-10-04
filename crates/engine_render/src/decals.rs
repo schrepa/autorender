@@ -89,6 +89,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::DECALS;
+    use crate::buffers::{ensure_storage, storage};
     use crate::cached::Cached;
     use crate::materials::MaterialStore;
 
@@ -117,15 +118,6 @@ mod gpu {
         buffer_generation: u64,
     }
 
-    fn storage(device: &wgpu::Device, bytes: u64) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/decal-records"),
-            size: bytes.max(16).next_multiple_of(16),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
     impl DecalPass {
         pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
             // Group 2 beside the mesh poses' bindings: the joint palette
@@ -136,7 +128,12 @@ mod gpu {
                 pipeline_layouts: [None, None],
                 pipelines: HashMap::new(),
                 surface_format,
-                records: storage(device, size_of::<DecalData>() as u64),
+                records: storage(
+                    device,
+                    "engine/decal-records",
+                    size_of::<DecalData>() as u64,
+                    wgpu::BufferUsages::empty(),
+                ),
                 staging: Vec::new(),
                 uploaded: Vec::new(),
                 runs: Vec::new(),
@@ -177,8 +174,13 @@ mod gpu {
                 return None;
             }
             let bytes = (self.staging.len() * size_of::<DecalData>()) as u64;
-            if bytes > self.records.size() {
-                self.records = storage(device, bytes.next_power_of_two());
+            if ensure_storage(
+                device,
+                &mut self.records,
+                "engine/decal-records",
+                bytes,
+                wgpu::BufferUsages::empty(),
+            ) {
                 self.uploaded.clear();
                 self.buffer_generation += 1;
             }
@@ -313,40 +315,30 @@ mod gpu {
         } else {
             crate::post::SCENE_FORMAT
         };
-        crate::pipelines::render(
+        crate::pipelines::geometry(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/decals"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some(crate::entries::DECAL_VERTEX),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/decals",
+                layout,
+                module: shader,
+                vertex: crate::entries::DECAL_VERTEX,
+                buffers: &[],
                 // The box's far faces cover its pixels once, from inside too.
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     cull_mode: Some(wgpu::Face::Front),
                     ..Default::default()
                 },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some(crate::entries::decal_fragment(lit)),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                depth: None,
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: crate::entries::decal_fragment(lit),
+                    constants: &constants,
                     targets: &[Some(wgpu::ColorTargetState {
                         format,
                         blend: Some(wgpu::BlendState { color, alpha: keep }),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
-                multiview_mask: None,
-                cache: None,
             },
         )
     }

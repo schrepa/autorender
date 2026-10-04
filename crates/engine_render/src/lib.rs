@@ -12,8 +12,12 @@ use serde::Serialize;
 /// read them as the JSON object it serializes to, under these names.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RenderStats {
-    /// Indexed draw commands of the camera pass; `shadows` counts the
-    /// shadow maps' separately.
+    /// Draw commands of the camera's mesh passes, each counted once however
+    /// many occlusion phases (decision 040) issue it: each opaque mesh
+    /// group's, one per level of detail on GPU-presented frames (decision
+    /// 047), the impostors' (decision 048), virtual geometry's forward bins
+    /// (decision 044) and the transparent groups'. `shadow_draws` counts the
+    /// shadow maps'.
     pub draw_calls: u32,
     /// Actual bytes uploaded or initialized: changed camera/instances and new assets.
     /// An unchanged rendered frame can submit draws with zero upload bytes.
@@ -140,15 +144,13 @@ pub struct RenderStats {
     pub virtual_loading_pages: u32,
     pub virtual_missing_pages: u32,
     pub dropped_virtual_pages: u32,
-    /// The passes this frame ran, in order, and those its render graph culled
-    /// (decision 050), named in the JSON.
+    /// The passes this frame ran, in order (decision 050), named in the
+    /// JSON.
     #[serde(
         rename = "render_passes",
         serialize_with = "render_graph::serialize_passes"
     )]
     pub passes: u32,
-    #[serde(serialize_with = "render_graph::serialize_passes")]
-    pub culled_passes: u32,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -190,6 +192,8 @@ mod virtual_streaming;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
+#[cfg(target_arch = "wasm32")]
+mod buffers;
 #[cfg(target_arch = "wasm32")]
 mod environment;
 #[cfg(target_arch = "wasm32")]

@@ -61,7 +61,7 @@ use display::{DepthTarget, Display};
 use impostor_draws::ImpostorDraws;
 pub(crate) use instances::FramePoses;
 use instances::Instances;
-use meshes::{DrawOrder, MeshPipelines, SkyTargets};
+use meshes::{BatchBinds, DrawOrder, MeshPipelines, SkyTargets};
 pub(crate) use meshes::{extra_layout, skin_layout, vertex_layout};
 use virtual_draws::{VIRTUAL_ATTRIBUTES, VirtualDraws, VirtualStages};
 use visibility_draws::VisibilityDraws;
@@ -316,12 +316,11 @@ impl Renderer {
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         display.configure(&device);
         let depth = DepthTarget::new(&device, display.size());
-        let lighting_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/lighting-uniform"),
-            size: size_of::<LightingUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let lighting_buffer = crate::buffers::uniform(
+            &device,
+            "engine/lighting-uniform",
+            size_of::<LightingUniform>() as u64,
+        );
         let materials = MaterialStore::new(&device, &queue);
         let shadows = ShadowPass::new(
             &device,
