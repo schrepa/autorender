@@ -8,6 +8,11 @@ use crate::{
 
 /// Accepted authoring format version. Changes require an explicit migration.
 pub const SCENE_VERSION: u32 = 8;
+
+/// The repository path of the generated schema of [`SCENE_VERSION`].
+pub fn schema_path() -> String {
+    format!("docs/schema/scene-v{SCENE_VERSION}.schema.json")
+}
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
 /// which references image and buffer files for bulk data (decision 030).
 pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;

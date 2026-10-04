@@ -126,13 +126,13 @@ function fill(config: Config) {
     ["compressed", "compressed_textures"]] as const) {
     el<HTMLInputElement>(id).checked = config[field];
   }
-  choice("scene").value = config.scene;
+  choice("scene-select").value = config.scene;
 }
 function readConfig(): Config {
   return { seed: number("seed"), renderables: number("objects"), moving_percent: number("moving"), colliders: number("colliders"),
     sensor_percent: number("sensors"), queries_per_tick: number("queries"), mesh_variety: number("meshes"), hierarchy: checked("hierarchy"),
     interpolation: checked("interpolation"), textured: checked("textures"), dense_colliders: checked("dense"), culling: checked("culling"),
-    scene: choice("scene").value as Scene, compressed_textures: checked("compressed") };
+    scene: choice("scene-select").value as Scene, compressed_textures: checked("compressed") };
 }
 /** Whether the adapter samples BC7, which compressed metro textures need. */
 let blockCompression: boolean | undefined;

@@ -257,7 +257,6 @@ mod gpu {
             }
         }
 
-        #[cfg_attr(not(feature = "profiling"), allow(dead_code))]
         pub(crate) fn capacity_bytes(&self) -> u64 {
             self.indices.size()
                 + self

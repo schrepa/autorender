@@ -39,10 +39,7 @@ test("fingerprints include all browser compile input roots and stable path order
     ["Cargo.lock", "dependencies"],
     ["rust-toolchain.toml", "toolchain"],
     [".cargo/config.toml", "flags"],
-    ["docs/schema/scene-v1.schema.json", "schema"],
-    ["docs/schema/scene-v2.schema.json", "texture schema"],
-    ["docs/schema/scene-v3.schema.json", "hierarchy schema"],
-    ["docs/schema/scene-v4.schema.json", "collider schema"],
+    ["vendor/glam/src/f32/math.rs", "patched glam"],
   ];
   for (const [path, content] of files) await first.put(path, content);
   for (const [path, content] of files.toReversed()) await second.put(path, content);
@@ -114,15 +111,15 @@ test("directory depth is bounded even for trees with no regular files", async t 
   await assert.rejects(fingerprintSources(root), { code: "source_budget" });
 });
 
-test("symlinked input directories and embedded-schema ancestors fail clearly", async t => {
+test("symlinked input directories and input ancestors fail clearly", async t => {
   const { root, put } = await fixture(t);
   await put("external/file.rs", "outside scope");
   await mkdir(join(root, "crates"));
   await symlink(join(root, "external"), join(root, "crates", "linked"), "junction");
   await assert.rejects(fingerprintSources(root), { code: "source_symlink", path: "crates/linked" });
   await rm(join(root, "crates", "linked"));
-  await symlink(join(root, "external"), join(root, "docs"), "junction");
-  await assert.rejects(fingerprintSources(root), { code: "source_symlink", path: "docs" });
+  await symlink(join(root, "external"), join(root, "vendor"), "junction");
+  await assert.rejects(fingerprintSources(root), { code: "source_symlink", path: "vendor" });
   assert.equal(await readFile(join(root, "external/file.rs"), "utf8"), "outside scope");
 });
 

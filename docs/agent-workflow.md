@@ -266,7 +266,7 @@ The last command requires the development server and Chrome. It verifies inspect
 
 ## Collision observations
 
-Discover `Collider`, `CollisionWorld` and `DevelopmentProtocol`. Spatial commands
+Discover `Collider`, `CollisionWorld` and the `protocol` schema (`describe` with name `protocol`). Spatial commands
 refresh authoritative transforms and the collision cache without advancing ticks,
 consuming input, changing the presented pose, or consuming sensor events.
 

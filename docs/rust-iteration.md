@@ -33,7 +33,7 @@ This is a fresh game instance: gameplay state and temporary input are reset. Sav
 
 ## Ownership and limits
 
-The source fingerprint covers files under `crates`, `examples`, `.cargo`, workspace Cargo manifests/lockfile, the pinned toolchain, and the embedded generated scene schema. It detects additions, deletions, and content edits without trusting timestamps. Generated directories, web scene sources, host TypeScript, and native tool sources are excluded. Host/tooling changes require restarting this managed workflow; ordinary `cargo xtask dev` remains available for Vite host editing.
+The source fingerprint covers files under `crates`, `examples`, `.cargo` and `vendor/glam` (the patched glam every Wasm build compiles), workspace Cargo manifests/lockfile, and the pinned toolchain; development schemas are generated from those sources at build time. It detects additions, deletions, and content edits without trusting timestamps. Generated directories, web scene sources, host TypeScript, and native tool sources are excluded. Host/tooling changes require restarting this managed workflow; ordinary `cargo xtask dev` remains available for Vite host editing.
 
 Polling occurs outside the browser and costs one bounded source scan approximately twice per second. Input limits are 20,000 files and 128 MiB. Symlinked inputs are rejected explicitly. Compiler diagnostics retain at most 100 entries and 256 KiB of diagnostic JSON. The supervisor retains a bounded latest result, one pending fingerprint, three successful binding generations, and at most two browsers during replacement. Failed/superseded generations are removed. A worker has a ten-minute deadline; shutdown stops only its owned process tree.
 

@@ -46,7 +46,9 @@ It checks both games, WebGPU startup, workload changes, per-mesh draws, pause/re
 
 The HUD samples CPU stage timings and browser frame cadence. Run `cargo xtask benchmark`
 for fixed workloads, culling A/B comparisons, metadata and versioned JSON reports;
-see [benchmarking](../docs/benchmarking.md). GPU timestamp queries are not implemented.
+see [benchmarking](../docs/benchmarking.md). Ordinary builds measure no GPU time; profiling builds
+(`cargo xtask profile`) time GPU passes with timestamp queries where the adapter supports them
+(see [profiling](../docs/profiling.md)).
 
 ## Agent sessions
 

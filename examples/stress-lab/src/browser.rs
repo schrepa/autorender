@@ -449,7 +449,7 @@ fn development_tools() -> engine::dev_browser::DevBrowser {
                 "dense_colliders":{"type":"boolean"},
                 "queries_per_tick":{"type":"integer","minimum":0,"maximum":512},
                 "mesh_variety":{"enum":[1,8,32,64]}, "textured":{"type":"boolean"}, "culling":{"type":"boolean"},
-                "scene":{"enum":["field","city","metro"]}, "compressed_textures":{"type":"boolean"}
+                "scene":{"enum":["field","city","metro","dense"]}, "compressed_textures":{"type":"boolean"}
             },
             "required":["seed","renderables","moving_percent","hierarchy","interpolation","colliders",
                 "sensor_percent","dense_colliders","queries_per_tick","mesh_variety","textured","culling",
