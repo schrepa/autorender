@@ -13,7 +13,6 @@ export interface RuntimeStats {
   missing_assets: number; culling_enabled: boolean; triangles: number | null;
   resident_meshes: number; mesh_upload_bytes: number; resident_mesh_bytes: number;
   resident_textures: number; texture_upload_bytes: number; resident_texture_bytes: number;
-  shadows_enabled: boolean; shadow_draws: number; ambient_occlusion: boolean; bloom: boolean;
   pipelines_created: number; pipelines_compiling: boolean;
   [field: string]: unknown;
 }
@@ -104,7 +103,6 @@ let simulation = 0;
 let extraction = 0;
 let submission = 0;
 let samples = 0;
-let droppedTime = 0;
 let pixelWidth = 1;
 let pixelHeight = 1;
 let resolutionScale = 1;
@@ -211,39 +209,26 @@ function frame(timestamp: number) {
     // Poll aggregate observations only four times a second, outside entity loops.
     if (timestamp - lastStats >= 250) {
       const stats = readStats(game);
-      {
-        simulation += stats.simulation_ms;
-        extraction += stats.extraction_ms;
-        submission += stats.render_ms;
-        samples++;
-        droppedTime = stats.dropped_seconds;
-        metric("fps", elapsed > 0 ? (intervals * 1000 / elapsed).toFixed(0) : "—", "FPS");
-        metric("simulation", (simulation / samples).toFixed(2), "ms");
-        metric("extraction", (extraction / samples).toFixed(2), "ms");
-        metric("draws", String(stats.draw_calls));
-        element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
-        const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
-        element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
-        canvas.dataset.frames = String(frameCount);
-        canvas.dataset.instances = String(stats.instances);
-        canvas.dataset.renderCandidates = String(stats.render_candidates);
-        canvas.dataset.visibleInstances = String(stats.visible_instances);
-        canvas.dataset.culledInstances = String(stats.culled_instances);
-        canvas.dataset.cullingEnabled = String(stats.culling_enabled);
-        canvas.dataset.fixedSteps = String(stats.fixed_steps);
-        canvas.dataset.droppedSeconds = String(droppedTime);
-        canvas.dataset.residentMeshes = String(stats.resident_meshes);
-        canvas.dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
-        canvas.dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
-        canvas.dataset.residentTextures = String(stats.resident_textures);
-        canvas.dataset.textureUploadBytes = String(stats.texture_upload_bytes);
-        canvas.dataset.residentTextureBytes = String(stats.resident_texture_bytes);
-        canvas.dataset.shadowsEnabled = String(stats.shadows_enabled);
-        canvas.dataset.shadowDraws = String(stats.shadow_draws);
-        canvas.dataset.ambientOcclusion = String(stats.ambient_occlusion);
-        canvas.dataset.bloom = String(stats.bloom);
-        options.poll?.(game);
-      }
+      simulation += stats.simulation_ms;
+      extraction += stats.extraction_ms;
+      submission += stats.render_ms;
+      samples++;
+      metric("fps", elapsed > 0 ? (intervals * 1000 / elapsed).toFixed(0) : "—", "FPS");
+      metric("simulation", (simulation / samples).toFixed(2), "ms");
+      metric("extraction", (extraction / samples).toFixed(2), "ms");
+      metric("draws", String(stats.draw_calls));
+      element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
+      const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
+      element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
+      canvas.dataset.frames = String(frameCount);
+      canvas.dataset.instances = String(stats.instances);
+      canvas.dataset.renderCandidates = String(stats.render_candidates);
+      canvas.dataset.residentMeshes = String(stats.resident_meshes);
+      canvas.dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
+      canvas.dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
+      canvas.dataset.residentTextures = String(stats.resident_textures);
+      canvas.dataset.textureUploadBytes = String(stats.texture_upload_bytes);
+      options.poll?.(game);
       lastStats = timestamp;
       // Bounded windows keep the HUD responsive to workload changes.
       if (samples >= 4) { simulation = 0; extraction = 0; submission = 0; samples = 0; elapsed = 0; intervals = 0; }

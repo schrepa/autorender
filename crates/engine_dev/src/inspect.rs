@@ -823,7 +823,6 @@ fn presentation_value(value: &PresentationState) -> Value {
         history_bytes: value.history_bytes(),
         presentation_scratch_bytes: value.presentation_scratch_bytes(),
         presented_nodes: value.presented_nodes(),
-        presented_component_bytes: value.presented_component_bytes(),
         presented_store_bytes: value.presented_store_bytes(),
     })
 }

@@ -1313,7 +1313,7 @@ impl Renderer {
         FrameShape {
             gpu: kind.gpu_mode,
             targets,
-            canvas_clear: canvas_clear(self.display.format().is_srgb()),
+            canvas_clear: canvas_clear(),
             phases,
             shadows: features.shadow_frame.is_some(),
             clusters: virtual_frame,

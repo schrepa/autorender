@@ -626,11 +626,6 @@ impl VirtualMesh {
         self.bounds
     }
 
-    /// The header words (quantization and counts), for renderers.
-    pub fn header_words(&self) -> &[u32] {
-        &self.words[..HEADER_WORDS]
-    }
-
     /// Node words, [`NODE_WORDS`] per node.
     pub fn node_section(&self) -> &[u32] {
         &self.words[self.layout.nodes..self.layout.groups]

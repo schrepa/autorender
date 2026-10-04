@@ -85,7 +85,6 @@ pub fn stress_observation(engine: &Engine, generation: u32) -> serde_json::Value
         "interpolation": {
             "history_nodes": history.history_nodes(), "history_bytes": history.history_bytes(),
             "presented_nodes": history.presented_nodes(),
-            "presented_component_bytes": history.presented_component_bytes(),
             "presented_store_bytes": history.presented_store_bytes(),
             "scratch_bytes": history.presentation_scratch_bytes(),
         },

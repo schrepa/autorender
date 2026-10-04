@@ -7,8 +7,9 @@
 @group(0) @binding(0) var accumulated: texture_2d<f32>;
 @group(0) @binding(1) var revealed: texture_2d<f32>;
 
-// sRGB targets apply output encoding themselves; UNORM canvas targets do not.
-override SURFACE_IS_SRGB: bool = false;
+// Frames with screen effects composite into the sRGB scene target, which
+// encodes as it stores; others into the UNORM canvas, encoded here.
+override TARGET_IS_SRGB: bool = false;
 
 // One triangle covering the viewport: (-1, -1), (3, -1) and (-1, 3).
 @vertex
@@ -33,7 +34,7 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     }
     let sum = textureLoad(accumulated, pixel, 0);
     var color = min(sum.rgb / max(sum.a, 1.0e-5), vec3<f32>(1.0));
-    if !SURFACE_IS_SRGB {
+    if !TARGET_IS_SRGB {
         color = encode_srgb(color);
     }
     return vec4<f32>(color, 1.0 - reveal);

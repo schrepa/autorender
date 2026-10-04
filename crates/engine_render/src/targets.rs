@@ -1,6 +1,6 @@
 //! The color targets of the frame's main passes (decision 050's
 //! [`Targets`]): the formats every pipeline drawing into them declares, in
-//! pipeline order, and the constants their fragment stages take.
+//! pipeline order.
 
 use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 pub(crate) use crate::render_graph::Targets;
@@ -28,14 +28,5 @@ impl Targets {
             .into_iter()
             .map(|format| Some(format.into()))
             .collect()
-    }
-
-    /// Pipeline constants of fragment stages drawing into these targets:
-    /// whether the canvas encodes sRGB itself.
-    pub(crate) fn constants(self, canvas: wgpu::TextureFormat) -> Vec<(&'static str, f64)> {
-        match self {
-            Self::Canvas => vec![("SURFACE_IS_SRGB", if canvas.is_srgb() { 1.0 } else { 0.0 })],
-            Self::Post | Self::Temporal => Vec::new(),
-        }
     }
 }

@@ -145,8 +145,8 @@ test("fractional presentation requires explicit setup ticks, unchanged simulatio
   for (const { benchmark } of report.runs) {
     benchmark.mode = "present";
     benchmark.observation = {
-      start: { frame: "1", tick: "1", presentation: { frame: "1", tick: "1", mode: "current", alpha: 1, history_nodes: 1000, history_capacity: 1024, history_bytes: 65536, presented_nodes: 1000, presented_component_bytes: 64000 } },
-      end: { frame: "1", tick: "1", presentation: { frame: "1", tick: "1", mode: "interpolated", alpha: 0.5, history_nodes: 1000, history_capacity: 1024, history_bytes: 65536, presented_nodes: 1000, presented_component_bytes: 64000, presentation_scratch_bytes: 32768 } },
+      start: { frame: "1", tick: "1", presentation: { frame: "1", tick: "1", mode: "current", alpha: 1, history_nodes: 1000, history_capacity: 1024, history_bytes: 65536, presented_nodes: 1000 } },
+      end: { frame: "1", tick: "1", presentation: { frame: "1", tick: "1", mode: "interpolated", alpha: 0.5, history_nodes: 1000, history_capacity: 1024, history_bytes: 65536, presented_nodes: 1000, presentation_scratch_bytes: 32768 } },
     };
   }
   assert.equal(validateReport(report)[0].median_of_runs.history_bytes, 65536);

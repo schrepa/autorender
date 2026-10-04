@@ -730,7 +730,6 @@ mod gpu {
         let vertex = crate::entries::impostor_vertex(targets);
         let fragment = crate::entries::impostor_fragment(targets, lit);
         let color_targets = targets.color_targets(canvas);
-        let constants = targets.constants(canvas);
         crate::pipelines::render(
             device,
             &wgpu::RenderPipelineDescriptor {
@@ -763,10 +762,7 @@ mod gpu {
                 fragment: Some(wgpu::FragmentState {
                     module: shader,
                     entry_point: Some(fragment),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                    compilation_options: Default::default(),
                     targets: &color_targets,
                 }),
                 multiview_mask: None,

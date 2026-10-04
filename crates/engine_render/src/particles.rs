@@ -368,11 +368,6 @@ mod gpu {
                     &[],
                 )
             } else {
-                let srgb = if self.surface_format.is_srgb() {
-                    1.0
-                } else {
-                    0.0
-                };
                 pipeline(
                     device,
                     &self.pipeline_layout,
@@ -380,7 +375,7 @@ mod gpu {
                     "fs_particle_add",
                     &[target(self.surface_format, add)],
                     self.depth_format,
-                    &[("SURFACE_IS_SRGB", srgb)],
+                    &[],
                 )
             };
             self.additive[index] = Some(pipeline);

@@ -35,9 +35,6 @@ struct Resolve {
 // they reach the canvas only.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
 
-// sRGB targets apply output encoding themselves; UNORM canvas targets do not.
-override SURFACE_IS_SRGB: bool = false;
-
 // Below this motion (a 64th of a pixel) the history is read at the pixel
 // itself: static pixels skip resampling.
 const STILL_PIXELS: f32 = 0x1p-6f;
@@ -124,10 +121,7 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let mirrored = reflected(color, reflections, history_sampler, screen, post);
     let lit = shafted(mirrored, effects.y, post);
     let shown = glowing(lit, bloom, history_sampler, screen, post);
-    if SURFACE_IS_SRGB {
-        output.canvas = vec4<f32>(shown, 1.0);
-    } else {
-        output.canvas = vec4<f32>(encode_srgb(shown), 1.0);
-    }
+    // The UNORM canvas stores encoded color.
+    output.canvas = vec4<f32>(encode_srgb(shown), 1.0);
     return output;
 }

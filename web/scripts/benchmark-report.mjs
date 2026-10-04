@@ -117,7 +117,7 @@ export function validateMeasurement(benchmark, configuration) {
         if (benchmark.observation[side][field] !== undefined && presentation[field] !== benchmark.observation[side][field]) throw failure("invalid_report", `$.benchmark.observation.${side}.presentation.${field}`, "Prepared extraction identity must match the observed frame/tick.");
       }
       if (!["current", "interpolated"].includes(presentation.mode) || !Number.isFinite(presentation.alpha) || presentation.alpha < 0 || presentation.alpha > 1 || (presentation.mode === "current" && presentation.alpha !== 1)) throw failure("invalid_report", `$.benchmark.observation.${side}.presentation`, "Expected a valid observed presentation mode and alpha.");
-      for (const field of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes", "presented_component_bytes"]) {
+      for (const field of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes"]) {
         if (!Number.isSafeInteger(presentation[field]) || presentation[field] < 0) throw failure("invalid_report", `$.benchmark.observation.${side}.presentation.${field}`, "Expected a nonnegative presentation count.");
       }
       for (const field of ["presentation_scratch_bytes", "presented_store_bytes"]) {
@@ -143,7 +143,7 @@ function groupedMetrics(runs) {
   metrics.visible_instances = median(runs.map(run => run.benchmark.rendering.last.visible_instances));
   metrics.culled_instances = median(runs.map(run => run.benchmark.rendering.last.culled_instances));
   metrics.draw_calls = median(runs.map(run => run.benchmark.rendering.last.draw_calls));
-  for (const field of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes", "presented_component_bytes", "presentation_scratch_bytes", "presented_store_bytes"]) {
+  for (const field of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes", "presentation_scratch_bytes", "presented_store_bytes"]) {
     const values = runs.map(run => run.benchmark.observation.end.presentation?.[field]);
     if (values.every(value => value !== undefined)) metrics[field] = median(values);
   }

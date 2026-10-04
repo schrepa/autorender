@@ -24,12 +24,6 @@ impl StressFiles {
         Self::default()
     }
 
-    /// Adds file `name`'s bytes.
-    pub fn add(&mut self, name: &str, bytes: Vec<u8>) {
-        self.files
-            .insert(name.to_owned(), StressFile { bytes, url: None });
-    }
-
     /// Adds virtual mesh `name`'s prefix and the URL renderers stream its
     /// other pages from.
     pub fn add_streamed(&mut self, name: &str, bytes: Vec<u8>, url: String) {
@@ -291,29 +285,17 @@ impl StressGame {
     pub fn set_gpu_presentation(&mut self, enabled: bool) {
         self.app.set_gpu_presentation(enabled);
     }
-    pub fn gpu_presentation(&self) -> bool {
-        self.app.gpu_presentation()
-    }
     /// Splits fixed ticks across frames around their due time (default).
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
         self.app.set_tick_pipelining(enabled);
-    }
-    pub fn tick_pipelining(&self) -> bool {
-        self.app.tick_pipelining()
     }
     /// Temporal antialiasing of GPU-presented frames (off by default).
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
         self.app.set_temporal_antialiasing(enabled);
     }
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.app.temporal_antialiasing()
-    }
     /// Occlusion culling of GPU-presented frames (on by default).
     pub fn set_occlusion_culling(&mut self, enabled: bool) {
         self.app.set_occlusion_culling(enabled);
-    }
-    pub fn occlusion_culling(&self) -> bool {
-        self.app.occlusion_culling()
     }
     /// Sub-pixel culling of GPU-presented frames (on by default).
     pub fn set_subpixel_culling(&mut self, enabled: bool) {
@@ -338,9 +320,6 @@ impl StressGame {
     pub fn set_visibility_buffer(&mut self, enabled: bool) {
         self.visibility_buffer = enabled;
         self.apply_world_settings();
-    }
-    pub fn subpixel_culling(&self) -> bool {
-        self.app.subpixel_culling()
     }
     pub fn reset_camera(&mut self) {
         set_view(&mut self.app.engine, "overview").expect("known view");

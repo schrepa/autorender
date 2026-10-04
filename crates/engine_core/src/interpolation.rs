@@ -100,7 +100,6 @@ pub struct PresentationState {
     history_capacity: usize,
     history_bytes: usize,
     presented_nodes: usize,
-    presented_component_bytes: usize,
     presented_store_bytes: usize,
     presentation_scratch_bytes: usize,
     gpu_pending: bool,
@@ -135,9 +134,6 @@ impl PresentationState {
     }
     pub fn presented_nodes(&self) -> usize {
         self.presented_nodes
-    }
-    pub fn presented_component_bytes(&self) -> usize {
-        self.presented_component_bytes
     }
     /// Reserved canonical Display and Entity Vec payload, excluding index-map
     /// and allocator overhead; derived poses have no ECS component allocation.
@@ -1165,7 +1161,6 @@ pub(crate) fn prepare(world: &mut World, mode: PresentationMode) {
         state.frame = frame;
         state.tick = tick;
         state.presented_nodes = count;
-        state.presented_component_bytes = 0;
         state.gpu_pending = false;
         interpolation.counters(&mut state);
     });

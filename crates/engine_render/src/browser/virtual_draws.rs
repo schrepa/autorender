@@ -412,13 +412,11 @@ impl Renderer {
         } else {
             (entries::virtual_vertex(targets), kind.fragment_entry(false))
         };
-        let constants = targets.constants(canvas);
-        let targets = targets.color_targets(canvas);
         VirtualStages {
             vertex,
             fragment,
-            targets,
-            constants: constants.into_iter().chain(variant.constants()).collect(),
+            targets: targets.color_targets(canvas),
+            constants: variant.constants().to_vec(),
         }
     }
 }

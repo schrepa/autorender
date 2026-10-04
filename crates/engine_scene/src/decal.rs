@@ -69,12 +69,10 @@ pub(crate) struct PreparedDecal {
 impl PreparedDecal {
     /// The component, with the material's resident handle.
     pub(crate) fn runtime(&self, material: MaterialHandle) -> Decal {
-        Decal {
-            material,
-            blend: self.blend,
-            opacity: self.opacity,
-            fade_angle: self.fade_angle,
-        }
+        Decal::new(material)
+            .with_blend(self.blend)
+            .with_opacity(self.opacity)
+            .with_fade_angle(self.fade_angle)
     }
 }
 

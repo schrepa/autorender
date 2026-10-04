@@ -143,8 +143,6 @@ counts and upload bytes. Native inspection does not trigger render extraction.
 History byte counters cover retained history vector payload.
 `presentation_scratch_bytes` reports reserved presentation scratch payload;
 `presented_store_bytes` reports canonical presented-pose/entity storage.
-`presented_component_bytes` remains as a zero-valued compatibility field because
-presented poses are no longer ECS components.
 These exclude allocator and map overhead, other ECS data, and GPU allocations;
 they are not process-memory totals.
 

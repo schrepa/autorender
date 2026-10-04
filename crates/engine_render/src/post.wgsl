@@ -43,9 +43,6 @@
 // in `source`.
 @group(0) @binding(15) var bloom_source: texture_2d<f32>;
 
-// sRGB targets apply output encoding themselves; UNORM canvas targets do not.
-override SURFACE_IS_SRGB: bool = false;
-
 const TAU: f32 = 6.2831853;
 const SAMPLES: u32 = 8u;
 // Unit directions of the occlusion samples: one per eighth of a turn, in the
@@ -607,8 +604,6 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     let mirrored = reflected(texel.rgb * shade, reflections, linear, uv, post);
     let lit = shafted(mirrored, effects.y, post);
     let color = glowing(lit, bloom, linear, uv, post);
-    if SURFACE_IS_SRGB {
-        return vec4<f32>(color, 1.0);
-    }
+    // The UNORM canvas stores encoded color.
     return vec4<f32>(encode_srgb(color), 1.0);
 }

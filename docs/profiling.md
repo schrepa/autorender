@@ -91,10 +91,9 @@ rows in that scan. Ordinary stamp filtering is independent of
 unrelated archetype moves do not require topology reconstruction. Early detection
 of incompatible source order can instead require the separately measured rebuild.
 
-`hierarchy.global_matrix_checks` remains zero as a compatibility counter; globals
-are private canonical values and there is no external derived-component repair.
-Previous
-captures' `queued_edits`, `dense_scan`, `journal_overflow`, `tracked_validation`
+Globals are private canonical values with no external derived-component repair,
+so older captures' always-zero `hierarchy.global_matrix_checks` is no longer
+emitted. Previous captures' `queued_edits`, `dense_scan`, `journal_overflow`, `tracked_validation`
 and `memory.transform_journal_bytes` describe the superseded replacement journal
 and are no longer emitted. Compare full simulation/propagation totals across
 this architecture change rather than equating individual renamed scopes.
@@ -103,9 +102,10 @@ this architecture change rather than equating individual renamed scopes.
 optional deferred replacement API. Targets missing at admission are skipped;
 capacity rejection happens while queueing and never drops accepted work.
 `transform_edits.buffer_capacity_bytes` is one system's retained buffer, not a
-sum across systems. `memory.global_write_buffer_bytes` is now zero because
-canonical output eliminates the separate publication buffer. Older captures
-counted retained changed-node indices or payload/suppression batches there.
+sum across systems. `memory.global_write_buffer_bytes` is no longer emitted:
+canonical output eliminated the separate publication buffer it measured (older
+captures counted retained changed-node indices or payload/suppression batches
+there).
 
 `capture_tick_begin` advances the interpolation epoch; it performs no history
 query. `capture_tick_end` closes the interval and consumes only coalesced validity
@@ -140,9 +140,10 @@ or contribute a new Vec capacity. World composition remains parent-first.
 
 `PresentationState.presented_store_bytes` reports canonical displayed-pose/entity
 Vec capacity (matrices, revisions, traversal flags and entities), while
-`presentation_scratch_bytes` reports temporary traversal/blend storage. `presented_component_bytes` remains zero for compatibility. Compare the
-combined relevant capacities across the storage change, not the component field
-alone; these are bounded payload observations, not process-memory totals.
+`presentation_scratch_bytes` reports temporary traversal/blend storage. Older
+reports' `presented_component_bytes` (zero once presented poses stopped being ECS
+components) is no longer reported; compare the combined capacities across that
+storage change. These are bounded payload observations, not process-memory totals.
 
 The retained browser path uses `extraction_retained_updates_culling`.
 `extraction.retained_resolved` counts source metadata resolutions;

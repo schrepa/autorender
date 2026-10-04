@@ -168,16 +168,14 @@ impl Renderer {
             return;
         }
         let canvas = self.display.format();
-        let (fragment, color_targets, constants) = match targets {
+        let (fragment, color_targets) = match targets {
             SkyTargets::Frame(targets) => (
                 entries::sky_fragment(Some(targets)),
                 targets.color_targets(canvas),
-                targets.constants(canvas),
             ),
             SkyTargets::Probe => (
                 entries::sky_fragment(None),
                 vec![Some(ENVIRONMENT_FORMAT.into())],
-                Vec::new(),
             ),
         };
         self.mesh_pipelines.sky[index] = Some(sky_pipeline(
@@ -186,7 +184,6 @@ impl Renderer {
             &self.camera.layout,
             fragment,
             &color_targets,
-            &constants,
         ));
     }
 
@@ -243,19 +240,16 @@ impl Renderer {
         let fragment = match kind.pass {
             MeshPass::Opaque(targets) => MeshFragment {
                 targets: targets.color_targets(canvas),
-                constants: targets.constants(canvas),
                 depth_write: true,
                 mirrored: false,
             },
             MeshPass::Transparent => MeshFragment {
                 targets: accumulation_targets().to_vec(),
-                constants: Vec::new(),
                 depth_write: false,
                 mirrored: false,
             },
             MeshPass::Probe => MeshFragment {
                 targets: vec![Some(ENVIRONMENT_FORMAT.into())],
-                constants: Vec::new(),
                 depth_write: true,
                 mirrored: true,
             },
@@ -307,16 +301,14 @@ impl Renderer {
     }
 }
 
-/// The sky pass of `fragment` into `targets` with `constants`: one triangle
-/// at the far plane, tested but not written against depth, over the camera
-/// bindings.
+/// The sky pass of `fragment` into `targets`: one triangle at the far plane,
+/// tested but not written against depth, over the camera bindings.
 fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
     camera_layout: &wgpu::BindGroupLayout,
     fragment: &str,
     targets: &[Option<wgpu::ColorTargetState>],
-    constants: &[(&str, f64)],
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("engine/sky-pipeline-layout"),
@@ -331,7 +323,7 @@ fn sky_pipeline(
             module: shader,
             vertex: entries::SKY_VERTEX,
             fragment,
-            constants,
+            constants: &[],
             targets,
             // On the far plane: it shows where nothing was drawn.
             depth: Some(wgpu::DepthStencilState {
@@ -349,7 +341,6 @@ fn sky_pipeline(
 /// constants, and whether it writes depth (transparent surfaces do not).
 struct MeshFragment {
     targets: Vec<Option<wgpu::ColorTargetState>>,
-    constants: Vec<(&'static str, f64)>,
     depth_write: bool,
     // Drawn through a mirroring view (reflection probe faces): triangles
     // wind the other way.
@@ -366,12 +357,7 @@ fn mesh_pipeline(
     fragment: &MeshFragment,
     variant: Variant,
 ) -> wgpu::RenderPipeline {
-    let constants: Vec<(&str, f64)> = fragment
-        .constants
-        .iter()
-        .copied()
-        .chain(variant.constants())
-        .collect();
+    let constants = variant.constants();
     // Extended meshes (decision 034) read a third vertex buffer through
     // their own entry points; skinned slots' meshes (decision 036) a fourth.
     let affine = kind.slots() != Slots::Instances;

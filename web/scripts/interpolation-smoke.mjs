@@ -88,7 +88,7 @@ function presentation(reply, mode, alpha) {
   assert.ok(Math.abs(value.alpha - alpha) < 0.000001);
   assert.equal(value.frame, reply.observation.frame, "Extraction must identify the actual observed frame.");
   assert.equal(value.tick, reply.observation.tick, "Extraction must identify the actual observed fixed tick.");
-  for (const key of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes", "presented_component_bytes", "presentation_scratch_bytes"]) assert.ok(Number.isSafeInteger(value[key]) && value[key] >= 0, key);
+  for (const key of ["history_nodes", "history_capacity", "history_bytes", "presented_nodes", "presentation_scratch_bytes"]) assert.ok(Number.isSafeInteger(value[key]) && value[key] >= 0, key);
   return value;
 }
 
@@ -283,7 +283,7 @@ try {
     history.push(presentation(reply, "interpolated", 0.5));
     assert.equal((await command("assets")).result.resident_cpu_bytes, assetBytes);
   }
-  assert.ok(history.every(value => ["history_nodes", "history_capacity", "history_bytes", "presented_component_bytes", "presentation_scratch_bytes"].every(field => value[field] === history[0][field])), "Repeated replacements must not grow retained presentation storage.");
+  assert.ok(history.every(value => ["history_nodes", "history_capacity", "history_bytes", "presentation_scratch_bytes"].every(field => value[field] === history[0][field])), "Repeated replacements must not grow retained presentation storage.");
   const preserved = await authority(), preservedPreview = await inspect("player", "PresentedTransform");
   served = structuredClone(fixture); served.revision = revision + 1; served.entities[1].parent = "missing";
   const rejected = await command("reload", { expected_revision: String(revision), revision: String(served.revision) }, false);
