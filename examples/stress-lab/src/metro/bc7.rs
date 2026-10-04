@@ -4,23 +4,52 @@
 //! regions and gentle gradients keep their look; hosts transcoding real
 //! assets use the Basis Universal transcoder instead.
 
+use std::collections::HashMap;
+
 use engine::prelude::*;
 
 /// Mode 6 weights of its 16 palette entries, out of 64.
 const WEIGHTS: [u32; 16] = [0, 4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47, 51, 55, 60, 64];
 
-/// BC7 blocks of an RGBA8 level whose dimensions are multiples of 4.
+/// The first palette entry whose weight reaches each integer from 0 to 64:
+/// for a weight `w`, the entry at `ceil(w)`, as weights are integers.
+const FIRST_REACHING: [usize; 65] = {
+    let mut table = [0; 65];
+    let mut value = 0;
+    while value < 65 {
+        let mut entry = 0;
+        while WEIGHTS[entry] < value as u32 {
+            entry += 1;
+        }
+        table[value] = entry;
+        value += 1;
+    }
+    table
+};
+
+/// BC7 blocks of an RGBA8 level whose dimensions are multiples of 4. Blocks
+/// of one color encode once per level.
 pub(crate) fn encode(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
     debug_assert!(width.is_multiple_of(4) && height.is_multiple_of(4));
     let mut blocks = Vec::with_capacity((width * height) as usize);
+    let mut uniform: HashMap<[u8; 4], [u8; 16]> = HashMap::new();
     for by in 0..height / 4 {
         for bx in 0..width / 4 {
-            let mut texels = [[0.0f32; 4]; 16];
-            for (index, texel) in texels.iter_mut().enumerate() {
-                let (x, y) = (bx * 4 + index as u32 % 4, by * 4 + index as u32 / 4);
+            let texel_at = |index: u32| {
+                let (x, y) = (bx * 4 + index % 4, by * 4 + index / 4);
                 let at = ((y * width + x) * 4) as usize;
-                *texel = [0, 1, 2, 3].map(|channel| pixels[at + channel] as f32);
+                [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
+            };
+            let first = texel_at(0);
+            if (1..16).all(|index| texel_at(index) == first) {
+                let encoded = uniform
+                    .entry(first)
+                    .or_insert_with(|| block(&[first.map(f32::from); 16]));
+                blocks.extend_from_slice(encoded);
+                continue;
             }
+            let texels: [[f32; 4]; 16] =
+                std::array::from_fn(|index| texel_at(index as u32).map(f32::from));
             blocks.extend_from_slice(&block(&texels));
         }
     }
@@ -81,10 +110,12 @@ fn fit(texels: &[[f32; 4]; 16], colors: &[[f32; 4]; 16]) -> ([u32; 16], f32) {
                 .map(|channel| (texel[channel] - first[channel]) * axis[channel])
                 .sum();
             let weight = math::clamp(along / length, 0.0, 1.0) * 64.0;
-            WEIGHTS
-                .iter()
-                .position(|w| *w as f32 >= weight)
-                .unwrap_or(15)
+            // The first weight reaching it; NaN reaches none.
+            if weight >= 0.0 {
+                FIRST_REACHING[weight.ceil() as usize]
+            } else {
+                15
+            }
         } else {
             0
         };
@@ -190,6 +221,10 @@ fn block(texels: &[[f32; 4]; 16]) -> [u8; 16] {
         if best.as_ref().is_none_or(|best| error < best.3) {
             best = Some((a, b, indices, error));
         }
+        // Nothing fits better than exactly.
+        if error == 0.0 {
+            break;
+        }
         match refine(texels, &indices) {
             Some(refined) => candidate = refined,
             None => break,
@@ -215,22 +250,20 @@ fn block(texels: &[[f32; 4]; 16]) -> [u8; 16] {
     for index in &indices[1..] {
         bits.push(*index, 4);
     }
-    bits.bytes
+    bits.value.to_le_bytes()
 }
 
+/// A block's bits, first pushed in the least significant.
 #[derive(Default)]
 struct Bits {
-    bytes: [u8; 16],
+    value: u128,
     at: u32,
 }
 
 impl Bits {
+    /// Appends the `count` (below 32) low bits of `value`.
     fn push(&mut self, value: u32, count: u32) {
-        for bit in 0..count {
-            if value >> bit & 1 == 1 {
-                self.bytes[(self.at / 8) as usize] |= 1 << (self.at % 8);
-            }
-            self.at += 1;
-        }
+        self.value |= u128::from(value & ((1 << count) - 1)) << self.at;
+        self.at += count;
     }
 }

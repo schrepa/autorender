@@ -6,6 +6,7 @@
 //! every workload.
 
 use std::f32::consts::TAU;
+use std::sync::OnceLock;
 
 use engine::prelude::*;
 
@@ -275,8 +276,16 @@ fn ramp(low: f32, high: f32, x: f32) -> f32 {
     smooth(math::clamp((x - low) / (high - low), 0.0, 1.0))
 }
 
-/// sRGB bytes of a linear value.
+/// sRGB bytes of a linear value, as [`encode_with_powf`] rounds them: the
+/// count of byte thresholds at or below it (none for NaN), eight
+/// comparisons instead of a `powf` per channel.
 fn encode(value: f32) -> u8 {
+    let value = math::clamp(value, 0.0, 1.0);
+    srgb_thresholds().partition_point(|&threshold| threshold <= value) as u8
+}
+
+/// The sRGB transfer function, rounded to a byte.
+fn encode_with_powf(value: f32) -> u8 {
     let value = math::clamp(value, 0.0, 1.0);
     let srgb = if value <= 0.003_130_8 {
         12.92 * value
@@ -284,6 +293,28 @@ fn encode(value: f32) -> u8 {
         1.055 * value.powf(1.0 / 2.4) - 0.055
     };
     (srgb * 255.0 + 0.5) as u8
+}
+
+/// The smallest value [`encode_with_powf`] rounds to each byte from 1 to
+/// 255: bisections over the bits of floats in [0, 1], which order like
+/// their values, as the encoding rises with its value.
+fn srgb_thresholds() -> &'static [f32; 255] {
+    static THRESHOLDS: OnceLock<[f32; 255]> = OnceLock::new();
+    THRESHOLDS.get_or_init(|| {
+        std::array::from_fn(|index| {
+            let byte = index as u8 + 1;
+            let (mut low, mut high) = (0_u32, 1.0_f32.to_bits());
+            while low < high {
+                let middle = low + (high - low) / 2;
+                if encode_with_powf(f32::from_bits(middle)) >= byte {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            f32::from_bits(low)
+        })
+    })
 }
 
 fn byte(value: f32) -> u8 {
