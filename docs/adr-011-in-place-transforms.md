@@ -41,8 +41,8 @@ Ordinary `World::get_mut`, mutable queries, `modify_component`, and component
 replacement are observed at the next transform propagation boundary. No game
 plugin registration, manual dirty flag or trusted-system declaration is needed.
 `edit_transform` edits a copy, skips bit-identical results and commits in place.
-`TransformEdits` remains a bounded, deferred replacement API with its existing
-ordering, capacity and observer behavior; prefer direct queries for hot loops.
+Decision 010's deferred `TransformEdits` was removed on 2026-10-03: only its tests
+used it, and its fixed replacement cap broke decision 029's no-caps rule.
 
 In-place edits and engine global updates follow Bevy's normal mutation semantics:
 they set change stamps and do **not** fire Insert/Discard lifecycle observers.

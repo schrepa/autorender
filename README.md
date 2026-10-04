@@ -105,9 +105,8 @@ Use ordinary mutable `Transform` queries for frequent updates. Read derived pose
 through `Res<GlobalTransforms>` or `Res<PresentedTransforms>` and their `get(entity)`
 methods; returned `GlobalTransform`/`PresentedTransform` values are not components.
 `Parent` stays immutable and uses checked `set_parent`/`set_parents` helpers.
-`edit_transform` immediately edits a local pose without insertion observers;
-`TransformEdits` retains deferred replacements and their ordinary observers.
-Chain dependent systems before reading queued edits. Read world poses after named
+`edit_transform` immediately edits a local pose without insertion observers.
+Read world poses after named
 propagation boundaries; retained consumers can compare store output revisions.
 See the [canonical pose migration](docs/migrations/0.1-canonical-poses.md).
 

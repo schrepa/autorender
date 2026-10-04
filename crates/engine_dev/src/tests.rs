@@ -1,5 +1,5 @@
 use engine_core::{
-    Engine, FixedTime, FrameTime, Transform, TransformEdits,
+    Engine, FixedTime, FrameTime, Transform,
     bevy_ecs::{self, prelude::*},
     edit_transform,
 };
@@ -182,12 +182,9 @@ fn presented_inspection_preserves_last_extraction_and_authoritative_world() {
         .insert(InterpolateTransform);
     engine.app.add_systems(
         FixedSimulation,
-        |transforms: Query<(Entity, &Transform), With<InterpolateTransform>>,
-         mut edits: TransformEdits| {
-            for (entity, transform) in &transforms {
-                edits
-                    .edit(entity, transform, |pose| pose.translation.x += 4.0)
-                    .unwrap();
+        |mut transforms: Query<&mut Transform, With<InterpolateTransform>>| {
+            for mut transform in &mut transforms {
+                transform.translation.x += 4.0;
             }
         },
     );
@@ -350,12 +347,9 @@ fn inspection_materializes_gpu_presented_frames_exactly() {
         .insert(InterpolateTransform);
     engine.app.add_systems(
         FixedSimulation,
-        |transforms: Query<(Entity, &Transform), With<InterpolateTransform>>,
-         mut edits: TransformEdits| {
-            for (entity, transform) in &transforms {
-                edits
-                    .edit(entity, transform, |pose| pose.translation.x += 4.0)
-                    .unwrap();
+        |mut transforms: Query<&mut Transform, With<InterpolateTransform>>| {
+            for mut transform in &mut transforms {
+                transform.translation.x += 4.0;
             }
         },
     );

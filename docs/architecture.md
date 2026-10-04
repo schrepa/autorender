@@ -22,8 +22,7 @@ transform storage. Ordinary mutable `Transform` queries and in-place derived
 global writes use an engine-owned change-tick window. Change stamps are tested
 before fetching payloads (now in contiguous blocks; see decision 013), and successful refreshes acknowledge derived
 writes before advancing the ECS tick. Structural hooks retain membership
-validation. `Parent` stays immutable, and `TransformEdits` remains available for
-deferred replacements with lifecycle observers. Interpolation captures previous
+validation. `Parent` stays immutable. Interpolation captures previous
 endpoints during hierarchy validation and reads current poses from the shared
 source cache, with constant-time normal tick begin/end bookkeeping. The decision
 defines explicit change-detection opt-outs and the observer contract.

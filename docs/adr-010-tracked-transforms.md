@@ -2,7 +2,8 @@
 
 Status: superseded by [decision 011](adr-011-in-place-transforms.md). This document
 records the former replacement-based API and its costs; use decision 011 for the
-current mutable-query contract. Extends decisions 006 and 008. Core owns mutation tracking,
+current mutable-query contract. `TransformEdits` itself was removed on 2026-10-03:
+nothing used it but its tests. Extends decisions 006 and 008. Core owns mutation tracking,
 propagation and the gameplay edit helpers. Bevy still owns the world, component
 lifecycle and schedule execution; `Engine::app` remains the ordinary Bevy app.
 

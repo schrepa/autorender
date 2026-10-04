@@ -77,9 +77,7 @@ pub use scene::{
     RenderTexture, Tint, Transform,
 };
 pub use skin::{RenderJoint, Skin};
-pub use transform_edits::{
-    MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform,
-};
+pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
 
 use bevy_app::PluginsState;
@@ -945,7 +943,7 @@ pub mod prelude {
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
-    pub use crate::{MAX_TRANSFORM_EDITS, TransformEditError, TransformEdits, edit_transform};
+    pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.
     pub use bevy_ecs::{self, prelude::*};

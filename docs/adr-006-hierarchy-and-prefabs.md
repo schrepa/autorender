@@ -10,8 +10,8 @@ replacement-journal implementation notes below. `Transform` and `GlobalTransform
 are ordinary mutable components; frequent gameplay motion uses mutable local
 queries while globals remain engine-owned. A private change-tick watermark
 drives source validation, and propagation updates globals without insertion
-events. `Parent` remains immutable with checked edits. `TransformEdits` retains
-deferred replacement observers; `edit_transform` writes in place. Decision 011
+events. `Parent` remains immutable with checked edits; `edit_transform` writes in
+place. Decision 011
 also defines change-detection opt-outs and fused interpolation source capture.
 
 ## Runtime contract

@@ -239,8 +239,7 @@ Rust gameplay should use `Query<&mut Transform>` for frequent local motion.
 `Res<GlobalTransforms>` and presented poses through `Res<PresentedTransforms>`;
 the derived read values are no longer components. `Parent` stays immutable; use checked
 parent helpers. `edit_transform` performs an immediate edit without insertion
-observers. `TransformEdits` still queues replacements with ordinary lifecycle
-observers; chain systems that must read those deferred edits.
+observers.
 
 Propagation scans change metadata against an engine-owned watermark independent
 of `clear_trackers`, then advances the ECS change tick after refresh. Repeated
