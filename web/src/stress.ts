@@ -219,7 +219,6 @@ function poll(runtime: StressGame) {
   drawChart(stats);
   if (recorder.active) el("record-status").textContent = `Recording · ${((performance.now() - recordStarted) / 1000).toFixed(1)} s including warm-up · camera locked`;
   if (profiler?.active) el("profile-status").textContent = `Capturing CPU, collision, allocator and browser events · ${((Number(profiler.status().elapsed_ms) || 0) / 1000).toFixed(1)} / 5 seconds · camera locked`;
-  el<HTMLCanvasElement>("scene").dataset.stress = JSON.stringify(data);
 }
 
 const params = new URLSearchParams(location.search);

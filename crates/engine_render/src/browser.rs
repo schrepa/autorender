@@ -594,16 +594,10 @@ impl Renderer {
     }
 }
 
-/// The canvas's clear color: the scene's in linear light, encoded unless the
-/// canvas is sRGB.
-fn canvas_clear(srgb_target: bool) -> [f64; 4] {
-    let encode = |linear: f64| {
-        if srgb_target {
-            linear
-        } else {
-            1.055 * linear.powf(1.0 / 2.4) - 0.055
-        }
-    };
+/// The canvas's clear color: the scene's in linear light, encoded for the
+/// UNORM canvas.
+fn canvas_clear() -> [f64; 4] {
+    let encode = |linear: f64| 1.055 * linear.powf(1.0 / 2.4) - 0.055;
     let [r, g, b, a] = crate::render_graph::SCENE_CLEAR;
     [encode(r), encode(g), encode(b), a]
 }

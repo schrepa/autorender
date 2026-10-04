@@ -77,9 +77,6 @@ struct Shadow {
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
 
-// sRGB targets apply output encoding themselves; UNORM canvas targets do not.
-override SURFACE_IS_SRGB: bool = false;
-
 const PI: f32 = 3.14159265;
 
 fn maximum_abs(value: vec3<f32>) -> f32 {
@@ -102,11 +99,9 @@ fn linear_to_srgb(color: vec3<f32>) -> vec3<f32> {
     return select(high, low, color <= vec3<f32>(0.0031308));
 }
 
-// Graded linear color as the target stores it.
+// Graded linear color as the canvas stores it: WebGPU canvases are UNORM,
+// so shaders drawing into them encode sRGB themselves.
 fn encoded(color: vec3<f32>) -> vec3<f32> {
-    if SURFACE_IS_SRGB {
-        return color;
-    }
     return linear_to_srgb(color);
 }
 

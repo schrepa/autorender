@@ -265,7 +265,6 @@ canonical matrix/revision/flag/entity Vec capacities, including invalid entries.
 Hierarchy and presentation storage keep one array per field group in a shared
 node index space (local poses, traversal links, matrices, revisions, flags), so
 each pass streams only the fields it reads.
-`presented_component_bytes()` remains a zero-valued compatibility field.
 These observations exclude entity HashMaps, query metadata, allocator overhead,
 and unused Bevy archetype capacity; they are not total process-memory estimates.
 

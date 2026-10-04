@@ -159,28 +159,25 @@ impl PostPass {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline =
-            |label, entry: &str, format: wgpu::TextureFormat, blend, srgb: Option<bool>| {
-                let constants =
-                    srgb.map(|srgb| [("SURFACE_IS_SRGB", if srgb { 1.0 } else { 0.0 })]);
-                fullscreen(
-                    device,
-                    &Fullscreen {
-                        label,
-                        layout: &pipeline_layout,
-                        module: &module,
-                        vertex: "vs_fullscreen",
-                        fragment: entry,
-                        constants: constants.as_ref().map_or(&[], |constants| &constants[..]),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        depth: None,
-                    },
-                )
-            };
+        let pipeline = |label, entry: &str, format: wgpu::TextureFormat, blend| {
+            fullscreen(
+                device,
+                &Fullscreen {
+                    label,
+                    layout: &pipeline_layout,
+                    module: &module,
+                    vertex: "vs_fullscreen",
+                    fragment: entry,
+                    constants: &[],
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    depth: None,
+                },
+            )
+        };
         let levels_pipeline = |label, entry: &str| {
             fullscreen(
                 device,
@@ -252,13 +249,11 @@ impl PostPass {
                 "fs_occlusion",
                 RAW_OCCLUSION_FORMAT,
                 None,
-                None,
             ),
             effects_filter: pipeline(
                 "engine/post-effects-filter",
                 "fs_effects_filter",
                 OCCLUSION_FORMAT,
-                None,
                 None,
             ),
             reflections: pipeline(
@@ -266,13 +261,11 @@ impl PostPass {
                 "fs_reflections",
                 REFLECTION_FORMAT,
                 None,
-                None,
             ),
             reflections_filter: pipeline(
                 "engine/post-reflections-filter",
                 "fs_reflections_filter",
                 REFLECTION_FORMAT,
-                None,
                 None,
             ),
             nearest: DepthPyramid::new(device, Reduction::Nearest),
@@ -284,22 +277,14 @@ impl PostPass {
                 "fs_bloom_first",
                 BLOOM_FORMAT,
                 None,
-                None,
             ),
             bloom_down: pipeline(
                 "engine/post-bloom-down",
                 "fs_bloom_down",
                 BLOOM_FORMAT,
                 None,
-                None,
             ),
-            bloom_up: pipeline(
-                "engine/post-bloom-up",
-                "fs_bloom_up",
-                BLOOM_FORMAT,
-                add,
-                None,
-            ),
+            bloom_up: pipeline("engine/post-bloom-up", "fs_bloom_up", BLOOM_FORMAT, add),
             levels_first: levels_pipeline("engine/post-levels-first", "fs_levels_first"),
             levels_down: levels_pipeline("engine/post-levels-down", "fs_levels_down"),
             composite: pipeline(
@@ -307,7 +292,6 @@ impl PostPass {
                 "fs_composite",
                 surface_format,
                 None,
-                Some(surface_format.is_srgb()),
             ),
             uniform,
             written: None,

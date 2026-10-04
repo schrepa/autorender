@@ -209,7 +209,7 @@ impl TransparentPass {
                 write_mask: wgpu::ColorWrites::empty(),
             }));
         }
-        let constants = [("SURFACE_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
         self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {

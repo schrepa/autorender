@@ -109,8 +109,6 @@ pub struct PresentationStateView {
     /// Reserved presentation scratch payload; excludes maps and allocator overhead.
     pub presentation_scratch_bytes: usize,
     pub presented_nodes: usize,
-    /// Compatibility field: zero because presented poses are no longer ECS components.
-    pub presented_component_bytes: usize,
     /// Reserved canonical presented-pose and entity storage; excludes maps/allocator overhead.
     pub presented_store_bytes: usize,
 }

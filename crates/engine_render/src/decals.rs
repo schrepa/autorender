@@ -297,7 +297,6 @@ mod gpu {
         let constants = [
             ("DECAL_MULTIPLY", flag(blend == DecalBlend::Multiply)),
             ("DECAL_CANVAS", flag(canvas)),
-            ("SURFACE_IS_SRGB", flag(surface_format.is_srgb())),
         ];
         // Alpha keeps the scene target's ambient share (decision 021).
         let keep = wgpu::BlendComponent {

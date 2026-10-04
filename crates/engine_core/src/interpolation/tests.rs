@@ -1410,7 +1410,6 @@ fn no_opt_in_uses_no_history_or_display_scratch_and_reports_component_payload() 
     assert_eq!(engine.presentation().history_bytes(), 0);
     assert_eq!(engine.presentation().presentation_scratch_bytes(), 0);
     assert_eq!(engine.presentation().presented_nodes(), 1);
-    assert_eq!(engine.presentation().presented_component_bytes(), 0);
 }
 
 #[test]
@@ -1586,7 +1585,6 @@ fn history_and_display_storage_are_bounded_reused_and_pruned_after_despawn() {
         scratch_bytes
             <= LIMIT * (size_of::<Display>() + size_of::<Transform>() + 4 * size_of::<usize>())
     );
-    assert_eq!(engine.presentation().presented_component_bytes(), 0);
     let world = engine.app.world_mut();
     assert_eq!(world.resource::<GlobalTransforms>().len(), LIMIT);
     assert_eq!(world.resource::<PresentedTransforms>().len(), LIMIT);
@@ -1632,7 +1630,6 @@ fn history_and_display_storage_are_bounded_reused_and_pruned_after_despawn() {
     );
     assert_eq!(engine.presentation().history_nodes(), 0);
     assert_eq!(engine.presentation().presented_nodes(), 0);
-    assert_eq!(engine.presentation().presented_component_bytes(), 0);
     assert_eq!(engine.presentation().history_bytes(), history_bytes);
     assert_eq!(
         engine.presentation().presentation_scratch_bytes(),

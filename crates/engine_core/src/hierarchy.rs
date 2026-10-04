@@ -1262,7 +1262,6 @@ impl GlobalTransforms {
         }
         engine_profile::counter("hierarchy.validated_nodes", checked as f64);
         engine_profile::counter("hierarchy.scan_evaluated_nodes", early as f64);
-        engine_profile::counter("hierarchy.global_matrix_checks", 0.0);
         Scan {
             topology_changed: false,
             observed,
@@ -1336,7 +1335,6 @@ impl GlobalTransforms {
         }
         engine_profile::counter("hierarchy.metadata_nodes", metadata as f64);
         engine_profile::counter("hierarchy.validated_nodes", checked as f64);
-        engine_profile::counter("hierarchy.global_matrix_checks", 0.0);
         engine_profile::counter("hierarchy.scanned_nodes", count as f64);
         Scan {
             topology_changed: count != self.report.transforms
@@ -1613,7 +1611,6 @@ impl GlobalTransforms {
         engine_profile::counter("hierarchy.evaluated_nodes", work.evaluated as f64);
         engine_profile::counter("hierarchy.deferred_globals", work.deferred as f64);
         engine_profile::counter("hierarchy.written_globals", work.written as f64);
-        engine_profile::counter("memory.global_write_buffer_bytes", 0.0);
         // Only the local input scan touches ECS timestamps. A completed boundary
         // owns its window independently of external clear_trackers calls.
         let completed_tick = world.read_change_tick();

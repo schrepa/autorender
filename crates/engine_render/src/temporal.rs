@@ -129,10 +129,7 @@ impl TemporalPass {
                 module: &module,
                 vertex: "vs_fullscreen",
                 fragment: "fs_resolve",
-                constants: &[(
-                    "SURFACE_IS_SRGB",
-                    if surface_format.is_srgb() { 1.0 } else { 0.0 },
-                )],
+                constants: &[],
                 targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
                 depth: None,
             },
