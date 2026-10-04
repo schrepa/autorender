@@ -202,6 +202,11 @@ impl<'a> RenderFrame<'a> {
     pub fn joints_revision(self) -> u64 {
         self.owner.joints_revision
     }
+    /// Advances whenever the snapshot's particle emitters change; frames
+    /// that keep it keep every emitter record.
+    pub fn emitters_revision(self) -> u64 {
+        self.owner.emitters_revision
+    }
     pub fn visible_indices(self) -> &'a [usize] {
         &self.owner.visible
     }
@@ -708,6 +713,7 @@ pub(crate) struct RetainedRender {
     caster_revision: u64,
     lights_revision: u64,
     joints_revision: u64,
+    emitters_revision: u64,
     snapshot: RenderSnapshot,
     // The engine's cube, which `Cube` components draw.
     cube_mesh: MeshHandle,
@@ -786,6 +792,7 @@ impl RetainedRender {
             caster_revision: 0,
             lights_revision: 0,
             joints_revision: 0,
+            emitters_revision: 0,
             snapshot: RenderSnapshot::default(),
             cube_mesh,
             owners: Vec::new(),
@@ -957,6 +964,7 @@ impl RetainedRender {
         );
         self.lights_revision = lights.revision;
         particles.extract(world, &mut self.snapshot, gpu);
+        self.emitters_revision = particles.revision;
     }
 
     /// Gives skinned slots (decision 036) their joint palettes in
