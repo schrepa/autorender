@@ -34,12 +34,15 @@ development commands verify it before compiling. Windows launches npm through
 | `node web/scripts/agent.mjs development` | Query structured compiler/build status without compiling the CLI. |
 | `cargo xtask scene validate --file PATH` | Validate one bounded source and return structured JSON. |
 | `cargo xtask scene save --file TARGET --candidate PATH --expected-revision N` | Validate and persist candidate bytes with revision/conflict protection. |
+| `cargo xtask scene schema` | Print the generated scene JSON schema as JSON, without writing files. |
 | `cargo xtask assets` | Validate every `web/public/scenes/*.scene.json` in sorted order. Report source path, stable error code and field path on failure; scene ID/revision/entity count on success. |
-| `cargo xtask schema` | Generate `docs/schema/scene-v2.schema.json` from Rust authoring types. Review and commit schema changes alongside format changes. |
-| `cargo xtask asset import --file MODEL.glb --id NAME --output NEW.scene.json` | Convert the supported static GLB subset into validated scene version 2; return counts and provenance as JSON. |
+| `cargo xtask schema` | Generate `docs/schema/scene-v8.schema.json` from Rust authoring types. Review and commit schema changes alongside format changes. |
+| `cargo xtask asset import --file MODEL.glb --id NAME --output NEW.scene.json` | Convert a GLB (meshes, glTF metallic-roughness materials, animations and skins) into a validated scene version 8 with its image and buffer files; return counts and provenance as JSON. See `docs/asset-import.md`. |
 | `cargo xtask lint` | Validate scenes and schema freshness, then check formatting, native workspace Clippy, all three Wasm clients with Clippy, and TypeScript. Generates bindings for clean checkouts. |
 | `cargo xtask test` | Run native workspace tests with development features, then host input, agent transport, and adapter lifecycle contracts through Node's runner. |
 | `cargo xtask docs` | Generate native workspace documentation, then Wasm façade/renderer documentation for browser-only APIs. |
+| `cargo xtask benchmark [--url URL] [--mode step\|render\|present] ...` | Measure fixed browser workloads with culling off and on and write a JSON report (`docs/benchmarking.md`). |
+| `cargo xtask profile [--attribution]` | Build an isolated instrumented Stress Lab into `web/dist-profile` (`web/dist-attribution` with `--attribution`; `docs/profiling.md`). |
 
 `orbit-demo`, `playground` and `stress-lab` build in one Cargo invocation. Their
 generated bindings have separate names: `orbit_demo`, `playground` and `stress_lab`.
@@ -49,8 +52,9 @@ bindings used by a running development host.
 Cargo uses the checked-in lockfile and npm uses `npm ci`. Build commands expect
 Cargo's default `target` directory; do not override `CARGO_TARGET_DIR`.
 
-Authoring commands read scene files only after checking the 1 MiB source limit,
-then use a bounded reader so concurrent growth cannot bypass that limit. They
+Authoring commands, `assets` included, read scene files with one bounded reader
+(`engine_dev::authoring::read_scene_source`): it checks the 64 MiB source bound
+first, so concurrent growth cannot bypass it. They
 call the same parser/validator as browser scene loading. `assets` does not cook
 binary assets or save revisions. `lint` compares the generated schema to the
 versioned artifact without rewriting it; line-ending differences are ignored.

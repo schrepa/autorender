@@ -50,8 +50,9 @@ pub fn validate_scene(source: &str) -> Result<ValidationReport, DevError> {
     })
 }
 
-/// Reads at most 1 MiB plus one overflow byte. This guards allocation even if a
-/// source changes size between its metadata check and the actual read.
+/// Reads at most [`MAX_SOURCE_BYTES`] plus one overflow byte. This guards
+/// allocation even if a source changes size between its metadata check and the
+/// actual read.
 pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
     let file = File::open(path).map_err(|error| io_error(path, error))?;
     if file
@@ -63,7 +64,7 @@ pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
         return Err(DevError::new(
             "source_too_large",
             path.display().to_string(),
-            "scene source exceeds 1048576 bytes",
+            format!("scene source exceeds {MAX_SOURCE_BYTES} bytes"),
         ));
     }
     let mut bytes = Vec::new();
@@ -74,7 +75,7 @@ pub fn read_scene_source(path: &Path) -> Result<String, DevError> {
         return Err(DevError::new(
             "source_too_large",
             path.display().to_string(),
-            "scene source exceeds 1048576 bytes",
+            format!("scene source exceeds {MAX_SOURCE_BYTES} bytes"),
         ));
     }
     String::from_utf8(bytes).map_err(|error| {

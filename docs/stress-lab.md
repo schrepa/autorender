@@ -119,7 +119,7 @@ Clusters shade through the visibility buffer
 Overview, inside-field and look-away cameras isolate visibility changes. Culling
 and resolution controls isolate draw submission and pixel costs; mesh variety
 changes actual draw batches. Resolution remains bounded by the shared host's
-2560×1440 drawing-buffer budget. These settings do not imply GPU timestamps.
+2560Ã—1440 drawing-buffer budget. These settings do not imply GPU timestamps.
 
 Click Record in the workload panel to capture while the scene stays visible,
 then Export JSON. Camera input and workload controls lock during recording.

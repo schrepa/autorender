@@ -71,7 +71,7 @@ Run the complete agent loop against a running development server with `node web/
 
 `raycast`, `overlap`, `shape_cast` and `collision_events` are read-only runtime
 verbs and need no pause. Pass their typed fields using `--json` or `--file`.
-Discover `DevelopmentProtocol`, `Collider` and `CollisionWorld` first; see
+Discover the `protocol` schema (`describe` with name `protocol`), `Collider` and `CollisionWorld` first; see
 [collision observations](../../docs/agent-workflow.md#collision-observations).
 Geometric queries refresh the authoritative cache; they never advance gameplay
 or change interpolation previews. Sensor snapshots remain available until the

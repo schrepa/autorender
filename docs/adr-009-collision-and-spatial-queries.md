@@ -87,7 +87,7 @@ semantics; their schemas are frozen. Complete source validation, including
 expanded world transforms, precedes mutation. Reimport preserves authored
 colliders for matching source IDs and rejects removal of collider-bearing IDs.
 
-Agents discover `Collider`, `CollisionWorld`, and `DevelopmentProtocol`, then use
+Agents discover `Collider`, `CollisionWorld`, and the `protocol` schema (`describe` with name `protocol`), then use
 `raycast`, `overlap`, `shape_cast`, or paged `collision_events`. Query poses are
 world position and quaternion; target colliders retain their full affine
 transforms. Hits identify active authored entities when possible, and explicitly

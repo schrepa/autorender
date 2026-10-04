@@ -27,7 +27,7 @@ pub use collider::{SceneCollider, SceneColliderShape};
 pub use decal::{SceneDecal, SceneDecalBlend};
 pub use document::{
     MeshSource, SCENE_VERSION, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
-    SceneSurface, SceneTransform, SceneVertex,
+    SceneSurface, SceneTransform, SceneVertex, schema_path,
 };
 pub use environment::{AtmospherePreset, EnvironmentSettings, SceneAtmosphere, SceneEnvironment};
 pub use error::SceneError;

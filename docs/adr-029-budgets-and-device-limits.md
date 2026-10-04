@@ -70,4 +70,5 @@ the old caps.
 
 Content can now exhaust GPU memory or buffer limits; games that need
 predictable frame times set budgets. Collision (100,000 nodes, 4,096 query
-hits) and the 1 MiB scene source limit remain constants for now.
+hits) and the scene source bound (64 MiB since decision 030) remain
+constants for now.

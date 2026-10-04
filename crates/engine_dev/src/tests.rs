@@ -857,7 +857,7 @@ fn environment_projections_share_scene_sections_and_surfaces_are_inspectable() {
         .iter()
         .find(|entry| entry["name"] == "SceneDocument")
         .unwrap();
-    assert_eq!(scene_entry["source"], "docs/schema/scene-v6.schema.json");
+    assert_eq!(scene_entry["source"], engine_scene::schema_path());
     let described = execute(
         &tools,
         &mut engine,

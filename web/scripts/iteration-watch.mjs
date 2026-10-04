@@ -14,8 +14,10 @@ const MAX_BYTES = 128 * 1024 * 1024;
 const MAX_ENTRIES = 40_000;
 const MAX_DEPTH = 64;
 const CHUNK_BYTES = 64 * 1024;
-const TREES = ["crates", "examples", ".cargo"];
-const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "docs/schema/scene-v1.schema.json", "docs/schema/scene-v2.schema.json", "docs/schema/scene-v3.schema.json", "docs/schema/scene-v4.schema.json"];
+// The patched glam (vendor/glam) compiles into every Wasm build; development
+// schemas are generated from crate sources at build time.
+const TREES = ["crates", "examples", ".cargo", "vendor/glam"];
+const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 
 export class SourceWatchError extends Error {
@@ -82,7 +84,21 @@ export async function fingerprintSources(root, options = {}) {
     files.push({ path, stat });
   }
 
+  // Whether every ancestor directory of `path` exists, refusing symlinked or
+  // non-directory ancestors.
+  async function ancestorsPresent(path) {
+    const parts = path.split("/");
+    for (let count = 1; count < parts.length; count++) {
+      const parent = parts.slice(0, count).join("/");
+      const stat = await statPath(root, parent, true);
+      if (!stat) return false;
+      if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", parent);
+    }
+    return true;
+  }
+
   for (const tree of TREES) {
+    if (!(await ancestorsPresent(tree))) continue;
     const stat = await statPath(root, tree, true);
     if (!stat) continue;
     if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", tree);
@@ -110,15 +126,7 @@ export async function fingerprintSources(root, options = {}) {
   }
 
   for (const path of FILES) {
-    const parts = path.split("/");
-    let absent = false;
-    for (let count = 1; count < parts.length; count++) {
-      const parent = parts.slice(0, count).join("/");
-      const stat = await statPath(root, parent, true);
-      if (!stat) { absent = true; break; }
-      if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", parent);
-    }
-    if (absent) continue;
+    if (!(await ancestorsPresent(path))) continue;
     const stat = await statPath(root, path, true);
     if (stat) addFile(path, stat);
   }
