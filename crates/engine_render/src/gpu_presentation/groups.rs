@@ -245,9 +245,11 @@ impl DrawGroups {
             records,
             ..
         } = inputs;
+        // Listed materials replaced in place change the structure revision,
+        // not the plan's draws.
         let key = (
             frame.identity(),
-            frame.structure_revision(),
+            plan.generation(),
             frame.source_revision(),
             gpu.identity,
             *records,

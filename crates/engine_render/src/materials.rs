@@ -30,6 +30,9 @@ pub(crate) struct GpuMaterial {
     group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
     variant: Variant,
+    // The library version the group holds (decision 033): a replaced
+    // material builds its group again.
+    version: u64,
 }
 
 /// Default map textures: white in both color spaces and a flat normal.
@@ -154,20 +157,20 @@ impl MaterialStore {
     ) -> (u64, u32) {
         let mut bytes = 0;
         let mut levels = 0;
+        let built = |materials: &BTreeMap<MaterialHandle, GpuMaterial>, source: &RenderMaterial| {
+            materials
+                .get(&source.handle)
+                .is_some_and(|gpu| gpu.version == source.version)
+        };
         let extra: Vec<&RenderMaterial> = extra
-            .filter(|handle| !self.materials.contains_key(handle))
             .filter_map(|handle| {
                 snapshot
                     .materials
                     .iter()
                     .find(|source| source.handle == handle)
             })
-            .chain(
-                snapshot
-                    .decal_materials
-                    .iter()
-                    .filter(|source| !self.materials.contains_key(&source.handle)),
-            )
+            .chain(&snapshot.decal_materials)
+            .filter(|source| !built(&self.materials, source))
             .collect();
         let sources = plan
             .material_sources
@@ -175,7 +178,7 @@ impl MaterialStore {
             .map(|&index| &snapshot.materials[index])
             .chain(extra);
         for source in sources {
-            if self.materials.contains_key(&source.handle) {
+            if built(&self.materials, source) {
                 continue;
             }
             let material = &source.material;
@@ -207,13 +210,18 @@ impl MaterialStore {
                     entry.insert(gpu);
                 }
             }
-            let gpu = self.create_material(device, material);
+            let gpu = self.create_material(device, material, source.version);
             self.materials.insert(source.handle, gpu);
         }
         (bytes, levels)
     }
 
-    fn create_material(&mut self, device: &wgpu::Device, material: &Material) -> GpuMaterial {
+    fn create_material(
+        &mut self,
+        device: &wgpu::Device,
+        material: &Material,
+        version: u64,
+    ) -> GpuMaterial {
         let defaults = [
             &self.defaults.white_srgb,
             &self.defaults.white_linear,
@@ -238,6 +246,7 @@ impl MaterialStore {
             group: bind_group(device, &self.layout, views, samplers, &uniform),
             _uniform: uniform,
             variant: Variant::of(material),
+            version,
         }
     }
 

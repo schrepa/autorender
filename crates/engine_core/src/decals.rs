@@ -267,6 +267,7 @@ impl DecalExtraction {
                     snapshot.decal_materials.push(RenderMaterial {
                         handle: decal.material,
                         material: *material,
+                        version: assets.material_version(decal.material).unwrap_or(0),
                     });
                     for texture in material.textures() {
                         if !snapshot

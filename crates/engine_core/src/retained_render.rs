@@ -3,6 +3,7 @@
 
 use std::{
     collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,10 +21,10 @@ use glam::Mat4;
 use crate::hierarchy::HierarchyScratch;
 
 use crate::{
-    Aabb, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation, MAX_TRANSFORM_NODES,
-    MaterialBinding, MaterialHandle, Mesh3d, MeshHandle, PresentedTransforms, RenderInstance,
-    RenderJoint, RenderMaterial, RenderMesh, RenderQuery, RenderSnapshot, RenderTexture, Surface,
-    TextureHandle, Tint, Transform, TransformIndex,
+    Aabb, AlphaMode, AssetLibrary, Camera, Cube, GlobalTransforms, GpuPresentation,
+    MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh3d, MeshHandle,
+    PresentedTransforms, RenderInstance, RenderJoint, RenderMaterial, RenderMesh, RenderQuery,
+    RenderSnapshot, RenderTexture, Surface, TextureHandle, Tint, Transform, TransformIndex,
     culling::{Classification, Frustum},
     decals::DecalExtraction,
     hierarchy::ChangeWindow,
@@ -51,6 +52,65 @@ fn changed_in_window<T: Component>(components: &Query<'_, '_, Ref<'static, T>>) 
 }
 
 static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
+
+/// Hashes asset handles and bindings, a few integers each, with one
+/// multiply per word instead of SipHash: structural passes look one up per
+/// object.
+#[derive(Default)]
+struct HandleHasher(u64);
+
+impl Hasher for HandleHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        let mixed = (self.0 ^ value).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        self.0 = mixed ^ (mixed >> 32);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
+type HandleMap<K, V> = HashMap<K, V, BuildHasherDefault<HandleHasher>>;
+
+/// What places a material's objects among draws besides its binding's
+/// contents: its pass, alpha mode, sides and transmission. A replacement
+/// that keeps it keeps its objects' draw keys.
+fn draw_class(material: &Material) -> (bool, u8, bool, bool) {
+    (
+        material.is_transparent(),
+        match material.alpha_mode() {
+            AlphaMode::Opaque => 0,
+            AlphaMode::Mask { .. } => 1,
+            AlphaMode::Blend => 2,
+        },
+        material.is_double_sided(),
+        material.transmission().factor > 0.0,
+    )
+}
+
+/// What a publish changed in the snapshot's source lists.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Published {
+    Unchanged,
+    /// Listed materials' contents, in place: slots keep their draw keys.
+    Contents,
+    /// The meshes or materials listed.
+    Sources,
+}
 
 /// An affine model matrix as its transposed top three rows: row `r` holds the
 /// three basis coefficients and the translation of world coordinate `r`. This
@@ -118,8 +178,10 @@ impl<'a> RenderFrame<'a> {
     pub fn structure_revision(self) -> u64 {
         self.owner.structure_revision
     }
-    /// Slot ownership, mesh/texture keys and source-array revision. Visibility
-    /// changes alone preserve this stamp so renderers can retain slot buckets.
+    /// Slot ownership, draw keys and the listed meshes and materials.
+    /// Visibility changes alone preserve this stamp so renderers can retain
+    /// slot buckets, and so do listed materials replaced in place (decision
+    /// 033), which advance only [`Self::structure_revision`].
     pub fn source_revision(self) -> u64 {
         self.owner.source_revision
     }
@@ -368,16 +430,21 @@ struct Sources {
     // Materials with maps (decision 031) and the textures they read.
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
-    mesh_indices: HashMap<MeshHandle, usize>,
+    mesh_indices: HandleMap<MeshHandle, usize>,
     // Materials with maps to their binding's index in `materials`, which
     // holds the first material of each binding (decision 031).
-    material_indices: HashMap<MaterialHandle, usize>,
-    binding_indices: HashMap<MaterialBinding, usize>,
-    texture_indices: HashMap<TextureHandle, usize>,
+    material_indices: HandleMap<MaterialHandle, usize>,
+    binding_indices: HandleMap<MaterialBinding, usize>,
+    texture_indices: HandleMap<TextureHandle, usize>,
+    // The version each object's material resolved at, with maps or not
+    // (decision 033): a replacement re-resolves only its objects.
+    versions: HandleMap<MaterialHandle, u64>,
     mesh_used: Vec<bool>,
     material_used: Vec<bool>,
     previous_mesh_used: Vec<bool>,
     previous_material_used: Vec<bool>,
+    // Listed materials changed in place since the last publish.
+    contents_changed: bool,
     // Publishing scratch: textures already listed.
     texture_listed: Vec<bool>,
 }
@@ -393,10 +460,12 @@ impl Sources {
         self.material_indices.clear();
         self.binding_indices.clear();
         self.texture_indices.clear();
+        self.versions.clear();
         self.mesh_used.clear();
         self.material_used.clear();
         self.previous_mesh_used.clear();
         self.previous_material_used.clear();
+        self.contents_changed = false;
     }
 
     fn resolve(
@@ -409,6 +478,8 @@ impl Sources {
     ) -> Option<ResolvedSource> {
         let (handle, color, mapped, surface) = if let Some(mesh3d) = mesh3d {
             let material = assets.material(mesh3d.material)?;
+            let version = assets.material_version(mesh3d.material).unwrap_or(0);
+            self.versions.insert(mesh3d.material, version);
             (
                 mesh3d.mesh,
                 material.color(),
@@ -461,6 +532,7 @@ impl Sources {
                         self.materials.push(RenderMaterial {
                             handle: material_handle,
                             material: *material,
+                            version: assets.material_version(material_handle).unwrap_or(0),
                         });
                         self.material_used.push(false);
                         self.materials.len() - 1
@@ -477,13 +549,118 @@ impl Sources {
         })
     }
 
-    fn publish(&mut self, snapshot: &mut RenderSnapshot, force: bool) -> bool {
-        if !force
-            && self.mesh_used == self.previous_mesh_used
-            && self.material_used == self.previous_material_used
+    /// Materials replaced since their objects resolved (decision 033). A
+    /// replaced material alone drawing as its binding is updated in place
+    /// when its draw class stands; every other one forgets its binding, and
+    /// a binding it held forgets the materials drawing as it. Returns the
+    /// materials whose objects resolve again.
+    fn replaced(&mut self, assets: &AssetLibrary) -> Vec<MaterialHandle> {
+        let mut handles = Vec::new();
+        for (&handle, version) in &mut self.versions {
+            let current = assets.material_version(handle);
+            if current != Some(*version) {
+                *version = current.unwrap_or(u64::MAX);
+                handles.push(handle);
+            }
+        }
+        for position in 0..handles.len() {
+            let handle = handles[position];
+            // Objects without maps follow on their own when they resolve.
+            let Some(&index) = self.material_indices.get(&handle) else {
+                continue;
+            };
+            if self.update_in_place(assets, handle, index) {
+                continue;
+            }
+            self.material_indices.remove(&handle);
+            let source = self.materials[index];
+            if source.handle != handle {
+                continue;
+            }
+            // The binding drew as this material's old contents.
+            if let Some(binding) = source.material.binding()
+                && self.binding_indices.get(&binding) == Some(&index)
+            {
+                self.binding_indices.remove(&binding);
+            }
+            let sharing: Vec<MaterialHandle> = self
+                .material_indices
+                .iter()
+                .filter(|&(_, &other)| other == index)
+                .map(|(&other, _)| other)
+                .collect();
+            for other in sharing {
+                self.material_indices.remove(&other);
+                if !handles.contains(&other) {
+                    handles.push(other);
+                }
+            }
+        }
+        handles
+    }
+
+    /// Updates listed material `index`, which replaced `handle` alone draws
+    /// as, to `handle`'s contents when its draw class stands: its objects
+    /// keep their draw keys, and only the listed contents change.
+    fn update_in_place(
+        &mut self,
+        assets: &AssetLibrary,
+        handle: MaterialHandle,
+        index: usize,
+    ) -> bool {
+        let Some(material) = assets.material(handle) else {
+            return false;
+        };
+        let source = self.materials[index];
+        if source.handle != handle
+            || !material.has_maps()
+            || draw_class(&source.material) != draw_class(material)
+            || material
+                .textures()
+                .any(|texture| assets.texture(texture).is_none())
+            || self
+                .material_indices
+                .iter()
+                .any(|(&other, &other_index)| other_index == index && other != handle)
         {
             return false;
         }
+        if let Some(binding) = source.material.binding()
+            && self.binding_indices.get(&binding) == Some(&index)
+        {
+            self.binding_indices.remove(&binding);
+        }
+        let binding = material.binding().expect("materials with maps bind");
+        self.binding_indices.entry(binding).or_insert(index);
+        for texture in material.textures() {
+            self.texture_indices.entry(texture).or_insert_with(|| {
+                self.textures.push(RenderTexture {
+                    handle: texture,
+                    texture: Arc::clone(assets.texture(texture).expect("checked above")),
+                });
+                self.textures.len() - 1
+            });
+        }
+        self.materials[index] = RenderMaterial {
+            handle,
+            material: *material,
+            version: assets.material_version(handle).unwrap_or(0),
+        };
+        self.contents_changed = true;
+        true
+    }
+
+    /// Lists the used sources in `snapshot` when they changed: `Sources`
+    /// when the used meshes or materials changed (or `force`), `Contents`
+    /// when only listed materials changed in place.
+    fn publish(&mut self, snapshot: &mut RenderSnapshot, force: bool) -> Published {
+        let sets_changed = force
+            || self.mesh_used != self.previous_mesh_used
+            || self.material_used != self.previous_material_used;
+        if !sets_changed && !self.contents_changed {
+            return Published::Unchanged;
+        }
+        self.contents_changed = false;
         snapshot.meshes.clear();
         snapshot.materials.clear();
         snapshot.textures.clear();
@@ -513,7 +690,11 @@ impl Sources {
         }
         self.previous_mesh_used.clone_from(&self.mesh_used);
         self.previous_material_used.clone_from(&self.material_used);
-        true
+        if sets_changed {
+            Published::Sources
+        } else {
+            Published::Contents
+        }
     }
 }
 
@@ -550,6 +731,7 @@ pub(crate) struct RetainedRender {
     pose_rows: Vec<PoseRows>,
     color_changes: Vec<u64>,
     asset_revision: Option<(u64, u64)>,
+    material_revision: Option<u64>,
     sources: Sources,
     last_scan: Option<Tick>,
     view: Option<([u32; 16], bool)>,
@@ -619,6 +801,7 @@ impl RetainedRender {
             pose_rows: Vec::new(),
             color_changes: Vec::new(),
             asset_revision: None,
+            material_revision: None,
             sources: Sources::default(),
             last_scan: None,
             view: None,
@@ -1005,10 +1188,17 @@ impl RetainedRender {
         let assets = world.resource::<AssetLibrary>();
         let revision = assets.revision();
         let assets_changed = self.asset_revision != Some(revision) || revision.1 == u64::MAX;
+        let material_revision = assets.material_revision();
+        // Objects whose materials were replaced in place resolve again.
+        let mut replaced = Vec::new();
         if assets_changed {
             self.sources.clear();
             self.asset_revision = Some(revision);
+        } else if self.material_revision != Some(material_revision) || material_revision == u64::MAX
+        {
+            replaced = self.sources.replaced(assets);
         }
+        self.material_revision = Some(material_revision);
         let view = world.resource::<Camera>().view_projection(aspect);
         self.snapshot.view_projection = view;
         crate::effects::extract_lighting(world, &mut self.snapshot);
@@ -1020,10 +1210,11 @@ impl RetainedRender {
             && !assets_changed
             && !stamps_changed
             && total == self.snapshot.render_candidates
+            && (replaced.is_empty() || self.refresh_replaced(world, query, &replaced))
         {
-            // Same renderables, sources, assets and node indices: candidates,
-            // slots and colors are unchanged, and the GPU culls. Only the camera
-            // moves on to this frame.
+            // Same renderables, sources, assets and node indices: candidates
+            // and slots are unchanged, and the GPU culls. Only the camera and
+            // replaced materials' objects move on to this frame.
             self.snapshot.missing_assets = self.missing_sources;
             engine_profile::counter("extraction.gpu_structure_reused", 1.0);
             return;
@@ -1054,8 +1245,14 @@ impl RetainedRender {
                 tint.as_ref().map(|value| value.last_changed()),
             );
             // Every live slot is (re)resolved when assets change or the window
-            // ages; new owners start from an unknown source key.
-            let source_changed = aged || assets_changed || self.frames[index].source != source;
+            // ages, and objects of replaced materials; new owners start from
+            // an unknown source key.
+            let source_changed = aged
+                || assets_changed
+                || self.frames[index].source != source
+                || mesh3d
+                    .as_ref()
+                    .is_some_and(|mesh3d| replaced.contains(&mesh3d.material));
             if source_changed {
                 self.frames[index].source = source;
                 let resolved = self.sources.resolve(
@@ -1080,6 +1277,66 @@ impl RetainedRender {
             }
         }
         self.finish_pass(pass, assets_changed, gpu, globals.topology_revision);
+    }
+
+    /// Re-resolves the objects of `replaced` materials on a GPU-presented
+    /// frame that keeps its candidates: their colors, surfaces and draw
+    /// keys, and the sources listed. False, for the full pass to run, when
+    /// one of them lost its sources.
+    fn refresh_replaced(
+        &mut self,
+        world: &World,
+        query: &mut RenderQuery,
+        replaced: &[MaterialHandle],
+    ) -> bool {
+        let assets = world.resource::<AssetLibrary>();
+        let mut pass = Pass::default();
+        let mut moved = false;
+        for (entity, _, cube, mesh3d, tint) in query.iter(world) {
+            let Some(mesh3d) = mesh3d.as_deref() else {
+                continue;
+            };
+            if !replaced.contains(&mesh3d.material) {
+                continue;
+            }
+            let Some(&index) = self.entities.get(&entity) else {
+                continue;
+            };
+            let before = self.frames[index];
+            let resolved = self.sources.resolve(
+                assets,
+                self.cube_mesh,
+                cube.as_deref(),
+                Some(mesh3d),
+                tint.as_deref(),
+            );
+            if resolved.is_none() {
+                return false;
+            }
+            self.apply_source(index, resolved, &mut pass);
+            moved |= self.frames[index].material != before.material;
+        }
+        if moved {
+            // Listed candidates use the sources: mark them again.
+            self.sources.mesh_used.fill(false);
+            self.sources.material_used.fill(false);
+            for position in 0..self.visible.len() {
+                self.mark_used(self.frames[self.visible[position]]);
+            }
+        }
+        let published = self.sources.publish(&mut self.snapshot, false);
+        let sequence = self.sequence;
+        if pass.structure_changed || published != Published::Unchanged {
+            self.structure_revision = sequence;
+        }
+        if pass.sources_changed || published == Published::Sources {
+            self.source_revision = sequence;
+        }
+        if pass.colors != 0 {
+            self.color_revision = sequence;
+        }
+        engine_profile::counter("extraction.retained_resolved", pass.resolved as f64);
+        true
     }
 
     /// Whether the camera's view or culling changed since the last
@@ -1355,11 +1612,11 @@ impl RetainedRender {
             }
             self.forget_freed_rows();
         }
-        let ownership_changed = self.sources.publish(&mut self.snapshot, assets_changed);
-        if pass.structure_changed || ownership_changed {
+        let published = self.sources.publish(&mut self.snapshot, assets_changed);
+        if pass.structure_changed || published != Published::Unchanged {
             self.structure_revision = sequence;
         }
-        if pass.sources_changed || ownership_changed {
+        if pass.sources_changed || published == Published::Sources {
             self.source_revision = sequence;
         }
         if pass.poses != 0 {

@@ -271,10 +271,13 @@ pub struct RenderTexture {
 
 /// One referenced material with maps (decision 031), copied so it outlives
 /// its library entry; its textures are in [`RenderSnapshot::textures`].
+/// `version` is its [`engine_assets::AssetLibrary::material_version`]: renderers
+/// keep what they built from a handle while its version stands.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderMaterial {
     pub handle: MaterialHandle,
     pub material: Material,
+    pub version: u64,
 }
 
 impl RenderInstance {
