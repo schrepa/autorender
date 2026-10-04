@@ -249,6 +249,41 @@ impl DevTools {
             InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity (decision 043) as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
             |probe| json!(SceneReflectionProbe::from(probe)),
         ).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity (decision 051) as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material and collision, with its streaming state: resident tiles by level.", schemas["Terrain"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())),
+            read: Box::new(|world, entity, _scene| {
+                let entity = entity?;
+                let terrain = world.get::<engine_core::Terrain>(entity)?;
+                let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
+                if let Some(terrains) = world.get_resource::<engine_core::Terrains>() {
+                    for tile in terrains.tiles(entity) {
+                        levels[usize::from(tile.key().level)] += 1;
+                    }
+                }
+                Some(json!(crate::views::TerrainView {
+                    terrain: engine_scene::SceneTerrain::from_runtime(terrain, None),
+                    levels: terrain.pyramid.levels(),
+                    extent: terrain.pyramid.extent().to_array(),
+                    resident_tiles_by_level: levels,
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::Terrains>(
+            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains, resident and loading tiles, tiles dropped by the budget or the device, patches drawn and patches standing in for finer levels not resident yet. Query heights with terrain_height and compare queries, collision and layers with terrain_sweep.", schemas["Terrains"].clone()),
+            |terrains| {
+                let stats = terrains.stats();
+                json!(crate::views::TerrainsView {
+                    terrains: stats.terrains,
+                    resident_tiles: stats.resident_tiles,
+                    loading_tiles: stats.loading_tiles,
+                    dropped_tiles: stats.dropped_tiles,
+                    patches: stats.patches,
+                    fallback_patches: stats.fallback_patches,
+                })
+            },
+        ).expect("built-in descriptor is bounded");
         self.register_component::<ParticleEmitter>(
             InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
                 .with_default(json!(SceneEmitter::default())),
@@ -373,6 +408,9 @@ fn section_description(name: &str) -> &'static str {
         }
         "virtual_geometry" => {
             "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections."
+        }
+        "terrain" => {
+            "Terrain settings (decision 051): whether terrains draw, their level of detail's pixel error, the coarsest levels kept resident everywhere, an optional tile budget, per-frame tile work, and the collision radius around the camera and focus entities. Missing means no terrain draws. The rendering observation reports terrain patches, triangles and shadow patches, and resident, loading and dropped tiles."
         }
         "level_of_detail" => {
             "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
@@ -508,6 +546,9 @@ impl DevTools {
         if crate::collision::spatial_request(&request) {
             return crate::collision::execute(engine, scene, request);
         }
+        if crate::terrain::terrain_request(&request) {
+            return crate::terrain::execute(engine, scene, request);
+        }
         if let DevRequest::Inspect {
             component: Some(component),
             entity,
@@ -595,7 +636,9 @@ impl DevTools {
             DevRequest::Raycast { .. }
             | DevRequest::Overlap { .. }
             | DevRequest::ShapeCast { .. }
-            | DevRequest::CollisionEvents { .. } => unreachable!("spatial requests return above"),
+            | DevRequest::CollisionEvents { .. }
+            | DevRequest::TerrainHeight { .. }
+            | DevRequest::TerrainSweep { .. } => unreachable!("spatial requests return above"),
         }
     }
 
@@ -618,7 +661,7 @@ impl DevTools {
                 )))
                 .expect("generated schemas are JSON");
                 Ok(
-                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; mutations, capture and benchmark require a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit; casts translate with fixed orientation. Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
+                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; mutations, capture and benchmark require a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096 (decision 051). Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals or tiles. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
                 )
             }
             _ => {

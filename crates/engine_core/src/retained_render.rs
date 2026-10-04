@@ -288,6 +288,7 @@ impl<'a> RenderFrame<'a> {
             dropped_decals,
             reflection_probes,
             dropped_reflection_probes,
+            terrain,
             instances,
             joints,
             meshes,
@@ -335,6 +336,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.dropped_decals = *dropped_decals;
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.dropped_reflection_probes = *dropped_reflection_probes;
+        snapshot.terrain.clone_from(terrain);
         snapshot.instances.clear();
         snapshot
             .instances
@@ -1118,6 +1120,16 @@ impl RetainedRender {
     /// Lists the frame's reflection probes (decision 043).
     pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {
         probes.extract(world, &mut self.snapshot);
+    }
+
+    /// Lists the frame's terrains (decision 051).
+    pub(crate) fn extract_terrain(
+        &mut self,
+        world: &World,
+        terrain: &mut crate::terrain::TerrainExtraction,
+        aspect: f32,
+    ) {
+        terrain.extract(world, aspect, &mut self.snapshot);
     }
 
     /// Creates the source stamp window used by GPU-presented frames.

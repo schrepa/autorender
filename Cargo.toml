@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "examples/orbit-demo", "examples/playground", "examples/stress-lab", "tools/xtask", "tools/assetc", "tools/vgbuild"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_assets", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_profile", "crates/engine_terrain", "examples/orbit-demo", "examples/playground", "examples/stress-lab", "tools/xtask", "tools/assetc", "tools/vgbuild"]
 resolver = "3"
 # The vendored glam copy is patched in below, not a workspace member.
 exclude = ["vendor"]
@@ -16,6 +16,7 @@ engine_core = { path = "crates/engine_core" }
 engine_math = { path = "crates/engine_math" }
 engine_profile = { path = "crates/engine_profile" }
 engine_collision = { path = "crates/engine_collision" }
+engine_terrain = { path = "crates/engine_terrain" }
 parry3d = { version = "=0.26.1", default-features = false, features = ["required-features", "std", "alloc"] }
 engine_render = { path = "crates/engine_render" }
 engine_assets = { path = "crates/engine_assets" }

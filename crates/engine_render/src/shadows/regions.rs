@@ -109,7 +109,7 @@ impl Regions {
 
     /// World to clip space of each map: every near cascade's (the far
     /// region's where unused), then the far maps'.
-    fn clips(
+    pub(super) fn clips(
         &self,
     ) -> (
         [engine_core::glam::Mat4; MAX_CASCADES],

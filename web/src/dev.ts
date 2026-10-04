@@ -89,13 +89,14 @@ export function connectDevelopment(host: Host): () => void {
           case "camera":
           case "culling":
           case "environment":
+          case "terrain":
           case "present":
           case "benchmark":
           case "step":
           case "render":
           case "capture":
           case "reload": {
-            if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling/environment edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
+            if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling/environment/terrain edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
             const checked = ["benchmark", "capture", "reload"].includes(command.op) ? validated(command) : undefined;
             if (checked && !checked.ok) return checked;
             const control = checked?.control ?? command;

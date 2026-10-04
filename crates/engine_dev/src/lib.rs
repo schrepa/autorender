@@ -9,6 +9,7 @@ mod controls;
 mod error;
 mod inspect;
 mod protocol;
+mod terrain;
 mod views;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -19,7 +20,7 @@ pub use error::DevError;
 pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
-    CollisionShapeRequest, DevRequest,
+    CollisionShapeRequest, DevRequest, TerrainViewRequest,
 };
 
 /// Initial development protocol version, independent of scene format versions.

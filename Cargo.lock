@@ -565,9 +565,11 @@ dependencies = [
  "engine_profile",
  "engine_render",
  "engine_scene",
+ "js-sys",
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -616,6 +618,7 @@ dependencies = [
  "engine_assets",
  "engine_math",
  "engine_profile",
+ "engine_terrain",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -674,6 +677,16 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_terrain"
+version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
 ]
 
 [[package]]

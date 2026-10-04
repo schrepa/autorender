@@ -143,6 +143,21 @@ impl Camera {
     /// Invalid aspect/lens values fall back to sensible defaults; a coincident
     /// target looks down -Z and a vertical direction uses Z as the up axis.
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
+        let (projection, position, direction, up) = self.lens(aspect);
+        projection * Mat4::look_to_rh(position, direction, up)
+    }
+
+    /// [`Self::view_projection`] seen from the origin: the view and
+    /// projection of positions relative to the eye (camera-relative
+    /// rendering), exact however far the eye is from the world's origin.
+    pub fn relative_view_projection(&self, aspect: f32) -> Mat4 {
+        let (projection, _, direction, up) = self.lens(aspect);
+        projection * Mat4::look_to_rh(Vec3::ZERO, direction, up)
+    }
+
+    /// The projection, eye, view direction and up axis of
+    /// [`Self::view_projection`], invalid values replaced.
+    fn lens(&self, aspect: f32) -> (Mat4, Vec3, Vec3, Vec3) {
         let defaults = Self::default();
         let aspect = if aspect.is_finite() && aspect > 0.0 {
             aspect
@@ -182,7 +197,12 @@ impl Camera {
             Vec3::Y
         };
         // Swapping the planes reverses depth.
-        Mat4::perspective_rh(fov, aspect, far, near) * Mat4::look_to_rh(position, direction, up)
+        (
+            Mat4::perspective_rh(fov, aspect, far, near),
+            position,
+            direction,
+            up,
+        )
     }
 }
 
@@ -327,6 +347,9 @@ pub struct RenderSnapshot {
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,
     /// Usable probes beyond the budget.
     pub dropped_reflection_probes: usize,
+    /// This frame's terrains (decision 051): their resident tiles and the
+    /// patches the camera draws.
+    pub terrain: crate::RenderTerrains,
     /// Every instance's `color[3]` is its opacity (decision 026); see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,

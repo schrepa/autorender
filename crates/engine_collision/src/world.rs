@@ -10,6 +10,7 @@ use glam::{Mat4, Vec3};
 use crate::{
     bvh::Bvh,
     geometry::{AffineShape, Bounds, NarrowScratch, intersects},
+    terrain::TerrainFields,
     types::*,
 };
 
@@ -25,11 +26,16 @@ pub(crate) struct CollisionSync<'w, 's> {
     config: Res<'w, CollisionConfig>,
     frame: Option<Res<'w, FrameTime>>,
     tick: Option<Res<'w, FixedTime>>,
+    terrains: Option<Res<'w, engine_core::Terrains>>,
     collisions: ResMut<'w, CollisionWorld>,
 }
 
 impl CollisionSync<'_, '_> {
     fn refresh(&mut self) -> CollisionReport {
+        // Terrain heightfields (decision 051) follow the resident tiles.
+        if self.collisions.terrain.sync(self.terrains.as_deref()) {
+            self.collisions.report.terrain_tiles = self.collisions.terrain.len();
+        }
         self.collisions.refresh(
             *self.config,
             self.frame.as_ref().map_or(0, |time| time.frame),
@@ -107,6 +113,7 @@ pub struct CollisionWorld {
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
     last_error: Option<CollisionError>,
+    terrain: TerrainFields,
 }
 
 impl FromWorld for CollisionWorld {
@@ -123,6 +130,7 @@ impl FromWorld for CollisionWorld {
             next_pairs: Vec::new(),
             report: CollisionReport::default(),
             last_error: None,
+            terrain: TerrainFields::default(),
         }
     }
 }
@@ -321,6 +329,11 @@ impl CollisionWorld {
                 }
             }
         }
+        if let Some(hit) = self.terrain.ray(ray, filter)
+            && nearest.is_none_or(|old| (hit.distance, hit.entity) < (old.distance, old.entity))
+        {
+            nearest = Some(hit);
+        }
         Ok(nearest)
     }
 
@@ -362,6 +375,10 @@ impl CollisionWorld {
                         started_inside,
                     });
                 }
+            }
+            self.terrain.ray_all(ray, filter, output);
+            if output.len() > limit {
+                return Err(CollisionError::ResultBudget);
             }
             output.sort_unstable_by(|a, b| {
                 a.distance
@@ -408,6 +425,10 @@ impl CollisionWorld {
                     }
                     output.push(entry.entity);
                 }
+            }
+            self.terrain.overlap(&shape, filter, output)?;
+            if output.len() > limit {
+                return Err(CollisionError::ResultBudget);
             }
             output.sort_unstable();
             Ok(())
@@ -460,6 +481,11 @@ impl CollisionWorld {
                     nearest = Some(hit);
                 }
             }
+        }
+        if let Some(hit) = self.terrain.cast(&shape, displacement, filter, options)?
+            && nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity))
+        {
+            nearest = Some(hit);
         }
         Ok(nearest)
     }

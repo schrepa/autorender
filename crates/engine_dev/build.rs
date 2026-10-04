@@ -33,6 +33,8 @@ fn main() {
         "Environment": schemars::schema_for!(engine_scene::SceneEnvironment),
         "Decal": schemars::schema_for!(views::DecalView),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
+        "Terrain": schemars::schema_for!(views::TerrainView),
+        "Terrains": schemars::schema_for!(views::TerrainsView),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!([f32; 4]),

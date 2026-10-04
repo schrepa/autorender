@@ -572,6 +572,19 @@ pub(crate) const SHADOW_SKINNED: Table = Table {
     ],
 };
 
+/// Group 1 of terrain pipelines (decision 051; `meshes/terrain_vertex.wgsl`):
+/// the height array, each view's eye-relative projection and each
+/// terrain's anchor and material, the uniforms at dynamic offsets.
+pub(crate) const TERRAIN: Table = Table {
+    label: "engine/terrain-layout",
+    bindings: &[
+        texture(17, "terrain_heights", Unfilterable, D2Array, V),
+        dynamic_uniform(18, "terrain_view", 80, V),
+        dynamic_uniform(19, "terrain", 112, VF),
+        read(20, "terrain_holes", F),
+    ],
+};
+
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",

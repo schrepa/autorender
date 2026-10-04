@@ -17,8 +17,26 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 17] {
+fn rules() -> [Rule; 19] {
     [
+        Rule {
+            since: 9,
+            what: "terrains",
+            first_use: |document| {
+                document.entity_use(|entity| entity.terrain.is_some().then_some("terrain"))
+            },
+        },
+        Rule {
+            since: 9,
+            what: "terrain settings",
+            first_use: |document| {
+                document
+                    .environment
+                    .as_ref()?
+                    .section_since(9)
+                    .map(|section| format!("$.environment.{section}"))
+            },
+        },
         Rule {
             since: 8,
             what: "glTF material maps, texture settings, emissive colors, alpha modes, double-sided materials and transmission",

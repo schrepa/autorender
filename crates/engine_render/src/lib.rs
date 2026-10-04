@@ -144,6 +144,18 @@ pub struct RenderStats {
     pub virtual_loading_pages: u32,
     pub virtual_missing_pages: u32,
     pub dropped_virtual_pages: u32,
+    /// Terrain (decision 051): patches and triangles the camera drew, and
+    /// patches drawn into shadow maps; tiles resident on the GPU, tiles
+    /// still generating or loading, and tiles dropped by the tile budget or
+    /// the device's texture array layers; patches standing in for finer
+    /// levels not resident yet.
+    pub terrain_patches: u32,
+    pub terrain_triangles: u32,
+    pub terrain_shadow_patches: u32,
+    pub terrain_tiles: u32,
+    pub terrain_loading_tiles: u32,
+    pub dropped_terrain_tiles: u32,
+    pub terrain_fallback_patches: u32,
     /// The passes this frame ran, in order (decision 050), named in the
     /// JSON.
     #[serde(
@@ -216,6 +228,8 @@ mod staging;
 mod targets;
 #[cfg(target_arch = "wasm32")]
 mod temporal;
+#[cfg(target_arch = "wasm32")]
+mod terrain;
 #[cfg(target_arch = "wasm32")]
 mod transparent;
 #[cfg(target_arch = "wasm32")]

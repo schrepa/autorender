@@ -369,6 +369,8 @@ pub struct CollisionReport {
     pub bvh_nodes: usize,
     pub cache_bytes: usize,
     pub complete: bool,
+    /// Terrain tiles colliding as heightfields (decision 051).
+    pub terrain_tiles: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
