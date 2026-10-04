@@ -1,7 +1,7 @@
 use engine_collision::{Collider, CollisionConfig, CollisionPlugin, CollisionWorld, SensorEvents};
 use engine_core::{
     ActionId, ActionInput, Engine, FixedSimulation, FixedTime, FrameTime, InterpolateTransform,
-    PresentationMode, PresentedTransforms, RenderSnapshot, Transform, TransformEdits,
+    PresentationMode, PresentedTransforms, RenderSnapshot, Transform,
     bevy_ecs::{self, prelude::*},
     edit_transform,
     glam::Vec3,
@@ -134,12 +134,9 @@ fn queries_ignore_presented_poses_and_preserve_input_events_and_extraction_ident
     engine.app.add_systems(
         FixedSimulation,
         (
-            |transforms: Query<(Entity, &Transform), With<InterpolateTransform>>,
-             mut edits: TransformEdits| {
-                for (entity, transform) in &transforms {
-                    edits
-                        .edit(entity, transform, |pose| pose.translation.x += 8.0)
-                        .unwrap();
+            |mut transforms: Query<&mut Transform, With<InterpolateTransform>>| {
+                for mut transform in &mut transforms {
+                    transform.translation.x += 8.0;
                 }
             },
             |input: Res<ActionInput>, mut edges: ResMut<JumpEdges>| {

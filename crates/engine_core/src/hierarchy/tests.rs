@@ -394,12 +394,8 @@ fn exact_development_ticks_refresh_globals_before_observation() {
     set_parent(engine.app.world_mut(), child, Some(parent)).unwrap();
     engine.app.add_systems(
         FixedSimulation,
-        move |transforms: Query<&Transform>, mut edits: TransformEdits| {
-            edits
-                .edit(parent, transforms.get(parent).unwrap(), |transform| {
-                    transform.translation.x += 1.0;
-                })
-                .unwrap();
+        move |mut transforms: Query<&mut Transform>| {
+            transforms.get_mut(parent).unwrap().translation.x += 1.0;
         },
     );
     engine.step_fixed(3).unwrap();
@@ -1271,11 +1267,12 @@ fn moving_an_ancestor_updates_its_descendants_without_rewriting_a_sibling_branch
         rotation: Quat::from_rotation_z(0.5),
         scale: Vec3::new(2.0, 1.0, 3.0),
     };
-    engine
-        .app
-        .add_systems(FixedSimulation, move |mut edits: TransformEdits| {
-            edits.set(ancestor, replacement).unwrap();
-        });
+    engine.app.add_systems(
+        FixedSimulation,
+        move |mut transforms: Query<&mut Transform>| {
+            *transforms.get_mut(ancestor).unwrap() = replacement;
+        },
+    );
     // Record change notifications before Engine ends the frame and clears them.
     engine.app.add_systems(Presentation, |world: &mut World| {
         let changed = changed_globals(world);

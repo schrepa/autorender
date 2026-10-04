@@ -181,7 +181,7 @@ Changes to tracked local poses outside a fixed tick snap that branch's local
 histories, including presentation-system and paused direct writes. Marker/local
 component removal and reinsertion, and entity generation changes, discard
 incompatible history. Ordinary mutable queries, `edit_transform`, and replacing
-an existing `Transform` with `insert` or `TransformEdits` preserve its added tick.
+an existing `Transform` with `insert` preserve its added tick.
 Bevy's `World::modify_component` resets that lifetime; use mutable access or the
 helpers for ordinary interpolated motion.
 `set_parent`/`set_parents` reset tracked descendants of changed relationships,
@@ -360,17 +360,8 @@ Their engine-owned resources expose no matrix mutation API. `Parent` stays
 immutable and uses the checked helpers below. No special plugin registration or
 app wrapper is required. See the [typed-read migration](../../docs/migrations/0.1-canonical-poses.md).
 
-`TransformEdits` remains available when deferred replacement and its component
-lifecycle observers are needed. Read a pose, then queue an edited copy through
-this system parameter. Its `set`/`edit` methods return
-`CapacityExceeded` after 262,144 accepted replacements per system between apply
-points. `set_batch` rejects the whole new batch on overflow, retaining earlier
-accepted edits. Edits apply in submission order; copies based on the same old
-pose do not compose automatically. Missing targets at application are skipped.
-
-`TransformEdits` uses one reusable deferred buffer. It applies at ordinary Bevy
-sync points and schedule ends; chain dependent systems before reading queued
-changes. `edit_transform(world, entity, closure)` immediately edits an existing
+Systems edit poses through ordinary `Query<&mut Transform>`.
+`edit_transform(world, entity, closure)` immediately edits an existing
 pose in place, returns `MissingEntity`/`MissingTransform` when appropriate, and
 skips a bit-identical result. It does not emit insertion observers. Refresh
 globals before inspecting derived data after an immediate edit. Normal
@@ -433,7 +424,7 @@ while invalid local-pose repair remains independent of ancestry validity.
 
 Global propagation publishes changed canonical values without an ECS output pass.
 Use the named boundaries or store output revisions to observe world motion;
-`Changed<GlobalTransform>` no longer applies. Explicit local replacements, including `TransformEdits`,
+`Changed<GlobalTransform>` no longer applies. Explicit local replacements (`insert`)
 still invoke ordinary lifecycle observers. Pending observer commands are flushed
 before source scanning. No schedule or plugin extension boundary is skipped.
 

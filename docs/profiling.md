@@ -70,8 +70,8 @@ compare unchanged-boundary durations across that change with care. The source lo
 so its duration includes that work. No per-entity timers are added to separate
 those operations. Successful propagation acknowledges the source scan before
 advancing the ECS tick; no derived-component writes need acknowledgement.
-`apply_transform_edits` measures deferred replacements only when a caller uses
-that API; direct mutable-query gameplay needs no edit buffer or apply phase.
+Gameplay edits poses through mutable queries, with no edit buffer or apply phase
+(older captures' `apply_transform_edits` measured the removed deferred API).
 
 `evaluate_dirty` evaluates changed branches and publishes canonical matrices.
 Decision 013 removes the separate `write_globals` ECS publication span and the
@@ -98,11 +98,7 @@ and `memory.transform_journal_bytes` describe the superseded replacement journal
 and are no longer emitted. Compare full simulation/propagation totals across
 this architecture change rather than equating individual renamed scopes.
 
-`transform_edits.queued`, `.applied` and `.skipped` remain available for the
-optional deferred replacement API. Targets missing at admission are skipped;
-capacity rejection happens while queueing and never drops accepted work.
-`transform_edits.buffer_capacity_bytes` is one system's retained buffer, not a
-sum across systems. `memory.global_write_buffer_bytes` is no longer emitted:
+Older captures' `transform_edits.*` counters measured the removed deferred API. `memory.global_write_buffer_bytes` is no longer emitted:
 canonical output eliminated the separate publication buffer it measured (older
 captures counted retained changed-node indices or payload/suppression batches
 there).

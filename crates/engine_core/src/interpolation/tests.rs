@@ -46,14 +46,9 @@ fn assert_matrix(actual: Mat4, expected: Mat4) {
     );
 }
 
-fn move_x(
-    transforms: Query<(Entity, &Transform), With<InterpolateTransform>>,
-    mut edits: TransformEdits,
-) {
-    for (entity, transform) in &transforms {
-        edits
-            .edit(entity, transform, |pose| pose.translation.x += 1.0)
-            .unwrap();
+fn move_x(mut transforms: Query<&mut Transform, With<InterpolateTransform>>) {
+    for mut transform in &mut transforms {
+        transform.translation.x += 1.0;
     }
 }
 
