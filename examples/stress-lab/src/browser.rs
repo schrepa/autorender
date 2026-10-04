@@ -83,7 +83,7 @@ impl StressGame {
             effects: "all".into(),
             level_of_detail: true,
             impostors: true,
-            visibility_buffer: true,
+            visibility_buffer: false,
             #[cfg(feature = "dev")]
             development: development_tools(),
         })
@@ -317,7 +317,7 @@ impl StressGame {
         self.apply_world_settings();
     }
     /// Whether virtual geometry shades through the visibility buffer
-    /// (decision 045, on by default) or as it draws, in this and later
+    /// (decision 045) or as it draws (the default), in this and later
     /// workloads.
     pub fn set_visibility_buffer(&mut self, enabled: bool) {
         self.visibility_buffer = enabled;

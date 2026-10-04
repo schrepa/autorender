@@ -269,9 +269,9 @@ const taa = params.get("taa") === "on" ? "on" : "off";
 // ?subpixel=off also those covering no pixel center (decision 041), for A/B.
 const occlusion = params.get("occlusion") === "off" ? "off" : "on";
 const subpixel = params.get("subpixel") === "off" ? "off" : "on";
-// ?visibility=off shades virtual geometry as it draws instead of through the
-// visibility buffer (decision 045).
-const visibility = params.get("visibility") === "off" ? "off" : "on";
+// ?visibility=on shades virtual geometry through the visibility buffer
+// (decision 045) instead of as it draws, for A/B.
+const visibility = params.get("visibility") === "on" ? "on" : "off";
 // ?lod=off draws every instance as its mesh instead of at its level of
 // detail (decision 047), for A/B.
 const lod = params.get("lod") === "off" ? "off" : "on";

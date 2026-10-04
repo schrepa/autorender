@@ -2406,7 +2406,7 @@
           "minimum": 0.25
         },
         "visibility_buffer": {
-          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw.\nOmitted, true.",
+          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
           "type": "boolean"
         }
       },
