@@ -4,7 +4,7 @@
 //! after phase one draws; or the nearest depths, which screen-space
 //! reflections (decision 025) walk after the opaque pass.
 
-use crate::bindings::{PYRAMID_DOWN, PYRAMID_FIRST};
+use crate::bindings::{PYRAMID_DOWN, PYRAMID_EXTENT_BYTES, PYRAMID_FIRST};
 use crate::cached::Cached;
 use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
 use crate::profiling::Span;
@@ -13,12 +13,23 @@ const GROUP: u32 = 8;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 struct Levels {
-    // Keeps the texture alive beside its views.
+    // Keeps the texture and the levels' extents alive beside their views.
     _texture: wgpu::Texture,
+    _extents: wgpu::Buffer,
     full: wgpu::TextureView,
-    // Per level: the reduction's bind group and the level's size.
-    passes: Vec<(wgpu::BindGroup, (u32, u32))>,
+    passes: Vec<Level>,
 }
+
+// One level's reduction: its bind group, the texels it writes and the
+// level's size.
+struct Level {
+    group: wgpu::BindGroup,
+    written: (u32, u32),
+    size: (u32, u32),
+}
+
+// Each level's extent in its own uniform binding offset.
+const EXTENT_STRIDE: u64 = 256;
 
 /// Which depth each pyramid texel keeps of the block it covers.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -121,9 +132,41 @@ impl DepthPyramid {
             })
         };
         let views: Vec<wgpu::TextureView> = (0..count).map(level_view).collect();
+        // Each level writes only the texels covering the depth buffer: the
+        // ones the occlusion test and reflection rays read.
+        let mut source = (width.max(1), height.max(1));
+        let extents: Vec<[u32; 4]> = (0..count)
+            .map(|_| {
+                let written = (source.0.div_ceil(2), source.1.div_ceil(2));
+                let extent = [written.0, written.1, source.0 - 1, source.1 - 1];
+                source = written;
+                extent
+            })
+            .collect();
+        let mut contents = vec![0_u8; count as usize * EXTENT_STRIDE as usize];
+        for (level, extent) in extents.iter().enumerate() {
+            let at = level * EXTENT_STRIDE as usize;
+            contents[at..at + PYRAMID_EXTENT_BYTES].copy_from_slice(bytemuck::cast_slice(extent));
+        }
+        let extents_buffer = wgpu::util::DeviceExt::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("engine/depth-pyramid-extents"),
+                contents: &contents,
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let extent_binding = |level: u32| {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &extents_buffer,
+                offset: u64::from(level) * EXTENT_STRIDE,
+                size: wgpu::BufferSize::new(PYRAMID_EXTENT_BYTES as u64),
+            })
+        };
         let passes = (0..count)
             .map(|level| {
                 let size = ((base.0 >> level).max(1), (base.1 >> level).max(1));
+                let [written_width, written_height, ..] = extents[level as usize];
                 let group = if level == 0 {
                     crate::pipelines::group(
                         device,
@@ -133,6 +176,7 @@ impl DepthPyramid {
                         &[
                             ("source_depth", crate::pipelines::view(depth)),
                             ("target_level", crate::pipelines::view(&views[0])),
+                            ("extent", extent_binding(0)),
                         ],
                     )
                 } else {
@@ -150,10 +194,15 @@ impl DepthPyramid {
                                 "target_level",
                                 crate::pipelines::view(&views[level as usize]),
                             ),
+                            ("extent", extent_binding(level)),
                         ],
                     )
                 };
-                (group, size)
+                Level {
+                    group,
+                    written: (written_width, written_height),
+                    size,
+                }
             })
             .collect();
         let full = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -161,6 +210,7 @@ impl DepthPyramid {
             depth_generation,
             Levels {
                 _texture: texture,
+                _extents: extents_buffer,
                 full,
                 passes,
             },
@@ -179,9 +229,10 @@ impl DepthPyramid {
             label: Some("engine/depth-pyramid"),
             timestamp_writes: span.map(|span| span.compute_part(true, false)),
         });
-        for (level, (group, (width, height))) in levels.passes.iter().enumerate() {
-            pass.set_pipeline(if level == 0 { &self.first } else { &self.down });
-            pass.set_bind_group(0, group, &[]);
+        for (index, level) in levels.passes.iter().enumerate() {
+            let (width, height) = level.written;
+            pass.set_pipeline(if index == 0 { &self.first } else { &self.down });
+            pass.set_bind_group(0, &level.group, &[]);
             pass.dispatch_workgroups(width.div_ceil(GROUP), height.div_ceil(GROUP), 1);
         }
     }
@@ -198,7 +249,7 @@ impl DepthPyramid {
             levels
                 .passes
                 .iter()
-                .map(|(_, (width, height))| u64::from(*width) * u64::from(*height) * 4)
+                .map(|level| u64::from(level.size.0) * u64::from(level.size.1) * 4)
                 .sum()
         })
     }
