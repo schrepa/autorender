@@ -195,13 +195,12 @@ impl GpuPresentationPass {
             self.probes.current = self.probes.groups.len() - 1;
         }
         let groups = &self.probes.groups[self.probes.current].1[face];
-        let pipelines = &self.shaders.pipelines;
         let candidates = self.groups.count();
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/presentation-probe"),
             timestamp_writes: None,
         });
-        pass.set_pipeline(&pipelines.probe_cull);
+        pass.set_pipeline(self.shaders.probe_cull(device));
         pass.set_bind_group(0, &groups.cull, &[]);
         pass.dispatch_workgroups(candidates.div_ceil(GROUP), 1, 1);
         self.dispatch_compaction(&mut pass, &groups.compact);

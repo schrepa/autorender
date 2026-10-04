@@ -105,8 +105,12 @@ mod browser {
             count: u32,
         ) -> Result<Game, JsValue> {
             console_error_panic_hook::set_once();
+            // The browser compiles the renderer's pipelines while the demo
+            // builds.
+            let starting = BrowserApp::start(canvas).await?;
+            let engine = create_demo(count);
             Ok(Self {
-                app: BrowserApp::new(canvas, create_demo(count)).await?,
+                app: starting.finish(engine).await?,
                 #[cfg(feature = "dev")]
                 development: engine::dev_browser::DevBrowser::default(),
             })

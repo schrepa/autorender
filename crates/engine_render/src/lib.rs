@@ -223,4 +223,4 @@ mod virtual_geometry;
 #[cfg(target_arch = "wasm32")]
 mod visibility;
 #[cfg(target_arch = "wasm32")]
-pub use browser::Renderer;
+pub use browser::{Renderer, StartingRenderer};

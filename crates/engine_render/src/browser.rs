@@ -231,6 +231,36 @@ pub struct Renderer {
     profiler: GpuProfiler,
 }
 
+/// A renderer whose startup pipelines the browser may still be compiling
+/// and validating: build the world meanwhile, then [`Self::finish`].
+pub struct StartingRenderer {
+    renderer: Renderer,
+    validation: std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>,
+}
+
+impl StartingRenderer {
+    /// The renderer, once its startup pipelines passed validation.
+    pub async fn finish(self) -> Result<Renderer, JsValue> {
+        if let Some(error) = self.validation.await {
+            return Err(js_error("WebGPU pipeline initialization failed", error));
+        }
+        Ok(self.renderer)
+    }
+}
+
+/// Lets the browser run one task: commands issued before it reach the GPU
+/// process before the caller's next synchronous work.
+async fn yield_to_browser() {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        let scheduled = web_sys::window()
+            .is_some_and(|window| window.set_timeout_with_callback(&resolve).is_ok());
+        if !scheduled {
+            let _ = resolve.call0(&JsValue::NULL);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+}
+
 impl Renderer {
     /// Create an engine-owned WebGPU context on a canvas in a secure context.
     ///
@@ -239,6 +269,13 @@ impl Renderer {
     /// no optional GPU features. Profiling builds request timestamps when supported;
     /// there is deliberately no WebGL fallback in this milestone.
     pub async fn new(canvas: HtmlCanvasElement) -> Result<Self, JsValue> {
+        Self::start(canvas).await?.finish().await
+    }
+
+    /// [`Self::new`] without waiting for its startup pipelines: the browser
+    /// compiles and validates them while the caller builds its world, the
+    /// usual startup cost, until [`StartingRenderer::finish`].
+    pub async fn start(canvas: HtmlCanvasElement) -> Result<StartingRenderer, JsValue> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -354,11 +391,10 @@ impl Renderer {
         let mesh_pipelines = MeshPipelines::new(&device);
         let impostors =
             ImpostorAtlas::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
-        if let Some(error) = scope.pop().await {
-            return Err(js_error("WebGPU pipeline initialization failed", error));
-        }
-
         let gpu_presentation = GpuPresentationPass::new(&device);
+        // Popping takes effect now; validation resolves once they compiled.
+        let validation = Box::pin(scope.pop());
+
         let profiler = GpuProfiler::new(
             required_features.contains(wgpu::Features::TIMESTAMP_QUERY),
             f64::from(queue.get_timestamp_period()),
@@ -372,7 +408,7 @@ impl Renderer {
             ]
             .map(|bytes| bytes as u64),
         );
-        Ok(Self {
+        let renderer = Self {
             device,
             queue,
             display,
@@ -416,6 +452,11 @@ impl Renderer {
             gpu_frame: false,
             failure,
             profiler,
+        };
+        yield_to_browser().await;
+        Ok(StartingRenderer {
+            renderer,
+            validation,
         })
     }
 

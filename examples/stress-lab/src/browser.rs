@@ -70,13 +70,13 @@ impl StressGame {
     ) -> Result<Self, JsValue> {
         console_error_panic_hook::set_once();
         let files = files.map(|files| files.files).unwrap_or_default();
-        let engine = create_workload_with(
-            StressConfig::from_json(config_json).map_err(js_error)?,
-            &files,
-        )
-        .map_err(js_error)?;
+        let config = StressConfig::from_json(config_json).map_err(js_error)?;
+        // The browser compiles the renderer's pipelines while the workload
+        // builds.
+        let starting = BrowserApp::start(canvas).await?;
+        let engine = create_workload_with(config, &files).map_err(js_error)?;
         Ok(Self {
-            app: BrowserApp::new(canvas, engine).await?,
+            app: starting.finish(engine).await?,
             generation: 1,
             files,
             look: "scene".into(),
