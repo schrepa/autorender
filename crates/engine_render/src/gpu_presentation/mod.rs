@@ -24,6 +24,7 @@ use engine_core::{Aabb, GpuPresentation, RenderFrame};
 
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::browser::FramePoses;
+use crate::buffers::entry;
 use crate::cached::Cached;
 use crate::gpu_data::{FLAG_PHASE1, FLAG_PHASE2, FLAG_VISIBLE, PresentationFrame, frustum_uniform};
 use crate::mesh_arena::Ids;
@@ -225,17 +226,7 @@ fn storage(
     bytes: u64,
     extra: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: bytes.max(MIN_STORAGE_BYTES).next_multiple_of(4),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-        mapped_at_creation: false,
-    })
-}
-
-// A buffer bound whole as binding `name`.
-fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
-    (name, buffer.as_entire_binding())
+    crate::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
 }
 
 fn grow(needed: usize) -> usize {
@@ -245,14 +236,8 @@ fn grow(needed: usize) -> usize {
 impl GpuPresentationPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let shaders = Shaders::new(device);
-        let uniform = |label| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size: size_of::<PresentationFrame>() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
+        let uniform =
+            |label| crate::buffers::uniform(device, label, size_of::<PresentationFrame>() as u64);
         Self {
             nodes: NodeInputs::new(device, &shaders.level_layout),
             shaders,

@@ -8,32 +8,20 @@ use std::{cell::Cell, rc::Rc};
 
 use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
-use super::{GROUP, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source, entry};
+use super::{GROUP, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source};
 use crate::bindings::{SHADOW_SELECT, SHADOW_SKINNED};
 use crate::browser::FramePoses;
+use crate::buffers::{ReadbackRing, entry};
 use crate::cached::Cached;
 use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
 use crate::profiling::{GpuProfiler, Span};
 use crate::shadow_fit::TILE_WORDS;
 
-const READBACKS: usize = 3;
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
 // Dirty tiles, then the three caster totals and a pad word, read back
 // together.
 const READBACK_BYTES: u64 = (TILE_WORDS as u64 + 4) * 4;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReadbackState {
-    Idle,
-    Recorded,
-    Pending,
-}
-
-struct DirtyReadback {
-    buffer: wgpu::Buffer,
-    state: Rc<Cell<ReadbackState>>,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SelectKey {
@@ -58,12 +46,7 @@ fn storage(
     bytes: u64,
     extra: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: bytes.max(MIN_STORAGE_BYTES).next_multiple_of(4),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-        mapped_at_creation: false,
-    })
+    crate::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
 }
 
 pub(super) struct Selection {
@@ -102,7 +85,7 @@ pub(super) struct Selection {
     // inputs they were built for.
     select_group: Cached<SelectKey, wgpu::BindGroup>,
     skinned_group: Cached<(u64, u64), wgpu::BindGroup>,
-    readbacks: Vec<DirtyReadback>,
+    readbacks: ReadbackRing<()>,
     // Dirty tiles read back and not yet taken, and the latest caster totals
     // read back: near, moving and kept maps.
     read_back: Rc<Cell<[u32; TILE_WORDS]>>,
@@ -141,7 +124,7 @@ impl Selection {
             generation: 0,
             select_group: Cached::default(),
             skinned_group: Cached::default(),
-            readbacks: Vec::new(),
+            readbacks: ReadbackRing::new("engine/shadow-dirty-readback"),
             read_back: Rc::new(Cell::new([0; TILE_WORDS])),
             casters: Rc::new(Cell::new(None)),
         }
@@ -452,76 +435,29 @@ impl Selection {
             pass.set_pipeline(&pipelines.count);
             pass.dispatch_workgroups(1, 1, 1);
         }
-        let dirty = self.dirty.clone();
-        if let Some(readback) = self.idle_readback(device) {
-            encoder.copy_buffer_to_buffer(&dirty, 0, &readback.buffer, 0, READBACK_BYTES);
-            readback.state.set(ReadbackState::Recorded);
-            // Unread tiles stay until a readback copies them.
-            encoder.clear_buffer(&dirty, 0, Some(TILE_WORDS as u64 * 4));
-        }
-    }
-
-    fn idle_readback(&mut self, device: &wgpu::Device) -> Option<&DirtyReadback> {
-        if let Some(index) = self
+        // Unread tiles stay until a readback copies them.
+        if self
             .readbacks
-            .iter()
-            .position(|readback| readback.state.get() == ReadbackState::Idle)
+            .record(device, encoder, &self.dirty, READBACK_BYTES, ())
         {
-            return Some(&self.readbacks[index]);
+            encoder.clear_buffer(&self.dirty, 0, Some(TILE_WORDS as u64 * 4));
         }
-        if self.readbacks.len() == READBACKS {
-            return None;
-        }
-        self.readbacks.push(DirtyReadback {
-            buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("engine/shadow-dirty-readback"),
-                size: READBACK_BYTES,
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
-            state: Rc::new(Cell::new(ReadbackState::Idle)),
-        });
-        self.readbacks.last()
     }
 
     /// Requests maps of dirty tiles recorded in the frame just submitted.
     pub(super) fn after_submit(&mut self) {
-        for readback in &self.readbacks {
-            if readback.state.get() != ReadbackState::Recorded {
-                continue;
+        let (read_back, casters) = (Rc::clone(&self.read_back), Rc::clone(&self.casters));
+        self.readbacks.after_submit(move |words, ()| {
+            let mut tiles = read_back.get();
+            for (index, tile) in tiles.iter_mut().enumerate() {
+                *tile |= words.get(index);
             }
-            readback.state.set(ReadbackState::Pending);
-            let state = Rc::clone(&readback.state);
-            let read_back = Rc::clone(&self.read_back);
-            let casters = Rc::clone(&self.casters);
-            let buffer = readback.buffer.clone();
-            readback
-                .buffer
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    if result.is_ok() {
-                        if let Ok(view) = buffer.slice(..).get_mapped_range() {
-                            let word = |index: usize| {
-                                let bytes = view.get(index * 4..index * 4 + 4);
-                                bytes.map_or(0, |bytes| {
-                                    u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
-                                })
-                            };
-                            let mut tiles = read_back.get();
-                            for (index, tile) in tiles.iter_mut().enumerate() {
-                                *tile |= word(index);
-                            }
-                            read_back.set(tiles);
-                            casters.set(Some([
-                                word(TILE_WORDS),
-                                word(TILE_WORDS + 1),
-                                word(TILE_WORDS + 2),
-                            ]));
-                        }
-                        buffer.unmap();
-                    }
-                    state.set(ReadbackState::Idle);
-                });
-        }
+            read_back.set(tiles);
+            casters.set(Some([
+                words.get(TILE_WORDS),
+                words.get(TILE_WORDS + 1),
+                words.get(TILE_WORDS + 2),
+            ]));
+        });
     }
 }

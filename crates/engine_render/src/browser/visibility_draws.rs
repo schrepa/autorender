@@ -111,42 +111,35 @@ impl Renderer {
                     immediate_size: 0,
                 });
             let pipeline = |double_sided: bool| {
-                crate::pipelines::render(
+                crate::pipelines::geometry(
                     &self.device,
-                    &wgpu::RenderPipelineDescriptor {
-                        label: Some("engine/visibility"),
-                        layout: Some(&layout),
-                        vertex: wgpu::VertexState {
-                            module: &self.mesh_shader,
-                            entry_point: Some(entries::VISIBILITY_VERTEX),
-                            compilation_options: Default::default(),
-                            buffers: &[Some(wgpu::VertexBufferLayout {
-                                array_stride: crate::virtual_geometry::VISIBLE_BYTES,
-                                step_mode: wgpu::VertexStepMode::Instance,
-                                attributes: &VIRTUAL_ATTRIBUTES,
-                            })],
-                        },
+                    &crate::pipelines::Geometry {
+                        label: "engine/visibility",
+                        layout: &layout,
+                        module: &self.mesh_shader,
+                        vertex: entries::VISIBILITY_VERTEX,
+                        buffers: &[Some(wgpu::VertexBufferLayout {
+                            array_stride: crate::virtual_geometry::VISIBLE_BYTES,
+                            step_mode: wgpu::VertexStepMode::Instance,
+                            attributes: &VIRTUAL_ATTRIBUTES,
+                        })],
                         primitive: wgpu::PrimitiveState {
                             topology: wgpu::PrimitiveTopology::TriangleList,
                             cull_mode: (!double_sided).then_some(wgpu::Face::Back),
                             ..Default::default()
                         },
-                        depth_stencil: Some(wgpu::DepthStencilState {
+                        depth: Some(wgpu::DepthStencilState {
                             format: DEPTH_FORMAT,
                             depth_write_enabled: Some(true),
                             depth_compare: Some(wgpu::CompareFunction::Greater),
                             stencil: Default::default(),
                             bias: Default::default(),
                         }),
-                        multisample: wgpu::MultisampleState::default(),
-                        fragment: Some(wgpu::FragmentState {
-                            module: &self.mesh_shader,
-                            entry_point: Some(entries::VISIBILITY_FRAGMENT),
-                            compilation_options: Default::default(),
+                        fragment: Some(crate::pipelines::Fragment {
+                            entry: entries::VISIBILITY_FRAGMENT,
+                            constants: &[],
                             targets: &[Some(ID_FORMAT.into())],
                         }),
-                        multiview_mask: None,
-                        cache: None,
                     },
                 )
             };
@@ -212,37 +205,27 @@ impl Renderer {
             targets,
             constants,
         } = self.virtual_stages(kind, variant, true);
-        crate::pipelines::render(
+        crate::pipelines::geometry(
             &self.device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/visibility-resolve"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: &self.mesh_shader,
-                    entry_point: Some(vertex),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/visibility-resolve",
+                layout,
+                module: &self.mesh_shader,
+                vertex,
+                buffers: &[],
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
+                depth: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(false),
                     depth_compare: Some(wgpu::CompareFunction::Always),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.mesh_shader,
-                    entry_point: Some(fragment),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants: &constants,
-                        ..Default::default()
-                    },
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: fragment,
+                    constants: &constants,
                     targets: &targets,
                 }),
-                multiview_mask: None,
-                cache: None,
             },
         )
     }

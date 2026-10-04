@@ -1,0 +1,172 @@
+//! Buffers every pass shares the shape of: storage buffers and their
+//! whole-buffer bindings, growth by powers of two, and values read back a
+//! few frames late.
+
+use std::{cell::Cell, rc::Rc};
+
+/// A storage buffer the queue writes, of at least `bytes` rounded up to a
+/// multiple of 16 (and at least 16), with `extra` usages.
+pub(crate) fn storage(
+    device: &wgpu::Device,
+    label: &str,
+    bytes: u64,
+    extra: wgpu::BufferUsages,
+) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes.max(16).next_multiple_of(16),
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
+        mapped_at_creation: false,
+    })
+}
+
+/// A uniform buffer of `bytes` the queue writes.
+pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: bytes,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
+}
+
+/// Replaces `buffer` by a [`storage`] buffer of the next power of two of
+/// `bytes` unless it holds them already; returns whether it did. The new
+/// buffer holds nothing of the old one.
+pub(crate) fn ensure_storage(
+    device: &wgpu::Device,
+    buffer: &mut wgpu::Buffer,
+    label: &str,
+    bytes: u64,
+    extra: wgpu::BufferUsages,
+) -> bool {
+    if bytes <= buffer.size() {
+        return false;
+    }
+    *buffer = storage(device, label, bytes.next_power_of_two(), extra);
+    true
+}
+
+/// A buffer bound whole as binding `name`.
+pub(crate) fn entry<'a>(
+    name: &'a str,
+    buffer: &'a wgpu::Buffer,
+) -> (&'a str, wgpu::BindingResource<'a>) {
+    (name, buffer.as_entire_binding())
+}
+
+/// Read-backs in flight at most: a frame records one while the two before
+/// it may still be mapping.
+const READBACKS: usize = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum State {
+    Idle,
+    Recorded,
+    Pending,
+}
+
+struct Slot<T> {
+    buffer: wgpu::Buffer,
+    state: Rc<Cell<State>>,
+    tag: T,
+}
+
+/// A mapped read-back's little-endian words; words past its end read 0.
+pub(crate) struct Words<'a>(&'a [u8]);
+
+impl Words<'_> {
+    pub(crate) fn get(&self, index: usize) -> u32 {
+        self.0.get(index * 4..index * 4 + 4).map_or(0, |bytes| {
+            u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
+        })
+    }
+}
+
+/// Copies of one GPU buffer read back a few frames late, through at most
+/// three buffers: [`Self::record`] copies into an idle one while a frame
+/// records, [`Self::after_submit`] maps those the frame just submitted, and
+/// each map hands its words and the tag recorded with them to a reader.
+/// Nothing waits on the GPU; frames finding every buffer in flight skip.
+pub(crate) struct ReadbackRing<T> {
+    label: &'static str,
+    slots: Vec<Slot<T>>,
+}
+
+impl<T: Copy + 'static> ReadbackRing<T> {
+    pub(crate) fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            slots: Vec::new(),
+        }
+    }
+
+    /// Records a copy of the first `bytes` of `source`, tagged `tag`, into
+    /// an idle buffer, creating one of `bytes` while fewer than three exist;
+    /// returns whether it did. Clear the ring when `bytes` changes.
+    pub(crate) fn record(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        source: &wgpu::Buffer,
+        bytes: u64,
+        tag: T,
+    ) -> bool {
+        let index = match self
+            .slots
+            .iter()
+            .position(|slot| slot.state.get() == State::Idle)
+        {
+            Some(index) => index,
+            None if self.slots.len() < READBACKS => {
+                self.slots.push(Slot {
+                    buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some(self.label),
+                        size: bytes,
+                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    }),
+                    state: Rc::new(Cell::new(State::Idle)),
+                    tag,
+                });
+                self.slots.len() - 1
+            }
+            None => return false,
+        };
+        let slot = &mut self.slots[index];
+        encoder.copy_buffer_to_buffer(source, 0, &slot.buffer, 0, bytes);
+        slot.state.set(State::Recorded);
+        slot.tag = tag;
+        true
+    }
+
+    /// Requests maps of the read-backs recorded in the frame just submitted;
+    /// `read` receives each one's words and tag once it is mapped.
+    pub(crate) fn after_submit(&self, read: impl Fn(&Words<'_>, T) + Clone + 'static) {
+        for slot in &self.slots {
+            if slot.state.get() != State::Recorded {
+                continue;
+            }
+            slot.state.set(State::Pending);
+            let state = Rc::clone(&slot.state);
+            let buffer = slot.buffer.clone();
+            let (read, tag) = (read.clone(), slot.tag);
+            slot.buffer
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    if result.is_ok() {
+                        if let Ok(view) = buffer.slice(..).get_mapped_range() {
+                            read(&Words(&view), tag);
+                        }
+                        buffer.unmap();
+                    }
+                    state.set(State::Idle);
+                });
+        }
+    }
+
+    /// Drops the buffers; maps in flight still complete.
+    pub(crate) fn clear(&mut self) {
+        self.slots.clear();
+    }
+}

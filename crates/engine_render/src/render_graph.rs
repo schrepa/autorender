@@ -299,8 +299,8 @@ impl Pass {
     }
 }
 
-/// The names of the passes in `mask`, a frame's [`RenderGraph::kept`] or
-/// [`RenderGraph::culled`], in frame order.
+/// The names of the passes in `mask`, such as a frame's
+/// [`RenderGraph::kept`], in frame order.
 pub(crate) fn pass_names(mask: u32) -> impl Iterator<Item = &'static str> {
     PASSES
         .into_iter()
@@ -555,7 +555,10 @@ impl RenderGraph {
         self.mask(true)
     }
 
-    /// The passes declared but culled, as a mask [`pass_names`] reads.
+    /// The passes declared but culled, as a mask [`pass_names`] reads. No
+    /// frame shape culls any (a test checks every one), so frames do not
+    /// report it.
+    #[cfg(test)]
     pub(crate) fn culled(&self) -> u32 {
         self.mask(false)
     }

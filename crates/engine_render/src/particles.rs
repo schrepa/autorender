@@ -133,6 +133,7 @@ mod gpu {
 
     use super::*;
     use crate::bindings::PARTICLES;
+    use crate::buffers::{ensure_storage, entry, storage};
     use crate::cached::Cached;
     use crate::gpu_data::PARTICLE_SHADER;
 
@@ -164,15 +165,6 @@ mod gpu {
         uploaded_owners: Vec<u32>,
         group: Cached<(u64, u64), wgpu::BindGroup>,
         buffers_generation: u64,
-    }
-
-    fn storage(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes.max(16).next_multiple_of(16),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
     }
 
     impl ParticlePass {
@@ -211,15 +203,24 @@ mod gpu {
                 additive: [None, None],
                 surface_format,
                 depth_format,
-                uniform: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("engine/particle-uniform"),
-                    size: size_of::<ParticleUniform>() as u64,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
+                uniform: crate::buffers::uniform(
+                    device,
+                    "engine/particle-uniform",
+                    size_of::<ParticleUniform>() as u64,
+                ),
                 written: None,
-                emitters: storage(device, "engine/particle-emitters", 128),
-                owners: storage(device, "engine/particle-owners", 4),
+                emitters: storage(
+                    device,
+                    "engine/particle-emitters",
+                    128,
+                    wgpu::BufferUsages::empty(),
+                ),
+                owners: storage(
+                    device,
+                    "engine/particle-owners",
+                    4,
+                    wgpu::BufferUsages::empty(),
+                ),
                 records: Vec::new(),
                 uploaded: Vec::new(),
                 owner_staging: Vec::new(),
@@ -265,22 +266,24 @@ mod gpu {
                 return None;
             }
             let emitter_bytes = (self.records.len() * size_of::<EmitterData>()) as u64;
-            if emitter_bytes > self.emitters.size() {
-                self.emitters = storage(
-                    device,
-                    "engine/particle-emitters",
-                    emitter_bytes.next_power_of_two(),
-                );
+            if ensure_storage(
+                device,
+                &mut self.emitters,
+                "engine/particle-emitters",
+                emitter_bytes,
+                wgpu::BufferUsages::empty(),
+            ) {
                 self.uploaded.clear();
                 self.buffers_generation += 1;
             }
             let owner_bytes = u64::from(total) * 4;
-            if owner_bytes > self.owners.size() {
-                self.owners = storage(
-                    device,
-                    "engine/particle-owners",
-                    owner_bytes.next_power_of_two(),
-                );
+            if ensure_storage(
+                device,
+                &mut self.owners,
+                "engine/particle-owners",
+                owner_bytes,
+                wgpu::BufferUsages::empty(),
+            ) {
                 self.uploaded_owners.clear();
                 self.buffers_generation += 1;
             }
@@ -305,9 +308,9 @@ mod gpu {
                     &PARTICLES,
                     &self.layout,
                     &[
-                        buffer_entry("particles", &self.uniform),
-                        buffer_entry("emitters", &self.emitters),
-                        buffer_entry("owners", &self.owners),
+                        entry("particles", &self.uniform),
+                        entry("emitters", &self.emitters),
+                        entry("owners", &self.owners),
                         ("depth_texture", crate::pipelines::view(depth)),
                     ],
                 );
@@ -416,14 +419,6 @@ mod gpu {
         }
     }
 
-    // A buffer bound whole as binding `name`.
-    fn buffer_entry<'a>(
-        name: &'a str,
-        buffer: &'a wgpu::Buffer,
-    ) -> (&'a str, wgpu::BindingResource<'a>) {
-        (name, buffer.as_entire_binding())
-    }
-
     fn pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
@@ -433,38 +428,28 @@ mod gpu {
         depth_format: wgpu::TextureFormat,
         constants: &[(&str, f64)],
     ) -> wgpu::RenderPipeline {
-        crate::pipelines::render(
+        crate::pipelines::geometry(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/particles"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module,
-                    entry_point: Some("vs_particle"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/particles",
+                layout,
+                module,
+                vertex: "vs_particle",
+                buffers: &[],
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
+                // Reversed depth (decision 042).
+                depth: Some(wgpu::DepthStencilState {
                     format: depth_format,
                     depth_write_enabled: Some(false),
-                    // Reversed depth (decision 042).
                     depth_compare: Some(wgpu::CompareFunction::Greater),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                multisample: wgpu::MultisampleState::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module,
-                    entry_point: Some(fragment),
-                    compilation_options: wgpu::PipelineCompilationOptions {
-                        constants,
-                        ..Default::default()
-                    },
+                fragment: Some(crate::pipelines::Fragment {
+                    entry: fragment,
+                    constants,
                     targets,
                 }),
-                multiview_mask: None,
-                cache: None,
             },
         )
     }

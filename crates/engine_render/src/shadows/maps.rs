@@ -38,21 +38,15 @@ impl MapTextures {
     /// `cascades` near layers.
     fn new(device: &wgpu::Device, resolution: u32, cascades: u32) -> Self {
         let texture = |label, size, layers| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: layers,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: SHADOW_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+            crate::targets::texture_2d(
+                device,
+                label,
+                (size, size),
+                layers,
+                1,
+                SHADOW_FORMAT,
+                crate::targets::RENDER_TARGET,
+            )
         };
         let textures = [
             texture("engine/shadow-near", resolution / 2, cascades),
@@ -106,12 +100,11 @@ pub(super) struct ShadowMaps {
 
 impl ShadowMaps {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/shadow-uniform"),
-            size: size_of::<ShadowUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = crate::buffers::uniform(
+            device,
+            "engine/shadow-uniform",
+            size_of::<ShadowUniform>() as u64,
+        );
         // Comparisons filter four texels.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/shadow-sampler"),
@@ -128,20 +121,15 @@ impl ShadowMaps {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let placeholder = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/shadow-placeholder"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SHADOW_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let placeholder = crate::targets::texture_2d(
+            device,
+            "engine/shadow-placeholder",
+            (1, 1),
+            1,
+            1,
+            SHADOW_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
         let placeholder_view = placeholder.create_view(&Default::default());
         let placeholder_array = placeholder.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),

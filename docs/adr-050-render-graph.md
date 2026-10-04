@@ -106,7 +106,9 @@ rather than before it; their queue writes precede the submitted frame
 either way.
 
 Reports. `rendering.render_passes` lists the passes the last frame ran, in
-order, and `rendering.culled_passes` those it culled.
+order. (`rendering.culled_passes` listed those it culled until 2026-10-03:
+no frame shape culls any, which a test checks over every shape, so the
+list was always empty.)
 
 ## Consequences
 

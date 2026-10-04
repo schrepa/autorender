@@ -5,33 +5,10 @@
 
 use super::VISIBLE_BYTES;
 use crate::bindings::{
-    Table, VIRTUAL_BIN, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
+    VIRTUAL_BIN, VIRTUAL_SEED, VIRTUAL_SELECT, VIRTUAL_SHADOW, VIRTUAL_TRAVERSE,
 };
-use crate::pipelines::{Fillers, filled_group, layout};
+use crate::pipelines::{Family, Fillers, layout};
 use crate::shadows::SHADOW_FORMAT;
-
-/// A shared layout: its table, group layout and pipeline layout.
-pub(super) struct Family {
-    table: &'static Table,
-    group: wgpu::BindGroupLayout,
-    pipeline: wgpu::PipelineLayout,
-}
-
-impl Family {
-    fn new(device: &wgpu::Device, table: &'static Table) -> Self {
-        let group = layout(device, table);
-        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(table.label),
-            bind_group_layouts: &[Some(&group)],
-            immediate_size: 0,
-        });
-        Self {
-            table,
-            group,
-            pipeline,
-        }
-    }
-}
 
 pub(super) struct Pipelines {
     pub(super) seed: wgpu::ComputePipeline,
@@ -51,10 +28,10 @@ pub(super) struct Pipelines {
 
 impl Pipelines {
     pub(super) fn new(device: &wgpu::Device, module: &wgpu::ShaderModule) -> Self {
-        let seed_family = Family::new(device, &VIRTUAL_SEED);
-        let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE);
-        let select_family = Family::new(device, &VIRTUAL_SELECT);
-        let bin_family = Family::new(device, &VIRTUAL_BIN);
+        let seed_family = Family::new(device, &VIRTUAL_SEED, &[]);
+        let traverse_family = Family::new(device, &VIRTUAL_TRAVERSE, &[]);
+        let select_family = Family::new(device, &VIRTUAL_SELECT, &[]);
+        let bin_family = Family::new(device, &VIRTUAL_BIN, &[]);
         let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, module, entry)
         };
@@ -89,14 +66,7 @@ impl Pipelines {
         family: &Family,
         resources: &[(&str, wgpu::BindingResource<'_>)],
     ) -> wgpu::BindGroup {
-        filled_group(
-            device,
-            "engine/virtual-group",
-            family.table,
-            &family.group,
-            resources,
-            &self.fillers,
-        )
+        family.group(device, "engine/virtual-group", resources, &self.fillers)
     }
 }
 
@@ -116,39 +86,33 @@ impl ShadowDrawing {
             immediate_size: 0,
         });
         let attributes = wgpu::vertex_attr_array![0 => Uint32, 1 => Uint32];
-        let pipeline = crate::pipelines::render(
+        let pipeline = crate::pipelines::geometry(
             device,
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("engine/virtual-shadow"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module,
-                    entry_point: Some("vs_shadow"),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VISIBLE_BYTES,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &attributes,
-                    })],
-                },
+            &crate::pipelines::Geometry {
+                label: "engine/virtual-shadow",
+                layout: &pipeline_layout,
+                module,
+                vertex: "vs_shadow",
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: VISIBLE_BYTES,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &attributes,
+                })],
                 // Both faces cast, as the shadow maps' other casters.
                 primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: Some(wgpu::DepthStencilState {
+                // The shadow maps' constant unit of bias (decision 028).
+                depth: Some(wgpu::DepthStencilState {
                     format: SHADOW_FORMAT,
                     depth_write_enabled: Some(true),
                     depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: Default::default(),
-                    // The shadow maps' constant unit of bias (decision 028).
                     bias: wgpu::DepthBiasState {
                         constant: 1,
                         slope_scale: 0.0,
                         clamp: 0.0,
                     },
                 }),
-                multisample: wgpu::MultisampleState::default(),
                 fragment: None,
-                multiview_mask: None,
-                cache: None,
             },
         );
         Self { layout, pipeline }

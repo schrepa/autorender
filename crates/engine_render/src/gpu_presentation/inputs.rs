@@ -74,12 +74,11 @@ pub(super) struct NodeInputs {
 
 impl NodeInputs {
     pub(super) fn new(device: &wgpu::Device, level_layout: &wgpu::BindGroupLayout) -> Self {
-        let levels = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/presentation-levels"),
-            size: LEVELS as u64 * LEVEL_STRIDE,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let levels = crate::buffers::uniform(
+            device,
+            "engine/presentation-levels",
+            LEVELS as u64 * LEVEL_STRIDE,
+        );
         let level_groups = (0..LEVELS as u64)
             .map(|level| {
                 crate::pipelines::group(

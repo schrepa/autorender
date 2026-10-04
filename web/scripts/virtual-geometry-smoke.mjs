@@ -178,7 +178,7 @@ try {
   await command("camera", { position: [0.5, 0.6, 0.5], target: [0.5, -10, 0.52], vertical_fov_radians: 0.3, near: 0.05, far: 5000 });
   let ground;
   for (let frame = 0; frame < 12; frame++) ground = (await command("present", { alpha: 0, gpu: false })).result.rendering;
-  assert.ok(ground.draw_calls < reference.rendering.draw_calls, `meshes retired: ${JSON.stringify(ground)}`);
+  assert.ok(ground.resident_meshes < reference.rendering.resident_meshes, `meshes retired: ${JSON.stringify(ground)}`);
   await command("camera", { position: last.position, target: last.target, vertical_fov_radians: 0.96, near: 0.1, far: 5000 });
   const rebuilt = await capture(`${last.label}-rebuilt`, false);
   const rebuiltPixels = await differentPixels([reference.png, rebuilt.png], 8);

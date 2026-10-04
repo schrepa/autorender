@@ -3,17 +3,10 @@
 //! uploads records newer than the sequence it last uploaded, coalescing small
 //! clean gaps with the same byte/call heuristics as retained uploads.
 
-use crate::uploads::UploadRange;
+pub(crate) use crate::uploads::whole_stream;
+use crate::uploads::{UploadRange, WRITE_CALL_BYTES};
 
 const MAX_RANGES: usize = 64;
-// Include clean gaps up to this many bytes instead of another queue call.
-const WRITE_CALL_BYTES: usize = 16 * 1024;
-
-/// Whether a stream of `len` records with `stamped` of them changed uploads
-/// whole instead of by records: at least three quarters changed.
-pub(crate) fn whole_stream(stamped: usize, len: usize) -> bool {
-    stamped * 4 >= len * 3
-}
 
 /// Ranges of records whose stamp exceeds `since`. Returns false, with a single
 /// full range, when the plan is fragmented or covers at least 75% of records.

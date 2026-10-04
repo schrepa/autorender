@@ -123,22 +123,74 @@ pub(super) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
     ]
 }
 
+/// What a pass drawing batches bound last: buffers and groups, and the
+/// pipeline variant.
+#[derive(Default)]
+pub(super) struct BatchBinds {
+    pub(super) bindings: Bindings,
+    variant: Option<Variant>,
+}
+
 impl Renderer {
+    /// The material group and pipeline variant a draw of `batch` uses: its
+    /// material's, with the extra streams (decisions 034 and 036) of its
+    /// `mesh`, plain while that is not resident.
+    pub(super) fn batch_binding(
+        &self,
+        batch: &DrawBatch,
+        mesh: Option<&GpuMesh>,
+    ) -> (&wgpu::BindGroup, Variant) {
+        let (group, variant) = self.materials.binding(batch.material);
+        let variant = variant
+            .with_extended(mesh.is_some_and(|mesh| mesh.extended))
+            .with_skinned(mesh.is_some_and(|mesh| mesh.skinned));
+        (group, variant)
+    }
+
+    /// Binds what `batch` draws in a pass of `kind`: its variant's pipeline
+    /// (the uber variant with `uber`, decision 049), switched only when the
+    /// variant changes, its material group and its mesh's streams. Returns
+    /// the mesh and its draw.
+    pub(super) fn bind_batch(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        binds: &mut BatchBinds,
+        (kind, uber): (PassKind, bool),
+        batch: &DrawBatch,
+    ) -> (&GpuMesh, MeshDraw<'_>) {
+        // Every planned source was validated and uploaded above.
+        let mesh = &self.meshes[&batch.mesh];
+        let (group, variant) = self.batch_binding(batch, Some(mesh));
+        let variant = if uber { variant.uber() } else { variant };
+        if binds.variant != Some(variant) {
+            pass.set_pipeline(&self.mesh_pipelines.variants[&(kind, variant)]);
+            binds.variant = Some(variant);
+        }
+        let bindings = &mut binds.bindings;
+        bindings.group(pass, 1, group);
+        let draw = mesh.draw(&self.mesh_arena);
+        bindings.vertex(pass, 0, draw.vertices);
+        if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
+            bindings.vertex(pass, 2, extras);
+        }
+        if let Some(skin) = draw.skin.filter(|_| mesh.skinned) {
+            bindings.vertex(pass, 3, skin);
+        }
+        bindings.index(pass, draw.indices);
+        (mesh, draw)
+    }
+
     /// Creates the pipelines of the plan's material variants for this frame's
     /// opaque and transparent passes, and the opaque pass's sky.
     pub(super) fn ensure_variants(&mut self, opaque: PassKind, transparent: PassKind) {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
-            let (_, variant) = self.materials.binding(batch.material);
             let kind = if batch.transparent {
                 transparent
             } else {
                 opaque
             };
-            let mesh = self.meshes.get(&batch.mesh);
-            let variant = variant
-                .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-                .with_skinned(mesh.is_some_and(|mesh| mesh.skinned));
+            let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
                 && !missing.contains(&(kind, variant))
             {
@@ -261,31 +313,26 @@ impl Renderer {
     /// so passes then switch pipelines and bind groups once per run rather
     /// than per batch.
     pub(super) fn order_draws(&mut self) {
-        let (plan, meshes, materials) = (&self.plan, &self.meshes, &self.materials);
-        self.draw_order.keys.clear();
-        self.draw_order
-            .keys
-            .extend(
-                plan.batches
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, batch)| {
-                        if batch.transparent {
-                            return None;
-                        }
-                        let mesh = &meshes[&batch.mesh];
-                        let (_, variant) = materials.binding(batch.material);
-                        let variant = variant
-                            .with_extended(mesh.extended)
-                            .with_skinned(mesh.skinned);
-                        let buffers = match &mesh.placement {
-                            Ok(placement) => placement.streams as u8,
-                            Err(_) => u8::MAX,
-                        };
-                        Some((variant, batch.material, buffers, index as u32))
-                    }),
-            );
-        self.draw_order.keys.sort_unstable();
+        let mut keys = std::mem::take(&mut self.draw_order.keys);
+        keys.clear();
+        keys.extend(
+            self.plan
+                .batches
+                .iter()
+                .enumerate()
+                .filter(|(_, batch)| !batch.transparent)
+                .map(|(index, batch)| {
+                    let mesh = &self.meshes[&batch.mesh];
+                    let (_, variant) = self.batch_binding(batch, Some(mesh));
+                    let buffers = match &mesh.placement {
+                        Ok(placement) => placement.streams as u8,
+                        Err(_) => u8::MAX,
+                    };
+                    (variant, batch.material, buffers, index as u32)
+                }),
+        );
+        keys.sort_unstable();
+        self.draw_order.keys = keys;
         self.draw_order.order.clear();
         self.draw_order
             .order
@@ -375,17 +422,14 @@ fn mesh_pipeline(
         "engine/mesh {vertex_entry} {fragment_entry} {:#06x}",
         variant.bits()
     );
-    crate::pipelines::render(
+    crate::pipelines::geometry(
         device,
-        &wgpu::RenderPipelineDescriptor {
-            label: Some(&label),
-            layout: Some(layout),
-            vertex: wgpu::VertexState {
-                module: shader,
-                entry_point: Some(vertex_entry),
-                compilation_options: Default::default(),
-                buffers: &layouts[..buffers],
-            },
+        &crate::pipelines::Geometry {
+            label: &label,
+            layout,
+            module: shader,
+            vertex: vertex_entry,
+            buffers: &layouts[..buffers],
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: if fragment.mirrored {
@@ -396,25 +440,18 @@ fn mesh_pipeline(
                 cull_mode: (!variant.double_sided()).then_some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
+            depth: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(fragment.depth_write),
                 depth_compare: Some(wgpu::CompareFunction::Greater),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: shader,
-                entry_point: Some(fragment_entry),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &constants,
-                    ..Default::default()
-                },
+            fragment: Some(crate::pipelines::Fragment {
+                entry: fragment_entry,
+                constants: &constants,
                 targets: &fragment.targets,
             }),
-            multiview_mask: None,
-            cache: None,
         },
     )
 }

@@ -268,22 +268,15 @@ fn create_maps(
 ) -> Maps {
     let levels = mip_levels(size, size);
     let cube = |label, layers, extra| {
-        device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: ENVIRONMENT_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | extra,
-            view_formats: &[],
-        })
+        crate::targets::texture_2d(
+            device,
+            label,
+            (size, size),
+            layers,
+            levels,
+            ENVIRONMENT_FORMAT,
+            crate::targets::RENDER_TARGET | extra,
+        )
     };
     let radiance = cube(
         "engine/environment-radiance",

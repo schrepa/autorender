@@ -8,10 +8,9 @@ use engine_core::RenderFrame;
 use engine_core::RenderInstance;
 
 use crate::gpu_data::{ColorData, PoseData};
-use crate::uploads::UploadRange;
+use crate::uploads::{UploadRange, WRITE_CALL_BYTES, whole_stream};
 
 const MAX_WRITE_RANGES: usize = 32;
-const WRITE_CALL_BYTES: usize = 16 * 1024;
 
 #[derive(Default)]
 struct WritePlan {
@@ -53,7 +52,7 @@ impl WritePlan {
         let fallback = !force_full
             && (self.fragmented
                 || (self.count != 0
-                    && (covered * 4 >= len * 3
+                    && (whole_stream(covered, len)
                         || covered * stride + (self.count - 1) * WRITE_CALL_BYTES
                             >= len * stride)));
         let full = len != 0 && (force_full || fallback);

@@ -117,32 +117,18 @@ impl Renderer {
                     let lights = self.lights.as_ref().expect("checked above");
                     pass.set_bind_group(3, lights.probe_fragment_group(face), &[]);
                 }
-                let mut bound = None;
-                let mut bindings = Bindings::default();
+                let mut binds = BatchBinds::default();
                 for &index in &self.draw_order.order {
                     let index = index as usize;
                     let batch = &self.plan.batches[index];
                     // Only still opaque meshes without joints are captured.
-                    let mesh = &self.meshes[&batch.mesh];
-                    if mesh.skinned {
+                    if self.meshes[&batch.mesh].skinned {
                         continue;
                     }
-                    let (group, variant) = self.materials.binding(batch.material);
-                    let variant = variant.with_extended(mesh.extended).uber();
-                    if bound != Some(variant) {
-                        pass.set_pipeline(&self.mesh_pipelines.variants[&(kind, variant)]);
-                        bound = Some(variant);
-                    }
-                    bindings.group(&mut pass, 1, group);
-                    let draw = mesh.draw(&self.mesh_arena);
-                    bindings.vertex(&mut pass, 0, draw.vertices);
-                    if let Some(extras) = draw.extras.filter(|_| mesh.extended) {
-                        bindings.vertex(&mut pass, 2, extras);
-                    }
-                    bindings.index(&mut pass, draw.indices);
+                    self.bind_batch(&mut pass, &mut binds, (kind, true), batch);
                     let (ids, draws, offset) =
                         self.gpu_presentation.probe_draw_source(batch, index);
-                    bindings.ids(&mut pass, 1, ids);
+                    binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
@@ -172,8 +158,7 @@ impl Renderer {
             if batch.transparent || mesh.skinned {
                 continue;
             }
-            let (_, variant) = self.materials.binding(batch.material);
-            let variant = variant.with_extended(mesh.extended).uber();
+            let variant = self.batch_binding(batch, Some(mesh)).1.uber();
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
                 && !missing.contains(&variant)
             {

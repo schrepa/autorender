@@ -6,6 +6,7 @@
 //! triangles overlapped them or however small they were.
 
 use crate::bindings::VISIBILITY_CLASSIFY;
+use crate::buffers::{storage, uniform};
 use crate::cached::Cached;
 use crate::gpu_data::VISIBILITY_SHADER;
 
@@ -48,44 +49,16 @@ pub(crate) struct VisibilityBuffer {
     group: Cached<u64, wgpu::BindGroup>,
 }
 
-fn storage(
-    device: &wgpu::Device,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: bytes.max(16).next_multiple_of(16),
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-        mapped_at_creation: false,
-    })
-}
-
-fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size: bytes,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
-}
-
 fn ids_target(device: &wgpu::Device, (width, height): (u32, u32)) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("engine/visibility-ids"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: ID_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    })
+    crate::targets::texture_2d(
+        device,
+        "engine/visibility-ids",
+        (width, height),
+        1,
+        1,
+        ID_FORMAT,
+        crate::targets::RENDER_TARGET,
+    )
 }
 
 impl VisibilityBuffer {

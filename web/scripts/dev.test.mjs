@@ -85,7 +85,7 @@ function setup(t, options = {}) {
         pipelines: 12, pipelines_created: 0, pipelines_compiling: false,
         virtual_clusters: 0, virtual_triangles: 0, virtual_shadow_clusters: 0, virtual_shadow_triangles: 0, virtual_occluded_clusters: 0, dropped_virtual: 0,
         virtual_resident_pages: 0, virtual_loading_pages: 0, virtual_missing_pages: 0, dropped_virtual_pages: 0,
-        render_passes: ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"], culled_passes: [],
+        render_passes: ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"],
       });
     },
     frame() { assert.fail("development controls must not call the ordinary frame loop"); },
@@ -226,7 +226,6 @@ test("capture renders current state then waits for two animation frames without 
   assert.equal(reply.result.rendering.reflections, true);
   assert.equal(reply.result.rendering.particles, 40);
   assert.deepEqual(reply.result.rendering.render_passes, ["presentation", "shadow_select", "shadow_maps", "opaque", "decals", "effects", "composite"]);
-  assert.deepEqual(reply.result.rendering.culled_passes, []);
   assert.equal(session.counters.statsRead, 1);
   assert.equal(session.counters.polls, 1);
   assert.deepEqual(session.busy, [true, false]);

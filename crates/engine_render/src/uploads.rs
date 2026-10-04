@@ -1,7 +1,17 @@
 //! Exact CPU upload reuse: the camera uniform is rewritten only when its
-//! bytes change, and upload planners describe written regions as ranges.
+//! bytes change, and upload planners describe written regions as ranges
+//! with the heuristics they share.
 
 use crate::gpu_data::CameraUniform;
+
+/// Clean bytes a range may span instead of another queue write.
+pub(crate) const WRITE_CALL_BYTES: usize = 16 * 1024;
+
+/// Whether a stream of `len` records with `changed` of them changed uploads
+/// whole instead of by ranges: at least three quarters changed.
+pub(crate) fn whole_stream(changed: usize, len: usize) -> bool {
+    changed * 4 >= len * 3
+}
 
 #[derive(Clone, Copy, Default)]
 pub(crate) struct UploadRange {

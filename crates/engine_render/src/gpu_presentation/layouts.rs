@@ -5,43 +5,10 @@
 
 use crate::bindings::{
     PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_LEVEL,
-    PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS, Table,
+    PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
 };
 use crate::gpu_data::PRESENTATION_SHADER;
-use crate::pipelines::{Fillers, filled_group, layout};
-
-/// A shared layout: its table (`crate::bindings`), group layout and
-/// pipeline layout.
-pub(super) struct Family {
-    table: &'static Table,
-    group: wgpu::BindGroupLayout,
-    pipeline: wgpu::PipelineLayout,
-}
-
-impl Family {
-    fn new(
-        device: &wgpu::Device,
-        table: &'static Table,
-        level: Option<&wgpu::BindGroupLayout>,
-    ) -> Self {
-        let group = layout(device, table);
-        let groups = [Some(&group), level];
-        let pipeline = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some(table.label),
-            bind_group_layouts: if level.is_some() {
-                &groups
-            } else {
-                &groups[..1]
-            },
-            immediate_size: 0,
-        });
-        Self {
-            table,
-            group,
-            pipeline,
-        }
-    }
-}
+use crate::pipelines::{Family, Fillers, layout};
 
 /// The passes' shared layouts.
 pub(super) struct Families {
@@ -84,11 +51,11 @@ impl Shaders {
         });
         let level_layout = layout(device, &PRESENTATION_LEVEL);
         let families = Families {
-            compose: Family::new(device, &PRESENTATION_COMPOSE, Some(&level_layout)),
-            cull: Family::new(device, &PRESENTATION_CULL, None),
-            tests: Family::new(device, &PRESENTATION_TESTS, None),
-            compact: Family::new(device, &PRESENTATION_COMPACT, None),
-            skin_bounds: Family::new(device, &PRESENTATION_SKIN_BOUNDS, None),
+            compose: Family::new(device, &PRESENTATION_COMPOSE, &[&level_layout]),
+            cull: Family::new(device, &PRESENTATION_CULL, &[]),
+            tests: Family::new(device, &PRESENTATION_TESTS, &[]),
+            compact: Family::new(device, &PRESENTATION_COMPACT, &[]),
+            skin_bounds: Family::new(device, &PRESENTATION_SKIN_BOUNDS, &[]),
         };
         let pipeline = |entry: &str, family: &Family| {
             crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
@@ -124,13 +91,6 @@ impl Shaders {
         label: &str,
         resources: &[(&str, wgpu::BindingResource<'_>)],
     ) -> wgpu::BindGroup {
-        filled_group(
-            device,
-            label,
-            family.table,
-            &family.group,
-            resources,
-            &self.fillers,
-        )
+        family.group(device, label, resources, &self.fillers)
     }
 }

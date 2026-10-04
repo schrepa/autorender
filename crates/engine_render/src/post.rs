@@ -201,12 +201,11 @@ impl PostPass {
             },
             alpha: wgpu::BlendComponent::REPLACE,
         });
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/post-uniform"),
-            size: size_of::<PostUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = crate::buffers::uniform(
+            device,
+            "engine/post-uniform",
+            size_of::<PostUniform>() as u64,
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/post-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -775,21 +774,15 @@ impl PostPass {
         let half = ((width / 2).max(1), (height / 2).max(1));
         let quarter = (width.div_ceil(4).max(1), height.div_ceil(4).max(1));
         let texture = |label, (width, height): (u32, u32), format, levels| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: levels,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+            crate::targets::texture_2d(
+                device,
+                label,
+                (width, height),
+                1,
+                levels,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            })
+                crate::targets::RENDER_TARGET,
+            )
         };
         let levels = BLOOM_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));
         let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(half.0, half.1));

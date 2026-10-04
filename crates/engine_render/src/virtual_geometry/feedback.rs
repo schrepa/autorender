@@ -6,24 +6,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use super::VirtualStats;
-
-const READBACKS: usize = 3;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ReadbackState {
-    Idle,
-    Recorded,
-    Pending,
-}
-
-struct Readback {
-    buffer: wgpu::Buffer,
-    state: Rc<Cell<ReadbackState>>,
-    // The frame it recorded, where its used and requested group bits start
-    // and their words each.
-    frame: u64,
-    feedback: (usize, usize),
-}
+use crate::buffers::ReadbackRing;
 
 /// What a frame read back: its counts, dropped queue, group and cluster
 /// entries and whether its retest list overflowed, and the groups it used
@@ -37,7 +20,9 @@ pub(super) struct Feedback {
 }
 
 pub(super) struct Readbacks {
-    readbacks: Vec<Readback>,
+    // Each read-back's frame, and where its used and requested group bits
+    // start and their words each.
+    readbacks: ReadbackRing<(u64, (usize, usize))>,
     // Feedback mapped since the last frame took it.
     read: Rc<Cell<Option<Feedback>>>,
     // The counts of the last frame taken.
@@ -47,7 +32,7 @@ pub(super) struct Readbacks {
 impl Readbacks {
     pub(super) fn new() -> Self {
         Self {
-            readbacks: Vec::new(),
+            readbacks: ReadbackRing::new("engine/virtual-counters-readback"),
             read: Rc::new(Cell::new(None)),
             last: None,
         }
@@ -81,88 +66,48 @@ impl Readbacks {
         frame: u64,
         feedback: (usize, usize),
     ) {
-        let index = match self
-            .readbacks
-            .iter()
-            .position(|readback| readback.state.get() == ReadbackState::Idle)
-        {
-            Some(index) => index,
-            None if self.readbacks.len() < READBACKS => {
-                // Counters, bins and both feedback bitsets.
-                self.readbacks.push(Readback {
-                    buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("engine/virtual-counters-readback"),
-                        size: counters.size(),
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    }),
-                    state: Rc::new(Cell::new(ReadbackState::Idle)),
-                    frame: 0,
-                    feedback: (0, 0),
-                });
-                self.readbacks.len() - 1
-            }
-            None => return,
-        };
-        let readback = &mut self.readbacks[index];
-        encoder.copy_buffer_to_buffer(counters, 0, &readback.buffer, 0, readback.buffer.size());
-        readback.state.set(ReadbackState::Recorded);
-        readback.frame = frame;
-        readback.feedback = feedback;
+        // Counters, bins and both feedback bitsets.
+        self.readbacks.record(
+            device,
+            encoder,
+            counters,
+            counters.size(),
+            (frame, feedback),
+        );
     }
 
     /// Requests maps of counters recorded in the frame just submitted, whose
     /// retest list had room for `retest_capacity` clusters.
     pub(super) fn after_submit(&mut self, retest_capacity: u32) {
-        for readback in &self.readbacks {
-            if readback.state.get() != ReadbackState::Recorded {
-                continue;
-            }
-            readback.state.set(ReadbackState::Pending);
-            let state = Rc::clone(&readback.state);
-            let read = Rc::clone(&self.read);
-            let buffer = readback.buffer.clone();
-            let (frame, (feedback, feedback_words)) = (readback.frame, readback.feedback);
-            readback
-                .buffer
-                .slice(..)
-                .map_async(wgpu::MapMode::Read, move |result| {
-                    if result.is_ok() {
-                        if let Ok(view) = buffer.slice(..).get_mapped_range() {
-                            let word = |index: usize| {
-                                view.get(index * 4..index * 4 + 4).map_or(0, |bytes| {
-                                    u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
-                                })
-                            };
-                            let drops = [word(3), word(4), word(5)];
-                            let bits = |start: usize| -> Vec<u32> {
-                                (start..start + feedback_words).map(word).collect()
-                            };
-                            read.set(Some(Feedback {
-                                stats: VirtualStats {
-                                    clusters: word(6),
-                                    triangles: word(7),
-                                    shadow_clusters: word(8),
-                                    shadow_triangles: word(9),
-                                    occluded: word(11),
-                                    dropped: drops.iter().sum(),
-                                    ..VirtualStats::default()
-                                },
-                                drops: [
-                                    drops[0],
-                                    drops[1],
-                                    drops[2],
-                                    u32::from(word(10) > retest_capacity),
-                                ],
-                                used: bits(feedback),
-                                requested: bits(feedback + feedback_words),
-                                frame,
-                            }));
-                        }
-                        buffer.unmap();
-                    }
-                    state.set(ReadbackState::Idle);
-                });
-        }
+        let read = Rc::clone(&self.read);
+        self.readbacks
+            .after_submit(move |words, (frame, (feedback, feedback_words))| {
+                let drops = [words.get(3), words.get(4), words.get(5)];
+                let bits = |start: usize| -> Vec<u32> {
+                    (start..start + feedback_words)
+                        .map(|index| words.get(index))
+                        .collect()
+                };
+                read.set(Some(Feedback {
+                    stats: VirtualStats {
+                        clusters: words.get(6),
+                        triangles: words.get(7),
+                        shadow_clusters: words.get(8),
+                        shadow_triangles: words.get(9),
+                        occluded: words.get(11),
+                        dropped: drops.iter().sum(),
+                        ..VirtualStats::default()
+                    },
+                    drops: [
+                        drops[0],
+                        drops[1],
+                        drops[2],
+                        u32::from(words.get(10) > retest_capacity),
+                    ],
+                    used: bits(feedback),
+                    requested: bits(feedback + feedback_words),
+                    frame,
+                }));
+            });
     }
 }

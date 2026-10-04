@@ -35,6 +35,8 @@ use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam:
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
 use crate::browser::FramePoses;
+use crate::buffers::entry;
+use crate::cached::Cached;
 use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
@@ -194,11 +196,6 @@ impl ShadowFrame {
     }
 }
 
-// A buffer bound whole as binding `name`.
-fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
-    (name, buffer.as_entire_binding())
-}
-
 pub(crate) struct ShadowPass {
     // Created with the first frame that has shadows: games without them
     // never compile them.
@@ -211,8 +208,8 @@ pub(crate) struct ShadowPass {
     kept: KeptMap,
     casters: CasterGroups,
     selection: Selection,
-    // Pose bindings of both pose buffers, for the generation they belong to.
-    pose_groups: Option<(u64, [Option<wgpu::BindGroup>; 2])>,
+    // Pose bindings of both pose buffers, by the generation they belong to.
+    pose_groups: Cached<u64, [Option<wgpu::BindGroup>; 2]>,
     // Maps drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
 }
@@ -235,7 +232,7 @@ impl ShadowPass {
             kept: KeptMap::default(),
             casters: CasterGroups::new(),
             selection: Selection::new(device),
-            pose_groups: None,
+            pose_groups: Cached::default(),
             virtual_views: Vec::new(),
         }
     }
@@ -442,12 +439,11 @@ impl ShadowPass {
         self.maps
             .write_uniform(queue, regions.lookup_uniform(&settings, classify));
         // Bindings: poses of this frame, and the selection inputs.
-        if self
-            .pose_groups
-            .as_ref()
-            .is_none_or(|(generation, groups)| {
-                *generation != poses.generation || groups[poses.parity].is_none()
-            })
+        if self.pose_groups.stale(&poses.generation)
+            || self
+                .pose_groups
+                .get()
+                .is_some_and(|groups| groups[poses.parity].is_none())
         {
             let group = |buffer: Option<&wgpu::Buffer>, palette: &wgpu::Buffer| {
                 buffer.map(|buffer| {
@@ -464,13 +460,13 @@ impl ShadowPass {
                     )
                 })
             };
-            self.pose_groups = Some((
+            self.pose_groups.set(
                 poses.generation,
                 [
                     group(poses.buffers[0], poses.palettes[0]),
                     group(poses.buffers[1], poses.palettes[1]),
                 ],
-            ));
+            );
         }
         self.selection.bind(
             device,
@@ -541,8 +537,8 @@ impl ShadowPass {
         );
         let pose_group = self
             .pose_groups
-            .as_ref()
-            .and_then(|(_, groups)| groups[frame.pose_index].as_ref());
+            .get()
+            .and_then(|groups| groups[frame.pose_index].as_ref());
         // Casters in pipeline, vertex buffer and material order,
         // which passes switch once per run: depth alone is written, so the
         // order changes no texel. Virtual geometry draws its casters'
