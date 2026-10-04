@@ -1,11 +1,11 @@
 # Engine trigonometry, minimum, maximum and clamping are branch-free and give
 # the same bits on native targets and in browsers; the standard functions
-# mispredict in Wasm (docs/math.md).
+# mispredict in Wasm.
 disallowed-methods = [
-    { path = "f32::sin", reason = "use engine::math::sin (docs/math.md)" },
-    { path = "f32::cos", reason = "use engine::math::cos (docs/math.md)" },
-    { path = "f32::sin_cos", reason = "use engine::math::sin_cos (docs/math.md)" },
-    { path = "f32::min", reason = "use engine::math::min: browsers compile f32::min to a branch (docs/math.md)" },
-    { path = "f32::max", reason = "use engine::math::max: browsers compile f32::max to a branch (docs/math.md)" },
-    { path = "f32::clamp", reason = "use engine::math::clamp: browsers compile f32::clamp to branches (docs/math.md)" },
+    { path = "f32::sin", reason = "use engine::math::sin" },
+    { path = "f32::cos", reason = "use engine::math::cos" },
+    { path = "f32::sin_cos", reason = "use engine::math::sin_cos" },
+    { path = "f32::min", reason = "use engine::math::min: browsers compile f32::min to a branch" },
+    { path = "f32::max", reason = "use engine::math::max: browsers compile f32::max to a branch" },
+    { path = "f32::clamp", reason = "use engine::math::clamp: browsers compile f32::clamp to branches" },
 ]
