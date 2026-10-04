@@ -7,6 +7,8 @@ use std::f32::consts::TAU;
 
 use engine::prelude::*;
 
+use crate::shapes::{fan, polygon_normal};
+
 /// How a face's texture coordinates follow its size.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Map {
@@ -94,21 +96,9 @@ impl Builder {
 
     /// A flat convex polygon fanned from its first corner, facing `outward`.
     pub(crate) fn face(&mut self, corners: &[Vec3], uvs: &[[f32; 2]], outward: Vec3) {
-        // Newell's normal: counterclockwise corners seen from its side.
-        let mut normal = Vec3::ZERO;
-        for (index, a) in corners.iter().enumerate() {
-            let b = corners[(index + 1) % corners.len()];
-            normal += Vec3::new(
-                (a.y - b.y) * (a.z + b.z),
-                (a.z - b.z) * (a.x + b.x),
-                (a.x - b.x) * (a.y + b.y),
-            );
-        }
-        if normal.length_squared() < 1.0e-12 {
+        let Some((normal, flip)) = polygon_normal(corners, outward) else {
             return;
-        }
-        let flip = normal.dot(outward) < 0.0;
-        let normal = if flip { -normal } else { normal }.normalize();
+        };
         let base = self.vertices.len() as u32;
         for (corner, uv) in corners.iter().zip(uvs) {
             self.vertices.push(MeshVertex {
@@ -119,13 +109,7 @@ impl Builder {
             self.colors.push(self.color);
             self.skin.push(self.bind);
         }
-        for index in 1..corners.len() as u32 - 1 {
-            if flip {
-                self.indices.extend([base, base + index + 1, base + index]);
-            } else {
-                self.indices.extend([base, base + index, base + index + 1]);
-            }
-        }
+        fan(&mut self.indices, base, corners.len() as u32, flip);
     }
 
     /// Texture coordinates of a polygon under `map`.

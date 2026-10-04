@@ -2,6 +2,8 @@
  * Call abort when configuration, camera, resolution, visibility or pause changes.
  * sample copies primitive values; callers still own/free any Wasm stats binding.
  */
+import { type Distribution, percentiles } from "./statistics.ts";
+
 export type StressJson = null | boolean | number | string | StressJson[] | { [key: string]: StressJson };
 export type StressRecordingMetadata = Record<string, unknown>;
 export type StressRecordingOptions = {
@@ -17,7 +19,6 @@ export type StressFrameInput = {
   counters?: Record<string, number | boolean>;
 };
 type Options = Required<StressRecordingOptions>;
-type Distribution = { min: number; median: number; p95: number; p99: number; max: number };
 type Frame = {
   elapsed_ms: number; frame_interval_ms: number;
   simulation_ms: number; extraction_ms: number; render_ms: number; total_cpu_ms: number;
@@ -75,15 +76,9 @@ function values<T extends number | boolean>(input: Record<string, T> | undefined
   return Object.fromEntries(entries);
 }
 
-/** Same linear-interpolation percentiles as the development benchmark runner. */
+/** The development benchmark's percentiles, or null without samples. */
 function distribution(input: number[]): Distribution | null {
-  if (!input.length) return null;
-  const sorted = [...input].sort((a, b) => a - b);
-  const percentile = (fraction: number) => {
-    const position = (sorted.length - 1) * fraction;
-    return sorted[Math.floor(position)] + (sorted[Math.ceil(position)] - sorted[Math.floor(position)]) * (position % 1);
-  };
-  return { min: sorted[0], median: percentile(0.5), p95: percentile(0.95), p99: percentile(0.99), max: sorted.at(-1)! };
+  return input.length ? percentiles(input) : null;
 }
 
 /** No adapter request/device allocation: pass the runtime's existing adapter info

@@ -3,6 +3,8 @@
 // this device samples, or to RGBA8 without one. The transcoder is the
 // vendored upstream build in public/basis, loaded on first use.
 
+import { adapterFeatures } from "./adapter.ts";
+
 /** A transcoded KTX2 image: every level of a compressed format, or RGBA8. */
 export type TranscodedImage =
   | { format: "bc7" | "etc2" | "astc"; width: number; height: number; data: Uint8Array; levels: Uint32Array }
@@ -29,8 +31,6 @@ interface BasisModule {
   transcoder_texture_format: Record<string, BasisEnum>;
 }
 type BasisFactory = (options: { locateFile(path: string): string }) => Promise<BasisModule>;
-interface GpuAdapter { features: ReadonlySet<string> }
-interface Gpu { requestAdapter(options?: { powerPreference?: string }): Promise<GpuAdapter | null> }
 
 const KTX2_MAGIC = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a];
 
@@ -66,9 +66,7 @@ function loadTranscoder(): Promise<BasisModule> {
 // The adapter the engine requests: its first block-compressed format.
 function targetFormat(): Promise<TranscodedImage["format"]> {
   target ??= (async () => {
-    const gpu = (navigator as Navigator & { gpu?: Gpu }).gpu;
-    const adapter = await gpu?.requestAdapter({ powerPreference: "high-performance" });
-    const features = adapter?.features ?? new Set<string>();
+    const features = await adapterFeatures();
     if (features.has("texture-compression-bc")) return "bc7";
     if (features.has("texture-compression-astc")) return "astc";
     if (features.has("texture-compression-etc2")) return "etc2";

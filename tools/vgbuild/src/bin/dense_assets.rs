@@ -1,5 +1,7 @@
 //! Writes the Stress Lab's dense virtual geometry (decision 044): procedural
-//! high-poly meshes as `EVG1` files and the manifest the web host reads.
+//! high-poly meshes as `EVG1` files, named as the Stress Lab's
+//! `DENSE_FILES` fetches them, and a manifest of them that the
+//! virtual-geometry smoke check reads.
 //!
 //! `cargo run -p engine_vgbuild --release --bin dense_assets -- [DIRECTORY]`
 //! (default `web/public/stress/dense`).

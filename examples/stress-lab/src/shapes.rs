@@ -56,6 +56,39 @@ const BARK: Uv = Uv::new(0.0, 0.8, 1.0, 1.0);
 const BODY: Uv = Uv::new(0.0, 0.55, 1.0, 1.0);
 const WINDOWS: Uv = Uv::new(0.0, 0.1, 1.0, 0.5);
 
+/// The unit normal of the flat convex polygon `corners` on its `outward`
+/// side (Newell's normal: counterclockwise corners seen from its side), and
+/// whether its corners turn the other way from there; `None` when it is
+/// degenerate. Both mesh builders face polygons with it.
+pub(crate) fn polygon_normal(corners: &[Vec3], outward: Vec3) -> Option<(Vec3, bool)> {
+    let mut normal = Vec3::ZERO;
+    for (index, a) in corners.iter().enumerate() {
+        let b = corners[(index + 1) % corners.len()];
+        normal += Vec3::new(
+            (a.y - b.y) * (a.z + b.z),
+            (a.z - b.z) * (a.x + b.x),
+            (a.x - b.x) * (a.y + b.y),
+        );
+    }
+    if normal.length_squared() < 1.0e-12 {
+        return None;
+    }
+    let flip = normal.dot(outward) < 0.0;
+    Some((if flip { -normal } else { normal }.normalize(), flip))
+}
+
+/// The triangles fanning a polygon of `count` corners from vertex `base`,
+/// wound the other way when `flip`.
+pub(crate) fn fan(indices: &mut Vec<u32>, base: u32, count: u32, flip: bool) {
+    for index in 1..count - 1 {
+        if flip {
+            indices.extend([base, base + index + 1, base + index]);
+        } else {
+            indices.extend([base, base + index, base + index + 1]);
+        }
+    }
+}
+
 #[derive(Default)]
 struct Builder {
     vertices: Vec<MeshVertex>,
@@ -65,21 +98,9 @@ struct Builder {
 impl Builder {
     /// A flat convex polygon fanned from its first corner, facing `outward`.
     fn face(&mut self, corners: &[Vec3], uvs: &[[f32; 2]], outward: Vec3) {
-        // Newell's normal: counterclockwise corners seen from its side.
-        let mut normal = Vec3::ZERO;
-        for (index, a) in corners.iter().enumerate() {
-            let b = corners[(index + 1) % corners.len()];
-            normal += Vec3::new(
-                (a.y - b.y) * (a.z + b.z),
-                (a.z - b.z) * (a.x + b.x),
-                (a.x - b.x) * (a.y + b.y),
-            );
-        }
-        if normal.length_squared() < 1.0e-12 {
+        let Some((normal, flip)) = polygon_normal(corners, outward) else {
             return;
-        }
-        let flip = normal.dot(outward) < 0.0;
-        let normal = if flip { -normal } else { normal }.normalize();
+        };
         let base = self.vertices.len() as u32;
         for (corner, uv) in corners.iter().zip(uvs) {
             self.vertices.push(MeshVertex {
@@ -88,13 +109,7 @@ impl Builder {
                 uv: *uv,
             });
         }
-        for index in 1..corners.len() as u32 - 1 {
-            if flip {
-                self.indices.extend([base, base + index + 1, base + index]);
-            } else {
-                self.indices.extend([base, base + index, base + index + 1]);
-            }
-        }
+        fan(&mut self.indices, base, corners.len() as u32, flip);
     }
 
     /// A quad through its bottom-left, bottom-right, top-right and top-left

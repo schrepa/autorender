@@ -1,11 +1,16 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
 import type { RuntimeStats } from "./host";
+import { percentiles } from "./statistics.ts";
 
 /** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
 export type RenderingStats = RuntimeStats;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
-export type Reply = { ok: boolean; observation?: Observation; result?: Record<string, unknown>; error?: { code: string; path: string; message: string } };
+export type Reply = {
+  version?: number; ok: boolean; observation?: Observation;
+  result?: Record<string, unknown>;
+  error?: { code: string; path: string; message: string };
+};
 export class BenchmarkError extends Error {
   code: string;
   constructor(code: string, message: string) { super(message); this.code = code; }
@@ -21,18 +26,12 @@ function numericFields(measurements: RenderingStats[]) {
   return Object.keys(measurements[0] ?? {}).filter(field => measurements.every(stats => typeof stats[field] === "number"));
 }
 
-/** Linear interpolation of sorted observations; counts describe actual samples. */
+/** Percentiles of measured `values`; counts describe actual samples. */
 export function distribution(values: number[]) {
   if (!values.length || values.some(value => !Number.isFinite(value) || value < 0)) {
     throw new BenchmarkError("invalid_measurement", "measurements must be nonempty, finite and nonnegative");
   }
-  const sorted = [...values].sort((a, b) => a - b);
-  function quantile(fraction: number) {
-    const index = (sorted.length - 1) * fraction;
-    const lower = Math.floor(index);
-    return sorted[lower] + (sorted[Math.ceil(index)] - sorted[lower]) * (index - lower);
-  }
-  return { min: sorted[0], median: quantile(0.5), p95: quantile(0.95), p99: quantile(0.99), max: sorted.at(-1)! };
+  return percentiles(values);
 }
 
 type Context = {

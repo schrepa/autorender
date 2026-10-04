@@ -21,6 +21,7 @@ export function readStats(runtime: { stats(): string }): RuntimeStats {
   return JSON.parse(runtime.stats()) as RuntimeStats;
 }
 export interface Runtime {
+  /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
   stats(): string;
   suspend(): void;

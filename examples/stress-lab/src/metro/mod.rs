@@ -32,7 +32,9 @@ use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use engine::prelude::*;
 
 use crate::StressConfig;
-use crate::city::{Motion, Orbit, Rng, Spin, Travel, Wheel, compose, part_at};
+use crate::city::{
+    Motion, Orbit, Rng, Spin, Travel, Wheel, budget, compose, part_at, river_row, street_loop,
+};
 use crate::scene::{Animation, hash, position_for_index};
 use materials::{AD_SLOTS, Clip, Library, Mat, NEON_COLORS};
 use models::{Car, MID_FLOORS, Mid, Model, Style, TOWER_FLOORS};
@@ -381,29 +383,9 @@ impl Metro {
     }
 }
 
-fn budget(config: &StressConfig) -> (u32, u32, f32) {
-    let moving = config.renderables / 100 * config.moving_percent
-        + (config.renderables % 100).min(config.moving_percent);
-    let dense = if config.dense_colliders {
-        config.colliders
-    } else {
-        0
-    };
-    let static_total = config.renderables - moving - dense.min(config.renderables - moving);
-    let radius = math::max(
-        (math::max(static_total as f32, moving as f32 * 0.5) / PER_BLOCK / PI).sqrt(),
-        1.0,
-    );
-    (moving, static_total, radius)
-}
-
-fn river_row(radius: f32) -> Option<i32> {
-    (radius >= 4.0).then(|| (radius * 0.45).round() as i32)
-}
-
 /// A street-level view across the river toward the core.
 pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config);
+    let (_, _, radius) = budget(config, PER_BLOCK);
     match river_row(radius) {
         Some(row) => (
             Vec3::new(-PERIOD * 0.3, 9.0, row as f32 * PERIOD + PERIOD * 0.62),
@@ -415,7 +397,7 @@ pub(crate) fn close_view(config: &StressConfig) -> (Vec3, Vec3) {
 
 /// An aerial view of the whole metro.
 pub(crate) fn overview(config: &StressConfig) -> (Vec3, Vec3) {
-    let (_, _, radius) = budget(config);
+    let (_, _, radius) = budget(config, PER_BLOCK);
     let reach = (radius + 2.0) * PERIOD;
     (
         Vec3::new(reach * 0.55, reach * 0.62, reach * 1.05),
@@ -424,7 +406,7 @@ pub(crate) fn overview(config: &StressConfig) -> (Vec3, Vec3) {
 }
 
 fn plan(config: &StressConfig) -> Metro {
-    let (moving, static_total, radius) = budget(config);
+    let (moving, static_total, radius) = budget(config, PER_BLOCK);
     let mut centers = vec![(Vec2::ZERO, radius * 0.34, 1.0)];
     let mut rng = Rng::new(config.seed ^ 0x6e7, 0, 0);
     if radius >= 6.0 {
@@ -2861,33 +2843,9 @@ fn reparent(city: &mut Metro, child: u32, parent: u32) {
     };
 }
 
-/// A random street loop around one or two blocks.
-fn street_loop(city: &Metro, rng: &mut Rng) -> (Vec3, Vec2) {
-    let (bx, bz) = if city.blocks.is_empty() {
-        let reach = city.radius.ceil() as i32;
-        (
-            rng.below(2 * reach as u32 + 1) as i32 - reach,
-            rng.below(2 * reach as u32 + 1) as i32 - reach,
-        )
-    } else {
-        let (bx, bz, _) = city.blocks[rng.below(city.blocks.len() as u32) as usize];
-        (bx, bz)
-    };
-    let (wide, deep) = (1 + rng.below(2), 1 + rng.below(2));
-    let center = v(
-        bx as f32 * PERIOD + wide as f32 * PERIOD * 0.5,
-        0.0,
-        bz as f32 * PERIOD + deep as f32 * PERIOD * 0.5,
-    );
-    (
-        center,
-        Vec2::new(wide as f32 * PERIOD * 0.5, deep as f32 * PERIOD * 0.5),
-    )
-}
-
 /// A bus (kind 0), a truck (1) or a car (2) with headlights on a loop.
 fn vehicle(city: &mut Metro, rng: &mut Rng, kind: u32) {
-    let (center, half) = street_loop(city, rng);
+    let (center, half) = street_loop(&city.blocks, city.radius, rng);
     let direction = rng.sign();
     let lane = direction * 1.1;
     let half = half + Vec2::splat(lane);
@@ -2950,7 +2908,7 @@ fn vehicle(city: &mut Metro, rng: &mut Rng, kind: u32) {
 }
 
 fn drone(city: &mut Metro, rng: &mut Rng) {
-    let (center, _) = street_loop(city, rng);
+    let (center, _) = street_loop(&city.blocks, city.radius, rng);
     let downtown = center.length() < city.radius * PERIOD * 0.3;
     let height = if downtown {
         rng.range(40.0, 130.0)
