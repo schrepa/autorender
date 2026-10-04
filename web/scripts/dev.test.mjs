@@ -53,6 +53,14 @@ function setup(t, options = {}) {
       accessed("dev_command");
       const command = JSON.parse(source);
       calls.push({ command, width, height });
+      // The engine validates the controls the host runs and returns them
+      // with their defaults, or rejects them.
+      if (["pause", "resume", "benchmark", "capture", "reload"].includes(command.op)) {
+        const rejected = options.reject?.(command);
+        if (rejected) return JSON.stringify({ version: 1, ok: false, observation: observation(), error: rejected });
+        const defaults = { benchmark: { mode: "step", warmup: 30, samples: 120 }, capture: { gpu: false } };
+        return reply({ control: { ...defaults[command.op], ...command } });
+      }
       if (options.command) return options.command(command, reply);
       if (command.op === "step") { tick += command.ticks; frame++; }
       return reply();
@@ -170,7 +178,8 @@ test("awaited source reload excludes competing commands and renders the accepted
   assert.deepEqual(session.calls.filter(call => call.reload), [{
     reload: { source: "saved scene source", expectedRevision: "4", targetRevision: "5" },
   }]);
-  assert.deepEqual(session.calls.filter(call => call.command).map(call => call.command.op), ["status", "render"]);
+  // The engine validates the reload first.
+  assert.deepEqual(session.calls.filter(call => call.command).map(call => call.command.op), ["reload", "status", "render"]);
   assert.deepEqual(session.busy, [true, false]);
   assert.equal(session.counters.frame, 7);
   assert.equal(session.counters.tick, 12);
@@ -190,7 +199,8 @@ test("disposal during source fetch never invokes the freed runtime", async t => 
   assert.equal(reply.error.code, "session_closed");
   assert.equal(session.counters.accessesAfterFree, 0);
   assert.equal(session.counters.polls, 0);
-  assert.deepEqual(session.calls, []);
+  // Only the validation before the fetch reached the runtime.
+  assert.deepEqual(session.calls.map(call => call.command?.op), ["reload"]);
   assert.equal((await session.api.request({ op: "status" })).error.code, "session_closed");
 });
 
@@ -198,7 +208,10 @@ test("capture renders current state then waits for two animation frames without 
   const session = setup(t);
   let settled = false;
   const capture = session.api.request({ op: "capture" }).then(reply => { settled = true; return reply; });
-  assert.deepEqual(session.calls, [{ command: { op: "render", version: 1 }, width: 800, height: 600 }]);
+  assert.deepEqual(session.calls, [
+    { command: { op: "capture", version: 1 }, width: 800, height: 600 },
+    { command: { op: "render", version: 1 }, width: 800, height: 600 },
+  ]);
   assert.equal(session.pendingFrames, 1);
   assert.equal(settled, false);
   session.flushFrame();
@@ -252,7 +265,7 @@ test("capture disposal cancels its wait and never reads statistics from a freed 
 test("explicit fractional capture presents the requested pose and holds the busy boundary", async t => {
   const session = setup(t);
   const capture = session.api.request({ op: "capture", alpha: 0.25 });
-  assert.deepEqual(session.calls[0].command, { op: "present", alpha: 0.25, version: 1 });
+  assert.deepEqual(session.calls[1].command, { op: "present", alpha: 0.25, version: 1 });
   assert.equal((await session.api.request({ op: "step", ticks: 1 })).error.code, "command_busy");
   session.flushFrame();
   session.flushFrame();
@@ -290,19 +303,25 @@ test("aborting capture settles even when animation frames never run", async t =>
   assert.equal(session.counters.accessesAfterFree, 0);
 });
 
-test("request shape, byte budget, and reload revisions reject before mutation", async t => {
-  const session = setup(t);
-  for (const command of [null, [], {}, { op: 7 }, { op: "pause", extra: true }]) {
+test("request shape and byte budget reject before forwarding; controls the engine rejects change nothing", async t => {
+  const session = setup(t, {
+    reject: command => command.extra !== undefined || command.revision === "01"
+      ? { code: command.op === "reload" ? "invalid_revision" : "invalid_request", path: "$", message: "rejected" }
+      : undefined,
+  });
+  for (const command of [null, [], {}, { op: 7 }]) {
     const reply = await session.api.request(command);
     assert.equal(reply.error.code, "invalid_request");
   }
   const oversized = await session.api.request({ op: "inspect", entity: "😀".repeat(5000) });
   assert.equal(oversized.error.code, "request_too_large", "budget counts UTF-8 bytes");
-  for (const revision of [4, "-1", "01", "1.0", "1e3", ""]) {
-    const reply = await session.api.request({ op: "reload", expected_revision: "4", revision });
-    assert.equal(reply.error.code, "invalid_revision");
-  }
   assert.ok(session.calls.every(call => call.command?.op === "status"));
+  const pause = await session.api.request({ op: "resume", extra: true });
+  assert.equal(pause.error.code, "invalid_request");
+  assert.equal(session.host.paused(), true, "a rejected resume keeps the session paused");
+  const reload = await session.api.request({ op: "reload", expected_revision: "4", revision: "01" });
+  assert.equal(reload.error.code, "invalid_revision");
+  assert.ok(!session.calls.some(call => call.reload), "a rejected reload never reaches the runtime");
   assert.equal(session.counters.statsRead, 0);
 });
 
@@ -376,13 +395,13 @@ test("benchmark warms separately, samples exact fixed ticks, and excludes compet
   assert.equal(session.pendingFrames, 0);
 });
 
-test("render-only benchmark does not advance simulation and invalid options do not mutate", async t => {
-  const session = setup(t);
-  for (const fields of [{ samples:0 }, { samples:241 }, { warmup:-1 }, { warmup:121 }, { mode:"frames" }, { samples:1.5 }, { extra:1 }]) {
-    const reply = await session.api.request({ op: "benchmark", ...fields });
-    assert.equal(reply.error.code, "invalid_benchmark");
-  }
-  assert.ok(session.calls.every(call => call.command?.op === "status"));
+test("render-only benchmark does not advance simulation and rejected options do not mutate", async t => {
+  const session = setup(t, {
+    reject: command => command.samples === 0 ? { code: "invalid_benchmark", path: "$", message: "rejected" } : undefined,
+  });
+  const rejected = await session.api.request({ op: "benchmark", samples: 0 });
+  assert.equal(rejected.error.code, "invalid_benchmark");
+  assert.ok(session.calls.every(call => call.command?.op === "status" || call.command?.op === "benchmark"));
   const running = session.api.request({ op: "benchmark", mode: "render", warmup: 0, samples: 1 });
   session.flushFrame(10);
   await new Promise(resolve => setImmediate(resolve));

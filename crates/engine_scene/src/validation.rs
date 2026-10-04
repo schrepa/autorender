@@ -16,7 +16,8 @@ use crate::{
 };
 
 pub(crate) struct PreparedScene {
-    pub environment: Option<crate::EnvironmentSettings>,
+    /// Validated.
+    pub environment: Option<crate::SceneEnvironment>,
     pub colliders: Vec<Option<engine_collision::Collider>>,
     pub lights: Vec<Option<LocalLight>>,
     pub emitters: Vec<Option<ParticleEmitter>>,
@@ -188,7 +189,7 @@ impl SceneDocument {
             if let Some(section) = self
                 .environment
                 .as_ref()
-                .and_then(|environment| environment.version_eight_field())
+                .and_then(|environment| environment.section_since(8))
             {
                 return Err(SceneError::new(
                     "version_required",
@@ -674,12 +675,11 @@ impl SceneDocument {
             .enumerate()
             .map(|(index, animation)| animation.clip(&format!("$.animations[{index}]"), files))
             .collect::<Result<Vec<_>, _>>()?;
-        let environment = self
-            .environment
-            .map(|environment| environment.resolve("$.environment"))
-            .transpose()?;
+        if let Some(environment) = &self.environment {
+            environment.validate("$.environment")?;
+        }
         Ok(PreparedScene {
-            environment,
+            environment: self.environment,
             colliders,
             lights,
             emitters,

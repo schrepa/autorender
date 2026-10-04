@@ -58,19 +58,11 @@ impl DevBrowser {
         };
         // Commands observe and control completed ticks only.
         app.engine.complete_pending_tick();
-        if request.get("version").and_then(Value::as_u64) != Some(1) {
-            return self.error(
-                app,
-                scene,
-                "protocol_version",
-                "$.version",
-                "expected version 1",
-            );
-        }
-        if !matches!(
-            request.get("op").and_then(Value::as_str),
-            Some("input" | "step" | "render" | "culling" | "camera" | "present" | "environment")
-        ) {
+        let control_op = request
+            .get("op")
+            .and_then(Value::as_str)
+            .is_some_and(|op| BrowserControl::OPS.contains(&op));
+        if !control_op {
             let response = self.tools.execute(&mut app.engine, scene, source);
             if request.get("op").and_then(Value::as_str) != Some("assets") {
                 return response;
@@ -104,6 +96,9 @@ impl DevBrowser {
                 return self.error(app, scene, "invalid_request", "$", &error.to_string());
             }
         };
+        if let Err(error) = control.validate() {
+            return self.error(app, scene, error.code, &error.path, &error.message);
+        }
         match control {
             BrowserControl::Present { alpha, gpu, .. } => {
                 let alpha = match engine_dev::validated_presentation_alpha(alpha) {
@@ -213,31 +208,11 @@ impl DevBrowser {
                     virtual_geometry,
                     level_of_detail,
                 };
-                let settings = match environment.resolve("$") {
-                    Ok(settings) => settings,
-                    Err(error) => {
-                        return self.error(app, scene, error.code, &error.path, &error.message);
-                    }
-                };
-                settings.apply_sections(app.engine.app.world_mut());
-                let changed: Vec<&str> = [
-                    ("atmosphere", settings.atmosphere.is_some()),
-                    ("shadows", settings.shadows.is_some()),
-                    ("ambient_occlusion", settings.ambient_occlusion.is_some()),
-                    ("bloom", settings.bloom.is_some()),
-                    ("local_lights", settings.local_lights.is_some()),
-                    ("sun_shafts", settings.sun_shafts.is_some()),
-                    ("reflections", settings.reflections.is_some()),
-                    ("particles", settings.particles.is_some()),
-                    ("refraction", settings.refraction.is_some()),
-                    ("decals", settings.decals.is_some()),
-                    ("reflection_probes", settings.reflection_probes.is_some()),
-                    ("virtual_geometry", settings.virtual_geometry.is_some()),
-                    ("level_of_detail", settings.level_of_detail.is_some()),
-                ]
-                .into_iter()
-                .filter_map(|(name, set)| set.then_some(name))
-                .collect();
+                if let Err(error) = environment.validate("$") {
+                    return self.error(app, scene, error.code, &error.path, &error.message);
+                }
+                environment.apply_sections(app.engine.app.world_mut());
+                let changed = environment.sections();
                 match app.dev_render(width, height) {
                     Ok(()) => self.result(
                         app,
@@ -332,13 +307,15 @@ impl DevBrowser {
                 Ok(()) => self.result(app, scene, json!({"rendered":true})),
                 Err(error) => self.error(app, scene, "render_failed", "$", &format!("{error:?}")),
             },
-            _ => self.error(
-                app,
-                scene,
-                "unsupported_command",
-                "$.op",
-                "control is owned by the browser host",
-            ),
+            // The browser host runs these: it receives them validated, with
+            // their defaults.
+            control @ (BrowserControl::Benchmark { .. }
+            | BrowserControl::Pause { .. }
+            | BrowserControl::Resume { .. }
+            | BrowserControl::Capture { .. }
+            | BrowserControl::Reload { .. }) => {
+                self.result(app, scene, json!({ "control": control }))
+            }
         }
     }
 
