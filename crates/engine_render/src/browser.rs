@@ -339,7 +339,12 @@ impl Renderer {
                 | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
         // Indirect draws name their visible-ID regions as first instances
         // where the adapter allows it, so passes bind each ID buffer once.
-        let features = compression | (adapter.features() & wgpu::Features::INDIRECT_FIRST_INSTANCE);
+        // Bloom (decision 021) keeps its levels in 32 bits where the device
+        // renders them.
+        let features = compression
+            | (adapter.features()
+                & (wgpu::Features::INDIRECT_FIRST_INSTANCE
+                    | wgpu::Features::RG11B10UFLOAT_RENDERABLE));
         #[cfg(not(feature = "profiling"))]
         let required_features = features;
         #[cfg(feature = "profiling")]

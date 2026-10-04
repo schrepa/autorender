@@ -34,9 +34,23 @@ pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb1
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// Occlusion before its filter, and each texel's distance from the eye.
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-const BLOOM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Reflected color and weight (decision 025).
-const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Bloom levels: light beyond 1 without alpha, packed in 32 bits where the
+/// device renders them (`rg11b10ufloat-renderable`).
+fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
+    if device
+        .features()
+        .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
+    {
+        wgpu::TextureFormat::Rg11b10Ufloat
+    } else {
+        wgpu::TextureFormat::Rgba16Float
+    }
+}
+/// The scene's blurred levels: averages of the 8-bit sRGB scene.
+const SCENE_LEVEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// Reflected color, from the scene and its levels, and weight (decision
+/// 025).
+const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Scattered sunlight (decision 024) and the length of the ray that
 /// gathered it, at quarter resolution.
 const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -121,6 +135,9 @@ pub(crate) struct PostPass {
     bloom_first: wgpu::RenderPipeline,
     bloom_down: wgpu::RenderPipeline,
     bloom_up: wgpu::RenderPipeline,
+    // The scene levels bloom leaves, halved as bloom halves its own.
+    scene_down: wgpu::RenderPipeline,
+    bloom_format: wgpu::TextureFormat,
     // Both chains' levels at once, into two targets.
     levels_first: wgpu::RenderPipeline,
     levels_down: wgpu::RenderPipeline,
@@ -152,6 +169,7 @@ impl PostPass {
             label: Some("engine/post.wgsl"),
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
         });
+        let bloom_format = bloom_format(device);
         // Every pass of post.wgsl shares one layout (decision 049).
         let layout = pipelines::layout(device, &POST);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -188,7 +206,7 @@ impl PostPass {
                     vertex: "vs_fullscreen",
                     fragment: entry,
                     constants: &[],
-                    targets: &[Some(BLOOM_FORMAT.into()), Some(BLOOM_FORMAT.into())],
+                    targets: &[Some(SCENE_LEVEL_FORMAT.into()), Some(bloom_format.into())],
                     depth: None,
                 },
             )
@@ -274,16 +292,23 @@ impl PostPass {
             bloom_first: pipeline(
                 "engine/post-bloom-first",
                 "fs_bloom_first",
-                BLOOM_FORMAT,
+                bloom_format,
                 None,
             ),
             bloom_down: pipeline(
                 "engine/post-bloom-down",
                 "fs_bloom_down",
-                BLOOM_FORMAT,
+                bloom_format,
                 None,
             ),
-            bloom_up: pipeline("engine/post-bloom-up", "fs_bloom_up", BLOOM_FORMAT, add),
+            bloom_up: pipeline("engine/post-bloom-up", "fs_bloom_up", bloom_format, add),
+            scene_down: pipeline(
+                "engine/post-scene-down",
+                "fs_bloom_down",
+                SCENE_LEVEL_FORMAT,
+                None,
+            ),
+            bloom_format,
             levels_first: levels_pipeline("engine/post-levels-first", "fs_levels_first"),
             levels_down: levels_pipeline("engine/post-levels-down", "fs_levels_down"),
             composite: pipeline(
@@ -596,7 +621,7 @@ impl PostPass {
                     wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     None,
                 );
-                pass.set_pipeline(&self.bloom_down);
+                pass.set_pipeline(&self.scene_down);
                 pass.set_bind_group(0, group, &[]);
                 pass.draw(0..3, 0..1);
             }
@@ -790,13 +815,18 @@ impl PostPass {
             texture("engine/post-scene", (width, height), SCENE_FORMAT, 1),
             texture("engine/post-glow", (width, height), GLOW_FORMAT, 1),
             texture("engine/post-occlusion", half, OCCLUSION_FORMAT, 1),
-            texture("engine/post-bloom", half, BLOOM_FORMAT, levels),
+            texture("engine/post-bloom", half, self.bloom_format, levels),
             texture("engine/post-reflections", half, REFLECTION_FORMAT, 1),
             texture("engine/post-shafts", quarter, SHAFT_FORMAT, 1),
             texture("engine/post-reflections-traced", half, REFLECTION_FORMAT, 1),
             texture("engine/post-occlusion-raw", half, RAW_OCCLUSION_FORMAT, 1),
             texture("engine/post-surface", (width, height), SURFACE_FORMAT, 1),
-            texture("engine/post-scene-levels", half, BLOOM_FORMAT, scene_levels),
+            texture(
+                "engine/post-scene-levels",
+                half,
+                SCENE_LEVEL_FORMAT,
+                scene_levels,
+            ),
         ];
         let [
             scene,
