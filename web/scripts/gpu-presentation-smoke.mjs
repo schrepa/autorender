@@ -1,13 +1,8 @@
 /** GPU presentation (decision 014) against the exact CPU reference in real Chrome. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
 // Every renderable moves; hierarchy, textures and several meshes exercise
 // composition, per-group bounds and compaction across draw groups.
 const config = {
@@ -23,57 +18,14 @@ const workloads = [
   { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },
   { label: "still", config: { ...config, moving_percent: 0 }, fractional: false, settle: true },
 ];
-const workloadUrl = workload => {
-  const url = new URL("stress.html", base);
-  url.searchParams.set("engine_dev", "1");
-  url.searchParams.set("config", JSON.stringify(workload.config));
-  return url;
-};
-const output = fileURLToPath(new URL(`../../artifacts/gpu-presentation-smoke-${randomUUID()}/`, import.meta.url));
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(30_000);
-const errors = [];
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
-
-async function command(op, fields = {}, expectedOk = true) {
-  const reply = await page.evaluate(command => window.__engineDev.request(command), { op, ...fields });
-  assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-  return reply;
-}
+const output = await artifacts("gpu-presentation-smoke");
+const { browser, page, errors } = await launch();
+const command = commander(page);
 
 async function capture(name, fields) {
   const reply = await command("capture", fields);
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   return { reply, png: bytes.toString("base64") };
-}
-
-// Pixels whose largest channel difference exceeds the tolerance.
-async function differentPixels(images, tolerance) {
-  return page.evaluate(async ({ images, tolerance }) => {
-    const pixels = await Promise.all(images.map(async png => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${png}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      return context.getImageData(0, 0, image.width, image.height);
-    }));
-    if (pixels[0].width !== pixels[1].width || pixels[0].height !== pixels[1].height) throw new Error("Capture dimensions changed.");
-    let changed = 0;
-    for (let offset = 0; offset < pixels[0].data.length; offset += 4) {
-      if ([0, 1, 2].some(channel => Math.abs(pixels[0].data[offset + channel] - pixels[1].data[offset + channel]) > tolerance)) changed++;
-    }
-    return { changed, total: pixels[0].width * pixels[0].height };
-  }, { images, tolerance });
 }
 
 // Counters partition candidates on both paths; this workload is below budget.
@@ -101,7 +53,7 @@ async function compare(label, alpha) {
   const reference = partition(cpu.reply.result.rendering, `${label} cpu`);
   const gpu = await gpuCapture(`${label}-gpu`, alpha);
   // Tolerate edge pixels from f32 rounding differences between WGSL and glam.
-  const pixels = await differentPixels([cpu.png, gpu.png], 8);
+  const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
   assert.ok(pixels.changed <= pixels.total * 0.001, `${label}: ${pixels.changed} of ${pixels.total} pixels differ`);
   const candidates = reference.render_candidates;
   assert.ok(Math.abs(gpu.rendering.visible_instances - reference.visible_instances) <= Math.max(2, candidates * 0.001),
@@ -111,23 +63,13 @@ async function compare(label, alpha) {
 }
 
 async function verify(workload) {
-  const url = workloadUrl(workload);
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 60_000 });
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));
-    // Only this rejection is retried: it occurs before the command dispatches.
-    if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
-    assert.equal(reply.ok, true, JSON.stringify(reply).slice(0, 4000));
-    break;
-  }
+  const url = devUrl("stress.html", { config: workload.config });
+  await openPaused(page, url);
   if (workload.settle) {
     await command("resume");
     await delay(1500);
     await command("pause");
   }
-  await mkdir(output, { recursive: true });
   await command("render");
   await command("step", { ticks: 3 });
   const cases = [];
@@ -142,7 +84,7 @@ async function verify(workload) {
   assert.ok(cases.some(value => value.cpu_visible < value.candidates), "A view must exercise GPU culling.");
   assert.ok(cases.every(value => value.cpu_visible > 0), "Every view must draw instances.");
   if (workload.fractional) {
-    const motion = await differentPixels([cases[0].cpu, cases[2].cpu], 8);
+    const motion = await differentPixels(page, [cases[0].cpu, cases[2].cpu], { tolerance: 8 });
     assert.ok(motion.changed > 0, "Fractions must present visibly different poses.");
   }
   const after = await command("status");

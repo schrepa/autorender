@@ -1,20 +1,11 @@
-import { chromium } from "@playwright/test";
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { base, launch } from "./harness.mjs";
 
-const url = process.env.DEMO_URL ?? "http://127.0.0.1:5173";
-const browser = await chromium.launch({
-  channel: process.env.BROWSER_CHANNEL ?? "chrome",
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const errors = [];
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 1 });
-page.on("pageerror", error => errors.push(String(error)));
-page.on("console", entry => { if (entry.type() === "error") errors.push(entry.text()); });
+const { browser, page, errors } = await launch({ width: 1440, height: 1000 });
 try {
-  await page.goto(url);
+  await page.goto(base);
   await page.waitForFunction(() => document.querySelector("#status")?.dataset.state === "running", null, { timeout: 60_000 });
   await page.waitForFunction(() => Number(document.querySelector("canvas")?.dataset.frames) >= 30);
   assert.equal(await page.locator("#scene").getAttribute("data-render-candidates"), "10000");
@@ -68,7 +59,7 @@ try {
   await page.screenshot({ path: `${output}/orbit-demo-mobile.png`, fullPage: true });
 
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.goto(`${url}/playground.html`);
+  await page.goto(new URL("playground.html", base).href);
   await page.waitForFunction(() => !!document.querySelector("canvas")?.dataset.progress);
   const progress = () => page.locator("canvas").evaluate(canvas => JSON.parse(canvas.dataset.progress));
   const initial = await progress();
@@ -88,7 +79,7 @@ try {
   await page.keyboard.press("Space");
   await page.waitForFunction(() => JSON.parse(document.querySelector("canvas").dataset.progress).jumps === 1);
 
-  const source = await (await page.request.get(`${url}/scenes/playground.scene.json`)).json();
+  const source = await (await page.request.get(new URL("scenes/playground.scene.json", base).href)).json();
   const invalid = structuredClone(source);
   invalid.entities[0].material = "does-not-exist";
   await page.route("**/scenes/playground.scene.json", route => route.fulfill({ json: invalid }));
@@ -126,7 +117,7 @@ try {
   // Validate the actual unsupported-device user flow independently of hardware.
   const unsupported = await browser.newPage();
   await unsupported.addInitScript(() => { delete Object.getPrototypeOf(navigator).gpu; });
-  await unsupported.goto(url);
+  await unsupported.goto(base);
   await unsupported.waitForFunction(() => document.querySelector("#status")?.dataset.state === "error");
   assert.match(await unsupported.locator("#message").textContent(), /WebGPU/);
   console.log(JSON.stringify({ result: "passed", checks: ["WebGPU initialization", "10k/1k/50k workload", "per-mesh instanced draws", "pause/resume", "keyboard/pointer controls", "resize", "playable scene collection and jumping", "failed reload preservation", "successful revision reload", "CPU/GPU asset retirement", "unsupported WebGPU"], screenshots: output, browser: browser.version() }, null, 2));

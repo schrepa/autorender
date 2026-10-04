@@ -2,14 +2,10 @@
  * frames converge to a stable, smoother image, while captures and CPU-presented
  * frames stay exact. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { artifacts, commander, devUrl, launch, openPaused } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
 // Textured meshes of several shapes give many edges; nothing moves, so any
 // difference between ordinary frames and captures is the antialiasing.
 const still = {
@@ -17,37 +13,13 @@ const still = {
   sensor_percent: 0, dense_colliders: false, queries_per_tick: 0, mesh_variety: 8, textured: true, culling: true,
 };
 const moving = { ...still, moving_percent: 100, colliders: 200, sensor_percent: 10, queries_per_tick: 8 };
-const output = fileURLToPath(new URL(`../../artifacts/taa-smoke-${randomUUID()}/`, import.meta.url));
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(30_000);
-const errors = [];
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
-
-async function command(op, fields = {}) {
-  for (const deadline = Date.now() + 5000; ;) {
-    const reply = await page.evaluate(command => window.__engineDev.request(command), { op, ...fields });
-    // Only this rejection is retried: it occurs before the command dispatches.
-    if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
-    assert.equal(reply.ok, true, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-    return reply;
-  }
-}
+const output = await artifacts("taa-smoke");
+const { browser, page, errors } = await launch();
+const command = commander(page);
 
 async function open(config, query) {
-  const url = new URL("stress.html", base);
-  url.searchParams.set("engine_dev", "1");
-  url.searchParams.set("config", JSON.stringify(config));
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 60_000 });
-  await command("pause");
+  const url = devUrl("stress.html", { config, ...query });
+  await openPaused(page, url);
   await command("render");
   await command("step", { ticks: 3 });
   return url.href;
@@ -146,7 +118,6 @@ async function compare(images, tolerances = [0, 8, 24]) {
 }
 
 try {
-  await mkdir(output, { recursive: true });
   const results = {};
 
   // Exact captures do not depend on the setting.

@@ -1,16 +1,10 @@
 /** Real Chrome collision contracts; fixtures are routed responses, never source edits. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { chromium } from "@playwright/test";
+import { writeFile } from "node:fs/promises";
+import { artifacts, commander, devUrl, launch, openPaused, routedScene } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
-const url = new URL("playground.html", base);
-url.searchParams.set("engine_dev", "1");
-if (process.env.ENGINE_BUILD) url.searchParams.set("engine_build", process.env.ENGINE_BUILD);
-const output = fileURLToPath(new URL(`../../artifacts/collision-smoke-${randomUUID()}/`, import.meta.url));
+const url = devUrl("playground.html", process.env.ENGINE_BUILD ? { engine_build: process.env.ENGINE_BUILD } : {});
+const output = await artifacts("collision-smoke");
 const cube = half_extents => ({ kind: "cuboid", half_extents });
 const collider = (shape, memberships = 1, filter = 2, sensor = false) => ({ shape, memberships, filter, sensor });
 const filter = { memberships: 2, filter: 1, sensors: "exclude" };
@@ -29,34 +23,12 @@ const fixture = {
     { id: "ellipsoid", transform: { translation: [-4, 1, 0], scale: [2, 1, 0.5] }, collider: collider({ kind: "sphere", radius: 0.5 }) },
   ],
 };
-let served = structuredClone(fixture), revision = 1;
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true, args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(20_000);
-const errors = [], checks = [];
-page.on("pageerror", error => { if (errors.length < 20) errors.push(String(error)); });
-page.on("console", entry => { if (entry.type() === "error" && errors.length < 20) errors.push(entry.text()); });
-async function command(op, fields = {}, ok = true) {
-  let timer;
-  try {
-    const reply = await Promise.race([
-      page.evaluate(command => window.__engineDev.request(command), { op, ...fields }),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${op} timed out; no mutation retried`)), 10_000); }),
-    ]);
-    assert.equal(reply.ok, ok, `${op}: ${JSON.stringify(reply).slice(0, 3000)}`);
-    return reply;
-  } finally { clearTimeout(timer); }
-}
+const { browser, page, errors } = await launch({ timeout: 20_000 });
+const checks = [];
+const command = commander(page, { deadline: 10_000 });
+const scene = routedScene(page, fixture);
 async function inspect(entity, component) {
   return (await command("inspect", { entity, component })).result.entity.components[component];
-}
-async function reload(source) {
-  served = structuredClone(source); served.revision = revision + 1;
-  await command("reload", { expected_revision: String(revision), revision: String(served.revision) });
-  revision = served.revision;
 }
 function near(value, expected, epsilon = 0.001) {
   assert.ok(Number.isFinite(value) && Math.abs(value - expected) < epsilon, `${value} != ${expected}`);
@@ -72,11 +44,8 @@ async function sensorEvents() {
 }
 
 try {
-  await mkdir(output, { recursive: true });
-  await page.route("**/scenes/playground.scene.json*", route => route.fulfill({ contentType: "application/json", body: JSON.stringify(served) }));
-  await page.goto(url.href);
-  await page.waitForFunction(() => window.__engineDev?.version === 1);
-  await command("pause");
+  await scene.route();
+  await openPaused(page, url, { timeout: 20_000 });
   await command("render");
   await command("describe", { name: "Collider" });
   await command("describe", { name: "CollisionWorld" });
@@ -135,7 +104,7 @@ try {
 
   const blocked = structuredClone(fixture);
   blocked.entities.push({ id: "thin-wall", transform: { translation: [0.66, 0.6, 0], rotation_degrees: [0, 90, 0] }, collider: collider(cube([3, 2, 0.01])) });
-  await reload(blocked);
+  await scene.reload(command, blocked);
   await command("input", { right: 1 });
   await command("step", { ticks: 30 });
   near((await inspect("player", "Transform")).translation[0], 0.05);
@@ -144,13 +113,14 @@ try {
   checks.push("swept_thin_wall", "no_game_query_errors");
 
   const invalidBefore = await state();
-  served = structuredClone(fixture); served.revision = revision + 1;
-  served.entities.find(entity => entity.id === "target").collider.shape.half_extents[0] = 0;
-  await command("reload", { expected_revision: String(revision), revision: String(served.revision) }, false);
+  const flat = structuredClone(fixture); flat.revision = scene.revision + 1;
+  flat.entities.find(entity => entity.id === "target").collider.shape.half_extents[0] = 0;
+  scene.serve(flat);
+  await command("reload", { expected_revision: String(scene.revision), revision: String(flat.revision) }, false);
   assert.deepEqual(await state(), invalidBefore);
   const removed = structuredClone(fixture);
   removed.entities = removed.entities.filter(entity => entity.id !== "target");
-  await reload(removed);
+  await scene.reload(command, removed);
   assert.equal((await command("raycast", { ...ray, max_distance: 3.5 })).result.hit, null);
   checks.push("invalid_reload_preserves_world", "removed_colliders_retire");
   await command("capture");

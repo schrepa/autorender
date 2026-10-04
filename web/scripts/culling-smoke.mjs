@@ -1,16 +1,9 @@
 /** Culling and GPU residency checks; authored fixtures exist only in routed responses. */
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
-import { chromium } from "@playwright/test";
+import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
-const base = `${(process.env.DEMO_URL ?? "http://127.0.0.1:5173").replace(/\/$/, "")}/`;
-const url = new URL("playground.html", base);
-url.searchParams.set("engine_dev", "1");
-const output = fileURLToPath(new URL(`../../artifacts/culling-smoke-${randomUUID()}/`, import.meta.url));
+const url = devUrl("playground.html");
+const output = await artifacts("culling-smoke");
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
 // Shadows start off, so residency first follows visibility alone: shadow maps
 // draw off-screen casters too (decision 020).
@@ -27,25 +20,9 @@ const fixture = {
     { id: "floor", transform: { translation: [0, -0.5, 0] }, collider: { shape: { kind: "cuboid", half_extents: [500, 0.5, 500] }, memberships: 1, filter: 2, sensor: false } },
   ],
 };
-let served = structuredClone(fixture);
-let revision = fixture.revision;
-const browser = await chromium.launch({
-  ...(process.env.BROWSER_PATH ? { executablePath: resolve(process.env.BROWSER_PATH) } : { channel: process.env.BROWSER_CHANNEL ?? "chrome" }),
-  headless: true,
-  args: ["--enable-unsafe-webgpu", ...(process.env.SOFTWARE_GPU === "1" ? ["--use-angle=swiftshader"] : [])],
-});
-const page = await browser.newPage({ viewport: { width: 1200, height: 900 }, deviceScaleFactor: 1 });
-page.setDefaultTimeout(30_000);
-const errors = [];
-const recordError = value => { if (errors.length < 20) errors.push(String(value).slice(0, 2000)); };
-page.on("pageerror", recordError);
-page.on("console", entry => { if (entry.type() === "error") recordError(entry.text()); });
-
-async function command(op, fields = {}, expectedOk = true) {
-  const reply = await page.evaluate(command => window.__engineDev.request(command), { op, ...fields });
-  assert.equal(reply.ok, expectedOk, `${op}: ${JSON.stringify(reply).slice(0, 4000)}`);
-  return reply;
-}
+const { browser, page, errors } = await launch();
+const command = commander(page);
+const scene = routedScene(page, fixture);
 
 function stats(reply) {
   const value = reply.result.rendering;
@@ -58,41 +35,11 @@ function stats(reply) {
   return value;
 }
 
-async function reload(document) {
-  served = structuredClone(document);
-  served.revision = revision + 1;
-  const reply = await command("reload", { expected_revision: String(revision), revision: String(served.revision) });
-  revision = served.revision;
-  assert.equal(reply.observation.scene.revision, String(revision));
-  return reply;
-}
-
 async function capture(name) {
   await command("capture");
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   assert.ok(bytes.length > 1000, "The fixture should produce a nonempty canvas.");
   return bytes.toString("base64");
-}
-
-async function differentPixels(images) {
-  return page.evaluate(async images => {
-    const pixels = await Promise.all(images.map(async png => {
-      const image = new Image();
-      image.src = `data:image/png;base64,${png}`;
-      await image.decode();
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width; canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      context.drawImage(image, 0, 0);
-      return context.getImageData(0, 0, image.width, image.height);
-    }));
-    if (pixels[0].width !== pixels[1].width || pixels[0].height !== pixels[1].height) throw new Error("Capture dimensions changed.");
-    let changed = 0;
-    for (let offset = 0; offset < pixels[0].data.length; offset += 4) {
-      if ([0, 1, 2, 3].some(channel => pixels[0].data[offset + channel] !== pixels[1].data[offset + channel])) changed++;
-    }
-    return { changed, total: pixels[0].width * pixels[0].height };
-  }, images);
 }
 
 async function equivalent(name, pose) {
@@ -104,7 +51,7 @@ async function equivalent(name, pose) {
   const disabled = await command("culling", { enabled: false });
   const off = stats(disabled);
   const second = await capture(`${name}-off`);
-  const pixels = await differentPixels([first, second]);
+  const pixels = await differentPixels(page, [first, second], { alpha: true });
   assert.equal(pixels.changed, 0, `${name}: culling changed visible pixels`);
   assert.equal(off.culled_instances, 0);
   assert.equal(off.render_candidates, on.render_candidates);
@@ -116,18 +63,8 @@ async function equivalent(name, pose) {
 }
 
 try {
-  await page.route("**/scenes/playground.scene.json", route => route.fulfill({ json: served }));
-  await page.goto(url.href, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => window.__engineDev?.version === 1, null, { timeout: 60_000 });
-  const deadline = Date.now() + 5000;
-  while (true) {
-    const reply = await page.evaluate(() => window.__engineDev.request({ op: "pause" }));
-    // Only this rejection is retried: it occurs before the command dispatches.
-    if (reply.error?.code === "command_busy" && Date.now() < deadline) { await delay(25); continue; }
-    assert.equal(reply.ok, true, JSON.stringify(reply).slice(0, 4000));
-    break;
-  }
-  await mkdir(output, { recursive: true });
+  await scene.route();
+  await openPaused(page, url);
   const initial = stats(await command("render"));
   assert.equal(initial.render_candidates, 2);
   assert.equal(initial.instances, 1);
@@ -182,14 +119,14 @@ try {
   // Without an environment a reload keeps the current look: shadows stay on,
   // and culled casters must still shadow the view.
   delete complex.environment;
-  const reloaded = await reload(complex);
+  const reloaded = await scene.reload(command, complex);
   assert.equal(reloaded.result.rendering.shadows_enabled, true);
   cases.push(await equivalent("hierarchy-shear-borders", camera));
   cases.push(await equivalent("angled-camera", { ...camera, position: [8, 6, 12], target: [0, 0.6, 0] }));
 
   const removed = structuredClone(fixture);
   removed.entities = removed.entities.filter(entity => entity.id === "player");
-  await reload(removed);
+  await scene.reload(command, removed);
   const retired = stats(await command("camera", camera));
   assert.equal(retired.resident_meshes, 1);
   assert.equal(retired.resident_textures, 0, "An unreferenced CPU texture must not retain its retired GPU resource.");

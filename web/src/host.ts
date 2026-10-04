@@ -45,6 +45,87 @@ export interface HostControls<T extends Runtime> {
   paused(): boolean;
   busy(): boolean;
 }
+function element<T extends HTMLElement>(id: string): T {
+  const found = document.getElementById(id);
+  if (!found) throw new Error(`Missing element #${id}`);
+  return found as T;
+}
+
+/** Shows `value` with `unit` in metric `id`. */
+function metric(id: string, value: string, unit = "") {
+  const node = element(id);
+  node.replaceChildren(document.createTextNode(value));
+  if (unit) {
+    const small = document.createElement("small");
+    small.textContent = ` ${unit}`;
+    node.append(small);
+  }
+}
+
+/**
+ * The page's frame rate and CPU timing readouts. Statistics are polled four
+ * times a second, outside entity loops, and averaged over bounded windows so
+ * the readouts follow workload changes.
+ */
+class FrameHud {
+  private frames = 0;
+  private previous: number | undefined;
+  private lastSample = 0;
+  private intervals = 0;
+  private elapsed = 0;
+  private simulation = 0;
+  private extraction = 0;
+  private submission = 0;
+  private samples = 0;
+
+  constructor(private readonly canvas: HTMLCanvasElement) {}
+
+  /** Leaves the time until the next frame out of the frame rate. */
+  skipInterval() { this.previous = undefined; }
+
+  /** Restarts every average, e.g. after a suspension. */
+  reset() {
+    this.previous = undefined;
+    this.intervals = 0; this.elapsed = 0;
+    this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0;
+  }
+
+  /** Counts a frame of `runtime` at `timestamp`; returns whether it sampled
+   * the statistics, four times a second. */
+  frame(runtime: Runtime, timestamp: number): boolean {
+    this.frames++;
+    if (this.previous !== undefined) { this.elapsed += timestamp - this.previous; this.intervals++; }
+    this.previous = timestamp;
+    if (timestamp - this.lastSample < 250) return false;
+    const stats = readStats(runtime);
+    this.simulation += stats.simulation_ms;
+    this.extraction += stats.extraction_ms;
+    this.submission += stats.render_ms;
+    this.samples++;
+    metric("fps", this.elapsed > 0 ? (this.intervals * 1000 / this.elapsed).toFixed(0) : "—", "FPS");
+    metric("simulation", (this.simulation / this.samples).toFixed(2), "ms");
+    metric("extraction", (this.extraction / this.samples).toFixed(2), "ms");
+    metric("draws", String(stats.draw_calls));
+    element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
+    const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
+    element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
+    const dataset = this.canvas.dataset;
+    dataset.frames = String(this.frames);
+    dataset.instances = String(stats.instances);
+    dataset.renderCandidates = String(stats.render_candidates);
+    dataset.residentMeshes = String(stats.resident_meshes);
+    dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
+    dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
+    dataset.residentTextures = String(stats.resident_textures);
+    dataset.textureUploadBytes = String(stats.texture_upload_bytes);
+    this.lastSample = timestamp;
+    if (this.samples >= 4) {
+      this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
+    }
+    return true;
+  }
+}
+
 export function boot<T extends Runtime>(options: {
   create(canvas: HTMLCanvasElement, count: number, signal: AbortSignal): Promise<T>;
   poll?(game: T): void;
@@ -60,12 +141,6 @@ export function boot<T extends Runtime>(options: {
 const lifecycle = new AbortController();
 const listenerOptions = { signal: lifecycle.signal };
 let disposed = false;
-
-function element<T extends HTMLElement>(id: string): T {
-  const found = document.getElementById(id);
-  if (!found) throw new Error(`Missing element #${id}`);
-  return found as T;
-}
 
 const canvas = element<HTMLCanvasElement>("scene");
 const status = element("status");
@@ -95,15 +170,7 @@ let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 let failed = false;
 let request = 0;
-let previousFrame: number | undefined;
-let lastStats = 0;
-let intervals = 0;
-let elapsed = 0;
-let frameCount = 0;
-let simulation = 0;
-let extraction = 0;
-let submission = 0;
-let samples = 0;
+const hud = new FrameHud(canvas);
 let pixelWidth = 1;
 let pixelHeight = 1;
 let resolutionScale = 1;
@@ -137,13 +204,7 @@ function stopClock() {
   options.interrupted?.("suspension");
   cancelAnimationFrame(request);
   request = 0;
-  previousFrame = undefined;
-  intervals = 0;
-  elapsed = 0;
-  simulation = 0;
-  extraction = 0;
-  submission = 0;
-  samples = 0;
+  hud.reset();
   clearInput();
   game?.suspend();
 }
@@ -161,16 +222,6 @@ function fail(error: unknown) {
   console.error(error);
 }
 
-function metric(id: string, value: string, unit = "") {
-  const node = element(id);
-  node.replaceChildren(document.createTextNode(value));
-  if (unit) {
-    const small = document.createElement("small");
-    small.textContent = ` ${unit}`;
-    node.append(small);
-  }
-}
-
 function prepareFrame(current: T, timestamp: number) {
   preparedSince ??= performance.now();
   const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
@@ -184,7 +235,7 @@ function prepareFrame(current: T, timestamp: number) {
   if (quietFrames < QUIET_FRAMES && !late) return;
   preparing = false;
   current.suspend();
-  previousFrame = undefined;
+  hud.skipInterval();
   canvas.style.visibility = "";
   message.hidden = true;
   setStatus("WebGPU active", "running");
@@ -204,36 +255,7 @@ function frame(timestamp: number) {
       inputEnabled ? input.yaw : 0, inputEnabled ? input.pitch : 0, inputEnabled ? input.held : 0, inputEnabled ? input.pressed : 0, inputEnabled ? input.released : 0);
     input.consumed();
     options.afterFrame?.(game, timestamp);
-    frameCount++;
-    if (previousFrame !== undefined) { elapsed += timestamp - previousFrame; intervals++; }
-    previousFrame = timestamp;
-    // Poll aggregate observations only four times a second, outside entity loops.
-    if (timestamp - lastStats >= 250) {
-      const stats = readStats(game);
-      simulation += stats.simulation_ms;
-      extraction += stats.extraction_ms;
-      submission += stats.render_ms;
-      samples++;
-      metric("fps", elapsed > 0 ? (intervals * 1000 / elapsed).toFixed(0) : "—", "FPS");
-      metric("simulation", (simulation / samples).toFixed(2), "ms");
-      metric("extraction", (extraction / samples).toFixed(2), "ms");
-      metric("draws", String(stats.draw_calls));
-      element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
-      const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
-      element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.culled_instances} culled · CPU render ${(submission / samples).toFixed(2)} ms · GPU time not measured`;
-      canvas.dataset.frames = String(frameCount);
-      canvas.dataset.instances = String(stats.instances);
-      canvas.dataset.renderCandidates = String(stats.render_candidates);
-      canvas.dataset.residentMeshes = String(stats.resident_meshes);
-      canvas.dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
-      canvas.dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
-      canvas.dataset.residentTextures = String(stats.resident_textures);
-      canvas.dataset.textureUploadBytes = String(stats.texture_upload_bytes);
-      options.poll?.(game);
-      lastStats = timestamp;
-      // Bounded windows keep the HUD responsive to workload changes.
-      if (samples >= 4) { simulation = 0; extraction = 0; submission = 0; samples = 0; elapsed = 0; intervals = 0; }
-    }
+    if (hud.frame(game, timestamp)) options.poll?.(game);
     options.afterHostFrame?.(game, timestamp);
     if (!disposed) request = requestAnimationFrame(frame);
   } catch (error) { fail(error); }
@@ -254,8 +276,8 @@ function resume() {
   }
 }
 
-window.addEventListener("blur", () => { options.interrupted?.("focus_lost"); clearInput(); game?.suspend(); previousFrame = undefined; }, listenerOptions);
-canvas.addEventListener("blur", () => { options.interrupted?.("focus_lost"); game?.suspend(); previousFrame = undefined; }, listenerOptions);
+window.addEventListener("blur", () => { options.interrupted?.("focus_lost"); clearInput(); game?.suspend(); hud.skipInterval(); }, listenerOptions);
+canvas.addEventListener("blur", () => { options.interrupted?.("focus_lost"); game?.suspend(); hud.skipInterval(); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
   stopClock();
   if (failed) return;
@@ -289,7 +311,7 @@ reload?.addEventListener("click", async () => {
   try {
     await options.reload(current, lifecycle.signal);
     if (disposed || game !== current) return;
-    current.suspend(); clearInput(); previousFrame = undefined;
+    current.suspend(); clearInput(); hud.skipInterval();
     notice.textContent = "Scene reloaded from its source file.";
   } catch (error) {
     if (!disposed) notice.textContent = `Reload failed; the current scene is still running. ${String(error)}`;
