@@ -8,9 +8,14 @@
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
+use crate::probes::FACES;
 
 /// Linear radiance: the sky and what reflects it exceed 1.
 pub(crate) const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// Faces each pass draws: three 8-byte targets fit the 32 bytes a sample
+/// every device renders.
+const FACES_PER_PASS: usize = 3;
 
 // The textures of one face size and cube count, and their views. Replaced
 // maps are dropped, not destroyed: growing the array copies from them in the
@@ -30,6 +35,9 @@ struct Maps {
     // The environment maps, sampled as a cube array.
     maps: wgpu::Texture,
     maps_view: wgpu::TextureView,
+    // Each cube's render targets, a face of a level each (level by level),
+    // made when it is first blurred.
+    cube_targets: Vec<Option<Vec<wgpu::TextureView>>>,
 }
 
 // The sky, level and prefilter passes' group layouts.
@@ -68,6 +76,8 @@ impl Environment {
             down: crate::pipelines::layout(device, &ENVIRONMENT_DOWN),
             prefilter: crate::pipelines::layout(device, &ENVIRONMENT_PREFILTER),
         };
+        let targets: [Option<wgpu::ColorTargetState>; FACES_PER_PASS] =
+            std::array::from_fn(|_| Some(ENVIRONMENT_FORMAT.into()));
         let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(entry),
@@ -83,7 +93,7 @@ impl Environment {
                     vertex: "vs_environment",
                     fragment: entry,
                     constants: &[],
-                    targets: &[Some(ENVIRONMENT_FORMAT.into())],
+                    targets: &targets,
                     depth: None,
                 },
             )
@@ -208,8 +218,14 @@ impl Environment {
             return false;
         }
         self.drawn = Some(sky);
-        for (face, target) in self.maps.radiance_targets[0].iter().enumerate() {
-            face_pass(encoder, target, &self.sky, &self.sky_group, face as u32);
+        for first in (0..FACES).step_by(FACES_PER_PASS) {
+            faces_pass(
+                encoder,
+                &self.maps.radiance_targets[0][first..first + FACES_PER_PASS],
+                &self.sky,
+                &self.sky_group,
+                first as u32,
+            );
         }
         self.finish(encoder, 0);
         true
@@ -223,30 +239,45 @@ impl Environment {
 
     /// Records the radiance cube's levels averaged down from its first and
     /// every level of cube `cube` of the maps blurred from them.
-    pub(crate) fn finish(&self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
-        for level in 1..self.maps.levels as usize {
-            for (face, target) in self.maps.radiance_targets[level].iter().enumerate() {
-                let group = &self.maps.down_groups[level - 1];
-                face_pass(encoder, target, &self.down, group, face as u32);
+    pub(crate) fn finish(&mut self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
+        let maps = &mut self.maps;
+        for level in 1..maps.levels as usize {
+            for first in (0..FACES).step_by(FACES_PER_PASS) {
+                faces_pass(
+                    encoder,
+                    &maps.radiance_targets[level][first..first + FACES_PER_PASS],
+                    &self.down,
+                    &maps.down_groups[level - 1],
+                    first as u32,
+                );
             }
         }
-        for face in 0..6 {
-            for level in 0..self.maps.levels {
-                let target = self.maps.maps.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_mip_level: level,
-                    mip_level_count: Some(1),
-                    base_array_layer: cube * 6 + face,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                });
-                let item = face + 6 * level;
-                face_pass(
+        let (texture, levels) = (&maps.maps, maps.levels);
+        let targets = maps.cube_targets[cube as usize].get_or_insert_with(|| {
+            (0..levels)
+                .flat_map(|level| {
+                    (0..FACES as u32).map(move |face| {
+                        texture.create_view(&wgpu::TextureViewDescriptor {
+                            dimension: Some(wgpu::TextureViewDimension::D2),
+                            base_mip_level: level,
+                            mip_level_count: Some(1),
+                            base_array_layer: cube * FACES as u32 + face,
+                            array_layer_count: Some(1),
+                            ..Default::default()
+                        })
+                    })
+                })
+                .collect()
+        });
+        for level in 0..levels as usize {
+            for first in (0..FACES).step_by(FACES_PER_PASS) {
+                let start = level * FACES + first;
+                faces_pass(
                     encoder,
-                    &target,
+                    &targets[start..start + FACES_PER_PASS],
                     &self.prefilter,
-                    &self.maps.prefilter_group,
-                    item,
+                    &maps.prefilter_group,
+                    start as u32,
                 );
             }
         }
@@ -356,28 +387,35 @@ fn create_maps(
         prefilter_group,
         maps,
         maps_view,
+        cube_targets: std::iter::repeat_with(|| None)
+            .take(cubes as usize)
+            .collect(),
     }
 }
 
-// Draws item `item` (face, plus 6 per level) of `pipeline` over `target`.
-fn face_pass(
+// Draws item `item` (a first face, plus 6 per level) of `pipeline` over
+// `targets`, that face's and the next two's.
+fn faces_pass(
     encoder: &mut wgpu::CommandEncoder,
-    target: &wgpu::TextureView,
+    targets: &[wgpu::TextureView],
     pipeline: &wgpu::RenderPipeline,
     group: &wgpu::BindGroup,
     item: u32,
 ) {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("engine/environment"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: target,
+    let attachments: [_; FACES_PER_PASS] = std::array::from_fn(|index| {
+        Some(wgpu::RenderPassColorAttachment {
+            view: &targets[index],
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                 store: wgpu::StoreOp::Store,
             },
-        })],
+        })
+    });
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("engine/environment"),
+        color_attachments: &attachments,
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
