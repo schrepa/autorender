@@ -2,7 +2,9 @@ use std::{fs, path::Path};
 
 use crate::{
     authoring,
-    process::{NPM, WASM_TARGET, run, verify_wasm_bindgen},
+    process::{
+        CLIENTS, NPM, WASM_TARGET, client_dev_features, client_packages, run, verify_wasm_bindgen,
+    },
 };
 
 pub fn build(root: &Path) -> Result<(), String> {
@@ -55,46 +57,17 @@ pub fn lint(root: &Path) -> Result<(), String> {
             "warnings",
         ],
     )?;
-    run(
-        root,
-        "cargo",
-        &[
-            "clippy",
-            "-p",
-            "orbit-demo",
-            "-p",
-            "playground",
-            "-p",
-            "stress-lab",
-            "--target",
-            WASM_TARGET,
-            "--locked",
-            "--",
-            "-D",
-            "warnings",
-        ],
-    )?;
-    run(
-        root,
-        "cargo",
-        &[
-            "clippy",
-            "-p",
-            "orbit-demo",
-            "-p",
-            "playground",
-            "-p",
-            "stress-lab",
-            "--features",
-            "orbit-demo/dev,playground/dev,stress-lab/dev",
-            "--target",
-            WASM_TARGET,
-            "--locked",
-            "--",
-            "-D",
-            "warnings",
-        ],
-    )?;
+    // The clients for the browser, without and with their development tools.
+    let features = client_dev_features();
+    for development in [false, true] {
+        let mut arguments: Vec<&str> = vec!["clippy"];
+        arguments.extend(client_packages());
+        if development {
+            arguments.extend(["--features", features.as_str()]);
+        }
+        arguments.extend(["--target", WASM_TARGET, "--locked", "--", "-D", "warnings"]);
+        run(root, "cargo", &arguments)?;
+    }
     // The host imports generated declarations, including on a clean checkout.
     build_wasm(root, false)?;
     build_wasm(root, true)?;
@@ -140,43 +113,21 @@ pub fn test(root: &Path) -> Result<(), String> {
         "cargo",
         &["test", "--workspace", "--all-features", "--locked"],
     )?;
-    run(
-        root,
-        "node",
-        &[
-            "--test",
-            "web/scripts/input.test.mjs",
-            "web/scripts/agent.test.mjs",
-            "web/scripts/dev.test.mjs",
-            "web/scripts/source.test.mjs",
-            "web/scripts/iteration-watch.test.mjs",
-            "web/scripts/iteration-controller.test.mjs",
-            "web/scripts/iteration-bridge.test.mjs",
-            "web/scripts/benchmark-report.test.mjs",
-        ],
-    )
+    // Every dependency-free host suite, as `npm test` runs them.
+    run(root, NPM, &["test", "--prefix", "web"])
 }
 
 pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
-    let mut arguments = vec![
-        "build",
-        "-p",
-        "orbit-demo",
-        "-p",
-        "playground",
-        "-p",
-        "stress-lab",
-        "--target",
-        WASM_TARGET,
-        "--release",
-        "--locked",
-    ];
+    let features = client_dev_features();
+    let mut arguments: Vec<&str> = vec!["build"];
+    arguments.extend(client_packages());
+    arguments.extend(["--target", WASM_TARGET, "--release", "--locked"]);
     if development {
-        arguments.extend(["--features", "orbit-demo/dev,playground/dev,stress-lab/dev"]);
+        arguments.extend(["--features", features.as_str()]);
     }
     run(root, "cargo", &arguments)?;
-    for name in ["orbit_demo", "playground", "stress_lab"] {
+    for (_, name) in CLIENTS {
         let artifact = format!("target/{WASM_TARGET}/release/{name}.wasm");
         run(
             root,

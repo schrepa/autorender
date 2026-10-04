@@ -38,7 +38,7 @@ Start the dev server, then run:
 npm run smoke --prefix web
 ```
 
-The smoke runner uses installed Chrome through Playwright. Set `BROWSER_CHANNEL=msedge` to use Edge, `DEMO_URL` to change the URL, or `SOFTWARE_GPU=1` to request SwiftShader for headless CI without a suitable GPU. Headless verification enables unsafe WebGPU for test compatibility; normal users do not need test flags on supported hardware. Software rendering checks correctness, not hardware performance. `npm test --prefix web` runs dependency-free keyboard/touch ownership and edge tests; xtask also runs them.
+The smoke runner uses installed Chrome through Playwright. Set `BROWSER_CHANNEL=msedge` to use Edge, `DEMO_URL` to change the URL, or `SOFTWARE_GPU=1` to request SwiftShader for headless CI without a suitable GPU. Headless verification enables unsafe WebGPU for test compatibility; normal users do not need test flags on supported hardware. Software rendering checks correctness, not hardware performance. `npm test --prefix web` runs every dependency-free host suite (`scripts/*.test.mjs`: input ownership and edges, agent and development protocols, sources, the iteration watcher and controller, benchmark reports); `cargo xtask test` runs it too.
 
 It checks both games, WebGPU startup, workload changes, per-mesh draws, pause/resume, keyboard/pointer input, resize, collection/jumping, scene revisions, failed reload preservation, repeated reload asset residency, error-free execution, and unsupported browsers. Desktop and narrow-viewport screenshots are written under ignored `artifacts/` for inspection. A narrow viewport is a layout check, not a physical mobile GPU test.
 
