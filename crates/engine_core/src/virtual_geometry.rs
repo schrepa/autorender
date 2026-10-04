@@ -4,9 +4,9 @@
 //!
 //! The [`VirtualGeometry`] settings are inserted by default; without them,
 //! or when disabled, meshes with virtual geometry draw their fallback cut.
-//! Resident pages live on the GPU. Without the visibility buffer, or where
-//! the device binds too few storage buffers, the camera's clusters shade as
-//! they draw rather than once per pixel after all of them are drawn.
+//! Resident pages live on the GPU. The camera's clusters shade as they draw;
+//! with the visibility buffer (opt-in), where the device binds enough storage
+//! buffers, they shade once per pixel after all of them are drawn.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -37,15 +37,15 @@ pub struct VirtualGeometry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_resident_pages: Option<u32>,
     /// Whether the camera's clusters shade through the visibility buffer
-    /// (decision 045), each pixel once; false shades them as they draw.
-    /// Omitted, true.
-    #[serde(skip_serializing_if = "is_true")]
+    /// (decision 045), each pixel once; false shades them as they draw,
+    /// which was faster on the integrated GPU measured. Omitted, false.
+    #[serde(skip_serializing_if = "is_false")]
     pub visibility_buffer: bool,
 }
 
-/// Scenes omit the visibility buffer while it is on.
-fn is_true(value: &bool) -> bool {
-    *value
+/// Scenes omit the visibility buffer while it is off.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Default for VirtualGeometry {
@@ -54,7 +54,7 @@ impl Default for VirtualGeometry {
             enabled: true,
             pixel_error: 1.5,
             max_resident_pages: None,
-            visibility_buffer: true,
+            visibility_buffer: false,
         }
     }
 }

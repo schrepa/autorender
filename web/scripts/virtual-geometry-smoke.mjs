@@ -92,16 +92,16 @@ try {
     const gpu = await capture(`${camera.label}-gpu`, true);
     const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
-    // Both resolve through the visibility buffer (decision 045); shading as
-    // clusters draw instead shows the same surfaces.
-    assert.ok(cpu.rendering.visibility_buffer && gpu.rendering.visibility_buffer, `${camera.label}: visibility buffer`);
-    await command("environment", { virtual_geometry: { visibility_buffer: false } });
-    const forward = await capture(`${camera.label}-forward`, true);
+    // Both shade clusters as they draw; resolving them through the
+    // visibility buffer (decision 045) instead shows the same surfaces.
+    assert.ok(!cpu.rendering.visibility_buffer && !gpu.rendering.visibility_buffer, `${camera.label}: forward shading`);
     await command("environment", { virtual_geometry: { visibility_buffer: true } });
-    assert.equal(forward.rendering.visibility_buffer, false);
-    const forwardPixels = await differentPixels(page, [gpu.png, forward.png], { tolerance: 8 });
+    const resolved = await capture(`${camera.label}-visibility`, true);
+    await command("environment", { virtual_geometry: { visibility_buffer: false } });
+    assert.equal(resolved.rendering.visibility_buffer, true);
+    const forwardPixels = await differentPixels(page, [gpu.png, resolved.png], { tolerance: 8 });
     assert.ok(forwardPixels.changed <= forwardPixels.total * 0.001,
-      `${camera.label}: ${forwardPixels.changed} of ${forwardPixels.total} pixels differ from forward shading`);
+      `${camera.label}: ${forwardPixels.changed} of ${forwardPixels.total} pixels differ through the visibility buffer`);
     const rendering = gpu.rendering;
     assert.ok(rendering.virtual_clusters > 0 && rendering.virtual_triangles > 0, `${camera.label}: clusters drawn`);
     assert.ok(rendering.virtual_shadow_clusters > 0 && rendering.virtual_shadow_triangles > 0, `${camera.label}: clusters cast shadows`);
