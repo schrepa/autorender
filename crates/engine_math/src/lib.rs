@@ -7,7 +7,7 @@
 //! angles that differ per object mispredict on most calls. These functions
 //! choose quadrants with integer bit operations instead, and give the same
 //! bits on native targets and in every browser (pure IEEE `f32` arithmetic,
-//! no fused multiply-add). See `docs/math.md` for measurements.
+//! no fused multiply-add).
 //!
 //! Accuracy against the exact values, rounded to `f32`:
 //! - `|x| <= pi/4`: within 1 ulp; `|x| <= pi`: within 2 ulp.

@@ -821,7 +821,7 @@ impl Nodes<'_> {
     /// The global of `index` for `local`, which equals its cached local's bits.
     // Measured natively: keeping this per-node path inlined into both
     // traversals matters more than batching local matrix construction.
-    // Attribution builds (docs/profiling.md) keep it and other hot helpers
+    // Attribution builds keep it and other hot helpers
     // out of line so sampling profilers can separate their costs.
     #[cfg_attr(not(feature = "attribution"), inline(always))]
     #[cfg_attr(feature = "attribution", inline(never))]

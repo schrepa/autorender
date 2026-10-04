@@ -1,5 +1,4 @@
-//! Trigonometry, minimum, maximum and clamping for gameplay and engine code
-//! (`docs/math.md`).
+//! Trigonometry, minimum, maximum and clamping for gameplay and engine code.
 //!
 //! Use these instead of `f32::sin`, `f32::cos` and `f32::sin_cos`: browsers
 //! run the standard functions 2-5 times slower on angles that differ per
