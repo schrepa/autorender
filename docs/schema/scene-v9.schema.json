@@ -1,0 +1,2962 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SceneDocument",
+  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget (decision 029); bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
+  "type": "object",
+  "properties": {
+    "animations": {
+      "description": "Keyframed clips that entity `animation` players play (decision 035).\nVersion 8.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneAnimation"
+      }
+    },
+    "camera": {
+      "$ref": "#/$defs/SceneCamera",
+      "default": {
+        "far": 500.0,
+        "fov_degrees": 55.0,
+        "near": 0.10000000149011612,
+        "position": [
+          24.0,
+          19.0,
+          28.0
+        ],
+        "target": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneObject"
+      }
+    },
+    "environment": {
+      "description": "The scene's atmosphere and rendering effects (decision 022). Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SceneEnvironment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.-]+$"
+    },
+    "materials": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneMaterial"
+      }
+    },
+    "meshes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneMesh"
+      }
+    },
+    "prefabs": {
+      "description": "Reusable local entity trees. Definitions share this document's assets.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ScenePrefab"
+      }
+    },
+    "revision": {
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    },
+    "skins": {
+      "description": "Joint lists that deform skinned meshes (decision 036). Version 8.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneSkin"
+      }
+    },
+    "textures": {
+      "description": "Opaque sRGB pixels: inline base64, or image files (version 7).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneTexture"
+      }
+    },
+    "version": {
+      "type": "integer",
+      "format": "uint32",
+      "maximum": 9,
+      "minimum": 1
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "id",
+    "revision",
+    "materials",
+    "meshes",
+    "entities"
+  ],
+  "$defs": {
+    "AtmospherePreset": {
+      "description": "A starting point for an atmosphere; fields set beside it override it.",
+      "type": "string",
+      "enum": [
+        "day",
+        "golden_hour",
+        "dusk",
+        "night"
+      ]
+    },
+    "Blend": {
+      "description": "How a layer's heights combine with the heights of the layers before it,\nweighted by the layer's coverage: added, the higher or lower of the two,\nor replacing them.",
+      "type": "string",
+      "enum": [
+        "add",
+        "max",
+        "min",
+        "replace"
+      ]
+    },
+    "MeshSource": {
+      "description": "Supported geometry recipes, including arbitrary validated triangle meshes.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "cube"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Centered unit square in the XZ plane, facing +Y.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "plane"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "octahedron"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "indices": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint32",
+                "minimum": 0
+              },
+              "minItems": 3
+            },
+            "kind": {
+              "type": "string",
+              "const": "inline"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SceneVertex"
+              },
+              "minItems": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "vertices",
+            "indices"
+          ]
+        },
+        {
+          "description": "An engine mesh buffer file (`EMB1`) beside the scene. Version 7.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "buffer"
+            },
+            "uri": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "uri"
+          ]
+        },
+        {
+          "description": "A virtual mesh file (`EVG1`, decision 044) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
+          "type": "object",
+          "properties": {
+            "fallback_triangles": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 1
+            },
+            "kind": {
+              "type": "string",
+              "const": "virtual"
+            },
+            "uri": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "uri"
+          ]
+        }
+      ]
+    },
+    "NoiseLayer": {
+      "description": "Procedural ground: fractal gradient noise whose fine octaves fade on\nslopes (Quilez's derivative damping), optionally folded into ridges and\nwarped sideways, shaped toward wide valley floors, then cut by the\nerosion filter's gullies running down its slopes.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/Blend",
+          "default": "add"
+        },
+        "erosion": {
+          "description": "How deep gullies cut down slopes, 0 (none) to 1.",
+          "type": "number",
+          "format": "float",
+          "default": 0.699999988079071,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "height": {
+          "description": "Meters from the lowest to the highest ground before gullies, 0 to\n20000.",
+          "type": "number",
+          "format": "float",
+          "default": 900.0,
+          "maximum": 20000.0,
+          "minimum": 0.0
+        },
+        "offset": {
+          "description": "Meters added to every height of the layer, -20000 to 20000.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 20000.0,
+          "minimum": -20000.0
+        },
+        "ridges": {
+          "description": "0 rolls; 1 folds every octave into sharp ridges.",
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "roughness": {
+          "description": "How much each finer octave keeps of the coarser one's height, from\n0 (smooth slopes up close) through 0.5 (every scale alike) to 1\n(rugged).",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "seed": {
+          "description": "Picks the pattern: the same seed gives the same heights everywhere.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "smoothing": {
+          "description": "How much fine detail fades on slopes, 0 to 1.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "valleys": {
+          "description": "0 keeps the heights' spread; 1 widens valley floors and sharpens\npeaks.",
+          "type": "number",
+          "format": "float",
+          "default": 0.699999988079071,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "warp": {
+          "description": "How far the ground warps sideways, as a share of the wavelength, 0\nto 1.",
+          "type": "number",
+          "format": "float",
+          "default": 0.3499999940395355,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "wavelength": {
+          "description": "Meters across the largest features, 16 to 1000000.",
+          "type": "number",
+          "format": "float",
+          "default": 3000.0,
+          "maximum": 1000000.0,
+          "minimum": 16.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneAlphaMode": {
+      "type": "string",
+      "enum": [
+        "opaque",
+        "mask",
+        "blend"
+      ]
+    },
+    "SceneAmbientOcclusion": {
+      "description": "Ambient occlusion (decision 021); an intensity of 0 turns it off.",
+      "type": "object",
+      "properties": {
+        "intensity": {
+          "type": "number",
+          "format": "float",
+          "default": 0.800000011920929,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "radius": {
+          "description": "World distance within which geometry occludes.",
+          "type": "number",
+          "format": "float",
+          "default": 2.5,
+          "minimum": 0.001
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneAnimation": {
+      "description": "A named animation clip: keyframed channels of the entities `targets`\nnames. Its channels are inline or in an `EAN1` buffer file (`uri`).",
+      "type": "object",
+      "properties": {
+        "channels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SceneChannel"
+          }
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "name": {
+          "description": "Optional display label.",
+          "type": "string"
+        },
+        "targets": {
+          "description": "Entity IDs a channel's `target` index names. A player inside a prefab\nplacement resolves them against the placement's local IDs first.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "targets"
+      ]
+    },
+    "SceneAtmosphere": {
+      "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
+      "type": "object",
+      "properties": {
+        "ambient": {
+          "description": "Scale of the sky's ambient light.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "contrast": {
+          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6\n(decision 027), like the grade fields below.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "emission": {
+          "description": "Scale of material emission: dim by day, full at night.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "exposure": {
+          "description": "Exposure before tone mapping.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "fog_density": {
+          "description": "Fog density per world unit at height zero.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "fog_falloff": {
+          "description": "How fast fog thins with height, per world unit.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "fog_max": {
+          "description": "The most fog can cover.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "fog_start": {
+          "description": "Fog begins this far from the camera (world units).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "ground": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "highlight_tint": {
+          "description": "Hue of bright tones, like `shadow_tint`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "horizon": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "preset": {
+          "$ref": "#/$defs/AtmospherePreset",
+          "default": "golden_hour"
+        },
+        "rim": {
+          "description": "Silhouette light in the horizon color.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "saturation": {
+          "description": "Saturation after tone mapping; 1 keeps it.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "shadow_tint": {
+          "description": "Hue of dark tones after tone mapping (split toning), as a color gain\nscaled to keep luminance; white or black keeps them.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "specular": {
+          "description": "Scale of sun highlights and sky reflections; 1 is physically based.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "sun_color": {
+          "description": "Sun color times intensity.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "sun_direction": {
+          "description": "Direction toward the sun; any nonzero length.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "vibrance": {
+          "description": "Saturation added to muted colors more than to vivid ones; 0 adds none.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "zenith": {
+          "description": "Sky straight up, at the horizon, and below it.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneBloom": {
+      "description": "Bloom (decision 021); an intensity of 0 turns it off.",
+      "type": "object",
+      "properties": {
+        "intensity": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
+        "threshold": {
+          "description": "Exposed brightness above which light glows.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneBounds": {
+      "description": "A world box (minimum and maximum corners).",
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "min",
+        "max"
+      ]
+    },
+    "SceneCamera": {
+      "description": "Right-handed, Y-up perspective camera. Lens values are in world units.",
+      "type": "object",
+      "properties": {
+        "far": {
+          "type": "number",
+          "format": "float",
+          "default": 500.0,
+          "maximum": 1000000.0,
+          "minimum": 0.001
+        },
+        "fov_degrees": {
+          "type": "number",
+          "format": "float",
+          "default": 55.0,
+          "maximum": 179.0,
+          "minimum": 1.0
+        },
+        "near": {
+          "type": "number",
+          "format": "float",
+          "default": 0.10000000149011612,
+          "maximum": 1000000.0,
+          "minimum": 0.001
+        },
+        "position": {
+          "type": "array",
+          "default": [
+            24.0,
+            19.0,
+            28.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "target": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneChannel": {
+      "description": "One keyframed property of one target.",
+      "type": "object",
+      "properties": {
+        "interpolation": {
+          "$ref": "#/$defs/SceneInterpolation",
+          "default": "linear"
+        },
+        "property": {
+          "$ref": "#/$defs/SceneProperty"
+        },
+        "target": {
+          "description": "Index into the clip's `targets`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "times": {
+          "description": "Key times in seconds, strictly increasing.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "values": {
+          "description": "Values, three numbers each (four for rotations, as quaternions x, y,\nz, w); cubic splines give in-tangent, value and out-tangent per key.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "property",
+        "times",
+        "values"
+      ]
+    },
+    "SceneCollider": {
+      "description": "A collider or sensor on any authored node, including prefab instance roots.\nZero layer masks are valid and intentionally disable matching pairs.",
+      "type": "object",
+      "properties": {
+        "filter": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 4294967295,
+          "minimum": 0
+        },
+        "memberships": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "sensor": {
+          "type": "boolean",
+          "default": false
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneColliderShape"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "shape"
+      ]
+    },
+    "SceneColliderShape": {
+      "description": "Explicit local collision geometry. Parent transforms apply as full affine\nmatrices; rendering meshes never supply implicit collider dimensions.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "half_extents": {
+              "description": "Positive half sizes on local axes, each in [0.0001, 10000].",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "kind": {
+              "type": "string",
+              "const": "cuboid"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "half_extents"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "sphere"
+            },
+            "radius": {
+              "description": "Local radius in [0.0001, 10000]. Nonuniform transforms form ellipsoids.",
+              "type": "number",
+              "format": "float",
+              "maximum": 10000.0,
+              "minimum": 0.0001
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "radius"
+          ]
+        }
+      ]
+    },
+    "SceneDecal": {
+      "description": "A decal on this entity (decision 039). Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/SceneDecalBlend",
+          "default": "alpha"
+        },
+        "fade_degrees": {
+          "description": "Degrees between a surface's normal and the box's +y beyond which the\ndecal fades out, gone at 90.",
+          "type": "number",
+          "format": "float",
+          "default": 60.0,
+          "maximum": 90.0,
+          "minimum": 0.0
+        },
+        "material": {
+          "description": "ID of the projected material in this document.",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "opacity": {
+          "description": "Multiplies the decal's alpha.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "material"
+      ]
+    },
+    "SceneDecalBlend": {
+      "description": "How a decal combines with the surface it lies on.",
+      "oneOf": [
+        {
+          "description": "Covering by alpha, lit like any surface: paint, posters, markings.",
+          "type": "string",
+          "const": "alpha"
+        },
+        {
+          "description": "Multiplying the surface's color, keeping its light: dirt, cracks,\nstains and scorch marks.",
+          "type": "string",
+          "const": "multiply"
+        }
+      ]
+    },
+    "SceneDecals": {
+      "description": "Decal settings (decision 039). Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_decals": {
+          "description": "An optional budget of decals a frame draws; beyond it the decals\nnearest the camera win. Omitted, every decal draws.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneEmitter": {
+      "description": "A particle emitter on this entity (decision 026). Requires version 6.\nOmitted fields take the engine's defaults.",
+      "type": "object",
+      "properties": {
+        "acceleration": {
+          "description": "World acceleration: gravity, buoyancy or wind.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "blend": {
+          "$ref": "#/$defs/SceneParticleBlend",
+          "default": "alpha"
+        },
+        "color": {
+          "description": "Linear RGBA at birth and at death, channels in [0, 1]; alpha fades.",
+          "type": "array",
+          "default": [
+            [
+              1.0,
+              1.0,
+              1.0,
+              0.6000000238418579
+            ],
+            [
+              1.0,
+              1.0,
+              1.0,
+              0.0
+            ]
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 4,
+            "minItems": 4
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "direction": {
+          "description": "Direction of emission in the entity's local space; nonzero.",
+          "type": "array",
+          "default": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "emission": {
+          "description": "Brightness multiple of the color, for glowing particles.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 64.0,
+          "minimum": 0.0
+        },
+        "lifetime": {
+          "description": "Seconds each particle lives; positive.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 60.0,
+          "minimum": 0.0
+        },
+        "offset": {
+          "description": "Birth position in the entity's local space.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "radius": {
+          "description": "Radius of the ball particles start in.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "minimum": 0.0
+        },
+        "rate": {
+          "description": "Particles born per second; positive.",
+          "type": "number",
+          "format": "float",
+          "default": 20.0,
+          "maximum": 100000.0,
+          "minimum": 0.0
+        },
+        "seed": {
+          "description": "Varies random choices between otherwise identical emitters.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "size": {
+          "description": "Diameter at birth and at death, in world units.",
+          "type": "array",
+          "default": [
+            0.30000001192092896,
+            0.6000000238418579
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "speed": {
+          "description": "Initial speed in world units per second.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0
+        },
+        "spread_degrees": {
+          "description": "Half-angle of the cone of initial directions, in degrees; 180 emits\nin every direction.",
+          "type": "number",
+          "format": "float",
+          "default": 17.18873405456543,
+          "maximum": 180.0,
+          "minimum": 0.0
+        },
+        "stretch": {
+          "description": "Seconds of travel particles stretch along their motion.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 10.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneEnvironment": {
+      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
+      "type": "object",
+      "properties": {
+        "ambient_occlusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAmbientOcclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "atmosphere": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAtmosphere"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bloom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBloom"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decals": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDecals"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "level_of_detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLevelOfDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "local_lights": {
+          "description": "Version 6 sections (decisions 023 to 026).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLocalLights"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "particles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneParticles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reflection_probes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reflections": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflections"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refraction": {
+          "description": "Version 8 sections (decisions 038, 039, 043, 044 and 047).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneRefraction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shadows": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneShadows"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sun_shafts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSunShafts"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain": {
+          "description": "Version 9: terrain streaming and level of detail (decision 051).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "virtual_geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneVirtualGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneFilter": {
+      "type": "string",
+      "enum": [
+        "nearest",
+        "linear"
+      ]
+    },
+    "SceneHeightmap": {
+      "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/Blend",
+          "default": "add"
+        },
+        "falloff": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2
+        },
+        "high": {
+          "type": "number",
+          "format": "float"
+        },
+        "low": {
+          "type": "number",
+          "format": "float"
+        },
+        "min": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "size": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "uri": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "width",
+        "height",
+        "min",
+        "size",
+        "low",
+        "high"
+      ]
+    },
+    "SceneInterpolation": {
+      "type": "string",
+      "enum": [
+        "step",
+        "linear",
+        "cubic_spline"
+      ]
+    },
+    "SceneLevelOfDetail": {
+      "description": "Level of detail settings (decisions 047 and 048): whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "impostors": {
+          "description": "Whether draw groups draw impostors where they fit (decision 048).",
+          "type": "boolean",
+          "default": true
+        },
+        "max_impostors": {
+          "description": "The most impostors kept baked; omitted for no budget.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "pixel_error": {
+          "description": "The largest simplification error a drawn level may show, in pixels of\nthe viewport height, from 0.25 to 64: smaller draws finer levels\nfarther away.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 64.0,
+          "minimum": 0.25
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneLight": {
+      "description": "A point or spot light on this entity (decision 023). Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Linear color, each channel finite and nonnegative.",
+          "type": "array",
+          "default": [
+            1.0,
+            0.8500000238418579,
+            0.6000000238418579
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "intensity": {
+          "description": "Light at one world unit; positive.",
+          "type": "number",
+          "format": "float",
+          "default": 20.0,
+          "minimum": 0.0
+        },
+        "offset": {
+          "description": "Position in the entity's local space, scaled with it.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "range": {
+          "description": "World distance beyond which the light has no effect; positive.",
+          "type": "number",
+          "format": "float",
+          "default": 12.0,
+          "minimum": 0.001
+        },
+        "spot": {
+          "description": "A cone; omitted for light in every direction.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSpot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneLocalLights": {
+      "description": "Local lighting settings (decision 023). Requires version 6.",
+      "type": "object",
+      "properties": {
+        "distance": {
+          "description": "View distance beyond which local light fades out: distant lights\ncost no shading.",
+          "type": "number",
+          "format": "float",
+          "default": 250.0,
+          "maximum": 100000.0,
+          "minimum": 1.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "intensity": {
+          "description": "Scales every light's intensity, e.g. to dim lamps by day.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "lights_per_cluster": {
+          "description": "An optional budget of lights one view cluster lists. Omitted, every\nlight reaching a cluster shades there.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "max_lights": {
+          "description": "An optional budget of lights a frame shades; beyond it the nearest to\nthe camera win. Omitted, every light shades.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneMap": {
+      "description": "A material's use of a texture: its ID, or (version 8) a map with glTF\nsampler and `KHR_texture_transform` settings.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneTextureMap"
+        }
+      ]
+    },
+    "SceneMaterial": {
+      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces (decision 031); `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
+      "type": "object",
+      "properties": {
+        "alpha_cutoff": {
+          "description": "Version 8, `mask` only: alpha below it is not drawn; default 0.5.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "minimum": 0.0
+        },
+        "alpha_mode": {
+          "description": "Version 8: how alpha (opacity times base color texture alpha) is\nused. Default `blend` below opacity 1, `opaque` otherwise.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlphaMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "double_sided": {
+          "description": "Version 8: draw back faces too, lit from their own side.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "emissive": {
+          "description": "Version 8: emitted linear color, not negative (glTF's emissive factor\ntimes its emissive strength).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "emissive_texture": {
+          "description": "Version 8: sRGB color multiplying `emissive`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "ior": {
+          "description": "Version 8, with `transmission`: the index of refraction in `[1, 3]`;\ndefault 1.5.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 3.0,
+          "minimum": 1.0
+        },
+        "metallic_roughness_texture": {
+          "description": "Version 8: linear green multiplies roughness and blue metalness.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "normal_scale": {
+          "description": "Version 8: scales the normal map's deflection; default 1.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "normal_texture": {
+          "description": "Version 8: a tangent-space normal map (green up the image).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occlusion_strength": {
+          "description": "Version 8: how much the occlusion map darkens, in `[0, 1]`; default 1.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "occlusion_texture": {
+          "description": "Version 8: linear red darkens indirect light.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "opacity": {
+          "description": "The fraction of light behind it the surface covers, in `(0, 1]`\n(decision 026). Below 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001
+        },
+        "surface": {
+          "description": "How the surface responds to light beyond its color (decision 019).\nRequires version 5; without it the material is matte.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "texture": {
+          "description": "Base color texture: its sRGB color multiplies `color`. A texture ID,\nor (version 8) a map with sampler and transform settings. IDs clamp at\nthe texture's edges before version 8 and repeat from version 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thickness": {
+          "description": "Version 8, with `transmission`: the depth in world units of the\nvolume beneath the surface that bends rays; default 0, a thin wall.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "minimum": 0.0
+        },
+        "transmission": {
+          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (decision 038,\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "color"
+      ]
+    },
+    "SceneMesh": {
+      "description": "A named CPU mesh. Sources contain no filesystem paths or executable data.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "source": {
+          "$ref": "#/$defs/MeshSource"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source"
+      ]
+    },
+    "SceneMipmapFilter": {
+      "type": "string",
+      "enum": [
+        "none",
+        "nearest",
+        "linear"
+      ]
+    },
+    "SceneObject": {
+      "description": "One local transform, optional renderable, or prefab instance root.\nTags are game-defined startup hook names.",
+      "type": "object",
+      "properties": {
+        "animation": {
+          "description": "Plays an animation on its targets (decision 035). Requires version 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePlayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collider": {
+          "description": "Local collision shape, independent of rendering. Requires version 4.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decal": {
+          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox (decision 039). Requires version 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDecal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "light": {
+          "description": "A point or spot light (decision 023). Requires version 6.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "material": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "mesh": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "name": {
+          "description": "Optional display label, at most 128 UTF-8 bytes without control characters.",
+          "type": "string",
+          "default": "",
+          "maxLength": 128
+        },
+        "parent": {
+          "description": "Parent ID in the scene, or in this prefab's local definition.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "particles": {
+          "description": "A particle emitter (decision 026). Requires version 6.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneEmitter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prefab": {
+          "description": "Named prefab to expand below this transform-only instance root.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "reflection_probe": {
+          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect (decision 043). Requires\nversion 8.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "skin": {
+          "description": "The skin deforming this object's mesh (decision 036). Requires\nversion 8 and a mesh with joints and weights.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "tags": {
+          "description": "At most 16 distinct authored IDs, each at most 64 ASCII bytes.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16
+        },
+        "terrain": {
+          "description": "A heightfield terrain whose tiles stream around the camera (decision\n051). Requires version 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrain"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tint": {
+          "description": "Multiplies this object's color and opacity channel by channel\n(decision 033), each factor finite and in `[0, 1]`. Requires version 8.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "transform": {
+          "$ref": "#/$defs/SceneTransform",
+          "default": {
+            "rotation_degrees": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "SceneParticleBlend": {
+      "description": "How particles combine with what is behind them.",
+      "oneOf": [
+        {
+          "description": "Covering by alpha, lit by the sun and sky: smoke, dust, rain.",
+          "type": "string",
+          "const": "alpha"
+        },
+        {
+          "description": "Adding light, unlit: sparks, fire.",
+          "type": "string",
+          "const": "additive"
+        }
+      ]
+    },
+    "SceneParticles": {
+      "description": "Particle settings (decision 026). Requires version 6.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_particles": {
+          "description": "An optional budget of particles a frame draws; beyond it the emitters\nnearest the camera win. Omitted, every emitter draws.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "ScenePlayer": {
+      "description": "Plays a clip on its targets from this entity (decision 035).",
+      "type": "object",
+      "properties": {
+        "clip": {
+          "description": "The animation's ID.",
+          "type": "string"
+        },
+        "loop": {
+          "type": "boolean"
+        },
+        "speed": {
+          "description": "Playback rate: 1 is real time, 0 paused, negative backward.",
+          "type": "number",
+          "format": "float"
+        },
+        "time": {
+          "description": "Starting time in seconds.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "clip"
+      ]
+    },
+    "ScenePrefab": {
+      "description": "A reusable entity tree whose parents reference IDs within the definition.\n\nInstance roots use [`SceneObject::prefab`]. Template roots become children of\nthat instance root. Nested prefab references are deliberately unsupported.",
+      "type": "object",
+      "properties": {
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "maxItems": 10000
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "entities"
+      ]
+    },
+    "SceneProperty": {
+      "type": "string",
+      "enum": [
+        "translation",
+        "rotation",
+        "scale"
+      ]
+    },
+    "SceneReflectionProbe": {
+      "description": "A reflection probe on this entity (decision 043). Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "description": "World distance inside the box's faces over which the probe fades out;\nfinite and nonnegative.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "minimum": 0.0
+        },
+        "extent": {
+          "description": "Half the box's size along each world axis in world units, each\nfinite and positive.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "extent"
+      ]
+    },
+    "SceneReflectionProbes": {
+      "description": "Reflection probe settings (decision 043). Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "faces_per_frame": {
+          "description": "Cube faces captured per frame while probes wait: more fill new places\nsooner, fewer keep those frames lighter.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 1
+        },
+        "max_probes": {
+          "description": "An optional budget of probes kept captured; beyond it the probes\nnearest the camera win. Omitted, as many as the GPU's texture arrays\nhold.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "resolution": {
+          "description": "Texels across each face of every environment map, the sky's\nincluded: a power of two from 16 to 1024.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 128,
+          "maximum": 1024,
+          "minimum": 16
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneReflections": {
+      "description": "Screen-space reflections (decision 025). Requires version 6; an intensity\nof 0 turns them off.",
+      "type": "object",
+      "properties": {
+        "distance": {
+          "description": "World distance reflection rays travel.",
+          "type": "number",
+          "format": "float",
+          "default": 120.0,
+          "maximum": 100000.0,
+          "minimum": 0.001
+        },
+        "intensity": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "max_roughness": {
+          "description": "Surfaces rougher than this reflect only the sky.",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.05
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneRefraction": {
+      "description": "Refraction through glass (decision 038). Requires version 8; a strength\nof 0 turns it off.",
+      "type": "object",
+      "properties": {
+        "blur": {
+          "description": "Blur radius in pixels that fully rough glass reaches.",
+          "type": "number",
+          "format": "float",
+          "default": 12.0,
+          "maximum": 64.0,
+          "minimum": 0.0
+        },
+        "strength": {
+          "description": "Scales how far rays bend through transmissive materials.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneShadows": {
+      "description": "Sun shadows (decision 020); omitted fields take the engine defaults.",
+      "type": "object",
+      "properties": {
+        "bounds": {
+          "description": "Region to keep shadows for: the whole scene gives the sharpest, stable\nshadows. Without it the maps follow the camera.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cascades": {
+          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6\n(decision 028).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "maximum": 4,
+          "minimum": 1
+        },
+        "distance": {
+          "description": "Shadows fade out this far from the camera (world units).",
+          "type": "number",
+          "format": "float",
+          "default": 500.0,
+          "minimum": 0.001
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "near_distance": {
+          "description": "View distance of the sharper maps that follow the camera.",
+          "type": "number",
+          "format": "float",
+          "default": 100.0,
+          "minimum": 0.001
+        },
+        "resolution": {
+          "description": "Texels per side of the far maps: 1024, 2048 or 4096.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2048,
+          "maximum": 4096,
+          "minimum": 1024
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneSkin": {
+      "description": "A named skin (decision 036): the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "inverse_binds": {
+          "description": "One matrix per joint; identity when omitted.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 16,
+            "minItems": 16
+          }
+        },
+        "joints": {
+          "description": "Joint entity IDs, resolved like animation targets.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "joints"
+      ]
+    },
+    "SceneSpot": {
+      "description": "The cone of a spot light.",
+      "type": "object",
+      "properties": {
+        "direction": {
+          "description": "Direction the cone points in the entity's local space; nonzero.",
+          "type": "array",
+          "default": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "inner_angle_degrees": {
+          "description": "Half-angle inside which the light is full, in degrees.",
+          "type": "number",
+          "format": "float",
+          "default": 25.0,
+          "maximum": 89.0,
+          "minimum": 0.0
+        },
+        "outer_angle_degrees": {
+          "description": "Half-angle beyond which it is dark, in degrees: at least the inner\nangle.",
+          "type": "number",
+          "format": "float",
+          "default": 40.0,
+          "maximum": 89.0,
+          "minimum": 0.1
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneSunShafts": {
+      "description": "Sun shafts (decision 024): sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
+      "type": "object",
+      "properties": {
+        "anisotropy": {
+          "description": "Forward scattering: higher concentrates light toward the sun.",
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 0.95,
+          "minimum": 0.0
+        },
+        "distance": {
+          "description": "World distance along each view ray light is gathered over.",
+          "type": "number",
+          "format": "float",
+          "default": 300.0,
+          "maximum": 100000.0,
+          "minimum": 0.001
+        },
+        "intensity": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneSurface": {
+      "description": "A material's response to light (decision 019). Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
+      "type": "object",
+      "properties": {
+        "emission": {
+          "description": "Emitted light as a multiple of the material color.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 16.0,
+          "minimum": 0.0
+        },
+        "metalness": {
+          "description": "Metals reflect in their own color and diffuse no light.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "ripples": {
+          "description": "Animated ripples of liquid surfaces.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "roughness": {
+          "description": "0 is a mirror, 1 spreads highlights and sky reflections widest.",
+          "type": "number",
+          "format": "float",
+          "default": 0.800000011920929,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneTerrain": {
+      "description": "A heightfield terrain on this entity (decision 051). Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
+      "type": "object",
+      "properties": {
+        "collision": {
+          "description": "Whether it collides where collision is installed. Omitted, true.",
+          "type": "boolean"
+        },
+        "file": {
+          "description": "An `ETR1` terrain file beside the scene, instead of layers.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layers": {
+          "description": "The layers generating its heights, in order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneTerrainLayer"
+          }
+        },
+        "material": {
+          "$ref": "#/$defs/SceneTerrainMaterial",
+          "default": {
+            "dirt": [
+              0.20999999344348907,
+              0.16500000655651093,
+              0.10999999940395355
+            ],
+            "grass": [
+              0.10499999672174454,
+              0.13500000536441803,
+              0.04500000178813934
+            ],
+            "rock": [
+              0.25,
+              0.23499999940395355,
+              0.2199999988079071
+            ],
+            "rock_slope": 34.0,
+            "roughness": 0.9200000166893005,
+            "snow": [
+              0.8199999928474426,
+              0.8399999737739563,
+              0.8799999952316284
+            ],
+            "snow_height": 650.0
+          }
+        },
+        "origin": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "spacing": {
+          "description": "Meters between level-0 samples, 1/64 to 1024. Required with layers;\na file's own when omitted.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "tiles": {
+          "description": "Level-0 tiles along x and z, 1 to 4096 each. Required with layers;\na file's own when omitted.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "origin"
+      ]
+    },
+    "SceneTerrainLayer": {
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), or an imported heightmap.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "noise": {
+              "$ref": "#/$defs/NoiseLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "noise"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stamp": {
+              "$ref": "#/$defs/Stamp"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "stamp"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "heightmap": {
+              "$ref": "#/$defs/SceneHeightmap"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "heightmap"
+          ]
+        }
+      ]
+    },
+    "SceneTerrainMaterial": {
+      "description": "A terrain's procedural material: rock where slopes steepen, snow above a\nheight on gentler slopes, and grass below, broken up by noise across the\nground. Colors are linear.",
+      "type": "object",
+      "properties": {
+        "dirt": {
+          "description": "Bare ground between grass and rock.",
+          "type": "array",
+          "default": [
+            0.20999999344348907,
+            0.16500000655651093,
+            0.10999999940395355
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "grass": {
+          "type": "array",
+          "default": [
+            0.10499999672174454,
+            0.13500000536441803,
+            0.04500000178813934
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "rock": {
+          "type": "array",
+          "default": [
+            0.25,
+            0.23499999940395355,
+            0.2199999988079071
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "rock_slope": {
+          "description": "Degrees from level where rock takes over, 0 to 90.",
+          "type": "number",
+          "format": "float",
+          "default": 34.0,
+          "maximum": 90.0,
+          "minimum": 0.0
+        },
+        "roughness": {
+          "description": "Surface roughness, 0.03 to 1.",
+          "type": "number",
+          "format": "float",
+          "default": 0.9200000166893005,
+          "maximum": 1.0,
+          "minimum": 0.03
+        },
+        "snow": {
+          "type": "array",
+          "default": [
+            0.8199999928474426,
+            0.8399999737739563,
+            0.8799999952316284
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "snow_height": {
+          "description": "Meters above the terrain's origin where snow starts.",
+          "type": "number",
+          "format": "float",
+          "default": 650.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneTerrainSettings": {
+      "description": "Terrain settings (decision 051). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "collision_radius": {
+          "description": "Meters around the camera and focus entities within which level-0\ntiles load for collision, 0 to 4096.",
+          "type": "number",
+          "format": "float",
+          "default": 192.0,
+          "maximum": 4096.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_tiles": {
+          "description": "An optional budget of resident tiles (each about 270 KB on the CPU\nand the GPU); beyond it the least important drop. Omitted, only the\ndevice's limits bound them.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "pinned_levels": {
+          "description": "The coarsest levels kept resident over the whole terrain, so it\nalways draws whole, from 1 to 8.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "maximum": 8,
+          "minimum": 1
+        },
+        "pixel_error": {
+          "description": "Pixels of the viewport height a level's samples span before the\nnext coarser level takes over, from 1 to 64: triangles span about\nthis to twice as many pixels. Smaller draws more triangles.",
+          "type": "number",
+          "format": "float",
+          "default": 6.0,
+          "maximum": 64.0,
+          "minimum": 1.0
+        },
+        "samples_per_frame": {
+          "description": "Work per frame for generating and decoding tiles, in samples: a tile\nis about 67,000 to 300,000. More loads tiles sooner at a larger\nframe cost.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 65536,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneTexture": {
+      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7, decision 030) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
+      "type": "object",
+      "properties": {
+        "height": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "maximum": 8192,
+          "minimum": 1
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "rgba8": {
+          "description": "Inline pixels: canonical padded RFC 4648 base64; each alpha byte must\nequal 255.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "description": "An image file (PNG, JPEG or WebP) as a path relative to the scene,\ninstead of inline pixels. Version 7.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$"
+        },
+        "width": {
+          "description": "Inline pixel dimensions, with `rgba8`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "maximum": 8192,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "SceneTextureMap": {
+      "description": "A texture map with its sampling and placement. Omitted settings take\nglTF's defaults: repeating, trilinear, untransformed.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "mag_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mipmap_filter": {
+          "description": "Filtering between mip levels; `none` samples the full-size texture\nonly.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMipmapFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "description": "Texture coordinates are scaled, rotated by `rotation` radians, then\noffset.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "rotation": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "scale": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "tex_coord": {
+          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second (decision 034).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "wrap_u": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wrap_v": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "SceneTransform": {
+      "description": "Local transform with Euler XYZ rotation expressed in degrees.\n\nTranslation is bounded to ±1,000,000 world units and each scale component\nto `[0.0001, 10000]`, avoiding singular or overflowing normal transforms.\nParent composition preserves full matrices, including shear. Negative scale\nreflection is not authored by this format.",
+      "type": "object",
+      "properties": {
+        "rotation_degrees": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "scale": {
+          "type": "array",
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "translation": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneVertex": {
+      "description": "CPU vertex authoring data; the renderer owns its separate upload layout.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor (decision 034). Every vertex of a mesh has one or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "joints": {
+          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex (decision 036). Every vertex of\na mesh has joints and weights or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "maxItems": 4,
+          "minItems": 4
+        },
+        "normal": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "uv": {
+          "description": "Top-left origin texture coordinates.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "uv1": {
+          "description": "Version 8: second texture coordinates, which texture maps may read.\nEvery vertex of a mesh has them or none does.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "weights": {
+          "description": "Version 8: the joints' weights, not negative and not all zero; they\nare normalized.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 4,
+          "minItems": 4
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "position",
+        "normal"
+      ]
+    },
+    "SceneVirtualGeometry": {
+      "description": "Virtual geometry settings (decision 044): whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_resident_pages": {
+          "description": "An optional budget of streamed pages (128 KiB each) kept resident;\nbeyond it the least recently used make room, and pinned pages always\nstay. Omitted, only the device's limits bound them.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "pixel_error": {
+          "description": "The largest simplification error a drawn cluster may show, in pixels\nof the viewport height, from 0.25 to 64: smaller draws more\ntriangles.",
+          "type": "number",
+          "format": "float",
+          "default": 1.5,
+          "maximum": 64.0,
+          "minimum": 0.25
+        },
+        "visibility_buffer": {
+          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneWrap": {
+      "type": "string",
+      "enum": [
+        "repeat",
+        "mirrored_repeat",
+        "clamp_to_edge"
+      ]
+    },
+    "Stamp": {
+      "description": "A local edit: full strength within `radius` meters of `center`, fading\nout over `falloff` meters beyond.",
+      "type": "object",
+      "properties": {
+        "center": {
+          "description": "Terrain-local meters along x and z.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "falloff": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "minimum": 0.0
+        },
+        "op": {
+          "$ref": "#/$defs/StampOp"
+        },
+        "radius": {
+          "type": "number",
+          "format": "float",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "center",
+        "radius",
+        "op"
+      ]
+    },
+    "StampOp": {
+      "description": "What a stamp does where it reaches: raise or lower heights by meters,\nlevel them toward a height, or cut holes in the terrain.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "raise": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "raise"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "lower": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "lower"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "flatten": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flatten"
+          ]
+        },
+        {
+          "description": "Cells whose centers lie within the radius are holes: no surface\ndraws or collides there.",
+          "type": "string",
+          "const": "hole"
+        }
+      ]
+    }
+  }
+}

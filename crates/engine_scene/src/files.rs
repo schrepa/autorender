@@ -23,6 +23,10 @@ pub enum SceneFileKind {
     /// (`VirtualMesh::prefix_bytes` long; the whole file works too) and its
     /// URL, from which renderers stream the other pages.
     VirtualMesh,
+    /// A terrain file (`ETR1`, decision 051): hosts supply its prefix (its
+    /// header and directory, `FileHeader::prefix_bytes` long; the whole
+    /// file works too) and its URL, from which hosts fetch its tiles.
+    Terrain,
 }
 
 /// A file a scene references, by its path relative to the scene.
@@ -31,6 +35,10 @@ pub struct SceneFile {
     pub uri: String,
     pub kind: SceneFileKind,
 }
+
+/// A terrain file's header, the URL its tiles stream from, and the whole
+/// file when supplied whole (decision 051).
+pub(crate) type TerrainFile = (engine_core::FileHeader, Option<String>, Option<Vec<u8>>);
 
 /// Format, width, height and levels of a transcoded image (decision 037).
 type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
@@ -44,6 +52,8 @@ pub struct SceneFiles {
     buffers: HashMap<String, Vec<u8>>,
     // Each virtual mesh's prefix (or whole file) and its URL.
     virtual_meshes: HashMap<String, (Vec<u8>, Option<String>)>,
+    // Each terrain file's prefix (or whole file) and its URL.
+    terrains: HashMap<String, (Vec<u8>, Option<String>)>,
 }
 
 impl SceneFiles {
@@ -82,6 +92,57 @@ impl SceneFiles {
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
         self.virtual_meshes
             .insert(uri.to_owned(), (bytes, url.map(str::to_owned)));
+    }
+
+    /// Adds terrain file `uri` (decision 051): its prefix or whole file, and
+    /// the URL hosts fetch the tiles a prefix lacks from.
+    pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
+        self.terrains
+            .insert(uri.to_owned(), (bytes, url.map(str::to_owned)));
+    }
+
+    /// Buffer `uri`'s bytes.
+    pub(crate) fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], SceneError> {
+        self.buffers
+            .get(uri)
+            .map(Vec::as_slice)
+            .ok_or_else(|| missing(uri, path))
+    }
+
+    /// Terrain file `uri` (decision 051), validated: its header, the URL
+    /// its tiles stream from, and the whole file when supplied whole (as a
+    /// terrain file or a buffer).
+    pub(crate) fn terrain(&self, uri: &str, path: &str) -> Result<TerrainFile, SceneError> {
+        let (bytes, url) = match self.terrains.get(uri) {
+            Some((bytes, url)) => (bytes, url.clone()),
+            None => (
+                self.buffers.get(uri).ok_or_else(|| missing(uri, path))?,
+                None,
+            ),
+        };
+        let header = engine_core::FileHeader::parse(bytes)
+            .map_err(|error| SceneError::new("invalid_terrain", path, error.to_string()))?;
+        // The file's end: after its last tile.
+        let end = header
+            .pyramid()
+            .level_tiles(0)
+            .chain(
+                (1..header.pyramid().levels())
+                    .flat_map(|level| header.pyramid().level_tiles(level)),
+            )
+            .filter_map(|key| header.tile(key))
+            .map(|tile| tile.offset + u64::from(tile.length))
+            .max()
+            .unwrap_or(0);
+        let whole = bytes.len() as u64 >= end;
+        if url.is_none() && !whole {
+            return Err(SceneError::new(
+                "invalid_terrain",
+                path,
+                "a terrain file's prefix needs the URL its tiles stream from",
+            ));
+        }
+        Ok((header, url, whole.then(|| bytes.clone())))
     }
 
     /// Image `uri` as a texture, validated.

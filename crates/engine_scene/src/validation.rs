@@ -39,6 +39,8 @@ pub(crate) struct PreparedEntity {
     pub probe: Option<ReflectionProbe>,
     pub player: Option<PreparedPlayer>,
     pub skin: Option<PreparedSkin>,
+    /// Prepared with the scene's files.
+    pub terrain: Option<engine_core::Terrain>,
 }
 
 /// Resolves an ID a clip target or skin joint names, from an entity's
@@ -104,6 +106,25 @@ impl SceneDocument {
                 add(uri, SceneFileKind::Buffer);
             }
         }
+        // Terrains (decision 051): heightmaps as buffers, and terrain files.
+        let entities = self
+            .entities
+            .iter()
+            .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
+        for entity in entities {
+            if let Some(terrain) = &entity.terrain {
+                for (uri, file) in terrain.files() {
+                    add(
+                        uri,
+                        if file {
+                            SceneFileKind::Terrain
+                        } else {
+                            SceneFileKind::Buffer
+                        },
+                    );
+                }
+            }
+        }
         files
     }
 
@@ -149,11 +170,20 @@ impl SceneDocument {
                 .or_else(|| entity_indices.get(id))
                 .copied()
         };
-        let components = expanded
+        let mut components = expanded
             .entities
             .iter()
             .map(|entity| self.prepare_entity(entity, &resolve, &rigs))
             .collect::<Result<Vec<_>, _>>()?;
+        // Terrains read their files (decision 051).
+        for (entity, component) in expanded.entities.iter().zip(&mut components) {
+            component.terrain = entity
+                .source
+                .terrain
+                .as_ref()
+                .map(|terrain| terrain.prepare(&format!("{}.terrain", entity.path), files))
+                .transpose()?;
+        }
 
         let CpuAssets {
             textures,
@@ -366,6 +396,7 @@ impl SceneDocument {
                 .reflection_probe
                 .map(|probe| probe.runtime(&format!("{path}.reflection_probe")))
                 .transpose()?,
+            terrain: None,
         })
     }
 

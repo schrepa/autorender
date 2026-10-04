@@ -388,6 +388,9 @@ impl SceneDocument {
             if let Some(probe) = component.probe {
                 entity.insert(probe);
             }
+            if let Some(terrain) = &component.terrain {
+                entity.insert(terrain.clone());
+            }
             spawned.push(entity.id());
         }
         spawned

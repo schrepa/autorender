@@ -1,6 +1,6 @@
 //! A scene's environment (decision 022): its atmosphere (decision 018) and
 //! rendering effects (decisions 020, 021, 023 to 026, 038, 039, 043, 044 and
-//! 047) as authored data.
+//! 047) and terrain settings (decision 051) as authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
 //! (local lights, particles, sun shafts and reflections need version 6);
 //! development controls apply the same sections temporarily, and inspection
@@ -13,7 +13,7 @@
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, InvalidSetting, LevelOfDetail,
     LocalLights, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
-    VirtualGeometry,
+    TerrainSettings, VirtualGeometry,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -250,6 +250,7 @@ section!(Decals, since 8, opt_in false);
 section!(ReflectionProbes, since 8, opt_in false);
 section!(VirtualGeometry, since 8, opt_in false);
 section!(LevelOfDetail, since 8, opt_in false);
+section!(TerrainSettings, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -292,6 +293,9 @@ pub struct SceneEnvironment {
     pub virtual_geometry: Option<VirtualGeometry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level_of_detail: Option<LevelOfDetail>,
+    /// Version 9: terrain streaming and level of detail (decision 051).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<TerrainSettings>,
 }
 
 impl SceneEnvironment {
@@ -314,6 +318,7 @@ impl SceneEnvironment {
             reflection_probes: Some(environment.reflection_probes),
             virtual_geometry: Some(environment.virtual_geometry),
             level_of_detail: Some(environment.level_of_detail),
+            terrain: Some(environment.terrain),
         }
     }
 
@@ -332,6 +337,7 @@ impl SceneEnvironment {
         visitor.section("reflection_probes", self.reflection_probes);
         visitor.section("virtual_geometry", self.virtual_geometry);
         visitor.section("level_of_detail", self.level_of_detail);
+        visitor.section("terrain", self.terrain);
     }
 
     /// The names of the sections present, the atmosphere first.

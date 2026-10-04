@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// Accepted authoring format version. Changes require an explicit migration.
-pub const SCENE_VERSION: u32 = 8;
+pub const SCENE_VERSION: u32 = 9;
 
 /// The repository path of the generated schema of [`SCENE_VERSION`].
 pub fn schema_path() -> String {
@@ -28,7 +28,7 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 9)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -612,6 +612,10 @@ pub struct SceneObject {
     /// version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_probe: Option<crate::SceneReflectionProbe>,
+    /// A heightfield terrain whose tiles stream around the camera (decision
+    /// 051). Requires version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<crate::SceneTerrain>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

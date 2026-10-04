@@ -25,6 +25,7 @@ mod probes;
 mod retained_render;
 mod scene;
 mod skin;
+mod terrain;
 mod transform_edits;
 mod virtual_geometry;
 
@@ -50,6 +51,13 @@ pub use engine_assets::{
 pub use engine_assets::{
     CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, GROUP_WORDS,
     NODE_WORDS, PAGE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
+};
+/// Heightfield terrain data (decision 051): tile pyramids, layer stacks,
+/// tiles, patches and the `ETR1` format.
+pub use engine_terrain as terrain_data;
+pub use engine_terrain::{
+    Blend, FileHeader, HeightImage, HeightmapLayer, Layer, LayerError, Layers, NoiseLayer, Patch,
+    Pyramid, PyramidError, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -77,6 +85,11 @@ pub use scene::{
     RenderTexture, Tint, Transform,
 };
 pub use skin::{RenderJoint, Skin};
+pub use terrain::{
+    RenderTerrain, RenderTerrains, Terrain, TerrainDebug, TerrainFocus, TerrainMaterial,
+    TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainView, Terrains,
+    TileRequest, Viewport,
+};
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
 
@@ -178,6 +191,7 @@ pub struct Engine {
     skins: skin::SkinExtraction,
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
+    terrain: terrain::TerrainExtraction,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -266,6 +280,9 @@ impl Engine {
             .init_resource::<ReflectionProbes>()
             .init_resource::<VirtualGeometry>()
             .init_resource::<LevelOfDetail>()
+            .init_resource::<TerrainSettings>()
+            .init_resource::<Terrains>()
+            .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
             .init_resource::<PresentationState>()
@@ -285,6 +302,7 @@ impl Engine {
         let skins = skin::SkinExtraction::new(app.world_mut());
         let decals = decals::DecalExtraction::new(app.world_mut());
         let probes = probes::ProbeExtraction::new(app.world_mut());
+        let terrain = terrain::TerrainExtraction::new(app.world_mut());
         Self {
             app,
             clock,
@@ -299,6 +317,7 @@ impl Engine {
             skins,
             decals,
             probes,
+            terrain,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -698,6 +717,7 @@ impl Engine {
         if gpu {
             self.retained.ensure_source_scan(self.app.world_mut());
         }
+        self.terrain.update(self.app.world_mut());
         let world = self.app.world();
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
@@ -710,6 +730,8 @@ impl Engine {
         self.retained.extract_skins(world, &mut self.skins, gpu);
         self.retained.extract_decals(world, &mut self.decals, gpu);
         self.retained.extract_probes(world, &mut self.probes);
+        self.retained
+            .extract_terrain(world, &mut self.terrain, aspect);
         if gpu {
             // Later source edits must be newer than the stamp window just
             // consumed.
@@ -782,6 +804,11 @@ pub mod prelude {
     pub use crate::{
         AnimatedProperty, AnimationChannel, AnimationClip, AnimationPlayer, AnimationSystems,
         ClipHandle, KeyInterpolation, Keyframes,
+    };
+    pub use crate::{
+        Blend, HeightImage, HeightmapLayer, Layer, Layers, NoiseLayer, Pyramid, Stamp, StampOp,
+        Terrain, TerrainFocus, TerrainMaterial, TerrainSample, TerrainSettings, TerrainSource,
+        Terrains, TileKey, Viewport,
     };
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};

@@ -108,6 +108,8 @@ pub(super) struct FrameState<'s> {
     /// Virtual geometry draws its clusters (decision 044), and the
     /// visibility buffer resolves some of them (decision 045).
     pub(super) virtual_frame: bool,
+    /// Terrain draws (decision 051).
+    pub(super) terrain: bool,
     pub(super) resolving: bool,
     /// What the frame's render graph declares (decision 050).
     pub(super) shape: FrameShape,
@@ -174,6 +176,12 @@ impl Renderer {
             features.occlusion,
             passes.opaque_kind,
         );
+        let terrain = self.prepare_terrain(
+            snapshot,
+            &packing.temporal_frame,
+            passes.opaque_kind,
+            kind.gpu_mode && !features.probe_list.is_empty(),
+        );
         let shape = self.frame_shape(kind, &packing, &features, (virtual_frame, resolving));
         let mut state = FrameState {
             snapshot,
@@ -186,6 +194,7 @@ impl Renderer {
             passes,
             virtual_frame,
             resolving,
+            terrain,
             shape,
         };
         self.prepare_frame_groups(&state);
@@ -871,6 +880,11 @@ impl Renderer {
                 slot_capacity: self.instances.capacity,
                 mesh_layout: self.mesh_layout,
                 placement: &placement,
+                terrain: snapshot
+                    .terrain
+                    .terrains
+                    .iter()
+                    .any(|terrain| !terrain.patches.is_empty()),
             },
         )
     }
@@ -1513,6 +1527,7 @@ impl Renderer {
         let arena = &self.mesh_arena;
         let (virtual_geometry, shadow_bins) =
             (&self.virtual_draws.pass, &self.virtual_draws.shadow_bins);
+        let (terrain, terrain_frame) = (&self.terrain, state.terrain);
         report.shadow_draws = self.shadows.encode_maps(
             encoder,
             shadow_frame,
@@ -1532,6 +1547,25 @@ impl Renderer {
                                 virtual_frame && virtual_geometry.draw_shadow(pass, bin, offset),
                             )
                         })
+                },
+                // Terrain (decision 051): the camera's patches in this map.
+                terrain_draw: &|pass, map| {
+                    let Some(pipeline) = terrain.shadow_pipeline().filter(|_| terrain_frame) else {
+                        return 0;
+                    };
+                    let mut draws = 0;
+                    for frame_terrain in &terrain.frame.terrains {
+                        let Some((_, range)) = frame_terrain
+                            .maps
+                            .iter()
+                            .find(|(drawn, range)| *drawn == map && !range.is_empty())
+                        else {
+                            continue;
+                        };
+                        pass.set_pipeline(pipeline);
+                        draws += terrain.draw(pass, range, 0, frame_terrain.uniform);
+                    }
+                    draws
                 },
             },
             &self.profiler,
@@ -1585,11 +1619,16 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        let draws = if state.kind.instance_count > 0 {
+        let mut draws = if state.kind.instance_count > 0 {
             self.draw_opaque(state, &mut pass, phase, virtual_first)
         } else {
             0
         };
+        // Terrain (decision 051), the main occluder: in the first phase, so
+        // occlusion culling's pyramid holds it.
+        if phase == 0 {
+            draws += self.draw_terrain(state, &mut pass);
+        }
         // Last, so depth testing leaves the sky only uncovered pixels.
         if phase + 1 == phases && !resolve_phase {
             pass.set_pipeline(self.sky_pipeline(state));

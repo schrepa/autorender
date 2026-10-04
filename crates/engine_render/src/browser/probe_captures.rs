@@ -131,6 +131,8 @@ impl Renderer {
                     binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
+                // Terrain (decision 051) stands still: probes capture it.
+                self.draw_terrain_face(&mut pass, face, probe.center, lights.is_some());
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
                 pass.draw(0..3, 0..1);
             }

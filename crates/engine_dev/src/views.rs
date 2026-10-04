@@ -1,5 +1,31 @@
 use serde::Serialize;
 
+/// A terrain as its inspector reports it (decision 051).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainView {
+    /// The terrain as a scene version 9 `terrain` field: `SceneTerrain` of
+    /// the SceneDocument schema (describe SceneDocument).
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "serde_json::Value"))]
+    pub terrain: engine_scene::SceneTerrain,
+    pub levels: u32,
+    /// Meters along x and z.
+    pub extent: [f32; 2],
+    pub resident_tiles_by_level: Vec<u32>,
+}
+
+/// Terrain streaming at the last extraction (decision 051).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainsView {
+    pub terrains: u32,
+    pub resident_tiles: u32,
+    pub loading_tiles: u32,
+    pub dropped_tiles: u32,
+    pub patches: u32,
+    pub fallback_patches: u32,
+}
+
 /// An animation player (decision 035) in the shape of a scene version 8
 /// `animation` field, with its clip's duration and its targets.
 #[derive(Serialize)]

@@ -170,6 +170,7 @@ impl DevBrowser {
                 reflection_probes,
                 virtual_geometry,
                 level_of_detail,
+                terrain,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -188,11 +189,63 @@ impl DevBrowser {
                     reflection_probes,
                     virtual_geometry,
                     level_of_detail,
+                    terrain,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
                 rendered(app.dev_render(width, height), "environment changed")?;
                 Ok(json!({"temporary":true,"environment_changed":environment.sections()}))
+            }
+            BrowserControl::Terrain {
+                pixel_error,
+                freeze,
+                view,
+                ..
+            } => {
+                let world = app.engine.app.world_mut();
+                if let Some(pixel_error) = pixel_error {
+                    if !(pixel_error.is_finite() && (1.0..=64.0).contains(&pixel_error)) {
+                        return Err(DevError::new(
+                            "invalid_request",
+                            "$.pixel_error",
+                            "pixel_error must be in [1, 64]",
+                        ));
+                    }
+                    let mut settings = world
+                        .get_resource::<engine_core::TerrainSettings>()
+                        .copied()
+                        .unwrap_or_default();
+                    settings.pixel_error = pixel_error;
+                    world.insert_resource(settings);
+                }
+                let eye = world.resource::<engine_core::Camera>().eye();
+                let mut debug = world
+                    .get_resource::<engine_core::TerrainDebug>()
+                    .copied()
+                    .unwrap_or_default();
+                if let Some(freeze) = freeze {
+                    debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
+                }
+                if let Some(view) = view {
+                    debug.view = match view {
+                        engine_dev::TerrainViewRequest::Shaded => engine_core::TerrainView::Shaded,
+                        engine_dev::TerrainViewRequest::Levels => engine_core::TerrainView::Levels,
+                        engine_dev::TerrainViewRequest::Normals => {
+                            engine_core::TerrainView::Normals
+                        }
+                        engine_dev::TerrainViewRequest::Tiles => engine_core::TerrainView::Tiles,
+                    };
+                }
+                world.insert_resource(debug);
+                rendered(app.dev_render(width, height), "terrain changed")?;
+                let world = app.engine.app.world();
+                Ok(json!({
+                    "temporary": true,
+                    "terrain_changed": true,
+                    "frozen_at": debug.freeze.map(|eye| eye.to_array()),
+                    "view": view.map(|_| debug.view),
+                    "pixel_error": world.get_resource::<engine_core::TerrainSettings>().map(|settings| settings.pixel_error),
+                }))
             }
             BrowserControl::Input {
                 forward,

@@ -363,6 +363,13 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/sky.wgsl"),
     include_str!("meshes/decals.wgsl"),
     include_str!("meshes/impostors.wgsl"),
+    include_str!("meshes/terrain_vertex.wgsl"),
+    include_str!("meshes/terrain.wgsl"),
+);
+/// Terrain's depth drawing into shadow maps (decision 051).
+pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
+    include_str!("meshes/terrain_vertex.wgsl"),
+    include_str!("terrain_shadow.wgsl")
 );
 /// Compute passes of GPU presentation (decision 014).
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");

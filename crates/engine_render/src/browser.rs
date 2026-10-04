@@ -53,6 +53,7 @@ mod impostor_draws;
 mod instances;
 mod meshes;
 mod probe_captures;
+mod terrain_draws;
 mod virtual_draws;
 mod visibility_draws;
 
@@ -232,6 +233,8 @@ pub struct Renderer {
     visibility: VisibilityDraws,
     // Impostors (decision 048).
     impostors: ImpostorDraws,
+    // Terrain (decision 051): heights of resident tiles, patches, pipelines.
+    terrain: crate::terrain::TerrainPass,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames (decision 017).
@@ -329,6 +332,9 @@ impl Renderer {
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
                 .max(8),
+            // Terrain tiles (decision 051), impostors and reflection probes
+            // take a layer each.
+            max_texture_array_layers: adapter_limits.max_texture_array_layers,
             ..wgpu::Limits::downlevel_defaults()
         };
         // Block-compressed textures (decision 037) in every format the
@@ -430,6 +436,7 @@ impl Renderer {
         let impostors =
             ImpostorAtlas::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
         let gpu_presentation = GpuPresentationPass::new(&device);
+        let terrain = crate::terrain::TerrainPass::new(&device);
         // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
 
@@ -482,6 +489,7 @@ impl Renderer {
                 records: Vec::new(),
                 dropped: 0,
             },
+            terrain,
             post: None,
             temporal: None,
             transparent: None,
@@ -506,6 +514,11 @@ impl Renderer {
             self.mesh_layout,
             self.materials.generation(),
         )
+    }
+
+    /// Terrain tiles the device's texture array holds (decision 051).
+    pub fn terrain_tile_capacity(&self) -> u32 {
+        self.display.max_layers
     }
 
     /// Resize in physical pixels, preserving aspect ratio within device limits.

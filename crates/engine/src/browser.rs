@@ -80,6 +80,12 @@ impl SceneFileSet {
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_virtual_mesh(uri, bytes, url.as_deref());
     }
+
+    /// Adds terrain file `uri` (decision 051): its prefix
+    /// ([`terrain_prefix_bytes`] long) and the URL its tiles stream from.
+    pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
+        self.files.add_terrain(uri, bytes, url.as_deref());
+    }
 }
 
 impl SceneFileSet {
@@ -89,8 +95,8 @@ impl SceneFileSet {
 }
 
 /// The files scene `source` references, as JSON `[{"uri", "kind"}]` with
-/// kind `image`, `buffer` or `virtual_mesh`, for the page to fetch; an
-/// unparsable source references none (loading reports its error).
+/// kind `image`, `buffer`, `virtual_mesh` or `terrain`, for the page to
+/// fetch; an unparsable source references none (loading reports its error).
 #[wasm_bindgen]
 pub fn scene_file_list(source: &str) -> String {
     let files = engine_scene::SceneDocument::from_json(source)
@@ -104,6 +110,7 @@ pub fn scene_file_list(source: &str) -> String {
                 engine_scene::SceneFileKind::Image => "image",
                 engine_scene::SceneFileKind::Buffer => "buffer",
                 engine_scene::SceneFileKind::VirtualMesh => "virtual_mesh",
+                engine_scene::SceneFileKind::Terrain => "terrain",
             };
             format!(r#"{{"uri":"{}","kind":"{kind}"}}"#, file.uri)
         })
@@ -118,6 +125,102 @@ pub fn scene_file_list(source: &str) -> String {
 #[wasm_bindgen]
 pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
     engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
+}
+
+/// Bytes of the prefix (header and directory) of the terrain file (decision
+/// 051) whose first 64 bytes are `header`: what hosts fetch before a scene
+/// loads; tiles stream by byte range as the camera needs them. `None` when
+/// it is not a terrain file.
+#[wasm_bindgen]
+pub fn terrain_prefix_bytes(header: &[u8]) -> Option<u32> {
+    engine_core::FileHeader::prefix_bytes(header)
+        .ok()
+        .map(|bytes| bytes as u32)
+}
+
+/// Terrain tiles in flight (decision 051): fetched by byte range from their
+/// files' URLs and handed back to the engine's terrains the next frame.
+#[derive(Default)]
+struct TerrainFetches {
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
+    requests: Vec<engine_core::TileRequest>,
+}
+
+/// A fetched tile: its terrain, key and bytes, `None` when the fetch
+/// failed.
+type TerrainArrival = (
+    engine_core::bevy_ecs::entity::Entity,
+    engine_core::TileKey,
+    Option<Vec<u8>>,
+);
+
+impl TerrainFetches {
+    /// Hands arrived tiles to `engine`'s terrains and starts fetching the
+    /// tiles they request.
+    fn exchange(&mut self, engine: &mut Engine) {
+        let Some(mut terrains) = engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Terrains>()
+        else {
+            return;
+        };
+        for (terrain, key, bytes) in self.inbox.borrow_mut().drain(..) {
+            terrains.deliver(terrain, key, bytes);
+        }
+        terrains.take_requests(&mut self.requests);
+        for request in self.requests.drain(..) {
+            fetch_tile(request, std::rc::Rc::clone(&self.inbox));
+        }
+    }
+}
+
+/// Fetches `request`'s byte range into `inbox` (a server ignoring ranges
+/// sends the whole file, which is cut to the range).
+fn fetch_tile(
+    request: engine_core::TileRequest,
+    inbox: std::rc::Rc<std::cell::RefCell<Vec<TerrainArrival>>>,
+) {
+    let range = request.offset..request.offset + u64::from(request.length);
+    let fetch = (|| {
+        let init = web_sys::RequestInit::new();
+        init.set_method("GET");
+        let headers = web_sys::Headers::new().ok()?;
+        headers
+            .set("Range", &format!("bytes={}-{}", range.start, range.end - 1))
+            .ok()?;
+        init.set_headers(&headers);
+        let request = web_sys::Request::new_with_str_and_init(&request.url, &init).ok()?;
+        Some(web_sys::window()?.fetch_with_request(&request))
+    })();
+    wasm_bindgen_futures::spawn_local(async move {
+        let bytes = async {
+            let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(fetch?)
+                .await
+                .ok()?
+                .dyn_into()
+                .ok()?;
+            if !response.ok() {
+                return None;
+            }
+            let whole = response.status() == 200;
+            let buffer = wasm_bindgen_futures::JsFuture::from(response.array_buffer().ok()?)
+                .await
+                .ok()?;
+            let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
+            if whole {
+                bytes
+                    .get(range.start as usize..range.end as usize)
+                    .map(<[u8]>::to_vec)
+            } else {
+                Some(bytes)
+            }
+        }
+        .await;
+        inbox
+            .borrow_mut()
+            .push((request.terrain, request.key, bytes));
+    });
 }
 
 /// CPU observations from the last submitted frame and the renderer's report
@@ -162,6 +265,8 @@ pub struct BrowserApp {
     tick_pipelining: bool,
     // The last GPU frame was not submitted, so the renderer missed its gather.
     gpu_inputs_stale: bool,
+    // Terrain tiles fetched by byte range (decision 051).
+    terrain_fetches: TerrainFetches,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
 }
@@ -216,7 +321,16 @@ impl BrowserApp {
         })
     }
 
-    fn with(engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
+    fn with(mut engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
+        // Terrain residency never exceeds the device's texture array layers
+        // (decision 051).
+        if let Some(mut terrains) = engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Terrains>()
+        {
+            terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
+        }
         Self {
             engine,
             renderer,
@@ -227,6 +341,7 @@ impl BrowserApp {
             gpu_presentation: true,
             tick_pipelining: true,
             gpu_inputs_stale: false,
+            terrain_fetches: TerrainFetches::default(),
             #[cfg(feature = "profiling")]
             profile_frame: 0,
         }
@@ -455,7 +570,17 @@ impl BrowserApp {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
+            // Terrain level of detail measures pixels (decision 051).
+            self.engine
+                .app
+                .world_mut()
+                .insert_resource(engine_core::Viewport {
+                    width: width.max(1),
+                    height: height.max(1),
+                });
         }
+        // Tiles that arrived stream in with this frame's extraction.
+        self.terrain_fetches.exchange(&mut self.engine);
         let before_extraction = self.performance.now();
         let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;

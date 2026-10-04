@@ -298,6 +298,13 @@ impl Renderer {
             virtual_missing_pages: virtual_stats.map_or(0, |stats| stats.missing_pages),
             dropped_virtual_pages: virtual_stats.map_or(0, |stats| stats.dropped_pages),
             dropped_virtual: virtual_stats.map_or(0, |stats| stats.dropped),
+            terrain_patches: self.terrain.frame.patches,
+            terrain_triangles: self.terrain.frame.triangles,
+            terrain_shadow_patches: self.terrain.frame.shadow_patches,
+            terrain_tiles: self.terrain.resident(),
+            terrain_loading_tiles: snapshot.terrain.stats.loading_tiles,
+            dropped_terrain_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.dropped,
+            terrain_fallback_patches: snapshot.terrain.stats.fallback_patches,
             ..self.residency_stats()
         };
         self.profile_counters(state, &stats, gpu_visible, virtual_stats);
@@ -423,6 +430,10 @@ impl Renderer {
         engine_profile::counter(
             "memory.gpu_impostor_bytes",
             self.impostors.atlas.capacity_bytes() as f64,
+        );
+        engine_profile::counter(
+            "memory.gpu_terrain_bytes",
+            self.terrain.capacity_bytes() as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

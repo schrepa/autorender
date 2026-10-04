@@ -181,9 +181,16 @@ impl AffineShape {
     }
 }
 
-struct Support<'a> {
+/// An affine shape's support map relative to its center, counting calls.
+pub(crate) struct Support<'a> {
     affine: &'a AffineShape,
     calls: &'a Cell<usize>,
+}
+
+impl<'a> Support<'a> {
+    pub(crate) fn new(affine: &'a AffineShape, calls: &'a Cell<usize>) -> Self {
+        Self { affine, calls }
+    }
 }
 impl SupportMap for Support<'_> {
     fn local_support_point(&self, direction: Vec3) -> Vec3 {

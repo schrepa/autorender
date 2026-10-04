@@ -31,7 +31,10 @@ mod selection;
 
 use std::cell::Cell;
 
-use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, glam::Vec3};
+use engine_core::{
+    MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot,
+    glam::{Mat4, Vec3},
+};
 
 use crate::batches::BatchPlan;
 use crate::bindings::SHADOW_POSES;
@@ -155,6 +158,9 @@ pub(crate) struct ShadowInputs<'a> {
     pub slot_capacity: usize,
     pub mesh_layout: u64,
     pub placement: &'a dyn Fn(MeshHandle) -> CasterDraw,
+    /// Whether terrain casts this frame (decision 051): shadows then run
+    /// without mesh casters too.
+    pub terrain: bool,
 }
 
 /// What depth passes draw: each mesh's uploaded draw (and whether it is
@@ -165,6 +171,8 @@ pub(crate) struct MapSources<'a> {
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
+    /// Terrain's patches in a map (decision 051), drawn first.
+    pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
 }
 
 /// A caster group as depth passes draw it: its pipeline choice (masked,
@@ -216,6 +224,9 @@ pub(crate) struct ShadowPass {
     pose_groups: Cached<u64, [Option<wgpu::BindGroup>; 2]>,
     // Maps drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
+    // Maps drawn every frame and their world-to-clip matrices, which
+    // terrain's patches are culled by (decision 051).
+    drawn_maps: Vec<(usize, Mat4)>,
     // Advances whenever the caster groups change.
     groups_generation: u64,
     // The caster groups, mesh layout and map errors (bits) the draw
@@ -246,6 +257,7 @@ impl ShadowPass {
             selection: Selection::new(device),
             pose_groups: Cached::default(),
             virtual_views: Vec::new(),
+            drawn_maps: Vec::new(),
             groups_generation: 0,
             template_key: None,
             written_views: None,
@@ -285,6 +297,12 @@ impl ShadowPass {
     /// geometry selects (decision 044); empty without such casters.
     pub(crate) fn virtual_views(&self) -> &[VirtualShadowView] {
         &self.virtual_views
+    }
+
+    /// Maps drawn every frame this frame (near cascades and the moving map)
+    /// and their world-to-clip matrices; empty without shadows.
+    pub(crate) fn drawn_maps(&self) -> &[(usize, Mat4)] {
+        &self.drawn_maps
     }
 
     /// The selected casters' IDs (each map's region `map * capacity`, then
@@ -357,8 +375,9 @@ impl ShadowPass {
         } = inputs;
         self.kept.merge(self.selection.take_dirty_tiles());
         self.virtual_views.clear();
+        self.drawn_maps.clear();
         let settings = snapshot.environment.shadows.sanitized();
-        if !settings.enabled || self.casters.groups().is_empty() {
+        if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
             if !settings.enabled {
                 self.maps.release();
             }
@@ -390,6 +409,15 @@ impl ShadowPass {
             settings.resolution,
         );
         let regions = Regions::new(basis, far, &settings, snapshot.view_projection, eye);
+        let (near_clips, far_clip) = regions.clips();
+        self.drawn_maps.extend(
+            near_clips
+                .iter()
+                .take(regions.near().len())
+                .copied()
+                .enumerate()
+                .chain([(MOVING_MAP, far_clip)]),
+        );
         let classify = source == Source::Presented;
         if classify
             && self
@@ -538,6 +566,10 @@ impl ShadowPass {
         let (Some(pipelines), Some(_)) = (&self.pipelines, self.maps.textures()) else {
             return;
         };
+        // Terrain alone casts (decision 051): no mesh casters to select.
+        if self.casters.groups().is_empty() {
+            return;
+        }
         self.selection.encode(
             device,
             encoder,
@@ -567,6 +599,7 @@ impl ShadowPass {
             meshes,
             materials,
             virtual_draw,
+            terrain_draw,
         } = sources;
         let draws = Cell::new(0_u32);
         let groups = self.casters.groups();
@@ -621,6 +654,7 @@ impl ShadowPass {
             )
         });
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
+            draws.set(draws.get() + terrain_draw(pass, map));
             let Some(pose_group) = pose_group else {
                 return;
             };

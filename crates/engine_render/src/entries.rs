@@ -193,6 +193,24 @@ pub(crate) fn impostor_bake(extended: bool) -> (&'static str, &'static str) {
     }
 }
 
+/// Terrain's vertex and fragment stages (decision 051) into `targets`, or
+/// a reflection probe face's (`None`), `lit` or not.
+pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (&'static str, &'static str) {
+    match (targets, lit) {
+        (Some(Targets::Canvas), false) => ("vs_terrain", "fs_terrain"),
+        (Some(Targets::Canvas), true) => ("vs_terrain", "fs_terrain_lit"),
+        (Some(Targets::Post), false) => ("vs_terrain", "fs_terrain_post"),
+        (Some(Targets::Post), true) => ("vs_terrain", "fs_terrain_post_lit"),
+        (Some(Targets::Temporal), false) => ("vs_terrain_temporal", "fs_terrain_temporal"),
+        (Some(Targets::Temporal), true) => ("vs_terrain_temporal", "fs_terrain_temporal_lit"),
+        (None, false) => ("vs_terrain", "fs_terrain_probe"),
+        (None, true) => ("vs_terrain", "fs_terrain_probe_lit"),
+    }
+}
+
+/// Terrain's depth stage in shadow maps (`terrain_shadow.wgsl`).
+pub(crate) const TERRAIN_SHADOW_VERTEX: &str = "vs_terrain_shadow";
+
 /// Decals' boxes (decision 039).
 pub(crate) const DECAL_VERTEX: &str = "vs_decal";
 

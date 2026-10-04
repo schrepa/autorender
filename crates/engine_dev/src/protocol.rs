@@ -1,6 +1,6 @@
 use engine_core::{
     AmbientOcclusion, Bloom, Decals, LevelOfDetail, LocalLights, Particles, ReflectionProbes,
-    Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
+    Reflections, Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -79,6 +79,28 @@ pub enum DevRequest {
         #[serde(default)]
         filter: CollisionFilterRequest,
     },
+    /// Terrain surfaces (decision 051) under world points `[x, z]`, 1 to
+    /// 256: each one's terrain, height, normal, hole and the level of the
+    /// resident tile answering, or null where no tile is resident.
+    TerrainHeight {
+        version: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        points: Vec<[f64; 2]>,
+    },
+    /// Compares, over `samples` by `samples` points across `half_extent`
+    /// meters of world `center` `[x, z]`, what terrain queries (the tiles
+    /// renderers draw), collision rays and generated terrains' layers say
+    /// the ground is (decision 051): the largest differences and where.
+    TerrainSweep {
+        version: u32,
+        center: [f64; 2],
+        #[serde(default = "default_half_extent")]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 4096.0)))]
+        half_extent: f64,
+        #[serde(default = "default_sweep_samples")]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 2, max = 64)))]
+        samples: u32,
+    },
     /// Non-consuming page of the latest fixed-tick sensor transition snapshot.
     CollisionEvents {
         version: u32,
@@ -149,6 +171,25 @@ fn identity_rotation() -> [f64; 4] {
     [0.0, 0.0, 0.0, 1.0]
 }
 
+fn default_half_extent() -> f64 {
+    64.0
+}
+
+fn default_sweep_samples() -> u32 {
+    16
+}
+
+/// What the terrain control shows (decision 051).
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TerrainViewRequest {
+    Shaded,
+    Levels,
+    Normals,
+    Tiles,
+}
+
 fn default_limit() -> usize {
     20
 }
@@ -163,6 +204,8 @@ impl DevRequest {
             | Self::Raycast { version, .. }
             | Self::Overlap { version, .. }
             | Self::ShapeCast { version, .. }
+            | Self::TerrainHeight { version, .. }
+            | Self::TerrainSweep { version, .. }
             | Self::CollisionEvents { version, .. } => *version,
         }
     }
@@ -227,6 +270,24 @@ pub enum BrowserControl {
         virtual_geometry: Option<VirtualGeometry>,
         #[serde(default)]
         level_of_detail: Option<LevelOfDetail>,
+        #[serde(default)]
+        terrain: Option<TerrainSettings>,
+    },
+    /// Temporarily set terrain's level of detail and view (decision 051) and
+    /// render while paused: `pixel_error` replaces the settings' (1 to
+    /// 64), `freeze` keeps streaming and patches following the camera's
+    /// current position while the camera moves on, and `view` shows terrain
+    /// shaded or its levels, normals or tiles and patches. Omitted fields
+    /// stay as they are.
+    Terrain {
+        version: u32,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1.0, max = 64.0)))]
+        pixel_error: Option<f32>,
+        #[serde(default)]
+        freeze: Option<bool>,
+        #[serde(default)]
+        view: Option<TerrainViewRequest>,
     },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
@@ -330,10 +391,11 @@ pub enum BrowserControl {
 
 impl BrowserControl {
     /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 12] = [
+    pub const OPS: [&'static str; 13] = [
         "present",
         "culling",
         "environment",
+        "terrain",
         "camera",
         "benchmark",
         "step",
@@ -350,6 +412,7 @@ impl BrowserControl {
             Self::Present { version, .. }
             | Self::Culling { version, .. }
             | Self::Environment { version, .. }
+            | Self::Terrain { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }

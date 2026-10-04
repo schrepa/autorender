@@ -2,6 +2,7 @@
 
 mod bvh;
 mod geometry;
+mod terrain;
 mod types;
 mod world;
 

@@ -10,7 +10,8 @@ use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, LevelOfDetail, LocalLights, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, VirtualGeometry,
+    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
+    VirtualGeometry,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -54,6 +55,7 @@ pub struct Environment {
     pub reflection_probes: ReflectionProbes,
     pub virtual_geometry: VirtualGeometry,
     pub level_of_detail: LevelOfDetail,
+    pub terrain: TerrainSettings,
 }
 
 impl Environment {
@@ -150,6 +152,13 @@ impl Environment {
                     ..LevelOfDetail::default()
                 },
             ),
+            terrain: read(
+                world,
+                TerrainSettings {
+                    enabled: false,
+                    ..TerrainSettings::default()
+                },
+            ),
         }
     }
 
@@ -169,6 +178,7 @@ impl Environment {
             reflection_probes: self.reflection_probes.sanitized(),
             virtual_geometry: self.virtual_geometry.sanitized(),
             level_of_detail: self.level_of_detail.sanitized(),
+            terrain: self.terrain.sanitized(),
         }
     }
 }
