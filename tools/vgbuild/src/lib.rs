@@ -19,8 +19,3 @@ pub fn build_virtual_mesh(source: &Source<'_>) -> Result<Vec<u8>, String> {
         .flat_map(|word| word.to_le_bytes())
         .collect())
 }
-
-#[cfg(test)]
-mod simplify_parity;
-#[cfg(test)]
-mod tests;

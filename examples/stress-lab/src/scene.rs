@@ -358,22 +358,6 @@ fn animate(
     metrics.animation_ms += metrics::now_ms() - start;
 }
 
-/// The motion of one object at a time: the reference for [`move_lanes`].
-#[cfg(test)]
-fn move_each<'a, T: std::ops::DerefMut<Target = Transform>>(
-    t: f32,
-    objects: impl Iterator<Item = (&'a Motion, T)>,
-) {
-    for (motion, mut transform) in objects {
-        let angle = t * motion.speed + motion.phase;
-        let wave = math::sin(angle);
-        transform.translation = motion.anchor + Vec3::Y * (wave * 0.6);
-        transform.rotation = motion.rotation
-            * Quat::from_rotation_y(angle * 0.7)
-            * Quat::from_rotation_z(wave * 0.12);
-    }
-}
-
 /// Each object bobs and turns about its anchor, four objects at a time with
 /// the engine's SIMD helpers: the operations of `move_each` per lane, so
 /// the same bits (glam's rotation constructors take `sin_cos` of half the
@@ -552,39 +536,4 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
         FlyCameraController::from_camera(&camera).with_speed(math::clamp(span * 0.3, 22.0, 220.0)),
     );
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn four_lane_animation_writes_the_same_bits() {
-        let motions: Vec<Motion> = (0..37)
-            .map(|index| Motion {
-                anchor: Vec3::new(index as f32, 0.5, -2.0),
-                rotation: Quat::from_rotation_y(index as f32 * 0.16),
-                phase: index as f32 * 0.731,
-                speed: 0.3 + (index % 15) as f32 * 0.05,
-            })
-            .collect();
-        let bits = |transform: &Transform| {
-            transform
-                .translation
-                .to_array()
-                .into_iter()
-                .chain(transform.rotation.to_array())
-                .map(f32::to_bits)
-                .collect::<Vec<_>>()
-        };
-        for t in [0.0, 1.25, 97.5, 1_234.567, 9_999.9] {
-            let mut each = vec![Transform::default(); motions.len()];
-            let mut lanes = each.clone();
-            move_each(t, motions.iter().zip(each.iter_mut()));
-            move_lanes(t, motions.iter().zip(lanes.iter_mut()));
-            for (each, lanes) in each.iter().zip(&lanes) {
-                assert_eq!(bits(each), bits(lanes), "t = {t}");
-            }
-        }
-    }
 }

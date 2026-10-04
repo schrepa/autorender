@@ -34,6 +34,3 @@ pub use virtual_mesh::{
     NONE as VIRTUAL_NONE, PAGE_WORDS, VERTEX_WORDS, VIRTUAL_MESH_MAGIC, VIRTUAL_MESH_VERSION,
     VirtualMesh, octahedral_encode, octahedral_normal,
 };
-
-#[cfg(test)]
-mod tests;

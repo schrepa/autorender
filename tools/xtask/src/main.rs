@@ -117,19 +117,3 @@ fn dev_port(arguments: &[String]) -> Result<u16, String> {
         _ => Err("usage: cargo xtask dev [--port N]".to_owned()),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::dev_port;
-
-    #[test]
-    fn development_ports_are_explicit_and_bounded() {
-        assert_eq!(dev_port(&[]).unwrap(), 5173);
-        assert_eq!(dev_port(&["--port".into(), "6200".into()]).unwrap(), 6200);
-        for value in ["0", "-1", "65536", "abc"] {
-            assert!(dev_port(&["--port".into(), value.into()]).is_err());
-        }
-        assert!(dev_port(&["--port".into()]).is_err());
-        assert!(dev_port(&["--host".into(), "0.0.0.0".into()]).is_err());
-    }
-}

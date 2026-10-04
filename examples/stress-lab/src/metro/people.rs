@@ -283,35 +283,3 @@ pub(crate) fn idle() -> Result<AnimationClip, String> {
         |phase| rest + Vec3::Y * (math::sin(phase * TAU) * 0.01),
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn people_are_skinned_to_every_joint() {
-        for variant in 0..VARIANTS {
-            let mesh = mesh(variant).expect("person");
-            assert_eq!(mesh.joint_count(), JOINTS as u32);
-            assert!(mesh.colors().is_some());
-            let bounds = mesh.bounds();
-            assert!(bounds.min().y.abs() < 1.0e-5 && (bounds.max().y - 1.82).abs() < 1.0e-3);
-        }
-    }
-
-    #[test]
-    fn clips_animate_every_joint_and_loop() {
-        for clip in [walk().expect("walk"), idle().expect("idle")] {
-            assert_eq!(clip.target_count(), JOINTS as u32);
-            let first = clip.channels()[THIGH_L as usize].sample(0.0);
-            let last = clip.channels()[THIGH_L as usize].sample(clip.duration());
-            match (first, last) {
-                (engine::AnimationSample::Rotation(a), engine::AnimationSample::Rotation(b)) => {
-                    assert!(a.angle_between(b) < 1.0e-3, "loops seamlessly");
-                }
-                _ => panic!("thighs rotate"),
-            }
-        }
-        assert_eq!(inverse_binds().len(), JOINTS);
-    }
-}

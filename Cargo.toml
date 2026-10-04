@@ -42,7 +42,6 @@ js-sys = "=0.3.104"
 wasm-bindgen-futures = "=0.4.77"
 web-sys = { version = "=0.3.104", features = ["HtmlCanvasElement", "Window", "Performance", "console", "Headers", "Request", "RequestInit", "Response"] }
 console_error_panic_hook = "0.1.7"
-naga = { version = "30.0.0", features = ["wgsl-in"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

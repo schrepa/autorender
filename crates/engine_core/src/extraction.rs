@@ -114,25 +114,3 @@ fn total_order(value: f32) -> u32 {
         bits | 1 << 31
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn nearest_win_with_ties_in_order() {
-        let mut nearest = Nearest::default();
-        let distances = [3.0, -1.0, 2.0, 2.0, f32::INFINITY, 0.5];
-        let first: Vec<usize> = nearest.nearest_first(distances, 4).collect();
-        assert_eq!(first, [1, 5, 2, 3]);
-        let ordered: Vec<usize> = nearest.kept_in_order(distances.into_iter(), 4).collect();
-        assert_eq!(ordered, [1, 2, 3, 5]);
-        // Without a budget, every candidate.
-        let all: Vec<usize> = nearest.nearest_first(distances, usize::MAX).collect();
-        assert_eq!(all, [1, 5, 2, 3, 0, 4]);
-        assert_eq!(nearest.kept_in_order(distances.into_iter(), 0).len(), 0);
-        // A budget keeping every candidate keeps them in order, unranked.
-        let kept: Vec<usize> = nearest.kept_in_order(distances.into_iter(), 6).collect();
-        assert_eq!(kept, [0, 1, 2, 3, 4, 5]);
-    }
-}

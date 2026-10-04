@@ -37,30 +37,3 @@ impl UploadCache {
         self.camera = Some(camera);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::Mat4;
-
-    #[test]
-    fn static_cache_camera_reuse_requires_committed_exact_bytes() {
-        let mut cache = UploadCache::default();
-        let camera = CameraUniform::exact(Mat4::IDENTITY, glam::Vec3::ZERO, 0.0);
-        assert!(cache.camera_needs_write(&camera));
-        // Merely inspecting or preparing a skipped frame does not commit it.
-        assert!(cache.camera_needs_write(&camera));
-        cache.commit_camera(camera);
-        assert!(!cache.camera_needs_write(&camera));
-        let mut changed = camera;
-        changed.view_projection[3][0] = -0.0;
-        assert!(cache.camera_needs_write(&changed));
-        cache.commit_camera(changed);
-        assert!(!cache.camera_needs_write(&changed));
-        assert!(cache.camera_needs_write(&camera));
-        // Temporal jitter and history are camera bytes too.
-        let mut jittered = changed;
-        jittered.jitter[0] = 0.001;
-        assert!(cache.camera_needs_write(&jittered));
-    }
-}

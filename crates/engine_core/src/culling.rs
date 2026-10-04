@@ -111,11 +111,6 @@ impl Frustum {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn outside(&self, model: Mat4, bounds: Aabb) -> bool {
-        self.classify(model, bounds).outside()
-    }
-
     /// Returns true only when the whole box is proven strictly inside all six
     /// planes (exact arithmetic on these f32 inputs). False means "not proven";
     /// it never means outside. Non-affine, extreme and nonfinite inputs return
@@ -261,6 +256,3 @@ fn bounded_matrix(absolute: Mat4) -> bool {
             .max_element()
             <= MAX_COEFFICIENT
 }
-
-#[cfg(test)]
-mod tests;

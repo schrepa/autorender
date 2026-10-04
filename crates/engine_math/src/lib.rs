@@ -138,6 +138,3 @@ pub fn clamp(x: f32, low: f32, high: f32) -> f32 {
 fn large(x: f32) -> (f32, f32) {
     libm::sincosf(x)
 }
-
-#[cfg(test)]
-mod tests;

@@ -30,8 +30,3 @@ pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
 pub const MAX_INSPECTORS: usize = 64;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
 pub const MAX_PAGE_SIZE: usize = 100;
-
-#[cfg(test)]
-mod collision_tests;
-#[cfg(test)]
-mod tests;

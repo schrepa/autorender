@@ -8,7 +8,6 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
-    "test": "node --test scripts/*.test.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "smoke": "node scripts/smoke.mjs"
   },

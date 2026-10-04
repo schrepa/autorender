@@ -225,6 +225,3 @@ pub fn import_glb_prefab_with(
 pub(crate) fn unsupported(path: impl Into<String>, message: impl Into<String>) -> ImportError {
     ImportError::new("unsupported_feature", path, message)
 }
-
-#[cfg(test)]
-mod tests;

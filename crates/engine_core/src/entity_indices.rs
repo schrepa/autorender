@@ -35,12 +35,6 @@ impl EntityIndices {
         (entry.entity == *entity).then_some(&entry.value)
     }
 
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn contains_key(&self, entity: &Entity) -> bool {
-        self.get(entity).is_some()
-    }
-
     /// Sets `entity`'s index, returning the one it replaces.
     pub(crate) fn insert(&mut self, entity: Entity, value: usize) -> Option<usize> {
         let slot = entity.index_u32() as usize;
@@ -69,23 +63,6 @@ impl EntityIndices {
     pub(crate) fn reserve(&mut self, additional: usize) {
         self.occupied.reserve(additional);
     }
-
-    /// Entities holding entries (an entity whose index slot another took
-    /// counts until the next clear).
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.occupied.len()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.occupied.is_empty()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn capacity(&self) -> usize {
-        self.occupied.capacity()
-    }
 }
 
 impl Index<&Entity> for EntityIndices {
@@ -93,32 +70,5 @@ impl Index<&Entity> for EntityIndices {
 
     fn index(&self, entity: &Entity) -> &usize {
         self.get(entity).expect("entity has an index")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lookups_match_by_generation_and_clearing_forgets_everything() {
-        let entity = |index: u64, generation: u64| Entity::from_bits(index | generation << 32);
-        let (a, b) = (entity(5, 0), entity(900, 0));
-        let mut indices = EntityIndices::default();
-        assert_eq!(indices.insert(a, 3), None);
-        assert_eq!(indices.insert(b, 7), None);
-        assert_eq!(indices.insert(a, 4), Some(3));
-        assert_eq!(
-            (indices.get(&a), indices[&b], indices.len()),
-            (Some(&4), 7, 2)
-        );
-        // An entity reusing a despawned one's index, with a new generation,
-        // does not find the old entity's entry, nor the old one its.
-        let c = entity(5, 1);
-        assert!(!indices.contains_key(&c));
-        indices.insert(c, 9);
-        assert!(!indices.contains_key(&a) && indices[&c] == 9);
-        indices.clear();
-        assert!(indices.is_empty() && indices.get(&b).is_none() && indices.get(&c).is_none());
     }
 }

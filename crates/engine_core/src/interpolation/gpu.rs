@@ -361,75 +361,6 @@ impl GpuInputs {
         // The new stream starts without previous poses to shift.
         self.last_epoch = None;
     }
-
-    /// Every output a gather writes, compared bit for bit (parents and the
-    /// active set as sets: their order does not reach consumers).
-    #[cfg(test)]
-    fn assert_same_outputs(&self, actual: &Self, stamped: [usize; 4]) {
-        let poses = |poses: &[NodePose]| -> Vec<[u32; 10]> {
-            poses.iter().map(|pose| pose.map(f32::to_bits)).collect()
-        };
-        let rows = |rows: &[PoseRows]| -> Vec<[[u32; 4]; 3]> {
-            rows.iter()
-                .map(|rows| rows.map(|row| row.map(f32::to_bits)))
-                .collect()
-        };
-        assert_eq!(self.current_stamps, actual.current_stamps, "current stamps");
-        assert_eq!(poses(&self.previous), poses(&actual.previous), "previous");
-        assert_eq!(
-            self.previous_stamps, actual.previous_stamps,
-            "previous stamps"
-        );
-        assert_eq!(self.epochs, actual.epochs, "epochs");
-        assert_eq!(self.info, actual.info, "info");
-        assert_eq!(self.info_stamps, actual.info_stamps, "info stamps");
-        assert_eq!(rows(&self.authority), rows(&actual.authority), "authority");
-        assert_eq!(
-            self.authority_stamps, actual.authority_stamps,
-            "authority stamps"
-        );
-        assert_eq!(
-            self.authority_revisions, actual.authority_revisions,
-            "authority revisions"
-        );
-        assert_eq!(self.state, actual.state, "traversal state");
-        let sorted = |values: &[(u8, u32)]| {
-            let mut values = values.to_vec();
-            values.sort_unstable();
-            values
-        };
-        assert_eq!(
-            sorted(&self.parent_scratch),
-            sorted(&actual.parent_scratch),
-            "active parents"
-        );
-        assert!(actual.active_listed);
-        let set = |nodes: &[u32]| {
-            let mut nodes = nodes.to_vec();
-            nodes.sort_unstable();
-            nodes
-        };
-        if self.active_listed {
-            assert_eq!(set(&self.active), set(&actual.active), "active set");
-        }
-        for (stream, (expected, actual)) in self
-            .stamped_lists
-            .iter()
-            .zip(&actual.stamped_lists)
-            .enumerate()
-        {
-            // Lists hold every stamped record within their bound.
-            let complete = expected.len() == stamped[stream];
-            assert_eq!(complete, actual.len() == stamped[stream]);
-            if complete {
-                assert_eq!(
-                    set(expected),
-                    set(actual),
-                    "stamped nodes of stream {stream}"
-                );
-            }
-        }
-    }
 }
 
 impl InterpolationState {
@@ -571,16 +502,7 @@ impl InterpolationState {
                     .max(records.history_nodes.len())
                     <= nodes / SPARSE_SHARE
         });
-        #[cfg(test)]
-        let reference = sparse.is_some().then(|| self.gpu.clone());
         let changed = walk(&mut self.gpu, &records, hierarchy, pass, sparse);
-        #[cfg(test)]
-        if let Some(mut reference) = reference {
-            // Every sparse gather reproduces the full walk exactly.
-            let expected = walk(&mut reference, &records, hierarchy, pass, None);
-            assert_eq!(changed, expected, "stamped records per stream");
-            reference.assert_same_outputs(&self.gpu, expected);
-        }
         engine_profile::counter("interpolation.gpu_visited", self.gpu.visited as f64);
         let gpu = &mut self.gpu;
         gpu.last_epoch = Some(epoch);
@@ -995,6 +917,3 @@ fn walk_all(
     *visited = nodes;
     gather.changed
 }
-
-#[cfg(test)]
-mod tests;

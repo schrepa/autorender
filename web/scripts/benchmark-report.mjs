@@ -5,7 +5,7 @@ export const REPORT_VERSION = 1;
 export const SUITE = "browser-engine-culling-v1";
 export const MAX_REPORT_BYTES = 2 * 1024 * 1024;
 export const PERCENTILES = ["min", "median", "p95", "p99", "max"];
-export const RENDER_FIELDS = ["render_candidates", "visible_instances", "culled_instances", "instances", "dropped_instances", "missing_assets", "invalid_transforms", "draw_calls", "upload_bytes", "fixed_steps", "dropped_seconds", "resident_meshes", "resident_mesh_bytes", "mesh_upload_bytes", "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms"];
+const RENDER_FIELDS = ["render_candidates", "visible_instances", "culled_instances", "instances", "dropped_instances", "missing_assets", "invalid_transforms", "draw_calls", "upload_bytes", "fixed_steps", "dropped_seconds", "resident_meshes", "resident_mesh_bytes", "mesh_upload_bytes", "resident_textures", "resident_texture_bytes", "texture_upload_bytes", "simulation_ms", "extraction_ms", "render_ms"];
 
 export function failure(code, path, message) {
   return Object.assign(new Error(message), { code, path });
@@ -60,7 +60,7 @@ export function parseArguments(args) {
 }
 
 /** Percentiles of repeat measurements: their medians and spread. */
-export function statistics(values) {
+function statistics(values) {
   if (!values.length || values.some(value => !Number.isFinite(value) || value < 0)) throw failure("invalid_measurement", "$", "Measurements must be a nonempty array of finite nonnegative numbers.");
   return percentiles(values);
 }
@@ -189,7 +189,7 @@ export function assertCompatible(current, baseline) {
   if (!same(views(current), views(baseline))) throw failure("incompatible_baseline", "$.runs", "Observed canvas sizes, pixel ratio, user agent or cameras differ from baseline.");
 }
 
-export function difference(current, baseline) {
+function difference(current, baseline) {
   nonnegative(current, "$.current"); nonnegative(baseline, "$.baseline");
   return { current, baseline, ratio: baseline === 0 ? (current === 0 ? 1 : null) : current / baseline,
     percent: baseline === 0 ? (current === 0 ? 0 : null) : (current / baseline - 1) * 100,

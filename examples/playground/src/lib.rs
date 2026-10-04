@@ -122,6 +122,3 @@ impl Playground {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

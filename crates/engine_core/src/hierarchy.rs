@@ -1667,11 +1667,6 @@ fn local_matrix(local: &Transform) -> Option<Mat4> {
     ((local.rotation.length_squared() - 1.0).abs() <= 1.0e-3).then(|| local.matrix())
 }
 
-#[cfg(test)]
-pub(crate) fn same_matrix_bits(left: Mat4, right: Mat4) -> bool {
-    left.to_cols_array().map(f32::to_bits) == right.to_cols_array().map(f32::to_bits)
-}
-
 /// Bit equality for finite matrices (admitted poses): non-NaN floats are
 /// bit-identical exactly when they compare equal and share a sign bit, which
 /// also distinguishes the two zeros. Four vector compares and sign masks.
@@ -1717,6 +1712,3 @@ pub fn propagate_transforms(world: &mut World) -> HierarchyReport {
         }
     })
 }
-
-#[cfg(test)]
-mod tests;

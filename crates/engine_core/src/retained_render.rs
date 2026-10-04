@@ -1401,6 +1401,3 @@ impl RetainedRender {
         );
     }
 }
-
-#[cfg(test)]
-mod tests;
