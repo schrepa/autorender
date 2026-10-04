@@ -2,7 +2,7 @@
 //! and write their targets' local transforms, which interpolation then
 //! presents smoothly between ticks.
 
-use bevy_ecs::prelude::{Component, Entity, Query, Res, SystemSet};
+use bevy_ecs::prelude::{Component, Entity, Local, Query, Res, SystemSet};
 
 use crate::{AnimationSample, AssetLibrary, ClipHandle, FixedTime, Transform};
 
@@ -51,6 +51,7 @@ pub(crate) fn animate(
     assets: Res<AssetLibrary>,
     mut players: Query<&mut AnimationPlayer>,
     mut transforms: Query<&mut Transform>,
+    mut samples: Local<Vec<(u32, AnimationSample)>>,
 ) {
     for mut player in &mut players {
         let Some(clip) = assets.clip(player.clip) else {
@@ -69,33 +70,40 @@ pub(crate) fn animate(
         if player.time != next {
             player.time = next;
         }
-        let targets = &player.targets;
+        samples.clear();
         clip.sample_channels(player.time, |channel, sample| {
-            let Some(Some(target)) = targets.get(channel.target() as usize) else {
-                return;
+            samples.push((channel.target(), sample));
+        });
+        // Channels of one target in a row share its lookup.
+        let targets = &player.targets;
+        for run in samples.chunk_by(|a, b| a.0 == b.0) {
+            let Some(Some(target)) = targets.get(run[0].0 as usize) else {
+                continue;
             };
             let Ok(mut transform) = transforms.get_mut(*target) else {
-                return;
+                continue;
             };
-            // Unchanged values leave the transform unchanged: held and
-            // paused poses cost propagation nothing.
-            match sample {
-                AnimationSample::Translation(translation) => {
-                    if transform.translation != translation {
-                        transform.translation = translation;
+            for &(_, sample) in run {
+                // Unchanged values leave the transform unchanged: held and
+                // paused poses cost propagation nothing.
+                match sample {
+                    AnimationSample::Translation(translation) => {
+                        if transform.translation != translation {
+                            transform.translation = translation;
+                        }
                     }
-                }
-                AnimationSample::Rotation(rotation) => {
-                    if transform.rotation != rotation {
-                        transform.rotation = rotation;
+                    AnimationSample::Rotation(rotation) => {
+                        if transform.rotation != rotation {
+                            transform.rotation = rotation;
+                        }
                     }
-                }
-                AnimationSample::Scale(scale) => {
-                    if transform.scale != scale {
-                        transform.scale = scale;
+                    AnimationSample::Scale(scale) => {
+                        if transform.scale != scale {
+                            transform.scale = scale;
+                        }
                     }
                 }
             }
-        });
+        }
     }
 }
