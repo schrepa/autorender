@@ -64,6 +64,8 @@ struct Shadow {
     // x: distance where shadows are gone; y: normal offset of far lookups;
     // z: steepest receiver plane of the far maps.
     offsets: vec4<f32>,
+    // Texels a side of the near cascades (x) and the far maps (y).
+    sizes: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> lighting: Lighting;
@@ -203,11 +205,15 @@ fn far_visibility(world: vec3<f32>) -> f32 {
         return 1.0;
     }
     let uv = vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
-    var visible = textureSampleCompareLevel(moving_shadows, shadow_sampler, uv, clip.z);
+    // Where the kept map shadows, the moving one leaves the minimum at 0.
+    var kept = 1.0;
     if shadow.state.y != 0.0 {
-        visible = min(visible, textureSampleCompareLevel(kept_shadows, shadow_sampler, uv, clip.z));
+        kept = textureSampleCompareLevel(kept_shadows, shadow_sampler, uv, clip.z);
+        if kept == 0.0 {
+            return 0.0;
+        }
     }
-    return visible;
+    return min(textureSampleCompareLevel(moving_shadows, shadow_sampler, uv, clip.z), kept);
 }
 
 // Receiver planes (decision 028): a surface's lookup compares each of the
@@ -277,7 +283,7 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
 // not cover the lookup.
 fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
-    let size = f32(textureDimensions(near_shadows).x);
+    let size = shadow.sizes.x;
     let point = map_point(shadow.near[cascade], world + normal * shadow.near_offsets[cascade],
         dx, dy, size, shadow.near_limits[cascade]);
     let uv = point.texel / size;
@@ -290,7 +296,7 @@ fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec
 
 // Visibility of the surface at `world` in the far maps; 1 outside them.
 fn far_surface_visibility(world: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32 {
-    let size = f32(textureDimensions(moving_shadows).x);
+    let size = shadow.sizes.y;
     let point = map_point(shadow.far, world, dx, dy, size, shadow.offsets.z);
     let uv = point.texel / size;
     if any(abs(uv * 2.0 - vec2<f32>(1.0)) >= vec2<f32>(1.0)) || point.depth >= 1.0 {

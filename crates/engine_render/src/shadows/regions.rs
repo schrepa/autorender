@@ -314,6 +314,12 @@ impl Regions {
                 slope_limit(&self.far, self.resolution),
                 0.0,
             ],
+            sizes: [
+                self.near_resolution() as f32,
+                self.resolution as f32,
+                0.0,
+                0.0,
+            ],
         }
     }
 }
