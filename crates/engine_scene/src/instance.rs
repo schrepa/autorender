@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    AnimationPlayer, AssetLibrary, ClipHandle, InterpolateTransform, MaterialHandle, Mesh3d,
-    MeshHandle, Skin, TextureHandle,
+    AnimationPlayer, AssetError, AssetLibrary, ClipHandle, InterpolateTransform, MaterialHandle,
+    Mesh3d, MeshHandle, Skin, TextureHandle,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
@@ -46,13 +46,57 @@ pub struct SceneInstance {
     revision: u64,
     world_id: WorldId,
     entities: BTreeMap<String, Entity>,
+    assets: OwnedAssets,
+    material_ids: Vec<String>,
+    texture_ids: Vec<String>,
+    clip_ids: Vec<String>,
+}
+
+/// The assets one instantiation inserted, in source order, removed together.
+#[derive(Debug, Default)]
+struct OwnedAssets {
     meshes: Vec<MeshHandle>,
     materials: Vec<MaterialHandle>,
-    material_ids: Vec<String>,
     textures: Vec<TextureHandle>,
-    texture_ids: Vec<String>,
     clips: Vec<ClipHandle>,
-    clip_ids: Vec<String>,
+}
+
+impl OwnedAssets {
+    fn remove(&self, assets: &mut AssetLibrary) {
+        for &handle in &self.meshes {
+            assets.remove_mesh(handle);
+        }
+        for &handle in &self.materials {
+            assets.remove_material(handle);
+        }
+        for &handle in &self.textures {
+            assets.remove_texture(handle);
+        }
+        for &clip in &self.clips {
+            assets.remove_clip(clip);
+        }
+    }
+}
+
+/// Inserts `items` with `insert`, pushing each handle onto `handles`; the
+/// first refusal is a budget error at `$.{field}[index]`.
+fn insert_each<T, H>(
+    items: Vec<T>,
+    handles: &mut Vec<H>,
+    field: &str,
+    mut insert: impl FnMut(T) -> Result<H, AssetError>,
+) -> Result<(), SceneError> {
+    for (index, item) in items.into_iter().enumerate() {
+        let handle = insert(item).map_err(|error| {
+            SceneError::new(
+                "asset_budget_exceeded",
+                format!("$.{field}[{index}]"),
+                error.to_string(),
+            )
+        })?;
+        handles.push(handle);
+    }
+    Ok(())
 }
 
 impl SceneInstance {
@@ -82,7 +126,7 @@ impl SceneInstance {
     pub fn textures(&self) -> impl ExactSizeIterator<Item = (&str, TextureHandle)> {
         self.texture_ids
             .iter()
-            .zip(&self.textures)
+            .zip(&self.assets.textures)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -90,7 +134,7 @@ impl SceneInstance {
     pub fn materials(&self) -> impl ExactSizeIterator<Item = (&str, MaterialHandle)> {
         self.material_ids
             .iter()
-            .zip(&self.materials)
+            .zip(&self.assets.materials)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -100,14 +144,14 @@ impl SceneInstance {
         self.clip_ids
             .iter()
             .position(|clip| clip == id)
-            .map(|index| self.clips[index])
+            .map(|index| self.assets.clips[index])
     }
 
     /// Authored animation IDs and their clips, in source order.
     pub fn clips(&self) -> impl ExactSizeIterator<Item = (&str, ClipHandle)> {
         self.clip_ids
             .iter()
-            .zip(&self.clips)
+            .zip(&self.assets.clips)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -134,10 +178,7 @@ impl SceneInstance {
             world.despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
-            remove_assets(&mut assets, &self.meshes, &self.materials, &self.textures);
-            for &clip in &self.clips {
-                assets.remove_clip(clip);
-            }
+            self.assets.remove(&mut assets);
         }
     }
 }
@@ -166,10 +207,7 @@ impl SceneDocument {
         files: &SceneFiles,
     ) -> Result<SceneInstance, SceneError> {
         let prepared = self.prepare(Some(files))?;
-        let mut meshes = Vec::with_capacity(prepared.meshes.len());
-        let mut materials = Vec::with_capacity(prepared.materials.len());
-        let mut textures = Vec::with_capacity(prepared.textures.len());
-        let mut clips = Vec::with_capacity(prepared.clips.len());
+        let mut owned = OwnedAssets::default();
         {
             let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
                 SceneError::new(
@@ -178,94 +216,57 @@ impl SceneDocument {
                     "install AssetLibrary in the world before instantiating a scene",
                 )
             })?;
-            for (index, mesh) in prepared.meshes.into_iter().enumerate() {
-                match assets.insert_mesh(mesh) {
-                    Ok(handle) => meshes.push(handle),
-                    Err(error) => {
-                        remove_assets(&mut assets, &meshes, &materials, &textures);
-                        return Err(SceneError::new(
-                            "asset_budget_exceeded",
-                            format!("$.meshes[{index}]"),
-                            error.to_string(),
-                        ));
-                    }
-                }
-            }
-            for (index, texture) in prepared.textures.into_iter().enumerate() {
-                match assets.insert_texture(texture) {
-                    Ok(handle) => textures.push(handle),
-                    Err(error) => {
-                        remove_assets(&mut assets, &meshes, &materials, &textures);
-                        return Err(SceneError::new(
-                            "asset_budget_exceeded",
-                            format!("$.textures[{index}]"),
-                            error.to_string(),
-                        ));
-                    }
-                }
-            }
-            let texture_lookup: BTreeMap<_, _> = self
-                .textures
-                .iter()
-                .zip(&textures)
-                .map(|(source, handle)| (source.id.as_str(), *handle))
-                .collect();
-            for (index, material) in prepared.materials.into_iter().enumerate() {
-                let material = material.material(|id| texture_lookup[id]);
-                match assets.insert_material(material) {
-                    Ok(handle) => materials.push(handle),
-                    Err(error) => {
-                        remove_assets(&mut assets, &meshes, &materials, &textures);
-                        return Err(SceneError::new(
-                            "asset_budget_exceeded",
-                            format!("$.materials[{index}]"),
-                            error.to_string(),
-                        ));
-                    }
-                }
-            }
-            for (index, clip) in prepared.clips.into_iter().enumerate() {
-                match assets.insert_clip(clip) {
-                    Ok(handle) => clips.push(handle),
-                    Err(error) => {
-                        remove_assets(&mut assets, &meshes, &materials, &textures);
-                        for &clip in &clips {
-                            assets.remove_clip(clip);
-                        }
-                        return Err(SceneError::new(
-                            "asset_budget_exceeded",
-                            format!("$.animations[{index}]"),
-                            error.to_string(),
-                        ));
-                    }
-                }
+            // A refused asset leaves none of this document's assets resident.
+            let inserted = (|| {
+                insert_each(prepared.meshes, &mut owned.meshes, "meshes", |mesh| {
+                    assets.insert_mesh(mesh)
+                })?;
+                insert_each(
+                    prepared.textures,
+                    &mut owned.textures,
+                    "textures",
+                    |texture| assets.insert_texture(texture),
+                )?;
+                let texture_lookup: BTreeMap<_, _> = self
+                    .textures
+                    .iter()
+                    .zip(&owned.textures)
+                    .map(|(source, handle)| (source.id.as_str(), *handle))
+                    .collect();
+                insert_each(
+                    prepared.materials,
+                    &mut owned.materials,
+                    "materials",
+                    |material| assets.insert_material(material.material(|id| texture_lookup[id])),
+                )?;
+                insert_each(prepared.clips, &mut owned.clips, "animations", |clip| {
+                    assets.insert_clip(clip)
+                })
+            })();
+            if let Err(error) = inserted {
+                owned.remove(&mut assets);
+                return Err(error);
             }
         }
         let mesh_lookup: BTreeMap<_, _> = self
             .meshes
             .iter()
-            .zip(&meshes)
+            .zip(&owned.meshes)
             .map(|(source, handle)| (source.id.as_str(), *handle))
             .collect();
         let material_lookup: BTreeMap<_, _> = self
             .materials
             .iter()
-            .zip(&materials)
+            .zip(&owned.materials)
             .map(|(source, handle)| (source.id.as_str(), *handle))
             .collect();
         let mut entities = BTreeMap::new();
         let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for (((((((expanded, transform), collider), light), emitter), tint), decal), probe) in
-            prepared
-                .entities
-                .iter()
-                .zip(prepared.transforms)
-                .zip(prepared.colliders)
-                .zip(prepared.lights)
-                .zip(prepared.emitters)
-                .zip(prepared.tints)
-                .zip(prepared.decals)
-                .zip(prepared.probes)
+        for ((expanded, transform), component) in prepared
+            .entities
+            .iter()
+            .zip(prepared.transforms)
+            .zip(&prepared.components)
         {
             let source = &expanded.source;
             let mut entity = world.spawn((
@@ -287,22 +288,22 @@ impl SceneDocument {
                     material: material_lookup[material.as_str()],
                 });
             }
-            if let Some(collider) = collider {
+            if let Some(collider) = component.collider {
                 entity.insert(collider);
             }
-            if let Some(light) = light {
+            if let Some(light) = component.light {
                 entity.insert(light);
             }
-            if let Some(emitter) = emitter {
+            if let Some(emitter) = component.emitter {
                 entity.insert(emitter);
             }
-            if let Some(tint) = tint {
+            if let Some(tint) = component.tint {
                 entity.insert(tint);
             }
-            if let Some(decal) = decal {
-                entity.insert(decal.runtime(materials[decal.material]));
+            if let Some(decal) = &component.decal {
+                entity.insert(decal.runtime(owned.materials[decal.material]));
             }
-            if let Some(probe) = probe {
+            if let Some(probe) = component.probe {
                 entity.insert(probe);
             }
             spawned.push(entity.id());
@@ -310,8 +311,8 @@ impl SceneDocument {
         }
         // Players and skins name entities spawned above; animated targets
         // present smoothly between fixed ticks.
-        for (player, &entity) in prepared.players.iter().zip(&spawned) {
-            let Some(player) = player else {
+        for (component, &entity) in prepared.components.iter().zip(&spawned) {
+            let Some(player) = &component.player else {
                 continue;
             };
             for &target in &player.targets {
@@ -320,7 +321,7 @@ impl SceneDocument {
                     .insert(InterpolateTransform);
             }
             world.entity_mut(entity).insert(AnimationPlayer {
-                clip: clips[player.clip],
+                clip: owned.clips[player.clip],
                 targets: player
                     .targets
                     .iter()
@@ -331,8 +332,8 @@ impl SceneDocument {
                 looping: player.looping,
             });
         }
-        for (skin, &entity) in prepared.skins.iter().zip(&spawned) {
-            let Some(skin) = skin else {
+        for (component, &entity) in prepared.components.iter().zip(&spawned) {
+            let Some(skin) = &component.skin else {
                 continue;
             };
             world.entity_mut(entity).insert(Skin::new(
@@ -357,11 +358,7 @@ impl SceneDocument {
             for &entity in entities.values() {
                 world.despawn(entity);
             }
-            let mut assets = world.resource_mut::<AssetLibrary>();
-            remove_assets(&mut assets, &meshes, &materials, &textures);
-            for &clip in &clips {
-                assets.remove_clip(clip);
-            }
+            owned.remove(&mut world.resource_mut::<AssetLibrary>());
             return Err(SceneError::new(
                 "hierarchy_install_failed",
                 "$.entities",
@@ -378,42 +375,22 @@ impl SceneDocument {
             revision: self.revision,
             world_id: world.id(),
             entities,
-            meshes,
-            materials,
+            assets: owned,
             material_ids: self
                 .materials
                 .iter()
                 .map(|material| material.id.clone())
                 .collect(),
-            textures,
             texture_ids: self
                 .textures
                 .iter()
                 .map(|texture| texture.id.clone())
                 .collect(),
-            clips,
             clip_ids: self
                 .animations
                 .iter()
                 .map(|animation| animation.id.clone())
                 .collect(),
         })
-    }
-}
-
-fn remove_assets(
-    assets: &mut AssetLibrary,
-    meshes: &[MeshHandle],
-    materials: &[MaterialHandle],
-    textures: &[TextureHandle],
-) {
-    for &handle in meshes {
-        assets.remove_mesh(handle);
-    }
-    for &handle in materials {
-        assets.remove_material(handle);
-    }
-    for &handle in textures {
-        assets.remove_texture(handle);
     }
 }

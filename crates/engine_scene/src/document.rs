@@ -336,10 +336,10 @@ impl MeshSource {
                 if version < 8
                     && (buffer.colors.is_some() || buffer.uv1.is_some() || buffer.skin.is_some())
                 {
-                    return Err(SceneError::new(
-                        "version_required",
+                    return Err(crate::versions::version_required(
                         uri_path,
-                        "vertex colors, second texture coordinates, joints and weights require scene version 8; set version to 8 and increment revision",
+                        "vertex colors, second texture coordinates, joints and weights",
+                        8,
                     ));
                 }
                 with_extras(
@@ -354,13 +354,6 @@ impl MeshSource {
                 uri,
                 fallback_triangles,
             } => {
-                if version < 8 {
-                    return Err(SceneError::new(
-                        "version_required",
-                        path,
-                        "virtual meshes require scene version 8; set version to 8 and increment revision",
-                    ));
-                }
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
                 if *fallback_triangles == Some(0) {
