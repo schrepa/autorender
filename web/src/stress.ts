@@ -7,7 +7,7 @@ import { fetchVirtualPrefix } from "./virtual-mesh";
 import { adapterFeatures } from "./adapter";
 import "./stress.css";
 
-type Scene = "field" | "city" | "metro" | "dense";
+type Scene = "field" | "city" | "metro" | "dense" | "highlands";
 type Config = {
   seed: number; renderables: number; moving_percent: number; hierarchy: boolean;
   interpolation: boolean; colliders: number; sensor_percent: number; dense_colliders: boolean;
@@ -45,6 +45,8 @@ const presets: Record<string, { title: string; note: string; config: Config }> =
     config: { ...baseline, scene: "metro", moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 64, compressed_textures: true } },
   dense: { title: "DENSE GEOMETRY", note: "Boulders and fluted columns of 330,000 to 590,000 triangles each on terrain tiles, drawn as virtual geometry: the GPU picks the clusters each view needs. Build the files with `cargo run -p engine_vgbuild --release --bin dense_assets`.",
     config: { ...baseline, scene: "dense", renderables: 2000, moving_percent: 5, hierarchy: false, interpolation: true, mesh_variety: 8 } },
+  highlands: { title: "HIGHLANDS", note: "An 8 km terrain the engine generates as the camera moves: eroded mountains from noise, then hand-placed stamps level a plateau for a hamlet of towers, flatten a valley floor and cut a cave mouth. Coarse levels keep the whole world visible; finer tiles stream around the camera.",
+    config: { ...baseline, scene: "highlands", renderables: 4000, moving_percent: 10, hierarchy: true, interpolation: true, mesh_variety: 32 } },
   mixed: { title: "MIXED WORKLOAD", note: "A moving hierarchy, interpolation, filtered queries and sensors share the frame budget.",
     config: { ...baseline, renderables: 10000, moving_percent: 25, hierarchy: true, interpolation: true, colliders: 1000, sensor_percent: 10, queries_per_tick: 32, mesh_variety: 8 } },
   motion: { title: "TRANSFORM PRESSURE", note: "50,000 moving objects with parents and interpolation. Toggle each feature to isolate its cost.",
@@ -304,6 +306,14 @@ if (params.has("config")) {
     activeConfig = parsed as Config;
     activeTitle = "SHARED WORKLOAD";
   } catch (error) { notice(`Invalid workload link; using visual preset. ${String(error)}`, true); activeConfig = { ...baseline }; }
+}
+// ?preset=NAME starts from that preset instead of the maximum visual load.
+const requestedPreset = params.get("preset");
+if (!params.has("config") && requestedPreset && requestedPreset in presets) {
+  activeConfig = { ...presets[requestedPreset].config };
+  activeTitle = presets[requestedPreset].title;
+  choice("preset").value = requestedPreset;
+  el("preset-note").textContent = presets[requestedPreset].note;
 }
 fill(activeConfig);
 

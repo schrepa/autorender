@@ -2,10 +2,10 @@ use engine::prelude::*;
 
 use std::collections::HashMap;
 
-use crate::{FrameMetrics, StressConfig, StressScene, city, dense, metrics, metro};
+use crate::{FrameMetrics, StressConfig, StressScene, city, dense, highlands, metrics, metro};
 
 const GROUP_SIZE: u32 = 32;
-const SPACING: f32 = 2.4;
+pub(crate) const SPACING: f32 = 2.4;
 
 #[derive(Resource)]
 pub(crate) struct Workload {
@@ -66,7 +66,12 @@ pub fn create_workload_with(
             // The grid, the height objects bob to, and a margin.
             let half = (config.renderables as f32).sqrt().ceil() * SPACING * 0.5 + 4.0;
             let bounds = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 12.0, half));
-            (field(world, &config)?, bounds)
+            (field(world, &config, 0.0)?, bounds)
+        }
+        StressScene::Highlands => {
+            let (bounds, plateau) =
+                highlands::populate(world, &config, highlands::hamlet_radius(&config))?;
+            (field(world, &config, plateau)?, bounds)
         }
         StressScene::City => {
             let city = city::populate(world, &config)?;
@@ -95,13 +100,23 @@ pub fn create_workload_with(
         StressScene::Dense => dense::populate(world, &config, files)?,
     };
     // Shadows (decision 020) keep the whole scene in one map, seen from
-    // every view.
-    world.insert_resource(Shadows {
-        bounds: Some(bounds),
-        distance: 1600.0,
-        near_distance: 90.0,
-        resolution: 4096,
-        ..Shadows::default()
+    // every view; the highlands' reach across the valleys.
+    world.insert_resource(if config.scene == StressScene::Highlands {
+        Shadows {
+            bounds: Some(bounds),
+            distance: 6000.0,
+            near_distance: 160.0,
+            resolution: 4096,
+            ..Shadows::default()
+        }
+    } else {
+        Shadows {
+            bounds: Some(bounds),
+            distance: 1600.0,
+            near_distance: 90.0,
+            resolution: 4096,
+            ..Shadows::default()
+        }
     });
     // Sun shafts (decision 024) and screen-space reflections (decision 025)
     // are opt-in engine effects; street lamps near the camera light the
@@ -142,10 +157,10 @@ pub fn create_workload_with(
     Ok(engine)
 }
 
-/// The tower field: a grid of towers, optionally grouped under parents of
-/// 32, with the first `colliders` carrying colliders. Returns the moving
-/// node count.
-fn field(world: &mut World, config: &StressConfig) -> Result<u32, String> {
+/// The tower field: a grid of towers `lift` above the ground, optionally
+/// grouped under parents of 32, with the first `colliders` carrying
+/// colliders. Returns the moving node count.
+fn field(world: &mut World, config: &StressConfig, lift: f32) -> Result<u32, String> {
     let meshes = create_assets(&mut world.resource_mut::<AssetLibrary>(), config)?;
     let mut parent_changes = Vec::with_capacity(if config.hierarchy {
         config.renderables as usize
@@ -159,10 +174,10 @@ fn field(world: &mut World, config: &StressConfig) -> Result<u32, String> {
     let mut moving_nodes = 0;
     let mut sensor_nodes = 0;
     for index in 0..config.renderables {
-        let position = position_for_index(index, config);
+        let position = position_for_index(index, config) + Vec3::Y * lift;
         if config.hierarchy && index % GROUP_SIZE == 0 {
             let end = (index + GROUP_SIZE - 1).min(config.renderables - 1);
-            let anchor = (position + position_for_index(end, config)) * 0.5;
+            let anchor = (position + position_for_index(end, config) + Vec3::Y * lift) * 0.5;
             let transform = Transform {
                 translation: anchor,
                 rotation: Quat::from_rotation_y(0.25 + (index % 5) as f32 * 0.1),
@@ -465,6 +480,7 @@ pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String>
         ("scene", StressScene::Field) => "night",
         ("scene", StressScene::City | StressScene::Metro) => "golden",
         ("scene", StressScene::Dense) => "day",
+        ("scene", StressScene::Highlands) => "golden",
         _ => name,
     };
     LOOKS
@@ -478,6 +494,26 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
     let config = engine.app.world().resource::<StressConfig>();
     let span = (config.renderables as f32).sqrt().ceil() * SPACING;
     let camera = match view {
+        "overview" if config.scene == StressScene::Highlands => {
+            let (position, target) = highlands::overview(engine.app.world(), config);
+            Camera {
+                position,
+                target,
+                near: 0.5,
+                far: 20_000.0,
+                vertical_fov_radians: 55.0_f32.to_radians(),
+            }
+        }
+        "close" if config.scene == StressScene::Highlands => {
+            let (position, target) = highlands::close_view(engine.app.world(), config);
+            Camera {
+                position,
+                target,
+                near: 0.2,
+                far: 20_000.0,
+                ..Camera::default()
+            }
+        }
         "overview" if config.scene == StressScene::Metro => {
             let (position, target) = metro::overview(config);
             Camera {
@@ -520,6 +556,16 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
             far: 5000.0,
             ..Camera::default()
         },
+        "away" if config.scene == StressScene::Highlands => {
+            let (position, target) = highlands::away_view(engine.app.world());
+            Camera {
+                position,
+                target,
+                near: 0.5,
+                far: 20_000.0,
+                ..Camera::default()
+            }
+        }
         "away" => {
             let position = Vec3::new(0.0, span, span * 1.4);
             Camera {
@@ -531,9 +577,15 @@ pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {
         }
         _ => return Err("view must be overview, close or away".into()),
     };
+    // The highlands' camera crosses kilometers.
+    let speed = if config.scene == StressScene::Highlands {
+        160.0
+    } else {
+        math::clamp(span * 0.3, 22.0, 220.0)
+    };
     engine.app.insert_resource(camera);
-    engine.app.insert_resource(
-        FlyCameraController::from_camera(&camera).with_speed(math::clamp(span * 0.3, 22.0, 220.0)),
-    );
+    engine
+        .app
+        .insert_resource(FlyCameraController::from_camera(&camera).with_speed(speed));
     Ok(())
 }
