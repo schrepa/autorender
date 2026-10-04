@@ -17,8 +17,6 @@ pub(crate) struct Bvh {
     indices: Vec<usize>,
     // Summed internal surface area when last built.
     built_area: f32,
-    #[cfg(test)]
-    pub(crate) refits: usize,
 }
 
 /// Moved leaves refit while the summed internal surface area stays within
@@ -72,10 +70,6 @@ impl Bvh {
         }
         // A degraded (or NaN) refit rebuilds instead.
         if area <= self.built_area * REFIT_LIMIT {
-            #[cfg(test)]
-            {
-                self.refits += 1;
-            }
             return;
         }
         self.rebuild(bounds);

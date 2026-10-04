@@ -656,7 +656,6 @@ dependencies = [
  "engine_profile",
  "glam 0.30.9",
  "js-sys",
- "naga",
  "serde",
  "serde_json",
  "wasm-bindgen",

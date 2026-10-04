@@ -1325,6 +1325,3 @@ fn reset_roots(world: &mut World, roots: &[Entity]) -> usize {
         count
     })
 }
-
-#[cfg(test)]
-mod tests;

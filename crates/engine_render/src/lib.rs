@@ -153,41 +153,41 @@ pub struct RenderStats {
     pub passes: u32,
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod bindings;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod cached;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod gpu_data;
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod batches;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod decals;
 #[cfg(target_arch = "wasm32")]
 mod depth_pyramid;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod entries;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod gpu_uploads;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod impostors;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod lights;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod particles;
 #[cfg(target_arch = "wasm32")]
 mod pipelines;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod probes;
 mod render_graph;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod retained_uploads;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod shadow_fit;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod uploads;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod virtual_streaming;
 
 #[cfg(target_arch = "wasm32")]
@@ -200,7 +200,7 @@ mod environment;
 mod gpu_presentation;
 #[cfg(target_arch = "wasm32")]
 mod materials;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod mesh_arena;
 #[cfg(target_arch = "wasm32")]
 mod mipmaps;

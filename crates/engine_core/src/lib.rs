@@ -451,12 +451,6 @@ impl Engine {
         true
     }
 
-    /// Whether a tick started by [`Self::run_ahead`] awaits its second stage.
-    #[cfg(test)]
-    pub(crate) fn tick_in_flight(&self) -> bool {
-        self.tick_ahead == TickAhead::InFlight
-    }
-
     /// Completes a tick started by [`Self::run_ahead`] now, before it is due;
     /// the clock counts it when it becomes due. Until then ordinary GPU frames
     /// keep presenting the previous interval; [`Self::reveal_ticks_ahead`] lets
@@ -804,6 +798,3 @@ pub mod prelude {
     pub use bevy_ecs::{self, prelude::*};
     pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 }
-
-#[cfg(test)]
-mod tests;

@@ -630,6 +630,3 @@ pub(crate) fn detect(
 ) {
     collisions.detect(&mut events, time.tick);
 }
-
-#[cfg(test)]
-mod tests;

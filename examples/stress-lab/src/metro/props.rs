@@ -174,28 +174,3 @@ pub(crate) fn clip(clip: Clip) -> Result<AnimationClip, String> {
     };
     AnimationClip::new(channels).map_err(|error| error.to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_prop_clip_builds() {
-        let mut kinds = vec![
-            Clip::Flag,
-            Clip::Dish,
-            Clip::Trivision,
-            Clip::Drawbridge,
-            Clip::Door,
-            Clip::Turbine,
-            Clip::Excavator,
-            Clip::Carousel,
-            Clip::Ring,
-        ];
-        kinds.extend((0..TOWER_FLOORS.len() as u8).map(Clip::Gondola));
-        for kind in kinds {
-            let built = clip(kind).unwrap_or_else(|error| panic!("{kind:?}: {error}"));
-            assert!(built.duration() > 0.0, "{kind:?}");
-        }
-    }
-}

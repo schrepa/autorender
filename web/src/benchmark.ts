@@ -27,7 +27,7 @@ function numericFields(measurements: RenderingStats[]) {
 }
 
 /** Percentiles of measured `values`; counts describe actual samples. */
-export function distribution(values: number[]) {
+function distribution(values: number[]) {
   if (!values.length || values.some(value => !Number.isFinite(value) || value < 0)) {
     throw new BenchmarkError("invalid_measurement", "measurements must be nonempty, finite and nonnegative");
   }

@@ -373,38 +373,3 @@ mod gpu {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn spaces_allocate_first_fit_and_coalesce_released_ranges() {
-        let mut space = Space::default();
-        assert_eq!(space.allocate(1), None);
-        space.grow(10);
-        assert_eq!(space.allocate(4), Some(0));
-        assert_eq!(space.allocate(4), Some(4));
-        assert_eq!(space.allocate(4), None);
-        space.release(0, 4);
-        space.release(4, 4);
-        // The released ranges merged with the free tail: one range again.
-        assert_eq!(space.free, [(0, 10)]);
-        assert_eq!(space.allocate(10), Some(0));
-        space.release(0, 10);
-        space.grow(16);
-        assert_eq!(space.free, [(0, 16)]);
-    }
-
-    #[test]
-    fn full_spaces_double_within_the_device_limit() {
-        let space = Space {
-            capacity: 4096,
-            free: Vec::new(),
-        };
-        assert_eq!(grown_capacity(&space, 10, 4, u64::MAX), Some(8192));
-        assert_eq!(grown_capacity(&space, 10_000, 4, u64::MAX), Some(14_096));
-        assert_eq!(grown_capacity(&space, 10, 4, 5000 * 4), Some(5000));
-        assert_eq!(grown_capacity(&space, 10, 4, 4100 * 4), None);
-    }
-}

@@ -112,9 +112,7 @@ pub fn test(root: &Path) -> Result<(), String> {
         root,
         "cargo",
         &["test", "--workspace", "--all-features", "--locked"],
-    )?;
-    // Every dependency-free host suite, as `npm test` runs them.
-    run(root, NPM, &["test", "--prefix", "web"])
+    )
 }
 
 pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {

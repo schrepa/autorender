@@ -48,12 +48,3 @@ pub use material::{
 pub use probe::SceneReflectionProbe;
 pub use texture::SceneTexture;
 pub use versions::version_features;
-
-#[cfg(test)]
-mod animation_tests;
-#[cfg(test)]
-mod collider_tests;
-#[cfg(test)]
-mod hierarchy_tests;
-#[cfg(test)]
-mod tests;

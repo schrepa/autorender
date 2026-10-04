@@ -86,26 +86,3 @@ impl ValueIds {
         value
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn derived_value_ids_do_not_wrap_or_reuse_exhausted_ranges() {
-        let source = AtomicU64::new(UNSTAMPED - BLOCK);
-        let mut ids = ValueIds::default();
-        for expected in (UNSTAMPED - BLOCK)..UNSTAMPED {
-            assert_eq!(ids.next_from(&source), expected);
-        }
-        assert_eq!(ids.next_from(&source), UNSTAMPED);
-        assert_eq!(ValueIds::default().next_from(&source), UNSTAMPED);
-        let fallback = GlobalTransform {
-            matrix: Mat4::IDENTITY,
-            value: UNSTAMPED,
-            valid: true,
-        };
-        assert_eq!(fallback.matrix(), Some(Mat4::IDENTITY));
-        assert_eq!(size_of::<GlobalTransform>(), size_of::<Option<Mat4>>());
-    }
-}

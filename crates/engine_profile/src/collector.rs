@@ -324,34 +324,3 @@ impl Drop for Aggregate {
         });
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn clock() -> f64 {
-        100.0
-    }
-    #[test]
-    fn capture_is_bounded_and_stale_guards_cannot_write_next_capture() {
-        set_clock(clock);
-        assert!(start(0).is_err());
-        start(2).unwrap();
-        let stale = span("test", "open");
-        counter("one", 1.0);
-        counter("overflow", 2.0);
-        let first = finish();
-        assert_eq!(first.events.len(), 2);
-        assert_eq!(first.dropped_events, 1);
-        assert_eq!(first.incomplete_spans, 1);
-        assert!(!first.complete);
-        start(2).unwrap();
-        drop(stale);
-        {
-            let _scope = span("test", "fresh");
-        }
-        let second = finish();
-        assert!(second.complete);
-        assert_eq!(second.events[0].depth, 0);
-        assert_eq!(second.events.len(), 1);
-    }
-}

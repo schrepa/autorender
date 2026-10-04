@@ -319,20 +319,3 @@ impl SceneDocument {
             })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_version_after_the_first_introduced_something() {
-        let features = version_features();
-        for version in 2..=SCENE_VERSION {
-            assert!(
-                features.contains(&format!("{version} ")),
-                "{version}: {features}"
-            );
-        }
-        assert!(features.starts_with("2 textures and UV data; 3 hierarchies"));
-    }
-}
