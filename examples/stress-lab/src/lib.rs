@@ -4,6 +4,7 @@ mod browser;
 mod city;
 mod config;
 mod dense;
+mod highlands;
 mod metrics;
 mod metro;
 mod scene;
