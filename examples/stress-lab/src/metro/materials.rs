@@ -101,11 +101,33 @@ enum Payload {
     },
 }
 
-/// Generated maps per set, and their BC7 levels once compressed.
+/// Generated maps per set, and their BC7 levels once compressed: a set's
+/// maps go once all of them are compressed, and `None` then answers for
+/// maps the set lacks.
 #[derive(Default)]
 struct Cache {
     maps: HashMap<Set, Arc<textures::Maps>>,
-    compressed: HashMap<(Set, Slot), Arc<Vec<Vec<u8>>>>,
+    compressed: HashMap<(Set, Slot), Option<Arc<Compressed>>>,
+}
+
+/// A map's size and BC7 levels.
+struct Compressed {
+    width: u32,
+    height: u32,
+    levels: Vec<Vec<u8>>,
+}
+
+/// Every slot, in the order maps list them.
+const SLOTS: [Slot; 4] = [Slot::Base, Slot::Mr, Slot::Normal, Slot::Emissive];
+
+/// `slot`'s map of `maps`, when the set has one.
+fn slot_image(maps: &textures::Maps, slot: Slot) -> Option<&Image> {
+    match slot {
+        Slot::Base => Some(&maps.base),
+        Slot::Mr => maps.mr.as_ref(),
+        Slot::Normal => maps.normal.as_ref(),
+        Slot::Emissive => maps.emissive.as_ref(),
+    }
 }
 
 fn cache() -> &'static Mutex<Cache> {
@@ -123,13 +145,19 @@ fn maps(set: Set) -> Arc<textures::Maps> {
 }
 
 fn payload(set: Set, slot: Slot, compressed: bool) -> Option<Payload> {
+    if compressed {
+        let cache = cache().lock().expect("texture cache");
+        if let Some(compressed) = cache.compressed.get(&(set, slot)) {
+            let compressed = compressed.as_ref()?;
+            return Some(Payload::Bc7 {
+                width: compressed.width,
+                height: compressed.height,
+                levels: compressed.levels.clone(),
+            });
+        }
+    }
     let maps = maps(set);
-    let image: &Image = match slot {
-        Slot::Base => &maps.base,
-        Slot::Mr => maps.mr.as_ref()?,
-        Slot::Normal => maps.normal.as_ref()?,
-        Slot::Emissive => maps.emissive.as_ref()?,
-    };
+    let image = slot_image(&maps, slot)?;
     if !compressed {
         return Some(Payload::Rgba8 {
             width: image.width,
@@ -138,25 +166,37 @@ fn payload(set: Set, slot: Slot, compressed: bool) -> Option<Payload> {
             alpha: slot == Slot::Base && set.masked(),
         });
     }
-    let levels = {
+    let levels: Vec<Vec<u8>> = textures::mip_chain(image)
+        .iter()
+        .map(|(width, height, pixels)| bc7::encode(*width, *height, pixels))
+        .collect();
+    {
         let mut cache = cache().lock().expect("texture cache");
+        let compressed = Compressed {
+            width: image.width,
+            height: image.height,
+            levels: levels.clone(),
+        };
         cache
             .compressed
-            .entry((set, slot))
-            .or_insert_with(|| {
-                Arc::new(
-                    textures::mip_chain(image)
-                        .iter()
-                        .map(|(width, height, pixels)| bc7::encode(*width, *height, pixels))
-                        .collect(),
-                )
-            })
-            .clone()
-    };
+            .insert((set, slot), Some(Arc::new(compressed)));
+        let compressed = |slot| cache.compressed.contains_key(&(set, slot));
+        if SLOTS
+            .iter()
+            .all(|&slot| slot_image(&maps, slot).is_none() || compressed(slot))
+        {
+            for slot in SLOTS {
+                if slot_image(&maps, slot).is_none() {
+                    cache.compressed.insert((set, slot), None);
+                }
+            }
+            cache.maps.remove(&set);
+        }
+    }
     Some(Payload::Bc7 {
         width: image.width,
         height: image.height,
-        levels: levels.as_ref().clone(),
+        levels,
     })
 }
 
