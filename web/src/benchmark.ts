@@ -1,6 +1,7 @@
 /** Bounded sampling for the opt-in development host. No ordinary-frame work. */
 import type { RuntimeStats } from "./host";
 
+/** A benchmark control as the engine validated it, with its defaults. */
 export type BenchmarkOptions = { mode: "step" | "render" | "present"; warmup: number; samples: number };
 export type RenderingStats = RuntimeStats;
 export type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
@@ -8,20 +9,6 @@ export type Reply = { ok: boolean; observation?: Observation; result?: Record<st
 export class BenchmarkError extends Error {
   code: string;
   constructor(code: string, message: string) { super(message); this.code = code; }
-}
-
-export function benchmarkOptions(command: Record<string, unknown>): BenchmarkOptions {
-  if (Object.keys(command).some(key => !["op", "mode", "warmup", "samples"].includes(key))) {
-    throw new BenchmarkError("invalid_benchmark", "benchmark accepts only mode, warmup and samples");
-  }
-  const mode = command.mode ?? "step";
-  const warmup = command.warmup ?? 30;
-  const samples = command.samples ?? 120;
-  if ((mode !== "step" && mode !== "render" && mode !== "present") || !Number.isInteger(warmup) || !Number.isInteger(samples) ||
-      typeof warmup !== "number" || warmup < 0 || warmup > 120 || typeof samples !== "number" || samples < 1 || samples > 240) {
-    throw new BenchmarkError("invalid_benchmark", "mode must be step, render or present; warmup 0..120; samples 1..240");
-  }
-  return { mode, warmup, samples };
 }
 
 /** The frame statistics in `json`, which agents receive as `rendering`. */

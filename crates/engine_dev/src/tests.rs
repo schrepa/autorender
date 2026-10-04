@@ -883,15 +883,12 @@ fn environment_projections_share_scene_sections_and_surfaces_are_inspectable() {
     );
     let look: engine_scene::SceneEnvironment =
         serde_json::from_value(environment["result"]["value"].clone()).unwrap();
-    let resolved = look.resolve("$.environment").unwrap();
-    assert_eq!(resolved.atmosphere, Some(Atmosphere::night()));
-    assert_eq!(resolved.shadows, Some(Shadows::default()));
-    assert_eq!(
-        resolved.ambient_occlusion,
-        Some(AmbientOcclusion::default())
-    );
+    look.validate("$.environment").unwrap();
+    assert_eq!(look.atmosphere.unwrap().atmosphere(), Atmosphere::night());
+    assert_eq!(look.shadows, Some(Shadows::default()));
+    assert_eq!(look.ambient_occlusion, Some(AmbientOcclusion::default()));
     assert!(
-        !resolved.bloom.unwrap().enabled(),
+        !look.bloom.unwrap().enabled(),
         "a missing effect reads as off"
     );
     // A missing resource is reported, not invented.
@@ -1446,4 +1443,158 @@ fn virtual_geometry_settings_are_discoverable_inspectable_and_controllable() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn host_controls_validate_once_and_return_their_defaults() {
+    let control = |request: Value| serde_json::from_value::<crate::BrowserControl>(request);
+    let code = |request: Value| control(request).unwrap().validate().unwrap_err().code;
+    for request in [
+        json!({"version":1,"op":"benchmark"}),
+        json!({"version":1,"op":"benchmark","mode":"render","warmup":0,"samples":1}),
+        json!({"version":1,"op":"benchmark","warmup":120,"samples":240}),
+        json!({"version":1,"op":"pause"}),
+        json!({"version":1,"op":"resume"}),
+        json!({"version":1,"op":"capture"}),
+        json!({"version":1,"op":"capture","alpha":0.5,"gpu":true}),
+        json!({"version":1,"op":"reload","expected_revision":"4","revision":"0"}),
+    ] {
+        assert!(
+            control(request.clone()).unwrap().validate().is_ok(),
+            "{request}"
+        );
+    }
+    for fields in [
+        json!({"samples":0}),
+        json!({"samples":241}),
+        json!({"warmup":121}),
+    ] {
+        let mut request = json!({"version":1,"op":"benchmark"});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        assert_eq!(code(request), "invalid_benchmark");
+    }
+    assert_eq!(
+        code(json!({"version":1,"op":"capture","gpu":true})),
+        "invalid_request"
+    );
+    assert_eq!(
+        code(json!({"version":1,"op":"capture","alpha":1.5})),
+        "invalid_presentation_alpha"
+    );
+    for revision in ["-1", "01", "1.0", "1e3", "", "18446744073709551616"] {
+        assert_eq!(
+            code(json!({"version":1,"op":"reload","expected_revision":"4","revision":revision})),
+            "invalid_revision",
+            "{revision}"
+        );
+    }
+    assert_eq!(
+        code(json!({"version":2,"op":"render"})),
+        "unsupported_version"
+    );
+    // Types, unknown fields and missing fields fail to deserialize.
+    for request in [
+        json!({"version":1,"op":"benchmark","warmup":-1}),
+        json!({"version":1,"op":"benchmark","samples":1.5}),
+        json!({"version":1,"op":"pause","extra":true}),
+        json!({"version":1,"op":"reload","expected_revision":"4","revision":4}),
+        json!({"version":1,"op":"capture","gpu":"yes"}),
+    ] {
+        assert!(control(request.clone()).is_err(), "{request}");
+    }
+    // Validated controls serialize with their defaults, as hosts receive them.
+    let benchmark =
+        serde_json::to_value(control(json!({"version":1,"op":"benchmark"})).unwrap()).unwrap();
+    assert_eq!(
+        benchmark,
+        json!({"op":"benchmark","version":1,"warmup":30,"samples":120,"mode":"step"})
+    );
+    // Every control operation is one the typed schema describes.
+    let description = execute(
+        &DevTools::default(),
+        &mut Engine::default(),
+        None,
+        json!({"version":1,"op":"describe","name":"BrowserControl"}),
+    );
+    let mut described: Vec<&str> = description["result"]["schema"]["oneOf"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|variant| variant["properties"]["op"]["const"].as_str().unwrap())
+        .collect();
+    described.sort_unstable();
+    let mut ops = crate::BrowserControl::OPS.to_vec();
+    ops.sort_unstable();
+    assert_eq!(described, ops);
+}
+
+// A two-bone rig (engine_scene's animation tests) with a tint and a decal.
+const RIG: &str = r#"{
+  "version": 8,
+  "id": "rig",
+  "revision": 1,
+  "materials": [{"id": "skin", "color": [0.9, 0.7, 0.6, 1.0]}, {"id": "paint", "color": [1, 0, 0, 1]}],
+  "meshes": [{"id": "body", "source": {"kind": "inline", "vertices": [
+    {"position": [0, 0, 0], "normal": [0, 0, 1], "joints": [0, 0, 0, 0], "weights": [1, 0, 0, 0]},
+    {"position": [1, 0, 0], "normal": [0, 0, 1], "joints": [0, 1, 0, 0], "weights": [1, 1, 0, 0]},
+    {"position": [0, 1, 0], "normal": [0, 0, 1], "joints": [1, 0, 0, 0], "weights": [1, 0, 0, 0]}
+  ], "indices": [0, 1, 2]}}],
+  "animations": [{"id": "sway", "name": "Sway", "targets": ["hips", "arm"], "channels": [
+    {"target": 0, "property": "rotation", "times": [0, 1], "values": [0, 0, 0, 1, 0, 0.7071068, 0, 0.7071068]}
+  ]}],
+  "skins": [{"id": "bones", "joints": ["hips", "arm"], "inverse_binds": [
+    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1]
+  ]}],
+  "entities": [
+    {"id": "hips", "animation": {"clip": "sway", "speed": 0.5, "loop": false}},
+    {"id": "arm", "parent": "hips", "transform": {"translation": [0, 1, 0]}},
+    {"id": "body", "mesh": "body", "material": "skin", "skin": "bones", "tint": [0.5, 1, 1, 1]},
+    {"id": "mark", "decal": {"material": "paint", "blend": "multiply", "opacity": 0.5, "fade_degrees": 30}}
+  ]
+}"#;
+
+#[test]
+fn tint_animation_skin_and_decal_inspectors_read_their_scene_fields() {
+    let tools = DevTools::default();
+    let mut engine = Engine::default();
+    let source: Value = serde_json::from_str(RIG).unwrap();
+    let scene = SceneDocument::from_json(RIG)
+        .unwrap()
+        .instantiate(engine.app.world_mut())
+        .unwrap();
+    let mut inspect = |entity: &str, component: &str| {
+        let reply = execute(
+            &tools,
+            &mut engine,
+            Some(&scene),
+            json!({"version":1,"op":"inspect","entity":entity,"component":component}),
+        );
+        assert_eq!(reply["ok"], true, "{reply}");
+        reply["result"]["entity"]["components"][component].clone()
+    };
+    assert_eq!(inspect("body", "Tint"), json!([0.5, 1.0, 1.0, 1.0]));
+    assert_eq!(
+        inspect("hips", "AnimationPlayer"),
+        json!({"clip":"sway","clip_alive":true,"duration":1.0,"time":0.0,"speed":0.5,"loop":false,"targets":["hips","arm"]})
+    );
+    assert_eq!(inspect("body", "Skin"), json!({"joints":["hips","arm"]}));
+    let decal = inspect("mark", "Decal");
+    assert_eq!(decal["material_alive"], true);
+    // The scene field round trips.
+    let mut field = decal.clone();
+    field.as_object_mut().unwrap().remove("material_alive");
+    assert_eq!(
+        field["material"],
+        source["entities"][3]["decal"]["material"]
+    );
+    assert_eq!(field["blend"], "multiply");
+    assert_eq!(field["opacity"], 0.5);
+    assert!((field["fade_degrees"].as_f64().unwrap() - 30.0).abs() < 1.0e-4);
+    let restored: engine_scene::SceneDecal = serde_json::from_value(field).unwrap();
+    assert_eq!(restored.material, "paint");
+    scene.despawn(engine.app.world_mut());
 }

@@ -1,5 +1,72 @@
-use crate::DevError;
+use crate::{BrowserControl, DevError, PROTOCOL_VERSION};
 use engine_core::{Camera, glam::Vec3};
+
+impl BrowserControl {
+    /// Checks what deserialization does not: the protocol version, and the
+    /// ranges and revision strings of the controls the browser host runs
+    /// (benchmark, capture and reload), which it receives back validated
+    /// with their defaults. Controls the engine runs check their values
+    /// where they apply.
+    pub fn validate(&self) -> Result<(), DevError> {
+        if self.version() != PROTOCOL_VERSION {
+            return Err(DevError::new(
+                "unsupported_version",
+                "$.version",
+                "accepted protocol version: 1",
+            ));
+        }
+        match self {
+            Self::Benchmark {
+                warmup, samples, ..
+            } => {
+                if *warmup > 120 || !(1..=240).contains(samples) {
+                    return Err(DevError::new(
+                        "invalid_benchmark",
+                        "$",
+                        "warmup must be in 0..=120 and samples in 1..=240",
+                    ));
+                }
+            }
+            Self::Capture { alpha, gpu, .. } => match alpha {
+                Some(alpha) => {
+                    validated_presentation_alpha(*alpha)?;
+                }
+                None if *gpu => {
+                    return Err(DevError::new(
+                        "invalid_request",
+                        "$.gpu",
+                        "a GPU-presented capture needs an alpha",
+                    ));
+                }
+                None => {}
+            },
+            Self::Reload {
+                expected_revision,
+                revision,
+                ..
+            } => {
+                for (path, value) in [
+                    ("$.expected_revision", expected_revision),
+                    ("$.revision", revision),
+                ] {
+                    let decimal = !value.is_empty()
+                        && value.bytes().all(|byte| byte.is_ascii_digit())
+                        && (value == "0" || !value.starts_with('0'))
+                        && value.parse::<u64>().is_ok();
+                    if !decimal {
+                        return Err(DevError::new(
+                            "invalid_revision",
+                            path,
+                            "revisions are unsigned decimal strings without leading zeros",
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
 
 /// Validates a temporary render fraction without mutating clocks or gameplay.
 /// Fractions include both fixed-tick endpoints; no clamping hides bad requests.

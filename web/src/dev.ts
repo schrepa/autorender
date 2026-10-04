@@ -1,6 +1,6 @@
 /** On-demand adapter, dynamically imported only by the Vite development host. */
 import type { Runtime } from "./host";
-import { BenchmarkError, benchmarkOptions, readRendering, sampleBenchmark } from "./benchmark.ts";
+import { BenchmarkError, type BenchmarkOptions, readRendering, sampleBenchmark } from "./benchmark.ts";
 
 type Command = { op: string; [field: string]: unknown };
 type Observation = { frame: string; tick: string; scene: { id: string; revision: string } | null };
@@ -58,8 +58,10 @@ export function connectDevelopment(host: Host): () => void {
     }
     return reply;
   }
-  function only(command: Command, fields: string[]) {
-    return Object.keys(command).every(key => key === "op" || fields.includes(key));
+  /** The engine validates the controls the host runs and returns them with their defaults. */
+  function validated(command: Command): Reply & { control?: Command } {
+    const reply = invoke(command);
+    return reply.ok ? { ...reply, control: reply.result?.control as Command } : reply;
   }
   const api = {
     version: 1 as const,
@@ -82,11 +84,13 @@ export function connectDevelopment(host: Host): () => void {
         let reply: Reply;
         switch (command.op) {
           case "pause":
-          case "resume":
-            if (!only(command, [])) return error("invalid_request", "$", "pause/resume accept no arguments");
+          case "resume": {
+            const checked = validated(command);
+            if (!checked.ok) return checked;
             host.setPaused(command.op === "pause");
             reply = invoke({ op: "status" });
             break;
+          }
           case "input":
           case "camera":
           case "culling":
@@ -98,32 +102,27 @@ export function connectDevelopment(host: Host): () => void {
           case "capture":
           case "reload": {
             if (!host.paused()) return error("pause_required", "$", "pause before input, camera/culling/environment edits, presentation previews, benchmarking, stepping, rendering, capture, or reload");
+            const checked = ["benchmark", "capture", "reload"].includes(command.op) ? validated(command) : undefined;
+            if (checked && !checked.ok) return checked;
+            const control = checked?.control ?? command;
             if (command.op === "benchmark") {
-              const options = benchmarkOptions(command);
+              const options = control as unknown as BenchmarkOptions;
               const benchmark = await sampleBenchmark({
                 signal: host.signal, invoke, stats: () => runtime.stats(), size: host.size,
                 interrupted: () => disposed || !host.paused() || (globalThis.document?.hidden ?? false),
               }, options);
               reply = { ok: true, version: 1, observation: benchmark.observation.end, result: { benchmark, temporary: true } };
             } else if (command.op === "capture") {
-              if (!only(command, ["alpha", "gpu"]) || ("gpu" in command && (typeof command.gpu !== "boolean" || !("alpha" in command)))) {
-                return error("invalid_request", "$", "capture accepts only an optional interpolation alpha, and gpu with alpha");
-              }
-              reply = invoke("alpha" in command ? { op: "present", alpha: command.alpha, ...(command.gpu ? { gpu: true } : {}) } : { op: "render" });
+              reply = invoke("alpha" in control ? { op: "present", alpha: control.alpha, ...(control.gpu ? { gpu: true } : {}) } : { op: "render" });
               if (!reply.ok) return reply;
               await presented(host.signal);
             } else if (command.op === "reload") {
-              if (!only(command, ["expected_revision", "revision"]) ||
-                  typeof command.expected_revision !== "string" || !/^(0|[1-9][0-9]*)$/.test(command.expected_revision) ||
-                  typeof command.revision !== "string" || !/^(0|[1-9][0-9]*)$/.test(command.revision)) {
-                return error("invalid_revision", "$.revision", "reload requires expected_revision and revision as unsigned decimal strings");
-              }
               if (!host.source || !runtime.dev_reload) return error("unsupported_command", "$.op", "this game has no authored scene reload adapter");
               const source = await host.source.load(host.signal);
               const files = await host.source.files?.(source, host.signal);
               host.signal.throwIfAborted();
               if (disposed) return error("session_closed", "$", "runtime was disposed during scene fetch");
-              reply = JSON.parse(runtime.dev_reload(source, command.expected_revision, command.revision, files));
+              reply = JSON.parse(runtime.dev_reload(source, control.expected_revision as string, control.revision as string, files));
               if (reply.ok) {
                 const rendered = invoke({ op: "render" });
                 if (!rendered.ok) return finish(rendered);

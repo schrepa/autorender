@@ -448,9 +448,9 @@ fn version_five_environments_own_the_look_and_validate_every_field() {
     );
     // The current resources, as a section each, reproduce themselves.
     let current = crate::SceneEnvironment::current(&world);
-    let resolved = current.resolve("$").unwrap();
-    assert_eq!(resolved.atmosphere, Some(atmosphere));
-    assert_eq!(resolved.shadows, Some(shadows));
+    current.validate("$").unwrap();
+    assert_eq!(current.atmosphere.unwrap().atmosphere(), atmosphere);
+    assert_eq!(current.shadows, Some(shadows));
     instance.despawn(&mut world);
     // Disposal keeps the environment for the next scene to replace.
     assert_eq!(*world.resource::<Atmosphere>(), atmosphere);
@@ -913,9 +913,9 @@ fn version_six_lights_particles_opacity_and_effects_instantiate_and_validate() {
     // Inspection round trips: the current look resolves to itself, with
     // missing reflections read as off.
     let current = crate::SceneEnvironment::current(&world);
-    let resolved = current.resolve("$").unwrap();
-    assert_eq!(resolved.sun_shafts, Some(*world.resource::<SunShafts>()));
-    assert!(!resolved.reflections.unwrap().enabled());
+    current.validate("$").unwrap();
+    assert_eq!(current.sun_shafts, Some(*world.resource::<SunShafts>()));
+    assert!(!current.reflections.unwrap().enabled());
     assert_eq!(crate::SceneLight::from(&light).runtime("$").unwrap(), light);
     assert_eq!(
         crate::SceneEmitter::from(&emitter).runtime("$").unwrap(),
@@ -1038,7 +1038,8 @@ fn version_six_grading_overrides_its_preset_and_earlier_versions_refuse_it() {
     );
     // Inspection reproduces the grade.
     let current = crate::SceneEnvironment::current(&world);
-    assert_eq!(current.resolve("$").unwrap().atmosphere, Some(atmosphere));
+    current.validate("$").unwrap();
+    assert_eq!(current.atmosphere.unwrap().atmosphere(), atmosphere);
     instance.despawn(&mut world);
     for (field, value) in [
         ("contrast", serde_json::json!(-0.5)),
@@ -1634,11 +1635,10 @@ fn version_eight_reflection_probes_instantiate_validate_and_earlier_versions_ref
         SceneReflectionProbe::from(&hall).runtime("$").unwrap(),
         hall
     );
+    let current = SceneEnvironment::current(&world);
+    current.validate("$").unwrap();
     assert_eq!(
-        SceneEnvironment::current(&world)
-            .resolve("$")
-            .unwrap()
-            .reflection_probes,
+        current.reflection_probes,
         Some(*world.resource::<ReflectionProbes>())
     );
     // An environment without the section restores the engine's default.

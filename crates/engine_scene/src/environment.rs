@@ -13,7 +13,9 @@
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, InvalidSetting, LevelOfDetail,
     LocalLights, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
-    VirtualGeometry, bevy_ecs::prelude::World, glam::Vec3,
+    VirtualGeometry,
+    bevy_ecs::prelude::{Resource, World},
+    glam::Vec3,
 };
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +145,16 @@ impl SceneAtmosphere {
     /// checked by [`Atmosphere::validate`]: values must be finite and
     /// nonnegative, the fog maximum at most 1 and the sun direction nonzero.
     pub fn resolve(&self, path: &str) -> Result<Atmosphere, SceneError> {
+        let atmosphere = self.atmosphere();
+        // Presets are valid, so the first invalid field is an override.
+        atmosphere
+            .validate()
+            .map_err(|invalid| section_error(path, invalid))?;
+        Ok(atmosphere)
+    }
+
+    /// Its preset with overrides, unchecked: [`Self::resolve`] checks them.
+    pub fn atmosphere(&self) -> Atmosphere {
         let mut atmosphere = self.preset.atmosphere();
         let colors = [
             (self.sun_color, &mut atmosphere.sun_color),
@@ -179,11 +191,7 @@ impl SceneAtmosphere {
                 *target = value;
             }
         }
-        // Presets are valid, so the first invalid field is an override.
         atmosphere
-            .validate()
-            .map_err(|invalid| section_error(path, invalid))?;
-        Ok(atmosphere)
     }
 }
 
@@ -196,18 +204,57 @@ fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
     )
 }
 
-/// `section` when absent or valid by `validate`, at authored path
-/// `{path}.{name}`.
-fn checked<T>(
-    section: Option<T>,
-    path: &str,
-    name: &str,
-    validate: fn(&T) -> Result<(), InvalidSetting>,
-) -> Result<Option<T>, SceneError> {
-    if let Some(settings) = &section {
-        validate(settings).map_err(|invalid| section_error(&format!("{path}.{name}"), invalid))?;
-    }
-    Ok(section)
+/// An effect section of a scene environment (decision 022): the engine's
+/// settings resource, which checks itself; the scene version that first
+/// authors it; and whether it is opt-in (off unless named), which a
+/// document's environment removes when it omits the section instead of
+/// setting its default.
+pub trait EnvironmentSection: Resource + Copy + Default + serde::Serialize {
+    /// The settings type's name, which development tools inspect it by.
+    const NAME: &'static str;
+    const SINCE: u32;
+    const OPT_IN: bool;
+    /// The first invalid field and the rule it breaks, if any.
+    fn check(&self) -> Result<(), InvalidSetting>;
+    /// The section's JSON schema.
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema;
+}
+
+macro_rules! section {
+    ($settings:ident, since $since:literal, opt_in $opt_in:literal) => {
+        impl EnvironmentSection for $settings {
+            const NAME: &'static str = stringify!($settings);
+            const SINCE: u32 = $since;
+            const OPT_IN: bool = $opt_in;
+            fn check(&self) -> Result<(), InvalidSetting> {
+                self.validate()
+            }
+            #[cfg(feature = "schema")]
+            fn schema() -> schemars::Schema {
+                schemars::schema_for!($settings)
+            }
+        }
+    };
+}
+
+section!(Shadows, since 5, opt_in false);
+section!(AmbientOcclusion, since 5, opt_in false);
+section!(Bloom, since 5, opt_in false);
+section!(LocalLights, since 6, opt_in false);
+section!(SunShafts, since 6, opt_in true);
+section!(Reflections, since 6, opt_in true);
+section!(Particles, since 6, opt_in false);
+section!(Refraction, since 8, opt_in true);
+section!(Decals, since 8, opt_in false);
+section!(ReflectionProbes, since 8, opt_in false);
+section!(VirtualGeometry, since 8, opt_in false);
+section!(LevelOfDetail, since 8, opt_in false);
+
+/// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
+/// each with its authored name.
+pub trait SectionVisitor {
+    fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>);
 }
 
 /// A scene's look (decision 022). In a document, every omitted section takes
@@ -247,24 +294,6 @@ pub struct SceneEnvironment {
     pub level_of_detail: Option<LevelOfDetail>,
 }
 
-/// Resolved sections of an environment; `None` where a section is omitted.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EnvironmentSettings {
-    pub atmosphere: Option<Atmosphere>,
-    pub shadows: Option<Shadows>,
-    pub ambient_occlusion: Option<AmbientOcclusion>,
-    pub bloom: Option<Bloom>,
-    pub local_lights: Option<LocalLights>,
-    pub sun_shafts: Option<SunShafts>,
-    pub reflections: Option<Reflections>,
-    pub particles: Option<Particles>,
-    pub refraction: Option<Refraction>,
-    pub decals: Option<Decals>,
-    pub reflection_probes: Option<ReflectionProbes>,
-    pub virtual_geometry: Option<VirtualGeometry>,
-    pub level_of_detail: Option<LevelOfDetail>,
-}
-
 impl SceneEnvironment {
     /// Every section, from `world`'s current resources
     /// ([`Environment::current`]): resolving it reproduces them. Absent
@@ -288,18 +317,55 @@ impl SceneEnvironment {
         }
     }
 
-    /// The first version 8 section present (decisions 038, 039, 043, 044
-    /// and 047).
-    pub(crate) fn version_eight_field(&self) -> Option<&'static str> {
-        [
-            ("refraction", self.refraction.is_some()),
-            ("decals", self.decals.is_some()),
-            ("reflection_probes", self.reflection_probes.is_some()),
-            ("virtual_geometry", self.virtual_geometry.is_some()),
-            ("level_of_detail", self.level_of_detail.is_some()),
-        ]
-        .into_iter()
-        .find_map(|(name, present)| present.then_some(name))
+    /// Hands every effect section (all but the atmosphere) to `visitor`, in
+    /// authored order: the one list of them.
+    pub fn visit(&self, visitor: &mut impl SectionVisitor) {
+        visitor.section("shadows", self.shadows);
+        visitor.section("ambient_occlusion", self.ambient_occlusion);
+        visitor.section("bloom", self.bloom);
+        visitor.section("local_lights", self.local_lights);
+        visitor.section("sun_shafts", self.sun_shafts);
+        visitor.section("reflections", self.reflections);
+        visitor.section("particles", self.particles);
+        visitor.section("refraction", self.refraction);
+        visitor.section("decals", self.decals);
+        visitor.section("reflection_probes", self.reflection_probes);
+        visitor.section("virtual_geometry", self.virtual_geometry);
+        visitor.section("level_of_detail", self.level_of_detail);
+    }
+
+    /// The names of the sections present, the atmosphere first.
+    pub fn sections(&self) -> Vec<&'static str> {
+        struct Names(Vec<&'static str>);
+        impl SectionVisitor for Names {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
+                if section.is_some() {
+                    self.0.push(name);
+                }
+            }
+        }
+        let mut names = Names(Vec::new());
+        if self.atmosphere.is_some() {
+            names.0.push("atmosphere");
+        }
+        self.visit(&mut names);
+        names.0
+    }
+
+    /// The first effect section present that scene version `version`
+    /// introduced.
+    pub(crate) fn section_since(&self, version: u32) -> Option<&'static str> {
+        struct Since(u32, Option<&'static str>);
+        impl SectionVisitor for Since {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
+                if self.1.is_none() && section.is_some() && T::SINCE == self.0 {
+                    self.1 = Some(name);
+                }
+            }
+        }
+        let mut since = Since(version, None);
+        self.visit(&mut since);
+        since.1
     }
 
     /// The first version 6 field present, as its path below the environment:
@@ -319,139 +385,71 @@ impl SceneEnvironment {
                 atmosphere.highlight_tint.is_some(),
             ),
             ("shadows.cascades", cascades),
-            ("local_lights", self.local_lights.is_some()),
-            ("sun_shafts", self.sun_shafts.is_some()),
-            ("reflections", self.reflections.is_some()),
-            ("particles", self.particles.is_some()),
         ]
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
+        .or_else(|| self.section_since(6))
     }
 
-    /// The sections at authored path `path`, validated; omitted ones are
-    /// `None`.
-    pub fn resolve(&self, path: &str) -> Result<EnvironmentSettings, SceneError> {
-        Ok(EnvironmentSettings {
-            atmosphere: self
-                .atmosphere
-                .map(|section| section.resolve(&format!("{path}.atmosphere")))
-                .transpose()?,
-            shadows: checked(self.shadows, path, "shadows", Shadows::validate)?,
-            ambient_occlusion: checked(
-                self.ambient_occlusion,
-                path,
-                "ambient_occlusion",
-                AmbientOcclusion::validate,
-            )?,
-            bloom: checked(self.bloom, path, "bloom", Bloom::validate)?,
-            local_lights: checked(
-                self.local_lights,
-                path,
-                "local_lights",
-                LocalLights::validate,
-            )?,
-            sun_shafts: checked(self.sun_shafts, path, "sun_shafts", SunShafts::validate)?,
-            reflections: checked(self.reflections, path, "reflections", Reflections::validate)?,
-            particles: checked(self.particles, path, "particles", Particles::validate)?,
-            refraction: checked(self.refraction, path, "refraction", Refraction::validate)?,
-            decals: checked(self.decals, path, "decals", Decals::validate)?,
-            reflection_probes: checked(
-                self.reflection_probes,
-                path,
-                "reflection_probes",
-                ReflectionProbes::validate,
-            )?,
-            virtual_geometry: checked(
-                self.virtual_geometry,
-                path,
-                "virtual_geometry",
-                VirtualGeometry::validate,
-            )?,
-            level_of_detail: checked(
-                self.level_of_detail,
-                path,
-                "level_of_detail",
-                LevelOfDetail::validate,
-            )?,
-        })
+    /// Checks every section present at authored path `path`.
+    pub fn validate(&self, path: &str) -> Result<(), SceneError> {
+        struct FirstInvalid<'p>(&'p str, Option<SceneError>);
+        impl SectionVisitor for FirstInvalid<'_> {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>) {
+                if self.1.is_none()
+                    && let Some(Err(invalid)) = section.map(|section| section.check())
+                {
+                    self.1 = Some(section_error(&format!("{}.{name}", self.0), invalid));
+                }
+            }
+        }
+        if let Some(atmosphere) = &self.atmosphere {
+            atmosphere.resolve(&format!("{path}.atmosphere"))?;
+        }
+        let mut first = FirstInvalid(path, None);
+        self.visit(&mut first);
+        first.1.map_or(Ok(()), Err)
     }
-}
 
-impl EnvironmentSettings {
-    /// Inserts every resolved section into `world`, leaving the others.
+    /// Inserts every section present into `world`, leaving the others. Call
+    /// on an environment [`Self::validate`] accepted.
     pub fn apply_sections(&self, world: &mut World) {
-        if let Some(atmosphere) = self.atmosphere {
-            world.insert_resource(atmosphere);
+        struct Insert<'w>(&'w mut World);
+        impl SectionVisitor for Insert<'_> {
+            fn section<T: EnvironmentSection>(&mut self, _: &'static str, section: Option<T>) {
+                if let Some(section) = section {
+                    self.0.insert_resource(section);
+                }
+            }
         }
-        if let Some(shadows) = self.shadows {
-            world.insert_resource(shadows);
+        if let Some(atmosphere) = &self.atmosphere {
+            world.insert_resource(atmosphere.atmosphere());
         }
-        if let Some(occlusion) = self.ambient_occlusion {
-            world.insert_resource(occlusion);
-        }
-        if let Some(bloom) = self.bloom {
-            world.insert_resource(bloom);
-        }
-        if let Some(lights) = self.local_lights {
-            world.insert_resource(lights);
-        }
-        if let Some(shafts) = self.sun_shafts {
-            world.insert_resource(shafts);
-        }
-        if let Some(reflections) = self.reflections {
-            world.insert_resource(reflections);
-        }
-        if let Some(particles) = self.particles {
-            world.insert_resource(particles);
-        }
-        if let Some(refraction) = self.refraction {
-            world.insert_resource(refraction);
-        }
-        if let Some(decals) = self.decals {
-            world.insert_resource(decals);
-        }
-        if let Some(probes) = self.reflection_probes {
-            world.insert_resource(probes);
-        }
-        if let Some(settings) = self.virtual_geometry {
-            world.insert_resource(settings);
-        }
-        if let Some(settings) = self.level_of_detail {
-            world.insert_resource(settings);
-        }
+        self.visit(&mut Insert(world));
     }
 
     /// Sets every section in `world`, omitted ones to the engine's default
-    /// state: a document's environment owns the whole look. Sun shafts,
-    /// reflections and refraction are opt-in, so omitting them removes them.
+    /// state: a document's environment owns the whole look. Opt-in effects
+    /// (sun shafts, reflections and refraction) are off by default, so
+    /// omitting them removes them. Call on an environment
+    /// [`Self::validate`] accepted.
     pub fn apply_all(&self, world: &mut World) {
-        world.insert_resource(self.atmosphere.unwrap_or_default());
-        world.insert_resource(self.shadows.unwrap_or_default());
-        world.insert_resource(self.ambient_occlusion.unwrap_or_default());
-        world.insert_resource(self.bloom.unwrap_or_default());
-        world.insert_resource(self.local_lights.unwrap_or_default());
-        world.insert_resource(self.particles.unwrap_or_default());
-        world.insert_resource(self.decals.unwrap_or_default());
-        world.insert_resource(self.reflection_probes.unwrap_or_default());
-        world.insert_resource(self.virtual_geometry.unwrap_or_default());
-        world.insert_resource(self.level_of_detail.unwrap_or_default());
-        match self.sun_shafts {
-            Some(shafts) => world.insert_resource(shafts),
-            None => {
-                world.remove_resource::<SunShafts>();
+        struct Own<'w>(&'w mut World);
+        impl SectionVisitor for Own<'_> {
+            fn section<T: EnvironmentSection>(&mut self, _: &'static str, section: Option<T>) {
+                match section {
+                    Some(section) => self.0.insert_resource(section),
+                    None if T::OPT_IN => {
+                        self.0.remove_resource::<T>();
+                    }
+                    None => self.0.insert_resource(T::default()),
+                }
             }
         }
-        match self.reflections {
-            Some(reflections) => world.insert_resource(reflections),
-            None => {
-                world.remove_resource::<Reflections>();
-            }
-        }
-        match self.refraction {
-            Some(refraction) => world.insert_resource(refraction),
-            None => {
-                world.remove_resource::<Refraction>();
-            }
-        }
+        world.insert_resource(
+            self.atmosphere
+                .map_or_else(Atmosphere::default, |atmosphere| atmosphere.atmosphere()),
+        );
+        self.visit(&mut Own(world));
     }
 }

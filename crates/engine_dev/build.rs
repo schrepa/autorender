@@ -5,10 +5,20 @@ mod protocol;
 #[path = "src/views.rs"]
 mod views;
 
+/// Each scene environment section's schema, by the name of its inspector.
+struct Sections(serde_json::Map<String, serde_json::Value>);
+
+impl engine_scene::SectionVisitor for Sections {
+    fn section<T: engine_scene::EnvironmentSection>(&mut self, _: &'static str, _: Option<T>) {
+        let schema = serde_json::to_value(T::schema()).expect("schema serializes");
+        self.0.insert(T::NAME.to_owned(), schema);
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=src/views.rs");
     println!("cargo:rerun-if-changed=src/protocol.rs");
-    let schemas = serde_json::json!({
+    let mut schemas = serde_json::json!({
         "Transform": schemars::schema_for!(views::TransformView),
         "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
         "InterpolateTransform": schemars::schema_for!(views::InterpolateTransformView),
@@ -20,20 +30,8 @@ fn main() {
         "Collider": schemars::schema_for!(views::ColliderView),
         "CollisionWorld": schemars::schema_for!(views::CollisionWorldView),
         "Atmosphere": schemars::schema_for!(engine_scene::SceneAtmosphere),
-        "Shadows": schemars::schema_for!(engine_core::Shadows),
-        "AmbientOcclusion": schemars::schema_for!(engine_core::AmbientOcclusion),
-        "Bloom": schemars::schema_for!(engine_core::Bloom),
         "Environment": schemars::schema_for!(engine_scene::SceneEnvironment),
-        "LocalLights": schemars::schema_for!(engine_core::LocalLights),
-        "SunShafts": schemars::schema_for!(engine_core::SunShafts),
-        "Reflections": schemars::schema_for!(engine_core::Reflections),
-        "Refraction": schemars::schema_for!(engine_core::Refraction),
-        "Particles": schemars::schema_for!(engine_core::Particles),
-        "Decals": schemars::schema_for!(engine_core::Decals),
         "Decal": schemars::schema_for!(views::DecalView),
-        "ReflectionProbes": schemars::schema_for!(engine_core::ReflectionProbes),
-        "VirtualGeometry": schemars::schema_for!(engine_core::VirtualGeometry),
-        "LevelOfDetail": schemars::schema_for!(engine_core::LevelOfDetail),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
@@ -43,6 +41,12 @@ fn main() {
         "protocol": schemars::schema_for!(protocol::DevRequest),
         "BrowserControl": schemars::schema_for!(protocol::BrowserControl),
     });
+    let mut sections = Sections(serde_json::Map::new());
+    engine_scene::SceneEnvironment::default().visit(&mut sections);
+    schemas
+        .as_object_mut()
+        .expect("schemas are an object")
+        .extend(sections.0);
     let output = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo OUT_DIR"));
     std::fs::write(output.join("inspectors.json"), schemas.to_string())
         .expect("write generated development schemas");

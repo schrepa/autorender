@@ -20,8 +20,9 @@ pub struct AnimationPlayerView {
     pub targets: Vec<Option<String>>,
 }
 
-/// A decal (decision 039) in the shape of a scene version 8 `decal` field,
-/// with whether its material is resident.
+/// A decal (decision 039) in the shape of a scene version 8 `decal` field
+/// (`engine_scene::SceneDecal::from_runtime`), with whether its material is
+/// resident.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct DecalView {
@@ -29,8 +30,7 @@ pub struct DecalView {
     pub material: Option<String>,
     /// Whether the material is still resident.
     pub material_alive: bool,
-    /// `alpha` or `multiply`.
-    pub blend: String,
+    pub blend: engine_scene::SceneDecalBlend,
     pub opacity: f32,
     pub fade_degrees: f32,
 }

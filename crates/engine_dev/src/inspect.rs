@@ -2,16 +2,15 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{Collider, CollisionWorld, refresh_collision_world};
 use engine_core::{
-    AmbientOcclusion, AnimationPlayer, AssetLibrary, Atmosphere, Bloom, Camera, Decal, DecalBlend,
-    Decals, Engine, FixedTime, FrameTime, GlobalTransforms, InterpolateTransform, LevelOfDetail,
-    LocalLight, LocalLights, Mesh3d, Parent, ParticleEmitter, Particles, PresentationMode,
-    PresentationState, PresentedTransforms, ReflectionProbe, ReflectionProbes, Reflections,
-    Refraction, Shadows, Skin, SunShafts, Tint, Transform, VirtualGeometry,
+    AnimationPlayer, AssetLibrary, Atmosphere, Camera, Decal, Engine, FixedTime, FrameTime,
+    GlobalTransforms, InterpolateTransform, LocalLight, Mesh3d, Parent, ParticleEmitter,
+    PresentationMode, PresentationState, PresentedTransforms, ReflectionProbe, Skin, Tint,
+    Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight,
-    SceneReflectionProbe,
+    EnvironmentSection, SceneAtmosphere, SceneDecal, SceneEmitter, SceneEntity, SceneEnvironment,
+    SceneInstance, SceneLight, SceneReflectionProbe, SectionVisitor,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -210,66 +209,28 @@ impl Default for DevTools {
                 .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
             |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
         ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Shadows>(
-            InspectorDescriptor::new("Shadows", "Sun shadows (decision 020): kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws.", schemas["Shadows"].clone())
-                .with_default(json!(Shadows::default())),
-            |shadows| json!(shadows),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<AmbientOcclusion>(
-            InspectorDescriptor::new("AmbientOcclusion", "Screen-space ambient occlusion (decision 021); intensity 0 or a missing resource turns it off.", schemas["AmbientOcclusion"].clone())
-                .with_default(json!(AmbientOcclusion::default())),
-            |occlusion| json!(occlusion),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Bloom>(
-            InspectorDescriptor::new("Bloom", "Glow beyond bright pixels (decision 021); intensity 0 or a missing resource turns it off.", schemas["Bloom"].clone())
-                .with_default(json!(Bloom::default())),
-            |bloom| json!(bloom),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<LocalLights>(
-            InspectorDescriptor::new("LocalLights", "Local lighting settings (decision 023): whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow.", schemas["LocalLights"].clone())
-                .with_default(json!(LocalLights::default())),
-            |lights| json!(lights),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<SunShafts>(
-            InspectorDescriptor::new("SunShafts", "Sunlight scattered by the fog between shadow casters (decision 024). Opt-in: missing or intensity 0 means off; it needs shadows.", schemas["SunShafts"].clone())
-                .with_default(json!(SunShafts::default())),
-            |shafts| json!(shafts),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Reflections>(
-            InspectorDescriptor::new("Reflections", "Screen-space reflections in glossy surfaces (decision 025), falling back to the sky off screen. Opt-in: missing or intensity 0 means off.", schemas["Reflections"].clone())
-                .with_default(json!(Reflections::default())),
-            |reflections| json!(reflections),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Refraction>(
-            InspectorDescriptor::new("Refraction", "Refraction through glass (decision 038): transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency.", schemas["Refraction"].clone())
-                .with_default(json!(Refraction::default())),
-            |refraction| json!(refraction),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Particles>(
-            InspectorDescriptor::new("Particles", "Particle settings (decision 026): whether emitters draw and the per-frame particle budget. Missing means no particles.", schemas["Particles"].clone())
-                .with_default(json!(Particles::default())),
-            |particles| json!(particles),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<Decals>(
-            InspectorDescriptor::new("Decals", "Decal settings (decision 039): whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped.", schemas["Decals"].clone())
-                .with_default(json!(Decals::default())),
-            |decals| json!(decals),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<ReflectionProbes>(
-            InspectorDescriptor::new("ReflectionProbes", "Reflection probe settings (decision 043): whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped.", schemas["ReflectionProbes"].clone())
-                .with_default(json!(ReflectionProbes::default())),
-            |probes| json!(probes),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<VirtualGeometry>(
-            InspectorDescriptor::new("VirtualGeometry", "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections.", schemas["VirtualGeometry"].clone())
-                .with_default(json!(VirtualGeometry::default())),
-            |settings| json!(settings),
-        ).expect("built-in descriptor is bounded");
-        tools.register_resource::<LevelOfDetail>(
-            InspectorDescriptor::new("LevelOfDetail", "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out.", schemas["LevelOfDetail"].clone())
-                .with_default(json!(LevelOfDetail::default())),
-            |settings| json!(settings),
-        ).expect("built-in descriptor is bounded");
+        // Every effect section of a scene environment as its resource, in
+        // the section's shape (decision 022).
+        struct Sections<'t> {
+            tools: &'t mut DevTools,
+            schemas: &'t Value,
+        }
+        impl SectionVisitor for Sections<'_> {
+            fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
+                let schema = self.schemas[T::NAME].clone();
+                self.tools
+                    .register_resource::<T>(
+                        InspectorDescriptor::new(T::NAME, section_description(name), schema)
+                            .with_default(json!(T::default())),
+                        |settings| json!(settings),
+                    )
+                    .expect("built-in descriptor is bounded");
+            }
+        }
+        SceneEnvironment::default().visit(&mut Sections {
+            tools: &mut tools,
+            schemas: &schemas,
+        });
         tools.register_component::<LocalLight>(
             InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
                 .with_default(json!(SceneLight::default())),
@@ -323,15 +284,14 @@ impl Default for DevTools {
             read: Box::new(|world, entity, scene| {
                 let decal = world.get::<Decal>(entity?)?;
                 let assets = world.get_resource::<AssetLibrary>();
+                let material = scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == decal.material).map(|(id, _)| id.to_owned()));
+                let field = SceneDecal::from_runtime(decal, material.clone().unwrap_or_default());
                 Some(json!(DecalView {
-                    material: scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == decal.material).map(|(id, _)| id.to_owned())),
+                    material,
                     material_alive: assets.is_some_and(|assets| assets.material(decal.material).is_some()),
-                    blend: match decal.blend {
-                        DecalBlend::Alpha => "alpha",
-                        DecalBlend::Multiply => "multiply",
-                    }.to_owned(),
-                    opacity: decal.opacity,
-                    fade_degrees: decal.fade_angle.to_degrees(),
+                    blend: field.blend,
+                    opacity: field.opacity,
+                    fade_degrees: field.fade_degrees,
                 }))
             }),
         }).expect("built-in descriptor is bounded");
@@ -351,6 +311,49 @@ impl Default for DevTools {
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
         }).expect("built-in descriptor is bounded");
         tools
+    }
+}
+
+/// What the inspector of environment section `name` reports.
+fn section_description(name: &str) -> &'static str {
+    match name {
+        "shadows" => {
+            "Sun shadows (decision 020): kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws."
+        }
+        "ambient_occlusion" => {
+            "Screen-space ambient occlusion (decision 021); intensity 0 or a missing resource turns it off."
+        }
+        "bloom" => {
+            "Glow beyond bright pixels (decision 021); intensity 0 or a missing resource turns it off."
+        }
+        "local_lights" => {
+            "Local lighting settings (decision 023): whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow."
+        }
+        "sun_shafts" => {
+            "Sunlight scattered by the fog between shadow casters (decision 024). Opt-in: missing or intensity 0 means off; it needs shadows."
+        }
+        "reflections" => {
+            "Screen-space reflections in glossy surfaces (decision 025), falling back to the sky off screen. Opt-in: missing or intensity 0 means off."
+        }
+        "particles" => {
+            "Particle settings (decision 026): whether emitters draw and the per-frame particle budget. Missing means no particles."
+        }
+        "refraction" => {
+            "Refraction through glass (decision 038): transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency."
+        }
+        "decals" => {
+            "Decal settings (decision 039): whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped."
+        }
+        "reflection_probes" => {
+            "Reflection probe settings (decision 043): whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped."
+        }
+        "virtual_geometry" => {
+            "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections."
+        }
+        "level_of_detail" => {
+            "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
+        }
+        _ => "An environment section (decision 022).",
     }
 }
 

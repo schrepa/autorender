@@ -329,6 +329,22 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
+    /// The operation of every control, as requests name it.
+    pub const OPS: [&'static str; 12] = [
+        "present",
+        "culling",
+        "environment",
+        "camera",
+        "benchmark",
+        "step",
+        "input",
+        "render",
+        "pause",
+        "resume",
+        "capture",
+        "reload",
+    ];
+
     pub fn version(&self) -> u32 {
         match self {
             Self::Present { version, .. }
