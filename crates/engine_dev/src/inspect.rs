@@ -257,9 +257,14 @@ impl DevTools {
                 let entity = entity?;
                 let terrain = world.get::<engine_core::Terrain>(entity)?;
                 let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
+                let (mut level_errors, mut level_ranges) = (Vec::new(), Vec::new());
                 if let Some(terrains) = world.get_resource::<engine_core::Terrains>() {
                     for tile in terrains.tiles(entity) {
                         levels[usize::from(tile.key().level)] += 1;
+                    }
+                    if let Some((errors, ranges)) = terrains.level_detail(entity) {
+                        level_errors = errors.to_vec();
+                        level_ranges = ranges.to_vec();
                     }
                 }
                 Some(json!(crate::views::TerrainView {
@@ -267,6 +272,8 @@ impl DevTools {
                     levels: terrain.pyramid.levels(),
                     extent: terrain.pyramid.extent().to_array(),
                     resident_tiles_by_level: levels,
+                    level_errors,
+                    level_ranges,
                 }))
             }),
         }).expect("built-in descriptor is bounded");

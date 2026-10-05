@@ -195,7 +195,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array};
-use wgpu::TextureFormat::{R32Float, Rgba16Float};
+use wgpu::TextureFormat::{R32Float, Rgba8Snorm, Rgba16Float};
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
@@ -586,8 +586,23 @@ pub(crate) const TERRAIN: Table = Table {
     bindings: &[
         texture(17, "terrain_heights", Unfilterable, D2Array, V),
         dynamic_uniform(18, "terrain_view", 80, V),
-        dynamic_uniform(19, "terrain", 112, VF),
+        dynamic_uniform(19, "terrain", 128, VF),
         read(20, "terrain_holes", F),
+        texture(21, "terrain_normals", Float, D2Array, F),
+        sampler(22, "terrain_normal_sampler", Filtering, F),
+        read(23, "terrain_directory", F),
+    ],
+};
+
+/// A tile's normal map (decision 051; `terrain_normals.wgsl`): the height
+/// array, the job's layer and spacing, and the layer of the normal array
+/// written.
+pub(crate) const TERRAIN_NORMALS: Table = Table {
+    label: "engine/terrain-normals-layout",
+    bindings: &[
+        texture(0, "heights", Unfilterable, D2Array, C),
+        uniform_of(1, "job", 16, C),
+        bind(2, "normals", Kind::Storage(Rgba8Snorm), C),
     ],
 };
 

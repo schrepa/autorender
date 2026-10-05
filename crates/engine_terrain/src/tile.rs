@@ -8,7 +8,7 @@ use glam::{Vec2, Vec3};
 
 use engine_math::{max, min};
 
-use crate::layers::{CoarseState, Layers, STATE};
+use crate::layers::{Layers, state_len};
 use crate::{
     PATCH_QUADS, PATCHES_PER_TILE, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
@@ -116,6 +116,34 @@ impl Tile {
         self.heights[((z + 1) * stride + x + 1) as usize]
     }
 
+    /// The largest difference, in meters, between this tile's heights and
+    /// those of `parent`, the tile of the next coarser level holding it,
+    /// between its samples: what this level's patches move by as they
+    /// morph into the parent level's. Every third sample along each axis
+    /// is compared, alternately on and between the parent's.
+    pub fn morph_error(&self, parent: &Tile) -> f32 {
+        let offset = [
+            i32::from(self.key.x % 2) * 128,
+            i32::from(self.key.z % 2) * 128,
+        ];
+        let mut largest = 0.0_f32;
+        for z in (0..=TILE_QUADS as i32).step_by(3) {
+            for x in (0..=TILE_QUADS as i32).step_by(3) {
+                // The parent's samples around this one, half as far apart.
+                let (px, pz) = (offset[0] * 2 + x, offset[1] * 2 + z);
+                let (x0, z0) = (px.div_euclid(2), pz.div_euclid(2));
+                let (fx, fz) = ((px % 2) as f32 * 0.5, (pz % 2) as f32 * 0.5);
+                let a = parent.height(x0, z0);
+                let b = parent.height(x0 + 1, z0);
+                let c = parent.height(x0, z0 + 1);
+                let d = parent.height(x0 + 1, z0 + 1);
+                let coarse = (a + (b - a) * fx) + ((c + (d - c) * fx) - (a + (b - a) * fx)) * fz;
+                largest = max(largest, (self.height(x, z) - coarse).abs());
+            }
+        }
+        largest
+    }
+
     /// Every sample, the border included, row by row: the layout GPU tiles
     /// upload.
     pub fn heights(&self) -> &[f32] {
@@ -200,14 +228,18 @@ impl Tile {
 const GRID: usize = 69;
 const GRID_FIRST: i64 = -2;
 const GRID_STEP: i64 = 4;
-/// Work units of a coarse grid point, against one per sample.
+/// Work units of a coarse grid point and of a noise layer's sample,
+/// against one per sample of other layers: about their time.
 const COARSE_COST: u64 = 24;
+const NOISE_SAMPLE_COST: u64 = 4;
 
-/// Adds `weight` times `state` to `sum`, value by value.
+/// Four coarse states `taps` combined with Catmull-Rom `weights` into
+/// `out`, value by value, in one order wherever states are interpolated.
 #[inline(always)]
-fn add_weighted(sum: &mut CoarseState, weight: f32, state: &CoarseState) {
-    for (total, value) in sum.iter_mut().zip(state) {
-        *total += weight * value;
+fn interpolate(out: &mut [f32], weights: [f32; 4], taps: [&[f32]; 4]) {
+    let [a, b, c, d] = taps;
+    for ((((value, a), b), c), d) in out.iter_mut().zip(a).zip(b).zip(c).zip(d) {
+        *value = weights[0] * a + weights[1] * b + weights[2] * c + weights[3] * d;
     }
 }
 
@@ -229,7 +261,7 @@ enum Stage {
 
 /// Generates one tile from a layer stack in steps, so streaming can spread
 /// the work over frames. Every sample is a pure function of its position
-/// and level: noise octaves at least 16 samples long are evaluated on a
+/// and level: noise octaves at least 32 samples long are evaluated on a
 /// grid of every fourth sample and interpolated, shorter ones down to four
 /// samples at every sample, so neighboring tiles agree on shared samples.
 pub struct Generator {
@@ -238,14 +270,18 @@ pub struct Generator {
     spacing: f32,
     first: [i64; 2],
     bands: Vec<Option<(usize, Range<usize>, usize)>>,
-    grids: Vec<Option<Box<[CoarseState]>>>,
+    // Each noise layer's coarse states, grid point by grid point.
+    grids: Vec<Option<Box<[f32]>>>,
     stage: Stage,
     heights: Box<[f32]>,
     holes: Option<Box<[u64]>>,
     xs: Box<[f32]>,
     row: Box<[f32]>,
     values: Box<[f32]>,
-    column: Box<[CoarseState]>,
+    // A row's coarse states interpolated along z, grid column by column,
+    // and one sample's.
+    column: Box<[f32]>,
+    state: Box<[f32]>,
     min: Vec2,
     max: Vec2,
 }
@@ -256,16 +292,18 @@ impl Generator {
         let spacing = pyramid.spacing(level);
         let first = pyramid.first_sample(key);
         let stride = TILE_STRIDE as usize;
-        let bands = (0..layers.layers().len())
+        let bands: Vec<_> = (0..layers.layers().len())
             .map(|index| layers.noise(index).map(|tables| tables.bands(spacing)))
             .collect();
-        let grids = (0..layers.layers().len())
-            .map(|index| {
-                layers
-                    .noise(index)
-                    .map(|_| vec![[0.0; STATE]; GRID * GRID].into_boxed_slice())
-            })
+        let lens: Vec<_> = bands
+            .iter()
+            .map(|bands| bands.as_ref().map(|(coarse, _, _)| state_len(*coarse)))
             .collect();
+        let grids = lens
+            .iter()
+            .map(|len| len.map(|len| vec![0.0; GRID * GRID * len].into_boxed_slice()))
+            .collect();
+        let widest = lens.iter().flatten().copied().max().unwrap_or(0);
         let xs = (-1..=TILE_SAMPLES as i64)
             .map(|i| (first[0] + i) as f32 * spacing)
             .collect();
@@ -293,7 +331,8 @@ impl Generator {
             xs,
             row: vec![0.0; stride].into_boxed_slice(),
             values: vec![0.0; stride].into_boxed_slice(),
-            column: vec![[0.0; STATE]; GRID].into_boxed_slice(),
+            column: vec![0.0; GRID * widest].into_boxed_slice(),
+            state: vec![0.0; widest].into_boxed_slice(),
             min,
             max,
         }
@@ -329,10 +368,12 @@ impl Generator {
                     let z = (self.first[1] + (GRID_FIRST + row as i64) * GRID_STEP) as f32
                         * self.spacing;
                     let grid = self.grids[layer].as_mut().expect("noise layers have grids");
+                    let len = state_len(coarse);
                     for column in 0..GRID {
                         let x = (self.first[0] + (GRID_FIRST + column as i64) * GRID_STEP) as f32
                             * self.spacing;
-                        grid[row * GRID + column] = tables.coarse(x, z, coarse, gullies);
+                        let at = (row * GRID + column) * len;
+                        tables.coarse(x, z, coarse, gullies, &mut grid[at..at + len]);
                     }
                     *budget = budget.saturating_sub(GRID as u64 * COARSE_COST);
                     self.stage = if row + 1 < GRID {
@@ -349,8 +390,12 @@ impl Generator {
                 }
                 Stage::Samples { row } => {
                     self.sample_row(row);
-                    *budget = budget
-                        .saturating_sub(u64::from(TILE_STRIDE) * self.grids.len().max(1) as u64);
+                    let layers = self
+                        .grids
+                        .iter()
+                        .map(|grid| if grid.is_some() { NOISE_SAMPLE_COST } else { 1 })
+                        .sum::<u64>();
+                    *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * layers.max(1));
                     self.stage = if row < TILE_SAMPLES as i32 {
                         Stage::Samples { row: row + 1 }
                     } else if self.holes.is_some() {
@@ -397,28 +442,32 @@ impl Generator {
                     .apply_local(layer, &mut self.row, &self.xs, z, self.min, self.max);
                 continue;
             };
-            let (_, fine, _) = self.bands[layer].clone().unwrap_or_default();
+            let (octaves, fine, _) = self.bands[layer].clone().unwrap_or_default();
+            let len = state_len(octaves);
             let grid = self.grids[layer].as_ref().expect("noise layers have grids");
             // The coarse state along z first, for every grid column.
             let base = (coarse_row - 1 - GRID_FIRST) as usize;
-            for (column, value) in self.column.iter_mut().enumerate() {
-                let mut sum = [0.0; STATE];
-                for (tap, weight) in vertical.iter().enumerate() {
-                    add_weighted(&mut sum, *weight, &grid[(base + tap) * GRID + column]);
-                }
-                *value = sum;
+            let tap = |row: usize, column: usize| {
+                let at = ((base + row) * GRID + column) * len;
+                &grid[at..at + len]
+            };
+            for (column, sum) in self.column.chunks_exact_mut(len).take(GRID).enumerate() {
+                let taps = [0, 1, 2, 3].map(|row| tap(row, column));
+                interpolate(sum, vertical, taps);
             }
-            // Then along x for every sample, which the fine octaves finish.
+            // Then along x for every sample, which sums every octave.
+            let sum = &mut self.state[..len];
             for (index, value) in self.values.iter_mut().enumerate() {
                 let sample = index as i64 - 1;
                 let coarse = sample.div_euclid(GRID_STEP);
                 let weights = QUARTER_WEIGHTS[sample.rem_euclid(GRID_STEP) as usize];
                 let first = (coarse - 1 - GRID_FIRST) as usize;
-                let mut sum = [0.0; STATE];
-                for (tap, weight) in weights.iter().enumerate() {
-                    add_weighted(&mut sum, *weight, &self.column[first + tap]);
-                }
-                *value = tables.finish(self.xs[index], z, &sum, fine.clone());
+                let taps = [0, 1, 2, 3].map(|tap| {
+                    let at = (first + tap) * len;
+                    &self.column[at..at + len]
+                });
+                interpolate(sum, weights, taps);
+                *value = tables.finish(self.xs[index], z, sum, octaves, fine.clone());
             }
             self.layers.apply_noise(layer, &mut self.row, &self.values);
         }
@@ -446,26 +495,39 @@ impl Layers {
                 self.apply_local(layer, &mut height, &[x], z, point, point);
                 continue;
             };
-            let (coarse, fine, gullies) = tables.bands(spacing);
+            let (octaves, fine, gullies) = tables.bands(spacing);
             // The coarse state along z first for each column, then along x,
             // as tiles interpolate it.
-            let mut sum = [0.0_f32; STATE];
-            for (tap, weight) in horizontal.iter().enumerate() {
-                let column = (cx - 1 + tap as i64) * GRID_STEP;
-                let mut value = [0.0_f32; STATE];
-                for (row_tap, row_weight) in vertical.iter().enumerate() {
-                    let row = (cz - 1 + row_tap as i64) * GRID_STEP;
-                    let coarse_point = tables.coarse(
-                        column as f32 * spacing,
-                        row as f32 * spacing,
-                        coarse,
-                        gullies,
-                    );
-                    add_weighted(&mut value, *row_weight, &coarse_point);
-                }
-                add_weighted(&mut sum, *weight, &value);
+            let len = state_len(octaves);
+            // The sixteen grid points' states, column by column.
+            let mut points = vec![0.0_f32; 16 * len];
+            for (index, point) in points.chunks_exact_mut(len).enumerate() {
+                let column = (cx - 1 + (index / 4) as i64) * GRID_STEP;
+                let row = (cz - 1 + (index % 4) as i64) * GRID_STEP;
+                tables.coarse(
+                    column as f32 * spacing,
+                    row as f32 * spacing,
+                    octaves,
+                    gullies,
+                    point,
+                );
             }
-            self.apply_noise(layer, &mut height, &[tables.finish(x, z, &sum, fine)]);
+            let mut columns = vec![0.0_f32; 4 * len];
+            for (column, value) in columns.chunks_exact_mut(len).enumerate() {
+                let taps = [0, 1, 2, 3].map(|row| {
+                    let at = (column * 4 + row) * len;
+                    &points[at..at + len]
+                });
+                interpolate(value, vertical, taps);
+            }
+            let mut sum = vec![0.0_f32; len];
+            let taps = [0, 1, 2, 3].map(|column| &columns[column * len..(column + 1) * len]);
+            interpolate(&mut sum, horizontal, taps);
+            self.apply_noise(
+                layer,
+                &mut height,
+                &[tables.finish(x, z, &sum, octaves, fine)],
+            );
         }
         height[0]
     }

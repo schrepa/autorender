@@ -2538,7 +2538,7 @@
           "default": true
         },
         "max_tiles": {
-          "description": "An optional budget of resident tiles (about 270 KB each); the least\nimportant beyond it drop.",
+          "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
           "type": [
             "integer",
             "null"
@@ -2563,7 +2563,7 @@
           "minimum": 1.0
         },
         "samples_per_frame": {
-          "description": "Samples generated or decoded per frame (67,000 to 300,000 a tile).",
+          "description": "Work generated or decoded per frame, in samples' worth (67,000 a\ndecoded tile, about 500,000 a generated one).",
           "type": "integer",
           "format": "uint32",
           "default": 24576,

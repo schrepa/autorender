@@ -377,6 +377,8 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),
     include_str!("meshes/terrain.wgsl"),
 );
+/// Terrain normal maps (decision 051).
+pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");
 /// Terrain horizon map builds (decision 052).
 pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
 /// Terrain's depth drawing into shadow maps (decision 051).

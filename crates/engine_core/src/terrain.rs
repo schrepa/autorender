@@ -269,12 +269,13 @@ pub struct TerrainSettings {
     /// always draws whole, from 1 to 8.
     #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
     pub pinned_levels: u32,
-    /// An optional budget of resident tiles (about 270 KB each); the least
-    /// important beyond it drop.
+    /// An optional budget of resident tiles (about 270 KB each, twice that
+    /// on the GPU); the least important beyond it drop.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tiles: Option<u32>,
-    /// Samples generated or decoded per frame (67,000 to 300,000 a tile).
+    /// Work generated or decoded per frame, in samples' worth (67,000 a
+    /// decoded tile, about 500,000 a generated one).
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub samples_per_frame: u32,
     /// Meters around the camera and focus entities within which level-0
@@ -404,9 +405,11 @@ pub struct TerrainStats {
 
 /// Frames a failed fetch waits before it is requested again.
 const RETRY_AFTER: u64 = 120;
-/// Ranges, as multiples of each level's, within which tiles load and stay.
-const LOAD_REACH: f32 = 1.25;
-const KEEP_REACH: f32 = 1.6;
+/// Ranges, as multiples of each level's, within which tiles load and stay:
+/// beyond its range a level's tiles still shade the coarser level's
+/// patches (their normals), so they load further than they draw.
+const LOAD_REACH: f32 = 2.0;
+const KEEP_REACH: f32 = 2.5;
 
 /// One terrain's streaming state.
 struct TerrainState {
@@ -424,10 +427,17 @@ struct TerrainState {
     collision: Vec<TileKey>,
     /// Advances whenever the resident tiles change.
     revision: u64,
+    /// The largest height difference measured between each level and the
+    /// next coarser one ([`Tile::morph_error`]), what its patches morph by;
+    /// zero until measured.
+    errors: Vec<f32>,
+    /// The ranges the last selection used.
+    ranges: Vec<f32>,
 }
 
 impl TerrainState {
     fn new(entity: Entity, terrain: Terrain) -> Self {
+        let levels = terrain.pyramid.levels() as usize;
         Self {
             entity,
             terrain,
@@ -439,11 +449,33 @@ impl TerrainState {
             selection: Selection::default(),
             collision: Vec::new(),
             revision: 1,
+            errors: vec![0.0; levels],
+            ranges: Vec::new(),
         }
     }
 
+    /// Makes `tile` resident, measuring how far it lies from its resident
+    /// parent and its resident children from it.
     fn insert(&mut self, tile: Tile) {
-        self.tiles.insert(tile.key(), Arc::new(tile));
+        let key = tile.key();
+        let pyramid = self.terrain.pyramid;
+        let level = usize::from(key.level);
+        if let Some(parent) = pyramid
+            .parent(key)
+            .and_then(|parent| self.tiles.get(&parent))
+        {
+            self.errors[level] = crate::math::max(self.errors[level], tile.morph_error(parent));
+        }
+        if let Some(finer) = level.checked_sub(1) {
+            for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                let child = TileKey::new(finer as u8, key.x * 2 + dx, key.z * 2 + dz);
+                if let Some(child) = self.tiles.get(&child) {
+                    self.errors[finer] =
+                        crate::math::max(self.errors[finer], child.morph_error(&tile));
+                }
+            }
+        }
+        self.tiles.insert(key, Arc::new(tile));
         self.revision += 1;
     }
 
@@ -536,6 +568,17 @@ impl Terrains {
             .iter()
             .find(|state| state.entity == entity)
             .map(|state| &state.terrain)
+    }
+
+    /// Each level's largest measured height difference from the next
+    /// coarser one (meters; zero until measured) and the range it drew to
+    /// at the last selection (meters from the eye), finest first, of
+    /// `entity`'s terrain.
+    pub fn level_detail(&self, entity: Entity) -> Option<(&[f32], &[f32])> {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity)
+            .map(|state| (state.errors.as_slice(), state.ranges.as_slice()))
     }
 
     /// Resident tiles of `entity`'s terrain.
@@ -632,6 +675,10 @@ impl Terrains {
             let origin = state.terrain.origin;
             let ranges =
                 LodRanges::new(&pyramid, settings.pixel_error, viewport.height as f32, fov);
+            state.ranges.clear();
+            state
+                .ranges
+                .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
             let local_eye = eye - origin;
             // What to load: pinned levels and the camera's tiles, then
             // collision's, most important first.
@@ -887,6 +934,9 @@ pub struct RenderTerrain {
     pub tiles_revision: u64,
     /// The patches the camera draws.
     pub patches: Vec<Patch>,
+    /// Meters from the eye within which each level's tiles load, finest
+    /// first: where renderers can shade with them.
+    pub reach: Vec<f32>,
 }
 
 /// The frame's terrains (decision 051).
@@ -1010,6 +1060,7 @@ impl TerrainExtraction {
                     tiles: Arc::from(Vec::new()),
                     tiles_revision: 0,
                     patches: Vec::new(),
+                    reach: Vec::new(),
                 });
             }
             let render = &mut listing.terrains[index];
@@ -1027,6 +1078,10 @@ impl TerrainExtraction {
             if enabled {
                 render.patches.extend_from_slice(&state.selection.patches);
             }
+            render.reach.clear();
+            render
+                .reach
+                .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
         }
     }
 }
