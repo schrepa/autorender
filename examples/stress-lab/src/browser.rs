@@ -10,7 +10,8 @@ use crate::{
 };
 
 /// Files workloads read, by name: the dense scene's virtual meshes
-/// (decision 044), whose prefixes the page fetches.
+/// (decision 044), whose prefixes the page fetches, and the highlands'
+/// terrain material maps (decision 054), which it decodes.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct StressFiles {
@@ -32,6 +33,20 @@ impl StressFiles {
             StressFile {
                 bytes,
                 url: Some(url),
+                size: None,
+            },
+        );
+    }
+
+    /// Adds image `name`: `width` by `height` RGBA8 pixels, rows from the
+    /// top.
+    pub fn add_image(&mut self, name: &str, width: u32, height: u32, pixels: Vec<u8>) {
+        self.files.insert(
+            name.to_owned(),
+            StressFile {
+                bytes: pixels,
+                url: None,
+                size: Some([width, height]),
             },
         );
     }
@@ -39,6 +54,11 @@ impl StressFiles {
     /// The files the dense scene reads, as a JSON array of names.
     pub fn dense_names() -> String {
         serde_json::to_string(&crate::DENSE_FILES).unwrap_or_else(|_| "[]".into())
+    }
+
+    /// The images the highlands read, as a JSON array of names.
+    pub fn highlands_names() -> String {
+        serde_json::to_string(&crate::HIGHLANDS_FILES).unwrap_or_else(|_| "[]".into())
     }
 }
 

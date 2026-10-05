@@ -34,15 +34,18 @@ pub fn create_workload(config: StressConfig) -> Result<Engine, String> {
 }
 
 /// A file a workload reads: its bytes (a virtual mesh's may be the prefix)
-/// and the URL the rest streams from.
+/// and the URL the rest streams from, or an image's RGBA8 pixels and their
+/// width and height.
 #[derive(Clone, Debug, Default)]
 pub struct StressFile {
     pub bytes: Vec<u8>,
     pub url: Option<String>,
+    pub size: Option<[u32; 2]>,
 }
 
 /// [`create_workload`] reading the files a scene needs from `files` (the
-/// dense scene's virtual meshes, decision 044).
+/// dense scene's virtual meshes, decision 044, and the highlands' terrain
+/// materials, decision 054).
 pub fn create_workload_with(
     config: StressConfig,
     files: &HashMap<String, StressFile>,
@@ -70,7 +73,7 @@ pub fn create_workload_with(
         }
         StressScene::Highlands => {
             let (bounds, plateau) =
-                highlands::populate(world, &config, highlands::hamlet_radius(&config))?;
+                highlands::populate(world, &config, highlands::hamlet_radius(&config), files)?;
             (field(world, &config, plateau)?, bounds)
         }
         StressScene::City => {

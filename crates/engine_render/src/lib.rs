@@ -160,6 +160,11 @@ pub struct RenderStats {
     /// 052), and the maps this frame rebuilt.
     pub terrain_horizons: u32,
     pub terrain_horizon_builds: u32,
+    /// Terrain surface materials (decision 054) past the palette's
+    /// capacity, or whose maps the shared arrays cannot hold (block
+    /// compressed, or sized unlike the first material's), which show a
+    /// plain color instead.
+    pub dropped_terrain_materials: u32,
     /// The passes this frame ran, in order (decision 050), named in the
     /// JSON.
     #[serde(
@@ -236,6 +241,8 @@ mod temporal;
 mod terrain;
 #[cfg(target_arch = "wasm32")]
 mod terrain_horizons;
+#[cfg(target_arch = "wasm32")]
+mod terrain_maps;
 #[cfg(target_arch = "wasm32")]
 mod transparent;
 #[cfg(target_arch = "wasm32")]

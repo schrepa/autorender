@@ -307,6 +307,7 @@ impl Renderer {
             terrain_fallback_patches: snapshot.terrain.stats.fallback_patches,
             terrain_horizons: self.terrain.horizons.count(),
             terrain_horizon_builds: self.terrain.horizons.builds,
+            dropped_terrain_materials: self.terrain.dropped_materials,
             ..self.residency_stats()
         };
         self.profile_counters(state, &stats, gpu_visible, virtual_stats);

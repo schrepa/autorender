@@ -4,6 +4,7 @@ import { StressRecorder, type StressRecordingReport } from "./stress-recording";
 import type { DetailedProfiler, DetailedProfileReport } from "./profiling";
 import type { StressFiles, StressGame } from "../pkg/stress_lab";
 import { fetchVirtualPrefix } from "./virtual-mesh";
+import { isKtx2, readRgba8Ktx2 } from "./ktx2";
 import { adapterFeatures } from "./adapter";
 import "./stress.css";
 
@@ -83,6 +84,37 @@ async function denseFiles(): Promise<StressFiles | undefined> {
   }
   denseSupplied = true;
   return files;
+}
+// The highlands' terrain material maps (decision 054), fetched once: the
+// game keeps them for later workloads. Without them its ground shows plain
+// colors.
+let highlandsSupplied = false;
+async function highlandsFiles(): Promise<StressFiles | undefined> {
+  if (highlandsSupplied || !filesClass) return undefined;
+  const files = new filesClass();
+  try {
+    const names = JSON.parse(filesClass.highlands_names()) as string[];
+    const images = await Promise.all(names.map(async name => {
+      const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/terrain/${name}`, location.href));
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const image = response.ok && isKtx2(bytes) ? readRgba8Ktx2(name, bytes) : undefined;
+      if (!image) throw new Error(`stress/terrain/${name} is missing or not an uncompressed RGBA8 KTX2 image.`);
+      return image;
+    }));
+    names.forEach((name, index) => files.add_image(name, images[index].width, images[index].height, images[index].pixels));
+  } catch (error) {
+    files.free();
+    notice(`The ground shows plain colors: ${String(error)} Build its materials with \`cargo run -p engine_assetc --release --bin terrain_materials\`.`);
+    return undefined;
+  }
+  highlandsSupplied = true;
+  return files;
+}
+/** The files `config`'s scene reads that the game lacks. */
+async function sceneFiles(config: Config): Promise<StressFiles | undefined> {
+  if (config.scene === "dense") return denseFiles();
+  if (config.scene === "highlands") return highlandsFiles();
+  return undefined;
 }
 let lastDiagnostic = -Infinity;
 let wasmIdentity: { url: string | null; sha256: string | null } = { url: null, sha256: null };
@@ -194,9 +226,7 @@ async function apply(requested: Config, title: string) {
   const config = supported(requested);
   if (profiler?.busy || recorder.active) { notice("Finish the active capture before changing the workload.", true); return; }
   let files: StressFiles | undefined;
-  if (config.scene === "dense") {
-    try { files = await denseFiles(); } catch (error) { notice(`Workload unchanged: ${String(error)}`, true); return; }
-  }
+  try { files = await sceneFiles(config); } catch (error) { notice(`Workload unchanged: ${String(error)}`, true); return; }
   try {
     controls.mutate(runtime => runtime.configure(JSON.stringify(config), files));
     activeConfig = config; activeTitle = title;
@@ -329,8 +359,7 @@ boot({
     void fingerprintWasm();
     blockCompression = await compression;
     activeConfig = supported(activeConfig);
-    return StressGame.create(canvas, JSON.stringify(activeConfig),
-      activeConfig.scene === "dense" ? await denseFiles() : undefined);
+    return StressGame.create(canvas, JSON.stringify(activeConfig), await sceneFiles(activeConfig));
   },
   ready(runtime, host) {
     game = runtime; controls = host;

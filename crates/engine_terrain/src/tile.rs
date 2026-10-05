@@ -441,6 +441,7 @@ impl Generator {
                 height,
                 gradient: (gx * gx + gz * gz).sqrt(),
                 curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
+                spacing,
             };
             control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
         }

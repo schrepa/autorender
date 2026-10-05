@@ -1,7 +1,9 @@
 // KTX2 images (decision 037): Basis Universal supercompressed textures,
 // transcoded at scene load (never per frame) to the block-compressed format
-// this device samples, or to RGBA8 without one. The transcoder is the
-// vendored upstream build in public/basis, loaded on first use.
+// this device samples, or to RGBA8 without one, and uncompressed RGBA8
+// images read as they are, alpha exact (terrain materials keep height in
+// it, decision 054). The transcoder is the vendored upstream build in
+// public/basis, loaded on first use.
 
 import { adapterFeatures } from "./adapter.ts";
 
@@ -37,6 +39,31 @@ const KTX2_MAGIC = [0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 
 /** Whether `bytes` start with the KTX2 identifier. */
 export function isKtx2(bytes: Uint8Array): boolean {
   return bytes.length >= KTX2_MAGIC.length && KTX2_MAGIC.every((value, index) => bytes[index] === value);
+}
+
+// Uncompressed RGBA8 formats: VK_FORMAT_R8G8B8A8_UNORM and _SRGB. Whether
+// a map decodes sRGB is the material's choice, not the file's.
+const RGBA8_FORMATS = [37, 43];
+
+/**
+ * The pixels of an uncompressed RGBA8 KTX2 image's base level, or
+ * `undefined` for any other KTX2 image; `uri` names it in messages.
+ */
+export function readRgba8Ktx2(uri: string, bytes: Uint8Array): { width: number; height: number; pixels: Uint8Array } | undefined {
+  if (bytes.byteLength < 104) throw new Error(`Scene file ${uri} is not a valid KTX2 image.`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const word = (at: number) => view.getUint32(at, true);
+  if (!RGBA8_FORMATS.includes(word(12)) || word(44) !== 0) return undefined;
+  const width = word(20), height = word(24);
+  if (word(28) > 1 || word(32) > 1 || word(36) !== 1 || width === 0 || height === 0) {
+    throw new Error(`Scene file ${uri} must be a single 2D image.`);
+  }
+  // The base level's entry leads the level index.
+  const offset = word(80), length = word(88);
+  if (word(84) !== 0 || word(92) !== 0 || length !== width * height * 4 || offset + length > bytes.byteLength) {
+    throw new Error(`Scene file ${uri} has an invalid base level.`);
+  }
+  return { width, height, pixels: bytes.slice(offset, offset + length) };
 }
 
 let transcoder: Promise<BasisModule> | undefined;
@@ -79,6 +106,8 @@ const TRANSCODER_FORMATS = { bc7: "cTFBC7_RGBA", astc: "cTFASTC_4x4_RGBA", etc2:
 
 /** Transcodes one 2D KTX2 image `uri` (for messages) at a load boundary. */
 export async function transcodeKtx2(uri: string, bytes: Uint8Array): Promise<TranscodedImage> {
+  const plain = readRgba8Ktx2(uri, bytes);
+  if (plain) return { format: "rgba8", ...plain };
   const [module, preferred] = await Promise.all([loadTranscoder(), targetFormat()]);
   const file = new module.KTX2File(bytes);
   try {

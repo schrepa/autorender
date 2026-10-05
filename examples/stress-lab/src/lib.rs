@@ -12,6 +12,7 @@ mod shapes;
 
 pub use config::{StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;
+pub use highlands::FILES as HIGHLANDS_FILES;
 pub use metrics::FrameMetrics;
 pub use scene::{StressFile, create_workload, create_workload_with, look, set_view, stress_shafts};
 

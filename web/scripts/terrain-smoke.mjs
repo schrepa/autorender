@@ -107,6 +107,7 @@ try {
   assert.ok(settled.terrain_patches > 0 && settled.terrain_triangles > 0, "terrain draws");
   assert.ok(settled.terrain_shadow_patches > 0, "terrain casts shadows");
   assert.equal(settled.dropped_terrain_tiles, 0);
+  assert.equal(settled.dropped_terrain_materials, 0);
   checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles });
 
   // Discovery and inspection.
