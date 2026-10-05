@@ -2747,6 +2747,19 @@
           "type": "boolean",
           "default": true
         },
+        "level_extent": {
+          "description": "Side of the finest kept level (world units), which each next level\nis four times; 256 when omitted.",
+          "type": "number",
+          "format": "float",
+          "minimum": 0.001
+        },
+        "levels": {
+          "description": "Kept levels (decision 065): maps of still casters following the\ncamera, sharper than the far maps where they reach, each with half\nthe far maps' `resolution` per side; 0 to 3, none when omitted.\nWorlds larger than their shadows' sharpness give them two or three.",
+          "type": "integer",
+          "format": "uint32",
+          "maximum": 3,
+          "minimum": 0
+        },
         "near_distance": {
           "description": "View distance of the sharper maps that follow the camera.",
           "type": "number",

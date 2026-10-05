@@ -11,7 +11,11 @@
 //! indirect draws per mesh; on GPU-presented frames it also keeps each
 //! slot's stillness and marks dirty tiles, read back a few frames later.
 //! CPU-prepared frames draw every caster into the moving map and leave the
-//! kept map unread. Casters with virtual geometry (decision 044) are
+//! kept map unread. Kept levels (decision 065), layers of another texture,
+//! hold still casters sharper than the kept map near the camera: each
+//! follows it a tile at a time, and a frame redraws the tiles one level
+//! uncovered, or a region of its dirty tiles; lookups read the finest level
+//! holding a receiver's tile, then the kept map. Casters with virtual geometry (decision 044) are
 //! selected like the others; virtual geometry selects their clusters for
 //! each map drawn, as the camera sees them in the maps drawn every frame
 //! and within half a texel in the kept map, and draws them after its own
@@ -44,7 +48,7 @@ use crate::cached::Cached;
 use crate::gpu_data::{DRAW_ARGS_BYTES, MAX_CASCADES, ShadowCullUniform};
 use crate::mesh_arena::{Bindings, Ids, MeshDraw};
 use crate::profiling::GpuProfiler;
-use crate::shadow_fit::{KeptMap, LightBasis, Refresh};
+use crate::shadow_fit::{KeptLevels, KeptMap, LevelRefresh, LightBasis, REFRESH_TILES, Refresh};
 
 use casters::CasterGroups;
 pub(crate) use casters::ShadowGroup;
@@ -54,19 +58,24 @@ use pipelines::ShadowPipelines;
 use regions::{Regions, SelectionCounts};
 use selection::Selection;
 
-// Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow.
+// Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow, then
+// the kept levels (decision 065), one map of selected casters for the one
+// redrawn.
 pub(crate) const MOVING_MAP: usize = MAX_CASCADES;
 pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1;
-const MAPS: usize = MAX_CASCADES + 2;
-// Uniform offset alignment between view matrices: each near cascade's, then
-// the far maps'.
+pub(crate) const KEPT_LEVELS: usize = MAX_CASCADES + 2;
+const MAPS: usize = MAX_CASCADES + 3;
+// Uniform offset alignment between view matrices: each near cascade's, the
+// far maps', then the redrawn kept level's.
 const VIEW_STRIDE: u64 = 256;
 const FAR_VIEW: u64 = MAX_CASCADES as u64 * VIEW_STRIDE;
+const LEVEL_VIEW: u64 = FAR_VIEW + VIEW_STRIDE;
 const GROUP: u32 = 256;
 const SKINNED_GROUP: u32 = 64;
 // Mode bits of the selection pass.
 const STILLNESS: u32 = 1;
 const REFRESH: u32 = 2;
+const LEVEL_REFRESH: u32 = 4;
 
 /// Planes of a virtual shadow view: its selection region's five, and the
 /// view frustum slice's that the sun's sweep never crosses.
@@ -178,10 +187,14 @@ pub(crate) type ScatterDraw<'a> = dyn Fn(
     ) -> u32
     + 'a;
 
-/// A redraw of the kept map for placed objects (decision 060): its
-/// world-to-clip matrix and the inward world planes around the region
-/// redrawn.
-pub(crate) type KeptRefresh = (Mat4, [[f32; 4]; 6]);
+/// A redraw of the kept map (decision 060) or of a kept level (decision
+/// 065) for placed objects: the inward world planes around the region
+/// redrawn and its texel's world size.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct KeptRefresh {
+    pub planes: [[f32; 4]; 6],
+    pub texel: f32,
+}
 
 pub(crate) struct MapSources<'a> {
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
@@ -211,6 +224,10 @@ pub(crate) struct ShadowFrame {
     // Near cascades drawn and looked up.
     cascades: u32,
     refresh: Option<Refresh>,
+    // The kept level redrawn (decision 065), and the tiles no level holds
+    // yet.
+    level_refresh: Option<LevelRefresh>,
+    level_pending: u32,
     pose_index: usize,
 }
 
@@ -224,6 +241,19 @@ impl ShadowFrame {
             Some(Refresh::Whole) => 2,
         }
     }
+
+    /// Kept-level tiles this frame redraws (decision 065).
+    pub(crate) fn level_tiles(&self) -> u32 {
+        self.level_refresh.map_or(0, |refresh| {
+            let region = refresh.region;
+            (region.columns[1] - region.columns[0] + 1) * (region.rows[1] - region.rows[0] + 1)
+        })
+    }
+
+    /// Kept-level tiles no level holds yet, which lookups read coarser.
+    pub(crate) fn level_pending(&self) -> u32 {
+        self.level_pending
+    }
 }
 
 pub(crate) struct ShadowPass {
@@ -236,6 +266,7 @@ pub(crate) struct ShadowPass {
     material_layout: wgpu::BindGroupLayout,
     maps: ShadowMaps,
     kept: KeptMap,
+    levels: KeptLevels,
     casters: CasterGroups,
     selection: Selection,
     // Pose bindings of both pose buffers, by the generation they belong to.
@@ -246,10 +277,11 @@ pub(crate) struct ShadowPass {
     // terrain's patches are culled by (decision 051).
     drawn_maps: Vec<(usize, Mat4)>,
     // Whether this frame keeps still casters in the kept map (GPU-presented
-    // frames), and its redraw of it: the far maps' clip and world planes
-    // around the region redrawn, for placed objects (decision 060).
+    // frames), and its redraws of it and of a kept level, for placed objects
+    // (decisions 060 and 065).
     keeps_still: bool,
     kept_refresh: Option<KeptRefresh>,
+    level_refresh: Option<KeptRefresh>,
     // Advances whenever the caster groups change.
     groups_generation: u64,
     // The caster groups, mesh layout and map errors (bits) the draw
@@ -276,6 +308,7 @@ impl ShadowPass {
             material_layout: material_layout.clone(),
             maps: ShadowMaps::new(device),
             kept: KeptMap::default(),
+            levels: KeptLevels::default(),
             casters: CasterGroups::new(),
             selection: Selection::new(device),
             pose_groups: Cached::default(),
@@ -283,6 +316,7 @@ impl ShadowPass {
             drawn_maps: Vec::new(),
             keeps_still: false,
             kept_refresh: None,
+            level_refresh: None,
             groups_generation: 0,
             template_key: None,
             written_views: None,
@@ -303,7 +337,7 @@ impl ShadowPass {
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
     /// lookup uniform, the near cascades, the kept and moving maps, the
     /// comparison sampler and the texel sampler of receiver planes.
-    pub(crate) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 6] {
+    pub(crate) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 7] {
         self.maps.entries()
     }
 
@@ -343,15 +377,23 @@ impl ShadowPass {
         self.kept_refresh
     }
 
-    /// Marks the kept map's tiles under the world box `min`..`max` dirty:
-    /// placed objects within it appeared or left (decision 060).
+    /// This frame's redraw of a kept level (decision 065), likewise.
+    pub(crate) fn level_refresh(&self) -> Option<KeptRefresh> {
+        self.level_refresh
+    }
+
+    /// Marks the tiles of the kept map and levels under the world box
+    /// `min`..`max` dirty: placed objects within it appeared or left
+    /// (decision 060).
     pub(crate) fn dirty_kept(&mut self, min: Vec3, max: Vec3) {
         self.kept.dirty_box(min, max);
+        self.levels.dirty_box(min, max);
     }
 
     /// Marks every kept tile dirty: what placed objects cast changed.
     pub(crate) fn dirty_kept_all(&mut self) {
         self.kept.dirty_all();
+        self.levels.dirty_all();
     }
 
     /// The maps' resolution, texels square; 0 without maps.
@@ -381,9 +423,10 @@ impl ShadowPass {
     }
 
     /// The latest caster totals of the near cascades together, the moving
-    /// map and the kept map read back from GPU-selected frames, a few frames
-    /// old; the kept total counts only frames that redrew part of it.
-    pub(crate) fn caster_counts(&self) -> Option<[u32; 3]> {
+    /// map, the kept map and the kept levels read back from GPU-selected
+    /// frames, a few frames old; the kept totals count only frames that
+    /// redrew part of them.
+    pub(crate) fn caster_counts(&self) -> Option<[u32; 4]> {
         self.selection.caster_counts()
     }
 
@@ -409,6 +452,7 @@ impl ShadowPass {
             if self.casters.source() == Source::Presented {
                 // Removed casters leave their kept shadows: redraw every tile.
                 self.kept.dirty_all();
+                self.levels.dirty_all();
             }
         }
     }
@@ -428,10 +472,12 @@ impl ShadowPass {
             ..
         } = inputs;
         self.kept.merge(self.selection.take_dirty_tiles());
+        self.levels.merge(self.selection.take_level_tiles());
         self.virtual_views.clear();
         self.drawn_maps.clear();
         self.keeps_still = false;
         self.kept_refresh = None;
+        self.level_refresh = None;
         let settings = snapshot.environment.shadows.sanitized();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
             if !settings.enabled {
@@ -446,12 +492,16 @@ impl ShadowPass {
         self.pipelines.get_or_insert_with(|| {
             ShadowPipelines::new(device, self.layout, &self.material_layout)
         });
-        if self
-            .maps
-            .ensure(device, settings.resolution, settings.cascades)
-        {
-            // New maps hold nothing: the kept one is redrawn whole.
+        if self.maps.ensure(
+            device,
+            settings.resolution,
+            settings.cascades,
+            settings.levels,
+        ) {
+            // New maps hold nothing: the kept one and levels are redrawn
+            // whole.
             self.kept.invalidate();
+            self.levels.invalidate();
         }
         // The far region: the settings' bounds, or a cube around an anchor
         // that follows the camera a quarter of the distance at a time.
@@ -464,7 +514,27 @@ impl ShadowPass {
             eye,
             settings.resolution,
         );
-        let regions = Regions::new(basis, far, &settings, snapshot.view_projection, eye);
+        // Kept levels (decision 065) follow the camera.
+        self.levels
+            .place(basis, eye, settings.levels, settings.level_extent);
+        let classify = source == Source::Presented;
+        if classify
+            && self
+                .selection
+                .ensure_stillness(device, inputs.slot_capacity)
+        {
+            // Stillness starts over: the kept map and levels must be redrawn
+            // whole.
+            self.kept.invalidate();
+            self.levels.invalidate();
+        }
+        let level_refresh = if classify {
+            self.levels.refresh(REFRESH_TILES)
+        } else {
+            None
+        };
+        let regions = Regions::new(basis, far, &settings, snapshot.view_projection, eye)
+            .with_levels(&self.levels, level_refresh);
         let (near_clips, far_clip) = regions.clips();
         self.drawn_maps.extend(
             near_clips
@@ -474,22 +544,22 @@ impl ShadowPass {
                 .enumerate()
                 .chain([(MOVING_MAP, far_clip)]),
         );
-        let classify = source == Source::Presented;
-        if classify
-            && self
-                .selection
-                .ensure_stillness(device, inputs.slot_capacity)
-        {
-            // Stillness starts over: the kept map must be redrawn whole.
-            self.kept.invalidate();
-        }
         let refresh = if classify { self.kept.refresh() } else { None };
         self.keeps_still = classify;
-        self.kept_refresh = refresh.map(|refresh| {
-            (
-                far_clip,
-                regions.rect_planes(regions.refresh_rect(Some(refresh))),
-            )
+        let far_texel = far.texel(settings.resolution);
+        self.kept_refresh = refresh.map(|refresh| KeptRefresh {
+            planes: regions.rect_planes(regions.refresh_rect(Some(refresh))),
+            texel: far_texel,
+        });
+        self.level_refresh = regions.level_draw().map(|draw| {
+            let mut planes = regions.rect_planes(draw.rect);
+            // Casters beyond the band's far depth darken none of its
+            // receivers.
+            planes[4] = (-basis.rows[2]).extend(draw.page.depth[1]).to_array();
+            KeptRefresh {
+                planes,
+                texel: draw.page.texel(settings.resolution / 2),
+            }
         });
         // Selection outputs, and the draw arguments' template: each group's
         // mesh placement at the level of detail each map draws it at.
@@ -528,8 +598,12 @@ impl ShadowPass {
                 // it whole.
                 self.kept.invalidate();
             }
+            if update.level_levels {
+                self.levels.invalidate();
+            }
             if update.dirty_replaced {
                 self.kept.dirty_all();
+                self.levels.dirty_all();
             }
         }
         let pipelines = self.pipelines.as_ref().expect("created above");
@@ -570,6 +644,7 @@ impl ShadowPass {
                     .groups()
                     .iter()
                     .any(|group| group.virtual_geometry),
+                levels: &self.levels,
             },
             &mut self.virtual_views,
         );
@@ -580,8 +655,10 @@ impl ShadowPass {
             queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
             self.written_cull = Some(cull);
         }
-        self.maps
-            .write_uniform(queue, regions.lookup_uniform(&settings, classify));
+        self.maps.write_uniform(
+            queue,
+            regions.lookup_uniform(&settings, classify, &self.levels),
+        );
         // Bindings: poses of this frame, and the selection inputs.
         if self.pose_groups.stale(&poses.generation)
             || self
@@ -625,6 +702,8 @@ impl ShadowPass {
             skinned,
             cascades: regions.near().len() as u32,
             refresh,
+            level_refresh: regions.level_draw().map(|draw| draw.refresh),
+            level_pending: self.levels.pending(),
             pose_index: poses.parity,
         })
     }
@@ -673,8 +752,8 @@ impl ShadowPass {
     /// Records the depth passes of `frame` from `sources`, after
     /// [`Self::encode_selection`] and virtual geometry's selection, timed by
     /// `profiler` (`shadow_near` from the first cascade to the last,
-    /// `shadow_moving` and `shadow_kept`); returns the indexed draws, one per
-    /// mesh group and map drawn.
+    /// `shadow_moving`, `shadow_kept` and `shadow_levels`); returns the
+    /// indexed draws, one per mesh group and map drawn.
     pub(crate) fn encode_maps(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -797,6 +876,7 @@ impl ShadowPass {
             let (span, begin, end) = match map {
                 MOVING_MAP => ("shadow_moving", true, true),
                 KEPT_MAP => ("shadow_kept", true, true),
+                KEPT_LEVELS => ("shadow_levels", true, true),
                 cascade => ("shadow_near", cascade == 0, cascade == last_cascade),
             };
             (begin || end)
@@ -843,6 +923,24 @@ impl ShadowPass {
             }
             pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
             draw_selected(&mut pass, KEPT_MAP);
+        }
+        // A region of a kept level (decision 065): cleared, then its still
+        // casters drawn through its page's view; GPU-presented frames
+        // alone redraw levels, and bind poses.
+        if let (Some(refresh), Some(pose_group)) = (frame.level_refresh, pose_group) {
+            let mut pass = map_pass(
+                encoder,
+                &maps.level_layers[refresh.level],
+                wgpu::LoadOp::Load,
+                writes(KEPT_LEVELS),
+            );
+            let [x, y, width, height] = refresh.region.scissor(maps.resolution / 2);
+            pass.set_scissor_rect(x, y, width, height);
+            pass.set_bind_group(0, &pipelines.view_group, &[LEVEL_VIEW as u32]);
+            pass.set_bind_group(1, pose_group, &[]);
+            pass.set_pipeline(&pipelines.clear);
+            pass.draw(0..3, 0..1);
+            draw_selected(&mut pass, KEPT_LEVELS);
         }
         draws.get()
     }

@@ -1,27 +1,32 @@
 //! Caster selection (decision 020): one compute pass selects each map's
 //! casters from every candidate, visible or culled, into indirect draws per
 //! caster group, from the draw arguments' template. On GPU-presented frames
-//! it also keeps each slot's stillness and marks the kept map's dirty
-//! tiles, read back a few frames later with the caster totals.
+//! it also keeps each slot's stillness and marks the dirty tiles of the
+//! kept map and levels (decision 065), read back a few frames later with
+//! the caster totals.
 
 use std::{cell::Cell, rc::Rc};
 
 use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
-use super::{GROUP, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source};
+use super::{GROUP, KEPT_LEVELS, KEPT_MAP, MAPS, Presented, SKINNED_GROUP, ShadowFrame, Source};
 use crate::bindings::{SHADOW_SELECT, SHADOW_SKINNED};
 use crate::browser::FramePoses;
 use crate::buffers::{ReadbackRing, entry};
 use crate::cached::Cached;
-use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
+use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES, MAX_LEVELS};
 use crate::profiling::{GpuProfiler, Span};
 use crate::shadow_fit::TILE_WORDS;
 
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
-// Dirty tiles, then the three caster totals and a pad word, read back
-// together.
-const READBACK_BYTES: u64 = (TILE_WORDS as u64 + 4) * 4;
+// Dirty tiles of the kept map, then of each kept level (decision 065), then
+// the four caster totals, read back together.
+const DIRTY_WORDS: usize = TILE_WORDS * (1 + MAX_LEVELS);
+const READBACK_BYTES: u64 = (DIRTY_WORDS as u64 + 4) * 4;
+// Bytes of a slot's stillness: its pose key, its still-frame count and
+// kept-map tiles, and its footprint in the kept levels.
+const STILLNESS_BYTES: u64 = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SelectKey {
@@ -33,10 +38,11 @@ struct SelectKey {
 }
 
 /// What a template update changed for the kept map: the levels of detail
-/// it draws (it must be redrawn whole), and the dirty-tile buffer (every
-/// tile must be redrawn).
+/// it draws (it must be redrawn whole), those the kept levels draw
+/// (likewise), and the dirty-tile buffer (every tile must be redrawn).
 pub(super) struct TemplateUpdate {
     pub(super) kept_levels: bool,
+    pub(super) level_levels: bool,
     pub(super) dirty_replaced: bool,
 }
 
@@ -89,10 +95,11 @@ pub(super) struct Selection {
     select_parity: usize,
     skinned_group: Cached<(u64, u64), wgpu::BindGroup>,
     readbacks: ReadbackRing<()>,
-    // Dirty tiles read back and not yet taken, and the latest caster totals
-    // read back: near, moving and kept maps.
-    read_back: Rc<Cell<[u32; TILE_WORDS]>>,
-    casters: Rc<Cell<Option<[u32; 3]>>>,
+    // Dirty tiles of the kept map and levels read back and not yet taken,
+    // and the latest caster totals read back: near, moving and kept maps
+    // and kept levels.
+    read_back: Rc<Cell<[u32; DIRTY_WORDS]>>,
+    casters: Rc<Cell<Option<[u32; 4]>>>,
 }
 
 impl Selection {
@@ -129,7 +136,7 @@ impl Selection {
             select_parity: 0,
             skinned_group: Cached::default(),
             readbacks: ReadbackRing::new("engine/shadow-dirty-readback"),
-            read_back: Rc::new(Cell::new([0; TILE_WORDS])),
+            read_back: Rc::new(Cell::new([0; DIRTY_WORDS])),
             casters: Rc::new(Cell::new(None)),
         }
     }
@@ -154,14 +161,30 @@ impl Selection {
     }
 
     /// The latest caster totals read back: near cascades together, the
-    /// moving map and the kept map.
-    pub(super) fn caster_counts(&self) -> Option<[u32; 3]> {
+    /// moving map, the kept map and the kept levels.
+    pub(super) fn caster_counts(&self) -> Option<[u32; 4]> {
         self.casters.get()
     }
 
-    /// Takes the dirty tiles read back since the last call.
+    /// Takes the kept map's dirty tiles read back since the last call.
     pub(super) fn take_dirty_tiles(&self) -> [u32; TILE_WORDS] {
-        self.read_back.replace([0; TILE_WORDS])
+        let mut words = self.read_back.get();
+        let tiles = std::array::from_fn(|index| words[index]);
+        words[..TILE_WORDS].fill(0);
+        self.read_back.set(words);
+        tiles
+    }
+
+    /// Takes each kept level's dirty tiles (decision 065) read back since
+    /// the last call.
+    pub(super) fn take_level_tiles(&self) -> [[u32; TILE_WORDS]; MAX_LEVELS] {
+        let mut words = self.read_back.get();
+        let tiles = std::array::from_fn(|level| {
+            std::array::from_fn(|index| words[TILE_WORDS * (1 + level) + index])
+        });
+        words[TILE_WORDS..].fill(0);
+        self.read_back.set(words);
+        tiles
     }
 
     /// The template must be written again: the caster groups changed.
@@ -179,7 +202,7 @@ impl Selection {
         self.stillness = storage(
             device,
             "engine/shadow-stillness",
-            self.stillness_capacity as u64 * 8,
+            self.stillness_capacity as u64 * STILLNESS_BYTES,
             wgpu::BufferUsages::empty(),
         );
         self.generation += 1;
@@ -238,6 +261,7 @@ impl Selection {
     ) -> TemplateUpdate {
         let mut update = TemplateUpdate {
             kept_levels: false,
+            level_levels: false,
             dirty_replaced: false,
         };
         let groups = casters.groups();
@@ -247,12 +271,14 @@ impl Selection {
             // Casters drawn at other levels than the kept map holds redraw
             // it whole, as a moved sun does (decision 047): its levels change
             // only with its texel and when levels of detail turn on or off.
-            let kept = |levels: &[u8]| {
+            let kept = |levels: &[u8], map: usize| {
                 levels
-                    .get(KEPT_MAP * groups.len()..(KEPT_MAP + 1) * groups.len())
+                    .get(map * groups.len()..(map + 1) * groups.len())
                     .map(<[u8]>::to_vec)
             };
-            update.kept_levels = kept(&levels) != kept(&self.template_levels);
+            update.kept_levels = kept(&levels, KEPT_MAP) != kept(&self.template_levels, KEPT_MAP);
+            update.level_levels =
+                kept(&levels, KEPT_LEVELS) != kept(&self.template_levels, KEPT_LEVELS);
             self.template_stale = true;
         }
         if !self.template_stale {
@@ -445,7 +471,7 @@ impl Selection {
             .readbacks
             .record(device, encoder, &self.dirty, READBACK_BYTES, ())
         {
-            encoder.clear_buffer(&self.dirty, 0, Some(TILE_WORDS as u64 * 4));
+            encoder.clear_buffer(&self.dirty, 0, Some(DIRTY_WORDS as u64 * 4));
         }
     }
 
@@ -458,11 +484,9 @@ impl Selection {
                 *tile |= words.get(index);
             }
             read_back.set(tiles);
-            casters.set(Some([
-                words.get(TILE_WORDS),
-                words.get(TILE_WORDS + 1),
-                words.get(TILE_WORDS + 2),
-            ]));
+            casters.set(Some(std::array::from_fn(|index| {
+                words.get(DIRTY_WORDS + index)
+            })));
         });
     }
 }

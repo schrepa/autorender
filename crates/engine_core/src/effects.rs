@@ -19,7 +19,10 @@
 //! Sharper maps follow the first `near_distance` of the view, split into
 //! `cascades` (decision 028): each has three times the texel density of the
 //! next and is a depth pass per frame over the casters it covers, and each
-//! has half the far maps' `resolution` per side.
+//! has half the far maps' `resolution` per side. Kept `levels` (decision
+//! 065) hold still casters sharper than that map near the camera: squares
+//! `level_extent` wide and four times wider each, following the camera a
+//! tile at a time and redrawing only the tiles it uncovers.
 //!
 //! Ambient occlusion darkens the sky's ambient light in creases, corners and
 //! under objects. Bloom makes light glow beyond bright pixels such as
@@ -54,6 +57,8 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
 
 /// Most near shadow cascades ([`Shadows::cascades`]).
 pub const MAX_SHADOW_CASCADES: u32 = 4;
+/// Most kept shadow levels ([`Shadows::levels`]).
+pub const MAX_KEPT_LEVELS: u32 = 3;
 
 /// Sun shadows (decision 020); omitted fields take the engine defaults.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -91,6 +96,26 @@ pub struct Shadows {
     /// Texels per side of the far maps: 1024, 2048 or 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 1024, max = 4096)))]
     pub resolution: u32,
+    /// Kept levels (decision 065): maps of still casters following the
+    /// camera, sharper than the far maps where they reach, each with half
+    /// the far maps' `resolution` per side; 0 to 3, none when omitted.
+    /// Worlds larger than their shadows' sharpness give them two or three.
+    #[serde(skip_serializing_if = "is_zero")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 3)))]
+    pub levels: u32,
+    /// Side of the finest kept level (world units), which each next level
+    /// is four times; 256 when omitted.
+    #[serde(skip_serializing_if = "is_default_level_extent")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
+    pub level_extent: f32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+fn is_default_level_extent(extent: &f32) -> bool {
+    *extent == Shadows::default().level_extent
 }
 
 /// Shadow bounds as a scene writes them: `{"min": [x, y, z], "max": [x, y, z]}`.
@@ -151,6 +176,8 @@ impl Default for Shadows {
             near_distance: 100.0,
             cascades: 3,
             resolution: 2048,
+            levels: 0,
+            level_extent: 256.0,
         }
     }
 }
@@ -185,13 +212,20 @@ impl Shadows {
             near_distance,
             cascades: self.cascades.clamp(1, MAX_SHADOW_CASCADES),
             resolution: self.resolution.clamp(1024, 4096).next_power_of_two(),
+            levels: self.levels.min(MAX_KEPT_LEVELS),
+            level_extent: if self.level_extent.is_finite() && self.level_extent > 0.0 {
+                self.level_extent
+            } else {
+                defaults.level_extent
+            },
         }
     }
 
     /// Ok when a scene may hold these settings: positive distances with the
     /// near one inside the other, a resolution of 1024, 2048 or 4096, 1 to
-    /// [`MAX_SHADOW_CASCADES`] cascades, and finite bounds with `min` at most
-    /// `max` on every axis.
+    /// [`MAX_SHADOW_CASCADES`] cascades, at most [`MAX_KEPT_LEVELS`] kept
+    /// levels of a finite positive extent, and finite bounds with `min` at
+    /// most `max` on every axis.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !self.distance.is_finite() || self.distance <= 0.0 {
             return Err(InvalidSetting::new(
@@ -218,6 +252,18 @@ impl Shadows {
             return Err(InvalidSetting::new(
                 "cascades",
                 format!("must be 1 to {MAX_SHADOW_CASCADES}"),
+            ));
+        }
+        if self.levels > MAX_KEPT_LEVELS {
+            return Err(InvalidSetting::new(
+                "levels",
+                format!("must be 0 to {MAX_KEPT_LEVELS}"),
+            ));
+        }
+        if !self.level_extent.is_finite() || self.level_extent <= 0.0 {
+            return Err(InvalidSetting::new(
+                "level_extent",
+                "must be finite and positive",
             ));
         }
         if let Some((min, max)) = self.bounds

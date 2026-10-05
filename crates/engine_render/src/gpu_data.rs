@@ -692,10 +692,12 @@ impl Variant {
 
 /// Most near shadow cascades (decision 028).
 pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
+/// Most kept shadow levels (decision 065).
+pub(crate) const MAX_LEVELS: usize = engine_core::MAX_KEPT_LEVELS as usize;
 
-/// WGSL `Shadow` uniform of `scene.wgsl` (decisions 020 and 028): world to
-/// each near cascade and to the far shadow maps, and their settings, 400
-/// bytes.
+/// WGSL `Shadow` uniform of `scene.wgsl` (decisions 020, 028 and 065):
+/// world to each near cascade, to the far shadow maps and to light space,
+/// each kept level's part of it, and their settings, 656 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct ShadowUniform {
@@ -719,6 +721,22 @@ pub(crate) struct ShadowUniform {
     pub offsets: [f32; 4],
     /// Texels a side of the near cascades and the far maps; zw unused.
     pub sizes: [f32; 4],
+    /// World to light space (decision 065): the sun's right, up and
+    /// away-from-sun axes, which every kept level scales.
+    pub light: [[f32; 4]; 3],
+    /// Each kept level's light space: one over its width (x and y in level
+    /// widths, whose fractions place a point in its toroidal map), and its
+    /// band's nearest depth and one over its depth (z in [0, 1]); w unused.
+    pub level_scales: [[f32; 4]; MAX_LEVELS],
+    /// Each level's window: its first corner in level widths, the normal
+    /// offset (world units) of its lookups and its steepest receiver plane.
+    pub level_windows: [[f32; 4]; MAX_LEVELS],
+    /// The tiles of each level holding their casters: a bit per tile slot,
+    /// eight words a level.
+    pub level_valid: [[u32; 4]; 2 * MAX_LEVELS],
+    /// Levels in use, their texels a side, and a bit for each level with
+    /// tiles not yet drawn; w unused.
+    pub level_state: [f32; 4],
 }
 
 /// WGSL `Cull` uniform of `shadows.wgsl`: 240 bytes. Each draw group's ID
@@ -755,7 +773,16 @@ pub(crate) struct ShadowCullUniform {
     pub cascades: u32,
     /// Skinned slots `select_skinned` visits on GPU-presented frames.
     pub skinned: u32,
-    pub pad: [u32; 2],
+    /// Kept levels in use (decision 065).
+    pub levels: u32,
+    pub pad: u32,
+    /// The light-space rectangle of the kept level redrawn this frame, and
+    /// its depth band's nearest and farthest depths (zw unused).
+    pub level_refresh: [f32; 4],
+    pub level_depths: [f32; 4],
+    /// Each kept level's tiles: light-space x and y of its first tile's
+    /// corner and the tile width; w unused.
+    pub level_tiles: [[f32; 4]; MAX_LEVELS],
     /// Inward world planes (`xyz . p + w >= 0` inside) bounding where
     /// casters can darken each near cascade's receivers, then the moving
     /// map's: their part of the view swept toward the sun; unused planes
