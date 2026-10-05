@@ -182,6 +182,8 @@ pub struct RenderStats {
     /// Of those, objects standing far away (decision 061), which hide where
     /// the tiles holding them instead are resident.
     pub placed_far_objects: u32,
+    /// Chunks of terrains' water drawn (decision 067).
+    pub water_chunks: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.
@@ -286,5 +288,7 @@ mod transparent;
 mod virtual_geometry;
 #[cfg(target_arch = "wasm32")]
 mod visibility;
+#[cfg(target_arch = "wasm32")]
+mod water;
 #[cfg(target_arch = "wasm32")]
 pub use browser::{Renderer, StartingRenderer};

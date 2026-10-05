@@ -243,6 +243,8 @@ pub struct Renderer {
     terrain: crate::terrain::TerrainPass,
     // Ground cover grown each frame on terrain (decision 056).
     ground_cover: crate::ground_cover::GroundCoverPass,
+    // Terrains' lakes and rivers (decision 067).
+    water: crate::water::WaterPass,
     // Objects placed on terrain (decision 057): their pass, their meshes
     // and a counter advancing when that set changes, and their draw groups
     // and slots.
@@ -438,6 +440,7 @@ impl Renderer {
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
         let terrain = crate::terrain::TerrainPass::new(&device, &queue);
         let ground_cover = crate::ground_cover::GroundCoverPass::new(&device);
+        let water = crate::water::WaterPass::new(&device);
         let scatter = crate::scatter::ScatterPass::new(&device);
         let occupancy = crate::occupancy::OccupancyPass::new(&device);
         let camera = CameraBindings::new(
@@ -523,6 +526,7 @@ impl Renderer {
             },
             terrain,
             ground_cover,
+            water,
             scatter,
             scatter_meshes: (BTreeSet::new(), 0),
             scatter_draws: scatter_draws::ScatterDraws::default(),

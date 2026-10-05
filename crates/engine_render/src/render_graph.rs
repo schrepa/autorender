@@ -250,10 +250,12 @@ pub(crate) enum Pass {
     TemporalResolve,
     /// Reflection probe faces captured after the frame (decision 043).
     ProbeCaptures,
+    /// Water over the opaque scene (decision 067).
+    Water,
 }
 
 /// Passes, by their bits in the masks frames report.
-const PASSES: [Pass; 23] = [
+const PASSES: [Pass; 24] = [
     Pass::Presentation,
     Pass::Scatter,
     Pass::Occupancy,
@@ -271,6 +273,7 @@ const PASSES: [Pass; 23] = [
     Pass::Classify { phase: 1 },
     Pass::Resolve { phase: 1 },
     Pass::Decals,
+    Pass::Water,
     Pass::Transparent,
     Pass::TransparentComposite,
     Pass::Effects,
@@ -305,6 +308,7 @@ impl Pass {
             Self::Effects => "effects",
             Self::Composite => "composite",
             Self::TemporalResolve => "temporal_resolve",
+            Self::Water => "water",
             Self::ProbeCaptures => "probe_captures",
         }
     }
@@ -654,6 +658,8 @@ pub(crate) struct FrameShape {
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
     pub(crate) decals: bool,
+    /// Water draws over the opaque scene (decision 067).
+    pub(crate) water: bool,
     /// Transparent draws or particles (decision 026), and glass reading
     /// the opaque scene (decision 038).
     pub(crate) transparency: bool,
@@ -793,6 +799,18 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Depth)
             .read_if(shape.lights, Lights)
             .color(scene, Access::Load);
+    }
+    // Water (decision 067) blends over the opaque scene and writes its
+    // depth, which transparent surfaces and screen effects then see.
+    if shape.water {
+        let mut water = graph
+            .add(Pass::Water)
+            .read_if(shape.shadows, ShadowMaps)
+            .read(Probes);
+        for &(target, _) in targets {
+            water = water.color(target, Access::Load);
+        }
+        water.depth(Depth, Access::Load);
     }
     if shape.transparency {
         graph

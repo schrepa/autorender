@@ -94,8 +94,37 @@ pub struct Hydrology {
     /// How deep water would stand in filled pits, as [`LAKE_RANGE`]
     /// encodes it.
     pub lakes: HeightImage,
+    /// Where water stands: lakes in filled pits and rivers in channels.
+    pub water: Arc<WaterGrid>,
     pub stats: HydrologyStats,
 }
+
+/// Where a bake's water stands (decision 067), sample by sample of its
+/// grid: lakes level at their pits' spill heights, rivers part full in
+/// their channels, flat across and falling along them. Surfaces reach a
+/// sample or two past the shore, under the banks, so water meets the
+/// ground where they cross; elsewhere they lie well below the ground.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterGrid {
+    pub width: usize,
+    pub height: usize,
+    /// Meters between samples, from the terrain's first corner.
+    pub spacing: f32,
+    /// The water's surface (terrain-local meters).
+    pub surface: Vec<f32>,
+    /// Meters of water above the ground; 0 where dry.
+    pub depth: Vec<f32>,
+    /// The water's velocity along x and z (meters a second); still in
+    /// lakes.
+    pub flow: Vec<[f32; 2]>,
+}
+
+/// Rivers fill this share of their channels' depth.
+const RIVER_FILL: f32 = 0.7;
+/// Samples past the shore water's surface reaches under the banks.
+const SHORE_SAMPLES: usize = 2;
+/// Meters below the ground dry samples' surfaces lie.
+const DRY_DEPTH: f32 = 20.0;
 
 /// The eight neighbors, orthogonal first, and how far each lies in
 /// samples.
@@ -276,6 +305,13 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
             }
         }
     }
+    let water = Arc::new(water(
+        heights,
+        (&filled, &carve, &area, &receivers),
+        width,
+        spacing,
+        layer,
+    ));
     let mut lake_samples = 0;
     let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
@@ -306,6 +342,7 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
         flow: image(flow),
         wetness: image(wetness),
         lakes: image(lakes),
+        water,
         stats: HydrologyStats {
             samples: count,
             channel_samples,
@@ -451,5 +488,160 @@ impl Layers {
             layers = layers.with_bake(unbaked.0, Arc::new(baked));
         }
         layers
+    }
+}
+
+/// Where water stands over the grid of `heights` (`width` samples wide,
+/// `spacing` meters apart), from the bake's filled heights, carving,
+/// upstream areas and receivers.
+fn water(
+    heights: &[f32],
+    (filled, carve, area, receivers): (&[f32], &[f32], &[f32], &[u32]),
+    width: usize,
+    spacing: f32,
+    layer: &HydrologyLayer,
+) -> WaterGrid {
+    let count = heights.len();
+    let height = count / width;
+    let lake = |sample: usize| filled[sample] - heights[sample] > LAKE_DEPTH;
+    let mut surface = vec![f32::NAN; count];
+    let mut flow = vec![[0.0_f32; 2]; count];
+    // Lakes stand level at their spill heights.
+    for (sample, level) in surface.iter_mut().enumerate() {
+        if lake(sample) {
+            *level = filled[sample];
+        }
+    }
+    // Rivers fill their channels part way, the nearest channel sample
+    // setting the surface across the bed, and run toward their receivers.
+    let mut nearest = vec![f32::INFINITY; count];
+    let reach_cells = (layer.max_width / spacing).ceil() as i32 + 1;
+    let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
+    for (sample, &drained) in area.iter().enumerate() {
+        let ratio = drained / layer.channel_area;
+        if ratio < 1.0 || layer.depth <= 0.0 || lake(sample) {
+            continue;
+        }
+        let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);
+        let level = heights[sample] - depth * (1.0 - RIVER_FILL);
+        let half = 0.5 * min(layer.width * ratio.sqrt(), layer.max_width);
+        let receiver = receivers[sample];
+        let velocity = if receiver == u32::MAX {
+            [0.0; 2]
+        } else {
+            let (rx, rz) = (receiver as usize % width, receiver as usize / width);
+            let (x, z) = (sample % width, sample / width);
+            let along = [rx as f32 - x as f32, rz as f32 - z as f32];
+            let length = (along[0] * along[0] + along[1] * along[1]).sqrt();
+            let drop = max(heights[sample] - heights[receiver as usize], 0.0);
+            // Steeper channels run faster, up to a torrent.
+            let speed = min(0.6 + 12.0 * (drop / (length * spacing)).sqrt(), 4.0);
+            [along[0] / length * speed, along[1] / length * speed]
+        };
+        let reach = max(half, 0.5 * spacing);
+        let cells = ((reach / spacing).ceil() as i32).min(reach_cells);
+        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+        for dz in -cells..=cells {
+            for dx in -cells..=cells {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx > last_x || nz > last_z {
+                    continue;
+                }
+                let distance = ((dx * dx + dz * dz) as f32).sqrt() * spacing;
+                let neighbor = nz as usize * width + nx as usize;
+                if distance > reach || distance >= nearest[neighbor] || lake(neighbor) {
+                    continue;
+                }
+                nearest[neighbor] = distance;
+                surface[neighbor] = level;
+                flow[neighbor] = velocity;
+            }
+        }
+    }
+    // Depths over the carved ground, then surfaces reaching past the
+    // shore: dry samples beside water take its level, a sample at a time.
+    let depth: Vec<f32> = (0..count)
+        .map(|sample| {
+            if surface[sample].is_nan() {
+                0.0
+            } else {
+                max(surface[sample] - (heights[sample] - carve[sample]), 0.0)
+            }
+        })
+        .collect();
+    for _ in 0..SHORE_SAMPLES {
+        let previous = surface.clone();
+        for (sample, level) in surface.iter_mut().enumerate() {
+            if !previous[sample].is_nan() {
+                continue;
+            }
+            let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+            for (dx, dz, _) in NEIGHBORS {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx > last_x || nz > last_z {
+                    continue;
+                }
+                let neighbor = previous[nz as usize * width + nx as usize];
+                if !neighbor.is_nan() && (level.is_nan() || neighbor > *level) {
+                    *level = neighbor;
+                }
+            }
+        }
+    }
+    // Elsewhere well below the ground.
+    for (sample, level) in surface.iter_mut().enumerate() {
+        if level.is_nan() {
+            *level = heights[sample] - carve[sample] - DRY_DEPTH;
+        }
+    }
+    WaterGrid {
+        width,
+        height,
+        spacing,
+        surface,
+        depth,
+        flow,
+    }
+}
+
+impl WaterGrid {
+    /// The water at terrain-local `(x, z)`: its surface and depth,
+    /// interpolated between the samples around it; `None` where dry.
+    pub fn at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
+        let (u, v) = (x / self.spacing, z / self.spacing);
+        if !(u >= 0.0 && v >= 0.0) {
+            return None;
+        }
+        let (x0, z0) = (u.floor() as usize, v.floor() as usize);
+        if x0 + 1 >= self.width || z0 + 1 >= self.height {
+            return None;
+        }
+        let (fx, fz) = (u - x0 as f32, v - z0 as f32);
+        let at = |values: &[f32], dx: usize, dz: usize| values[(z0 + dz) * self.width + x0 + dx];
+        let blend = |values: &[f32]| {
+            let low = at(values, 0, 0) + (at(values, 1, 0) - at(values, 0, 0)) * fx;
+            let high = at(values, 0, 1) + (at(values, 1, 1) - at(values, 0, 1)) * fx;
+            low + (high - low) * fz
+        };
+        let depth = blend(&self.depth);
+        (depth > 0.0).then(|| (blend(&self.surface), depth))
+    }
+
+    /// The lowest and highest surfaces of the samples from `(x, z)` to
+    /// `size` samples further each way, if any of them holds water.
+    pub fn block(&self, x: usize, z: usize, size: usize) -> Option<[f32; 2]> {
+        let mut wet = false;
+        let mut range = [f32::INFINITY, f32::NEG_INFINITY];
+        for row in z..(z + size + 1).min(self.height) {
+            for column in x..(x + size + 1).min(self.width) {
+                let sample = row * self.width + column;
+                wet |= self.depth[sample] > 0.0;
+                range = [
+                    min(range[0], self.surface[sample]),
+                    max(range[1], self.surface[sample]),
+                ];
+            }
+        }
+        wet.then_some(range)
     }
 }

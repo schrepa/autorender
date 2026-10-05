@@ -1550,7 +1550,7 @@ fn terrain_uniform(
 
 /// The planes of `clip`'s frustum as `ax + by + cz + d >= 0` inside: its
 /// sides, and unless `sides_only` its near and far planes (depth 0 to 1).
-fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {
+pub(crate) fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {
     let rows = [clip.row(0), clip.row(1), clip.row(2), clip.row(3)];
     let mut planes = vec![
         rows[3] + rows[0],
@@ -1580,7 +1580,7 @@ fn caster_planes(clip: Mat4, reach: Option<f32>) -> Vec<Vec4> {
 }
 
 /// Whether the box from `min` to `max` reaches inside every plane.
-fn visible(planes: &[Vec4], min: Vec3, max: Vec3) -> bool {
+pub(crate) fn visible(planes: &[Vec4], min: Vec3, max: Vec3) -> bool {
     planes.iter().all(|plane| {
         let corner = Vec3::new(
             if plane.x >= 0.0 { max.x } else { min.x },

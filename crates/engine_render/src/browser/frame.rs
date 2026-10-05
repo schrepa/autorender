@@ -186,14 +186,17 @@ impl Renderer {
         );
         let scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
+        // Water on terrains (decision 067).
+        let water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps (decision 052) may have been replaced.
         self.refresh_camera_group();
-        let shape = self.frame_shape(
+        let mut shape = self.frame_shape(
             kind,
             &packing,
             &features,
             (virtual_frame, resolving, scatter),
         );
+        shape.water = water;
         let mut state = FrameState {
             snapshot,
             frame,
@@ -1406,6 +1409,7 @@ impl Renderer {
             ],
             lights: features.light_frame.is_some() && self.lights.is_some(),
             decals: features.decal_frame.is_some() && self.decals.is_some(),
+            water: false,
             transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.map_or(Effects::default(), |frame| Effects {
@@ -1500,6 +1504,7 @@ impl Renderer {
             }
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::Decals => self.encode_decals(state, encoder, view, node),
+            Pass::Water => report.draws += self.encode_water(state, encoder, view, node),
             Pass::Transparent => {
                 report.draws += self.encode_transparent(state, encoder, view, node);
             }
@@ -2111,6 +2116,28 @@ impl Renderer {
                 .map(LightPass::fragment_group),
             state.shape.targets != Targets::Canvas,
         );
+    }
+
+    /// Water over the opaque scene (decision 067), writing its depth;
+    /// returns its draws.
+    fn encode_water(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        node: &Node,
+    ) -> u32 {
+        let (colors, count) = self.color_attachments(node, view);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/water"),
+            color_attachments: &colors[..count],
+            depth_stencil_attachment: self.depth_attachment(node),
+            timestamp_writes: self.profiler.span("water").map(Span::render),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        self.water
+            .draw(&mut pass, &self.camera.group, state.shape.targets)
     }
 
     /// Transparent surfaces and alpha particles accumulated (decision 026);
