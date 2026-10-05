@@ -261,30 +261,37 @@ impl Default for Viewport {
 #[serde(default, deny_unknown_fields)]
 pub struct TerrainSettings {
     pub enabled: bool,
-    /// Pixels of the viewport height a level's samples span before the
-    /// next coarser level takes over, from 1 to 64: triangles span about
-    /// this to twice as many pixels. Smaller draws more triangles.
+    /// Pixels a level's samples span before the next coarser level takes
+    /// over, 1 to 64; smaller draws more triangles.
     #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 64.0)))]
     pub pixel_error: f32,
     /// The coarsest levels kept resident over the whole terrain, so it
     /// always draws whole, from 1 to 8.
     #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
     pub pinned_levels: u32,
-    /// An optional budget of resident tiles (each about 270 KB on the CPU
-    /// and the GPU); beyond it the least important drop. Omitted, only the
-    /// device's limits bound them.
+    /// An optional budget of resident tiles (about 270 KB each); the least
+    /// important beyond it drop.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tiles: Option<u32>,
-    /// Work per frame for generating and decoding tiles, in samples: a tile
-    /// is about 67,000 to 300,000. More loads tiles sooner at a larger
-    /// frame cost.
+    /// Samples generated or decoded per frame (67,000 to 300,000 a tile).
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub samples_per_frame: u32,
     /// Meters around the camera and focus entities within which level-0
     /// tiles load for collision, 0 to 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4096.0)))]
     pub collision_radius: f32,
+    /// Long sun shadows through each terrain's horizon map (decision 052),
+    /// with shadows on; shadow maps then draw terrain near the camera only.
+    /// Off, terrain casts into the shadow maps alone.
+    pub sun_shadows: bool,
+    /// Texels along a horizon map's sides, 64 to 4096 (8 bytes each).
+    #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
+    pub shadow_resolution: u32,
+    /// Shadow edge height per meter to the slope casting it (the sun's disc
+    /// gives 0.0093).
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.2)))]
+    pub shadow_softness: f32,
 }
 
 impl Default for TerrainSettings {
@@ -296,6 +303,9 @@ impl Default for TerrainSettings {
             max_tiles: None,
             samples_per_frame: 65_536,
             collision_radius: 192.0,
+            sun_shadows: true,
+            shadow_resolution: 1024,
+            shadow_softness: 0.01,
         }
     }
 }
@@ -313,7 +323,14 @@ impl TerrainSettings {
                 "must be at least 1",
             ));
         }
-        check_range("collision_radius", self.collision_radius, 0.0..=4096.0)
+        check_range("collision_radius", self.collision_radius, 0.0..=4096.0)?;
+        if !(64..=4096).contains(&self.shadow_resolution) {
+            return Err(InvalidSetting::new(
+                "shadow_resolution",
+                "must be in [64, 4096]",
+            ));
+        }
+        check_range("shadow_softness", self.shadow_softness, 0.0..=0.2)
     }
 
     /// Every value in range.
@@ -334,6 +351,13 @@ impl TerrainSettings {
                 finite(self.collision_radius, defaults.collision_radius),
                 0.0,
                 4096.0,
+            ),
+            sun_shadows: self.sun_shadows,
+            shadow_resolution: self.shadow_resolution.clamp(64, 4096),
+            shadow_softness: crate::math::clamp(
+                finite(self.shadow_softness, defaults.shadow_softness),
+                0.0,
+                0.2,
             ),
         }
     }

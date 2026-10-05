@@ -55,7 +55,7 @@ use regions::{Regions, SelectionCounts};
 use selection::Selection;
 
 // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow.
-const MOVING_MAP: usize = MAX_CASCADES;
+pub(crate) const MOVING_MAP: usize = MAX_CASCADES;
 const KEPT_MAP: usize = MAX_CASCADES + 1;
 const MAPS: usize = MAX_CASCADES + 2;
 // Uniform offset alignment between view matrices: each near cascade's, then

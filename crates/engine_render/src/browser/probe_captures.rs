@@ -24,9 +24,12 @@ impl Renderer {
         self.ensure_probe_pipelines(kind);
         self.camera.prepare_probe_groups(
             &self.device,
-            &self.shadows,
-            &self.environment,
-            &self.probes,
+            &camera::GroupSources {
+                shadows: &self.shadows,
+                environment: &self.environment,
+                probes: &self.probes,
+                horizons: &self.terrain.horizons,
+            },
         );
         if odd {
             self.instances.prepare_alternate_group(&self.device);

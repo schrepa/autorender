@@ -36,6 +36,14 @@ impl Renderer {
                 eye: snapshot.camera_position,
                 maps: &maps,
                 probes,
+                settings: snapshot.environment.terrain.sanitized(),
+                shadows: snapshot.environment.shadows.enabled,
+                sun: snapshot
+                    .environment
+                    .atmosphere
+                    .sanitized()
+                    .sun_direction
+                    .normalize(),
             },
             self.display.max_layers,
         );

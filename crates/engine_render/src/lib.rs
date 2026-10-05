@@ -156,6 +156,10 @@ pub struct RenderStats {
     pub terrain_loading_tiles: u32,
     pub dropped_terrain_tiles: u32,
     pub terrain_fallback_patches: u32,
+    /// Terrains casting long sun shadows through horizon maps (decision
+    /// 052), and the maps this frame rebuilt.
+    pub terrain_horizons: u32,
+    pub terrain_horizon_builds: u32,
     /// The passes this frame ran, in order (decision 050), named in the
     /// JSON.
     #[serde(
@@ -230,6 +234,8 @@ mod targets;
 mod temporal;
 #[cfg(target_arch = "wasm32")]
 mod terrain;
+#[cfg(target_arch = "wasm32")]
+mod terrain_horizons;
 #[cfg(target_arch = "wasm32")]
 mod transparent;
 #[cfg(target_arch = "wasm32")]

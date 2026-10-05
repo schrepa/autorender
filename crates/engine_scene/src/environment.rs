@@ -80,6 +80,20 @@ pub struct SceneAtmosphere {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fog_max: Option<f32>,
+    /// Aerial perspective (decision 053), version 9: beyond this distance,
+    /// air of `aerial_density` per unit at height zero (0: off), thinning by
+    /// `aerial_falloff` per unit up, dims toward `aerial_color` and, toward
+    /// the sun, an `aerial_glow` of its color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aerial_start: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aerial_density: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aerial_falloff: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aerial_color: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aerial_glow: Option<f32>,
     /// Silhouette light in the horizon color.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rim: Option<f32>,
@@ -127,6 +141,11 @@ impl From<&Atmosphere> for SceneAtmosphere {
             fog_density: Some(atmosphere.fog_density),
             fog_falloff: Some(atmosphere.fog_falloff),
             fog_max: Some(atmosphere.fog_max),
+            aerial_start: Some(atmosphere.aerial_start),
+            aerial_density: Some(atmosphere.aerial_density),
+            aerial_falloff: Some(atmosphere.aerial_falloff),
+            aerial_color: Some(atmosphere.aerial_color.to_array()),
+            aerial_glow: Some(atmosphere.aerial_glow),
             rim: Some(atmosphere.rim),
             specular: Some(atmosphere.specular),
             emission: Some(atmosphere.emission),
@@ -163,6 +182,7 @@ impl SceneAtmosphere {
             (self.ground, &mut atmosphere.ground),
             (self.shadow_tint, &mut atmosphere.shadow_tint),
             (self.highlight_tint, &mut atmosphere.highlight_tint),
+            (self.aerial_color, &mut atmosphere.aerial_color),
         ];
         for (value, target) in colors {
             if let Some(value) = value {
@@ -178,6 +198,10 @@ impl SceneAtmosphere {
             (self.fog_density, &mut atmosphere.fog_density),
             (self.fog_falloff, &mut atmosphere.fog_falloff),
             (self.fog_max, &mut atmosphere.fog_max),
+            (self.aerial_start, &mut atmosphere.aerial_start),
+            (self.aerial_density, &mut atmosphere.aerial_density),
+            (self.aerial_falloff, &mut atmosphere.aerial_falloff),
+            (self.aerial_glow, &mut atmosphere.aerial_glow),
             (self.rim, &mut atmosphere.rim),
             (self.specular, &mut atmosphere.specular),
             (self.emission, &mut atmosphere.emission),
@@ -395,6 +419,28 @@ impl SceneEnvironment {
         .into_iter()
         .find_map(|(name, present)| present.then_some(name))
         .or_else(|| self.section_since(6))
+    }
+
+    /// The first version 9 field present, as its path below the environment:
+    /// aerial perspective (decision 053) or terrain settings (decision 051).
+    pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
+        let atmosphere = self.atmosphere.unwrap_or_default();
+        [
+            ("atmosphere.aerial_start", atmosphere.aerial_start.is_some()),
+            (
+                "atmosphere.aerial_density",
+                atmosphere.aerial_density.is_some(),
+            ),
+            (
+                "atmosphere.aerial_falloff",
+                atmosphere.aerial_falloff.is_some(),
+            ),
+            ("atmosphere.aerial_color", atmosphere.aerial_color.is_some()),
+            ("atmosphere.aerial_glow", atmosphere.aerial_glow.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(name, present)| present.then_some(name))
+        .or_else(|| self.section_since(9))
     }
 
     /// Checks every section present at authored path `path`.

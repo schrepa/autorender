@@ -43,6 +43,9 @@ struct SurfacePoint {
     // impostors (decision 048), whose rebuilt surfaces look from outside
     // their own meshes' shadows.
     shadow_offset: vec3<f32>,
+    // Whether the point is terrain's (decision 052), which lies on the
+    // ground of terrain's horizon maps.
+    on_terrain: bool,
 }
 
 // Shaded light of a surface: graded color (and its linear light before the
@@ -405,11 +408,12 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         + lighting.horizon.rgb * rim) + reflection) * point.occlusion;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
-            point.world_dy, point.distance);
+            point.world_dy, point.distance, point.on_terrain);
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;
     let lit = sky_light + sun_light + emitted + local;
-    let covered = fog(camera.position.xyz, point.world);
-    let fogged = mix(lit, haze(-view), covered);
+    let through = atmospheric(lit, camera.position.xyz, point.world, -view);
+    let fogged = through.rgb;
+    let covered = through.a;
     var shaded: Shaded;
     shaded.opacity = point.opacity;
     shaded.normal = normal;

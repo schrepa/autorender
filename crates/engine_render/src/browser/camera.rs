@@ -1,10 +1,31 @@
 //! The main passes' first group: the camera and lighting uniforms, shadow
-//! lookups (decisions 020 and 028), what glass refracts (decision 038) and
-//! what surfaces reflect (decision 043), rebuilt when the shadow maps,
-//! environment maps or reflection probe grid it binds are replaced.
+//! lookups (decisions 020 and 028), what glass refracts (decision 038),
+//! what surfaces reflect (decision 043) and terrain's horizon maps (decision
+//! 052), rebuilt when the shadow maps, environment maps, reflection probe
+//! grid or horizon maps it binds are replaced.
 
 use super::*;
 use crate::bindings::CAMERA;
+use crate::terrain_horizons::Horizons;
+
+/// What the first group binds besides the camera and lighting uniforms.
+pub(super) struct GroupSources<'a> {
+    pub(super) shadows: &'a ShadowPass,
+    pub(super) environment: &'a Environment,
+    pub(super) probes: &'a ProbePass,
+    pub(super) horizons: &'a Horizons,
+}
+
+impl GroupSources<'_> {
+    fn key(&self) -> CameraGroupsKey {
+        (
+            self.shadows.generation(),
+            self.environment.generation(),
+            self.probes.words().1,
+            self.horizons.generation(),
+        )
+    }
+}
 
 pub(super) struct CameraBindings {
     pub(super) layout: wgpu::BindGroupLayout,
@@ -29,15 +50,12 @@ pub(super) struct CameraBindings {
 
 impl CameraBindings {
     /// The layout, the camera uniform and the first group, over
-    /// `lighting_buffer` and the maps of `shadows`, `environment` and
-    /// `probes`.
+    /// `lighting_buffer` and `sources`.
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         lighting_buffer: wgpu::Buffer,
-        shadows: &ShadowPass,
-        environment: &Environment,
-        probes: &ProbePass,
+        sources: &GroupSources<'_>,
     ) -> Self {
         let buffer = crate::buffers::uniform(
             device,
@@ -64,9 +82,8 @@ impl CameraBindings {
             device,
             &layout,
             (&buffer, &lighting_buffer),
-            shadows,
             (&refraction_fallback, &refraction_sampler),
-            (environment.binding(), probes.words().0),
+            sources,
         );
         Self {
             layout,
@@ -74,7 +91,7 @@ impl CameraBindings {
             lighting_buffer,
             lighting: None,
             group,
-            key: (shadows.generation(), 0, 0),
+            key: sources.key(),
             refraction_fallback,
             refraction_sampler,
             refraction_group: Cached::default(),
@@ -92,20 +109,10 @@ impl CameraBindings {
         size_of::<LightingUniform>() as u64
     }
 
-    /// Rebuilds the group when the shadow maps, environment maps or probe
-    /// grid it binds were replaced, and forgets the probe faces' groups.
-    pub(super) fn refresh(
-        &mut self,
-        device: &wgpu::Device,
-        shadows: &ShadowPass,
-        environment: &Environment,
-        probes: &ProbePass,
-    ) {
-        let key = (
-            shadows.generation(),
-            environment.generation(),
-            probes.words().1,
-        );
+    /// Rebuilds the group when the maps or probe grid of `sources` it binds
+    /// were replaced, and forgets the probe faces' groups.
+    pub(super) fn refresh(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
+        let key = sources.key();
         if key == self.key {
             return;
         }
@@ -114,9 +121,8 @@ impl CameraBindings {
             device,
             &self.layout,
             (&self.buffer, &self.lighting_buffer),
-            shadows,
             (&self.refraction_fallback, &self.refraction_sampler),
-            (environment.binding(), probes.words().0),
+            sources,
         );
         self.probe_groups.clear();
     }
@@ -128,9 +134,7 @@ impl CameraBindings {
         &mut self,
         device: &wgpu::Device,
         (scene, generation): (&wgpu::TextureView, u64),
-        shadows: &ShadowPass,
-        environment: &Environment,
-        probes: &ProbePass,
+        sources: &GroupSources<'_>,
     ) {
         let key = (generation, self.key);
         if self.refraction_group.stale(&key) {
@@ -138,9 +142,8 @@ impl CameraBindings {
                 device,
                 &self.layout,
                 (&self.buffer, &self.lighting_buffer),
-                shadows,
                 (scene, &self.refraction_sampler),
-                (environment.binding(), probes.words().0),
+                sources,
             );
             self.refraction_group.set(key, group);
         }
@@ -156,9 +159,7 @@ impl CameraBindings {
     pub(super) fn prepare_probe_groups(
         &mut self,
         device: &wgpu::Device,
-        shadows: &ShadowPass,
-        environment: &Environment,
-        probes: &ProbePass,
+        sources: &GroupSources<'_>,
     ) {
         if self.probe_groups.is_empty() {
             self.probe_groups = (0..FACES)
@@ -166,10 +167,9 @@ impl CameraBindings {
                     camera_group(
                         device,
                         &self.layout,
-                        (probes.camera(face), &self.lighting_buffer),
-                        shadows,
+                        (sources.probes.camera(face), &self.lighting_buffer),
                         (&self.refraction_fallback, &self.refraction_sampler),
-                        (environment.binding(), probes.words().0),
+                        sources,
                     )
                 })
                 .collect();
@@ -183,21 +183,21 @@ impl CameraBindings {
 }
 
 /// The main passes' first group over the `camera` and `lighting` uniforms:
-/// shadow lookups, what glass refracts (decision 038) with its sampler, and
+/// shadow lookups, what glass refracts (decision 038) with its sampler,
 /// what surfaces reflect (decision 043): the environment maps with their
-/// sampler and the reflection probes' grid.
+/// sampler and the reflection probes' grid, and terrain's horizon maps
+/// (decision 052).
 fn camera_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     (camera, lighting): (&wgpu::Buffer, &wgpu::Buffer),
-    shadows: &ShadowPass,
     (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
-    ((environment, environment_sampler), probe_words): (
-        (&wgpu::TextureView, &wgpu::Sampler),
-        &wgpu::Buffer,
-    ),
+    sources: &GroupSources<'_>,
 ) -> wgpu::BindGroup {
-    let [shadow, near, kept, moving, sampler, texel_sampler] = shadows.entries();
+    let [shadow, near, kept, moving, sampler, texel_sampler] = sources.shadows.entries();
+    let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
+    let (environment, environment_sampler) = sources.environment.binding();
+    let probe_words = sources.probes.words().0;
     crate::pipelines::group(
         device,
         "engine/camera-bind-group",
@@ -223,6 +223,9 @@ fn camera_group(
                 crate::pipelines::sampler(environment_sampler),
             ),
             ("probe_words", probe_words.as_entire_binding()),
+            horizons,
+            horizon_records,
+            horizon_sampler,
         ],
     )
 }

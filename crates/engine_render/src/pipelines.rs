@@ -119,9 +119,9 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
             },
             multisampled: false,
         },
-        Kind::StorageR32Float => wgpu::BindingType::StorageTexture {
+        Kind::Storage(format) => wgpu::BindingType::StorageTexture {
             access: wgpu::StorageTextureAccess::WriteOnly,
-            format: wgpu::TextureFormat::R32Float,
+            format,
             view_dimension: wgpu::TextureViewDimension::D2,
         },
         Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {

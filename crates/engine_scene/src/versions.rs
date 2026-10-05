@@ -28,13 +28,13 @@ fn rules() -> [Rule; 19] {
         },
         Rule {
             since: 9,
-            what: "terrain settings",
+            what: "terrain settings and aerial perspective",
             first_use: |document| {
                 document
                     .environment
                     .as_ref()?
-                    .section_since(9)
-                    .map(|section| format!("$.environment.{section}"))
+                    .version_nine_field()
+                    .map(|field| format!("$.environment.{field}"))
             },
         },
         Rule {

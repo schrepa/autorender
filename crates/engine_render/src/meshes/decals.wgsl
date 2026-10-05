@@ -196,7 +196,7 @@ fn fs_decal(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);
     if DECAL_MULTIPLY {
         // Fog hides what it covers.
-        let visible = point.opacity * (1.0 - fog(camera.position.xyz, point.world));
+        let visible = point.opacity * (1.0 - atmospheric_cover(camera.position.xyz, point.world));
         return decal_output(mix(vec3<f32>(1.0), point.albedo, visible), 1.0);
     }
     // Covering decals are lit like any surface.
