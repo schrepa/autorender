@@ -280,7 +280,7 @@ impl Renderer {
                     .as_ref()
                     .map_or(0, |frame| u64::from(frame.dropped)))
             .min(u64::from(u32::MAX)) as u32,
-            impostors: self.impostors.atlas.live(),
+            impostors: self.impostors.live(),
             dropped_impostors: self.impostors.dropped,
             reflection_probes: self.probes.slots.ready(),
             reflection_probe_faces: probe_faces,
@@ -312,6 +312,7 @@ impl Renderer {
             ground_cover_blades: self.ground_cover.totals()[0],
             dropped_ground_cover: self.ground_cover.totals()[1],
             placed_objects: self.scatter.resident,
+            placed_impostors: self.impostors.placed.live(),
             occupancy_redraws: self.occupancy.redraws,
             dropped_terrain_materials: self.terrain.dropped_materials,
             ..self.residency_stats()
@@ -438,7 +439,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_impostor_bytes",
-            self.impostors.atlas.capacity_bytes() as f64,
+            self.impostors.capacity_bytes() as f64,
         );
         engine_profile::counter(
             "memory.gpu_terrain_bytes",

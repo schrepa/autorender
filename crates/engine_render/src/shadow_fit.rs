@@ -352,6 +352,32 @@ impl KeptMap {
         self.dirty = DirtyTiles::ALL;
     }
 
+    /// Marks dirty the tiles casters within the world box `min`..`max`
+    /// draw into, as when they appeared or left; nothing before the map
+    /// has a region.
+    pub(crate) fn dirty_box(&mut self, min: Vec3, max: Vec3) {
+        let (Some(basis), Some(region)) = (self.basis, self.region) else {
+            return;
+        };
+        let (low, high) = basis.bounds(min, max);
+        let [x0, y0, x1, y1] = region.rect;
+        let tile = |value: f32, start: f32, end: f32| {
+            ((value - start) / (end - start) * TILES as f32).floor()
+        };
+        let columns = [tile(low.x, x0, x1), tile(high.x, x0, x1)];
+        let rows = [tile(low.y, y0, y1), tile(high.y, y0, y1)];
+        let last = (TILES - 1) as f32;
+        if columns[1] < 0.0 || rows[1] < 0.0 || columns[0] > last || rows[0] > last {
+            return;
+        }
+        let clamped = |value: f32| math::clamp(value, 0.0, last) as u32;
+        let [first_column, last_column] = columns.map(clamped);
+        let mask = (0xffff >> (15 - last_column)) & (0xffff << first_column);
+        for row in clamped(rows[0])..=clamped(rows[1]) {
+            self.dirty.0[(row / 2) as usize] |= mask << (row % 2 * TILES);
+        }
+    }
+
     /// The far maps' region in light `basis`, `texels` wide: the box
     /// `bounds`, or a cube `distance` around an anchor that follows `eye` a
     /// quarter of the distance at a time. A new basis or region invalidates

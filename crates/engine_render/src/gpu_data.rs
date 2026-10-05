@@ -385,6 +385,7 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/resolve.wgsl"),
     include_str!("meshes/sky.wgsl"),
     include_str!("meshes/decals.wgsl"),
+    include_str!("impostor_frames.wgsl"),
     include_str!("meshes/impostors.wgsl"),
     include_str!("meshes/terrain_vertex.wgsl"),
     include_str!("meshes/terrain.wgsl"),
@@ -436,7 +437,10 @@ pub(crate) const SHAFTS_SHADER: &str = concat!(
     include_str!("shafts.wgsl")
 );
 /// Shadow caster selection and depth drawing (decision 020).
-pub(crate) const SHADOW_SHADER: &str = include_str!("shadows.wgsl");
+pub(crate) const SHADOW_SHADER: &str = concat!(
+    include_str!("shadows.wgsl"),
+    include_str!("impostor_frames.wgsl")
+);
 /// Ambient occlusion, bloom and their composite (decision 021).
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));

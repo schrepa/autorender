@@ -43,11 +43,40 @@ const terrain = {
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }] },
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
-    // Decision 057: crates stand on the meadow, a coarser box far away.
-    assets: [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 }],
-    placements: [{ id: "crates", assets: [{ asset: "crate" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
+    // Decision 057: crates stand on the meadow, a coarser box far away,
+    // with balls, whose impostors far away cast cards (decision 060).
+    assets: [
+      { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 },
+      { id: "ball", mesh: "ball", material: "plain" },
+    ],
+    placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
   },
 };
+/** A unit icosphere subdivided once: 80 triangles, enough for an impostor. */
+function ball() {
+  const t = (1 + Math.sqrt(5)) / 2;
+  const corners = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
+  const faces = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2],
+    [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11],
+    [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+  const unit = ([x, y, z]) => { const l = Math.hypot(x, y, z); return [x / l, y / l, z / l]; };
+  const points = corners.map(unit);
+  const middles = new Map();
+  const middle = (a, b) => {
+    const key = a < b ? `${a},${b}` : `${b},${a}`;
+    if (!middles.has(key)) {
+      middles.set(key, points.length);
+      points.push(unit(points[a].map((value, axis) => value + points[b][axis])));
+    }
+    return middles.get(key);
+  };
+  const indices = faces.flatMap(([a, b, c]) => {
+    const [ab, bc, ca] = [middle(a, b), middle(b, c), middle(c, a)];
+    return [a, ab, ca, b, bc, ab, c, ca, bc, ab, bc, ca];
+  });
+  return { vertices: points.map(point => ({ position: point, normal: point })), indices };
+}
 /** A 65 by 65 dome of little-endian 16-bit samples, highest at its center. */
 function dome() {
   const bytes = Buffer.alloc(65 * 65 * 2);
@@ -63,7 +92,7 @@ const fixture = {
   version: 9, id: "terrain-fixture", revision: 1,
   camera: { position: [0, 80, 140], target: [0, 30, 0], fov_degrees: 60, near: 0.5, far: 4000 },
   materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }],
-  meshes: [{ id: "box", source: { kind: "cube" } }],
+  meshes: [{ id: "box", source: { kind: "cube" } }, { id: "ball", source: { kind: "inline", ...ball() } }],
   entities: [
     { id: "player", mesh: "box", material: "plain", tags: ["player"], collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false }, transform: { translation: [0, 31, 0] } },
     { id: "ground", terrain },
@@ -88,6 +117,12 @@ async function settle() {
 }
 
 async function capture(name) {
+  // Pipelines go on compiling for seconds after the frames that first
+  // need them, and a capture presents only once they have.
+  for (let frame = 0; frame < 600; frame++) {
+    if (!(await command("render")).result.rendering.pipelines_compiling) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await command("capture");
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   return bytes.toString("base64");
@@ -114,7 +149,16 @@ try {
   assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
   // Occupancy (decision 059): the crates' covers are drawn around the camera.
   assert.ok(settled.occupancy_redraws > 0, `the occupancy map draws: ${settled.occupancy_redraws}`);
-  checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles });
+  // GPU-presented frames bake the balls' impostor (decision 060), which far
+  // balls draw and cast as cards.
+  let presented;
+  for (let frame = 0; frame < 60; frame++) {
+    presented = (await command("present", { alpha: 0, gpu: true })).result.rendering;
+    if (presented.placed_impostors > 0) break;
+  }
+  assert.equal(presented.placed_impostors, 1, `the balls' impostor bakes: ${JSON.stringify(presented)}`);
+  assert.equal(presented.dropped_impostors, 0);
+  checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles, placed_impostors: presented.placed_impostors });
 
   // Discovery and inspection.
   const listing = await command("describe");
@@ -135,7 +179,8 @@ try {
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
-  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 }]);
+  assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
+  assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 });
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 

@@ -1,19 +1,64 @@
 //! Octahedral impostors (decision 048): the first frame an opaque draw group
 //! whose mesh has enough triangles draws, its mesh is baked with its material
-//! from `IMPOSTOR_FRAMES` x `IMPOSTOR_FRAMES` directions over the sphere into
-//! one layer of four texture arrays, and GPU-presented frames draw instances
-//! too small for the layer's texels to show as cards blending the three
-//! frames around the view (`meshes/impostors.wgsl`). The GPU side is created with the
-//! first bake.
+//! from `IMPOSTOR_FRAMES` x `IMPOSTOR_FRAMES` directions into one layer of
+//! four texture arrays, and GPU-presented frames draw instances too small
+//! for the layer's texels to show as cards blending the three frames around
+//! the view (`meshes/impostors.wgsl`). Plan batches' frames cover the
+//! sphere; placed objects' (decision 057), which stand on the ground, cover
+//! the upper hemisphere at four times the texels in an atlas of their own
+//! (decision 060). Bakes also record how much of the sky each texel's
+//! surface sees past its own mesh, which shades the sun on cards as the
+//! mesh's own shadows would (decision 060). The GPU side is created with
+//! the first bake.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::Vec3;
 
-/// Frames per side of the octahedral grid, texels across a frame of the
-/// first level, and levels, as `meshes/impostors.wgsl` declares them.
+/// Frames per side of the octahedral grid, as `meshes/impostors.wgsl`
+/// declares it.
 pub(crate) const IMPOSTOR_FRAMES: u32 = 8;
-pub(crate) const IMPOSTOR_TEXELS: u32 = 16;
-pub(crate) const IMPOSTOR_LEVELS: u32 = 4;
+
+/// The flag of records whose frames cover only the upper hemisphere, above
+/// their texels across a frame.
+pub(crate) const HEMISPHERE: u32 = 1 << 16;
+
+/// How an atlas lays out its impostors: texels across a frame of the first
+/// level, and whether its frames cover only the upper hemisphere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AtlasShape {
+    pub texels: u32,
+    pub hemisphere: bool,
+}
+
+impl AtlasShape {
+    /// Plan batches' impostors (decision 048): 16 texels a frame over the
+    /// sphere.
+    pub(crate) const SPHERE: Self = Self {
+        texels: 16,
+        hemisphere: false,
+    };
+    /// Placed objects' (decision 060): 64 texels a frame over the upper
+    /// hemisphere, which views from below see from the horizon.
+    pub(crate) const PLACED: Self = Self {
+        texels: 64,
+        hemisphere: true,
+    };
+
+    /// Texels across a layer's first level.
+    pub(crate) fn size(self) -> u32 {
+        IMPOSTOR_FRAMES * self.texels
+    }
+
+    /// Levels down to two texels a frame.
+    pub(crate) fn levels(self) -> u32 {
+        self.texels.trailing_zeros()
+    }
+
+    /// The flags of records of this shape.
+    fn flags(self) -> u32 {
+        self.texels | if self.hemisphere { HEMISPHERE } else { 0 }
+    }
+}
 
 /// WGSL `ImpostorRecord` of `meshes/impostors.wgsl`: 48 bytes.
 #[repr(C)]
@@ -24,25 +69,33 @@ pub(crate) struct ImpostorRecord {
     /// Mesh-space half extents of the mesh's bounds.
     pub extent: [f32; 3],
     pub layer: u32,
-    /// The material's emissive color (glTF), linear; w unused.
-    pub emissive: [f32; 4],
+    /// The material's emissive color (glTF), linear.
+    pub emissive: [f32; 3],
+    /// Texels across a frame, and `HEMISPHERE`.
+    pub flags: u32,
 }
 
 impl ImpostorRecord {
-    /// The record of a mesh with bounds `min` to `max` baked into `layer`,
-    /// whose material emits `emissive`.
-    pub(crate) fn new(min: Vec3, max: Vec3, layer: u32, emissive: [f32; 3]) -> Self {
+    /// The record of a mesh with bounds `min` to `max` baked into `layer` of
+    /// an atlas of `shape`, whose material emits `emissive`.
+    pub(crate) fn new(
+        min: Vec3,
+        max: Vec3,
+        layer: u32,
+        emissive: [f32; 3],
+        shape: AtlasShape,
+    ) -> Self {
         let center = (min + max) * 0.5;
         let half = (max - min) * 0.5;
         // A hair over the half diagonal keeps every vertex inside the frames,
         // and flat bounds still get a radius.
         let radius = engine_core::math::max(half.length() * 1.0001, 1.0e-6);
-        let [r, g, b] = emissive;
         Self {
             sphere: center.extend(radius).to_array(),
             extent: half.to_array(),
             layer,
-            emissive: [r, g, b, 0.0],
+            emissive,
+            flags: shape.flags(),
         }
     }
 
@@ -50,15 +103,21 @@ impl ImpostorRecord {
     /// the card resolves no finer; 0 for the zeroed records of draw groups
     /// without an impostor.
     pub(crate) fn error(&self) -> f32 {
-        2.0 * self.sphere[3] / IMPOSTOR_TEXELS as f32
+        let texels = self.flags & (HEMISPHERE - 1);
+        if texels == 0 {
+            return 0.0;
+        }
+        2.0 * self.sphere[3] / texels as f32
     }
 }
 
-/// WGSL `ImpostorBake` uniform of `meshes/impostors.wgsl`: 16 bytes.
+/// WGSL `ImpostorBake` uniform of `meshes/impostors.wgsl`: 32 bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct ImpostorBakeUniform {
     pub sphere: [f32; 4],
+    /// The record's flags; the rest unused.
+    pub flags: [u32; 4],
 }
 
 /// Layers of the texture arrays: free ones are reused lowest first, and the
@@ -122,8 +181,6 @@ mod gpu {
     use crate::mipmaps::MipGenerator;
     use crate::targets::Targets;
 
-    /// Texels across a layer's first level.
-    const IMPOSTOR_SIZE: u32 = IMPOSTOR_FRAMES * IMPOSTOR_TEXELS;
     /// Fewest triangles a mesh needs for an impostor: a card's pixels cost
     /// about what fewer triangles would.
     pub(crate) const IMPOSTOR_MIN_TRIANGLES: usize = 64;
@@ -132,7 +189,8 @@ mod gpu {
     pub(crate) type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
 
     /// Albedo and coverage, emissive color and mask (both decode sRGB), then
-    /// normal and depth, and roughness, metalness and occlusion.
+    /// normal and depth, and roughness, metalness, occlusion and the sky the
+    /// surface sees past its mesh.
     const FORMATS: [wgpu::TextureFormat; 4] = [
         wgpu::TextureFormat::Rgba8UnormSrgb,
         wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -143,6 +201,10 @@ mod gpu {
     /// fragments with the cleared zeros, premultiplying coverage.
     const SAMPLES: u32 = 4;
     const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+    /// The depth of every frame's nearest surface, which bakes look up to
+    /// find the directions a surface sees past its mesh, has this many
+    /// times the layer's texels across.
+    const SHADE_SCALE: u32 = 4;
 
     struct Arrays {
         textures: [wgpu::Texture; 4],
@@ -150,12 +212,13 @@ mod gpu {
         layers: u32,
     }
 
-    /// Multisampled targets every bake renders into before resolving to its
-    /// layer.
+    /// Targets every bake renders into: the frames' nearest depths, then
+    /// the multisampled colors resolving to its layer.
     struct BakeTargets {
+        shade: wgpu::TextureView,
         colors: [wgpu::TextureView; 4],
         depth: wgpu::TextureView,
-        _textures: [wgpu::Texture; 5],
+        _textures: [wgpu::Texture; 6],
     }
 
     struct Baked {
@@ -175,39 +238,21 @@ mod gpu {
         pub material: Option<Material>,
     }
 
-    pub(crate) struct ImpostorAtlas {
-        arrays: Option<Arrays>,
-        targets: Option<BakeTargets>,
-        layers: Layers,
-        baked: HashMap<ImpostorKey, Baked>,
+    /// What every atlas shares: the bakes' and draws' layouts and
+    /// pipelines, and the draws' sampler.
+    pub(crate) struct ImpostorPipelines {
         bake_layout: wgpu::BindGroupLayout,
         bake_pipeline_layout: wgpu::PipelineLayout,
         bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
+        shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
         draw_layout: wgpu::BindGroupLayout,
         draw_pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
         sampler: wgpu::Sampler,
-        // One record per plan batch as last uploaded, and the group binding
-        // them with the arrays, keyed by the generations of both.
-        records: wgpu::Buffer,
-        uploaded: Vec<ImpostorRecord>,
-        group: Cached<(u64, u64), wgpu::BindGroup>,
-        records_generation: u64,
-        arrays_generation: u64,
-        // Advances whenever an impostor is baked or dropped: batch records
-        // carrying impostor errors are rebuilt then.
-        generation: u64,
+        // Stands in for the frames' depths while bakes draw them.
+        no_shade: Option<wgpu::TextureView>,
     }
 
-    fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("engine/impostor-records"),
-            size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    }
-
-    impl ImpostorAtlas {
+    impl ImpostorPipelines {
         /// `material_layout` binds a material's maps (group 1 of bakes).
         pub(crate) fn new(
             device: &wgpu::Device,
@@ -236,16 +281,83 @@ mod gpu {
                 ..Default::default()
             });
             Self {
+                bake_layout,
+                bake_pipeline_layout,
+                bake_pipelines: HashMap::new(),
+                shade_pipelines: HashMap::new(),
+                draw_layout,
+                draw_pipelines: HashMap::new(),
+                sampler,
+                no_shade: None,
+            }
+        }
+
+        /// The layout of the impostor draws' group 1.
+        pub(crate) fn draw_layout(&self) -> &wgpu::BindGroupLayout {
+            &self.draw_layout
+        }
+
+        /// The draw pipeline into `targets`, shading local lights when `lit`,
+        /// once inserted.
+        pub(crate) fn pipeline(
+            &self,
+            targets: Targets,
+            lit: bool,
+        ) -> Option<&wgpu::RenderPipeline> {
+            self.draw_pipelines.get(&(targets, lit))
+        }
+
+        pub(crate) fn insert_pipeline(
+            &mut self,
+            targets: Targets,
+            lit: bool,
+            pipeline: wgpu::RenderPipeline,
+        ) {
+            self.draw_pipelines.insert((targets, lit), pipeline);
+        }
+
+        /// Drops the draw pipelines of `targets`, built over layouts of a
+        /// pass that is gone.
+        pub(crate) fn forget_pipelines(&mut self, targets: Targets) {
+            self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
+        }
+    }
+
+    pub(crate) struct ImpostorAtlas {
+        shape: AtlasShape,
+        arrays: Option<Arrays>,
+        targets: Option<BakeTargets>,
+        layers: Layers,
+        baked: HashMap<ImpostorKey, Baked>,
+        // The records last uploaded, and the group binding them with the
+        // arrays, keyed by the generations of both.
+        records: wgpu::Buffer,
+        uploaded: Vec<ImpostorRecord>,
+        group: Cached<(u64, u64), wgpu::BindGroup>,
+        records_generation: u64,
+        arrays_generation: u64,
+        // Advances whenever an impostor is baked or dropped: records carrying
+        // impostor errors are rebuilt then.
+        generation: u64,
+    }
+
+    fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/impostor-records"),
+            size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    impl ImpostorAtlas {
+        pub(crate) fn new(device: &wgpu::Device, shape: AtlasShape) -> Self {
+            Self {
+                shape,
                 arrays: None,
                 targets: None,
                 layers: Layers::default(),
                 baked: HashMap::new(),
-                bake_layout,
-                bake_pipeline_layout,
-                bake_pipelines: HashMap::new(),
-                draw_layout,
-                draw_pipelines: HashMap::new(),
-                sampler,
                 records: record_buffer(device, 1),
                 uploaded: Vec::new(),
                 group: Cached::default(),
@@ -253,11 +365,6 @@ mod gpu {
                 arrays_generation: 0,
                 generation: 0,
             }
-        }
-
-        /// The layout of the impostor draws' group 1.
-        pub(crate) fn draw_layout(&self) -> &wgpu::BindGroupLayout {
-            &self.draw_layout
         }
 
         /// Advances whenever an impostor is baked or dropped.
@@ -274,8 +381,8 @@ mod gpu {
         pub(crate) fn capacity_bytes(&self) -> u64 {
             let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
             // Four bytes a texel in four arrays, a third more for the levels.
-            let texels = u64::from(IMPOSTOR_SIZE * IMPOSTOR_SIZE) * 4 * 4 / 3;
-            u64::from(layers) * texels * 4 + self.records.size()
+            let size = u64::from(self.shape.size());
+            u64::from(layers) * size * size * 4 * 4 * 4 / 3 + self.records.size()
         }
 
         /// The impostor of `key`, when baked for `material`.
@@ -313,7 +420,7 @@ mod gpu {
         }
 
         /// Drops every impostor when more than `budget` are baked: the draw
-        /// groups first in the plan bake again up to it.
+        /// groups first in order bake again up to it.
         pub(crate) fn enforce_budget(&mut self, budget: Option<u32>) {
             if budget.is_some_and(|budget| self.layers.live() > budget) {
                 self.baked.clear();
@@ -333,6 +440,7 @@ mod gpu {
             encoder: &mut wgpu::CommandEncoder,
             mips: &MipGenerator,
             shader: &wgpu::ShaderModule,
+            pipelines: &mut ImpostorPipelines,
             key: ImpostorKey,
             source: &BakeSource<'_>,
             budget: Option<u32>,
@@ -354,34 +462,98 @@ mod gpu {
                 return false;
             };
             self.ensure_layers(device, encoder, self.layers.extent());
-            let targets = self.targets.get_or_insert_with(|| bake_targets(device));
+            let shape = self.shape;
+            let targets = self
+                .targets
+                .get_or_insert_with(|| bake_targets(device, shape));
             // Bakes are rare: uber variants (decision 049).
             let variant = source.variant.with_extended(source.extended).uber();
-            let pipeline = self.bake_pipelines.entry(variant).or_insert_with(|| {
-                bake_pipeline(device, shader, &self.bake_pipeline_layout, variant)
-            });
+            let layout = &pipelines.bake_pipeline_layout;
+            let pipeline = pipelines
+                .bake_pipelines
+                .entry(variant)
+                .or_insert_with(|| bake_pipeline(device, shader, layout, variant, false));
+            let shade_pipeline = pipelines
+                .shade_pipelines
+                .entry(variant)
+                .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
             let emissive = source
                 .material
                 .as_ref()
                 .map_or([0.0; 3], Material::emissive);
-            let record = ImpostorRecord::new(source.bounds.0, source.bounds.1, layer, emissive);
+            let record =
+                ImpostorRecord::new(source.bounds.0, source.bounds.1, layer, emissive, shape);
             let uniform = wgpu::util::DeviceExt::create_buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("engine/impostor-bake"),
                     contents: bytemuck::bytes_of(&ImpostorBakeUniform {
                         sphere: record.sphere,
+                        flags: [record.flags, 0, 0, 0],
                     }),
                     usage: wgpu::BufferUsages::UNIFORM,
                 },
             );
-            let uniform_group = crate::pipelines::group(
-                device,
-                "engine/impostor-bake-group",
-                &IMPOSTOR_BAKE,
-                &self.bake_layout,
-                &[("impostor_bake", uniform.as_entire_binding())],
-            );
+            let no_shade = pipelines.no_shade.get_or_insert_with(|| {
+                bake_texture(
+                    device,
+                    1,
+                    1,
+                    BAKE_DEPTH,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                )
+                .create_view(&Default::default())
+            });
+            let group = |shade: &wgpu::TextureView| {
+                crate::pipelines::group(
+                    device,
+                    "engine/impostor-bake-group",
+                    &IMPOSTOR_BAKE,
+                    &pipelines.bake_layout,
+                    &[
+                        ("impostor_bake", uniform.as_entire_binding()),
+                        ("impostor_shade", crate::pipelines::view(shade)),
+                    ],
+                )
+            };
+            let (shade_group, color_group) = (group(no_shade), group(&targets.shade));
+            let draw = |pass: &mut wgpu::RenderPass<'_>| {
+                pass.set_bind_group(1, source.group, &[]);
+                pass.set_vertex_buffer(0, source.draw.vertices.slice(..));
+                if source.extended
+                    && let Some(extras) = source.draw.extras
+                {
+                    pass.set_vertex_buffer(1, extras.slice(..));
+                }
+                pass.set_index_buffer(source.draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(
+                    source.draw.first_index..source.draw.first_index + source.draw.index_count,
+                    source.draw.base_vertex,
+                    0..IMPOSTOR_FRAMES * IMPOSTOR_FRAMES,
+                );
+            };
+            // Every frame's nearest depths first, which the colors' bake
+            // looks up (decision 060).
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("engine/impostor-shade"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &targets.shade,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(0.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                pass.set_pipeline(shade_pipeline);
+                pass.set_bind_group(2, &shade_group, &[]);
+                draw(&mut pass);
+            }
             let arrays = self.arrays.as_ref().expect("grown above");
             let resolves: Vec<wgpu::TextureView> = arrays
                 .textures
@@ -421,20 +593,8 @@ mod gpu {
                     multiview_mask: None,
                 });
                 pass.set_pipeline(pipeline);
-                pass.set_bind_group(1, source.group, &[]);
-                pass.set_bind_group(2, &uniform_group, &[]);
-                pass.set_vertex_buffer(0, source.draw.vertices.slice(..));
-                if source.extended
-                    && let Some(extras) = source.draw.extras
-                {
-                    pass.set_vertex_buffer(1, extras.slice(..));
-                }
-                pass.set_index_buffer(source.draw.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(
-                    source.draw.first_index..source.draw.first_index + source.draw.index_count,
-                    source.draw.base_vertex,
-                    0..IMPOSTOR_FRAMES * IMPOSTOR_FRAMES,
-                );
+                pass.set_bind_group(2, &color_group, &[]);
+                draw(&mut pass);
             }
             // Premultiplied texels average into the levels below: a frame's
             // cell halves with each level and never mixes with another's.
@@ -452,6 +612,12 @@ mod gpu {
             true
         }
 
+        /// Frees the targets bakes render into until the next bake: a large
+        /// atlas's would otherwise stay resident.
+        pub(crate) fn release_targets(&mut self) {
+            self.targets = None;
+        }
+
         /// Grows the arrays to hold `layers`, copying the baked ones.
         fn ensure_layers(
             &mut self,
@@ -467,13 +633,14 @@ mod gpu {
                 return;
             }
             let capacity = grown_layers(layers, device.limits().max_texture_array_layers);
+            let (size, levels) = (self.shape.size(), self.shape.levels());
             let textures = FORMATS.map(|format| {
                 crate::targets::texture_2d(
                     device,
                     "engine/impostor-array",
-                    (IMPOSTOR_SIZE, IMPOSTOR_SIZE),
+                    (size, size),
                     capacity,
-                    IMPOSTOR_LEVELS,
+                    levels,
                     format,
                     wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -483,8 +650,8 @@ mod gpu {
             });
             if let Some(old) = &self.arrays {
                 for (from, to) in old.textures.iter().zip(&textures) {
-                    for level in 0..IMPOSTOR_LEVELS {
-                        let size = IMPOSTOR_SIZE >> level;
+                    for level in 0..levels {
+                        let size = size >> level;
                         encoder.copy_texture_to_texture(
                             wgpu::TexelCopyTextureInfo {
                                 texture: from,
@@ -522,13 +689,14 @@ mod gpu {
             self.arrays_generation += 1;
         }
 
-        /// Uploads `records`, one per plan batch (zeroed for batches without
-        /// an impostor), when they changed, and builds the draws' group;
-        /// returns whether there is one, not before any bake.
+        /// Uploads `records` (zeroed for draw groups without an impostor)
+        /// when they changed, and builds the draws' group; returns whether
+        /// there is one, not before any bake.
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &wgpu::Queue,
+            pipelines: &ImpostorPipelines,
             records: &[ImpostorRecord],
         ) -> bool {
             let Some(arrays) = self.arrays.as_ref() else {
@@ -552,7 +720,7 @@ mod gpu {
                     device,
                     "engine/impostor-group",
                     &IMPOSTOR_DRAW,
-                    &self.draw_layout,
+                    &pipelines.draw_layout,
                     &[
                         ("impostor_records", self.records.as_entire_binding()),
                         ("impostor_albedo", crate::pipelines::view(&arrays.views[0])),
@@ -565,7 +733,10 @@ mod gpu {
                             crate::pipelines::view(&arrays.views[2]),
                         ),
                         ("impostor_surface", crate::pipelines::view(&arrays.views[3])),
-                        ("impostor_sampler", crate::pipelines::sampler(&self.sampler)),
+                        (
+                            "impostor_sampler",
+                            crate::pipelines::sampler(&pipelines.sampler),
+                        ),
                     ],
                 );
                 self.group.set(key, group);
@@ -576,31 +747,6 @@ mod gpu {
         /// The draws' group, after [`Self::prepare`] built it.
         pub(crate) fn group(&self) -> Option<&wgpu::BindGroup> {
             self.group.get()
-        }
-
-        /// The draw pipeline into `targets`, shading local lights when `lit`,
-        /// once inserted.
-        pub(crate) fn pipeline(
-            &self,
-            targets: Targets,
-            lit: bool,
-        ) -> Option<&wgpu::RenderPipeline> {
-            self.draw_pipelines.get(&(targets, lit))
-        }
-
-        pub(crate) fn insert_pipeline(
-            &mut self,
-            targets: Targets,
-            lit: bool,
-            pipeline: wgpu::RenderPipeline,
-        ) {
-            self.draw_pipelines.insert((targets, lit), pipeline);
-        }
-
-        /// Drops the draw pipelines of `targets`, built over layouts of a
-        /// pass that is gone.
-        pub(crate) fn forget_pipelines(&mut self, targets: Targets) {
-            self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
         }
     }
 
@@ -616,24 +762,48 @@ mod gpu {
         })
     }
 
-    fn bake_targets(device: &wgpu::Device) -> BakeTargets {
+    fn bake_texture(
+        device: &wgpu::Device,
+        size: u32,
+        samples: u32,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("engine/impostor-bake-target"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    }
+
+    fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
+        let size = shape.size();
         let target = |format| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("engine/impostor-bake-target"),
-                size: wgpu::Extent3d {
-                    width: IMPOSTOR_SIZE,
-                    height: IMPOSTOR_SIZE,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: SAMPLES,
-                dimension: wgpu::TextureDimension::D2,
+            bake_texture(
+                device,
+                size,
+                SAMPLES,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            )
         };
         let textures = [
+            bake_texture(
+                device,
+                size * SHADE_SCALE,
+                1,
+                BAKE_DEPTH,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            ),
             target(FORMATS[0]),
             target(FORMATS[1]),
             target(FORMATS[2]),
@@ -642,31 +812,41 @@ mod gpu {
         ];
         let view = |texture: &wgpu::Texture| texture.create_view(&Default::default());
         BakeTargets {
+            shade: view(&textures[0]),
             colors: [
-                view(&textures[0]),
                 view(&textures[1]),
                 view(&textures[2]),
                 view(&textures[3]),
+                view(&textures[4]),
             ],
-            depth: view(&textures[4]),
+            depth: view(&textures[5]),
             _textures: textures,
         }
     }
 
+    /// A bake pipeline of `variant`: the colors', or with `shade` the
+    /// frames' nearest depths alone.
     fn bake_pipeline(
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
         variant: Variant,
+        shade: bool,
     ) -> wgpu::RenderPipeline {
         let constants = variant.constants();
         let extended = variant.extended();
-        let (vertex, fragment) = crate::entries::impostor_bake(extended);
+        let (vertex, fragment) = crate::entries::impostor_bake(extended, shade);
         let mut buffers = vec![crate::browser::vertex_layout()];
         if extended {
             buffers.push(crate::browser::extra_layout());
         }
-        let targets = FORMATS.map(|format| Some(wgpu::ColorTargetState::from(format)));
+        let targets = if shade {
+            Vec::new()
+        } else {
+            FORMATS
+                .map(|format| Some(wgpu::ColorTargetState::from(format)))
+                .to_vec()
+        };
         crate::pipelines::render(
             device,
             &wgpu::RenderPipelineDescriptor {
@@ -692,7 +872,7 @@ mod gpu {
                     bias: Default::default(),
                 }),
                 multisample: wgpu::MultisampleState {
-                    count: SAMPLES,
+                    count: if shade { 1 } else { SAMPLES },
                     ..Default::default()
                 },
                 fragment: Some(wgpu::FragmentState {
@@ -761,4 +941,6 @@ mod gpu {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) use gpu::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, draw_pipeline};
+pub(crate) use gpu::{
+    BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorPipelines, draw_pipeline,
+};

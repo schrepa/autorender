@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use engine_core::TileKey;
+use engine_core::glam::Vec3;
 
 use crate::gpu_data::{ColorData, PoseData};
 use crate::scatter::{DEAD, Record};
@@ -30,9 +31,11 @@ pub(super) struct ScatterPool {
     free: Vec<Range<u32>>,
     // The tiles revision of each terrain last synchronized.
     revisions: HashMap<u64, u64>,
-    // Slots written since the last upload, and whether counts changed.
+    // Slots written since the last upload, whether counts changed, and the
+    // world bounds of each tile's objects that came or went since.
     dirty: Option<Range<u32>>,
     counts_changed: bool,
+    moved: Vec<(Vec3, Vec3)>,
 }
 
 impl ScatterPool {
@@ -63,6 +66,8 @@ impl ScatterPool {
             false
         });
         for slots in freed {
+            let bounds = bounds(&self.records[slots.start as usize..slots.end as usize]);
+            self.moved.extend(bounds);
             self.free_slots(slots);
         }
     }
@@ -93,6 +98,7 @@ impl ScatterPool {
         for record in &records {
             self.counts[record.group as usize] += 1;
         }
+        self.moved.extend(bounds(&records));
         self.counts_changed = true;
         self.mark(slots.clone());
         self.tiles.insert((id, key), (identity, slots));
@@ -101,6 +107,12 @@ impl ScatterPool {
     /// Slots written since the last call, and whether group counts changed.
     pub(super) fn take_changes(&mut self) -> (Option<Range<u32>>, bool) {
         (self.dirty.take(), std::mem::take(&mut self.counts_changed))
+    }
+
+    /// The world bounds of each tile's objects that came or went since the
+    /// last call.
+    pub(super) fn take_moved(&mut self) -> Vec<(Vec3, Vec3)> {
+        std::mem::take(&mut self.moved)
     }
 
     /// Whether freed slots outnumber live ones enough to start over.
@@ -165,6 +177,20 @@ impl ScatterPool {
             None => slots,
         });
     }
+}
+
+/// The world bounds of `records`' live objects, a radius taller: the
+/// terrain sets their bases on finer heights than placed them.
+fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
+    records
+        .iter()
+        .filter(|record| record.group != DEAD)
+        .map(|record| {
+            let center = Vec3::from(record.center);
+            let reach = Vec3::new(record.radius, 2.0 * record.radius, record.radius);
+            (center - reach, center + reach)
+        })
+        .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
 }
 
 /// The record of a dead slot, which culling skips.

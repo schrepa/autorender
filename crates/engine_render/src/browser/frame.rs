@@ -1291,6 +1291,17 @@ impl Renderer {
         } else {
             None
         };
+        // Placed objects' impostors cast cards (decision 060).
+        if impostor_pass.is_some()
+            && self
+                .scatter_draws
+                .impostors()
+                .iter()
+                .any(|record| record.sphere[3] > 0.0)
+        {
+            self.shadows
+                .prepare_impostor_casters(&self.device, self.impostors.pipelines.draw_layout());
+        }
         Passes {
             opaque_kind,
             transparent_kind,
@@ -1698,9 +1709,9 @@ impl Renderer {
                     draws
                 },
                 // Placed objects (decision 057) culled for this map.
-                scatter_draw: &|pass, map, casters| {
+                scatter_draw: &|pass, map, casters, cards| {
                     if state.scatter {
-                        self.draw_scatter_shadow(pass, map, casters)
+                        self.draw_scatter_shadow(pass, map, casters, cards)
                     } else {
                         0
                     }
@@ -1906,7 +1917,7 @@ impl Renderer {
         if gpu_mode
             && let Some((targets, lit)) = impostor_pass
             && let (Some(pipeline), Some(group)) = (
-                self.impostors.atlas.pipeline(targets, lit),
+                self.impostors.pipelines.pipeline(targets, lit),
                 self.impostors.atlas.group(),
             )
         {

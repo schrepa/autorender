@@ -1,7 +1,7 @@
 //! The depth pipelines of shadow maps (decisions 020 and 031): caster
-//! selection's compute passes, slot casters plain, masked and skinned, and
-//! the clear of kept-map tiles, with the view matrices and selection uniform
-//! they read.
+//! selection's compute passes, slot casters plain, masked and skinned,
+//! placed objects' impostor cards (decision 060) and the clear of kept-map
+//! tiles, with the view matrices and selection uniform they read.
 
 use super::{FAR_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
 use crate::bindings::{SHADOW_POSES, SHADOW_SELECT, SHADOW_SKINNED, SHADOW_VIEW};
@@ -21,6 +21,11 @@ pub(super) struct ShadowPipelines {
     // 031), with a material group; and of meshes with joints (decision 036),
     // which read a skin stream and the joint palettes.
     pub(super) casters: [wgpu::RenderPipeline; 4],
+    // Placed objects' impostor cards (decision 060), created once they
+    // have impostors, and what creating them takes.
+    pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
+    module: wgpu::ShaderModule,
+    view_layout: wgpu::BindGroupLayout,
     pub(super) clear: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
     pub(super) view_group: wgpu::BindGroup,
@@ -30,7 +35,7 @@ pub(super) struct ShadowPipelines {
 
 /// A shadow caster pipeline of `module`'s `entry_point` over `layouts` and
 /// vertex `buffers`; `clear` passes write the far depth everywhere, and
-/// `masked` casters test their material's texels.
+/// casters with a `fragment` stage test texels.
 #[allow(clippy::too_many_arguments)]
 fn caster_pipeline(
     device: &wgpu::Device,
@@ -40,7 +45,7 @@ fn caster_pipeline(
     entry_point: &str,
     buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     clear: bool,
-    masked: bool,
+    fragment: Option<&str>,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
@@ -79,9 +84,10 @@ fn caster_pipeline(
                     }
                 },
             }),
-            // Only masked casters test texels; the rest write depth alone.
-            fragment: masked.then_some(crate::pipelines::Fragment {
-                entry: "fs_masked",
+            // Only masked casters and cards test texels; the rest write
+            // depth alone.
+            fragment: fragment.map(|entry| crate::pipelines::Fragment {
+                entry,
                 constants: &[],
                 targets: &[],
             }),
@@ -170,7 +176,7 @@ impl ShadowPipelines {
                 entry_point,
                 buffers,
                 clear,
-                masked,
+                masked.then_some("fs_masked"),
             )
         };
         let plain = pipeline(
@@ -274,11 +280,42 @@ impl ShadowPipelines {
             select_skinned,
             skinned_layout,
             casters: [plain, masked, skinned, masked_skinned],
+            impostor_casters: None,
+            module,
+            view_layout,
             clear,
             view_buffer,
             view_group,
             pose_layout,
             cull,
         }
+    }
+
+    /// The pipeline of placed objects' impostor cards (decision 060): the
+    /// view, the objects' poses and `impostor_layout`'s impostors, each
+    /// card's slot and record as instance attributes.
+    pub(super) fn impostor_caster(
+        &self,
+        device: &wgpu::Device,
+        impostor_layout: &wgpu::BindGroupLayout,
+    ) -> wgpu::RenderPipeline {
+        caster_pipeline(
+            device,
+            &self.module,
+            "engine/shadow-impostor-cards",
+            &[
+                Some(&self.view_layout),
+                Some(&self.pose_layout),
+                Some(impostor_layout),
+            ],
+            "vs_impostor_card",
+            &[Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32],
+            })],
+            false,
+            Some("fs_impostor_card"),
+        )
     }
 }

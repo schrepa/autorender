@@ -374,15 +374,14 @@ pub(crate) const IMPOSTOR_DRAW: Table = Table {
     ],
 };
 
-/// Group 2 of impostor bakes: the frame being baked.
+/// Group 2 of impostor bakes: the impostor being baked, and the nearest
+/// depths of its frames (decision 060).
 pub(crate) const IMPOSTOR_BAKE: Table = Table {
     label: "engine/impostor-bake-layout",
-    bindings: &[uniform_of(
-        20,
-        "impostor_bake",
-        size_of::<ImpostorBakeUniform>(),
-        V,
-    )],
+    bindings: &[
+        uniform_of(20, "impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
+        texture(21, "impostor_shade", Depth, D2, F),
+    ],
 };
 
 // GPU presentation's families (decision 014; `presentation.wgsl`).

@@ -56,7 +56,7 @@ use selection::Selection;
 
 // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow.
 pub(crate) const MOVING_MAP: usize = MAX_CASCADES;
-const KEPT_MAP: usize = MAX_CASCADES + 1;
+pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1;
 const MAPS: usize = MAX_CASCADES + 2;
 // Uniform offset alignment between view matrices: each near cascade's, then
 // the far maps'.
@@ -167,16 +167,30 @@ pub(crate) struct ShadowInputs<'a> {
 /// skinned), each masked material's group, and the clusters of a map's
 /// virtual casters (decision 044), drawn last in its pass, which returns its
 /// draws.
+/// Draws placed objects into a map (decision 057) with the caster pipelines
+/// (by `masked + 2 * skinned`), and their impostor cards with the cards'
+/// pipeline (decision 060) once prepared; returns the draws.
+pub(crate) type ScatterDraw<'a> = dyn Fn(
+        &mut wgpu::RenderPass<'_>,
+        usize,
+        &[wgpu::RenderPipeline; 4],
+        Option<&wgpu::RenderPipeline>,
+    ) -> u32
+    + 'a;
+
+/// A redraw of the kept map for placed objects (decision 060): its
+/// world-to-clip matrix and the inward world planes around the region
+/// redrawn.
+pub(crate) type KeptRefresh = (Mat4, [[f32; 4]; 6]);
+
 pub(crate) struct MapSources<'a> {
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
     /// Terrain's patches in a map (decision 051), drawn first.
     pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
-    /// Placed objects in a map (decision 057), drawn next with the caster
-    /// pipelines (by `masked + 2 * skinned`).
-    pub scatter_draw:
-        &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize, &[wgpu::RenderPipeline; 4]) -> u32,
+    /// Placed objects in a map, drawn next.
+    pub scatter_draw: &'a ScatterDraw<'a>,
 }
 
 /// A caster group as depth passes draw it: its pipeline choice (masked,
@@ -231,6 +245,11 @@ pub(crate) struct ShadowPass {
     // Maps drawn every frame and their world-to-clip matrices, which
     // terrain's patches are culled by (decision 051).
     drawn_maps: Vec<(usize, Mat4)>,
+    // Whether this frame keeps still casters in the kept map (GPU-presented
+    // frames), and its redraw of it: the far maps' clip and world planes
+    // around the region redrawn, for placed objects (decision 060).
+    keeps_still: bool,
+    kept_refresh: Option<KeptRefresh>,
     // Advances whenever the caster groups change.
     groups_generation: u64,
     // The caster groups, mesh layout and map errors (bits) the draw
@@ -262,6 +281,8 @@ impl ShadowPass {
             pose_groups: Cached::default(),
             virtual_views: Vec::new(),
             drawn_maps: Vec::new(),
+            keeps_still: false,
+            kept_refresh: None,
             groups_generation: 0,
             template_key: None,
             written_views: None,
@@ -307,6 +328,30 @@ impl ShadowPass {
     /// and their world-to-clip matrices; empty without shadows.
     pub(crate) fn drawn_maps(&self) -> &[(usize, Mat4)] {
         &self.drawn_maps
+    }
+
+    /// Whether this frame keeps still casters in the kept map rather than
+    /// the moving one: placed objects (decision 060) cast there alone.
+    pub(crate) fn keeps_still(&self) -> bool {
+        self.keeps_still
+    }
+
+    /// This frame's redraw of the kept map, while it keeps still casters:
+    /// its world-to-clip matrix and the inward world planes around the
+    /// region redrawn.
+    pub(crate) fn kept_refresh(&self) -> Option<KeptRefresh> {
+        self.kept_refresh
+    }
+
+    /// Marks the kept map's tiles under the world box `min`..`max` dirty:
+    /// placed objects within it appeared or left (decision 060).
+    pub(crate) fn dirty_kept(&mut self, min: Vec3, max: Vec3) {
+        self.kept.dirty_box(min, max);
+    }
+
+    /// Marks every kept tile dirty: what placed objects cast changed.
+    pub(crate) fn dirty_kept_all(&mut self) {
+        self.kept.dirty_all();
     }
 
     /// The maps' resolution, texels square; 0 without maps.
@@ -385,6 +430,8 @@ impl ShadowPass {
         self.kept.merge(self.selection.take_dirty_tiles());
         self.virtual_views.clear();
         self.drawn_maps.clear();
+        self.keeps_still = false;
+        self.kept_refresh = None;
         let settings = snapshot.environment.shadows.sanitized();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
             if !settings.enabled {
@@ -437,6 +484,13 @@ impl ShadowPass {
             self.kept.invalidate();
         }
         let refresh = if classify { self.kept.refresh() } else { None };
+        self.keeps_still = classify;
+        self.kept_refresh = refresh.map(|refresh| {
+            (
+                far_clip,
+                regions.rect_planes(regions.refresh_rect(Some(refresh))),
+            )
+        });
         // Selection outputs, and the draw arguments' template: each group's
         // mesh placement at the level of detail each map draws it at.
         self.selection
@@ -601,6 +655,21 @@ impl ShadowPass {
         );
     }
 
+    /// Creates the pipeline of placed objects' impostor cards (decision
+    /// 060), whose group 2 `impostor_layout` binds, once shadows have
+    /// pipelines.
+    pub(crate) fn prepare_impostor_casters(
+        &mut self,
+        device: &wgpu::Device,
+        impostor_layout: &wgpu::BindGroupLayout,
+    ) {
+        if let Some(pipelines) = &mut self.pipelines
+            && pipelines.impostor_casters.is_none()
+        {
+            pipelines.impostor_casters = Some(pipelines.impostor_caster(device, impostor_layout));
+        }
+    }
+
     /// Records the depth passes of `frame` from `sources`, after
     /// [`Self::encode_selection`] and virtual geometry's selection, timed by
     /// `profiler` (`shadow_near` from the first cascade to the last,
@@ -677,7 +746,15 @@ impl ShadowPass {
         });
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             draws.set(draws.get() + terrain_draw(pass, map));
-            draws.set(draws.get() + scatter_draw(pass, map, &pipelines.casters));
+            draws.set(
+                draws.get()
+                    + scatter_draw(
+                        pass,
+                        map,
+                        &pipelines.casters,
+                        pipelines.impostor_casters.as_ref(),
+                    ),
+            );
             let Some(pose_group) = pose_group else {
                 return;
             };

@@ -21,7 +21,10 @@ use crate::gpu_data::{
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;
-use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorRecord};
+use crate::impostors::{
+    AtlasShape, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas, ImpostorPipelines,
+    ImpostorRecord,
+};
 use crate::lights::{LightFrame, LightPass};
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
@@ -457,8 +460,12 @@ impl Renderer {
         });
         let instances = Instances::new(&device);
         let mesh_pipelines = MeshPipelines::new(&device);
-        let impostors =
-            ImpostorAtlas::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
+        let impostor_pipelines =
+            ImpostorPipelines::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
+        let impostor_atlases = (
+            ImpostorAtlas::new(&device, AtlasShape::SPHERE),
+            ImpostorAtlas::new(&device, AtlasShape::PLACED),
+        );
         let gpu_presentation = GpuPresentationPass::new(&device);
         // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
@@ -508,7 +515,9 @@ impl Renderer {
             virtual_draws,
             visibility,
             impostors: ImpostorDraws {
-                atlas: impostors,
+                atlas: impostor_atlases.0,
+                placed: impostor_atlases.1,
+                pipelines: impostor_pipelines,
                 records: Vec::new(),
                 dropped: 0,
             },
@@ -597,7 +606,7 @@ impl Renderer {
             self.visibility
                 .resolve_pipelines
                 .retain(|key, _| current(key));
-            self.impostors.atlas.forget_pipelines(Targets::Temporal);
+            self.impostors.pipelines.forget_pipelines(Targets::Temporal);
             self.mesh_pipelines
                 .forget_sky(SkyTargets::Frame(Targets::Temporal));
             self.instances.release_alternate();
