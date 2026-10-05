@@ -72,15 +72,61 @@ pub struct TerrainSurface {
 /// An object placement layers stand on a terrain (decision 057): the mesh
 /// it draws and the material it draws with, the coarser meshes it draws at
 /// a distance, finest first (without them, the mesh's automatic levels of
-/// detail, decision 047), and how far it sways in the wind (decision 058):
+/// detail, decision 047), how far it sways in the wind (decision 058):
 /// meters at ten meters up in full wind, its bend growing with the square
-/// of the height, 0 (rigid) to 10.
+/// of the height, 0 (rigid) to 10, and its objects' collider (decision
+/// 064), if they collide.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub lods: Vec<PlacementLod>,
     pub sway: f32,
+    pub collider: Option<PlacedCollider>,
+}
+
+/// The collider of a placement asset's objects (decision 064), in the
+/// asset's mesh space at scale 1: its primitive about `center`, and the
+/// collision layers the objects belong to and collide with. Objects within
+/// terrains' collision radius collide; those standing far away (decision
+/// 061) never do.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacedCollider {
+    pub shape: PlacedShape,
+    pub center: [f32; 3],
+    pub memberships: u32,
+    pub filter: u32,
+}
+
+/// A placed collider's primitive: a box's half extents or a sphere's
+/// radius, each 0.0001 to 10000.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PlacedShape {
+    Cuboid { half_extents: [f32; 3] },
+    Sphere { radius: f32 },
+}
+
+impl PlacedCollider {
+    /// A collider of `shape` about `center` in the default layers: a
+    /// member of the first, colliding with every one.
+    pub fn new(shape: PlacedShape, center: [f32; 3]) -> Self {
+        Self {
+            shape,
+            center,
+            memberships: 1,
+            filter: u32::MAX,
+        }
+    }
+
+    /// Whether its dimensions are in range and its center finite.
+    pub fn is_usable(&self) -> bool {
+        let usable = |value: f32| value.is_finite() && (1.0e-4..=1.0e4).contains(&value);
+        let dimensions = match self.shape {
+            PlacedShape::Cuboid { half_extents } => half_extents.iter().all(|&half| usable(half)),
+            PlacedShape::Sphere { radius } => usable(radius),
+        };
+        dimensions && self.center.iter().all(|value| value.is_finite())
+    }
 }
 
 /// A coarser mesh of a placement asset and the largest deviation from the
@@ -214,6 +260,12 @@ impl TerrainSurface {
         for (index, asset) in assets.iter().enumerate() {
             if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
                 return fail(format!("assets[{index}].sway"), "must be in [0, 10]");
+            }
+            if asset.collider.is_some_and(|collider| !collider.is_usable()) {
+                return fail(
+                    format!("assets[{index}].collider"),
+                    "needs dimensions in [0.0001, 10000] and a finite center",
+                );
             }
             let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
             if let Err((level, rule)) = PlacementLod::check(&errors) {

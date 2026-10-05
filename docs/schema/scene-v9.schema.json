@@ -2983,6 +2983,17 @@
       "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), and how far it sways in the wind (decision 058): meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
       "type": "object",
       "properties": {
+        "collider": {
+          "description": "Its objects' collider (decision 064); without one they never\ncollide.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "id": {
           "type": "string"
         },
@@ -3010,6 +3021,40 @@
         "id",
         "mesh",
         "material"
+      ]
+    },
+    "SceneTerrainCollider": {
+      "description": "The collider of a placement asset's objects (decision 064), in its\nmesh's space at scale 1: its shape about `center` (the origin by\ndefault), and the collision layers its objects belong to (the first by\ndefault) and collide with (every one by default). Objects within\nterrains' collision radius collide; those standing far away never do.",
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "filter": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 4294967295,
+          "minimum": 0
+        },
+        "memberships": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneColliderShape"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "shape"
       ]
     },
     "SceneTerrainLayer": {

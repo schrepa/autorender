@@ -119,6 +119,34 @@ pub struct Placed {
     pub near_level: Option<u8>,
 }
 
+impl Placed {
+    /// The world matrix of the object on a terrain whose origin is
+    /// `origin`, with its base at height `base` (terrain-local) instead of
+    /// where it was placed: its up leaning as placed, turned about it by its
+    /// yaw, and scaled.
+    pub fn model(&self, origin: glam::Vec3, base: f32) -> glam::Mat4 {
+        use glam::Vec3;
+        let [lean_x, lean_z] = self.lean;
+        let up = Vec3::new(
+            lean_x,
+            max(1.0 - lean_x * lean_x - lean_z * lean_z, 0.01).sqrt(),
+            lean_z,
+        )
+        .normalize();
+        let (sin, cos) = sin_cos(self.yaw);
+        let forward = Vec3::new(cos, 0.0, sin);
+        let tangent = (forward - up * forward.dot(up)).normalize_or(Vec3::X);
+        let across = tangent.cross(up);
+        let [x, _, z] = self.position;
+        glam::Mat4::from_cols(
+            (tangent * self.scale).extend(0.0),
+            (up * self.scale).extend(0.0),
+            (across * self.scale).extend(0.0),
+            (origin + Vec3::new(x, base, z)).extend(1.0),
+        )
+    }
+}
+
 /// A compiled layer: its tiles' level, its asset indices and cumulative
 /// weights, the share of a square its density fills, its materials as a
 /// 256-bit set (none: any), its mask and its variations, and the level and

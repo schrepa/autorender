@@ -671,7 +671,7 @@ fn tile_objects(
         let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
         let draw = &draws.groups[group as usize];
         let (center, radius) = draw.sphere;
-        let model = placed_model(terrain.origin, placed);
+        let model = placed.model(terrain.origin, placed.position[1]);
         objects.0.push(pose_rows(model));
         objects.1.push(draw.color);
         objects.2.push(Record {
@@ -684,29 +684,6 @@ fn tile_objects(
         });
     }
     objects
-}
-
-/// The world matrix of `placed` on a terrain whose origin is `origin`: its
-/// up leaning as placed, turned about it by its yaw, and scaled.
-fn placed_model(origin: Vec3, placed: &engine_core::Placed) -> Mat4 {
-    let [lean_x, lean_z] = placed.lean;
-    let up = Vec3::new(
-        lean_x,
-        engine_core::math::max(1.0 - lean_x * lean_x - lean_z * lean_z, 0.01).sqrt(),
-        lean_z,
-    )
-    .normalize();
-    let (sin, cos) = engine_core::math::sin_cos(placed.yaw);
-    let forward = Vec3::new(cos, 0.0, sin);
-    let tangent = (forward - up * forward.dot(up)).normalize_or(Vec3::X);
-    let across = tangent.cross(up);
-    let scale = placed.scale;
-    Mat4::from_cols(
-        (tangent * scale).extend(0.0),
-        (up * scale).extend(0.0),
-        (across * scale).extend(0.0),
-        (origin + Vec3::from_array(placed.position)).extend(1.0),
-    )
 }
 
 /// The three rows of `model`'s affine part, the layout slot poses keep.

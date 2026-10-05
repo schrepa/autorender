@@ -19,6 +19,9 @@ pub(crate) const MAX_POINTS: usize = 256;
 pub(crate) const MAX_SWEEP_SAMPLES: u32 = 64;
 /// The largest coordinate a request names, as collision queries bound them.
 const LIMIT: f64 = 1.0e6;
+/// Hits a sweep ray may meet: placed objects (decision 064) above the
+/// ground, and the ground itself.
+const PLACED_RAY_HITS: usize = 16;
 
 pub(crate) fn terrain_request(request: &DevRequest) -> bool {
     matches!(
@@ -150,7 +153,7 @@ fn sweep(
     let mut holes = 0;
     let mut rays = Worst::default();
     let mut layers = Worst::default();
-    let (mut ray_checks, mut ray_misses, mut layer_checks) = (0, 0, 0);
+    let (mut ray_checks, mut ray_misses, mut layer_checks, mut placed_first) = (0, 0, 0, 0);
     let mut collected = Vec::new();
     for row in 0..samples {
         for column in 0..samples {
@@ -168,19 +171,26 @@ fn sweep(
             if sample.level != 0 {
                 continue;
             }
-            // Collision holds level-0 tiles around focus points only.
+            // Collision holds level-0 tiles around focus points only. Rays
+            // meeting placed objects first (decision 064) count, and the
+            // ground beneath them compares.
             if collision {
-                let hit = world
+                let mut hits = Vec::new();
+                world
                     .resource::<CollisionWorld>()
-                    .raycast(
+                    .raycast_all(
                         CollisionRay {
                             origin: Vec3::new(point.x, sample.height + 1000.0, point.y),
                             direction: Vec3::NEG_Y,
                             max_distance: 2000.0,
                         },
                         QueryFilter::default(),
+                        &mut hits,
+                        PLACED_RAY_HITS,
                     )
                     .map_err(crate::collision::native_error)?;
+                placed_first += usize::from(hits.first().is_some_and(|hit| hit.placed.is_some()));
+                let hit = hits.into_iter().find(|hit| hit.placed.is_none());
                 match hit.filter(|hit| hit.entity == sample.terrain) {
                     Some(hit) => {
                         ray_checks += 1;
@@ -210,6 +220,7 @@ fn sweep(
         "collision": collision.then(|| json!({
             "compared": ray_checks,
             "missed": ray_misses,
+            "placed_first": placed_first,
             "worst": rays.value(),
         })),
         "layers": json!({"compared": layer_checks, "worst": layers.value()}),

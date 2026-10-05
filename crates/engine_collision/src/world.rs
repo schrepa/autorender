@@ -10,6 +10,7 @@ use glam::{Mat4, Vec3};
 use crate::{
     bvh::Bvh,
     geometry::{AffineShape, Bounds, NarrowScratch, intersects},
+    placed::PlacedShapes,
     terrain::TerrainFields,
     types::*,
 };
@@ -35,6 +36,10 @@ impl CollisionSync<'_, '_> {
         // Terrain heightfields (decision 051) follow the resident tiles.
         if self.collisions.terrain.sync(self.terrains.as_deref()) {
             self.collisions.report.terrain_tiles = self.collisions.terrain.len();
+        }
+        // Placed objects (decision 064) within the same radius.
+        if self.collisions.placed.sync(self.terrains.as_deref()) {
+            self.collisions.report.placed_colliders = self.collisions.placed.len();
         }
         self.collisions.refresh(
             *self.config,
@@ -114,6 +119,7 @@ pub struct CollisionWorld {
     report: CollisionReport,
     last_error: Option<CollisionError>,
     terrain: TerrainFields,
+    placed: PlacedShapes,
 }
 
 impl FromWorld for CollisionWorld {
@@ -131,6 +137,7 @@ impl FromWorld for CollisionWorld {
             report: CollisionReport::default(),
             last_error: None,
             terrain: TerrainFields::default(),
+            placed: PlacedShapes::default(),
         }
     }
 }
@@ -323,16 +330,20 @@ impl CollisionWorld {
                     point: ray.origin + ray.direction * distance,
                     normal,
                     started_inside,
+                    placed: None,
                 };
                 if nearest.is_none_or(|old| (distance, entry.entity) < (old.distance, old.entity)) {
                     nearest = Some(hit);
                 }
             }
         }
-        if let Some(hit) = self.terrain.ray(ray, filter)
-            && nearest.is_none_or(|old| (hit.distance, hit.entity) < (old.distance, old.entity))
+        for hit in [self.placed.ray(ray, filter), self.terrain.ray(ray, filter)]
+            .into_iter()
+            .flatten()
         {
-            nearest = Some(hit);
+            if nearest.is_none_or(|old| (hit.distance, hit.entity) < (old.distance, old.entity)) {
+                nearest = Some(hit);
+            }
         }
         Ok(nearest)
     }
@@ -373,9 +384,11 @@ impl CollisionWorld {
                         point: ray.origin + ray.direction * distance,
                         normal,
                         started_inside,
+                        placed: None,
                     });
                 }
             }
+            self.placed.ray_all(ray, filter, output);
             self.terrain.ray_all(ray, filter, output);
             if output.len() > limit {
                 return Err(CollisionError::ResultBudget);
@@ -426,6 +439,7 @@ impl CollisionWorld {
                     output.push(entry.entity);
                 }
             }
+            self.placed.overlap(&shape, filter, output)?;
             self.terrain.overlap(&shape, filter, output)?;
             if output.len() > limit {
                 return Err(CollisionError::ResultBudget);
@@ -476,16 +490,21 @@ impl CollisionWorld {
                     point,
                     normal,
                     started_overlapping,
+                    placed: None,
                 };
                 if nearest.is_none_or(|old| (fraction, entry.entity) < (old.fraction, old.entity)) {
                     nearest = Some(hit);
                 }
             }
         }
-        if let Some(hit) = self.terrain.cast(&shape, displacement, filter, options)?
-            && nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity))
-        {
-            nearest = Some(hit);
+        let placed = self
+            .placed
+            .cast(&mut self.narrow, &shape, displacement, filter, options)?;
+        let terrain = self.terrain.cast(&shape, displacement, filter, options)?;
+        for hit in [placed, terrain].into_iter().flatten() {
+            if nearest.is_none_or(|old| (hit.fraction, hit.entity) < (old.fraction, old.entity)) {
+                nearest = Some(hit);
+            }
         }
         Ok(nearest)
     }
