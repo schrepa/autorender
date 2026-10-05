@@ -42,10 +42,10 @@ pub(super) struct ScatterDraws {
 }
 
 impl ScatterDraws {
-    /// Each draw group's impostor record, zeroed without one, as the
-    /// impostors' records list them after the plan batches'.
-    pub(super) fn impostors(&self) -> impl Iterator<Item = &ImpostorRecord> {
-        self.impostors.iter()
+    /// Each draw group's impostor record in the placed objects' atlas
+    /// (decision 060), zeroed without one.
+    pub(super) fn impostors(&self) -> &[ImpostorRecord] {
+        &self.impostors
     }
 
     /// Each draw group's cover, which the occupancy map draws (decision
@@ -156,6 +156,11 @@ impl Renderer {
             .collect();
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
+        // The kept shadow map redraws where objects came or went
+        // (decision 060).
+        for (min, max) in draws.pool.take_moved() {
+            self.shadows.dirty_kept(min, max);
+        }
         self.scatter.write_slots(
             &self.device,
             &self.queue,
@@ -205,21 +210,35 @@ impl Renderer {
             .enabled
             .then_some(level_of_detail.pixel_error);
         let height = self.display.size().1 as f32;
+        // Frames keeping still casters cast placed objects into the kept map
+        // (decision 060), not the moving one.
+        let keeps_still = self.shadows.keeps_still();
+        let maps: Vec<(usize, engine_core::glam::Mat4)> = self
+            .shadows
+            .drawn_maps()
+            .iter()
+            .copied()
+            .filter(|&(map, _)| !(keeps_still && map == crate::shadows::MOVING_MAP))
+            .collect();
         self.scatter.prepare(
             &self.device,
             &self.queue,
             (snapshot.view_projection, snapshot.camera_position),
             (pixel_error, height, impostors),
-            (self.shadows.drawn_maps(), self.shadows.map_resolution()),
+            (
+                &maps,
+                self.shadows.kept_refresh(),
+                self.shadows.map_resolution(),
+            ),
         )
     }
 
     /// The impostors of placed draw groups (decision 057) on GPU-presented
     /// frames with impostors: each group's, baked into `encoder` after its
-    /// material's levels where missing, as plan batches' are (decision
-    /// 048), zeroed where its material blends, its mesh is too small or the
-    /// budget is spent. The groups' layouts take their errors and records,
-    /// listed after the plan batches'.
+    /// material's levels where missing into the placed objects' atlas
+    /// (decision 060), zeroed where its material blends, its mesh is too
+    /// small or the budget the plan batches' leave is spent. The groups'
+    /// layouts take their errors and records.
     pub(super) fn prepare_scatter_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -228,7 +247,19 @@ impl Renderer {
     ) {
         let settings = snapshot.environment.level_of_detail;
         let enabled = gpu_mode && settings.enabled && settings.impostors;
-        let first = self.impostors.records.len() as u32;
+        let (meshes, materials) = (&self.meshes, &self.materials);
+        self.impostors.placed.retain(
+            |(mesh, material)| {
+                meshes.contains_key(mesh)
+                    && material.is_none_or(|handle| materials.group(handle).is_some())
+            },
+            |handle| Self::placed_material(snapshot, handle),
+        );
+        // Plan batches' impostors come first within a budget.
+        let budget = settings
+            .max_impostors
+            .map(|budget| budget.saturating_sub(self.impostors.atlas.live()));
+        self.impostors.placed.enforce_budget(budget);
         let mut records = Vec::with_capacity(self.scatter_draws.groups.len());
         for group in &self.scatter_draws.groups {
             let mut record = ImpostorRecord::default();
@@ -247,7 +278,7 @@ impl Renderer {
                     .is_some_and(|source| source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES);
             if let (true, Some(mesh), Some(source)) = (eligible, mesh, source) {
                 let key = (group.meshes[0], Some(group.material));
-                if let Some(baked) = self.impostors.atlas.record(key, Some(&group.source)) {
+                if let Some(baked) = self.impostors.placed.record(key, Some(&group.source)) {
                     record = baked;
                 } else {
                     let (bind_group, variant) = self.materials.binding(Some(group.material));
@@ -266,18 +297,19 @@ impl Renderer {
                         bounds: (bounds.min(), bounds.max()),
                         material: Some(group.source),
                     };
-                    if self.impostors.atlas.bake(
+                    if self.impostors.placed.bake(
                         &self.device,
                         encoder,
                         self.materials.mips(),
                         &self.mesh_shader,
+                        &mut self.impostors.pipelines,
                         key,
                         &bake,
-                        settings.max_impostors,
+                        budget,
                     ) {
                         record = self
                             .impostors
-                            .atlas
+                            .placed
                             .record(key, Some(&group.source))
                             .unwrap_or_default();
                     } else {
@@ -287,9 +319,15 @@ impl Renderer {
             }
             records.push(record);
         }
+        self.impostors.placed.release_targets();
+        // The kept shadow map casts impostors as cards: it redraws whole
+        // when they change (decision 060).
+        if records != self.scatter_draws.impostors {
+            self.shadows.dirty_kept_all();
+        }
         let draws = &mut self.scatter_draws;
         for (index, (layout, record)) in draws.layouts.iter_mut().zip(&records).enumerate() {
-            let impostor = (record.error(), first + index as u32);
+            let impostor = (record.error(), index as u32);
             if layout.impostor != impostor {
                 layout.impostor = impostor;
                 draws.changed = true;
@@ -489,15 +527,15 @@ impl Renderer {
         // the poses and lights the meshes bound.
         if let Some((targets, lit)) = state.passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
-                self.impostors.atlas.pipeline(targets, lit),
-                self.impostors.atlas.group(),
+                self.impostors.pipelines.pipeline(targets, lit),
+                self.impostors.placed.group(),
             )
         {
-            let (cards, args) = self.scatter.card_source();
+            let (cards, args, offset) = self.scatter.card_source(0);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            pass.set_vertex_buffer(0, cards.slice(..));
-            pass.draw_indirect(args, 0);
+            pass.set_vertex_buffer(0, cards);
+            pass.draw_indirect(args, offset);
             draws += 1;
         }
         draws
@@ -519,13 +557,15 @@ impl Renderer {
     }
 
     /// Draws this frame's placed objects culled for shadow map `map` with
-    /// the depth passes' caster pipelines `casters`; the map's view is
-    /// bound. Returns the draws.
+    /// the depth passes' caster pipelines `casters`, and their impostor
+    /// cards with `cards` (decision 060); the map's view is bound. Returns
+    /// the draws.
     pub(super) fn draw_scatter_shadow(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         map: usize,
         casters: &[wgpu::RenderPipeline; 4],
+        cards: Option<&wgpu::RenderPipeline>,
     ) -> u32 {
         let (Some(view), Some(poses)) = (self.scatter.map_view(map), self.scatter.shadow_group())
         else {
@@ -549,6 +589,14 @@ impl Renderer {
                 bound = Some(masked);
             }
             draws += self.draw_scatter_levels(pass, (index, draw), view, false);
+        }
+        if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group()) {
+            let (cards, args, offset) = self.scatter.card_source(view);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(2, group, &[]);
+            pass.set_vertex_buffer(0, cards);
+            pass.draw_indirect(args, offset);
+            draws += 1;
         }
         draws
     }

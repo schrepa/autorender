@@ -184,12 +184,14 @@ pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> &'static str {
 }
 
 /// The vertex and fragment stages baking impostors of meshes with a second
-/// vertex stream (`extended`) or without.
-pub(crate) fn impostor_bake(extended: bool) -> (&'static str, &'static str) {
-    if extended {
-        ("vs_impostor_bake_extended", "fs_impostor_bake_extended")
-    } else {
-        ("vs_impostor_bake", "fs_impostor_bake")
+/// vertex stream (`extended`) or without: their colors, or with `shade`
+/// their frames' nearest depths (decision 060).
+pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (&'static str, &'static str) {
+    match (extended, shade) {
+        (false, false) => ("vs_impostor_bake", "fs_impostor_bake"),
+        (true, false) => ("vs_impostor_bake_extended", "fs_impostor_bake_extended"),
+        (false, true) => ("vs_impostor_bake", "fs_impostor_shade"),
+        (true, true) => ("vs_impostor_bake_extended", "fs_impostor_shade_extended"),
     }
 }
 

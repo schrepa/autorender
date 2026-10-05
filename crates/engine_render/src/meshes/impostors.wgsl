@@ -1,26 +1,17 @@
 // Octahedral impostors (decision 048): a draw group's mesh baked from
-// IMPOSTOR_FRAMES x IMPOSTOR_FRAMES directions over the whole sphere into
-// one layer of four texture arrays, drawn for instances too small for its
+// IMPOSTOR_FRAMES x IMPOSTOR_FRAMES directions over the whole sphere, or
+// over the upper hemisphere for placed objects (decision 060), into one
+// layer of four texture arrays, drawn for instances too small for its
 // texels to show as a card facing the viewer that blends the three frames
 // around the view. Texels hold premultiplied coverage: albedo and coverage;
 // emissive color and emission mask; normal and depth; roughness and
-// metalness factors and occlusion. Normals are plain vectors, which filter
-// and average across levels as octahedral ones, folded across the lower
-// hemisphere's seams, cannot.
-const IMPOSTOR_FRAMES: u32 = 8u;
-// Texels across a frame of the first level, and the levels.
-const IMPOSTOR_TEXELS: u32 = 16u;
-const IMPOSTOR_LEVELS: u32 = 4u;
+// metalness factors, occlusion and the sky the surface sees past its own
+// mesh (decision 060). Normals are plain vectors, which filter and average
+// across levels as octahedral ones, folded across the lower hemisphere's
+// seams, cannot.
+//
+// Frames, records and their directions: `impostor_frames.wgsl`.
 
-struct ImpostorRecord {
-    // Mesh-space center and radius of the sphere every frame frames.
-    sphere: vec4<f32>,
-    // Mesh-space half extents of the mesh's bounds, and the layer.
-    extent: vec3<f32>,
-    layer: u32,
-    // The material's emissive color (glTF), linear.
-    emissive: vec4<f32>,
-}
 // One record per draw group; groups without an impostor never draw one.
 @group(1) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
 @group(1) @binding(12) var impostor_albedo: texture_2d_array<f32>;
@@ -29,54 +20,62 @@ struct ImpostorRecord {
 @group(1) @binding(15) var impostor_surface: texture_2d_array<f32>;
 @group(1) @binding(16) var impostor_sampler: sampler;
 
-// Octahedral coordinates in [-1, 1] of unit direction `d` about +y: the
-// upper hemisphere fills the central diamond, the lower folds into the
-// corners.
-fn impostor_octahedral(d: vec3<f32>) -> vec2<f32> {
-    let n = d / (abs(d.x) + abs(d.y) + abs(d.z));
-    let sign = select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xz >= vec2<f32>(0.0));
-    return select(n.xz, (vec2<f32>(1.0) - abs(n.zx)) * sign, n.y < 0.0);
-}
-
-// The unit direction of octahedral coordinates `p`.
-fn impostor_direction(p: vec2<f32>) -> vec3<f32> {
-    var d = vec3<f32>(p.x, 1.0 - abs(p.x) - abs(p.y), p.y);
-    let fold = max(-d.y, 0.0);
-    d.x += select(fold, -fold, d.x >= 0.0);
-    d.z += select(fold, -fold, d.z >= 0.0);
-    return normalize(d);
-}
-
-// Frame `frame`'s direction toward its viewer: the frames sit on the
-// octahedral map's grid points, its edges and corners included.
-fn impostor_frame_direction(frame: u32) -> vec3<f32> {
-    let cell = vec2<f32>(f32(frame % IMPOSTOR_FRAMES), f32(frame / IMPOSTOR_FRAMES));
-    return impostor_direction(cell / f32(IMPOSTOR_FRAMES - 1u) * 2.0 - 1.0);
-}
-
-// Right and up of an image seen from direction `d`: up follows +y unless `d`
-// nearly does.
-struct ImpostorBasis {
-    right: vec3<f32>,
-    up: vec3<f32>,
-}
-
-fn impostor_basis(d: vec3<f32>) -> ImpostorBasis {
-    var hint = vec3<f32>(0.0, 1.0, 0.0);
-    if abs(d.y) > 0.999 {
-        hint = vec3<f32>(0.0, 0.0, -sign(d.y));
-    }
-    let right = normalize(cross(hint, d));
-    return ImpostorBasis(right, cross(d, right));
-}
-
 // Baking: every frame renders the mesh orthographically into its cell of the
 // layer, instance `frame` for frame `frame`, the sphere filling the cell.
 struct ImpostorBake {
     // Mesh-space center and radius of the frames' sphere.
     sphere: vec4<f32>,
+    // The record's flags.
+    flags: vec4<u32>,
 }
 @group(2) @binding(20) var<uniform> impostor_bake: ImpostorBake;
+// Each frame's nearest depth toward its viewer, at four times the layer's
+// texels, drawn before the colors (decision 060).
+@group(2) @binding(21) var impostor_shade: texture_depth_2d;
+
+fn bake_hemisphere() -> bool {
+    return (impostor_bake.flags.x & IMPOSTOR_HEMISPHERE) != 0u;
+}
+
+// The share of the sky above the horizon that mesh-space `position`, with
+// unit normal `normal`, sees past its own mesh, weighted by how squarely
+// its surface faces each direction: the frames' nearest depths are a depth
+// map from every frame's direction (decision 060). Cards shade the sun by
+// it, as the mesh's own shadows would darken its insides.
+fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let size = textureDimensions(impostor_shade).x;
+    // A texel of the depths, in sphere radii.
+    let texel = 2.0 * f32(IMPOSTOR_FRAMES) / f32(size);
+    // Moved a texel and a half along its normal, a surface clears its own
+    // depth.
+    let p = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w
+        + normal * (1.5 * texel);
+    let hemisphere = bake_hemisphere();
+    var seen = 0.0;
+    var total = 0.0;
+    for (var frame = 0u; frame < IMPOSTOR_FRAMES * IMPOSTOR_FRAMES; frame++) {
+        let d = impostor_frame_direction(frame, hemisphere);
+        let facing = dot(normal, d);
+        if d.y < 0.0 || facing <= 0.0 {
+            continue;
+        }
+        let basis = impostor_basis(d);
+        let image = vec2<f32>(dot(p, basis.right), -dot(p, basis.up));
+        let cell = vec2<f32>(f32(frame % IMPOSTOR_FRAMES), f32(frame / IMPOSTOR_FRAMES));
+        let atlas = (cell + 0.5 + image * 0.5) / f32(IMPOSTOR_FRAMES);
+        let at = min(vec2<u32>(max(atlas, vec2<f32>(0.0)) * f32(size)), vec2<u32>(size - 1u));
+        // Nearer the frame's viewer is greater; empty texels hold zero.
+        let nearest = textureLoad(impostor_shade, at, 0);
+        total += facing;
+        if 0.5 + 0.5 * dot(p, d) >= nearest {
+            seen += facing;
+        }
+    }
+    if total <= 0.0 {
+        return 1.0;
+    }
+    return seen / total;
+}
 
 struct BakeOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -98,7 +97,7 @@ struct BakeExtendedOutput {
 
 fn bake_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, uv: vec2<f32>, frame: u32)
         -> BakeOutput {
-    let d = impostor_frame_direction(frame);
+    let d = impostor_frame_direction(frame, bake_hemisphere());
     let basis = impostor_basis(d);
     let local = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w;
     let image = vec2<f32>(dot(local, basis.right), -dot(local, basis.up));
@@ -147,6 +146,13 @@ struct BakeTargets {
     @location(3) surface: vec4<f32>,
 }
 
+// Discards the gaps of masked materials, as their fragments would.
+fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
+    if ALPHA_MASK && texels.base.a * color.a * texels.coverage < material_maps.params.z {
+        discard;
+    }
+}
+
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
@@ -166,16 +172,28 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
         emissive = texels.emissive;
         occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
     }
-    if ALPHA_MASK && texels.base.a * color.a * texels.coverage < material_maps.params.z {
-        discard;
-    }
+    bake_mask(texels, color);
     var targets: BakeTargets;
     targets.albedo = vec4<f32>(texels.base.rgb * color.rgb, 1.0);
     // Texture alpha masks emission (decision 019).
     targets.emissive = vec4<f32>(emissive, texels.base.a);
     targets.geometry = vec4<f32>(stable_normalize(normal) * 0.5 + 0.5, 0.5 + 0.5 * input.depth);
-    targets.surface = vec4<f32>(texels.factors, occlusion, 1.0);
+    targets.surface = vec4<f32>(texels.factors, occlusion,
+        impostor_self_visibility(local, geometric));
     return targets;
+}
+
+// The frames' nearest depths alone (decision 060).
+@fragment
+fn fs_impostor_shade(input: BakeOutput) {
+    let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
+    bake_mask(material_texels(uv, uv), vec4<f32>(1.0));
+}
+
+@fragment
+fn fs_impostor_shade_extended(input: BakeExtendedOutput) {
+    let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
+    bake_mask(material_texels(uv, input.uv1), input.color);
 }
 
 @fragment
@@ -288,7 +306,8 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     let dir = stable_normalize(vec3<f32>(dot(yz, toward), dot(zx, toward), dot(xy, toward))
         * orientation);
     // The three frames around it: the grid triangle holding it.
-    let grid = (impostor_octahedral(dir) * 0.5 + 0.5) * f32(IMPOSTOR_FRAMES - 1u);
+    let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
+    let grid = (impostor_grid(dir, hemisphere) * 0.5 + 0.5) * f32(IMPOSTOR_FRAMES - 1u);
     let cell = min(floor(grid), vec2<f32>(f32(IMPOSTOR_FRAMES - 2u)));
     let f = grid - cell;
     let base = vec2<u32>(cell);
@@ -315,7 +334,7 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     var frames = 0u;
     for (var k = 0u; k < 3u; k++) {
         let frame = corners[k].y * IMPOSTOR_FRAMES + corners[k].x;
-        let d = impostor_frame_direction(frame);
+        let d = impostor_frame_direction(frame, hemisphere);
         let frame_basis = impostor_basis(d);
         let projected = offset - dir * (dot(offset, d) / max(dot(dir, d), 1.0e-3));
         let image = vec2<f32>(dot(projected, frame_basis.right), -dot(projected, frame_basis.up))
@@ -374,7 +393,8 @@ fn vs_impostor_temporal(input: ImpostorInput) -> ImpostorTemporalOutput {
 
 // The surface an impostor fragment shows: the three frames blended by
 // weight and coverage, unpremultiplied, on the slot's color and surface;
-// discards fragments the blend leaves under half covered.
+// discards fragments the blend leaves under half covered, scaling coverage
+// up on coarser levels as masked materials do.
 fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let record = impostor_records[input.batch];
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
@@ -383,10 +403,11 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let frames = vec3<u32>(packed & 63u, (packed >> 6u) & 63u, (packed >> 12u) & 63u);
     // The level whose texels match the pixels, and half a texel of the
     // coarser level sampled, which keeps each frame's samples in its cell.
-    let size = f32(IMPOSTOR_FRAMES * IMPOSTOR_TEXELS);
+    let size = f32(textureDimensions(impostor_albedo).x);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
         * size;
-    let level = clamp(log2(max(footprint, 1.0e-6)), 0.0, f32(IMPOSTOR_LEVELS - 1u));
+    let level = clamp(log2(max(footprint, 1.0e-6)), 0.0,
+        f32(textureNumLevels(impostor_albedo) - 1u));
     let inset = 0.5 * exp2(ceil(level)) / size;
     let span = 1.0 / f32(IMPOSTOR_FRAMES);
     let unclamped = array<vec2<f32>, 3>(input.frames_ab.xy, input.frames_ab.zw, input.frame_c);
@@ -402,7 +423,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // Most of a card around its mesh is empty: those fragments stop before
     // reading the rest.
     let coverage = albedo.a;
-    if coverage < 0.5 {
+    if coverage * (1.0 + MASK_MIP_SCALE * level) < 0.5 {
         discard;
     }
     var emissive = vec4<f32>(0.0);
@@ -432,8 +453,10 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.albedo = albedo_color;
     point.opacity = color.a;
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
-    point.emissive = record.emissive.rgb * emissive.rgb * unpremultiply;
+    point.emissive = record.emissive * emissive.rgb * unpremultiply;
     point.occlusion = surface.z * unpremultiply;
+    // The mesh's own shadows inside it (decision 060).
+    point.sun_shade = 1.0 - saturate(surface.w * unpremultiply);
     point.roughness = max(slot_surface.x * surface.x * unpremultiply, 0.03);
     point.alpha = point.roughness * point.roughness;
     point.f0 = mix(vec3<f32>(0.04), albedo_color, metalness);
@@ -452,8 +475,12 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // rebuild the surface up to a few tenths of the radius off the mesh
     // that casts its shadow: the sun is looked up a radius toward it, from
     // outside the mesh's own shadow, with a flat receiver plane
-    // (`world_dx` and `world_dy` stay zero).
-    point.shadow_offset = lighting.sun.xyz * length(input.depth_axis.xyz);
+    // (`world_dx` and `world_dy` stay zero). Placed objects' impostors
+    // cast cards through their centers instead (decision 060): a quarter
+    // of the radius clears the sunlit half of their own, and neighbors'
+    // cards still shade them.
+    let reach = select(1.0, 0.25, (record.flags & IMPOSTOR_HEMISPHERE) != 0u);
+    point.shadow_offset = lighting.sun.xyz * (reach * length(input.depth_axis.xyz));
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 

@@ -135,6 +135,35 @@ impl Regions {
         views
     }
 
+    /// The light-space rectangle of the kept map `refresh` redraws, with a
+    /// texel of margin keeping casters at its tiles' edges; zero without
+    /// one.
+    pub(super) fn refresh_rect(&self, refresh: Option<Refresh>) -> [f32; 4] {
+        match refresh {
+            Some(Refresh::Whole) => self.far.rect,
+            Some(Refresh::Tiles(region)) => {
+                region.rect(self.far.rect, self.far.texel(self.resolution))
+            }
+            None => [0.0; 4],
+        }
+    }
+
+    /// Inward world planes around the light-space rectangle `rect`, then
+    /// two passing everything: what casts into it.
+    pub(super) fn rect_planes(&self, rect: [f32; 4]) -> [[f32; 4]; 6] {
+        let [x0, y0, x1, y1] = rect;
+        let [right, up, _] = self.basis.rows;
+        let plane = |normal: Vec3, distance: f32| normal.extend(distance).to_array();
+        [
+            plane(right, -x0),
+            plane(-right, x1),
+            plane(up, -y0),
+            plane(-up, y1),
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    }
+
     /// The selection pass's uniform for `counts`' casters: each map's
     /// selection region, and the kept map's `refresh`, while keeping
     /// stillness (`classify`). Maps drawn every frame whose virtual casters'
@@ -151,12 +180,7 @@ impl Regions {
     ) -> ShadowCullUniform {
         let (basis, far, near) = (&self.basis, &self.far, self.near());
         let eye = snapshot.camera_position;
-        let refresh_rect = match refresh {
-            Some(Refresh::Whole) => far.rect,
-            // A texel of margin keeps casters at the tiles' edges.
-            Some(Refresh::Tiles(region)) => region.rect(far.rect, far.texel(self.resolution)),
-            None => [0.0; 4],
-        };
+        let refresh_rect = self.refresh_rect(refresh);
         let row = |axis: Vec3| axis.extend(0.0).to_array();
         // Casters matter only above receivers a map shadows: within the
         // view frustum up to how far the map reaches, widened by the

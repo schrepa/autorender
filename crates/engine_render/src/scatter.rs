@@ -7,9 +7,10 @@
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
 //! then the shadow maps drawn every frame) and picks its level of detail
 //! from the camera (`scatter_cull.wgsl`), appending it to its draw
-//! group's list for that view and level; each group and level then draws
-//! indirectly. Objects draw in the first opaque phase, and cast into the
-//! near cascades and the moving map, never the kept one: the tiles they
+//! group's list for that view and level, or to the view's impostor cards
+//! (decisions 048 and 060); each group and level then draws indirectly, and
+//! each view's cards. Objects draw in the first opaque phase, and cast into
+//! the near cascades and the moving map, never the kept one: the tiles they
 //! stand on come and go with the camera. They are never occlusion culled.
 
 use bytemuck::{Pod, Zeroable};
@@ -18,6 +19,7 @@ use engine_core::glam::{Mat4, Vec3};
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, PoseData};
+use crate::shadows::KeptRefresh;
 
 /// Levels each draw group lists: its mesh and four coarser levels.
 pub(crate) const LEVELS: u32 = 5;
@@ -31,7 +33,8 @@ struct FrameUniform {
     strides: [u32; 4],
 }
 
-/// WGSL `View`: a view's frustum planes and the radius objects need in it.
+/// WGSL `View`: a view's frustum planes, the radius objects need in it,
+/// the error its texels hide and whether it is the kept shadow map's.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct ViewData {
@@ -152,8 +155,8 @@ pub(crate) struct ScatterPass {
     poses: wgpu::Buffer,
     colors: wgpu::Buffer,
     palette: wgpu::Buffer,
-    // The camera's impostor cards (each one's slot and impostor record) and
-    // their draw.
+    // Each view's impostor cards (each one's slot and impostor record, as
+    // many as objects a view) and their draws.
     cards: wgpu::Buffer,
     card_args: wgpu::Buffer,
     // Advances when buffers are replaced.
@@ -352,13 +355,6 @@ impl ScatterPass {
                 wgpu::BufferUsages::empty(),
             );
         }
-        grown |= grow(
-            device,
-            &mut self.cards,
-            "engine/scatter-cards",
-            records.len() as u64 * 8,
-            wgpu::BufferUsages::VERTEX,
-        );
         if grown {
             self.generation += 1;
         }
@@ -393,20 +389,23 @@ impl ScatterPass {
     }
 
     /// Plans this frame's culling: the camera's view, from its
-    /// `view_projection` (world) and eye, and those of the shadow `maps`
+    /// `view_projection` (world) and eye, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, `resolution` texels
-    /// square), where objects smaller than half a texel cast nothing. Levels
-    /// are picked within `pixel_error` pixels of a viewport `height` pixels
-    /// tall (no error: finest levels only); maps draw a coarser level where
-    /// a texel hides its error, and the camera draws impostors within the
-    /// error when `impostors`. Returns whether any object draws.
+    /// square), where objects smaller than half a texel cast nothing, and
+    /// the region of the kept map redrawn this frame (its clip and planes),
+    /// if any. Levels are picked within `pixel_error` pixels of a viewport
+    /// `height` pixels tall (no error: finest levels only); maps draw a
+    /// coarser level where a texel hides its error, and the camera draws
+    /// impostors within the error when `impostors`, which the kept map
+    /// draws wherever there are (decision 060). Returns whether any object
+    /// draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors): (Option<f32>, f32, bool),
-        (maps, resolution): (&[(usize, Mat4)], u32),
+        (maps, kept, resolution): (&[(usize, Mat4)], Option<KeptRefresh>, u32),
     ) -> bool {
         self.maps.clear();
         if self.resident == 0 {
@@ -418,18 +417,29 @@ impl ScatterPass {
             planes: crate::ground_cover::planes(view_projection),
             limits: [0.0; 4],
         }];
+        let half_texel = |clip: Mat4| {
+            let texels = clip.row(0).truncate().length() * resolution as f32;
+            1.0 / engine_core::math::max(texels, 1.0e-12)
+        };
         for &(map, clip) in maps {
             // An orthographic map: its sides alone bound what casts into it.
             let mut planes = crate::ground_cover::planes(clip);
             planes[4] = [0.0, 0.0, 0.0, 1.0];
             planes[5] = [0.0, 0.0, 0.0, 1.0];
-            let texels = clip.row(0).truncate().length() * resolution as f32;
-            let half_texel = 1.0 / engine_core::math::max(texels, 1.0e-12);
+            let half_texel = half_texel(clip);
             views.push(ViewData {
                 planes,
                 limits: [half_texel, 2.0 * half_texel, 0.0, 0.0],
             });
             self.maps.push(map);
+        }
+        if let Some((clip, planes)) = kept {
+            let half_texel = half_texel(clip);
+            views.push(ViewData {
+                planes,
+                limits: [half_texel, 2.0 * half_texel, 1.0, 0.0],
+            });
+            self.maps.push(crate::shadows::KEPT_MAP);
         }
         let view_count = views.len() as u32;
         let draws_per_view = self.group_count * LEVELS;
@@ -455,20 +465,36 @@ impl ScatterPass {
             u64::from(draws_per_view) * u64::from(view_count) * size_of::<DrawArgs>() as u64,
             wgpu::BufferUsages::INDIRECT,
         );
+        replaced |= grow(
+            device,
+            &mut self.cards,
+            "engine/scatter-cards",
+            u64::from(self.objects) * u64::from(view_count) * 8,
+            wgpu::BufferUsages::VERTEX,
+        );
+        replaced |= grow(
+            device,
+            &mut self.card_args,
+            "engine/scatter-card-args",
+            u64::from(view_count) * 16,
+            wgpu::BufferUsages::INDIRECT,
+        );
         if replaced {
             self.generation += 1;
         }
         let frame = FrameUniform {
             eye: eye.extend(pixels).to_array(),
             counts: [self.objects, self.group_count, LEVELS, view_count],
-            strides: [self.ids_per_view, draws_per_view, u32::from(impostors), 0],
+            strides: [
+                self.ids_per_view,
+                draws_per_view,
+                u32::from(impostors),
+                self.objects,
+            ],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
-        queue.write_buffer(
-            &self.card_args,
-            0,
-            bytemuck::cast_slice(&[CARD_VERTICES, 0, 0, 0]),
-        );
+        let card_args = [CARD_VERTICES, 0, 0, 0].repeat(view_count as usize);
+        queue.write_buffer(&self.card_args, 0, bytemuck::cast_slice(&card_args));
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
         self.args.clear();
         for _ in 0..view_count {
@@ -678,10 +704,12 @@ impl ScatterPass {
         pass.dispatch_workgroups(self.objects.div_ceil(64), 1 + self.maps.len() as u32, 1);
     }
 
-    /// The camera's impostor cards, each one's slot and impostor record as
-    /// instance attributes, and their draw's arguments.
-    pub(crate) fn card_source(&self) -> (&wgpu::Buffer, &wgpu::Buffer) {
-        (&self.cards, &self.card_args)
+    /// `view`'s impostor cards (0 the camera's), each one's slot and
+    /// impostor record as instance attributes: the slice to bind and the
+    /// indirect buffer and offset of their draw.
+    pub(crate) fn card_source(&self, view: usize) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
+        let start = view as u64 * u64::from(self.objects) * 8;
+        (self.cards.slice(start..), &self.card_args, view as u64 * 16)
     }
 
     /// Group `group`'s list of level `level` in `view` (0 the camera's) and

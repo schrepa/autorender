@@ -32,6 +32,13 @@ async function present(gpu) {
 }
 
 async function capture(name, gpu) {
+  // Pipelines go on compiling for seconds after the frames that first
+  // need them, and a capture presents only once they have; the frames
+  // after them settle what the view draws.
+  for (let frame = 0; frame < 600; frame++) {
+    if (!(await command("present", { alpha: 0, gpu })).result.rendering.pipelines_compiling) break;
+    await delay(50);
+  }
   const rendering = await present(gpu);
   await command("capture", { alpha: 0, gpu });
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });

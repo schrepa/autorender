@@ -49,6 +49,9 @@ struct SurfacePoint {
     // Light from surfaces around the point where they hide the sky, per
     // unit diffuse color: terrain's (decision 055), zero elsewhere.
     bounce: vec3<f32>,
+    // The share of the sun the point's own mesh hides: impostors' (decision
+    // 060), zero elsewhere.
+    sun_shade: f32,
 }
 
 // Shaded light of a surface: graded color (and its linear light before the
@@ -438,7 +441,7 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         + point.diffuse_color * point.bounce * covered_sky;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
-            point.world_dy, point.distance, point.on_terrain);
+            point.world_dy, point.distance, point.on_terrain) * (1.0 - point.sun_shade);
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);

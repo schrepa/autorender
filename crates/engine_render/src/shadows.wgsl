@@ -538,6 +538,82 @@ fn vs_affine_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: v
         slot_colors[slot].color);
 }
 
+// Placed objects' impostor cards (decision 060): objects the camera draws
+// as impostors cast a card through their sphere's center facing the
+// frame nearest the sun, covered as that frame covers it. The impostors'
+// group of meshes.wgsl: records, the albedo and coverage array and its
+// sampler.
+@group(2) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;
+@group(2) @binding(12) var impostor_albedo: texture_2d_array<f32>;
+@group(2) @binding(16) var impostor_sampler: sampler;
+
+struct CardOutput {
+    @builtin(position) clip: vec4<f32>,
+    // Layer coordinates of the card point in its frame.
+    @location(0) uv: vec2<f32>,
+    // The layer, and the frame's column and row.
+    @location(1) @interpolate(flat) frame: vec3<u32>,
+}
+
+// Two triangles of a card, corners in its right and up.
+const CARD = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+    vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0),
+);
+
+@vertex
+fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
+        @location(3) index: u32) -> CardOutput {
+    let pose = slot_poses[slot];
+    let record = impostor_records[index];
+    // The mesh-space direction toward the sun: depth grows away from it.
+    // Cofactor columns map it as the inverse would, but for scale.
+    let toward = -vec3<f32>(view.clip[0].z, view.clip[1].z, view.clip[2].z);
+    let x = vec3<f32>(pose.r0.x, pose.r1.x, pose.r2.x);
+    let y = vec3<f32>(pose.r0.y, pose.r1.y, pose.r2.y);
+    let z = vec3<f32>(pose.r0.z, pose.r1.z, pose.r2.z);
+    let yz = cross(y, z);
+    let orientation = sign(dot(x, yz));
+    let sun = normalize(vec3<f32>(dot(yz, toward), dot(cross(z, x), toward),
+        dot(cross(x, y), toward)) * orientation);
+    // The frame nearest it, whose image the card shows.
+    let hemisphere = (record.flags & IMPOSTOR_HEMISPHERE) != 0u;
+    let grid = (impostor_grid(sun, hemisphere) * 0.5 + 0.5) * f32(IMPOSTOR_FRAMES - 1u);
+    let cell = vec2<u32>(min(round(grid), vec2<f32>(f32(IMPOSTOR_FRAMES - 1u))));
+    let basis = impostor_basis(impostor_frame_direction(cell.y * IMPOSTOR_FRAMES + cell.x,
+        hemisphere));
+    let corner = CARD[vertex];
+    let local = vec4<f32>(record.sphere.xyz
+        + (basis.right * corner.x + basis.up * corner.y) * record.sphere.w, 1.0);
+    var output: CardOutput;
+    output.clip = project(vec3<f32>(dot(pose.r0, local), dot(pose.r1, local),
+        dot(pose.r2, local)));
+    output.uv = (vec2<f32>(cell) + 0.5 + vec2<f32>(corner.x, -corner.y) * 0.5)
+        / f32(IMPOSTOR_FRAMES);
+    output.frame = vec3<u32>(record.layer, cell);
+    return output;
+}
+
+// The frame's coverage where texels match the map's, scaled up on coarser
+// levels as the impostors' own tests are; samples stay within the frame.
+@fragment
+fn fs_impostor_card(input: CardOutput) {
+    let size = f32(textureDimensions(impostor_albedo).x);
+    let dx = dpdx(input.uv) * size;
+    let dy = dpdy(input.uv) * size;
+    let level = clamp(0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 1.0e-12)), 0.0,
+        f32(textureNumLevels(impostor_albedo) - 1u));
+    let span = 1.0 / f32(IMPOSTOR_FRAMES);
+    let cell = vec2<f32>(input.frame.yz) * span;
+    let inset = 0.5 * exp2(ceil(level)) / size;
+    let uv = clamp(input.uv, cell + inset, cell + span - inset);
+    let coverage = textureSampleLevel(impostor_albedo, impostor_sampler, uv, input.frame.x,
+        level).a;
+    if coverage * (1.0 + 0.25 * level) < 0.5 {
+        discard;
+    }
+}
+
 // Material bindings are fragment-visible: the base color map's transform
 // applies here.
 @fragment
