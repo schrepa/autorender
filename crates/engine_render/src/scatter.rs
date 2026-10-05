@@ -45,9 +45,18 @@ struct ViewData {
 /// The draw group of slots no object holds, which culling skips.
 pub(crate) const DEAD: u32 = u32::MAX;
 
-/// WGSL `Record`: an object's bounding sphere, draw group and scale, and
-/// the terrain it stands on (its index this frame; none: `u32::MAX`) and
-/// how far its base sinks below the ground.
+/// A record's terrain word: the index this frame of the terrain the object
+/// stands on (`TERRAIN_INDEX` itself: none); for objects standing far away
+/// (decision 061), one more than the level whose resident tiles hold them
+/// instead, from `NEAR_LEVEL_SHIFT`; and the top bit (the shaders'
+/// `HIDDEN`) while such tiles are resident where they stand, which setting
+/// them on the terrain marks and culling skips.
+pub(crate) const TERRAIN_INDEX: u32 = 0xffff;
+pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16;
+
+/// WGSL `Record`: an object's bounding sphere, draw group and scale, the
+/// terrain word (see [`TERRAIN_INDEX`]) and how far its base sinks below
+/// the ground.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct Record {
@@ -706,7 +715,7 @@ impl ScatterPass {
         }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
-        pass.dispatch_workgroups(self.objects.div_ceil(64), 1 + self.maps.len() as u32, 1);
+        pass.dispatch_workgroups(self.objects.div_ceil(64), 1, 1);
     }
 
     /// `view`'s impostor cards (0 the camera's), each one's slot and

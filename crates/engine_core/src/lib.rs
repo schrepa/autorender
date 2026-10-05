@@ -59,9 +59,10 @@ pub use engine_assets::{
 /// tiles, patches and the `ETR1` format.
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, FileHeader, HeightImage,
-    HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Placed,
-    PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, FarPlacement, FileHeader,
+    HeightImage, HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch,
+    Placed, PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile,
+    TileKey,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -817,8 +818,8 @@ pub mod prelude {
         ClipHandle, KeyInterpolation, Keyframes,
     };
     pub use crate::{
-        Biome, BiomeLayer, Biomes, Blend, HeightImage, HeightmapLayer, Layer, Layers, Mask,
-        NoiseLayer, NoiseMask, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
+        Biome, BiomeLayer, Biomes, Blend, FarPlacement, HeightImage, HeightmapLayer, Layer, Layers,
+        Mask, NoiseLayer, NoiseMask, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
         Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };

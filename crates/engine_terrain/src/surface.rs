@@ -485,7 +485,9 @@ impl BiomeRules {
 
     /// Whether any placement layer stands objects on tiles of `level`.
     pub fn places_on(&self, level: u8) -> bool {
-        self.placements.iter().any(|layer| layer.level == level)
+        self.placements
+            .iter()
+            .any(|layer| layer.level == level || layer.far.is_some_and(|(far, _)| far == level))
     }
 
     /// The objects row `row` of placement layer `layer`'s candidate squares

@@ -38,6 +38,9 @@ struct Cover {
 }
 
 const DEAD: u32 = 0xffffffffu;
+// Objects standing far away while tiles holding them instead are resident
+// (decision 061; `scatter.rs`).
+const HIDDEN: u32 = 0x80000000u;
 
 @group(0) @binding(0) var<uniform> splat: Splat;
 @group(0) @binding(1) var<storage, read> records: array<Record>;
@@ -61,13 +64,15 @@ const CORNERS = array<vec2<f32>, 6>(
 fn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) slot: u32)
         -> SplatOutput {
     var output: SplatOutput;
-    // Dead slots and groups without cover collapse outside the map.
+    // Dead and hidden slots and groups without cover collapse outside the
+    // map.
     output.clip = vec4<f32>(2.0, 2.0, 0.5, 1.0);
     if slot >= splat.counts.x {
         return output;
     }
     let record = records[slot];
-    if record.group == DEAD || record.group >= splat.counts.y {
+    if record.group == DEAD || (record.terrain & HIDDEN) != 0u
+        || record.group >= splat.counts.y {
         return output;
     }
     let cover = covers[record.group];

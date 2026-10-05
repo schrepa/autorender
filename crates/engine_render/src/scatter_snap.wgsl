@@ -3,7 +3,8 @@
 // resident heights, as ground cover's roots do (`cover_grow.wgsl`), so
 // objects of coarse tiles sit on the finer ground drawn near the camera and
 // settle as finer tiles arrive. Its pose's height and its bounding sphere
-// follow its base.
+// follow its base. Objects standing far away (decision 061) hide where
+// tiles of the level holding them instead are resident.
 
 struct Snap {
     // Slots and terrains.
@@ -18,7 +19,7 @@ struct TerrainInfo {
 }
 
 // `scatter_cull.wgsl`'s record: the bounding sphere, draw group and scale,
-// then the terrain the object stands on and how far its base sinks.
+// then the terrain word (`scatter.rs`) and how far its base sinks.
 struct Record {
     center: vec3<f32>,
     radius: f32,
@@ -37,6 +38,9 @@ struct Pose {
 
 const DEAD: u32 = 0xffffffffu;
 const NOT_RESIDENT: u32 = 0xffffffffu;
+const TERRAIN_INDEX: u32 = 0xffffu;
+const NEAR_LEVEL_SHIFT: u32 = 16u;
+const HIDDEN: u32 = 0x80000000u;
 
 @group(0) @binding(0) var<uniform> snap: Snap;
 @group(0) @binding(1) var<storage, read_write> records: array<Record>;
@@ -45,14 +49,15 @@ const NOT_RESIDENT: u32 = 0xffffffffu;
 @group(0) @binding(4) var<storage, read> directory: array<u32>;
 @group(0) @binding(5) var heights: texture_2d_array<f32>;
 
-// The finest resident height of terrain `info` at terrain-local `local`, and
-// 1 where one is resident there (0 beyond its edges or with none).
-fn ground_at(info: TerrainInfo, local: vec2<f32>) -> vec2<f32> {
+// The finest resident height of terrain `info` at terrain-local `local`, 1
+// where one is resident there (0 beyond its edges or with none), and its
+// level.
+fn ground_at(info: TerrainInfo, local: vec2<f32>) -> vec3<f32> {
     let base = info.levels.x;
     let spacing = info.origin.w;
     let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * spacing;
     if any(local < vec2<f32>(0.0)) || any(local > extent) {
-        return vec2<f32>(0.0);
+        return vec3<f32>(0.0);
     }
     for (var index = 0u; index < info.levels.y; index++) {
         let header = base + index * 4u;
@@ -72,9 +77,9 @@ fn ground_at(info: TerrainInfo, local: vec2<f32>) -> vec2<f32> {
         let b = textureLoad(heights, texel + vec2<u32>(1u, 0u), layer, 0).r;
         let c = textureLoad(heights, texel + vec2<u32>(0u, 1u), layer, 0).r;
         let d = textureLoad(heights, texel + vec2<u32>(1u, 1u), layer, 0).r;
-        return vec2<f32>(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), 1.0);
+        return vec3<f32>(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), 1.0, f32(index));
     }
-    return vec2<f32>(0.0);
+    return vec3<f32>(0.0);
 }
 
 @compute @workgroup_size(64)
@@ -83,12 +88,18 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let record = records[id.x];
-    if record.group == DEAD || record.terrain >= snap.counts.y {
+    let terrain = record.terrain & TERRAIN_INDEX;
+    if record.group == DEAD || terrain >= snap.counts.y {
         return;
     }
-    let info = terrains[record.terrain];
+    let info = terrains[terrain];
     let pose = poses[id.x];
     let ground = ground_at(info, vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz);
+    // Far away, an object hides where the level holding it instead is
+    // resident, or a finer one.
+    let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0xffu;
+    let hidden = near != 0u && ground.y != 0.0 && u32(ground.z) < near;
+    records[id.x].terrain = select(record.terrain & ~HIDDEN, record.terrain | HIDDEN, hidden);
     if ground.y == 0.0 {
         return;
     }

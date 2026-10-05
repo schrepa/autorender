@@ -227,6 +227,29 @@
       },
       "additionalProperties": false
     },
+    "FarPlacement": {
+      "description": "Where a placement layer also stands far away (decision 061): on the\ntiles of `level`, coarser than its own, a `share` (0 to 1] of its\nobjects, the candidates ranked first, where its own level's tiles are\nnot resident.",
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 1
+        },
+        "share": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "share"
+      ]
+    },
     "Mask": {
       "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, or where a material\ncovers its biome's ground. Ramps run from 0 at their first value to 1 at\ntheir second, smoothly, falling when the first is the larger.",
       "oneOf": [
@@ -671,7 +694,7 @@
       ]
     },
     "PlacementLayer": {
-      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how deep they sink, in\nmeters at scale 1; and the pyramid level whose tiles hold its\ncandidates (0, the finest, by default).",
+      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how deep they sink, in\nmeters at scale 1; the pyramid level whose tiles hold its candidates\n(0, the finest, by default); and where it also stands far away.",
       "type": "object",
       "properties": {
         "align": {
@@ -691,6 +714,16 @@
           "type": "number",
           "format": "float",
           "minimum": 0.0
+        },
+        "far": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FarPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "footprint": {
           "type": "number",

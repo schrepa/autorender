@@ -10,7 +10,11 @@
 //! candidate belongs to the tile of the layer's level holding its point.
 //! Coarser levels stay resident farther from the camera, so their layers'
 //! objects show farther away; renderers set objects on the finest heights
-//! resident.
+//! resident. A layer may also stand far away (decision 061): a coarser
+//! level's tiles, which stay resident farther still (pinned levels
+//! everywhere), place the share of its candidates whose rank falls under
+//! that share of its density, a subset of its own objects in the same
+//! places, which renderers hide where its own level's tiles are resident.
 
 use engine_math::{clamp, max, sin_cos};
 use serde::{Deserialize, Serialize};
@@ -42,8 +46,8 @@ pub struct PlacementChoice {
 /// materials it stands on (IDs; any when empty), weighted by their share;
 /// where its mask allows; its objects' scale range; how far they lean with
 /// the ground (0 upright, 1 along its normal); how deep they sink, in
-/// meters at scale 1; and the pyramid level whose tiles hold its
-/// candidates (0, the finest, by default).
+/// meters at scale 1; the pyramid level whose tiles hold its candidates
+/// (0, the finest, by default); and where it also stands far away.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -68,6 +72,22 @@ pub struct PlacementLayer {
     #[serde(default, skip_serializing_if = "is_zero")]
     #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
     pub level: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub far: Option<FarPlacement>,
+}
+
+/// Where a placement layer also stands far away (decision 061): on the
+/// tiles of `level`, coarser than its own, a `share` (0 to 1] of its
+/// objects, the candidates ranked first, where its own level's tiles are
+/// not resident.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct FarPlacement {
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 15)))]
+    pub level: u8,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub share: f32,
 }
 
 fn is_zero(level: &u8) -> bool {
@@ -85,7 +105,8 @@ fn unit_scale() -> [f32; 2] {
 /// One object a layer placed: its base's terrain-local position, its turn
 /// about the vertical (radians), how its up leans (x and z of its up
 /// vector), its scale, how far its base sinks below the ground (meters),
-/// and its asset and layer indices.
+/// its asset and layer indices, and for objects standing far away
+/// (decision 061) the level whose resident tiles hold it instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -95,14 +116,17 @@ pub struct Placed {
     pub sink: f32,
     pub asset: u16,
     pub layer: u16,
+    pub near_level: Option<u8>,
 }
 
 /// A compiled layer: its tiles' level, its asset indices and cumulative
 /// weights, the share of a square its density fills, its materials as a
-/// 256-bit set (none: any), its mask and its variations.
+/// 256-bit set (none: any), its mask and its variations, and the level and
+/// share it stands far away at.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CompiledPlacement {
     pub(crate) level: u8,
+    pub(crate) far: Option<(u8, f32)>,
     choices: Vec<(u16, f32)>,
     fill: f32,
     footprint: f32,
@@ -214,8 +238,20 @@ pub(crate) fn compile(
         if layer.level > MAX_LEVEL {
             return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
         }
+        if let Some(far) = layer.far {
+            if far.level <= layer.level || far.level > MAX_LEVEL {
+                return Err(fail(
+                    format!("{at}.far.level"),
+                    "must be coarser than the layer's level, at most 15",
+                ));
+            }
+            if !(far.share.is_finite() && far.share > 0.0 && far.share <= 1.0) {
+                return Err(fail(format!("{at}.far.share"), "must be in (0, 1]"));
+            }
+        }
         compiled.push(CompiledPlacement {
             level: layer.level,
+            far: layer.far.map(|far| (far.level, far.share)),
             choices,
             fill,
             footprint: layer.footprint,
@@ -265,9 +301,10 @@ const SAMPLE_COST: u64 = 8;
 
 /// Places row `row` (from the first) of layer `layer`'s candidate squares
 /// over `tile`, appending to `out`; `seed` varies them per terrain.
-/// Layers of other levels than `tile`'s hold no rows. Returns the work it
-/// took (samples' worth) and the next row, none after the last layer's
-/// last.
+/// Layers hold rows on tiles of their level, and of the level they stand
+/// far away at, where only their far share stands; others hold none.
+/// Returns the work it took (samples' worth) and the next row, none after
+/// the last layer's last.
 pub(crate) fn place_row(
     layers: &[CompiledPlacement],
     tile: &Tile,
@@ -282,7 +319,14 @@ pub(crate) fn place_row(
     let Some(layer) = layers.get(layer_index) else {
         return (0, None);
     };
-    if layer.fill <= 0.0 || layer.level != key.level {
+    // Far away, the candidates ranked first: a subset of the layer's own.
+    let (share, near_level) = match layer.far {
+        _ if layer.level == key.level => (1.0, None),
+        Some((level, share)) if level == key.level => (share, Some(layer.level)),
+        _ => (0.0, None),
+    };
+    let fill = layer.fill * share;
+    if fill <= 0.0 {
         return (0, Some((layer_index + 1, 0)));
     }
     let footprint = layer.footprint;
@@ -303,7 +347,7 @@ pub(crate) fn place_row(
                 ^ (square_z as u32).wrapping_mul(0xd816_3841),
         );
         let rank = unit(hash(square ^ 0x1656_67b1));
-        if rank >= layer.fill {
+        if rank >= fill {
             continue;
         }
         // The candidate's point, which belongs to the tile holding
@@ -329,8 +373,8 @@ pub(crate) fn place_row(
         let Some(control) = tile.control_at(nearest[0], nearest[1]) else {
             continue;
         };
-        let share = material_share(control, &layer.materials);
-        if share <= 0.0 {
+        let share_of_materials = material_share(control, &layer.materials);
+        if share_of_materials <= 0.0 {
             continue;
         }
         let normal = sample.normal;
@@ -348,7 +392,7 @@ pub(crate) fn place_row(
             curvature,
             spacing,
         };
-        let keep = layer.fill * share * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
+        let keep = fill * share_of_materials * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
         if rank >= keep {
             continue;
         }
@@ -380,10 +424,11 @@ pub(crate) fn place_row(
             sink: layer.sink * scale,
             asset,
             layer: layer_index as u16,
+            near_level,
         });
     }
     let squares = (last[0] - first[0] + 1) as u64;
-    let kept = (squares as f32 * layer.fill).ceil() as u64;
+    let kept = (squares as f32 * fill).ceil() as u64;
     let cost = squares * SQUARE_COST + kept * (SAMPLE_COST + layer.mask.cost());
     let next = if square_z < last[1] {
         (layer_index, row + 1)
