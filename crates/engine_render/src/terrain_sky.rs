@@ -5,9 +5,10 @@
 //! light by it, taking the hidden sky's share back as its own light.
 //!
 //! A map builds from the terrain's finest pinned level once every tile of
-//! that level is resident, a band of rows per frame, and builds again when
-//! those tiles or the map's size change; until its first build completes,
-//! a terrain's ground sees the whole sky.
+//! that level is resident, a band of rows per frame in a submission of its
+//! own (shadows or not), and builds again when those tiles or the map's
+//! size change; until its first build completes, a terrain's ground sees
+//! the whole sky.
 
 use std::collections::HashMap;
 
@@ -254,15 +255,13 @@ impl SkyMaps {
         }
     }
 
-    /// Records this frame's bands from the height array `heights`, timed
-    /// by `profiler` (`terrain_sky`); a map whose last band this is counts
-    /// as built.
-    pub(crate) fn encode(
+    /// Builds this frame's bands from the height array `heights` and
+    /// submits them; a map whose last band this is counts as built.
+    pub(crate) fn build(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
+        queue: &wgpu::Queue,
         heights: Option<&wgpu::TextureView>,
-        profiler: &crate::profiling::GpuProfiler,
     ) {
         let (Some(maps), Some(pipeline), Some(heights)) = (&self.maps, &self.pipeline, heights)
         else {
@@ -300,9 +299,12 @@ impl SkyMaps {
                 (layer, group)
             })
             .collect();
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/terrain-sky"),
+        });
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/terrain-sky"),
-            timestamp_writes: profiler.span("terrain_sky").map(|span| span.compute()),
+            timestamp_writes: None,
         });
         pass.set_pipeline(pipeline);
         for (_, group) in &groups {
@@ -310,6 +312,7 @@ impl SkyMaps {
             pass.dispatch_workgroups(maps.size.div_ceil(GROUP), band.div_ceil(GROUP), 1);
         }
         drop(pass);
+        queue.submit([encoder.finish()]);
         for (layer, _) in groups {
             let Some((source, row)) = self.building[layer].take() else {
                 continue;
