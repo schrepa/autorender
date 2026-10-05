@@ -2566,7 +2566,7 @@
           "description": "Samples generated or decoded per frame (67,000 to 300,000 a tile).",
           "type": "integer",
           "format": "uint32",
-          "default": 65536,
+          "default": 24576,
           "minimum": 1
         },
         "shadow_resolution": {

@@ -8,7 +8,7 @@ use glam::{Vec2, Vec3};
 
 use engine_math::{max, min};
 
-use crate::layers::Layers;
+use crate::layers::{CoarseState, Layers, STATE};
 use crate::{
     PATCH_QUADS, PATCHES_PER_TILE, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
@@ -203,6 +203,14 @@ const GRID_STEP: i64 = 4;
 /// Work units of a coarse grid point, against one per sample.
 const COARSE_COST: u64 = 24;
 
+/// Adds `weight` times `state` to `sum`, value by value.
+#[inline(always)]
+fn add_weighted(sum: &mut CoarseState, weight: f32, state: &CoarseState) {
+    for (total, value) in sum.iter_mut().zip(state) {
+        *total += weight * value;
+    }
+}
+
 /// Catmull-Rom weights at quarter steps, exact in `f32`.
 const QUARTER_WEIGHTS: [[f32; 4]; 4] = [
     [0.0, 1.0, 0.0, 0.0],
@@ -230,14 +238,14 @@ pub struct Generator {
     spacing: f32,
     first: [i64; 2],
     bands: Vec<Option<(usize, Range<usize>, usize)>>,
-    grids: Vec<Option<Box<[[f32; 2]]>>>,
+    grids: Vec<Option<Box<[CoarseState]>>>,
     stage: Stage,
     heights: Box<[f32]>,
     holes: Option<Box<[u64]>>,
     xs: Box<[f32]>,
     row: Box<[f32]>,
     values: Box<[f32]>,
-    column: Box<[[f32; 2]]>,
+    column: Box<[CoarseState]>,
     min: Vec2,
     max: Vec2,
 }
@@ -255,7 +263,7 @@ impl Generator {
             .map(|index| {
                 layers
                     .noise(index)
-                    .map(|_| vec![[0.0; 2]; GRID * GRID].into_boxed_slice())
+                    .map(|_| vec![[0.0; STATE]; GRID * GRID].into_boxed_slice())
             })
             .collect();
         let xs = (-1..=TILE_SAMPLES as i64)
@@ -285,7 +293,7 @@ impl Generator {
             xs,
             row: vec![0.0; stride].into_boxed_slice(),
             values: vec![0.0; stride].into_boxed_slice(),
-            column: vec![[0.0; 2]; GRID].into_boxed_slice(),
+            column: vec![[0.0; STATE]; GRID].into_boxed_slice(),
             min,
             max,
         }
@@ -391,35 +399,26 @@ impl Generator {
             };
             let (_, fine, _) = self.bands[layer].clone().unwrap_or_default();
             let grid = self.grids[layer].as_ref().expect("noise layers have grids");
-            // Along z first, for every grid column.
+            // The coarse state along z first, for every grid column.
             let base = (coarse_row - 1 - GRID_FIRST) as usize;
             for (column, value) in self.column.iter_mut().enumerate() {
-                let mut sum = [0.0; 2];
+                let mut sum = [0.0; STATE];
                 for (tap, weight) in vertical.iter().enumerate() {
-                    let point = grid[(base + tap) * GRID + column];
-                    sum[0] += weight * point[0];
-                    sum[1] += weight * point[1];
+                    add_weighted(&mut sum, *weight, &grid[(base + tap) * GRID + column]);
                 }
                 *value = sum;
             }
-            // Then along x for every sample.
+            // Then along x for every sample, which the fine octaves finish.
             for (index, value) in self.values.iter_mut().enumerate() {
                 let sample = index as i64 - 1;
                 let coarse = sample.div_euclid(GRID_STEP);
                 let weights = QUARTER_WEIGHTS[sample.rem_euclid(GRID_STEP) as usize];
                 let first = (coarse - 1 - GRID_FIRST) as usize;
-                let mut sum = [0.0; 2];
+                let mut sum = [0.0; STATE];
                 for (tap, weight) in weights.iter().enumerate() {
-                    let point = self.column[first + tap];
-                    sum[0] += weight * point[0];
-                    sum[1] += weight * point[1];
+                    add_weighted(&mut sum, *weight, &self.column[first + tap]);
                 }
-                let detail = if fine.is_empty() {
-                    0.0
-                } else {
-                    sum[1] * tables.fine(self.xs[index], z, fine.clone())
-                };
-                *value = sum[0] + detail;
+                *value = tables.finish(self.xs[index], z, &sum, fine.clone());
             }
             self.layers.apply_noise(layer, &mut self.row, &self.values);
         }
@@ -448,11 +447,12 @@ impl Layers {
                 continue;
             };
             let (coarse, fine, gullies) = tables.bands(spacing);
-            // Along z first for each column, then along x, as tiles do.
-            let mut sum = [0.0_f32; 2];
+            // The coarse state along z first for each column, then along x,
+            // as tiles interpolate it.
+            let mut sum = [0.0_f32; STATE];
             for (tap, weight) in horizontal.iter().enumerate() {
                 let column = (cx - 1 + tap as i64) * GRID_STEP;
-                let mut value = [0.0_f32; 2];
+                let mut value = [0.0_f32; STATE];
                 for (row_tap, row_weight) in vertical.iter().enumerate() {
                     let row = (cz - 1 + row_tap as i64) * GRID_STEP;
                     let coarse_point = tables.coarse(
@@ -461,18 +461,11 @@ impl Layers {
                         coarse,
                         gullies,
                     );
-                    value[0] += row_weight * coarse_point[0];
-                    value[1] += row_weight * coarse_point[1];
+                    add_weighted(&mut value, *row_weight, &coarse_point);
                 }
-                sum[0] += weight * value[0];
-                sum[1] += weight * value[1];
+                add_weighted(&mut sum, *weight, &value);
             }
-            let detail = if fine.is_empty() {
-                0.0
-            } else {
-                sum[1] * tables.fine(x, z, fine)
-            };
-            self.apply_noise(layer, &mut height, &[sum[0] + detail]);
+            self.apply_noise(layer, &mut height, &[tables.finish(x, z, &sum, fine)]);
         }
         height[0]
     }
