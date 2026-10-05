@@ -389,7 +389,7 @@ impl SceneDocument {
                 entity.insert(probe);
             }
             if let Some(terrain) = &component.terrain {
-                entity.insert(terrain.clone());
+                entity.insert(terrain.runtime(&owned.materials));
             }
             spawned.push(entity.id());
         }

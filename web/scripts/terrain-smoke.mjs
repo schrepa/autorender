@@ -31,6 +31,19 @@ const terrain = {
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
   ],
+  // Decision 054: meadow below, rock on steep ground; a summit biome of
+  // snow above 120 m.
+  surface: {
+    materials: [
+      { id: "meadow", color: [0.12, 0.2, 0.06] },
+      { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
+      { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5 },
+    ],
+    biomes: [
+      { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }] },
+      { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
+    ],
+  },
 };
 /** A 65 by 65 dome of little-endian 16-bit samples, highest at its center. */
 function dome() {
@@ -113,6 +126,8 @@ try {
   // which its patches morph by, and ranges growing level by level.
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
+  assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
+  assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
@@ -184,6 +199,10 @@ try {
   assert.ok((await differentPixels(page, [baseline, levelView])).changed > 10_000, "the levels view differs");
   await command("terrain", { view: "tiles" });
   await capture("view-tiles");
+  // Each surface material in its own color.
+  await command("terrain", { view: "materials" });
+  const materialView = await capture("view-materials");
+  assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
   await command("terrain", { view: "shaded" });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));

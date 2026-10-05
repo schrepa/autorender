@@ -47,6 +47,8 @@ pub use material::{
     SceneWrap,
 };
 pub use probe::SceneReflectionProbe;
-pub use terrain::{SceneHeightmap, SceneTerrain, SceneTerrainLayer};
+pub use terrain::{
+    SceneHeightmap, SceneTerrain, SceneTerrainLayer, SceneTerrainMaterial, SceneTerrainSurface,
+};
 pub use texture::SceneTexture;
 pub use versions::version_features;

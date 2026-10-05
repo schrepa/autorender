@@ -40,7 +40,7 @@ pub(crate) struct PreparedEntity {
     pub player: Option<PreparedPlayer>,
     pub skin: Option<PreparedSkin>,
     /// Prepared with the scene's files.
-    pub terrain: Option<engine_core::Terrain>,
+    pub terrain: Option<crate::terrain::PreparedTerrain>,
 }
 
 /// Resolves an ID a clip target or skin joint names, from an entity's
@@ -181,7 +181,9 @@ impl SceneDocument {
                 .source
                 .terrain
                 .as_ref()
-                .map(|terrain| terrain.prepare(&format!("{}.terrain", entity.path), files))
+                .map(|terrain| {
+                    terrain.prepare(&format!("{}.terrain", entity.path), files, &self.materials)
+                })
                 .transpose()?;
         }
 

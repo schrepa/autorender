@@ -253,7 +253,7 @@ impl DevTools {
             descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity (decision 051) as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material and collision, with its streaming state: resident tiles by level.", schemas["Terrain"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())),
-            read: Box::new(|world, entity, _scene| {
+            read: Box::new(|world, entity, scene| {
                 let entity = entity?;
                 let terrain = world.get::<engine_core::Terrain>(entity)?;
                 let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
@@ -268,7 +268,9 @@ impl DevTools {
                     }
                 }
                 Some(json!(crate::views::TerrainView {
-                    terrain: engine_scene::SceneTerrain::from_runtime(terrain, None),
+                    terrain: engine_scene::SceneTerrain::from_runtime(terrain, None, |handle| {
+                        scene.and_then(|scene| scene.materials().find(|(_, candidate)| *candidate == handle).map(|(id, _)| id.to_owned()))
+                    }),
                     levels: terrain.pyramid.levels(),
                     extent: terrain.pyramid.extent().to_array(),
                     resident_tiles_by_level: levels,

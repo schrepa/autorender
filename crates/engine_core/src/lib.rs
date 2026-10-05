@@ -56,8 +56,9 @@ pub use engine_assets::{
 /// tiles, patches and the `ETR1` format.
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
-    Blend, FileHeader, HeightImage, HeightmapLayer, Layer, LayerError, Layers, NoiseLayer, Patch,
-    Pyramid, PyramidError, Stamp, StampOp, Tile, TileKey,
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, FileHeader, HeightImage,
+    HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Pyramid,
+    PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -86,9 +87,9 @@ pub use scene::{
 };
 pub use skin::{RenderJoint, Skin};
 pub use terrain::{
-    RenderTerrain, RenderTerrains, Terrain, TerrainDebug, TerrainFocus, TerrainMaterial,
-    TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainView, Terrains,
-    TileRequest, Viewport,
+    RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Terrain, TerrainDebug,
+    TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
+    TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
@@ -806,8 +807,9 @@ pub mod prelude {
         ClipHandle, KeyInterpolation, Keyframes,
     };
     pub use crate::{
-        Blend, HeightImage, HeightmapLayer, Layer, Layers, NoiseLayer, Pyramid, Stamp, StampOp,
-        Terrain, TerrainFocus, TerrainMaterial, TerrainSample, TerrainSettings, TerrainSource,
+        Biome, BiomeLayer, Biomes, Blend, HeightImage, HeightmapLayer, Layer, Layers, Mask,
+        NoiseLayer, NoiseMask, Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection,
+        Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainSurface,
         Terrains, TileKey, Viewport,
     };
     pub use crate::{Decal, DecalBlend, Decals};

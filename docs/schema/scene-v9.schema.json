@@ -117,6 +117,51 @@
         "night"
       ]
     },
+    "Biome": {
+      "description": "A biome: where it applies (`fitness`, everywhere when omitted) and the\nlayers of its ground. Later biomes paint over earlier ones where they\nfit; the first covers wherever none of the others do.",
+      "type": "object",
+      "properties": {
+        "fitness": {
+          "$ref": "#/$defs/Mask"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BiomeLayer"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "layers"
+      ]
+    },
+    "BiomeLayer": {
+      "description": "One layer of a biome's ground: `material` (an ID of the surface's\nmaterials) painted over the layers before it where `mask` allows, at\nmost `opacity`. A biome's first layer covers its whole ground.",
+      "type": "object",
+      "properties": {
+        "mask": {
+          "$ref": "#/$defs/Mask"
+        },
+        "material": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "material"
+      ]
+    },
     "Blend": {
       "description": "How a layer's heights combine with the heights of the layers before it,\nweighted by the layer's coverage: added, the higher or lower of the two,\nor replacing them.",
       "type": "string",
@@ -125,6 +170,185 @@
         "max",
         "min",
         "replace"
+      ]
+    },
+    "Mask": {
+      "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, or where a material\ncovers its biome's ground. Ramps run from 0 at their first value to 1 at\ntheir second, smoothly, falling when the first is the larger.",
+      "oneOf": [
+        {
+          "description": "The same value everywhere.",
+          "type": "object",
+          "properties": {
+            "constant": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "constant"
+          ]
+        },
+        {
+          "description": "A ramp over meters above the terrain's origin.",
+          "type": "object",
+          "properties": {
+            "height": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "height"
+          ]
+        },
+        {
+          "description": "A ramp over the ground's slope, in degrees from level, 0 to 90.",
+          "type": "object",
+          "properties": {
+            "slope": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "slope"
+          ]
+        },
+        {
+          "description": "A ramp over the ground's curvature: how fast its slope grows per\nmeter, positive in hollows and valleys, negative on ridges.",
+          "type": "object",
+          "properties": {
+            "curvature": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "curvature"
+          ]
+        },
+        {
+          "description": "Gradient noise from 0 to 1.",
+          "type": "object",
+          "properties": {
+            "noise": {
+              "$ref": "#/$defs/NoiseMask"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "noise"
+          ]
+        },
+        {
+          "description": "The product of masks.",
+          "type": "object",
+          "properties": {
+            "multiply": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Mask"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "multiply"
+          ]
+        },
+        {
+          "description": "The sum of masks.",
+          "type": "object",
+          "properties": {
+            "add": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Mask"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "add"
+          ]
+        },
+        {
+          "description": "The smallest of masks.",
+          "type": "object",
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Mask"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "min"
+          ]
+        },
+        {
+          "description": "The largest of masks.",
+          "type": "object",
+          "properties": {
+            "max": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Mask"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "max"
+          ]
+        },
+        {
+          "description": "One minus a mask.",
+          "type": "object",
+          "properties": {
+            "invert": {
+              "$ref": "#/$defs/Mask"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "invert"
+          ]
+        },
+        {
+          "description": "A mask remapped by a ramp: 0 up to `from`, 1 from `to`.",
+          "type": "object",
+          "properties": {
+            "remap": {
+              "$ref": "#/$defs/Remap"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "remap"
+          ]
+        }
       ]
     },
     "MeshSource": {
@@ -342,6 +566,58 @@
         }
       },
       "additionalProperties": false
+    },
+    "NoiseMask": {
+      "description": "Gradient noise from 0 to 1 with features `wavelength` meters across,\nsummed over `octaves` (1 to 8), each half as long and half as strong.",
+      "type": "object",
+      "properties": {
+        "octaves": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "wavelength": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.01
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "wavelength"
+      ]
+    },
+    "Remap": {
+      "description": "A mask remapped: 0 up to `from`, 1 from `to`, smooth between.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "number",
+          "format": "float"
+        },
+        "mask": {
+          "$ref": "#/$defs/Mask"
+        },
+        "to": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mask",
+        "from",
+        "to"
+      ]
     },
     "SceneAlphaMode": {
       "type": "string",
@@ -2329,34 +2605,6 @@
             "$ref": "#/$defs/SceneTerrainLayer"
           }
         },
-        "material": {
-          "$ref": "#/$defs/SceneTerrainMaterial",
-          "default": {
-            "dirt": [
-              0.20999999344348907,
-              0.16500000655651093,
-              0.10999999940395355
-            ],
-            "grass": [
-              0.10499999672174454,
-              0.13500000536441803,
-              0.04500000178813934
-            ],
-            "rock": [
-              0.25,
-              0.23499999940395355,
-              0.2199999988079071
-            ],
-            "rock_slope": 34.0,
-            "roughness": 0.9200000166893005,
-            "snow": [
-              0.8199999928474426,
-              0.8399999737739563,
-              0.8799999952316284
-            ],
-            "snow_height": 650.0
-          }
-        },
         "origin": {
           "type": "array",
           "items": {
@@ -2373,6 +2621,17 @@
             "null"
           ],
           "format": "float"
+        },
+        "surface": {
+          "description": "Its materials and biomes. Omitted, the engine's default: grass,\nbare dirt, rock on steep ground and snow above 650 meters.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "tiles": {
           "description": "Level-0 tiles along x and z, 1 to 4096 each. Required with layers;\na file's own when omitted.",
@@ -2436,16 +2695,15 @@
       ]
     },
     "SceneTerrainMaterial": {
-      "description": "A terrain's procedural material: rock where slopes steepen, snow above a\nheight on gentler slopes, and grass below, broken up by noise across the\nground. Colors are linear.",
+      "description": "How one surface material looks: a `material` of this document whose\nmaps and factors shade it, or a linear `color` and `roughness`; the\nmeters its textures repeat over (0.01 to 1000); how sharply its height\nmap wins where it blends with another (0 to 1); and whether steep ground\nprojects it from the side.",
       "type": "object",
       "properties": {
-        "dirt": {
-          "description": "Bare ground between grass and rock.",
+        "color": {
           "type": "array",
           "default": [
-            0.20999999344348907,
-            0.16500000655651093,
-            0.10999999940395355
+            0.5,
+            0.5,
+            0.5
           ],
           "items": {
             "type": "number",
@@ -2454,72 +2712,45 @@
           "maxItems": 3,
           "minItems": 3
         },
-        "grass": {
-          "type": "array",
-          "default": [
-            0.10499999672174454,
-            0.13500000536441803,
-            0.04500000178813934
-          ],
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
-        "rock": {
-          "type": "array",
-          "default": [
-            0.25,
-            0.23499999940395355,
-            0.2199999988079071
-          ],
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
-        "rock_slope": {
-          "description": "Degrees from level where rock takes over, 0 to 90.",
+        "height_contrast": {
           "type": "number",
           "format": "float",
-          "default": 34.0,
-          "maximum": 90.0,
+          "default": 0.5,
+          "maximum": 1.0,
           "minimum": 0.0
         },
+        "id": {
+          "type": "string"
+        },
+        "material": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "projection": {
+          "$ref": "#/$defs/SurfaceProjection",
+          "default": "top"
+        },
         "roughness": {
-          "description": "Surface roughness, 0.03 to 1.",
           "type": "number",
           "format": "float",
-          "default": 0.9200000166893005,
+          "default": 0.8999999761581421,
           "maximum": 1.0,
           "minimum": 0.03
         },
-        "snow": {
-          "type": "array",
-          "default": [
-            0.8199999928474426,
-            0.8399999737739563,
-            0.8799999952316284
-          ],
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
-        "snow_height": {
-          "description": "Meters above the terrain's origin where snow starts.",
+        "tiling": {
           "type": "number",
           "format": "float",
-          "default": 650.0
+          "default": 4.0,
+          "maximum": 1000.0,
+          "minimum": 0.01
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
     },
     "SceneTerrainSettings": {
       "description": "Terrain settings (decision 051). Requires version 9.",
@@ -2592,6 +2823,29 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneTerrainSurface": {
+      "description": "A terrain's surface (decision 054): up to 255 materials, which biome\nlayers name by ID, and up to 255 biomes. Later biomes paint over earlier\nones where they fit; the first covers wherever none of the others do.",
+      "type": "object",
+      "properties": {
+        "biomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Biome"
+          }
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneTerrainMaterial"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "materials",
+        "biomes"
+      ]
     },
     "SceneTexture": {
       "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7, decision 030) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
@@ -3018,6 +3272,14 @@
           "type": "string",
           "const": "hole"
         }
+      ]
+    },
+    "SurfaceProjection": {
+      "description": "How a surface material's textures lie on the ground: from above, or\non steep ground also from the side, so cliffs don't stretch them.",
+      "type": "string",
+      "enum": [
+        "top",
+        "biplanar"
       ]
     }
   }

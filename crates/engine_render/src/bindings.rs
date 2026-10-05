@@ -586,11 +586,13 @@ pub(crate) const TERRAIN: Table = Table {
     bindings: &[
         texture(17, "terrain_heights", Unfilterable, D2Array, V),
         dynamic_uniform(18, "terrain_view", 80, V),
-        dynamic_uniform(19, "terrain", 128, VF),
+        dynamic_uniform(19, "terrain", 64, VF),
         read(20, "terrain_holes", F),
         texture(21, "terrain_normals", Float, D2Array, F),
         sampler(22, "terrain_normal_sampler", Filtering, F),
         read(23, "terrain_directory", F),
+        texture(24, "terrain_control", Uint, D2Array, F),
+        uniform_of(25, "terrain_palette", 16_384, F),
     ],
 };
 

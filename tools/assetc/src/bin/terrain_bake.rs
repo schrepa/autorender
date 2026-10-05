@@ -57,7 +57,11 @@ fn run() -> Result<(), String> {
         .terrain
         .as_ref()
         .ok_or_else(|| format!("entity {entity} has no terrain"))?
-        .prepare(&format!("$.entities[{index}].terrain"), Some(&files))
+        .prepare_component(
+            &format!("$.entities[{index}].terrain"),
+            Some(&files),
+            &document.materials,
+        )
         .map_err(|error| error.to_string())?;
     let TerrainSource::Generated(layers) = &terrain.source else {
         return Err(format!("entity {entity}'s terrain already reads a file"));

@@ -75,11 +75,12 @@ pub(crate) fn populate(
     .map_err(|error| error.to_string())?;
     // Snow on the peaks only.
     world.spawn(
-        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_material(
-            TerrainMaterial {
-                snow_height: 800.0,
-                ..TerrainMaterial::default()
-            },
+        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(
+            TerrainSurface::new(
+                &TerrainSurface::default_rules(800.0),
+                TerrainSurface::default_materials(),
+            )
+            .map_err(|error| error.to_string())?,
         ),
     );
     Ok((

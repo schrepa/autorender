@@ -234,6 +234,9 @@ impl DevBrowser {
                             engine_core::TerrainView::Normals
                         }
                         engine_dev::TerrainViewRequest::Tiles => engine_core::TerrainView::Tiles,
+                        engine_dev::TerrainViewRequest::Materials => {
+                            engine_core::TerrainView::Materials
+                        }
                     };
                 }
                 world.insert_resource(debug);

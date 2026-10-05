@@ -3,7 +3,8 @@
 //!
 //! An entity's [`Terrain`] describes one: where it lies, its tile pyramid,
 //! where its tiles come from (generated from a layer stack, or read from an
-//! `ETR1` file by byte ranges) and its material. The [`Terrains`] resource
+//! `ETR1` file by byte ranges) and its surface (decision 054): the rules
+//! choosing each sample's materials and how those look. The [`Terrains`] resource
 //! keeps every terrain's resident tiles. Each extraction streams toward the
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
@@ -31,9 +32,11 @@ use bevy_ecs::{
 use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+use engine_assets::MaterialHandle;
 use engine_terrain::{
-    FileHeader, FormatError, Generator, Layers, LodRanges, Patch, Pyramid, Selection, TILE_STRIDE,
-    Tile, TileKey, TileSample, WantedTile, decode_tile,
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator, Layers,
+    LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap, Selection, TILE_STRIDE, Tile, TileKey,
+    TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -54,59 +57,180 @@ pub enum TerrainSource {
     },
 }
 
-/// A terrain's procedural material: rock where slopes steepen, snow above a
-/// height on gentler slopes, and grass below, broken up by noise across the
-/// ground. Colors are linear.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneTerrainMaterial")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct TerrainMaterial {
-    pub grass: [f32; 3],
-    /// Bare ground between grass and rock.
-    pub dirt: [f32; 3],
-    pub rock: [f32; 3],
-    pub snow: [f32; 3],
-    /// Degrees from level where rock takes over, 0 to 90.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 90.0)))]
-    pub rock_slope: f32,
-    /// Meters above the terrain's origin where snow starts.
-    pub snow_height: f32,
-    /// Surface roughness, 0.03 to 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.03, max = 1.0)))]
-    pub roughness: f32,
+/// How a terrain's ground looks (decision 054): the rules choosing each
+/// sample's materials (its biomes), and how each material looks, in the
+/// rules' order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainSurface {
+    pub rules: Arc<BiomeRules>,
+    pub materials: Vec<SurfaceMaterial>,
 }
 
-impl Default for TerrainMaterial {
-    fn default() -> Self {
+/// How a surface material looks: an engine material's maps and factors,
+/// or without one a linear `color` and `roughness`; the meters its
+/// textures repeat over; how sharply its height map wins where it blends
+/// with another (0 even, 1 sharpest); and whether steep ground projects it
+/// from the side.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SurfaceMaterial {
+    pub material: Option<MaterialHandle>,
+    pub color: [f32; 3],
+    pub roughness: f32,
+    pub tiling: f32,
+    pub height_contrast: f32,
+    pub projection: SurfaceProjection,
+}
+
+/// How a surface material's textures lie on the ground: from above, or
+/// on steep ground also from the side, so cliffs don't stretch them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SurfaceProjection {
+    #[default]
+    Top,
+    Biplanar,
+}
+
+impl SurfaceMaterial {
+    /// A material of plain linear `color` and `roughness`, its textures (if
+    /// it gains any) repeating every 4 meters.
+    pub fn color(color: [f32; 3], roughness: f32) -> Self {
         Self {
-            grass: [0.105, 0.135, 0.045],
-            dirt: [0.21, 0.165, 0.11],
-            rock: [0.25, 0.235, 0.22],
-            snow: [0.82, 0.84, 0.88],
-            rock_slope: 34.0,
-            snow_height: 650.0,
-            roughness: 0.92,
+            material: None,
+            color,
+            roughness,
+            tiling: 4.0,
+            height_contrast: 0.5,
+            projection: SurfaceProjection::Top,
         }
+    }
+
+    /// Whether every value is in range: color 0 to 1, roughness 0.03 to
+    /// 1, tiling 0.01 to 1000 meters, height contrast 0 to 1.
+    pub fn is_usable(&self) -> bool {
+        self.color
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            && self.roughness.is_finite()
+            && (0.03..=1.0).contains(&self.roughness)
+            && self.tiling.is_finite()
+            && (0.01..=1000.0).contains(&self.tiling)
+            && self.height_contrast.is_finite()
+            && (0.0..=1.0).contains(&self.height_contrast)
     }
 }
 
-impl TerrainMaterial {
-    /// Whether every value is in range.
+impl TerrainSurface {
+    /// The surface of `surface`'s rules with `materials`, one per
+    /// material it names, in order.
+    pub fn new(surface: &Biomes, materials: Vec<SurfaceMaterial>) -> Result<Self, BiomeError> {
+        let rules = surface.compile()?;
+        if materials.len() != surface.materials.len() {
+            return Err(BiomeError {
+                path: "materials".into(),
+                rule: "needs one look per material".into(),
+            });
+        }
+        Ok(Self {
+            rules: Arc::new(rules),
+            materials,
+        })
+    }
+
+    /// Whether every material is usable and one exists per material the
+    /// rules name.
     pub fn is_usable(&self) -> bool {
-        let color = |c: [f32; 3]| c.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v));
-        color(self.grass)
-            && color(self.dirt)
-            && color(self.rock)
-            && color(self.snow)
-            && self.rock_slope.is_finite()
-            && (0.0..=90.0).contains(&self.rock_slope)
-            && self.snow_height.is_finite()
-            && self.roughness.is_finite()
-            && (0.03..=1.0).contains(&self.roughness)
+        self.materials.len() == self.rules.authored().materials.len()
+            && self.materials.iter().all(SurfaceMaterial::is_usable)
+    }
+
+    /// The default surface's rules as authored: grass, bare dirt where noise
+    /// and slope open it up, rock on steep ground and snow above
+    /// `snow_height` meters on gentler slopes.
+    pub fn default_rules(snow_height: f32) -> Biomes {
+        let noise = |wavelength: f32, seed: u32| {
+            Mask::Noise(NoiseMask {
+                wavelength,
+                seed,
+                octaves: 2,
+            })
+        };
+        let scaled = |mask: Mask, by: f32| Mask::Multiply(vec![mask, Mask::Constant(by)]);
+        let remap = |mask: Mask, from: f32, to: f32| {
+            Mask::Remap(Remap {
+                mask: Box::new(mask),
+                from,
+                to,
+            })
+        };
+        let layer = |material: &str, mask: Mask| BiomeLayer {
+            material: material.into(),
+            mask,
+            opacity: 1.0,
+        };
+        Biomes {
+            materials: ["grass", "dirt", "rock", "snow"].map(String::from).to_vec(),
+            biomes: vec![Biome {
+                id: "ground".into(),
+                fitness: Mask::one(),
+                layers: vec![
+                    layer("grass", Mask::one()),
+                    layer(
+                        "dirt",
+                        remap(
+                            Mask::Add(vec![
+                                scaled(noise(60.0, 1), 0.7),
+                                scaled(noise(9.0, 2), 0.3),
+                                scaled(Mask::Slope([10.0, 40.0]), 0.5),
+                            ]),
+                            0.55,
+                            0.75,
+                        ),
+                    ),
+                    layer(
+                        "rock",
+                        remap(
+                            Mask::Add(vec![Mask::Slope([25.0, 45.0]), scaled(noise(60.0, 1), 0.3)]),
+                            0.55,
+                            0.75,
+                        ),
+                    ),
+                    layer(
+                        "snow",
+                        Mask::Multiply(vec![
+                            remap(
+                                Mask::Add(vec![
+                                    Mask::Height([snow_height - 100.0, snow_height + 100.0]),
+                                    scaled(noise(60.0, 3), 0.4),
+                                    Mask::Constant(-0.2),
+                                ]),
+                                0.4,
+                                0.6,
+                            ),
+                            Mask::Invert(Box::new(Mask::Slope([35.0, 50.0]))),
+                        ]),
+                    ),
+                ],
+            }],
+        }
+    }
+
+    /// The default materials' looks, matching [`Self::default_rules`].
+    pub fn default_materials() -> Vec<SurfaceMaterial> {
+        vec![
+            SurfaceMaterial::color([0.105, 0.135, 0.045], 0.92),
+            SurfaceMaterial::color([0.21, 0.165, 0.11], 0.92),
+            SurfaceMaterial::color([0.25, 0.235, 0.22], 0.82),
+            SurfaceMaterial::color([0.82, 0.84, 0.88], 0.55),
+        ]
+    }
+}
+
+impl Default for TerrainSurface {
+    fn default() -> Self {
+        Self::new(&Self::default_rules(650.0), Self::default_materials())
+            .expect("the default surface is valid")
     }
 }
 
@@ -118,7 +242,7 @@ pub struct Terrain {
     pub origin: Vec3,
     pub pyramid: Pyramid,
     pub source: TerrainSource,
-    pub material: TerrainMaterial,
+    pub surface: TerrainSurface,
     /// Whether it collides where collision is installed.
     pub collision: bool,
 }
@@ -142,7 +266,9 @@ impl Terrain {
         source
             && self.origin == other.origin
             && self.pyramid == other.pyramid
-            && self.material == other.material
+            && (Arc::ptr_eq(&self.surface.rules, &other.surface.rules)
+                || self.surface.rules == other.surface.rules)
+            && self.surface.materials == other.surface.materials
             && self.collision == other.collision
     }
 
@@ -152,7 +278,7 @@ impl Terrain {
             origin,
             pyramid,
             source: TerrainSource::Generated(Arc::new(layers)),
-            material: TerrainMaterial::default(),
+            surface: TerrainSurface::default(),
             collision: true,
         }
     }
@@ -168,7 +294,7 @@ impl Terrain {
                 url: url.into(),
                 data: None,
             },
-            material: TerrainMaterial::default(),
+            surface: TerrainSurface::default(),
             collision: true,
         }
     }
@@ -184,13 +310,13 @@ impl Terrain {
                 url: Arc::from(""),
                 data: Some(bytes),
             },
-            material: TerrainMaterial::default(),
+            surface: TerrainSurface::default(),
             collision: true,
         })
     }
 
-    pub fn with_material(mut self, material: TerrainMaterial) -> Self {
-        self.material = material;
+    pub fn with_surface(mut self, surface: TerrainSurface) -> Self {
+        self.surface = surface;
         self
     }
 
@@ -201,7 +327,7 @@ impl Terrain {
 
     /// Whether streaming can use this terrain.
     pub fn is_usable(&self) -> bool {
-        self.origin.is_finite() && self.material.is_usable()
+        self.origin.is_finite() && self.surface.is_usable()
     }
 }
 
@@ -216,6 +342,8 @@ pub enum TerrainView {
     Levels,
     Normals,
     Tiles,
+    /// Each surface material in its own color, blended as the ground is.
+    Materials,
 }
 
 /// Temporary terrain state for development (decision 051): an eye that
@@ -452,6 +580,36 @@ impl TerrainState {
             errors: vec![0.0; levels],
             ranges: Vec::new(),
         }
+    }
+
+    /// Gives decoded `tile` its surface's control values, within
+    /// `budget`; it becomes resident once they are done.
+    fn resurface(&mut self, tile: Tile, budget: &mut u64) {
+        let key = tile.key();
+        let mut job = Generator::resurface(
+            &tile,
+            &self.terrain.pyramid,
+            self.terrain.surface.rules.clone(),
+        );
+        match job.advance(budget) {
+            Some(tile) => self.insert(tile),
+            None => {
+                self.jobs.insert(key, job);
+            }
+        }
+    }
+
+    /// Advances `key`'s surface job within `budget`, if it has one,
+    /// making its tile resident once done; whether it had one.
+    fn surface_job(&mut self, key: TileKey, budget: &mut u64) -> bool {
+        let Some(job) = self.jobs.get_mut(&key) else {
+            return false;
+        };
+        if let Some(tile) = job.advance(budget) {
+            self.jobs.remove(&key);
+            self.insert(tile);
+        }
+        true
     }
 
     /// Makes `tile` resident, measuring how far it lies from its resident
@@ -788,10 +946,11 @@ impl Terrains {
                         if *work == 0 {
                             break;
                         }
-                        let job = state
-                            .jobs
-                            .entry(key)
-                            .or_insert_with(|| Generator::new(layers.clone(), &pyramid, key));
+                        let rules = &state.terrain.surface.rules;
+                        let job = state.jobs.entry(key).or_insert_with(|| {
+                            Generator::new(layers.clone(), &pyramid, key)
+                                .with_surface(rules.clone())
+                        });
                         if let Some(tile) = job.advance(work) {
                             state.jobs.remove(&key);
                             state.insert(tile);
@@ -803,10 +962,14 @@ impl Terrains {
                     url: _,
                     data: Some(data),
                 } => {
-                    // The whole file is here: decode within the budget.
+                    // The whole file is here: decode within the budget, then
+                    // give each tile its surface.
                     for key in missing {
                         if budget == 0 {
                             break;
+                        }
+                        if state.surface_job(key, &mut budget) {
+                            continue;
                         }
                         let Some(entry) = header.tile(key) else {
                             continue;
@@ -814,13 +977,13 @@ impl Terrains {
                         let range = usize::try_from(entry.offset).ok().and_then(|start| {
                             data.get(start..start.checked_add(entry.length as usize)?)
                         });
+                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
                         match range.map(|bytes| decode_tile(&header, key, bytes)) {
-                            Some(Ok(tile)) => state.insert(tile),
+                            Some(Ok(tile)) => state.resurface(tile, &mut budget),
                             _ => {
                                 state.failed.insert(key, frame);
                             }
                         }
-                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
                     }
                 }
                 TerrainSource::File {
@@ -829,7 +992,12 @@ impl Terrains {
                     data: None,
                 } => {
                     for &key in &missing {
+                        if budget > 0 {
+                            state.surface_job(key, &mut budget);
+                        }
                         if state.in_flight.contains(&key)
+                            || state.jobs.contains_key(&key)
+                            || state.tiles.contains_key(&key)
                             || state
                                 .failed
                                 .get(&key)
@@ -858,16 +1026,16 @@ impl Terrains {
                             }
                             continue;
                         }
+                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
                         match bytes.map(|bytes| decode_tile(&header, key, &bytes)) {
                             Some(Ok(tile)) => {
                                 state.failed.remove(&key);
-                                state.insert(tile);
+                                state.resurface(tile, &mut budget);
                             }
                             _ => {
                                 state.failed.insert(key, frame);
                             }
                         }
-                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
                     }
                     state.arrivals = later;
                 }
@@ -927,7 +1095,9 @@ pub struct RenderTerrain {
     pub id: u64,
     pub origin: Vec3,
     pub pyramid: Pyramid,
-    pub material: TerrainMaterial,
+    /// How each of its surface's materials looks, by the index tiles'
+    /// control values hold.
+    pub surface: Vec<SurfaceMaterial>,
     /// Its resident tiles: renderers upload those they lack and release
     /// the rest. The list changes only when `tiles_revision` advances.
     pub tiles: Arc<[Arc<Tile>]>,
@@ -1056,7 +1226,7 @@ impl TerrainExtraction {
                     id: 0,
                     origin: Vec3::ZERO,
                     pyramid: state.terrain.pyramid,
-                    material: TerrainMaterial::default(),
+                    surface: Vec::new(),
                     tiles: Arc::from(Vec::new()),
                     tiles_revision: 0,
                     patches: Vec::new(),
@@ -1067,7 +1237,7 @@ impl TerrainExtraction {
             render.id = state.entity.to_bits();
             render.origin = state.terrain.origin;
             render.pyramid = state.terrain.pyramid;
-            render.material = state.terrain.material;
+            render.surface.clone_from(&state.terrain.surface.materials);
             if render.tiles_revision != state.revision || render.id != state.entity.to_bits() {
                 let mut tiles: Vec<Arc<Tile>> = state.tiles.values().cloned().collect();
                 tiles.sort_unstable_by_key(|tile| tile.key());
