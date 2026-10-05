@@ -651,6 +651,95 @@
         "wavelength"
       ]
     },
+    "PlacementChoice": {
+      "description": "An asset a placement layer chooses, by ID of the surface's assets, and\nhow often against the layer's others.",
+      "type": "object",
+      "properties": {
+        "asset": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "asset"
+      ]
+    },
+    "PlacementLayer": {
+      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); and how deep they sink, in\nmeters at scale 1.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlacementChoice"
+          }
+        },
+        "density": {
+          "type": "number",
+          "format": "float",
+          "minimum": 0.0
+        },
+        "footprint": {
+          "type": "number",
+          "format": "float",
+          "maximum": 256.0,
+          "minimum": 0.25
+        },
+        "id": {
+          "type": "string"
+        },
+        "mask": {
+          "$ref": "#/$defs/Mask",
+          "default": {
+            "constant": 1.0
+          }
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "scale": {
+          "type": "array",
+          "default": [
+            1.0,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "sink": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "assets",
+        "density",
+        "footprint"
+      ]
+    },
     "Remap": {
       "description": "A mask remapped: 0 up to `from`, 1 from `to`, smooth between.",
       "type": "object",
@@ -2768,6 +2857,27 @@
         "origin"
       ]
     },
+    "SceneTerrainAsset": {
+      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "material": {
+          "type": "string"
+        },
+        "mesh": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "mesh",
+        "material"
+      ]
+    },
     "SceneTerrainLayer": {
       "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), or an imported heightmap.",
       "oneOf": [
@@ -2966,6 +3076,13 @@
       "description": "A terrain's surface (decision 054): up to 255 materials, which biome\nlayers name by ID, and up to 255 biomes. Later biomes paint over earlier\nones where they fit; the first covers wherever none of the others do.",
       "type": "object",
       "properties": {
+        "assets": {
+          "description": "What placement layers stand on the terrain (decision 057).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneTerrainAsset"
+          }
+        },
         "biomes": {
           "type": "array",
           "items": {
@@ -2976,6 +3093,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/SceneTerrainMaterial"
+          }
+        },
+        "placements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlacementLayer"
           }
         }
       },

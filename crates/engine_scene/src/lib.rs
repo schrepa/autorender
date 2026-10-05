@@ -48,7 +48,8 @@ pub use material::{
 };
 pub use probe::SceneReflectionProbe;
 pub use terrain::{
-    SceneHeightmap, SceneTerrain, SceneTerrainLayer, SceneTerrainMaterial, SceneTerrainSurface,
+    SceneHeightmap, SceneTerrain, SceneTerrainAsset, SceneTerrainLayer, SceneTerrainMaterial,
+    SceneTerrainSurface,
 };
 pub use texture::SceneTexture;
 pub use versions::version_features;

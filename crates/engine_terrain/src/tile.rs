@@ -30,6 +30,7 @@ pub struct Tile {
     heights: Box<[f32]>,
     holes: Option<Box<[u64]>>,
     control: Option<Box<[u32]>>,
+    placed: Option<Arc<[crate::Placed]>>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -69,6 +70,7 @@ impl Tile {
             heights,
             holes,
             control: None,
+            placed: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -127,6 +129,18 @@ impl Tile {
     /// row: the layout GPU tiles upload. `None` without a surface.
     pub fn control(&self) -> Option<&[u32]> {
         self.control.as_deref()
+    }
+
+    /// The objects the surface's placement layers stand on this tile
+    /// (decision 057): level-0 tiles of surfaces that place any.
+    pub fn placed(&self) -> &[crate::Placed] {
+        self.placed.as_deref().unwrap_or(&[])
+    }
+
+    /// The tile with `placed` standing on it.
+    pub fn with_placed(mut self, placed: Vec<crate::Placed>) -> Self {
+        self.placed = (!placed.is_empty()).then(|| Arc::from(placed));
+        self
     }
 
     /// The control value of sample `(x, z)`, -1 to 257 along each axis.
@@ -539,10 +553,19 @@ impl Generator {
                 Stage::Done => {
                     let heights = std::mem::take(&mut self.heights);
                     let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
-                    return match self.control.take() {
-                        Some(control) => tile.with_control(control),
-                        None => Some(tile),
+                    let tile = match self.control.take() {
+                        Some(control) => tile.with_control(control)?,
+                        None => tile,
                     };
+                    // Objects stand on level-0 tiles (decision 057).
+                    return Some(match &self.surface {
+                        Some(surface) if surface.places() && self.key.level == 0 => {
+                            let mut placed = Vec::new();
+                            surface.place(&tile, &mut placed);
+                            tile.with_placed(placed)
+                        }
+                        _ => tile,
+                    });
                 }
             }
         }

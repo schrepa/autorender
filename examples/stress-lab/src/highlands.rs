@@ -6,7 +6,8 @@
 //! meadow, dry grass, dirt, scree, rock and snow, each textured by maps
 //! built offline (`cargo run -p engine_assetc --release --bin
 //! terrain_materials`) and fetched by the page, or in plain colors without
-//! them.
+//! them. Boulders lie on its meadows, stones on its scree and outcrops on
+//! its rock (decision 057).
 
 use std::collections::HashMap;
 
@@ -229,8 +230,62 @@ fn surface(
             cover: look.cover,
         });
     }
-    TerrainSurface::new(&rules(), materials).map_err(|error| error.to_string())
+    // Boulders of a few shapes, in the rock's maps where the page supplied
+    // them: lighter than the cliffs' and gentler in relief, as weathered
+    // stones are.
+    let base = Material::new([0.8, 0.77, 0.72, 1.0])
+        .and_then(|material| {
+            material.with_surface(Surface {
+                roughness: 0.85,
+                ..Surface::MATTE
+            })
+        })
+        .map_err(|error| error.to_string())?;
+    let error = |error: AssetError| error.to_string();
+    let material = match materials[4]
+        .material
+        .and_then(|rock| assets.material(rock).copied())
+    {
+        Some(rock) => {
+            let mut material = base;
+            if let Some(map) = rock.base_color_texture() {
+                material = material.with_base_color_texture(map).map_err(error)?;
+            }
+            if let Some(map) = rock.normal_texture() {
+                material = material.with_normal_texture(map, 0.5).map_err(error)?;
+            }
+            if let Some(map) = rock.metallic_roughness_texture() {
+                material = material
+                    .with_metallic_roughness_texture(map)
+                    .and_then(|material| material.with_occlusion_texture(map, 1.0))
+                    .map_err(error)?;
+            }
+            material
+        }
+        None => Material::new([0.3, 0.28, 0.26, 1.0])
+            .and_then(|material| material.with_surface(base.surface()))
+            .map_err(error)?,
+    };
+    let rock = assets
+        .insert_material(material)
+        .map_err(|error| error.to_string())?;
+    let mut boulders = Vec::with_capacity(BOULDERS);
+    for seed in 0..BOULDERS as u32 {
+        let mesh = assets
+            .insert_mesh(crate::rocks::boulder(seed)?)
+            .map_err(|error| error.to_string())?;
+        boulders.push(PlacementAsset {
+            mesh,
+            material: rock,
+        });
+    }
+    TerrainSurface::new(&rules(), materials)
+        .and_then(|surface| surface.with_assets(boulders))
+        .map_err(|error| error.to_string())
 }
+
+/// Boulder shapes the placement layers choose from.
+const BOULDERS: usize = 5;
 
 /// `look`'s maps from `files` as an engine material tinted by its tint,
 /// when the page supplied all three: base color, normal, and occlusion
@@ -301,7 +356,55 @@ fn rules() -> Biomes {
         mask,
         opacity: 1.0,
     };
+    let boulders = |weight: f32| {
+        (0..BOULDERS)
+            .map(|index| PlacementChoice {
+                asset: format!("boulder{index}"),
+                weight,
+            })
+            .collect::<Vec<_>>()
+    };
     Biomes {
+        assets: (0..BOULDERS)
+            .map(|index| format!("boulder{index}"))
+            .collect(),
+        // Boulders in clumps over the meadows, stones strewn on scree and
+        // outcrops on rock.
+        placements: vec![
+            PlacementLayer {
+                id: "boulders".into(),
+                assets: boulders(1.0),
+                density: 18.0,
+                footprint: 7.0,
+                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
+                mask: remap(noise(90.0, 21, 2), 0.45, 0.75),
+                scale: [0.6, 2.4],
+                align: 0.3,
+                sink: 0.2,
+            },
+            PlacementLayer {
+                id: "stones".into(),
+                assets: boulders(1.0),
+                density: 450.0,
+                footprint: 1.5,
+                materials: vec!["scree".into()],
+                mask: Mask::one(),
+                scale: [0.12, 0.45],
+                align: 0.8,
+                sink: 0.08,
+            },
+            PlacementLayer {
+                id: "outcrops".into(),
+                assets: boulders(1.0),
+                density: 25.0,
+                footprint: 8.0,
+                materials: vec!["rock".into()],
+                mask: Mask::one(),
+                scale: [2.0, 5.0],
+                align: 0.6,
+                sink: 0.5,
+            },
+        ],
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
         biomes: vec![Biome {
             id: "highlands".into(),

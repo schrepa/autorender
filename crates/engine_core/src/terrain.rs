@@ -32,7 +32,7 @@ use bevy_ecs::{
 use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use engine_assets::{AssetLibrary, Material, MaterialHandle};
+use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator, Layers,
     LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap, Selection, TILE_STRIDE, Tile, TileKey,
@@ -40,7 +40,7 @@ use engine_terrain::{
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
-use crate::{Camera, GlobalTransforms, RenderSnapshot, RenderTexture};
+use crate::{Camera, GlobalTransforms, RenderMaterial, RenderMesh, RenderSnapshot, RenderTexture};
 
 /// Where a terrain's tiles come from.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +64,17 @@ pub enum TerrainSource {
 pub struct TerrainSurface {
     pub rules: Arc<BiomeRules>,
     pub materials: Vec<SurfaceMaterial>,
+    /// What the rules' placement layers stand on the terrain (decision
+    /// 057), in the rules' order of asset IDs.
+    pub assets: Vec<PlacementAsset>,
+}
+
+/// An object placement layers stand on a terrain (decision 057): the mesh
+/// it draws and the material it draws with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlacementAsset {
+    pub mesh: MeshHandle,
+    pub material: MaterialHandle,
 }
 
 /// How a surface material looks: an engine material's maps and factors,
@@ -142,13 +153,28 @@ impl TerrainSurface {
         Ok(Self {
             rules: Arc::new(rules),
             materials,
+            assets: Vec::new(),
         })
     }
 
-    /// Whether every material is usable and one exists per material the
-    /// rules name.
+    /// The surface with `assets`, one per asset its rules name, in order
+    /// (decision 057).
+    pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, BiomeError> {
+        if assets.len() != self.rules.authored().assets.len() {
+            return Err(BiomeError {
+                path: "assets".into(),
+                rule: "needs one mesh and material per asset".into(),
+            });
+        }
+        self.assets = assets;
+        Ok(self)
+    }
+
+    /// Whether every material is usable and one exists per material and
+    /// asset the rules name.
     pub fn is_usable(&self) -> bool {
         self.materials.len() == self.rules.authored().materials.len()
+            && self.assets.len() == self.rules.authored().assets.len()
             && self.materials.iter().all(SurfaceMaterial::is_usable)
     }
 
@@ -177,6 +203,8 @@ impl TerrainSurface {
             opacity: 1.0,
         };
         Biomes {
+            assets: Vec::new(),
+            placements: Vec::new(),
             materials: ["grass", "dirt", "rock", "snow"].map(String::from).to_vec(),
             biomes: vec![Biome {
                 id: "ground".into(),
@@ -1152,6 +1180,49 @@ impl RenderSurfaceMaps {
     }
 }
 
+/// A placement asset of a frame (decision 057): its mesh, its material
+/// and the material's textures.
+#[derive(Clone, Debug)]
+pub struct RenderPlacementAsset {
+    pub mesh: RenderMesh,
+    pub material: RenderMaterial,
+    pub textures: Vec<RenderTexture>,
+}
+
+impl RenderPlacementAsset {
+    /// `asset` from `assets`, or `None` with what is missing counted in
+    /// `missing`.
+    fn of(asset: PlacementAsset, assets: &AssetLibrary, missing: &mut usize) -> Option<Self> {
+        let found = (|| {
+            let mesh = assets.mesh(asset.mesh)?;
+            let material = assets.material(asset.material)?;
+            let textures = material
+                .textures()
+                .map(|handle| {
+                    assets.texture(handle).map(|texture| RenderTexture {
+                        handle,
+                        texture: Arc::clone(texture),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            Some(Self {
+                mesh: RenderMesh {
+                    handle: asset.mesh,
+                    mesh: Arc::clone(mesh),
+                },
+                material: RenderMaterial {
+                    handle: asset.material,
+                    material: *material,
+                    version: assets.material_version(asset.material).unwrap_or(0),
+                },
+                textures,
+            })
+        })();
+        *missing += usize::from(found.is_none());
+        found
+    }
+}
+
 /// One terrain of a frame (decision 051).
 #[derive(Clone, Debug)]
 pub struct RenderTerrain {
@@ -1165,6 +1236,10 @@ pub struct RenderTerrain {
     /// Each surface material's engine material, where it names one that
     /// exists.
     pub maps: Vec<Option<RenderSurfaceMaps>>,
+    /// What its placement layers stand on it (decision 057), by the asset
+    /// indices its tiles' placed objects hold; `None` where the mesh or
+    /// material is missing.
+    pub assets: Vec<Option<RenderPlacementAsset>>,
     /// Its resident tiles: renderers upload those they lack and release
     /// the rest. The list changes only when `tiles_revision` advances.
     pub tiles: Arc<[Arc<Tile>]>,
@@ -1297,6 +1372,7 @@ impl TerrainExtraction {
                     pyramid: state.terrain.pyramid,
                     surface: Vec::new(),
                     maps: Vec::new(),
+                    assets: Vec::new(),
                     tiles: Arc::from(Vec::new()),
                     tiles_revision: 0,
                     patches: Vec::new(),
@@ -1308,6 +1384,12 @@ impl TerrainExtraction {
             render.origin = state.terrain.origin;
             render.pyramid = state.terrain.pyramid;
             render.surface.clone_from(&state.terrain.surface.materials);
+            render.assets.clear();
+            for &asset in &state.terrain.surface.assets {
+                render.assets.push(
+                    assets.and_then(|assets| RenderPlacementAsset::of(asset, assets, missing)),
+                );
+            }
             render.maps.clear();
             for look in &state.terrain.surface.materials {
                 let material = look.material.and_then(|handle| {

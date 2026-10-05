@@ -123,33 +123,37 @@ impl MaterialStore {
     }
 
     /// Drops materials and textures `plan`'s snapshot no longer supplies,
-    /// keeping its decals' (decision 039).
+    /// keeping its decals' (decision 039) and its terrains' placed objects'
+    /// (decision 057).
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
-        let decal_material = |handle: &MaterialHandle| {
+        let extra_material = |handle: &MaterialHandle| {
             snapshot
                 .decal_materials
                 .iter()
+                .chain(placed_materials(snapshot))
                 .any(|source| source.handle == *handle)
         };
-        let decal_texture = |handle: &TextureHandle| {
+        let extra_texture = |handle: &TextureHandle| {
             snapshot
                 .decal_textures
                 .iter()
+                .chain(placed_textures(snapshot))
                 .any(|source| source.handle == *handle)
         };
         let count = self.materials.len();
         self.materials
-            .retain(|handle, _| plan.contains_material(*handle) || decal_material(handle));
+            .retain(|handle, _| plan.contains_material(*handle) || extra_material(handle));
         if self.materials.len() != count {
             self.generation += 1;
         }
         self.textures
-            .retain(|(handle, _), _| plan.contains_texture(*handle) || decal_texture(handle));
+            .retain(|(handle, _), _| plan.contains_texture(*handle) || extra_texture(handle));
     }
 
     /// Uploads the textures and builds the bind groups of `plan`'s used
-    /// materials and of `extra` listed ones (masked shadow casters) and the
-    /// snapshot's decal materials (decision 039). New
+    /// materials and of `extra` listed ones (masked shadow casters), the
+    /// snapshot's decal materials (decision 039) and its terrains' placed
+    /// objects' (decision 057). New
     /// textures' mip levels render from their base level in commands
     /// recorded into `encoder`, created when needed. Returns the uploaded
     /// bytes and generated levels.
@@ -177,6 +181,7 @@ impl MaterialStore {
                     .find(|source| source.handle == handle)
             })
             .chain(&snapshot.decal_materials)
+            .chain(placed_materials(snapshot))
             .filter(|source| !built(&self.materials, source))
             .collect();
         let sources = plan
@@ -200,6 +205,7 @@ impl MaterialStore {
                         .textures
                         .iter()
                         .chain(&snapshot.decal_textures)
+                        .chain(placed_textures(snapshot))
                         .find(|texture| texture.handle == map.texture)
                         .expect(
                             "the plan and decal extraction validated every material's textures",
@@ -307,6 +313,26 @@ impl MaterialStore {
                 )
             })
     }
+}
+
+/// The materials of `snapshot`'s terrains' placed objects (decision 057).
+fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
+    snapshot
+        .terrain
+        .terrains
+        .iter()
+        .flat_map(|terrain| terrain.assets.iter().flatten())
+        .map(|asset| &asset.material)
+}
+
+/// Those materials' textures.
+fn placed_textures(snapshot: &RenderSnapshot) -> impl Iterator<Item = &engine_core::RenderTexture> {
+    snapshot
+        .terrain
+        .terrains
+        .iter()
+        .flat_map(|terrain| terrain.assets.iter().flatten())
+        .flat_map(|asset| asset.textures.iter())
 }
 
 fn sampler<'a>(

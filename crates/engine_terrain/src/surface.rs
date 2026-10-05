@@ -133,11 +133,14 @@ pub struct Biome {
 }
 
 /// A surface as authored: its materials' IDs, in the order control values
-/// index them, and its biomes.
+/// index them, its biomes, and the IDs of the assets its placement layers
+/// stand on it (decision 057), in the order placements index them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biomes {
     pub materials: Vec<String>,
     pub biomes: Vec<Biome>,
+    pub assets: Vec<String>,
+    pub placements: Vec<crate::PlacementLayer>,
 }
 
 /// What a surface refused: the path of the offending value and why.
@@ -157,7 +160,7 @@ impl std::error::Error for BiomeError {}
 
 /// A mask ready to evaluate: slopes as gradients, noise as frequencies.
 #[derive(Clone, Debug, PartialEq)]
-enum Compiled {
+pub(crate) enum Compiled {
     Constant(f32),
     Height([f32; 2]),
     Gradient([f32; 2]),
@@ -200,7 +203,7 @@ fn ramp(value: f32, ends: [f32; 2]) -> f32 {
 }
 
 impl Compiled {
-    fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
+    pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
         let fail = |rule: &str| BiomeError {
             path: path.to_owned(),
             rule: rule.to_owned(),
@@ -305,7 +308,7 @@ impl Compiled {
         }
     }
 
-    fn evaluate(&self, inputs: &SampleInputs) -> f32 {
+    pub(crate) fn evaluate(&self, inputs: &SampleInputs) -> f32 {
         match self {
             Self::Constant(value) => *value,
             Self::Height(ends) => ramp(inputs.height, *ends),
@@ -371,6 +374,7 @@ pub struct BiomeRules {
     authored: Biomes,
     biomes: Vec<CompiledBiome>,
     cost: u64,
+    placements: Vec<crate::placement::CompiledPlacement>,
 }
 
 /// A sample's control value: the material weighing most (`a`), the one
@@ -462,10 +466,13 @@ impl Biomes {
                 biome.fitness.cost() + biome.layers.iter().map(|l| l.mask.cost()).sum::<u64>()
             })
             .sum::<u64>();
+        let placements = crate::placement::compile(&self.placements, &self.materials, &self.assets)
+            .map_err(|(path, rule)| BiomeError { path, rule })?;
         Ok(BiomeRules {
             authored: self.clone(),
             biomes,
             cost,
+            placements,
         })
     }
 }
@@ -474,6 +481,17 @@ impl BiomeRules {
     /// The biomes as authored.
     pub fn authored(&self) -> &Biomes {
         &self.authored
+    }
+
+    /// Whether any placement layer stands objects on the surface.
+    pub fn places(&self) -> bool {
+        !self.placements.is_empty()
+    }
+
+    /// The objects every placement layer stands on level-0 tile `tile`
+    /// (decision 057), appended to `out`.
+    pub fn place(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) {
+        crate::placement::place(&self.placements, tile, 0x5eed_0057, out);
     }
 
     /// Work units of one sample's control value, against one per sample

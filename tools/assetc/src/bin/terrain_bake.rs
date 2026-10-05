@@ -60,7 +60,7 @@ fn run() -> Result<(), String> {
         .prepare_component(
             &format!("$.entities[{index}].terrain"),
             Some(&files),
-            &document.materials,
+            (&document.materials, &document.meshes),
         )
         .map_err(|error| error.to_string())?;
     let TerrainSource::Generated(layers) = &terrain.source else {

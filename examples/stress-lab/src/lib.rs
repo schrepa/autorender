@@ -7,6 +7,7 @@ mod dense;
 mod highlands;
 mod metrics;
 mod metro;
+mod rocks;
 mod scene;
 mod shapes;
 
