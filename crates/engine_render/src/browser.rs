@@ -130,10 +130,11 @@ fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usiz
     }
 }
 
-/// `source`'s indices followed by its levels of detail (decision 047), and
-/// each level's first index in them, index count and error.
-fn lod_chain(source: &engine_core::Mesh) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
-    let lods = engine_core::mesh_lods(source, LOD_LEVELS - 1);
+/// `source`'s indices followed by `levels` levels of detail at most
+/// (decision 047), and each level's first index in them, index count and
+/// error.
+fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
+    let lods = engine_core::mesh_lods(source, levels);
     let levels = lods
         .levels
         .iter()

@@ -89,10 +89,10 @@ pub use scene::{
 };
 pub use skin::{RenderJoint, Skin};
 pub use terrain::{
-    PlacementAsset, RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
-    SurfaceMaterial, SurfaceProjection, Terrain, TerrainDebug, TerrainFocus, TerrainSample,
-    TerrainSettings, TerrainSource, TerrainStats, TerrainSurface, TerrainView, Terrains,
-    TileRequest, Viewport,
+    MAX_PLACEMENT_LODS, PlacementAsset, PlacementLod, RenderPlacementAsset, RenderSurfaceMaps,
+    RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Terrain, TerrainDebug,
+    TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
+    TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
@@ -812,9 +812,9 @@ pub mod prelude {
     };
     pub use crate::{
         Biome, BiomeLayer, Biomes, Blend, HeightImage, HeightmapLayer, Layer, Layers, Mask,
-        NoiseLayer, NoiseMask, PlacementAsset, PlacementChoice, PlacementLayer, Pyramid, Remap,
-        Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
-        TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
+        NoiseLayer, NoiseMask, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
+        Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus,
+        TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{Cover, GroundCover};
     pub use crate::{Decal, DecalBlend, Decals};

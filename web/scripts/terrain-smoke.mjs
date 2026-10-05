@@ -43,8 +43,8 @@ const terrain = {
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }] },
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
-    // Decision 057: crates stand on the meadow.
-    assets: [{ id: "crate", mesh: "box", material: "plain" }],
+    // Decision 057: crates stand on the meadow, a coarser box far away.
+    assets: [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }] }],
     placements: [{ id: "crates", assets: [{ asset: "crate" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
   },
 };
@@ -133,7 +133,7 @@ try {
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
-  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain" }]);
+  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }] }]);
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 

@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use engine_core::{
     Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle,
-    MeshHandle, NoiseLayer, PlacementAsset, PlacementLayer, Pyramid, Stamp, SurfaceMaterial,
-    SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
+    MeshHandle, NoiseLayer, PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp,
+    SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -76,7 +76,9 @@ pub struct SceneTerrainSurface {
 }
 
 /// An object placement layers stand on a terrain (decision 057): a `mesh`
-/// and a `material` of this document, by ID.
+/// and a `material` of this document, by ID, and up to four coarser
+/// meshes it draws at a distance, finest first (otherwise the mesh's
+/// automatic levels of detail).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -84,6 +86,18 @@ pub struct SceneTerrainAsset {
     pub id: String,
     pub mesh: String,
     pub material: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lods: Vec<SceneTerrainLod>,
+}
+
+/// A coarser mesh of a placement asset, by ID, and the largest deviation
+/// from the asset's mesh it shows, in mesh units; errors grow with each.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainLod {
+    pub mesh: String,
+    pub error: f32,
 }
 
 /// How one surface material looks: a `material` of this document whose
@@ -139,9 +153,14 @@ pub(crate) struct PreparedTerrain {
     pub terrain: Terrain,
     /// Each surface material's document material, if it names one.
     pub materials: Vec<Option<usize>>,
-    /// Each placement asset's document mesh and material.
-    pub assets: Vec<(usize, usize)>,
+    /// Each placement asset's document mesh and material, and its coarser
+    /// meshes with their errors.
+    pub assets: Vec<PreparedAsset>,
 }
+
+/// A placement asset's document mesh, material and coarser meshes with
+/// their errors.
+pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>);
 
 impl PreparedTerrain {
     /// The component, its surface materials and placement assets resolved
@@ -154,9 +173,16 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|&(mesh, material)| PlacementAsset {
-                mesh: meshes[mesh],
-                material: materials[material],
+            .map(|(mesh, material, lods)| PlacementAsset {
+                mesh: meshes[*mesh],
+                material: materials[*material],
+                lods: lods
+                    .iter()
+                    .map(|&(mesh, error)| PlacementLod {
+                        mesh: meshes[mesh],
+                        error,
+                    })
+                    .collect(),
             })
             .collect();
         terrain
@@ -225,7 +251,7 @@ impl SceneTerrain {
         path: &str,
         materials: &[SceneMaterial],
         meshes: &[SceneMesh],
-    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<(usize, usize)>), SceneError> {
+    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<PreparedAsset>), SceneError> {
         let invalid = |field: String, rule: String| {
             SceneError::new("invalid_terrain", format!("{path}.surface.{field}"), rule)
         };
@@ -278,17 +304,15 @@ impl SceneTerrain {
             indices.push(document);
         }
         let mut assets = Vec::with_capacity(surface.assets.len());
+        let mesh_index = |id: &str, field: String| {
+            meshes
+                .iter()
+                .position(|candidate| candidate.id == id)
+                .ok_or_else(|| invalid(field, "must name a mesh of this document".into()))
+        };
         for (index, asset) in surface.assets.iter().enumerate() {
             let at = format!("assets[{index}]");
-            let mesh = meshes
-                .iter()
-                .position(|candidate| candidate.id == asset.mesh)
-                .ok_or_else(|| {
-                    invalid(
-                        format!("{at}.mesh"),
-                        "must name a mesh of this document".into(),
-                    )
-                })?;
+            let mesh = mesh_index(&asset.mesh, format!("{at}.mesh"))?;
             let material = materials
                 .iter()
                 .position(|candidate| candidate.id == asset.material)
@@ -298,7 +322,24 @@ impl SceneTerrain {
                         "must name a material of this document".into(),
                     )
                 })?;
-            assets.push((mesh, material));
+            let lods = asset
+                .lods
+                .iter()
+                .enumerate()
+                .map(|(level, lod)| {
+                    mesh_index(&lod.mesh, format!("{at}.lods[{level}].mesh"))
+                        .map(|mesh| (mesh, lod.error))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let errors: Vec<f32> = lods.iter().map(|&(_, error)| error).collect();
+            if let Err((level, rule)) = PlacementLod::check(&errors) {
+                let field = match level {
+                    Some(level) => format!("{at}.lods[{level}].error"),
+                    None => format!("{at}.lods"),
+                };
+                return Err(invalid(field, rule.into()));
+            }
+            assets.push((mesh, material, lods));
         }
         let biomes = Biomes {
             materials: surface
@@ -497,6 +538,14 @@ impl SceneTerrain {
                         id: id.clone(),
                         mesh: meshes(asset.mesh).unwrap_or_default(),
                         material: materials(asset.material).unwrap_or_default(),
+                        lods: asset
+                            .lods
+                            .iter()
+                            .map(|lod| SceneTerrainLod {
+                                mesh: meshes(lod.mesh).unwrap_or_default(),
+                                error: lod.error,
+                            })
+                            .collect(),
                     })
                     .collect(),
                 placements: authored.placements.clone(),

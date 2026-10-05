@@ -10,6 +10,7 @@ mod metro;
 mod rocks;
 mod scene;
 mod shapes;
+mod trees;
 
 pub use config::{StressConfig, StressScene};
 pub use dense::FILES as DENSE_FILES;

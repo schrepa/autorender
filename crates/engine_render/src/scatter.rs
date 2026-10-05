@@ -18,8 +18,8 @@ use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SHADOW_POSES, TEMPORAL_POSES
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, PoseData};
 
-/// Levels each draw group lists: its mesh and two coarser levels.
-pub(crate) const LEVELS: u32 = 3;
+/// Levels each draw group lists: its mesh and four coarser levels.
+pub(crate) const LEVELS: u32 = 5;
 
 /// WGSL `Frame` of `scatter_cull.wgsl`.
 #[repr(C)]
@@ -49,14 +49,15 @@ pub(crate) struct Record {
     pub pad: [u32; 2],
 }
 
-/// WGSL `Group`: where its lists start, its objects, levels and errors.
+/// WGSL `Group`: where its lists start, its objects, its levels, those
+/// the camera draws, and the coarser ones' errors.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct GroupData {
     ids: u32,
     count: u32,
     levels: u32,
-    pad: u32,
+    camera: u32,
     errors: [f32; 4],
 }
 
@@ -72,13 +73,13 @@ struct DrawArgs {
 }
 
 /// One draw group as the renderer lays it out: its objects (counted from
-/// the group's first), its levels' index counts, first indices and base
-/// vertex, and the errors of its coarser levels.
+/// the group's first), each level's index count, first index and base
+/// vertex, the levels the camera draws, and the coarser levels' errors.
 pub(crate) struct GroupLayout {
     pub count: u32,
-    pub levels: Vec<(u32, u32)>,
-    pub base_vertex: i32,
-    pub errors: [f32; 2],
+    pub levels: Vec<(u32, u32, i32)>,
+    pub camera: u32,
+    pub errors: [f32; LEVELS as usize - 1],
 }
 
 /// What [`ScatterPass::upload`] writes: every object's pose, color and
@@ -203,16 +204,17 @@ impl ScatterPass {
                 ids,
                 count: group.count,
                 levels: group.levels.len() as u32,
-                pad: 0,
-                errors: [group.errors[0], group.errors[1], 0.0, 0.0],
+                camera: group.camera,
+                errors: group.errors,
             });
             for level in 0..LEVELS as usize {
-                let (index_count, first_index) = group.levels.get(level).copied().unwrap_or((0, 0));
+                let (index_count, first_index, base_vertex) =
+                    group.levels.get(level).copied().unwrap_or((0, 0, 0));
                 self.template.push(DrawArgs {
                     index_count,
                     instance_count: 0,
                     first_index,
-                    base_vertex: group.base_vertex,
+                    base_vertex,
                     first_instance: 0,
                 });
             }
@@ -266,8 +268,8 @@ impl ScatterPass {
     /// drawn every frame (their world-to-clip matrices, `resolution` texels
     /// square), where objects smaller than half a texel cast nothing. Levels
     /// are picked within `pixel_error` pixels of a viewport `height` pixels
-    /// tall (no error: finest levels only). Returns whether any object
-    /// draws.
+    /// tall (no error: finest levels only); maps draw a coarser level where
+    /// a texel hides its error. Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -292,9 +294,10 @@ impl ScatterPass {
             planes[4] = [0.0, 0.0, 0.0, 1.0];
             planes[5] = [0.0, 0.0, 0.0, 1.0];
             let texels = clip.row(0).truncate().length() * resolution as f32;
+            let half_texel = 1.0 / engine_core::math::max(texels, 1.0e-12);
             views.push(ViewData {
                 planes,
-                limits: [1.0 / engine_core::math::max(texels, 1.0e-12), 0.0, 0.0, 0.0],
+                limits: [half_texel, 2.0 * half_texel, 0.0, 0.0],
             });
             self.maps.push(map);
         }

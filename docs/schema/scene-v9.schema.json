@@ -2858,11 +2858,17 @@
       ]
     },
     "SceneTerrainAsset": {
-      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID.",
+      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID, and up to four coarser\nmeshes it draws at a distance, finest first (otherwise the mesh's\nautomatic levels of detail).",
       "type": "object",
       "properties": {
         "id": {
           "type": "string"
+        },
+        "lods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SceneTerrainLod"
+          }
         },
         "material": {
           "type": "string"
@@ -2917,6 +2923,24 @@
             "heightmap"
           ]
         }
+      ]
+    },
+    "SceneTerrainLod": {
+      "description": "A coarser mesh of a placement asset, by ID, and the largest deviation\nfrom the asset's mesh it shows, in mesh units; errors grow with each.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "number",
+          "format": "float"
+        },
+        "mesh": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "mesh",
+        "error"
       ]
     },
     "SceneTerrainMaterial": {

@@ -18,7 +18,8 @@ struct Frame {
 }
 
 // A view: its frustum planes (world, inside positive; a shadow map's depth
-// planes pass everything) and, in x, the radius objects need to draw in it.
+// planes pass everything), the radius objects need to draw in it (x), and
+// the geometric error its texels hide (y, world units; 0 for the camera).
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
@@ -35,13 +36,13 @@ struct Record {
 }
 
 // A draw group: where its objects' lists start, how many objects it has,
-// its mesh's levels of detail, and their errors (levels 1 and 2, mesh
-// units).
+// its levels of detail, how many of them the camera draws (coarser ones
+// serve shadow maps alone), and their errors (levels 1 to 4, mesh units).
 struct Group {
     ids: u32,
     count: u32,
     levels: u32,
-    pad: u32,
+    camera: u32,
     errors: vec4<f32>,
 }
 
@@ -81,10 +82,13 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let group = groups[record.group];
     var level = 0u;
     if frame.eye.w > 0.0 {
+        // The camera's level among those it draws, or a coarser one whose
+        // error the view's texels hide.
         let away = distance(record.center, frame.eye.xyz);
         for (var l = 1u; l < group.levels; l++) {
-            let projected = group.errors[l - 1u] * record.scale * frame.eye.w;
-            if projected + record.radius <= away {
+            let error = group.errors[l - 1u] * record.scale;
+            let seen = l < group.camera && error * frame.eye.w + record.radius <= away;
+            if seen || error <= (*view).limits.y {
                 level = l;
             }
         }
