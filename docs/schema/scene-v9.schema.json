@@ -419,6 +419,47 @@
       "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
       "type": "object",
       "properties": {
+        "aerial_color": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "aerial_density": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "aerial_falloff": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "aerial_glow": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "aerial_start": {
+          "description": "Aerial perspective (decision 053), version 9: beyond this distance,\nair of `aerial_density` per unit at height zero (0: off), thinning by\n`aerial_falloff` per unit up, dims toward `aerial_color` and, toward\nthe sun, an `aerial_glow` of its color.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
         "ambient": {
           "description": "Scale of the sky's ambient light.",
           "type": [
@@ -2497,7 +2538,7 @@
           "default": true
         },
         "max_tiles": {
-          "description": "An optional budget of resident tiles (each about 270 KB on the CPU\nand the GPU); beyond it the least important drop. Omitted, only the\ndevice's limits bound them.",
+          "description": "An optional budget of resident tiles (about 270 KB each); the least\nimportant beyond it drop.",
           "type": [
             "integer",
             "null"
@@ -2514,7 +2555,7 @@
           "minimum": 1
         },
         "pixel_error": {
-          "description": "Pixels of the viewport height a level's samples span before the\nnext coarser level takes over, from 1 to 64: triangles span about\nthis to twice as many pixels. Smaller draws more triangles.",
+          "description": "Pixels a level's samples span before the next coarser level takes\nover, 1 to 64; smaller draws more triangles.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -2522,11 +2563,32 @@
           "minimum": 1.0
         },
         "samples_per_frame": {
-          "description": "Work per frame for generating and decoding tiles, in samples: a tile\nis about 67,000 to 300,000. More loads tiles sooner at a larger\nframe cost.",
+          "description": "Samples generated or decoded per frame (67,000 to 300,000 a tile).",
           "type": "integer",
           "format": "uint32",
           "default": 65536,
           "minimum": 1
+        },
+        "shadow_resolution": {
+          "description": "Texels along a horizon map's sides, 64 to 4096 (8 bytes each).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "maximum": 4096,
+          "minimum": 64
+        },
+        "shadow_softness": {
+          "description": "Shadow edge height per meter to the slope casting it (the sun's disc\ngives 0.0093).",
+          "type": "number",
+          "format": "float",
+          "default": 0.009999999776482582,
+          "maximum": 0.2,
+          "minimum": 0.0
+        },
+        "sun_shadows": {
+          "description": "Long sun shadows through each terrain's horizon map (decision 052),\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
+          "type": "boolean",
+          "default": true
         }
       },
       "additionalProperties": false

@@ -183,7 +183,7 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w
         + lighting.sun_color.rgb * 0.5);
     let view = normalize(input.world - eye);
-    let fogged = mix(light, haze(view), fog(eye, input.world));
+    let fogged = atmospheric(light, eye, input.world, view).rgb;
     return weighted(grade(fogged), alpha, length(input.world - eye));
 }
 
@@ -191,7 +191,7 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
 fn added(input: ParticleOutput) -> vec3<f32> {
     let eye = camera.position.xyz;
     let light = input.color.rgb * (input.color.a * coverage(input));
-    return light * (1.0 - fog(eye, input.world));
+    return light * (1.0 - atmospheric_cover(eye, input.world));
 }
 
 @fragment

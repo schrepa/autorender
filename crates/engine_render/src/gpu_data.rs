@@ -114,6 +114,10 @@ pub(crate) struct LightingUniform {
     /// without refraction) and the blur radius in pixels of fully rough
     /// glass; zw unused.
     pub refraction: [f32; 4],
+    /// Aerial perspective (decision 053): start, density at height zero,
+    /// height falloff and the sun's glow; the air's color (w unused).
+    pub aerial: [f32; 4],
+    pub aerial_color: [f32; 4],
 }
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
@@ -176,6 +180,13 @@ impl LightingUniform {
             shadow_tint: unit_luminance(atmosphere.shadow_tint),
             highlight_tint: unit_luminance(atmosphere.highlight_tint),
             refraction: [refraction.strength, refraction.blur, 0.0, 0.0],
+            aerial: [
+                atmosphere.aerial_start,
+                atmosphere.aerial_density,
+                atmosphere.aerial_falloff,
+                atmosphere.aerial_glow,
+            ],
+            aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
         }
     }
 }
@@ -366,6 +377,8 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),
     include_str!("meshes/terrain.wgsl"),
 );
+/// Terrain horizon map builds (decision 052).
+pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
 /// Terrain's depth drawing into shadow maps (decision 051).
 pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),

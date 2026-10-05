@@ -180,6 +180,7 @@ fn terrain_point(normal_in: vec3<f32>, relative_spacing: vec4<f32>, cell: vec2<f
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.shadow_offset = vec3<f32>(0.0);
+    point.on_terrain = true;
     return widened(point, dpdx(normal), dpdy(normal));
 }
 

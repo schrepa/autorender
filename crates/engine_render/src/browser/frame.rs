@@ -182,6 +182,8 @@ impl Renderer {
             passes.opaque_kind,
             kind.gpu_mode && !features.probe_list.is_empty(),
         );
+        // Terrain's horizon maps (decision 052) may have been replaced.
+        self.refresh_camera_group();
         let shape = self.frame_shape(kind, &packing, &features, (virtual_frame, resolving));
         let mut state = FrameState {
             snapshot,
@@ -944,9 +946,22 @@ impl Renderer {
         self.probes.upload(&self.device, &self.queue);
         let dropped_probes = snapshot.dropped_reflection_probes as u64
             + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1));
-        self.camera
-            .refresh(&self.device, &self.shadows, &self.environment, &self.probes);
+        self.refresh_camera_group();
         (environment_encoder, probe_list, dropped_probes)
+    }
+
+    /// Rebuilds the main passes' first group when what it binds was
+    /// replaced.
+    fn refresh_camera_group(&mut self) {
+        self.camera.refresh(
+            &self.device,
+            &camera::GroupSources {
+                shadows: &self.shadows,
+                environment: &self.environment,
+                probes: &self.probes,
+                horizons: &self.terrain.horizons,
+            },
+        );
     }
 
     /// Local lights (decision 023), binned from the frame's poses.
@@ -1321,9 +1336,12 @@ impl Renderer {
             self.camera.prepare_refraction(
                 &self.device,
                 (scene, post.generation()),
-                &self.shadows,
-                &self.environment,
-                &self.probes,
+                &camera::GroupSources {
+                    shadows: &self.shadows,
+                    environment: &self.environment,
+                    probes: &self.probes,
+                    horizons: &self.terrain.horizons,
+                },
             );
         }
     }
@@ -1517,6 +1535,10 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         report: &mut EncodeReport,
     ) {
+        // Terrain's horizon maps (decision 052) where the sun or terrain
+        // changed, before the passes that read them.
+        self.terrain
+            .encode_horizons(&self.device, encoder, &self.profiler);
         let virtual_frame = state.virtual_frame;
         let shadow_frame = state
             .features

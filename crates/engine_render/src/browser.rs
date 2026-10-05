@@ -143,7 +143,7 @@ fn lod_chain(source: &engine_core::Mesh) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
 
 /// Generations of the shadow maps, environment maps and reflection probe
 /// grid (decision 043) the camera groups bind.
-type CameraGroupsKey = (u64, u64, u64);
+type CameraGroupsKey = (u64, u64, u64, u64);
 
 /// GPU culling of GPU-presented frames: occlusion culling (decision 040),
 /// on unless turned off, with its depth pyramid, and sub-pixel culling
@@ -417,13 +417,17 @@ impl Renderer {
             engine_core::ReflectionProbes::default().resolution,
         );
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
+        let terrain = crate::terrain::TerrainPass::new(&device);
         let camera = CameraBindings::new(
             &device,
             &queue,
             lighting_buffer,
-            &shadows,
-            &environment,
-            &probes,
+            &camera::GroupSources {
+                shadows: &shadows,
+                environment: &environment,
+                probes: &probes,
+                horizons: &terrain.horizons,
+            },
         );
         let virtual_draws = VirtualDraws::new(&device);
         let visibility = VisibilityDraws::new(&device);
@@ -436,7 +440,6 @@ impl Renderer {
         let impostors =
             ImpostorAtlas::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
         let gpu_presentation = GpuPresentationPass::new(&device);
-        let terrain = crate::terrain::TerrainPass::new(&device);
         // Popping takes effect now; validation resolves once they compiled.
         let validation = Box::pin(scope.pop());
 

@@ -2,8 +2,10 @@
  * Terrain checks (decision 051): a version 9 playground fixture with a
  * generated terrain streams, draws, casts shadows, collides and answers
  * height queries; the terrain control and environment section change what
- * draws; an `ETR1` file baked from the same layers streams by byte range and
- * matches; a version 8 scene with terrain is refused.
+ * draws; its horizon map casts long shadows (decision 052) and aerial
+ * perspective hazes it (decision 053); an `ETR1` file baked from the same
+ * layers streams by byte range and matches; a version 8 scene with terrain
+ * or aerial perspective is refused.
  *
  * Bakes its file with `cargo run -p engine_assetc --release --bin
  * terrain_bake` (the cargo on PATH) into web/public/scenes/terrain-smoke/,
@@ -193,6 +195,44 @@ try {
   await settle();
   checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain_patches, unfrozenPatches: moved });
 
+  // Long shadows (decision 052): a low sun behind the dome, with shadow maps
+  // reaching 60 m, shadows the plateau through the horizon map alone. A new
+  // sun rebuilds the map, an unchanged one keeps it.
+  const current = (await command("inspect", { component: "Environment" })).result.value;
+  const atmosphere = { ...current.atmosphere, sun_direction: [1, 0.22, 1] };
+  const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
+  // The control renders a frame with the new sun.
+  const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
+  assert.equal(rebuilt.terrain_horizons, 1);
+  assert.ok(rebuilt.terrain_horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
+  assert.equal((await command("render")).result.rendering.terrain_horizon_builds, 0, "an unchanged sun keeps the map");
+  const above = { ...overview, position: [-60, 320, 220], target: [0, 30, 0] };
+  await command("camera", above);
+  await settle();
+  const long = await capture("horizon-shadows");
+  const flat = await command("environment", { terrain: { samples_per_frame: 50_000_000, sun_shadows: false } });
+  assert.equal(flat.result.rendering.terrain_horizons, 0);
+  await settle();
+  const short = await capture("map-shadows-only");
+  const lengthened = await differentPixels(page, [long, short]);
+  assert.ok(lengthened.changed > 20_000, `the dome's long shadow covers ${lengthened.changed} pixels`);
+  checks.push({ check: "horizon shadows", builds: rebuilt.terrain_horizon_builds, pixels: lengthened.changed });
+
+  // Aerial perspective (decision 053): thick air from the eye hazes the
+  // terrain; none leaves it as it was.
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 }, atmosphere: { ...atmosphere, aerial_start: 0, aerial_density: 0 } });
+  await settle();
+  const clear = await capture("no-air");
+  await command("environment", { atmosphere: { ...atmosphere, aerial_start: 0, aerial_density: 0.004 } });
+  await settle();
+  const hazed = await capture("thick-air");
+  const air = await differentPixels(page, [clear, hazed]);
+  assert.ok(air.changed > 100_000, `air hazes ${air.changed} pixels`);
+  await command("environment", { atmosphere: current.atmosphere, shadows: current.shadows });
+  await command("camera", overview);
+  await settle();
+  checks.push({ check: "aerial perspective", pixels: air.changed });
+
   // An ETR1 file of the same layers streams by byte range and matches; the
   // bake reads the heightmap beside the scene, as the page does.
   await writeFile(source, JSON.stringify(fixture));
@@ -230,7 +270,7 @@ try {
   assert.ok(probes.reflection_probes > 0, `probe captured: ${JSON.stringify(probes)}`);
   checks.push({ check: "probe captures", probes: probes.reflection_probes });
 
-  // Version 8 scenes cannot author terrain.
+  // Version 8 scenes cannot author terrain or aerial perspective.
   const old = structuredClone(fixture);
   old.version = 8;
   old.revision = scene.revision + 1;
@@ -238,6 +278,14 @@ try {
   const refused = await command("reload", { expected_revision: String(scene.revision), revision: String(old.revision) }, false);
   assert.equal(refused.error.code, "version_required");
   assert.equal(refused.error.path, "$.entities[1].terrain");
+  const hazy = structuredClone(old);
+  hazy.entities.splice(1, 1);
+  hazy.environment = { atmosphere: { preset: "day", aerial_density: 0.0002 } };
+  hazy.revision = old.revision + 1;
+  scene.serve(hazy);
+  const refusedAir = await command("reload", { expected_revision: String(scene.revision), revision: String(hazy.revision) }, false);
+  assert.equal(refusedAir.error.code, "version_required");
+  assert.equal(refusedAir.error.path, "$.environment.atmosphere.aerial_density");
   checks.push({ check: "version 9 required" });
 
   assert.deepEqual(errors, []);

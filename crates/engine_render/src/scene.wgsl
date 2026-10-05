@@ -45,6 +45,10 @@ struct Lighting {
     // Refraction through glass (decision 038): the bend's strength (0 without
     // refraction) and the blur radius in pixels of fully rough glass.
     refraction: vec4<f32>,
+    // Aerial perspective (decision 053): start, density at height zero,
+    // height falloff and the sun's glow; the air's own color.
+    aerial: vec4<f32>,
+    aerial_color: vec4<f32>,
 }
 // Sun shadows (decisions 020 and 028): world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -78,6 +82,17 @@ struct Shadow {
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
+// Terrain's long sun shadows (decision 052): each terrain's horizon map, a
+// grid aligned with the sun: x how far above the ground the sun clears the
+// terrain toward it, y how far toward the sun the slope setting that lies, z
+// the ground's height.
+@group(0) @binding(13) var terrain_horizons: texture_2d_array<f32>;
+// Two texels per terrain casting: its map's center (world x and z) and unit
+// direction toward the sun; the map's half extents along and across the
+// sun, how fast its shadows soften per meter of that distance, and the
+// meters receivers rise before comparing. One unused texel without any.
+@group(0) @binding(14) var terrain_horizon_records: texture_2d<f32>;
+@group(0) @binding(15) var terrain_horizon_sampler: sampler;
 
 const PI: f32 = 3.14159265;
 
@@ -139,17 +154,16 @@ fn sky_average(normal: vec3<f32>) -> vec3<f32> {
     return mix(above, lighting.ground.rgb, max(-normal.y, 0.0));
 }
 
-// Fog covering `point` seen from `eye`: exponential in the distance beyond
-// the start, with a density decaying exponentially with height, integrated
-// along the ray.
-fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+// Optical depth from `eye` to `point` beyond `start` of a medium of
+// `density` per unit of distance at height zero, decaying exponentially by
+// `falloff` per unit of height, integrated along the ray.
+fn height_depth(eye: vec3<f32>, point: vec3<f32>, start: f32, density: f32, falloff: f32)
+        -> f32 {
     let ray = point - eye;
     let distance = length(ray);
-    let start = lighting.fog.x;
     if distance <= start {
         return 0.0;
     }
-    let falloff = lighting.fog.z;
     // Far below the ground the density would overflow; it is saturated there.
     let from_height = max(eye.y + ray.y * (start / distance), -1000.0);
     let to_height = max(point.y, -1000.0);
@@ -158,8 +172,56 @@ fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     let far = exp(-falloff * to_height);
     // The mean density along the ray; its limit where the ray is level.
     let mean = select(near, (near - far) / rise, abs(rise) > 1.0e-4);
-    let depth = lighting.fog.y * (distance - start) * mean;
+    return density * (distance - start) * mean;
+}
+
+// Fog covering `point` seen from `eye`: exponential in the distance beyond
+// the start, with a density decaying exponentially with height, integrated
+// along the ray, and at most its maximum.
+fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    let depth = height_depth(eye, point, lighting.fog.x, lighting.fog.y, lighting.fog.z);
     return min(1.0 - exp(-depth), lighting.fog.w);
+}
+
+// The light air scatters toward the eye looking along `direction`
+// (decision 053): its own color, and toward the sun a glow of the sun's
+// color, a broad lobe around a narrower one.
+fn air_light(direction: vec3<f32>) -> vec3<f32> {
+    let toward = max(dot(direction, lighting.sun.xyz), 0.0);
+    let broad = toward * toward;
+    let lobe = broad * broad;
+    return lighting.aerial_color.rgb
+        + lighting.sun_color.rgb * (lighting.aerial.w * lobe * (0.25 + 0.75 * lobe));
+}
+
+// What fog and air (decision 053) leave of light `lit` from `point` seen
+// from `eye` looking along `direction`, and how much of it they cover
+// together (w).
+fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
+        -> vec4<f32> {
+    let fogged = fog(eye, point);
+    var color = mix(lit, haze(direction), fogged);
+    var covered = fogged;
+    if lighting.aerial.y > 0.0 {
+        let depth = height_depth(eye, point, lighting.aerial.x, lighting.aerial.y,
+            lighting.aerial.z);
+        let air = 1.0 - exp(-depth);
+        color = mix(color, air_light(direction), air);
+        covered = fogged + (1.0 - fogged) * air;
+    }
+    return vec4<f32>(color, covered);
+}
+
+// How much of what lies at `point` seen from `eye` fog and air cover
+// together.
+fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    let fogged = fog(eye, point);
+    if lighting.aerial.y <= 0.0 {
+        return fogged;
+    }
+    let depth = height_depth(eye, point, lighting.aerial.x, lighting.aerial.y,
+        lighting.aerial.z);
+    return fogged + (1.0 - fogged) * (1.0 - exp(-depth));
 }
 
 // Narkowicz's fit of the ACES filmic curve.
@@ -311,19 +373,56 @@ fn far_surface_visibility(world: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32
     return visible;
 }
 
+// The share of the sun terrains leave unblocked at `world` (decision 052):
+// below a terrain's horizon there, none; above it, all; between, a soft edge
+// growing with the distance to the slope casting it. Heights count from the
+// map's ground, which terrain's own surfaces (`on_terrain`) lie on whatever
+// detail they draw at.
+fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
+    let count = textureDimensions(terrain_horizon_records).x / 2u;
+    var visible = 1.0;
+    for (var index = 0u; index < count; index++) {
+        let place = textureLoad(terrain_horizon_records, vec2<u32>(2u * index, 0u), 0);
+        let shape = textureLoad(terrain_horizon_records, vec2<u32>(2u * index + 1u, 0u), 0);
+        let relative = world.xz - place.xy;
+        let along = vec2<f32>(dot(relative, place.zw),
+            dot(relative, vec2<f32>(-place.w, place.z)));
+        let uv = along / shape.xy * 0.5 + 0.5;
+        if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+            continue;
+        }
+        let texel = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv, index, 0.0);
+        let elevation = select(world.y - texel.z, 0.0, on_terrain);
+        let edge = max(texel.y * shape.z, 0.5);
+        visible = min(visible, smoothstep(-edge, edge, elevation + shape.w - texel.x));
+    }
+    return visible;
+}
+
 // Visibility of the sun at the surface point `world` (decision 020), whose
 // position changes by `dx` and `dy` per pixel, looked up a little along the
-// surface normal. Near cascades cover the first stretch of the view, each
-// three times sharper than the next (decision 028), and hand over to the next
-// one across the last tenth of their reach; the far maps, the kept one for
-// still casters and the one redrawn every frame, cover the rest and fade out
-// at the shadow distance. Lookups compare four texels with the surface's
-// plane.
+// surface normal: what terrains' horizons leave of it (decision 052), and of
+// that what the shadow maps leave. `on_terrain`: the point is terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32) -> f32 {
+        distance: f32, on_terrain: bool) -> f32 {
     if shadow.state.x == 0.0 {
         return 1.0;
     }
+    let terrain = terrain_visibility(world, on_terrain);
+    if terrain <= 0.0 {
+        return 0.0;
+    }
+    return min(terrain, map_visibility(world, normal, dx, dy, distance));
+}
+
+// Visibility of the sun at `world` in the shadow maps. Near cascades cover
+// the first stretch of the view, each three times sharper than the next
+// (decision 028), and hand over to the next one across the last tenth of
+// their reach; the far maps, the kept one for still casters and the one
+// redrawn every frame, cover the rest and fade out at the shadow distance.
+// Lookups compare four texels with the surface's plane.
+fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
+        distance: f32) -> f32 {
     // The first cascade reaching the fragment. Reflection probe captures
     // (decision 043) look from elsewhere than the cascades cover and select
     // for: they read the far maps alone.

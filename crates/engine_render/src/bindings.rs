@@ -82,8 +82,8 @@ pub(crate) enum Kind {
         sample: Sample,
         view: View,
     },
-    /// A 2D texture of 32-bit floats shaders write.
-    StorageR32Float,
+    /// A 2D texture of this format shaders write.
+    Storage(wgpu::TextureFormat),
     Sampler(Sampling),
 }
 
@@ -195,6 +195,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array};
+use wgpu::TextureFormat::{R32Float, Rgba16Float};
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
@@ -237,6 +238,11 @@ pub(crate) const CAMERA: Table = Table {
         texture(10, "environment_maps", Float, CubeArray, F),
         sampler(11, "environment_sampler", Filtering, F),
         read(12, "probe_words", F),
+        // Terrain's long sun shadows (decision 052): each terrain's horizon
+        // map, two texels of records per terrain, and the maps' sampler.
+        texture(13, "terrain_horizons", Float, D2Array, F),
+        texture(14, "terrain_horizon_records", Unfilterable, D2, F),
+        sampler(15, "terrain_horizon_sampler", Filtering, F),
     ],
 };
 
@@ -585,6 +591,19 @@ pub(crate) const TERRAIN: Table = Table {
     ],
 };
 
+/// A terrain horizon map's build (decision 052; `terrain_horizon.wgsl`):
+/// the height array, which layer holds each source tile, the build's
+/// uniform and the layer it writes.
+pub(crate) const TERRAIN_HORIZON: Table = Table {
+    label: "engine/terrain-horizon-layout",
+    bindings: &[
+        texture(0, "heights", Unfilterable, D2Array, C),
+        read(1, "tile_layers", C),
+        uniform_of(2, "build", 64, C),
+        bind(3, "horizon", Kind::Storage(Rgba16Float), C),
+    ],
+};
+
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",
@@ -732,7 +751,7 @@ pub(crate) const PYRAMID_FIRST: Table = Table {
     label: "engine/depth-pyramid-first-layout",
     bindings: &[
         texture(0, "source_depth", Depth, D2, C),
-        bind(2, "target_level", Kind::StorageR32Float, C),
+        bind(2, "target_level", Kind::Storage(R32Float), C),
         uniform_of(3, "extent", PYRAMID_EXTENT_BYTES, C),
     ],
 };
@@ -745,7 +764,7 @@ pub(crate) const PYRAMID_DOWN: Table = Table {
     label: "engine/depth-pyramid-down-layout",
     bindings: &[
         texture(1, "source_level", Unfilterable, D2, C),
-        bind(2, "target_level", Kind::StorageR32Float, C),
+        bind(2, "target_level", Kind::Storage(R32Float), C),
         uniform_of(3, "extent", PYRAMID_EXTENT_BYTES, C),
     ],
 };

@@ -8,7 +8,9 @@
 //! tiles drop (counted) and their patches do not draw. Each view culls the
 //! camera's patches by their bounds: the camera's frustum, each shadow
 //! map's sides. Every view draws the same vertices, at the positions the
-//! camera sees, so terrain shadows itself without acne.
+//! camera sees, so terrain shadows itself without acne. Where terrains cast
+//! long shadows through their horizon maps (decision 052), only the near
+//! cascades draw terrain, near their receivers.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -21,6 +23,7 @@ use wgpu::util::DeviceExt;
 use crate::bindings::{SHADOW_VIEW, TERRAIN};
 use crate::cached::Cached;
 use crate::render_graph::Targets;
+use crate::terrain_horizons::Horizons;
 
 /// Vertices along a patch side, and the grid's before the skirts'.
 const GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1;
@@ -117,6 +120,11 @@ pub(crate) struct TerrainViews<'a> {
     /// Whether reflection probes capture faces this frame, which draw every
     /// patch.
     pub probes: bool,
+    /// Terrain settings, whether shadows run, and the direction toward the
+    /// sun, for horizon maps (decision 052).
+    pub settings: engine_core::TerrainSettings,
+    pub shadows: bool,
+    pub sun: Vec3,
 }
 
 struct Atlas {
@@ -157,6 +165,8 @@ pub(crate) struct TerrainPass {
     /// of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
+    /// Long sun shadows (decision 052).
+    pub(crate) horizons: Horizons,
 }
 
 impl TerrainPass {
@@ -199,6 +209,7 @@ impl TerrainPass {
             frame: TerrainFrame::default(),
             uploads: 0,
             dropped: 0,
+            horizons: Horizons::new(device),
         }
     }
 
@@ -212,11 +223,22 @@ impl TerrainPass {
         self.slots.len() as u32
     }
 
-    /// Bytes of the height array.
+    /// Bytes of the height array and the horizon maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.as_ref().map_or(0, |atlas| {
             u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 4
-        })
+        }) + self.horizons.capacity_bytes()
+    }
+
+    /// Records this frame's horizon map builds (decision 052).
+    pub(crate) fn encode_horizons(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        profiler: &crate::profiling::GpuProfiler,
+    ) {
+        let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
+        self.horizons.encode(device, encoder, heights, profiler);
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
@@ -236,6 +258,14 @@ impl TerrainPass {
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
+        self.horizons.prepare(
+            device,
+            queue,
+            terrains,
+            (&views.settings, views.shadows),
+            views.sun,
+            &self.slots,
+        );
         if terrains
             .terrains
             .iter()
@@ -300,8 +330,14 @@ impl TerrainPass {
             let all_range = all_start..self.records.len() as u32;
             let all_holes = if views.probes { all_holes } else { 0 };
             let mut maps = Vec::with_capacity(views.maps.len());
+            // Terrains casting long shadows draw into the near cascades
+            // only, within the reach their horizon maps leave them.
+            let reach = self.horizons.cascade_reach(terrain.id);
             for &(map, clip) in views.maps {
-                let sides = planes(clip, true);
+                if reach.is_some() && map == crate::shadows::MOVING_MAP {
+                    continue;
+                }
+                let sides = caster_planes(clip, reach);
                 let first = self.records.len() as u32;
                 for &(record, min, max) in &all {
                     if visible(&sides, origin + min, origin + max) {
@@ -989,6 +1025,20 @@ fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {
     if !sides_only {
         planes.push(rows[2]);
         planes.push(rows[3] - rows[2]);
+    }
+    planes
+}
+
+/// The planes of map `clip` where terrain casts into it: its sides and,
+/// with a `reach`, its receivers' depths widened that far toward the sun.
+fn caster_planes(clip: Mat4, reach: Option<f32>) -> Vec<Vec4> {
+    let mut planes = planes(clip, true);
+    if let Some(reach) = reach {
+        let (depth, w) = (clip.row(2), clip.row(3));
+        // Depth changes by the third row's length per world unit.
+        let per_unit = depth.truncate().length();
+        planes.push(w - depth);
+        planes.push(depth + w * (reach * per_unit));
     }
     planes
 }

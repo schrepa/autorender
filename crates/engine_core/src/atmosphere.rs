@@ -1,7 +1,8 @@
 //! Scene lighting and atmosphere (decision 018): a directional sun, a sky
-//! gradient that also colors ambient light, reflections and fog, and the
-//! grade of the final image: exposure, contrast, saturation, vibrance and
-//! split toning (decision 027). Every extracted frame carries a copy.
+//! gradient that also colors ambient light, reflections and fog, aerial
+//! perspective (decision 053), and the grade of the final image: exposure,
+//! contrast, saturation, vibrance and split toning (decision 027). Every
+//! extracted frame carries a copy.
 
 use bevy_ecs::prelude::Resource;
 use glam::Vec3;
@@ -35,6 +36,18 @@ pub struct Atmosphere {
     pub fog_falloff: f32,
     /// The most fog can cover, in `[0, 1]`.
     pub fog_max: f32,
+    /// Aerial perspective (decision 053): beyond `aerial_start` from the
+    /// camera, air dims what lies behind it toward the light it scatters,
+    /// with `aerial_density` extinction per unit of distance at height zero
+    /// (0 turns it off), thinning by `aerial_falloff` per unit of height.
+    /// Distant ridges fade into `aerial_color` away from the sun and into a
+    /// glow of the sun's color, `aerial_glow` strong, toward it. Unlike fog
+    /// it is unbounded and spans kilometers.
+    pub aerial_start: f32,
+    pub aerial_density: f32,
+    pub aerial_falloff: f32,
+    pub aerial_color: Vec3,
+    pub aerial_glow: f32,
     /// Silhouette light in the horizon color, facing away from the camera.
     pub rim: f32,
     /// Scale of sun highlights and sky reflections; 1 is physically based.
@@ -80,6 +93,11 @@ impl Atmosphere {
             fog_density: 0.0011,
             fog_falloff: 0.02,
             fog_max: 0.4,
+            aerial_start: 1000.0,
+            aerial_density: 1.0e-4,
+            aerial_falloff: 5.5e-4,
+            aerial_color: Vec3::new(0.56, 0.72, 1.0),
+            aerial_glow: 0.25,
             rim: 0.15,
             specular: 1.0,
             emission: 0.1,
@@ -106,6 +124,11 @@ impl Atmosphere {
             fog_density: 0.0014,
             fog_falloff: 0.022,
             fog_max: 0.45,
+            aerial_start: 1000.0,
+            aerial_density: 1.1e-4,
+            aerial_falloff: 6.0e-4,
+            aerial_color: Vec3::new(0.36, 0.48, 0.92),
+            aerial_glow: 0.7,
             rim: 0.45,
             specular: 1.0,
             emission: 0.5,
@@ -132,6 +155,11 @@ impl Atmosphere {
             fog_density: 0.0016,
             fog_falloff: 0.02,
             fog_max: 0.45,
+            aerial_start: 800.0,
+            aerial_density: 1.4e-4,
+            aerial_falloff: 6.0e-4,
+            aerial_color: Vec3::new(0.3, 0.3, 0.66),
+            aerial_glow: 0.9,
             rim: 0.6,
             specular: 1.0,
             emission: 1.0,
@@ -157,6 +185,11 @@ impl Atmosphere {
             fog_density: 0.0022,
             fog_falloff: 0.02,
             fog_max: 0.7,
+            aerial_start: 600.0,
+            aerial_density: 1.6e-4,
+            aerial_falloff: 6.0e-4,
+            aerial_color: Vec3::new(0.05, 0.07, 0.16),
+            aerial_glow: 0.15,
             rim: 0.8,
             specular: 1.0,
             emission: 1.0,
@@ -179,6 +212,7 @@ impl Atmosphere {
             ("ground", self.ground),
             ("shadow_tint", self.shadow_tint),
             ("highlight_tint", self.highlight_tint),
+            ("aerial_color", self.aerial_color),
         ];
         for (field, color) in colors {
             if !color.is_finite() || color.min_element() < 0.0 {
@@ -200,6 +234,10 @@ impl Atmosphere {
             ("fog_density", self.fog_density),
             ("fog_falloff", self.fog_falloff),
             ("fog_max", self.fog_max),
+            ("aerial_start", self.aerial_start),
+            ("aerial_density", self.aerial_density),
+            ("aerial_falloff", self.aerial_falloff),
+            ("aerial_glow", self.aerial_glow),
             ("rim", self.rim),
             ("specular", self.specular),
             ("emission", self.emission),
