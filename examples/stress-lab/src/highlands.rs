@@ -296,11 +296,17 @@ fn surface(
         let mesh = assets
             .insert_mesh(crate::rocks::boulder(seed)?)
             .map_err(|error| error.to_string())?;
+        // Boulders collide as spheres a little inside their faces
+        // (decision 064).
         placed.push(PlacementAsset {
             mesh,
             material: rock,
             lods: Vec::new(),
             sway: 0.0,
+            collider: Some(PlacedCollider::new(
+                PlacedShape::Sphere { radius: 0.42 },
+                [0.0; 3],
+            )),
         });
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
@@ -338,11 +344,18 @@ fn surface(
         }
         // Spruces bend in the wind (decision 058): a third of a meter at ten
         // meters up in full wind.
+        // Their trunks collide, up to where the lowest whorls spread.
         placed.push(PlacementAsset {
             mesh: full,
             material: needles,
             lods,
             sway: 0.35,
+            collider: Some(PlacedCollider::new(
+                PlacedShape::Cuboid {
+                    half_extents: [0.28, 2.0, 0.28],
+                },
+                [0.0, 1.5, 0.0],
+            )),
         });
     }
     TerrainSurface::new(&rules(), materials)

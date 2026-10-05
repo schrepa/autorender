@@ -58,7 +58,8 @@ pub(crate) fn execute(
                 "snapshot": world_value(world.resource::<CollisionWorld>()), "complete": true,
                 "hit": hit.map(|hit| json!({"entity":identities.entity(world, hit.entity),
                     "distance":hit.distance, "point":hit.point.to_array(),
-                    "normal":hit.normal.to_array(), "started_inside":hit.started_inside})),
+                    "normal":hit.normal.to_array(), "started_inside":hit.started_inside,
+                    "placed":hit.placed.map(placed_json)})),
             }))
         }
         DevRequest::Overlap {
@@ -125,7 +126,8 @@ pub(crate) fn execute(
                 "hit":hit.map(|hit| json!({"entity":identities.entity(world, hit.entity),
                     "fraction":hit.fraction,"distance":hit.fraction * ray.max_distance,
                     "point":hit.point.to_array(),"normal":hit.normal.to_array(),
-                    "started_overlapping":hit.started_overlapping})),
+                    "started_overlapping":hit.started_overlapping,
+                    "placed":hit.placed.map(placed_json)})),
             }))
         }
         DevRequest::CollisionEvents {
@@ -190,6 +192,7 @@ pub(crate) fn world_value(value: &CollisionWorld) -> Value {
         bvh_nodes: report.bvh_nodes,
         cache_bytes: report.cache_bytes,
         complete: report.complete,
+        placed_colliders: report.placed_colliders,
         limits: CollisionLimitsView {
             max_colliders: config.max_colliders,
             max_candidate_pairs: config.max_candidate_pairs,
@@ -343,6 +346,12 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
     };
     ray.validate().map_err(native_error)?;
     Ok(ray)
+}
+
+/// A placed object a hit names (decision 064): its terrain's placement
+/// layer and asset indices.
+fn placed_json(part: engine_collision::PlacedPart) -> serde_json::Value {
+    json!({"layer": part.layer, "asset": part.asset})
 }
 
 fn query_filter(

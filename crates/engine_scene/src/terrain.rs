@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use engine_core::{
     Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle,
-    MeshHandle, NoiseLayer, PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp,
-    SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
+    MeshHandle, NoiseLayer, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
+    TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -92,10 +93,76 @@ pub struct SceneTerrainAsset {
     #[serde(default, skip_serializing_if = "is_zero")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
     pub sway: f32,
+    /// Its objects' collider (decision 064); without one they never
+    /// collide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<SceneTerrainCollider>,
 }
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.0
+}
+
+/// The collider of a placement asset's objects (decision 064), in its
+/// mesh's space at scale 1: its shape about `center` (the origin by
+/// default), and the collision layers its objects belong to (the first by
+/// default) and collide with (every one by default). Objects within
+/// terrains' collision radius collide; those standing far away never do.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainCollider {
+    pub shape: crate::SceneColliderShape,
+    #[serde(default, skip_serializing_if = "is_origin")]
+    pub center: [f32; 3],
+    #[serde(default = "first_layer")]
+    pub memberships: u32,
+    #[serde(default = "every_layer")]
+    pub filter: u32,
+}
+
+fn is_origin(center: &[f32; 3]) -> bool {
+    *center == [0.0; 3]
+}
+
+fn first_layer() -> u32 {
+    1
+}
+
+fn every_layer() -> u32 {
+    u32::MAX
+}
+
+impl SceneTerrainCollider {
+    /// The engine's collider.
+    pub(crate) fn runtime(self) -> PlacedCollider {
+        PlacedCollider {
+            shape: match self.shape {
+                crate::SceneColliderShape::Cuboid { half_extents } => {
+                    PlacedShape::Cuboid { half_extents }
+                }
+                crate::SceneColliderShape::Sphere { radius } => PlacedShape::Sphere { radius },
+            },
+            center: self.center,
+            memberships: self.memberships,
+            filter: self.filter,
+        }
+    }
+
+    /// The authored collider of an engine one.
+    pub(crate) fn authored(collider: PlacedCollider) -> Self {
+        Self {
+            shape: match collider.shape {
+                PlacedShape::Cuboid { half_extents } => {
+                    crate::SceneColliderShape::Cuboid { half_extents }
+                }
+                PlacedShape::Sphere { radius } => crate::SceneColliderShape::Sphere { radius },
+            },
+            center: collider.center,
+            memberships: collider.memberships,
+            filter: collider.filter,
+        }
+    }
 }
 
 /// A coarser mesh of a placement asset, by ID, and the largest deviation
@@ -167,8 +234,8 @@ pub(crate) struct PreparedTerrain {
 }
 
 /// A placement asset's document mesh, material, coarser meshes with their
-/// errors, and sway.
-pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>, f32);
+/// errors, sway and collider.
+pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>, f32, Option<PlacedCollider>);
 
 impl PreparedTerrain {
     /// The component, its surface materials and placement assets resolved
@@ -181,7 +248,7 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|(mesh, material, lods, sway)| PlacementAsset {
+            .map(|(mesh, material, lods, sway, collider)| PlacementAsset {
                 mesh: meshes[*mesh],
                 material: materials[*material],
                 lods: lods
@@ -192,6 +259,7 @@ impl PreparedTerrain {
                     })
                     .collect(),
                 sway: *sway,
+                collider: *collider,
             })
             .collect();
         terrain
@@ -351,7 +419,14 @@ impl SceneTerrain {
             if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
                 return Err(invalid(format!("{at}.sway"), "must be in [0, 10]".into()));
             }
-            assets.push((mesh, material, lods, asset.sway));
+            let collider = asset.collider.map(SceneTerrainCollider::runtime);
+            if collider.is_some_and(|collider| !collider.is_usable()) {
+                return Err(invalid(
+                    format!("{at}.collider"),
+                    "needs dimensions in [0.0001, 10000] and a finite center".into(),
+                ));
+            }
+            assets.push((mesh, material, lods, asset.sway, collider));
         }
         let biomes = Biomes {
             materials: surface
@@ -559,6 +634,7 @@ impl SceneTerrain {
                             })
                             .collect(),
                         sway: asset.sway,
+                        collider: asset.collider.map(SceneTerrainCollider::authored),
                     })
                     .collect(),
                 placements: authored.placements.clone(),

@@ -163,6 +163,7 @@ impl TerrainFields {
                 point: ray.origin + ray.direction * hit.time_of_impact,
                 normal: hit.normal.try_normalize().unwrap_or(Vec3::Y),
                 started_inside: false,
+                placed: None,
             };
             if nearest.is_none_or(|old| candidate.distance < old.distance) {
                 nearest = Some(candidate);
@@ -189,6 +190,7 @@ impl TerrainFields {
                     point: ray.origin + ray.direction * hit.time_of_impact,
                     normal: hit.normal.try_normalize().unwrap_or(Vec3::Y),
                     started_inside: false,
+                    placed: None,
                 });
             }
         }
@@ -265,6 +267,7 @@ impl TerrainFields {
                                     point,
                                     normal,
                                     started_overlapping: started,
+                                    placed: None,
                                 });
                             }
                         }

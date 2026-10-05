@@ -2,6 +2,7 @@
 
 mod bvh;
 mod geometry;
+mod placed;
 mod terrain;
 mod types;
 mod world;
@@ -50,8 +51,8 @@ impl Plugin for CollisionPlugin {
 pub mod prelude {
     pub use crate::{
         Collider, ColliderShape, CollisionConfig, CollisionError, CollisionLayers, CollisionPlugin,
-        CollisionRay, CollisionReport, CollisionSystems, CollisionWorld, QueryFilter, RayHit,
-        SensorEvent, SensorEventKind, SensorEvents, SensorFilter, SensorPair, ShapeCastOptions,
-        ShapeHit, refresh_collision_world, validate_collider_transform,
+        CollisionRay, CollisionReport, CollisionSystems, CollisionWorld, PlacedPart, QueryFilter,
+        RayHit, SensorEvent, SensorEventKind, SensorEvents, SensorFilter, SensorPair,
+        ShapeCastOptions, ShapeHit, refresh_collision_world, validate_collider_transform,
     };
 }

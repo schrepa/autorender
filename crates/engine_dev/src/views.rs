@@ -257,5 +257,8 @@ pub struct CollisionWorldView {
     /// Reserved collision cache payload; not total process memory.
     pub cache_bytes: usize,
     pub complete: bool,
+    /// Placed objects colliding within terrains' collision radius
+    /// (decision 064).
+    pub placed_colliders: usize,
     pub limits: CollisionLimitsView,
 }

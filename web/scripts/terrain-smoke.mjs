@@ -46,8 +46,10 @@ const terrain = {
     // Decision 057: crates stand on the meadow, a coarser box far away,
     // with balls, whose impostors far away cast cards (decision 060).
     assets: [
-      { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 },
-      { id: "ball", mesh: "ball", material: "plain" },
+      // Both collide near the camera (decision 064): the crate as its
+      // box, the ball as a sphere around it.
+      { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } } },
+      { id: "ball", mesh: "ball", material: "plain", collider: { shape: { kind: "sphere", radius: 1 } } },
     ],
     // A quarter of them also stand on the pinned level-2 tiles, hidden where
     // level-0 tiles hold them (decision 061).
@@ -185,7 +187,7 @@ try {
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
-  assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 });
+  assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 1, filter: 4294967295 } });
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
@@ -224,9 +226,13 @@ try {
   const sweep = (await command("terrain_sweep", { center: [0, 0], half_extent: 120, samples: 24 })).result;
   assert.ok(sweep.collision.compared > 100, `sweep compared ${sweep.collision.compared}`);
   assert.ok(sweep.collision.worst.max_difference < 5e-3, `collision differs by ${sweep.collision.worst.max_difference}`);
+  // Placed crates and balls collide (decision 064): some rays meet them
+  // above the ground, which still compares beneath them.
+  assert.ok(ray.result.snapshot.placed_colliders > 0, `placed colliders: ${ray.result.snapshot.placed_colliders}`);
+  assert.ok(sweep.collision.placed_first > 0, `rays meeting placed objects first: ${sweep.collision.placed_first}`);
   assert.ok(sweep.layers.compared > 100);
   assert.ok(sweep.layers.worst.max_difference < 5e-3, `layers differ by ${sweep.layers.worst.max_difference}`);
-  checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference });
+  checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference, placed_colliders: ray.result.snapshot.placed_colliders, placed_first: sweep.collision.placed_first });
 
   // The settings section: finer level of detail reaches further and draws
   // more triangles; invalid values are refused; disabled terrain draws
