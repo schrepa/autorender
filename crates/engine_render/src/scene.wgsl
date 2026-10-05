@@ -79,6 +79,23 @@ struct Shadow {
     offsets: vec4<f32>,
     // Texels a side of the near cascades (x) and the far maps (y).
     sizes: vec4<f32>,
+    // World to light space (decision 065): the sun's right, up and
+    // away-from-sun axes, which every kept level scales.
+    light: array<vec4<f32>, 3>,
+    // Each kept level's light space: one over its width (x and y in level
+    // widths, whose fractions place a point in its map, which wraps), and
+    // its depth band's nearest depth and one over its depth (z in [0, 1]).
+    level_scales: array<vec4<f32>, 3>,
+    // Each level's window: its first corner in level widths (x and y), the
+    // normal offset of its lookups (z, world units) and its steepest
+    // receiver plane (w).
+    level_windows: array<vec4<f32>, 3>,
+    // The tiles of each level holding their casters: a bit per slot, two
+    // vectors a level.
+    level_valid: array<vec4<u32>, 6>,
+    // x: levels in use; y: their texels a side; z: a bit for each level
+    // with tiles not yet drawn.
+    level_state: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 @group(0) @binding(1) var<uniform> lighting: Lighting;
@@ -107,6 +124,8 @@ struct Shadow {
 // (negated), above the map's reference height.
 @group(0) @binding(16) var occupancy_coverage: texture_2d<f32>;
 @group(0) @binding(17) var occupancy_heights: texture_2d<f32>;
+// The kept shadow levels (decision 065), one layer each.
+@group(0) @binding(18) var kept_levels: texture_depth_2d_array;
 
 // The share of the sky light placed objects' covers leave at `world`
 // (decision 059): under a cover, its density's worth less; within it, less
@@ -366,28 +385,34 @@ struct MapPoint {
     slope: vec2<f32>,
 }
 
+// How depth changes per texel along a map's axes where the surface moves
+// by `map_dx` and `map_dy` per pixel in the map's coordinates, `scale`
+// texels per unit of x and y; within `limit` depth per texel where the
+// surface turns edge-on to the sun.
+fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f32) -> vec2<f32> {
+    let texel_dx = map_dx.xy * scale;
+    let texel_dy = map_dy.xy * scale;
+    let det = texel_dx.x * texel_dy.y - texel_dx.y * texel_dy.x;
+    var slope = vec2<f32>(0.0);
+    if abs(det) > 1.0e-12 {
+        slope = vec2<f32>(map_dx.z * texel_dy.y - map_dy.z * texel_dx.y,
+            map_dy.z * texel_dx.x - map_dx.z * texel_dy.x) / det;
+    }
+    return clamp(slope, vec2<f32>(-limit), vec2<f32>(limit));
+}
+
 // `world` in the map `clip_from_world`, `size` texels a side. The plane
 // comes from how the surface moves per pixel (`dx` and `dy`); its slope stays
 // within `limit` depth per texel where the surface turns edge-on to the sun.
 fn map_point(clip_from_world: mat4x4<f32>, world: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         size: f32, limit: f32) -> MapPoint {
     let clip = clip_from_world * vec4<f32>(world, 1.0);
-    let clip_dx = clip_from_world * vec4<f32>(dx, 0.0);
-    let clip_dy = clip_from_world * vec4<f32>(dy, 0.0);
     // Texel rows run downward.
-    let scale = vec2<f32>(0.5, -0.5) * size;
-    let texel_dx = clip_dx.xy * scale;
-    let texel_dy = clip_dy.xy * scale;
-    let det = texel_dx.x * texel_dy.y - texel_dx.y * texel_dy.x;
-    var slope = vec2<f32>(0.0);
-    if abs(det) > 1.0e-12 {
-        slope = vec2<f32>(clip_dx.z * texel_dy.y - clip_dy.z * texel_dx.y,
-            clip_dy.z * texel_dx.x - clip_dx.z * texel_dy.x) / det;
-    }
     var point: MapPoint;
     point.texel = (clip.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5)) * size;
     point.depth = clip.z;
-    point.slope = clamp(slope, vec2<f32>(-limit), vec2<f32>(limit));
+    point.slope = texel_slope(clip_from_world * vec4<f32>(dx, 0.0),
+        clip_from_world * vec4<f32>(dy, 0.0), vec2<f32>(0.5, -0.5) * size, limit);
     return point;
 }
 
@@ -428,21 +453,123 @@ fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec
     return plane_visibility(textureGather(near_shadows, shadow_texels, corner, cascade), point);
 }
 
-// Visibility of the surface at `world` in the far maps; 1 outside them.
-fn far_surface_visibility(world: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32 {
+// Kept levels (decision 065) hand over to the next coarser map across this
+// share of their width inside their windows' edges.
+const LEVEL_HANDOVER: f32 = 0.08;
+
+// The four depths around `point` in kept level `level`, `size` texels a
+// side, in gather order. The map wraps: texels past one edge are those at
+// the other.
+fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
+    let corner = floor(point.texel - vec2<f32>(0.5));
+    if all(corner >= vec2<f32>(0.0)) && all(corner < vec2<f32>(size - 1.0)) {
+        return textureGather(kept_levels, shadow_texels, (corner + vec2<f32>(1.0)) / size, level);
+    }
+    let last = vec2<i32>(i32(size) - 1);
+    let low = vec2<i32>(corner) & last;
+    let high = (vec2<i32>(corner) + vec2<i32>(1)) & last;
+    return vec4<f32>(textureLoad(kept_levels, vec2<i32>(low.x, high.y), level, 0),
+        textureLoad(kept_levels, high, level, 0),
+        textureLoad(kept_levels, vec2<i32>(high.x, low.y), level, 0),
+        textureLoad(kept_levels, low, level, 0));
+}
+
+// Visibility of still casters' sun at the surface point `world` in the kept
+// levels (decision 065), each looked up its offset along `normal`: from the
+// finest level whose window and band hold it on a tile holding its casters,
+// handing over to the next across the window's edge. x: the visibility
+// found, weighted; y: the weight left to coarser maps (1 where no level
+// holds the point).
+fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
+        dy: vec3<f32>) -> vec2<f32> {
+    let count = u32(shadow.level_state.x);
+    if count == 0u {
+        return vec2<f32>(0.0, 1.0);
+    }
+    // Light space once; each level scales it.
+    let axes = mat3x3<f32>(shadow.light[0].xyz, shadow.light[1].xyz, shadow.light[2].xyz);
+    let light = world * axes;
+    let light_normal = normal * axes;
+    let light_dx = dx * axes;
+    let light_dy = dy * axes;
+    let size = shadow.level_state.y;
+    let pending = u32(shadow.level_state.z);
+    // A level whose texels are under half a pixel's footprint shows no more
+    // than the coarser maps after it, which read cheaper: lookups take the
+    // first map no finer than that, as textures read mipmaps.
+    let footprint = sqrt(length(dx) * length(dy));
+    var visible = 0.0;
+    var left = 1.0;
+    for (var level = 0u; level < count; level++) {
+        let window = shadow.level_windows[level];
+        if 4.0 * window.z < footprint {
+            continue;
+        }
+        let scales = shadow.level_scales[level];
+        let at = light + light_normal * window.z;
+        let position = vec3<f32>(at.xy * scales.x, (at.z - scales.y) * scales.z);
+        let local = position.xy - window.xy;
+        let margin = 2.0 / size;
+        if any(local < vec2<f32>(margin)) || any(local > vec2<f32>(1.0 - margin))
+            || position.z <= 0.0 || position.z >= 1.0 {
+            continue;
+        }
+        if (pending & (1u << level)) != 0u {
+            let slot = vec2<u32>(vec2<i32>(floor(position.xy * 16.0)) & vec2<i32>(15));
+            let bit = slot.y * 16u + slot.x;
+            let words = shadow.level_valid[level * 2u + bit / 128u];
+            if (words[(bit / 32u) % 4u] & (1u << (bit % 32u))) == 0u {
+                continue;
+            }
+        }
+        // Texel rows run downward, and the map wraps.
+        var point: MapPoint;
+        point.texel = vec2<f32>(fract(position.x), 1.0 - fract(position.y)) * size;
+        point.depth = position.z;
+        let level_scale = vec3<f32>(scales.x, scales.x, scales.z);
+        point.slope = texel_slope(vec4<f32>(light_dx * level_scale, 0.0),
+            vec4<f32>(light_dy * level_scale, 0.0), vec2<f32>(1.0, -1.0) * size, window.w);
+        let here = plane_visibility(level_depths(level, point, size), point);
+        let edge = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
+        let handover = saturate(1.0 - edge / LEVEL_HANDOVER);
+        visible += left * (1.0 - handover) * here;
+        left *= handover;
+        if left <= 0.0 {
+            break;
+        }
+    }
+    return vec2<f32>(visible, left);
+}
+
+// Visibility of the surface at `world` beyond the near cascades: of the
+// moving map's casters and of still ones, which the kept levels (decision
+// 065) hold where they reach and the kept far map elsewhere. Far maps are
+// looked up their offset along `normal` and see nothing outside them.
+fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
+        dy: vec3<f32>) -> f32 {
     let size = shadow.sizes.y;
-    let point = map_point(shadow.far, world, dx, dy, size, shadow.offsets.z);
+    let point = map_point(shadow.far, world + normal * shadow.offsets.y, dx, dy, size,
+        shadow.offsets.z);
     let uv = point.texel / size;
-    if any(abs(uv * 2.0 - vec2<f32>(1.0)) >= vec2<f32>(1.0)) || point.depth >= 1.0 {
-        return 1.0;
-    }
+    let inside = all(abs(uv * 2.0 - vec2<f32>(1.0)) < vec2<f32>(1.0)) && point.depth < 1.0;
     let corner = gather_uv(point, size);
-    var visible = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
-    if shadow.state.y != 0.0 {
-        let kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
-        visible = min(visible, kept);
+    var moving = 1.0;
+    if inside {
+        moving = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
     }
-    return visible;
+    if shadow.state.y == 0.0 {
+        return moving;
+    }
+    let levels = level_visibility(world, normal, dx, dy);
+    var still = levels.x;
+    if levels.y > 0.0 {
+        var kept = 1.0;
+        if inside {
+            kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
+        }
+        still += levels.y * kept;
+    }
+    return min(moving, still);
 }
 
 // The share of the sun terrains leave unblocked at `world` (decision 052):
@@ -515,7 +642,7 @@ fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
             return visible;
         }
     }
-    let visible = far_surface_visibility(world + normal * shadow.offsets.y, dx, dy);
+    let visible = far_surface_visibility(world, normal, dx, dy);
     let fade = saturate((distance - shadow.state.w) / (shadow.offsets.x - shadow.state.w));
     return mix(visible, 1.0, fade);
 }

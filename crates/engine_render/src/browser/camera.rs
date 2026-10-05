@@ -197,7 +197,7 @@ fn camera_group(
     (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
     sources: &GroupSources<'_>,
 ) -> wgpu::BindGroup {
-    let [shadow, near, kept, moving, sampler, texel_sampler] = sources.shadows.entries();
+    let [shadow, near, kept, moving, sampler, texel_sampler, levels] = sources.shadows.entries();
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
     let probe_words = sources.probes.words().0;
@@ -232,6 +232,7 @@ fn camera_group(
             horizon_sampler,
             ("occupancy_coverage", crate::pipelines::view(coverage)),
             ("occupancy_heights", crate::pipelines::view(heights)),
+            levels,
         ],
     )
 }

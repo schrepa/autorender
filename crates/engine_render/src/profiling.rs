@@ -124,7 +124,12 @@ mod capture {
         "presentation_scatter",
     ];
     /// Shadow maps, whose first begin to last end is `shadow_maps`.
-    const SHADOW_MAPS: [&str; 3] = ["shadow_near", "shadow_moving", "shadow_kept"];
+    const SHADOW_MAPS: [&str; 4] = [
+        "shadow_near",
+        "shadow_moving",
+        "shadow_kept",
+        "shadow_levels",
+    ];
 
     #[derive(Clone, Copy)]
     struct Origin {
@@ -488,7 +493,7 @@ mod capture {
                 "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
                 "capture_id": self.capture.map(|id| id.to_string()),
                 "active": active,
-                "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving and shadow_kept per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch), effects_filter, and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
+                "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving, shadow_kept and shadow_levels (decision 065) per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch), effects_filter, and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
                 "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
                 "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
                 "precision": "browser may quantize timestamp values; zero durations remain valid samples",

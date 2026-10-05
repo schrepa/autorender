@@ -1,6 +1,7 @@
-//! Where a frame's maps look (decisions 020 and 028): the light basis, the
-//! far region the moving and kept maps share, and the near cascades in use,
-//! with what caster selection and lookups read about them.
+//! Where a frame's maps look (decisions 020, 028 and 065): the light basis,
+//! the far region the moving and kept maps share, the near cascades in use
+//! and the kept levels, with what caster selection and lookups read about
+//! them.
 
 use engine_core::{
     Shadows,
@@ -9,13 +10,13 @@ use engine_core::{
 };
 
 use super::{
-    FAR_VIEW, KEPT_MAP, MAPS, MOVING_MAP, REFRESH, STILLNESS, VIEW_STRIDE, VIRTUAL_SHADOW_PLANES,
-    VirtualShadowView,
+    FAR_VIEW, KEPT_LEVELS, KEPT_MAP, LEVEL_REFRESH, LEVEL_VIEW, MAPS, MOVING_MAP, REFRESH,
+    STILLNESS, VIEW_STRIDE, VIRTUAL_SHADOW_PLANES, VirtualShadowView,
 };
-use crate::gpu_data::{CASTER_PLANES, MAX_CASCADES, ShadowCullUniform, ShadowUniform};
+use crate::gpu_data::{CASTER_PLANES, MAX_CASCADES, MAX_LEVELS, ShadowCullUniform, ShadowUniform};
 use crate::shadow_fit::{
-    LightBasis, MapRegion, Refresh, TILES, caster_planes, frustum_footprint, receivers_from,
-    view_sphere,
+    KeptLevels, LevelRefresh, LightBasis, MapRegion, Refresh, TILE_WORDS, TILES, caster_planes,
+    frustum_footprint, receivers_from, view_sphere,
 };
 
 // Lookups move this many texels along the surface normal. Receiver planes
@@ -29,25 +30,43 @@ const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 const FADE_START: f32 = 0.85;
 
 /// The casters a frame selects: candidates, skinned slots among them
-/// (decision 036), caster groups, the ID capacity of each map, and whether
-/// any group draws virtual geometry (decision 044).
-pub(super) struct SelectionCounts {
+/// (decision 036), caster groups, the ID capacity of each map, whether any
+/// group draws virtual geometry (decision 044), and the kept levels.
+pub(super) struct SelectionCounts<'a> {
     pub(super) candidates: u32,
     pub(super) skinned: u32,
     pub(super) groups: u32,
     pub(super) capacity: u32,
     pub(super) virtual_geometry: bool,
+    /// The kept levels (decision 065), whose tiles still casters that
+    /// move or come to rest mark dirty.
+    pub(super) levels: &'a KeptLevels,
+}
+
+/// This frame's redraw of a kept level (decision 065): which, its
+/// light-space rectangle and the region of its page, which its view maps
+/// onto the level's whole map.
+#[derive(Clone, Copy)]
+pub(super) struct LevelDraw {
+    pub(super) refresh: LevelRefresh,
+    pub(super) rect: [f32; 4],
+    pub(super) page: MapRegion,
 }
 
 pub(super) struct Regions {
     basis: LightBasis,
-    // Far maps `resolution` texels a side, near cascades half as many.
+    // Far maps `resolution` texels a side, near cascades and kept levels
+    // half as many.
     resolution: u32,
     far: MapRegion,
     // The near cascades in use, nearest first, with the view depth each
     // reaches.
     near: [(f32, MapRegion); MAX_CASCADES],
     cascades: usize,
+    // The finest kept level's texel (decision 065), 0 without levels, and
+    // this frame's level redraw.
+    level_texel: f32,
+    level_draw: Option<LevelDraw>,
 }
 
 impl Regions {
@@ -79,7 +98,39 @@ impl Regions {
             far,
             near,
             cascades,
+            level_texel: 0.0,
+            level_draw: None,
         }
+    }
+
+    /// Adds the kept levels (decision 065): the finest one's texel, and
+    /// this frame's `refresh` of one of them.
+    pub(super) fn with_levels(
+        mut self,
+        levels: &KeptLevels,
+        refresh: Option<LevelRefresh>,
+    ) -> Self {
+        let texels = self.near_resolution();
+        self.level_texel = levels.texel(0, texels);
+        self.level_draw = refresh.map(|refresh| {
+            let (rect, page) = levels.refresh_regions(refresh, levels.texel(refresh.level, texels));
+            LevelDraw {
+                refresh,
+                rect,
+                page,
+            }
+        });
+        self
+    }
+
+    /// This frame's redraw of a kept level, if any.
+    pub(super) fn level_draw(&self) -> Option<LevelDraw> {
+        self.level_draw
+    }
+
+    /// World to clip space of this frame's kept-level redraw: its page's.
+    pub(super) fn level_clip(&self) -> Option<engine_core::glam::Mat4> {
+        self.level_draw.map(|draw| draw.page.clip(&self.basis))
     }
 
     /// The near cascades in use, with the view depth each reaches.
@@ -95,12 +146,14 @@ impl Regions {
     /// half a texel, so rasterized depths differ from the mesh's by less
     /// than rounding, and a whole texel in the moving map, whose casters are
     /// drawn every frame: its outlines may then move by one texel, and it
-    /// draws half the geometry.
+    /// draws half the geometry. Kept levels (decision 065) draw within half
+    /// the finest one's texel.
     pub(super) fn errors(&self) -> [f32; MAPS] {
         let far = self.far.texel(self.resolution);
         std::array::from_fn(|map| match map {
             MOVING_MAP => far,
             KEPT_MAP => far * 0.5,
+            KEPT_LEVELS => self.level_texel * 0.5,
             cascade => self.near().get(cascade).map_or(0.0, |(_, region)| {
                 region.texel(self.near_resolution()) * 0.5
             }),
@@ -124,11 +177,13 @@ impl Regions {
     }
 
     /// The maps' view matrices at their view offsets: each near cascade's,
-    /// then the far maps' at [`FAR_VIEW`].
-    pub(super) fn view_matrices(&self) -> [f32; (MAX_CASCADES + 1) * VIEW_STRIDE as usize / 4] {
+    /// then the far maps' at [`FAR_VIEW`] and the redrawn kept level's page
+    /// (decision 065) at [`LEVEL_VIEW`] (the far maps' without one).
+    pub(super) fn view_matrices(&self) -> [f32; (MAX_CASCADES + 2) * VIEW_STRIDE as usize / 4] {
         let (near, far) = self.clips();
-        let mut views = [0.0_f32; (MAX_CASCADES + 1) * VIEW_STRIDE as usize / 4];
-        for (index, clip) in near.iter().chain([&far]).enumerate() {
+        let level = self.level_clip().unwrap_or(far);
+        let mut views = [0.0_f32; (MAX_CASCADES + 2) * VIEW_STRIDE as usize / 4];
+        for (index, clip) in near.iter().chain([&far, &level]).enumerate() {
             let start = index * VIEW_STRIDE as usize / 4;
             views[start..start + 16].copy_from_slice(&clip.to_cols_array());
         }
@@ -175,7 +230,7 @@ impl Regions {
         settings: &Shadows,
         refresh: Option<Refresh>,
         classify: bool,
-        counts: SelectionCounts,
+        counts: SelectionCounts<'_>,
         virtual_views: &mut Vec<VirtualShadowView>,
     ) -> ShadowCullUniform {
         let (basis, far, near) = (&self.basis, &self.far, self.near());
@@ -279,6 +334,26 @@ impl Regions {
                 view_offset: FAR_VIEW as u32,
                 error: None,
             });
+            // A redrawn kept level (decision 065) likewise, within the error
+            // of its finest level's texels.
+            if let Some(draw) = self.level_draw.filter(|_| classify) {
+                let mut kept = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
+                for (slot, plane) in
+                    kept.iter_mut()
+                        .zip(region_planes(basis, draw.rect, draw.page.depth[1]))
+                {
+                    *slot = plane;
+                }
+                virtual_views.push(VirtualShadowView {
+                    map: KEPT_LEVELS,
+                    planes: kept,
+                    min_distance: None,
+                    texel: draw.page.texel(self.near_resolution()),
+                    direction: basis.rows[2],
+                    view_offset: LEVEL_VIEW as u32,
+                    error: Some(self.errors()[KEPT_LEVELS]),
+                });
+            }
             // The kept map holds still casters whatever the camera sees: on
             // frames redrawing it, their clusters within the error its other
             // casters draw with (half a texel), in the region redrawn.
@@ -301,6 +376,7 @@ impl Regions {
                 });
             }
         }
+        let level_draw = self.level_draw.filter(|_| classify);
         ShadowCullUniform {
             light: [row(basis.rows[0]), row(basis.rows[1]), row(basis.rows[2])],
             near: near_rects,
@@ -312,10 +388,14 @@ impl Regions {
             candidates: counts.candidates,
             groups: counts.groups,
             capacity: counts.capacity,
-            mode: [(classify, STILLNESS), (refresh.is_some(), REFRESH)]
-                .iter()
-                .filter(|(set, _)| *set)
-                .fold(0, |mode, (_, bit)| mode | bit),
+            mode: [
+                (classify, STILLNESS),
+                (refresh.is_some(), REFRESH),
+                (level_draw.is_some(), LEVEL_REFRESH),
+            ]
+            .iter()
+            .filter(|(set, _)| *set)
+            .fold(0, |mode, (_, bit)| mode | bit),
             tiles: [
                 far.rect[0],
                 far.rect[1],
@@ -324,14 +404,25 @@ impl Regions {
             ],
             cascades: near.len() as u32,
             skinned: counts.skinned,
-            pad: [0; 2],
+            levels: counts.levels.len() as u32,
+            pad: 0,
+            level_refresh: level_draw.map_or([0.0; 4], |draw| draw.rect),
+            level_depths: level_draw.map_or([0.0; 4], |draw| {
+                [draw.page.depth[0], draw.page.depth[1], 0.0, 0.0]
+            }),
+            level_tiles: std::array::from_fn(|index| counts.levels.tiles(index)),
             planes,
         }
     }
 
     /// The main passes' lookup uniform, which reads still slots' stillness
-    /// when `classify`.
-    pub(super) fn lookup_uniform(&self, settings: &Shadows, classify: bool) -> ShadowUniform {
+    /// when `classify`, from the far maps and `levels` (decision 065).
+    pub(super) fn lookup_uniform(
+        &self,
+        settings: &Shadows,
+        classify: bool,
+        levels: &KeptLevels,
+    ) -> ShadowUniform {
         let (near_clips, far_clip) = self.clips();
         // Cascades beyond those in use are never reached.
         let mut reach = [f32::MAX; 4];
@@ -343,6 +434,13 @@ impl Regions {
             near_limits[index] = slope_limit(region, self.near_resolution());
         }
         let far_texel = self.far.texel(self.resolution);
+        let texels = self.near_resolution();
+        let mut level_valid = [[0; 4]; 2 * MAX_LEVELS];
+        for (index, words) in level_valid.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let valid: [u32; TILE_WORDS] = levels.valid(index);
+            words[0].copy_from_slice(&valid[..4]);
+            words[1].copy_from_slice(&valid[4..]);
+        }
         ShadowUniform {
             near: near_clips.map(|clip| clip.to_cols_array_2d()),
             far: far_clip.to_cols_array_2d(),
@@ -365,6 +463,28 @@ impl Regions {
                 self.near_resolution() as f32,
                 self.resolution as f32,
                 0.0,
+                0.0,
+            ],
+            light: self.basis.rows.map(|row| row.extend(0.0).to_array()),
+            level_scales: std::array::from_fn(|index| levels.scales(index)),
+            level_windows: std::array::from_fn(|index| {
+                let [x, y] = levels.window(index);
+                let texel = levels.texel(index, texels);
+                let [near, far] = levels.band(index);
+                let limit = if far > near {
+                    SLOPE_LIMIT_TEXELS * texel / (far - near)
+                } else {
+                    0.0
+                };
+                [x, y, texel * NORMAL_OFFSET_TEXELS, limit]
+            }),
+            level_valid,
+            level_state: [
+                levels.len() as f32,
+                texels as f32,
+                (0..levels.len())
+                    .filter(|&index| levels.has_pending(index))
+                    .fold(0, |bits, index| bits | 1 << index) as f32,
                 0.0,
             ],
         }

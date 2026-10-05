@@ -41,7 +41,8 @@ pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
 pub use effects::{
-    AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
+    AmbientOcclusion, Bloom, MAX_KEPT_LEVELS, MAX_SHADOW_CASCADES, Reflections, Refraction,
+    Shadows, SunShafts,
 };
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LodLevel,

@@ -319,6 +319,32 @@ try {
   assert.equal(reaching.error.path, "$.contact_shadows.length");
   await command("environment", { contact_shadows: contact });
   checks.push({ check: "contact shadows", pixels: contactPixels.changed });
+  // Kept levels (decision 065) hold still casters sharper than the kept
+  // map around the camera on GPU-presented frames, every tile once built;
+  // with cascades out of reach, their shadows differ from the kept map's
+  // alone. The section refuses more levels than the engine keeps.
+  const kept = (await command("inspect", { component: "Shadows" })).result.value;
+  const reachless = { ...kept, near_distance: 1, distance: 400 };
+  const gpuCapture = async (name, shadows) => {
+    await command("environment", { shadows });
+    let rendering;
+    for (let frame = 0; frame < 40; frame++) {
+      rendering = (await command("present", { alpha: 1, gpu: true })).result.rendering;
+      if (frame > 8 && rendering.shadow_levels_pending === 0) break;
+    }
+    await command("capture", { alpha: 1, gpu: true });
+    const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
+    return { rendering, image: bytes.toString("base64") };
+  };
+  const leveled = await gpuCapture("kept-levels", { ...reachless, levels: 2, level_extent: 64 });
+  assert.equal(leveled.rendering.shadow_levels_pending, 0, `kept levels build: ${JSON.stringify(leveled.rendering)}`);
+  const unleveled = await gpuCapture("kept-map-only", { ...reachless, levels: 0 });
+  const levelPixels = await differentPixels(page, [leveled.image, unleveled.image]);
+  assert.ok(levelPixels.changed > 100, `kept levels change ${levelPixels.changed} pixels`);
+  const deep = await command("environment", { shadows: { ...kept, levels: 4 } }, false);
+  assert.equal(deep.error.path, "$.shadows.levels");
+  await command("environment", { shadows: kept });
+  checks.push({ check: "kept levels", pixels: levelPixels.changed });
   await command("camera", overview);
   // The sky visibility map (decision 055) builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.

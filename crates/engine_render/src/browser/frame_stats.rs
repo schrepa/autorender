@@ -8,7 +8,7 @@ use crate::gpu_presentation::GpuPrepared;
 type StatCounter = (&'static str, fn(&RenderStats) -> Option<f64>);
 
 /// Counters of every frame's stats.
-const STAT_COUNTERS: [StatCounter; 24] = [
+const STAT_COUNTERS: [StatCounter; 26] = [
     ("render.instances", |stats| Some(stats.instances.into())),
     ("render.draw_calls", |stats| Some(stats.draw_calls.into())),
     ("render.upload_bytes", |stats| {
@@ -31,6 +31,12 @@ const STAT_COUNTERS: [StatCounter; 24] = [
     }),
     ("render.shadow_kept_casters", |stats| {
         stats.shadow_kept_casters.map(f64::from)
+    }),
+    ("render.shadow_level_tiles", |stats| {
+        Some(stats.shadow_level_tiles.into())
+    }),
+    ("render.shadow_level_casters", |stats| {
+        stats.shadow_level_casters.map(f64::from)
     }),
     ("render.ambient_occlusion", |stats| {
         Some(u8::from(stats.ambient_occlusion).into())
@@ -247,6 +253,13 @@ impl Renderer {
             shadow_near_casters: shadow_casters.map(|casters| casters[0]),
             shadow_moving_casters: shadow_casters.map(|casters| casters[1]),
             shadow_kept_casters: shadow_casters.map(|casters| casters[2]),
+            shadow_level_tiles: shadow_frame
+                .as_ref()
+                .map_or(0, crate::shadows::ShadowFrame::level_tiles),
+            shadow_levels_pending: shadow_frame
+                .as_ref()
+                .map_or(0, crate::shadows::ShadowFrame::level_pending),
+            shadow_level_casters: shadow_casters.map(|casters| casters[3]),
             ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
             contact_shadows: post_frame.is_some_and(|frame| frame.contact),
             bloom: post_frame.is_some_and(|frame| frame.bloom),

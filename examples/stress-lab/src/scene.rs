@@ -110,13 +110,17 @@ pub fn create_workload_with(
         });
     }
     // Shadows (decision 020) keep the whole scene in one map, seen from
-    // every view; the highlands' reach across the valleys.
+    // every view; the highlands' reach across the valleys, and two kept
+    // levels (decision 065) keep still casters sharper within a kilometer
+    // of the camera: a quarter meter a texel within 256 meters, one beyond.
     world.insert_resource(if config.scene == StressScene::Highlands {
         Shadows {
             bounds: Some(bounds),
             distance: 6000.0,
             near_distance: 160.0,
             resolution: 4096,
+            levels: 2,
+            level_extent: 512.0,
             ..Shadows::default()
         }
     } else {

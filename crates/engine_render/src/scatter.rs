@@ -42,6 +42,16 @@ struct ViewData {
     limits: [f32; 4],
 }
 
+/// The shadow maps placed objects cast into: those drawn every frame
+/// (their world-to-clip matrices), this frame's redraws of the kept map and
+/// of a kept level (decision 065), and the far maps' texels a side.
+pub(crate) type ShadowViews<'a> = (
+    &'a [(usize, Mat4)],
+    Option<KeptRefresh>,
+    Option<KeptRefresh>,
+    u32,
+);
+
 /// The draw group of slots no object holds, which culling skips.
 pub(crate) const DEAD: u32 = u32::MAX;
 
@@ -404,20 +414,20 @@ impl ScatterPass {
     /// `view_projection` (world) and eye, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, `resolution` texels
     /// square), where objects smaller than half a texel cast nothing, and
-    /// the region of the kept map redrawn this frame (its clip and planes),
-    /// if any. Levels are picked within `pixel_error` pixels of a viewport
-    /// `height` pixels tall (no error: finest levels only); maps draw a
-    /// coarser level where a texel hides its error, and the camera draws
-    /// impostors within the error when `impostors`, which the kept map
-    /// draws wherever there are (decision 060). Returns whether any object
-    /// draws.
+    /// the regions of the kept map and of a kept level (decision 065)
+    /// redrawn this frame, if any. Levels are picked within `pixel_error`
+    /// pixels of a viewport `height` pixels tall (no error: finest levels
+    /// only); maps draw a coarser level where a texel hides its error, and
+    /// the camera draws impostors within the error when `impostors`, which
+    /// kept maps draw wherever their texels are no finer than an impostor's
+    /// (decision 060). Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors): (Option<f32>, f32, bool),
-        (maps, kept, resolution): (&[(usize, Mat4)], Option<KeptRefresh>, u32),
+        (maps, kept, level, resolution): ShadowViews<'_>,
     ) -> bool {
         self.maps.clear();
         if self.resident == 0 {
@@ -445,13 +455,17 @@ impl ScatterPass {
             });
             self.maps.push(map);
         }
-        if let Some((clip, planes)) = kept {
-            let half_texel = half_texel(clip);
-            views.push(ViewData {
-                planes,
-                limits: [half_texel, 2.0 * half_texel, 1.0, 0.0],
-            });
-            self.maps.push(crate::shadows::KEPT_MAP);
+        for (map, refresh) in [
+            (crate::shadows::KEPT_MAP, kept),
+            (crate::shadows::KEPT_LEVELS, level),
+        ] {
+            if let Some(refresh) = refresh {
+                views.push(ViewData {
+                    planes: refresh.planes,
+                    limits: [0.5 * refresh.texel, refresh.texel, 1.0, 0.0],
+                });
+                self.maps.push(map);
+            }
         }
         let view_count = views.len() as u32;
         let draws_per_view = self.group_count * LEVELS;

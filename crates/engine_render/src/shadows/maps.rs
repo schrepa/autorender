@@ -1,7 +1,8 @@
-//! The shadow maps (decisions 020 and 028) and what the main passes bind to
-//! look them up: the near cascades as layers of one texture, the moving and
-//! kept far maps, the lookup uniform and the samplers, with placeholders
-//! while shadows are off.
+//! The shadow maps (decisions 020, 028 and 065) and what the main passes
+//! bind to look them up: the near cascades as layers of one texture, the
+//! moving and kept far maps, the kept levels as layers of another, the
+//! lookup uniform and the samplers, with placeholders while shadows (or
+//! levels) are off.
 
 use crate::gpu_data::ShadowUniform;
 
@@ -13,30 +14,59 @@ pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth
 pub(super) struct MapTextures {
     pub(super) resolution: u32,
     cascades: u32,
-    // The near cascades as layers of one texture, and the moving and kept
-    // far maps.
+    levels: u32,
+    // The near cascades as layers of one texture, the moving and kept far
+    // maps, and the kept levels (decision 065) as layers of another.
     textures: [wgpu::Texture; 3],
+    level_texture: Option<wgpu::Texture>,
     // The near cascades as one array (lookups) and each layer (drawing).
     near_array: wgpu::TextureView,
     pub(super) near_layers: Vec<wgpu::TextureView>,
     pub(super) moving: wgpu::TextureView,
     pub(super) kept: wgpu::TextureView,
+    // The kept levels as one array (lookups) and each layer (drawing).
+    level_array: Option<wgpu::TextureView>,
+    pub(super) level_layers: Vec<wgpu::TextureView>,
 }
 
 impl Drop for MapTextures {
     fn drop(&mut self) {
         // Browsers otherwise keep the memory until garbage collection;
         // submitted work that still reads them completes first.
-        for texture in &self.textures {
+        for texture in self.textures.iter().chain(&self.level_texture) {
             texture.destroy();
         }
     }
 }
 
+/// Views of each layer of `texture`'s `layers`, for drawing.
+fn layer_views(texture: &wgpu::Texture, layers: u32) -> Vec<wgpu::TextureView> {
+    (0..layers)
+        .map(|layer| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("engine/shadow-layer"),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+/// A view of every layer of `texture`, for lookups.
+fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        label: Some("engine/shadow-layers"),
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
+}
+
 impl MapTextures {
-    /// Maps of `resolution` texels (the near cascades half as many) with
-    /// `cascades` near layers.
-    fn new(device: &wgpu::Device, resolution: u32, cascades: u32) -> Self {
+    /// Maps of `resolution` texels (the near cascades and kept levels half
+    /// as many) with `cascades` near layers and `levels` kept levels.
+    fn new(device: &wgpu::Device, resolution: u32, cascades: u32, levels: u32) -> Self {
         let texture = |label, size, layers| {
             crate::targets::texture_2d(
                 device,
@@ -53,32 +83,24 @@ impl MapTextures {
             texture("engine/shadow-moving", resolution, 1),
             texture("engine/shadow-kept", resolution, 1),
         ];
-        let near_array = textures[0].create_view(&wgpu::TextureViewDescriptor {
-            label: Some("engine/shadow-near-cascades"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        let near_layers = (0..cascades)
-            .map(|layer| {
-                textures[0].create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("engine/shadow-near-cascade"),
-                    dimension: Some(wgpu::TextureViewDimension::D2),
-                    base_array_layer: layer,
-                    array_layer_count: Some(1),
-                    ..Default::default()
-                })
-            })
-            .collect();
+        let level_texture =
+            (levels > 0).then(|| texture("engine/shadow-levels", resolution / 2, levels));
         let moving = textures[1].create_view(&Default::default());
         let kept = textures[2].create_view(&Default::default());
         Self {
             resolution,
             cascades,
-            textures,
-            near_array,
-            near_layers,
+            levels,
+            near_array: array_view(&textures[0]),
+            near_layers: layer_views(&textures[0], cascades),
             moving,
             kept,
+            level_array: level_texture.as_ref().map(array_view),
+            level_layers: level_texture
+                .as_ref()
+                .map_or_else(Vec::new, |texture| layer_views(texture, levels)),
+            textures,
+            level_texture,
         }
     }
 }
@@ -160,14 +182,21 @@ impl ShadowMaps {
 
     /// Bindings of the main passes' first group (`bindings::CAMERA`): the
     /// lookup uniform, the near cascades, the kept and moving maps, the
-    /// comparison sampler and the texel sampler of receiver planes.
-    pub(super) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 6] {
-        let (near, kept, moving) = match &self.textures {
-            Some(maps) => (&maps.near_array, &maps.kept, &maps.moving),
+    /// comparison sampler, the texel sampler of receiver planes and the
+    /// kept levels.
+    pub(super) fn entries(&self) -> [(&'static str, wgpu::BindingResource<'_>); 7] {
+        let (near, kept, moving, levels) = match &self.textures {
+            Some(maps) => (
+                &maps.near_array,
+                &maps.kept,
+                &maps.moving,
+                maps.level_array.as_ref().unwrap_or(&self.placeholder_array),
+            ),
             None => (
                 &self.placeholder_array,
                 &self.placeholder_view,
                 &self.placeholder_view,
+                &self.placeholder_array,
             ),
         };
         [
@@ -177,6 +206,7 @@ impl ShadowMaps {
             ("moving_shadows", view(moving)),
             ("shadow_sampler", sampler(&self.sampler)),
             ("shadow_texels", sampler(&self.texel_sampler)),
+            ("kept_levels", view(levels)),
         ]
     }
 
@@ -184,21 +214,26 @@ impl ShadowMaps {
     pub(super) fn capacity_bytes(&self) -> u64 {
         self.textures.as_ref().map_or(0, |maps| {
             let far = u64::from(maps.resolution) * u64::from(maps.resolution) * 2;
-            2 * far + u64::from(maps.cascades) * far / 4
+            2 * far + u64::from(maps.cascades + maps.levels) * far / 4
         })
     }
 
     /// Creates maps of `resolution` texels with `cascades` near layers
-    /// unless they exist; returns whether it did (new maps hold nothing).
-    pub(super) fn ensure(&mut self, device: &wgpu::Device, resolution: u32, cascades: u32) -> bool {
-        if self
-            .textures
-            .as_ref()
-            .is_some_and(|maps| maps.resolution == resolution && maps.cascades == cascades)
-        {
+    /// and `levels` kept levels unless they exist; returns whether it did
+    /// (new maps hold nothing).
+    pub(super) fn ensure(
+        &mut self,
+        device: &wgpu::Device,
+        resolution: u32,
+        cascades: u32,
+        levels: u32,
+    ) -> bool {
+        if self.textures.as_ref().is_some_and(|maps| {
+            maps.resolution == resolution && maps.cascades == cascades && maps.levels == levels
+        }) {
             return false;
         }
-        self.textures = Some(MapTextures::new(device, resolution, cascades));
+        self.textures = Some(MapTextures::new(device, resolution, cascades, levels));
         self.generation += 1;
         true
     }

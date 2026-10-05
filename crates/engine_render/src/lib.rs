@@ -80,6 +80,12 @@ pub struct RenderStats {
     pub shadow_near_casters: Option<u32>,
     pub shadow_moving_casters: Option<u32>,
     pub shadow_kept_casters: Option<u32>,
+    /// Kept levels (decision 065): tiles this frame redrew, tiles no level
+    /// holds yet (lookups read coarser maps there), and casters the levels
+    /// drew, read back like the others.
+    pub shadow_level_tiles: u32,
+    pub shadow_levels_pending: u32,
+    pub shadow_level_casters: Option<u32>,
     /// Whether this frame applied ambient occlusion and bloom (decision 021).
     pub ambient_occlusion: bool,
     /// Whether the frame traced contact shadows (decision 062).

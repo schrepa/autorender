@@ -7,9 +7,12 @@
 // kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
 // only when a region of it is dirty, and leave the per-frame map a little
-// later, once the kept map surely holds them. Casters with virtual geometry
-// (decision 044) go to the maps drawn every frame, whose views select their
-// clusters, and never to the kept map.
+// later, once the kept map surely holds them. Kept levels (decision 065),
+// finer kept maps following the camera, take still casters within the
+// region of the one redrawn this frame, and the tiles they leave or come to
+// rest in are marked dirty too. Casters with virtual geometry (decision 044)
+// go to the maps drawn every frame, whose views select their clusters, and
+// never to the kept map.
 
 struct Cull {
     // World to light space: the sun's right, up and away-from-sun axes.
@@ -37,12 +40,20 @@ struct Cull {
     // Kept-map tiles (TILES a side): light-space x and y of the first
     // tile's corner, and the tile width and height.
     tiles: vec4<f32>,
-    // Near cascades drawn this frame, and skinned slots of GPU-presented
-    // frames.
+    // Near cascades drawn this frame, skinned slots of GPU-presented frames
+    // and kept levels in use.
     cascades: u32,
     skinned: u32,
+    levels: u32,
     pad0: u32,
-    pad1: u32,
+    // The light-space rectangle of the kept level redrawn this frame, and
+    // its depth band's nearest and farthest depths (x and y).
+    level_refresh: vec4<f32>,
+    level_depths: vec4<f32>,
+    // Each kept level's tiles: light-space x and y of its first tile's
+    // corner, and the tile width. Its map holds the absolute tile (a, b) at
+    // slot (a mod TILES, b mod TILES).
+    level_tiles: array<vec4<f32>, 3>,
     // Inward world planes bounding where casters can darken each near
     // cascade's receivers, then the moving map's (MOVING_VOLUME): their
     // part of the view swept toward the sun. Unused planes pass all.
@@ -99,17 +110,19 @@ struct DrawArgs {
 // GPU-presented frames: presentation's per-candidate flags (VALID marks a
 // candidate whose pose this frame's culling wrote).
 @group(0) @binding(4) var<storage, read> flags: array<u32>;
-// Per slot: its pose key, and its still-frame count with the kept-map
-// tiles it was last drawn into.
-@group(0) @binding(5) var<storage, read_write> stillness: array<vec2<u32>>;
+// Per slot: its pose key, its still-frame count with the kept-map tiles it
+// was last drawn into, and its light-space footprint where it was last
+// drawn into a kept level.
+@group(0) @binding(5) var<storage, read_write> stillness: array<vec4<u32>>;
 @group(0) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(0) @binding(7) var<storage, read_write> args: array<DrawArgs>;
 // Counters read back ([0..8]: kept-map tiles to redraw, two rows of 16
-// each; [8..11]: this frame's casters of the near cascades, moving and kept
-// maps), then the start of each draw group's ID region within a map.
-// Sharing one binding keeps the selection within eight storage buffers.
+// each; [8..32]: each kept level's; [32..36]: this frame's casters of the
+// near cascades, moving and kept maps and kept levels), then the start of
+// each draw group's ID region within a map. Sharing one binding keeps the
+// selection within eight storage buffers.
 struct Counters {
-    dirty: array<atomic<u32>, 12>,
+    dirty: array<atomic<u32>, 36>,
     starts: array<u32>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
@@ -129,6 +142,7 @@ const STILLNESS: u32 = 1u;
 // Exact hex literal: browsers reject decimal spellings above f32::MAX.
 const F32_MAX: f32 = 0x1.fffffep+127f;
 const REFRESH: u32 = 2u;
+const LEVEL_REFRESH: u32 = 4u;
 // Presentation's candidate flag of a valid pose.
 const VALID: u32 = 4u;
 // Frames a pose must stay unchanged before its slot is kept, and until it
@@ -143,18 +157,26 @@ const KEEP_AFTER_RESTLESS: u32 = 180u;
 const MOVING_UNTIL_RESTLESS: u32 = 236u;
 // Stillness state bits: the count in the low byte; the kept-map tiles the
 // slot was last drawn into (first and last column, first and last row, four
-// bits each) and DRAWN when it was; and RESTLESS.
+// bits each) and DRAWN when it was; LEVELED when it was drawn into a kept
+// level, whose footprint the state's last two words hold; and RESTLESS.
 const FOOTPRINT: u32 = 0x1ffff00u;
 const DRAWN: u32 = 0x1000000u;
+const LEVELED: u32 = 0x2000000u;
 const RESTLESS: u32 = 0x80000000u;
-// Tiles across each side of the kept map, and the counter words marking
-// them dirty, before the caster totals.
+// Tiles across each side of the kept map and levels, the counter words
+// marking a map's dirty, and those of the kept map and every level, before
+// the caster totals.
 const TILES: u32 = 16u;
 const TILE_WORDS: u32 = 8u;
-// Near cascades are maps 0 to 3; the far maps follow.
+const DIRTY_WORDS: u32 = 32u;
+// World units of kept-level footprints: light-space corners rounded
+// outward to them, as signed 16-bit pairs.
+const FOOTPRINT_UNIT: f32 = 4.0;
+// Near cascades are maps 0 to 3; the far maps follow, then the kept levels.
 const MOVING_MAP: u32 = 4u;
 const KEPT_MAP: u32 = 5u;
-const MAPS: u32 = 6u;
+const KEPT_LEVELS: u32 = 6u;
+const MAPS: u32 = 7u;
 
 fn mix_key(key: u32, value: u32) -> u32 {
     var x = (key ^ value) * 0x9e3779b1u;
@@ -261,6 +283,38 @@ fn mark_dirty(packed: u32) {
     }
 }
 
+// Marks dirty each kept level's tiles (decision 065) under light-space
+// `low` to `high`, those of its window: a row's slots at a time.
+fn mark_levels(low: vec2<f32>, high: vec2<f32>) {
+    if !(all(abs(low) < vec2<f32>(1.0e9)) && all(abs(high) < vec2<f32>(1.0e9))) {
+        return;
+    }
+    for (var level = 0u; level < cull.levels; level++) {
+        let tiles = cull.level_tiles[level];
+        let first = vec2<i32>(round(tiles.xy / tiles.z));
+        let from_tile = max(vec2<i32>(floor(low / tiles.z)), first);
+        let to_tile = min(vec2<i32>(floor(high / tiles.z)), first + vec2<i32>(i32(TILES) - 1));
+        var columns = 0u;
+        for (var column = from_tile.x; column <= to_tile.x; column++) {
+            columns |= 1u << u32(column & 15);
+        }
+        for (var row = from_tile.y; row <= to_tile.y; row++) {
+            let slot = u32(row & 15);
+            atomicOr(&counters.dirty[TILE_WORDS * (1u + level) + slot / 2u],
+                columns << (slot % 2u * TILES));
+        }
+    }
+}
+
+// Signed 16-bit halves of a footprint word.
+fn footprint_word(value: vec2<i32>) -> u32 {
+    return (u32(value.x) & 0xffffu) | (u32(value.y) << 16u);
+}
+
+fn footprint_corner(word: u32) -> vec2<f32> {
+    return vec2<f32>(f32(i32(word << 16u) >> 16u), f32(i32(word) >> 16u)) * FOOTPRINT_UNIT;
+}
+
 @compute @workgroup_size(256)
 fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= cull.candidates {
@@ -315,6 +369,8 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         let state = stillness[candidate.slot];
         var count = state.y & 0xffu;
         var drawn = state.y & FOOTPRINT;
+        var leveled = state.y & LEVELED;
+        var level_footprint = state.zw;
         var restless = state.y & RESTLESS;
         var keep_after = select(KEEP_AFTER, KEEP_AFTER_RESTLESS, restless != 0u);
         if state.x == key {
@@ -322,17 +378,27 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
         } else {
             // A kept slot that moved leaves its shadow in the tiles it was
             // drawn into: redraw them, and keep it moving longer next time.
-            if count >= keep_after && drawn != 0u {
-                mark_dirty(drawn);
+            if count >= keep_after && (drawn | leveled) != 0u {
+                if drawn != 0u {
+                    mark_dirty(drawn);
+                }
+                if leveled != 0u {
+                    mark_levels(footprint_corner(level_footprint.x),
+                        footprint_corner(level_footprint.y));
+                }
                 restless = RESTLESS;
                 keep_after = KEEP_AFTER_RESTLESS;
             }
             count = 0u;
             drawn = 0u;
+            leveled = 0u;
         }
-        if count == keep_after && overlaps(cull.far, low, high, cull.depths.y) {
+        if count == keep_after {
             // Newly still: its tiles must be drawn with it.
-            mark_dirty(footprint(low.xy, high.xy));
+            if overlaps(cull.far, low, high, cull.depths.y) {
+                mark_dirty(footprint(low.xy, high.xy));
+            }
+            mark_levels(low.xy, high.xy);
         }
         moving = count < select(MOVING_UNTIL, MOVING_UNTIL_RESTLESS, restless != 0u);
         kept = count >= keep_after;
@@ -340,9 +406,17 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
             append(KEPT_MAP, batch.group, candidate.slot);
             drawn = footprint(low.xy, high.xy);
         }
-        let packed = count | drawn | restless;
-        if state.x != key || state.y != packed {
-            stillness[candidate.slot] = vec2<u32>(key, packed);
+        if kept && (cull.mode & LEVEL_REFRESH) != 0u
+            && overlaps(cull.level_refresh, low, high, cull.level_depths.y) {
+            append(KEPT_LEVELS, batch.group, candidate.slot);
+            leveled = LEVELED;
+            level_footprint = vec2<u32>(
+                footprint_word(vec2<i32>(floor(low.xy / FOOTPRINT_UNIT))),
+                footprint_word(vec2<i32>(ceil(high.xy / FOOTPRINT_UNIT))));
+        }
+        let packed = count | drawn | leveled | restless;
+        if state.x != key || state.y != packed || any(state.zw != level_footprint) {
+            stillness[candidate.slot] = vec4<u32>(key, packed, level_footprint);
         }
     }
     for (var cascade = 0u; cascade < cull.cascades; cascade++) {
@@ -360,34 +434,34 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Totals of this frame's casters of the near cascades together, the moving
-// map and the kept map, read back with the dirty tiles for profiling
-// counters: each of a workgroup's lanes sums some draws.
+// map, the kept map and the kept levels, read back with the dirty tiles for
+// profiling counters: each of a workgroup's lanes sums some draws.
 const COUNT_LANES: u32 = 256u;
-var<workgroup> cast_totals: array<atomic<u32>, 3>;
+var<workgroup> cast_totals: array<atomic<u32>, 4>;
 
 @compute @workgroup_size(256)
 fn count_casters(@builtin(local_invocation_index) lane: u32) {
-    if lane < 3u {
+    if lane < 4u {
         atomicStore(&cast_totals[lane], 0u);
     }
     workgroupBarrier();
     // Every lane sums every 256th draw, of the near cascades, the moving
-    // map or the kept map.
-    var totals = vec3<u32>(0u);
+    // map, the kept map or the kept levels.
+    var totals = vec4<u32>(0u);
     let draws = MAPS * cull.groups;
     for (var draw = lane; draw < draws; draw += COUNT_LANES) {
         let map = draw / cull.groups;
         totals[select(0u, map + 1u - MOVING_MAP, map >= MOVING_MAP)]
             += atomicLoad(&args[draw].instance_count);
     }
-    for (var index = 0u; index < 3u; index++) {
+    for (var index = 0u; index < 4u; index++) {
         if totals[index] != 0u {
             atomicAdd(&cast_totals[index], totals[index]);
         }
     }
     workgroupBarrier();
-    if lane < 3u {
-        atomicStore(&counters.dirty[TILE_WORDS + lane], atomicLoad(&cast_totals[lane]));
+    if lane < 4u {
+        atomicStore(&counters.dirty[DIRTY_WORDS + lane], atomicLoad(&cast_totals[lane]));
     }
 }
 

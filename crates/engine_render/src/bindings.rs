@@ -247,6 +247,8 @@ pub(crate) const CAMERA: Table = Table {
         // density, filtered, and the covers' tops and bottoms.
         texture(16, "occupancy_coverage", Float, D2, F),
         texture(17, "occupancy_heights", Unfilterable, D2, F),
+        // The kept shadow levels (decision 065), one layer each.
+        texture(18, "kept_levels", Depth, D2Array, F),
     ],
 };
 

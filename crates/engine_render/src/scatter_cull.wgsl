@@ -26,9 +26,10 @@ struct Frame {
 }
 
 // A view: its frustum planes (world, inside positive; a shadow map's depth
-// planes pass everything), the radius objects need to draw in it (x), the
-// geometric error its texels hide (y, world units; 0 for the camera) and
-// whether it is the kept shadow map's (z, 1).
+// planes pass everything, but a kept level's far one), the radius objects
+// need to draw in it (x), the geometric error its texels hide (y, world
+// units; 0 for the camera) and whether it is a kept map's or kept level's
+// (z, 1).
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
@@ -127,8 +128,9 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
     // The camera draws an impostor its texels show within the error, as a
-    // card, which maps drawn every frame leave out; the kept map casts
-    // every impostor as one.
+    // card, which maps drawn every frame leave out; kept maps cast one
+    // wherever their texels are no finer than the impostor's (decisions 060
+    // and 065).
     let impostor = group.impostor * record.scale;
     let impostors = frame.strides.z != 0u && impostor > 0.0;
     let takes_over = impostor * frame.eye.w + record.radius;
@@ -141,7 +143,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var view = 0u; view < frame.counts.w; view++) {
         let limits = views[view].limits;
         let kept = limits.z > 0.0;
-        let card = impostors && (kept || seen_as_card);
+        let card = impostors && select(seen_as_card, impostor <= limits.y, kept);
         if record.radius < limits.x || (card && view != 0u && !kept)
             || !inside(view, record.center, record.radius) {
             continue;

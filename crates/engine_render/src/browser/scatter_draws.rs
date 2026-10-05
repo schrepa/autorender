@@ -236,6 +236,7 @@ impl Renderer {
             (
                 &maps,
                 self.shadows.kept_refresh(),
+                self.shadows.level_refresh(),
                 self.shadows.map_resolution(),
             ),
         )
