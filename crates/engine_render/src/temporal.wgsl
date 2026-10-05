@@ -92,7 +92,8 @@ fn fs_resolve(@builtin(position) position: vec4<f32>) -> Outputs {
     let screen = position.xy * resolve.texel;
     // The neighborhood darkens with this pixel: its box scales alike.
     let effects = screen_effects(occlusion, history_sampler, screen, post);
-    let shade = occlusion_factor(texel.a, effects.x, post);
+    let shade = occlusion_factor(texel.a, effects.x, post)
+        * contact_factor(texel.a, effects.z, post);
     let current = texel.rgb * shade;
     var color = current;
     let offset = textureLoad(motion, pixel, 0).xy;

@@ -11,9 +11,9 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, GroundCover, InvalidSetting,
-    LevelOfDetail, LocalLights, Occupancy, Particles, ReflectionProbes, Reflections, Refraction,
-    Shadows, SunShafts, TerrainSettings, VirtualGeometry, Wind,
+    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Environment, GroundCover,
+    InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Particles, ReflectionProbes,
+    Reflections, Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Wind,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -278,6 +278,7 @@ section!(TerrainSettings, since 9, opt_in false);
 section!(GroundCover, since 9, opt_in false);
 section!(Wind, since 9, opt_in false);
 section!(Occupancy, since 9, opt_in false);
+section!(ContactShadows, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -333,6 +334,10 @@ pub struct SceneEnvironment {
     /// (decision 059).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub occupancy: Option<Occupancy>,
+    /// Short rays toward the sun shade what shadow maps cannot hold
+    /// (decision 062).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_shadows: Option<ContactShadows>,
 }
 
 impl SceneEnvironment {
@@ -359,6 +364,7 @@ impl SceneEnvironment {
             ground_cover: Some(environment.ground_cover),
             wind: Some(environment.wind),
             occupancy: Some(environment.occupancy),
+            contact_shadows: Some(environment.contact_shadows),
         }
     }
 
@@ -381,6 +387,7 @@ impl SceneEnvironment {
         visitor.section("ground_cover", self.ground_cover);
         visitor.section("wind", self.wind);
         visitor.section("occupancy", self.occupancy);
+        visitor.section("contact_shadows", self.contact_shadows);
     }
 
     /// The names of the sections present, the atmosphere first.

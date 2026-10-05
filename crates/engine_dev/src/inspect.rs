@@ -448,6 +448,9 @@ fn section_description(name: &str) -> &'static str {
         "occupancy" => {
             "Occupancy settings (decision 059): a top-down map around the camera of what placed objects cover, their tops and bottoms, which darkens the sky light of what lies under or within them: forest floors, the lower crowns of trees and the ground at a boulder's foot. Its reach from the camera, texels a side, and how much sky light full cover takes away. Missing means no darkening. The rendering observation reports the map's redraws and the objects drawn into it."
         }
+        "contact_shadows" => {
+            "Contact shadow settings (decision 062): short rays toward the sun through the depth buffer shade what shadow maps are too coarse to hold, such as grass on the ground, the feet of small objects and the gaps between stones. Whether they trace, each ray's reach in meters, how much of the sun's light a hit takes away, and the distance from the camera within which surfaces trace. Missing means none. The rendering observation reports whether a frame traced them."
+        }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }

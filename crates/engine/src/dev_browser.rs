@@ -174,6 +174,7 @@ impl DevBrowser {
                 ground_cover,
                 wind,
                 occupancy,
+                contact_shadows,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -196,6 +197,7 @@ impl DevBrowser {
                     ground_cover,
                     wind,
                     occupancy,
+                    contact_shadows,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());

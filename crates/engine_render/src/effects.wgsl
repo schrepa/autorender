@@ -28,6 +28,12 @@ struct Post {
     shafts: vec4<f32>,
     // The sun's exposed color: light the shafts scatter.
     sun: vec4<f32>,
+    // Contact shadows (decision 062): each ray's reach in meters, the share
+    // of sunlight a hit takes away, the distance within which surfaces
+    // trace, and 1 when they run.
+    contact: vec4<f32>,
+    // The unit direction toward the sun.
+    sun_direction: vec4<f32>,
 }
 
 // The full-resolution pixel quarter-resolution sun shaft texel `texel`
@@ -37,19 +43,20 @@ fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
     return texel * 4 + vec2<i32>(1);
 }
 
-// The ambient occlusion's visibility (x) and the sun shafts' light (y) at
-// `uv`, which the half-resolution filter of post.wgsl writes together: four
-// bilinear taps around the pixel smooth them over three texels.
+// The ambient occlusion's visibility (x), the sun shafts' light (y) and the
+// contact shadows' visibility (z) at `uv`, which the half-resolution filter
+// of post.wgsl writes together: four bilinear taps around the pixel smooth
+// them over three texels.
 fn screen_effects(effects: texture_2d<f32>, linear: sampler, uv: vec2<f32>,
-        settings: Post) -> vec2<f32> {
-    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 {
-        return vec2<f32>(1.0, 0.0);
+        settings: Post) -> vec3<f32> {
+    if settings.occlusion.w == 0.0 && settings.shafts.w == 0.0 && settings.contact.w == 0.0 {
+        return vec3<f32>(1.0, 0.0, 1.0);
     }
     let t = settings.bloom.zw * 0.5;
-    return (textureSampleLevel(effects, linear, uv - t, 0.0).rg
-        + textureSampleLevel(effects, linear, uv + vec2<f32>(t.x, -t.y), 0.0).rg
-        + textureSampleLevel(effects, linear, uv + vec2<f32>(-t.x, t.y), 0.0).rg
-        + textureSampleLevel(effects, linear, uv + t, 0.0).rg) * 0.25;
+    return (textureSampleLevel(effects, linear, uv - t, 0.0).rgb
+        + textureSampleLevel(effects, linear, uv + vec2<f32>(t.x, -t.y), 0.0).rgb
+        + textureSampleLevel(effects, linear, uv + vec2<f32>(-t.x, t.y), 0.0).rgb
+        + textureSampleLevel(effects, linear, uv + t, 0.0).rgb) * 0.25;
 }
 
 // The factor darkening a pixel whose light has an ambient share of
@@ -59,6 +66,15 @@ fn occlusion_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
         return 1.0;
     }
     return 1.0 - ambient * (1.0 - visible);
+}
+
+// The factor darkening the rest of that light, the sun's, by the contact
+// shadows' `visible` share (decision 062).
+fn contact_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
+    if settings.contact.w == 0.0 {
+        return 1.0;
+    }
+    return 1.0 - (1.0 - ambient) * (1.0 - visible);
 }
 
 // The scene reflected at `uv` (decision 025) replacing the share of `color`

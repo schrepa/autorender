@@ -1104,7 +1104,8 @@ impl Renderer {
             || snapshot.environment.bloom.sanitized().enabled()
             || snapshot.environment.reflections.sanitized().enabled()
             || (snapshot.environment.sun_shafts.sanitized().enabled()
-                && snapshot.environment.shadows.enabled);
+                && snapshot.environment.shadows.enabled)
+            || snapshot.environment.contact_shadows.sanitized().traces();
         // Glass refracts the opaque color of the scene target (decision
         // 038): frames drawing it render into the target.
         let refraction = snapshot.environment.refraction.enabled()
@@ -1412,6 +1413,7 @@ impl Renderer {
                 bloom: frame.bloom,
                 reflections: frame.reflections,
                 shafts: frame.shafts,
+                contact: frame.contact,
             }),
             probes: kind.gpu_mode && !features.probe_list.is_empty(),
         }

@@ -7,6 +7,7 @@
 mod animation;
 mod atmosphere;
 mod clock;
+mod contact_shadows;
 mod culling;
 mod decals;
 mod effects;
@@ -37,6 +38,7 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
+pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
 pub use effects::{
     AmbientOcclusion, Bloom, MAX_SHADOW_CASCADES, Reflections, Refraction, Shadows, SunShafts,
@@ -293,6 +295,7 @@ impl Engine {
             .init_resource::<GroundCover>()
             .init_resource::<Wind>()
             .init_resource::<Occupancy>()
+            .init_resource::<ContactShadows>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -823,7 +826,7 @@ pub mod prelude {
         Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
-    pub use crate::{Cover, GroundCover, Occupancy, Wind};
+    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{

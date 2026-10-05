@@ -82,6 +82,8 @@ pub struct RenderStats {
     pub shadow_kept_casters: Option<u32>,
     /// Whether this frame applied ambient occlusion and bloom (decision 021).
     pub ambient_occlusion: bool,
+    /// Whether the frame traced contact shadows (decision 062).
+    pub contact_shadows: bool,
     pub bloom: bool,
     /// Local lights the frame shaded within the budget (decision 023), and
     /// usable lights beyond it or without a valid pose.
