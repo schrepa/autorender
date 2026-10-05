@@ -250,6 +250,58 @@
         "share"
       ]
     },
+    "HydrologyLayer": {
+      "description": "A layer that bakes where water runs over the layers below it and carves\nchannels into them (decision 066).",
+      "type": "object",
+      "properties": {
+        "channel_area": {
+          "description": "Square meters of upstream area where channels begin, 100 to 1e10.",
+          "type": "number",
+          "format": "float",
+          "default": 200000.0,
+          "maximum": 10000000000.0,
+          "minimum": 100.0
+        },
+        "depth": {
+          "description": "Meters deep and wide channels are where they begin; downstream their\ndepth grows with the fourth root and their width with the square\nroot of the area they drain, up to `max_depth` and `max_width`.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "level": {
+          "description": "The pyramid level whose samples the bake reads: finer levels carve\nnarrower channels and take longer, 0 to 15.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "maximum": 15,
+          "minimum": 0
+        },
+        "max_depth": {
+          "type": "number",
+          "format": "float",
+          "default": 6.0,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "max_width": {
+          "type": "number",
+          "format": "float",
+          "default": 60.0,
+          "maximum": 1000.0,
+          "minimum": 0.1
+        },
+        "width": {
+          "type": "number",
+          "format": "float",
+          "default": 6.0,
+          "maximum": 1000.0,
+          "minimum": 0.1
+        }
+      },
+      "additionalProperties": false
+    },
     "Mask": {
       "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, or where a material\ncovers its biome's ground. Ramps run from 0 at their first value to 1 at\ntheir second, smoothly, falling when the first is the larger.",
       "oneOf": [
@@ -322,6 +374,63 @@
           "additionalProperties": false,
           "required": [
             "curvature"
+          ]
+        },
+        {
+          "description": "A ramp over the base-10 logarithm of the area draining through the\nground, in square meters, as the terrain's hydrology bake found it\n(decision 066): channels begin near its channel area. 0 without one.",
+          "type": "object",
+          "properties": {
+            "flow": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "flow"
+          ]
+        },
+        {
+          "description": "A ramp over the bake's wetness index, ln(a / tan b): about 5 on\nsteep ground, 10 and more in hollows and along streams.",
+          "type": "object",
+          "properties": {
+            "wetness": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "wetness"
+          ]
+        },
+        {
+          "description": "A ramp over how deep water would stand in a filled pit, in meters.",
+          "type": "object",
+          "properties": {
+            "lake": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "lake"
           ]
         },
         {
@@ -3071,7 +3180,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), or an imported heightmap.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, or a\nhydrology bake (decision 066) of the layers before it, which carves\nchannels where water gathers and feeds the `flow`, `wetness` and\n`lake` masks. Terrains load no tiles until their bake is done.",
       "oneOf": [
         {
           "type": "object",
@@ -3107,6 +3216,18 @@
           "additionalProperties": false,
           "required": [
             "heightmap"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "hydrology": {
+              "$ref": "#/$defs/HydrologyLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "hydrology"
           ]
         }
       ]

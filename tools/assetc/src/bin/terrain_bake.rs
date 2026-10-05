@@ -7,7 +7,7 @@
 //! ```
 //!
 //! `ENTITY` names the scene entity whose `terrain` has layers; heightmap
-//! files load from beside the scene. Heights are quantized to `STEP` meters
+//! files load from beside the scene, and hydrology layers bake first. Heights are quantized to `STEP` meters
 //! (default 1/256).
 
 use std::path::Path;
@@ -69,6 +69,8 @@ fn run() -> Result<(), String> {
     let pyramid = terrain.pyramid;
     let total = pyramid.tile_count();
     let start = Instant::now();
+    // Hydrology (decision 066) bakes before tiles generate from it.
+    let layers = &Arc::new(layers.bake_all(&pyramid));
     let mut done = 0;
     let bytes = engine_core::terrain_data::encode_file(&pyramid, step, |key| {
         let mut generator = Generator::new(Arc::clone(layers), &pyramid, key);

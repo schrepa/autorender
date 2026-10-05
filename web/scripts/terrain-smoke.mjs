@@ -27,6 +27,9 @@ const terrain = {
   origin: [-512, 0, -512], tiles: [4, 4], spacing: 1,
   layers: [
     { noise: { seed: 3, height: 140, wavelength: 600 } },
+    // Decision 066: water drains off the hills, carving channels, baked
+    // over the two-meter tiles before any tile loads.
+    { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
@@ -176,8 +179,9 @@ try {
   assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
-  assert.equal(view.terrain.layers.length, 4);
-  assert.equal(view.terrain.layers[3].heightmap.uri, "terrain-smoke/dome.r16");
+  assert.equal(view.terrain.layers.length, 5);
+  assert.deepEqual(view.terrain.layers[1], terrain.layers[1]);
+  assert.equal(view.terrain.layers[4].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
@@ -191,6 +195,15 @@ try {
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
+  // The hydrology bake (decision 066) read every sample of the two-meter
+  // tiles, found channels, and queries report what it found where they ask.
+  const water = view.hydrology;
+  assert.equal(water.baking, false, "the bake is done once tiles load");
+  assert.equal(water.samples, 513 * 513, `the bake reads its level: ${JSON.stringify(water)}`);
+  assert.ok(water.channel_samples > 0 && water.max_area > 20000, `water gathers into channels: ${JSON.stringify(water)}`);
+  const [watered] = (await command("terrain_height", { points: [[-300, -300]] })).result.samples;
+  assert.ok(watered.water && watered.water.flow > 0 && Number.isFinite(watered.water.wetness), `queries report water: ${JSON.stringify(watered)}`);
+  checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
   const [plateau, hole, outside] = await heights([[0, 0], [48, 0], [5000, 5000]]);

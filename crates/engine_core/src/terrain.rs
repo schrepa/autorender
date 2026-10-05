@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator, Layers,
-    LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap, Selection, TILE_STRIDE, Tile, TileKey,
-    TileSample, WantedTile, decode_tile,
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator,
+    HydrologyBake, HydrologyStats, Layers, LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap,
+    Selection, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -696,6 +696,9 @@ pub struct TerrainStats {
     /// levels not resident yet.
     pub patches: u32,
     pub fallback_patches: u32,
+    /// Terrains whose hydrology bakes (decision 066) are in progress: they
+    /// load no tiles until done.
+    pub hydrology_baking: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -728,6 +731,11 @@ struct TerrainState {
     errors: Vec<f32>,
     /// The ranges the last selection used.
     ranges: Vec<f32>,
+    /// The layers tiles generate from once its hydrology bakes (decision
+    /// 066), the bake in progress, and what the last one found.
+    baked: Option<Arc<Layers>>,
+    bake: Option<HydrologyBake>,
+    hydrology: Option<HydrologyStats>,
 }
 
 impl TerrainState {
@@ -746,6 +754,9 @@ impl TerrainState {
             revision: 1,
             errors: vec![0.0; levels],
             ranges: Vec::new(),
+            baked: None,
+            bake: None,
+            hydrology: None,
         }
     }
 
@@ -893,6 +904,30 @@ impl Terrains {
             .iter()
             .find(|state| state.entity == entity)
             .map(|state| &state.terrain)
+    }
+
+    /// The layers `entity`'s tiles generate from: its own, with their
+    /// hydrology baked once it is (decision 066); `None` for terrains read
+    /// from files.
+    pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
+        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        match &state.terrain.source {
+            TerrainSource::Generated(layers) => {
+                Some(state.baked.clone().unwrap_or_else(|| layers.clone()))
+            }
+            TerrainSource::File { .. } => None,
+        }
+    }
+
+    /// Whether `entity`'s hydrology bake (decision 066) is in progress,
+    /// and what the last one found.
+    pub fn hydrology(&self, entity: Entity) -> (bool, Option<HydrologyStats>) {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity)
+            .map_or((false, None), |state| {
+                (state.bake.is_some(), state.hydrology)
+            })
     }
 
     /// Each level's largest measured height difference from the next
@@ -1100,7 +1135,24 @@ impl Terrains {
                 .filter(|key| settings.enabled && !state.tiles.contains_key(key))
                 .collect();
             match state.terrain.source.clone() {
-                TerrainSource::Generated(layers) => {
+                TerrainSource::Generated(authored) => {
+                    // Hydrology (decision 066) bakes before any tile loads,
+                    // reading the layers below it.
+                    let layers = state.baked.clone().unwrap_or(authored);
+                    if let Some(unbaked) = layers.unbaked() {
+                        stats.hydrology_baking += 1;
+                        let bake = state
+                            .bake
+                            .get_or_insert_with(|| HydrologyBake::new(&layers, unbaked, &pyramid));
+                        let _profile = engine_profile::span("cpu", "hydrology_bake");
+                        if let Some(baked) = bake.advance(&pyramid, &mut budget) {
+                            state.hydrology = Some(baked.stats);
+                            state.baked =
+                                Some(Arc::new(layers.with_bake(unbaked.0, Arc::new(baked))));
+                            state.bake = None;
+                        }
+                        continue;
+                    }
                     // The coarsest level always draws: generate it whole at once.
                     let first = state.tiles.is_empty();
                     for key in missing {

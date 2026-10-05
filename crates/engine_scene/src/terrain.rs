@@ -6,10 +6,10 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle,
-    MeshHandle, NoiseLayer, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
-    TerrainSurface,
+    Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage,
+    Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer, PlacedCollider, PlacedShape,
+    PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp, SurfaceMaterial,
+    SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -267,7 +267,10 @@ impl PreparedTerrain {
 }
 
 /// One layer of a terrain's stack: procedural noise with erosion, a stamp
-/// (raise, lower, flatten or cut holes), or an imported heightmap.
+/// (raise, lower, flatten or cut holes), an imported heightmap, or a
+/// hydrology bake (decision 066) of the layers before it, which carves
+/// channels where water gathers and feeds the `flow`, `wetness` and
+/// `lake` masks. Terrains load no tiles until their bake is done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -275,6 +278,7 @@ pub enum SceneTerrainLayer {
     Noise(NoiseLayer),
     Stamp(Stamp),
     Heightmap(SceneHeightmap),
+    Hydrology(HydrologyLayer),
 }
 
 /// An imported heightmap: a file of little-endian 16-bit samples, row by row
@@ -576,6 +580,10 @@ impl SceneTerrain {
                     SceneTerrainLayer::Heightmap(map) => {
                         Layer::Heightmap(map.prepare(&format!("{at}.heightmap"), files)?)
                     }
+                    SceneTerrainLayer::Hydrology(layer) => Layer::Hydrology(HydrologyStage {
+                        layer: *layer,
+                        baked: None,
+                    }),
                 })
             })
             .collect::<Result<Vec<_>, SceneError>>()?;
@@ -647,6 +655,7 @@ impl SceneTerrain {
                 .map(|layer| match layer {
                     Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
                     Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
+                    Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
                     Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
                         uri: map.uri.clone().unwrap_or_default(),
                         width: map.image.width(),

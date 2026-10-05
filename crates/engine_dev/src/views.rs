@@ -17,6 +17,22 @@ pub struct TerrainView {
     /// measured), and meters from the eye it draws to.
     pub level_errors: Vec<f32>,
     pub level_ranges: Vec<f32>,
+    /// Its hydrology bake (decision 066), when its layers hold one.
+    pub hydrology: Option<HydrologyView>,
+}
+
+/// A terrain's hydrology bake (decision 066): whether it is in progress
+/// (tiles wait for it), and once done the samples it read, those channels
+/// run through, those of filled pits and the largest area draining through
+/// one (square meters).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct HydrologyView {
+    pub baking: bool,
+    pub samples: Option<usize>,
+    pub channel_samples: Option<usize>,
+    pub lake_samples: Option<usize>,
+    pub max_area: Option<f32>,
 }
 
 /// Terrain streaming at the last extraction (decision 051).
@@ -29,6 +45,8 @@ pub struct TerrainsView {
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,
+    /// Terrains whose hydrology bakes (decision 066) are in progress.
+    pub hydrology_baking: u32,
 }
 
 /// An animation player (decision 035) in the shape of a scene version 8

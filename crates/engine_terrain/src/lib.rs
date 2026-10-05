@@ -19,6 +19,7 @@
 //! renderers, collision and [`Tile::height_at`] use the same split.
 
 mod format;
+mod hydrology;
 mod layers;
 mod noise;
 mod placement;
@@ -31,8 +32,13 @@ pub use format::{
     FileHeader, FileTile, FormatError, TERRAIN_FILE_MAGIC, TERRAIN_FILE_VERSION, decode_tile,
     encode_file,
 };
+pub use hydrology::{
+    FLOW_RANGE, Hydrology, HydrologyBake, HydrologyLayer, HydrologySample, HydrologyStats,
+    LAKE_RANGE, WETNESS_RANGE, bake as bake_hydrology,
+};
 pub use layers::{
-    Blend, HeightImage, HeightmapLayer, Layer, LayerError, Layers, NoiseLayer, Stamp, StampOp,
+    Blend, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers, NoiseLayer,
+    Stamp, StampOp,
 };
 pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
 pub use pyramid::{Pyramid, PyramidError, TileKey};

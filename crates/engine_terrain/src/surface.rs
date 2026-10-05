@@ -40,6 +40,15 @@ pub enum Mask {
     /// A ramp over the ground's curvature: how fast its slope grows per
     /// meter, positive in hollows and valleys, negative on ridges.
     Curvature([f32; 2]),
+    /// A ramp over the base-10 logarithm of the area draining through the
+    /// ground, in square meters, as the terrain's hydrology bake found it
+    /// (decision 066): channels begin near its channel area. 0 without one.
+    Flow([f32; 2]),
+    /// A ramp over the bake's wetness index, ln(a / tan b): about 5 on
+    /// steep ground, 10 and more in hollows and along streams.
+    Wetness([f32; 2]),
+    /// A ramp over how deep water would stand in a filled pit, in meters.
+    Lake([f32; 2]),
     /// Gradient noise from 0 to 1.
     Noise(NoiseMask),
     /// The product of masks.
@@ -165,6 +174,9 @@ pub(crate) enum Compiled {
     Height([f32; 2]),
     Gradient([f32; 2]),
     Curvature([f32; 2]),
+    Flow([f32; 2]),
+    Wetness([f32; 2]),
+    Lake([f32; 2]),
     Noise {
         frequency: f32,
         seed: u32,
@@ -191,6 +203,9 @@ pub struct SampleInputs {
     pub gradient: f32,
     pub curvature: f32,
     pub spacing: f32,
+    /// What the terrain's hydrology bake found there (decision 066); zeros
+    /// without one.
+    pub water: crate::HydrologySample,
 }
 
 /// 0 at `ends[0]`, 1 at `ends[1]`, smooth between; a step where they meet.
@@ -257,6 +272,24 @@ impl Compiled {
                 }
                 Self::Curvature(*ends)
             }
+            Mask::Flow(ends) => {
+                if !finite(ends) {
+                    return Err(fail("flows must be finite"));
+                }
+                Self::Flow(*ends)
+            }
+            Mask::Wetness(ends) => {
+                if !finite(ends) {
+                    return Err(fail("wetness must be finite"));
+                }
+                Self::Wetness(*ends)
+            }
+            Mask::Lake(ends) => {
+                if !finite(ends) {
+                    return Err(fail("lake depths must be finite"));
+                }
+                Self::Lake(*ends)
+            }
             Mask::Noise(noise) => {
                 if !(noise.wavelength.is_finite() && (0.01..=1.0e6).contains(&noise.wavelength)) {
                     return Err(fail("noise wavelength must be in [0.01, 1e6] meters"));
@@ -299,7 +332,12 @@ impl Compiled {
     pub(crate) fn cost(&self) -> u64 {
         match self {
             Self::Constant(_) => 0,
-            Self::Height(_) | Self::Gradient(_) | Self::Curvature(_) => 1,
+            Self::Height(_)
+            | Self::Gradient(_)
+            | Self::Curvature(_)
+            | Self::Flow(_)
+            | Self::Wetness(_)
+            | Self::Lake(_) => 1,
             Self::Noise { octaves, .. } => 2 * u64::from(*octaves),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
                 masks.iter().map(Self::cost).sum::<u64>() + 1
@@ -314,6 +352,9 @@ impl Compiled {
             Self::Height(ends) => ramp(inputs.height, *ends),
             Self::Gradient(ends) => ramp(inputs.gradient, *ends),
             Self::Curvature(ends) => ramp(inputs.curvature, *ends),
+            Self::Flow(ends) => ramp(inputs.water.flow, *ends),
+            Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
+            Self::Lake(ends) => ramp(inputs.water.lake, *ends),
             Self::Noise {
                 frequency,
                 seed,
@@ -499,8 +540,16 @@ impl BiomeRules {
         tile: &crate::Tile,
         (layer, row): (usize, usize),
         out: &mut Vec<crate::Placed>,
+        water: Option<&crate::Hydrology>,
     ) -> (u64, Option<(usize, usize)>) {
-        crate::placement::place_row(&self.placements, tile, 0x5eed_0057, (layer, row), out)
+        crate::placement::place_row(
+            &self.placements,
+            tile,
+            0x5eed_0057,
+            (layer, row),
+            out,
+            water,
+        )
     }
 
     /// Work units of one sample's control value, against one per sample
