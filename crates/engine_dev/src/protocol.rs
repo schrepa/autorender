@@ -188,6 +188,7 @@ pub enum TerrainViewRequest {
     Levels,
     Normals,
     Tiles,
+    Materials,
 }
 
 fn default_limit() -> usize {

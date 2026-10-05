@@ -145,25 +145,89 @@ impl Stamp {
     }
 }
 
-/// 16-bit height samples of an imported heightmap, row by row along z.
+/// 16-bit height samples of an imported heightmap, row by row along z,
+/// with coarser levels for coarser terrain.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightImage {
     width: u32,
     height: u32,
     samples: Box<[u16]>,
+    levels: Vec<ImageLevel>,
+}
+
+/// A coarser level of a [`HeightImage`]: every other sample of the level
+/// before, filtered `[1, 2, 1] / 4` along each axis, so terrain levels whose
+/// samples lie further apart than the image's read it without aliasing.
+#[derive(Clone, Debug, PartialEq)]
+struct ImageLevel {
+    width: u32,
+    height: u32,
+    samples: Box<[f32]>,
+}
+
+impl ImageLevel {
+    /// The level after one `width` by `height` holding `samples`.
+    fn below(width: u32, height: u32, samples: &[f32]) -> Self {
+        let half = |size: u32| (size - 1).div_ceil(2) + 1;
+        let (next_width, next_height) = (half(width), half(height));
+        let at = |x: i64, z: i64| {
+            let x = x.clamp(0, i64::from(width) - 1) as usize;
+            let z = z.clamp(0, i64::from(height) - 1) as usize;
+            samples[z * width as usize + x]
+        };
+        // Along x first, then along z, each `[1, 2, 1] / 4`.
+        let mut rows = vec![0.0_f32; next_width as usize * height as usize];
+        for z in 0..i64::from(height) {
+            for x in 0..i64::from(next_width) {
+                let center = 2 * x;
+                rows[z as usize * next_width as usize + x as usize] =
+                    0.25 * at(center - 1, z) + 0.5 * at(center, z) + 0.25 * at(center + 1, z);
+            }
+        }
+        let row = |x: i64, z: i64| {
+            let z = z.clamp(0, i64::from(height) - 1) as usize;
+            rows[z * next_width as usize + x as usize]
+        };
+        let mut next = vec![0.0_f32; next_width as usize * next_height as usize];
+        for z in 0..i64::from(next_height) {
+            for x in 0..i64::from(next_width) {
+                let center = 2 * z;
+                next[z as usize * next_width as usize + x as usize] =
+                    0.25 * row(x, center - 1) + 0.5 * row(x, center) + 0.25 * row(x, center + 1);
+            }
+        }
+        Self {
+            width: next_width,
+            height: next_height,
+            samples: next.into_boxed_slice(),
+        }
+    }
 }
 
 impl HeightImage {
     /// `samples` holds `width * height` values, row by row; at least two
     /// along each axis.
     pub fn new(width: u32, height: u32, samples: Vec<u16>) -> Option<Self> {
-        (width >= 2 && height >= 2 && samples.len() == width as usize * height as usize).then(
-            || Self {
-                width,
-                height,
-                samples: samples.into_boxed_slice(),
-            },
-        )
+        if !(width >= 2 && height >= 2 && samples.len() == width as usize * height as usize) {
+            return None;
+        }
+        let mut levels: Vec<ImageLevel> = Vec::new();
+        let mut current: (u32, u32, Vec<f32>) = (
+            width,
+            height,
+            samples.iter().map(|&sample| f32::from(sample)).collect(),
+        );
+        while current.0 > 2 || current.1 > 2 {
+            let level = ImageLevel::below(current.0, current.1, &current.2);
+            current = (level.width, level.height, level.samples.to_vec());
+            levels.push(level);
+        }
+        Some(Self {
+            width,
+            height,
+            samples: samples.into_boxed_slice(),
+            levels,
+        })
     }
 
     /// Little-endian 16-bit samples (`.r16` files), row by row.
@@ -188,33 +252,56 @@ impl HeightImage {
         self.height
     }
 
-    #[inline]
-    fn texel(&self, x: i32, z: i32) -> f32 {
-        let x = x.clamp(0, self.width as i32 - 1) as usize;
-        let z = z.clamp(0, self.height as i32 - 1) as usize;
-        f32::from(self.samples[z * self.width as usize + x])
+    /// How many coarser levels follow the image's own samples.
+    pub fn levels(&self) -> usize {
+        self.levels.len()
     }
 
-    /// Catmull-Rom interpolation at image coordinates `(u, v)` in samples,
-    /// 0 to 65535, edges clamped.
+    /// Catmull-Rom interpolation at image coordinates `(u, v)` in the
+    /// image's own samples, 0 to 65535, edges clamped, read from `level`
+    /// (0 the image's samples, each one after twice as far apart).
     #[inline]
-    fn sample(&self, u: f32, v: f32) -> f32 {
-        let u0 = u.floor();
-        let v0 = v.floor();
-        let (x, z) = (u0 as i32, v0 as i32);
-        let wx = catmull_rom(u - u0);
-        let wz = catmull_rom(v - v0);
-        let mut sum = 0.0;
-        for (row, weight_z) in wz.iter().enumerate() {
-            let zi = z - 1 + row as i32;
-            let line = wx[0] * self.texel(x - 1, zi)
-                + wx[1] * self.texel(x, zi)
-                + wx[2] * self.texel(x + 1, zi)
-                + wx[3] * self.texel(x + 2, zi);
-            sum += weight_z * line;
+    fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
+        match level
+            .checked_sub(1)
+            .and_then(|index| self.levels.get(index))
+        {
+            None => catmull_rom_2d(u, v, |x, z| {
+                let x = x.clamp(0, self.width as i32 - 1) as usize;
+                let z = z.clamp(0, self.height as i32 - 1) as usize;
+                f32::from(self.samples[z * self.width as usize + x])
+            }),
+            Some(coarse) => {
+                // Exact: a power of two.
+                let scale = 1.0 / (1_u32 << level) as f32;
+                catmull_rom_2d(u * scale, v * scale, |x, z| {
+                    let x = x.clamp(0, coarse.width as i32 - 1) as usize;
+                    let z = z.clamp(0, coarse.height as i32 - 1) as usize;
+                    coarse.samples[z * coarse.width as usize + x]
+                })
+            }
         }
-        sum
     }
+}
+
+/// Catmull-Rom interpolation at `(u, v)` of the samples `texel` reads.
+#[inline(always)]
+fn catmull_rom_2d(u: f32, v: f32, texel: impl Fn(i32, i32) -> f32) -> f32 {
+    let u0 = u.floor();
+    let v0 = v.floor();
+    let (x, z) = (u0 as i32, v0 as i32);
+    let wx = catmull_rom(u - u0);
+    let wz = catmull_rom(v - v0);
+    let mut sum = 0.0;
+    for (row, weight_z) in wz.iter().enumerate() {
+        let zi = z - 1 + row as i32;
+        let line = wx[0] * texel(x - 1, zi)
+            + wx[1] * texel(x, zi)
+            + wx[2] * texel(x + 1, zi)
+            + wx[3] * texel(x + 2, zi);
+        sum += weight_z * line;
+    }
+    sum
 }
 
 /// Catmull-Rom weights of the four samples around fraction `t`.
@@ -247,9 +334,27 @@ pub struct HeightmapLayer {
 }
 
 impl HeightmapLayer {
-    /// The layer's height and coverage at terrain-local `(x, z)`.
+    /// The image level terrain samples `spacing` meters apart read: the
+    /// coarsest whose samples lie no further apart than the terrain's, so
+    /// neighboring terrain levels differ only by the detail the coarser one
+    /// leaves out.
+    fn level_for(&self, spacing: f32) -> usize {
+        let image = &self.image;
+        let texel = max(
+            self.size.x / (image.width - 1) as f32,
+            self.size.y / (image.height - 1) as f32,
+        );
+        let mut level = 0;
+        while level < image.levels() && texel * (2_u32 << level) as f32 <= spacing * 1.0001 {
+            level += 1;
+        }
+        level
+    }
+
+    /// The layer's height and coverage at terrain-local `(x, z)`, from
+    /// image level `level`.
     #[inline]
-    fn at(&self, x: f32, z: f32) -> (f32, f32) {
+    fn at(&self, x: f32, z: f32, level: usize) -> (f32, f32) {
         let local = Vec2::new(x, z) - self.min;
         let inside = min(
             min(local.x, self.size.x - local.x),
@@ -265,7 +370,7 @@ impl HeightmapLayer {
         };
         let u = local.x / self.size.x * (self.image.width - 1) as f32;
         let v = local.y / self.size.y * (self.image.height - 1) as f32;
-        let value = self.image.sample(u, v) * (1.0 / 65_535.0);
+        let value = self.image.sample(u, v, level) * (1.0 / 65_535.0);
         (self.low + (self.high - self.low) * value, weight)
     }
 }
@@ -772,8 +877,8 @@ impl Layers {
         row: &mut [f32],
         xs: &[f32],
         z: f32,
-        min: Vec2,
-        max: Vec2,
+        (min, max): (Vec2, Vec2),
+        spacing: f32,
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
@@ -797,8 +902,9 @@ impl Layers {
                 {
                     return;
                 }
+                let level = map.level_for(spacing);
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    let (value, weight) = map.at(x, z);
+                    let (value, weight) = map.at(x, z, level);
                     *height = map.blend.apply(*height, value, weight);
                 }
             }

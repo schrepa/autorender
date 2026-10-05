@@ -23,6 +23,7 @@ mod layers;
 mod noise;
 mod pyramid;
 mod select;
+mod surface;
 mod tile;
 
 pub use format::{
@@ -34,6 +35,10 @@ pub use layers::{
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use select::{LodRanges, Patch, Selection, WantedTile, select_patches, wanted_tiles};
+pub use surface::{
+    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
+    Mask, NoiseMask, Remap, SampleInputs,
+};
 pub use tile::{Generator, Tile, TileSample};
 
 /// Quads along each side of a tile.

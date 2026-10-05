@@ -24,19 +24,13 @@ struct TerrainView {
 @group(1) @binding(18) var<uniform> terrain_view: TerrainView;
 
 // One terrain: its anchor less its eye (w: the level-0 spacing), that eye's
-// world position, its origin, and its material (decision 051): linear grass,
-// dirt, rock and snow colors; grass's w its roughness, rock's the cosine of
-// the slope rock takes over at, snow's the height snow starts at above the
-// origin; and where its levels start in `terrain_directory` and how many
-// there are.
+// world position, its origin (w: what it shows), where its levels start in
+// `terrain_directory` and how many there are, and where its surface
+// materials start in `terrain_palette` (decision 054).
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
     origin: vec4<f32>,
-    grass: vec4<f32>,
-    dirt: vec4<f32>,
-    rock: vec4<f32>,
-    snow: vec4<f32>,
     directory: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;

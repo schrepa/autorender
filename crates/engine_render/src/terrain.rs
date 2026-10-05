@@ -45,6 +45,12 @@ const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 /// Each tile's normals, filtered.
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
+/// Each tile's control values (decision 054): its samples' two strongest
+/// materials, their blend and biome, read texel by texel.
+const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// Surface materials every terrain together can show: the palette's 16 KiB
+/// uniform, the smallest uniform binding devices guarantee, at 32 bytes each.
+const PALETTE_ENTRIES: usize = 512;
 /// A directory entry of a tile not resident.
 const NOT_RESIDENT: u32 = u32::MAX;
 
@@ -78,12 +84,12 @@ struct TerrainUniform {
     anchor: [f32; 4],
     eye: [f32; 4],
     origin: [f32; 4],
-    grass: [f32; 4],
-    dirt: [f32; 4],
-    rock: [f32; 4],
-    snow: [f32; 4],
     directory: [u32; 4],
 }
+
+/// WGSL `TerrainPaletteEntry`: a surface material's linear color and
+/// roughness, then its tiling, height contrast and projection.
+type PaletteEntry = [f32; 8];
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
 /// every patch (for probe faces) and each shadow map's. The camera's and
@@ -141,6 +147,8 @@ pub(crate) struct TerrainViews<'a> {
 struct Atlas {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    control: wgpu::Texture,
+    control_view: wgpu::TextureView,
     normals: wgpu::Texture,
     normals_view: wgpu::TextureView,
     layers: u32,
@@ -191,6 +199,14 @@ pub(crate) struct TerrainPass {
     directory_written: Vec<u32>,
     directory_generation: u64,
     directory_bases: Vec<u32>,
+    // Every terrain's surface materials (decision 054), where each
+    // terrain's start, and what the buffer holds.
+    palette: wgpu::Buffer,
+    palette_bases: Vec<u32>,
+    palette_written: Vec<PaletteEntry>,
+    /// Surface materials past the palette's capacity, which show the
+    /// palette's first instead.
+    pub(crate) dropped_materials: u32,
 }
 
 impl TerrainPass {
@@ -251,6 +267,14 @@ impl TerrainPass {
             directory_written: Vec::new(),
             directory_generation: 0,
             directory_bases: Vec::new(),
+            palette: crate::buffers::uniform(
+                device,
+                "engine/terrain-palette",
+                (PALETTE_ENTRIES * size_of::<PaletteEntry>()) as u64,
+            ),
+            palette_bases: Vec::new(),
+            palette_written: Vec::new(),
+            dropped_materials: 0,
         }
     }
 
@@ -264,10 +288,11 @@ impl TerrainPass {
         self.slots.len() as u32
     }
 
-    /// Bytes of the height and normal arrays and the horizon maps.
+    /// Bytes of the height, normal and control arrays and the horizon
+    /// maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.as_ref().map_or(0, |atlas| {
-            u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 8
+            u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 12
         }) + self.horizons.capacity_bytes()
     }
 
@@ -300,6 +325,7 @@ impl TerrainPass {
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
         self.write_directory(device, queue, terrains);
+        self.write_palette(queue, terrains);
         self.horizons.prepare(
             device,
             queue,
@@ -335,11 +361,12 @@ impl TerrainPass {
                 engine_core::TerrainView::Levels => 1.0,
                 engine_core::TerrainView::Normals => 2.0,
                 engine_core::TerrainView::Tiles => 3.0,
+                engine_core::TerrainView::Materials => 4.0,
             };
             let directory = [
                 self.directory_bases.get(index).copied().unwrap_or(0),
                 terrain.pyramid.levels(),
-                0,
+                self.palette_bases.get(index).copied().unwrap_or(0),
                 0,
             ];
             let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory);
@@ -573,6 +600,39 @@ impl TerrainPass {
                     depth_or_array_layers: 1,
                 },
             );
+            // Its control values; without a surface, the first material
+            // everywhere.
+            let blank;
+            let control = match listed[&key].control() {
+                Some(control) => control,
+                None => {
+                    blank = vec![0_u32; (LAYER_SIZE * LAYER_SIZE) as usize];
+                    &blank
+                }
+            };
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &atlas.control,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: layer,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytemuck::cast_slice(control),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(LAYER_SIZE * 4),
+                    rows_per_image: Some(LAYER_SIZE),
+                },
+                wgpu::Extent3d {
+                    width: LAYER_SIZE,
+                    height: LAYER_SIZE,
+                    depth_or_array_layers: 1,
+                },
+            );
             self.slots.insert(key, layer);
             self.normal_jobs.push((layer, listed[&key].spacing()));
             self.uploads += 1;
@@ -701,6 +761,46 @@ impl TerrainPass {
         self.normal_jobs.clear();
     }
 
+    /// Writes every terrain's surface materials into the palette when they
+    /// change, each terrain's after the one before; materials past its
+    /// capacity are dropped and counted.
+    fn write_palette(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
+        let mut entries: Vec<PaletteEntry> = Vec::new();
+        self.palette_bases.clear();
+        self.dropped_materials = 0;
+        for terrain in &terrains.terrains {
+            let room = PALETTE_ENTRIES - entries.len();
+            let kept = terrain.surface.len().min(room);
+            self.dropped_materials += (terrain.surface.len() - kept) as u32;
+            // Out of room, a terrain shows the palette's first material.
+            self.palette_bases.push(if kept == terrain.surface.len() {
+                entries.len() as u32
+            } else {
+                0
+            });
+            entries.extend(terrain.surface[..kept].iter().map(|look| {
+                [
+                    look.color[0],
+                    look.color[1],
+                    look.color[2],
+                    look.roughness,
+                    look.tiling,
+                    look.height_contrast,
+                    match look.projection {
+                        engine_core::SurfaceProjection::Top => 0.0,
+                        engine_core::SurfaceProjection::Biplanar => 1.0,
+                    },
+                    0.0,
+                ]
+            }));
+        }
+        if entries.is_empty() || entries == self.palette_written {
+            return;
+        }
+        queue.write_buffer(&self.palette, 0, bytemuck::cast_slice(&entries));
+        self.palette_written = entries;
+    }
+
     /// Writes the directory of every terrain's levels and resident tiles
     /// when it changes: each level's entries start, tiles and reach, then
     /// its entries.
@@ -804,6 +904,11 @@ impl TerrainPass {
             NORMAL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
         );
+        let control = array(
+            "engine/terrain-control",
+            CONTROL_FORMAT,
+            wgpu::TextureUsages::empty(),
+        );
         if let Some(old) = &self.atlas
             && self.next_layer > 0
         {
@@ -825,6 +930,11 @@ impl TerrainPass {
                 normals.as_image_copy(),
                 extent,
             );
+            encoder.copy_texture_to_texture(
+                old.control.as_image_copy(),
+                control.as_image_copy(),
+                extent,
+            );
             // Before this frame's tile writes, which the queue runs in order.
             queue.submit([encoder.finish()]);
         }
@@ -837,7 +947,9 @@ impl TerrainPass {
         self.atlas = Some(Atlas {
             view: array_view(&texture),
             normals_view: array_view(&normals),
+            control_view: array_view(&control),
             texture,
+            control,
             normals,
             layers,
         });
@@ -888,6 +1000,18 @@ impl TerrainPass {
                         crate::pipelines::sampler(&self.normal_sampler),
                     ),
                     crate::buffers::entry("terrain_directory", &self.directory),
+                    (
+                        "terrain_control",
+                        crate::pipelines::view(&atlas.control_view),
+                    ),
+                    (
+                        "terrain_palette",
+                        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.palette,
+                            offset: 0,
+                            size: None,
+                        }),
+                    ),
                 ],
             );
             self.group.set(key, group);
@@ -1222,19 +1346,10 @@ fn terrain_uniform(
         })
         .collect();
     let relative = (anchor - eye).as_vec3();
-    let material = &terrain.material;
-    let color = |rgb: [f32; 3], w: f32| [rgb[0], rgb[1], rgb[2], w];
     let uniform = TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
         origin: terrain.origin.extend(view).to_array(),
-        grass: color(material.grass, material.roughness),
-        dirt: color(material.dirt, 0.0),
-        rock: color(
-            material.rock,
-            engine_core::math::cos(material.rock_slope.to_radians()),
-        ),
-        snow: color(material.snow, material.snow_height),
         directory,
     };
     (uniform, anchors)

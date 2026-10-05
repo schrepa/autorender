@@ -9,6 +9,7 @@ use glam::{Vec2, Vec3};
 use engine_math::{max, min};
 
 use crate::layers::{Layers, state_len};
+use crate::surface::{BiomeRules, Control, SampleInputs};
 use crate::{
     PATCH_QUADS, PATCHES_PER_TILE, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
@@ -20,13 +21,15 @@ const HOLE_WORDS: usize = (HOLE_CELLS * HOLE_CELLS).div_ceil(64);
 
 /// A tile's samples: heights in meters above the terrain's origin of
 /// samples -1 to 257 along x and z (its samples and a border of one), row
-/// by row along z, with their bounds and, where a stamp cut them, holes.
+/// by row along z, with their bounds, where a stamp cut them holes, and
+/// with a surface each sample's control value (decision 054).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
     spacing: f32,
     heights: Box<[f32]>,
     holes: Option<Box<[u64]>>,
+    control: Option<Box<[u32]>>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -65,6 +68,7 @@ impl Tile {
             spacing,
             heights,
             holes,
+            control: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -100,6 +104,16 @@ impl Tile {
         Some(tile)
     }
 
+    /// The tile with `control`: one packed [`Control`] per sample, the
+    /// layout of its heights. `None` when the size does not match.
+    pub fn with_control(mut self, control: Box<[u32]>) -> Option<Self> {
+        let stride = TILE_STRIDE as usize;
+        (control.len() == stride * stride).then(|| {
+            self.control = Some(control);
+            self
+        })
+    }
+
     pub fn key(&self) -> TileKey {
         self.key
     }
@@ -107,6 +121,22 @@ impl Tile {
     /// Meters between samples.
     pub fn spacing(&self) -> f32 {
         self.spacing
+    }
+
+    /// Every sample's packed control value, the border included, row by
+    /// row: the layout GPU tiles upload. `None` without a surface.
+    pub fn control(&self) -> Option<&[u32]> {
+        self.control.as_deref()
+    }
+
+    /// The control value of sample `(x, z)`, -1 to 257 along each axis.
+    pub fn control_at(&self, x: i32, z: i32) -> Option<Control> {
+        let stride = TILE_STRIDE as i32;
+        let x = x.clamp(-1, stride - 2);
+        let z = z.clamp(-1, stride - 2);
+        self.control
+            .as_ref()
+            .map(|control| Control::unpack(control[((z + 1) * stride + x + 1) as usize]))
     }
 
     /// Height of sample `(x, z)`, -1 to 257 along each axis.
@@ -256,6 +286,7 @@ enum Stage {
     Coarse { layer: usize, row: usize },
     Samples { row: i32 },
     Holes { row: u32 },
+    Biomes { row: usize },
     Done,
 }
 
@@ -284,6 +315,11 @@ pub struct Generator {
     state: Box<[f32]>,
     min: Vec2,
     max: Vec2,
+    // The surface whose control values the tile gets, their samples, and
+    // scratch space for one sample's material weights.
+    surface: Option<Arc<BiomeRules>>,
+    control: Option<Box<[u32]>>,
+    weights: Vec<(u8, f32)>,
 }
 
 impl Generator {
@@ -335,11 +371,79 @@ impl Generator {
             state: vec![0.0; widest].into_boxed_slice(),
             min,
             max,
+            surface: None,
+            control: None,
+            weights: Vec::new(),
         }
+    }
+
+    /// The generator giving its tile `surface`'s control values.
+    pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
+        self.surface = Some(surface);
+        self
+    }
+
+    /// A generator giving `tile` (of `pyramid`, its heights read from a
+    /// file) `surface`'s control values, under the same budget as
+    /// generation.
+    pub fn resurface(tile: &Tile, pyramid: &Pyramid, surface: Arc<BiomeRules>) -> Self {
+        let layers = Arc::new(Layers::new(Vec::new()).expect("an empty stack is valid"));
+        let mut generator = Self::new(layers, pyramid, tile.key()).with_surface(surface);
+        generator.heights = tile.heights().into();
+        generator.holes = tile.hole_bits().map(Box::from);
+        generator.stage = Stage::Biomes { row: 0 };
+        generator
     }
 
     pub fn key(&self) -> TileKey {
         self.key
+    }
+
+    /// The stage after the samples and holes: the surface's, if any.
+    fn after_holes(&self) -> Stage {
+        if self.surface.is_some() {
+            Stage::Biomes { row: 0 }
+        } else {
+            Stage::Done
+        }
+    }
+
+    /// Control values of stored row `row` (0 to 258, samples -1 to 257),
+    /// from the heights around each sample; border samples read their
+    /// nearest neighbors inside.
+    fn surface_row(&mut self, row: usize) {
+        let stride = TILE_STRIDE as usize;
+        let Some(surface) = self.surface.clone() else {
+            return;
+        };
+        let control = self
+            .control
+            .get_or_insert_with(|| vec![0; stride * stride].into_boxed_slice());
+        let spacing = self.spacing;
+        let heights = &self.heights;
+        let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
+        let z = (self.first[1] + row as i64 - 1) as f32 * spacing;
+        for column in 0..stride {
+            let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
+            let at = |r: usize, c: usize| heights[r * stride + c];
+            let height = at(row, column);
+            let (west, east, north, south) = (
+                at(row, left),
+                at(row, right),
+                at(up, column),
+                at(down, column),
+            );
+            let gx = (east - west) / (2.0 * spacing);
+            let gz = (south - north) / (2.0 * spacing);
+            let inputs = SampleInputs {
+                x: self.xs[column],
+                z,
+                height,
+                gradient: (gx * gx + gz * gz).sqrt(),
+                curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
+            };
+            control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
+        }
     }
 
     /// Generates until the tile is done or `budget` work units run out
@@ -401,7 +505,7 @@ impl Generator {
                     } else if self.holes.is_some() {
                         Stage::Holes { row: 0 }
                     } else {
-                        Stage::Done
+                        self.after_holes()
                     };
                 }
                 Stage::Holes { row } => {
@@ -418,12 +522,26 @@ impl Generator {
                     self.stage = if (row as usize) + 1 < HOLE_CELLS {
                         Stage::Holes { row: row + 1 }
                     } else {
+                        self.after_holes()
+                    };
+                }
+                Stage::Biomes { row } => {
+                    self.surface_row(row);
+                    let cost = self.surface.as_ref().map_or(1, |surface| surface.cost());
+                    *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * cost);
+                    self.stage = if row + 1 < TILE_STRIDE as usize {
+                        Stage::Biomes { row: row + 1 }
+                    } else {
                         Stage::Done
                     };
                 }
                 Stage::Done => {
                     let heights = std::mem::take(&mut self.heights);
-                    return Tile::new(self.key, self.spacing, heights, self.holes.take());
+                    let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
+                    return match self.control.take() {
+                        Some(control) => tile.with_control(control),
+                        None => Some(tile),
+                    };
                 }
             }
         }
@@ -438,8 +556,14 @@ impl Generator {
         let vertical = QUARTER_WEIGHTS[i64::from(row).rem_euclid(GRID_STEP) as usize];
         for layer in 0..self.layers.layers().len() {
             let Some(tables) = self.layers.noise(layer) else {
-                self.layers
-                    .apply_local(layer, &mut self.row, &self.xs, z, self.min, self.max);
+                self.layers.apply_local(
+                    layer,
+                    &mut self.row,
+                    &self.xs,
+                    z,
+                    (self.min, self.max),
+                    self.spacing,
+                );
                 continue;
             };
             let (octaves, fine, _) = self.bands[layer].clone().unwrap_or_default();
@@ -492,7 +616,7 @@ impl Layers {
         let mut height = [0.0_f32];
         for layer in 0..self.layers().len() {
             let Some(tables) = self.noise(layer) else {
-                self.apply_local(layer, &mut height, &[x], z, point, point);
+                self.apply_local(layer, &mut height, &[x], z, (point, point), spacing);
                 continue;
             };
             let (octaves, fine, gullies) = tables.bands(spacing);
