@@ -55,6 +55,9 @@ struct DrawArgs {
     first_instance: u32,
 }
 
+// The draw group of slots no object holds.
+const DEAD: u32 = 0xffffffffu;
+
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> records: array<Record>;
 @group(0) @binding(2) var<storage, read> groups: array<Group>;
@@ -69,6 +72,9 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let record = records[id.x];
+    if record.group == DEAD {
+        return;
+    }
     let view = &views[id.y];
     if record.radius < (*view).limits.x {
         return;

@@ -38,6 +38,9 @@ struct ViewData {
     limits: [f32; 4],
 }
 
+/// The draw group of slots no object holds, which culling skips.
+pub(crate) const DEAD: u32 = u32::MAX;
+
 /// WGSL `Record`: an object's bounding sphere, draw group and scale.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -72,23 +75,13 @@ struct DrawArgs {
     first_instance: u32,
 }
 
-/// One draw group as the renderer lays it out: its objects (counted from
-/// the group's first), each level's index count, first index and base
-/// vertex, the levels the camera draws, and the coarser levels' errors.
+/// One draw group as the renderer lays it out: each level's index count,
+/// first index and base vertex, the levels the camera draws, and the
+/// coarser levels' errors.
 pub(crate) struct GroupLayout {
-    pub count: u32,
     pub levels: Vec<(u32, u32, i32)>,
     pub camera: u32,
     pub errors: [f32; LEVELS as usize - 1],
-}
-
-/// What [`ScatterPass::upload`] writes: every object's pose, color and
-/// record, grouped, and each group's layout.
-pub(crate) struct Objects {
-    pub poses: Vec<PoseData>,
-    pub colors: Vec<ColorData>,
-    pub records: Vec<Record>,
-    pub groups: Vec<GroupLayout>,
 }
 
 pub(crate) struct ScatterPass {
@@ -194,15 +187,22 @@ impl ScatterPass {
         .sum()
     }
 
-    /// Replaces every object and group with `objects`.
-    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, objects: &Objects) {
-        let mut groups = Vec::with_capacity(objects.groups.len());
+    /// Lays out the draw groups `groups` holding `counts` live objects:
+    /// each group's lists and the draws' template.
+    pub(crate) fn set_groups(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        groups: &[GroupLayout],
+        counts: &[u32],
+    ) {
+        let mut data = Vec::with_capacity(groups.len());
         self.template.clear();
         let mut ids = 0;
-        for group in &objects.groups {
-            groups.push(GroupData {
+        for (group, &count) in groups.iter().zip(counts) {
+            data.push(GroupData {
                 ids,
-                count: group.count,
+                count,
                 levels: group.levels.len() as u32,
                 camera: group.camera,
                 errors: group.errors,
@@ -218,49 +218,86 @@ impl ScatterPass {
                     first_instance: 0,
                 });
             }
-            ids += group.count * LEVELS;
+            ids += count * LEVELS;
         }
-        let mut replaced = false;
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+        if grow(
+            device,
+            &mut self.groups,
+            "engine/scatter-groups",
+            bytes.len() as u64,
+            wgpu::BufferUsages::empty(),
+        ) {
+            self.generation += 1;
+        }
+        if !bytes.is_empty() {
+            queue.write_buffer(&self.groups, 0, bytes);
+        }
+        self.group_count = groups.len() as u32;
+        self.ids_per_view = ids;
+        self.resident = counts.iter().sum();
+    }
+
+    /// Writes slots `dirty` of `poses`, `colors` and `records`, every
+    /// slot when the buffers grow to hold them all.
+    pub(crate) fn write_slots(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        (poses, colors, records): (&[PoseData], &[ColorData], &[Record]),
+        dirty: Option<std::ops::Range<u32>>,
+    ) {
+        let mut grown = false;
         for (buffer, label, bytes) in [
-            (
-                &mut self.poses,
-                "engine/scatter-poses",
-                bytemuck::cast_slice(&objects.poses),
-            ),
+            (&mut self.poses, "engine/scatter-poses", size_of_val(poses)),
             (
                 &mut self.colors,
                 "engine/scatter-colors",
-                bytemuck::cast_slice(&objects.colors),
+                size_of_val(colors),
             ),
             (
                 &mut self.records,
                 "engine/scatter-records",
-                bytemuck::cast_slice(&objects.records),
-            ),
-            (
-                &mut self.groups,
-                "engine/scatter-groups",
-                bytemuck::cast_slice(&groups),
+                size_of_val(records),
             ),
         ] {
-            replaced |= grow(
+            grown |= grow(
                 device,
                 buffer,
                 label,
-                bytes.len() as u64,
+                bytes as u64,
                 wgpu::BufferUsages::empty(),
             );
-            if !bytes.is_empty() {
-                queue.write_buffer(buffer, 0, bytes);
-            }
         }
-        if replaced {
+        if grown {
             self.generation += 1;
         }
-        self.objects = objects.records.len() as u32;
-        self.group_count = objects.groups.len() as u32;
-        self.ids_per_view = ids;
-        self.resident = self.objects;
+        let range = if grown {
+            Some(0..records.len())
+        } else {
+            dirty.map(|range| range.start as usize..range.end as usize)
+        };
+        if let Some(range) = range.filter(|range| !range.is_empty()) {
+            let write = |buffer: &wgpu::Buffer, stride: usize, bytes: &[u8]| {
+                queue.write_buffer(buffer, (range.start * stride) as u64, bytes);
+            };
+            write(
+                &self.poses,
+                size_of::<PoseData>(),
+                bytemuck::cast_slice(&poses[range.clone()]),
+            );
+            write(
+                &self.colors,
+                size_of::<ColorData>(),
+                bytemuck::cast_slice(&colors[range.clone()]),
+            );
+            write(
+                &self.records,
+                size_of::<Record>(),
+                bytemuck::cast_slice(&records[range.clone()]),
+            );
+        }
+        self.objects = records.len() as u32;
     }
 
     /// Plans this frame's culling: the camera's view, from its
@@ -279,7 +316,7 @@ impl ScatterPass {
         (maps, resolution): (&[(usize, Mat4)], u32),
     ) -> bool {
         self.maps.clear();
-        if self.objects == 0 {
+        if self.resident == 0 {
             return false;
         }
         let y_row = view_projection.row(1).truncate().length();

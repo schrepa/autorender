@@ -54,6 +54,7 @@ mod instances;
 mod meshes;
 mod probe_captures;
 mod scatter_draws;
+mod scatter_pool;
 mod terrain_draws;
 mod virtual_draws;
 mod visibility_draws;
@@ -240,12 +241,11 @@ pub struct Renderer {
     // Ground cover grown each frame on terrain (decision 056).
     ground_cover: crate::ground_cover::GroundCoverPass,
     // Objects placed on terrain (decision 057): their pass, their meshes
-    // and a counter advancing when that set changes, what they were laid
-    // out from, and their draw groups.
+    // and a counter advancing when that set changes, and their draw groups
+    // and slots.
     scatter: crate::scatter::ScatterPass,
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
-    scatter_key: Option<scatter_draws::ScatterKey>,
-    scatter_draws: Vec<scatter_draws::ScatterDraw>,
+    scatter_draws: scatter_draws::ScatterDraws,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames (decision 017).
@@ -509,8 +509,7 @@ impl Renderer {
             ground_cover,
             scatter,
             scatter_meshes: (BTreeSet::new(), 0),
-            scatter_key: None,
-            scatter_draws: Vec::new(),
+            scatter_draws: scatter_draws::ScatterDraws::default(),
             post: None,
             temporal: None,
             transparent: None,
