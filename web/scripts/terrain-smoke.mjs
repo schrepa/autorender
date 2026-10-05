@@ -43,6 +43,9 @@ const terrain = {
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }] },
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
+    // Decision 057: crates stand on the meadow.
+    assets: [{ id: "crate", mesh: "box", material: "plain" }],
+    placements: [{ id: "crates", assets: [{ asset: "crate" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
   },
 };
 /** A 65 by 65 dome of little-endian 16-bit samples, highest at its center. */
@@ -108,6 +111,7 @@ try {
   assert.ok(settled.terrain_shadow_patches > 0, "terrain casts shadows");
   assert.equal(settled.dropped_terrain_tiles, 0);
   assert.equal(settled.dropped_terrain_materials, 0);
+  assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
   checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles });
 
   // Discovery and inspection.
@@ -129,6 +133,8 @@ try {
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
+  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain" }]);
+  assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.

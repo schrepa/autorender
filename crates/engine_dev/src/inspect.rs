@@ -270,6 +270,8 @@ impl DevTools {
                 Some(json!(crate::views::TerrainView {
                     terrain: engine_scene::SceneTerrain::from_runtime(terrain, None, |handle| {
                         scene.and_then(|scene| scene.materials().find(|(_, candidate)| *candidate == handle).map(|(id, _)| id.to_owned()))
+                    }, |handle| {
+                        scene.and_then(|scene| scene.meshes().find(|(_, candidate)| *candidate == handle).map(|(id, _)| id.to_owned()))
                     }),
                     levels: terrain.pyramid.levels(),
                     extent: terrain.pyramid.extent().to_array(),

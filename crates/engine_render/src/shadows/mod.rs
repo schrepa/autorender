@@ -173,6 +173,10 @@ pub(crate) struct MapSources<'a> {
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
     /// Terrain's patches in a map (decision 051), drawn first.
     pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
+    /// Placed objects in a map (decision 057), drawn next with the caster
+    /// pipelines (by `masked + 2 * skinned`).
+    pub scatter_draw:
+        &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize, &[wgpu::RenderPipeline; 4]) -> u32,
 }
 
 /// A caster group as depth passes draw it: its pipeline choice (masked,
@@ -303,6 +307,11 @@ impl ShadowPass {
     /// and their world-to-clip matrices; empty without shadows.
     pub(crate) fn drawn_maps(&self) -> &[(usize, Mat4)] {
         &self.drawn_maps
+    }
+
+    /// The maps' resolution, texels square; 0 without maps.
+    pub(crate) fn map_resolution(&self) -> u32 {
+        self.maps.textures().map_or(0, |maps| maps.resolution)
     }
 
     /// The selected casters' IDs (each map's region `map * capacity`, then
@@ -600,6 +609,7 @@ impl ShadowPass {
             materials,
             virtual_draw,
             terrain_draw,
+            scatter_draw,
         } = sources;
         let draws = Cell::new(0_u32);
         let groups = self.casters.groups();
@@ -655,6 +665,7 @@ impl ShadowPass {
         });
         let draw_selected = |pass: &mut wgpu::RenderPass<'_>, map: usize| {
             draws.set(draws.get() + terrain_draw(pass, map));
+            draws.set(draws.get() + scatter_draw(pass, map, &pipelines.casters));
             let Some(pose_group) = pose_group else {
                 return;
             };

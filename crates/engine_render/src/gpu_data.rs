@@ -386,6 +386,8 @@ pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wg
 pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
 /// Ground cover's growth (decision 056).
 pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
+/// Placed objects' culling (decision 057).
+pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 /// Terrain's depth drawing into shadow maps (decision 051).
 pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),

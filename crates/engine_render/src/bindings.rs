@@ -671,6 +671,21 @@ pub(crate) const COVER_DRAW: Table = Table {
     ],
 };
 
+/// Placed objects' culling (decision 057; `scatter_cull.wgsl`): the frame,
+/// every object's record and every draw group, each view's visible lists
+/// and the indirect draws they count in, and the views.
+pub(crate) const SCATTER_CULL: Table = Table {
+    label: "engine/scatter-cull-layout",
+    bindings: &[
+        uniform_of(0, "frame", 48, C),
+        read(1, "records", C),
+        read(2, "groups", C),
+        write(3, "ids", C),
+        write(4, "draws", C),
+        read(5, "views", C),
+    ],
+};
+
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",

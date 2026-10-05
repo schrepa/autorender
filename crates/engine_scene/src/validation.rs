@@ -182,7 +182,11 @@ impl SceneDocument {
                 .terrain
                 .as_ref()
                 .map(|terrain| {
-                    terrain.prepare(&format!("{}.terrain", entity.path), files, &self.materials)
+                    terrain.prepare(
+                        &format!("{}.terrain", entity.path),
+                        files,
+                        (&self.materials, &self.meshes),
+                    )
                 })
                 .transpose()?;
         }

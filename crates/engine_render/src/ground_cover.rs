@@ -433,7 +433,7 @@ fn blades_buffer(device: &wgpu::Device, blades: u32) -> wgpu::Buffer {
 
 /// The view's frustum planes from its view-projection (world), each
 /// normalized with its inside positive.
-fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
+pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
     let rows = [
         view_projection.row(0),
         view_projection.row(1),

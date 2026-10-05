@@ -58,8 +58,8 @@ pub use engine_assets::{
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, FileHeader, HeightImage,
-    HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Pyramid,
-    PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
+    HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Placed,
+    PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -89,9 +89,10 @@ pub use scene::{
 };
 pub use skin::{RenderJoint, Skin};
 pub use terrain::{
-    RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Terrain,
-    TerrainDebug, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats,
-    TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
+    PlacementAsset, RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
+    SurfaceMaterial, SurfaceProjection, Terrain, TerrainDebug, TerrainFocus, TerrainSample,
+    TerrainSettings, TerrainSource, TerrainStats, TerrainSurface, TerrainView, Terrains,
+    TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
@@ -811,9 +812,9 @@ pub mod prelude {
     };
     pub use crate::{
         Biome, BiomeLayer, Biomes, Blend, HeightImage, HeightmapLayer, Layer, Layers, Mask,
-        NoiseLayer, NoiseMask, Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection,
-        Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainSurface,
-        Terrains, TileKey, Viewport,
+        NoiseLayer, NoiseMask, PlacementAsset, PlacementChoice, PlacementLayer, Pyramid, Remap,
+        Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
+        TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{Cover, GroundCover};
     pub use crate::{Decal, DecalBlend, Decals};

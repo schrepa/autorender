@@ -53,6 +53,7 @@ mod impostor_draws;
 mod instances;
 mod meshes;
 mod probe_captures;
+mod scatter_draws;
 mod terrain_draws;
 mod virtual_draws;
 mod visibility_draws;
@@ -173,8 +174,8 @@ struct StructureKeys {
     impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
     // Mesh residency: the plan's rebuild and the caster groups' generation
     // it was retired for, and those with the mesh layout it uploaded for.
-    residency: Option<(u64, u64)>,
-    uploads: Option<(u64, u64, u64)>,
+    residency: Option<(u64, u64, u64)>,
+    uploads: Option<(u64, u64, u64, u64)>,
 }
 
 /// Main-thread browser renderer. Never transfer it or its GPU objects to workers.
@@ -237,6 +238,13 @@ pub struct Renderer {
     terrain: crate::terrain::TerrainPass,
     // Ground cover grown each frame on terrain (decision 056).
     ground_cover: crate::ground_cover::GroundCoverPass,
+    // Objects placed on terrain (decision 057): their pass, their meshes
+    // and a counter advancing when that set changes, what they were laid
+    // out from, and their draw groups.
+    scatter: crate::scatter::ScatterPass,
+    scatter_meshes: (BTreeSet<MeshHandle>, u64),
+    scatter_key: Option<scatter_draws::ScatterKey>,
+    scatter_draws: Vec<scatter_draws::ScatterDraw>,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames (decision 017).
@@ -421,6 +429,7 @@ impl Renderer {
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
         let terrain = crate::terrain::TerrainPass::new(&device, &queue);
         let ground_cover = crate::ground_cover::GroundCoverPass::new(&device);
+        let scatter = crate::scatter::ScatterPass::new(&device);
         let camera = CameraBindings::new(
             &device,
             &queue,
@@ -497,6 +506,10 @@ impl Renderer {
             },
             terrain,
             ground_cover,
+            scatter,
+            scatter_meshes: (BTreeSet::new(), 0),
+            scatter_key: None,
+            scatter_draws: Vec::new(),
             post: None,
             temporal: None,
             transparent: None,

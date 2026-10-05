@@ -168,6 +168,9 @@ pub struct RenderStats {
     /// and those past the capacity or budget, which dropped.
     pub ground_cover_blades: u32,
     pub dropped_ground_cover: u32,
+    /// Objects terrains' placement layers stand on resident level-0 tiles
+    /// (decision 057), each culled on the GPU every frame.
+    pub placed_objects: u32,
     /// Terrain surface materials (decision 054) past the palette's
     /// capacity, or whose maps the shared arrays cannot hold (block
     /// compressed, or sized unlike the first material's), which show a
@@ -239,6 +242,8 @@ mod mipmaps;
 mod post;
 #[cfg(target_arch = "wasm32")]
 mod profiling;
+#[cfg(target_arch = "wasm32")]
+mod scatter;
 #[cfg(target_arch = "wasm32")]
 mod shadows;
 #[cfg(target_arch = "wasm32")]

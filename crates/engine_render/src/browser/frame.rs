@@ -110,6 +110,8 @@ pub(super) struct FrameState<'s> {
     pub(super) virtual_frame: bool,
     /// Terrain draws (decision 051).
     pub(super) terrain: bool,
+    /// Placed objects draw (decision 057).
+    pub(super) scatter: bool,
     pub(super) resolving: bool,
     /// What the frame's render graph declares (decision 050).
     pub(super) shape: FrameShape,
@@ -182,9 +184,15 @@ impl Renderer {
             passes.opaque_kind,
             kind.gpu_mode && !features.probe_list.is_empty(),
         );
+        let scatter = self.prepare_scatter(snapshot, passes.opaque_kind);
         // Terrain's horizon maps (decision 052) may have been replaced.
         self.refresh_camera_group();
-        let shape = self.frame_shape(kind, &packing, &features, (virtual_frame, resolving));
+        let shape = self.frame_shape(
+            kind,
+            &packing,
+            &features,
+            (virtual_frame, resolving, scatter),
+        );
         let mut state = FrameState {
             snapshot,
             frame,
@@ -197,6 +205,7 @@ impl Renderer {
             virtual_frame,
             resolving,
             terrain,
+            scatter,
             shape,
         };
         self.prepare_frame_groups(&state);
@@ -267,10 +276,26 @@ impl Renderer {
         // culled casters, whose meshes stay resident and upload with the
         // batches' meshes.
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);
+        // Terrains' placed objects (decision 057) keep their meshes resident.
+        let placed: BTreeSet<MeshHandle> = snapshot
+            .terrain
+            .terrains
+            .iter()
+            .flat_map(|terrain| terrain.assets.iter().flatten())
+            .map(|asset| asset.mesh.handle)
+            .collect();
+        if placed != self.scatter_meshes.0 {
+            self.scatter_meshes = (placed, self.scatter_meshes.1 + 1);
+        }
         // Supplied sources keep residency across culling; uploads below follow
         // only emitted draw batches, shadow casters and referenced textures.
-        // Residency changes only with the plan's sources or the casters.
-        let residency = (self.plan.rebuilds(), self.shadows.groups_generation());
+        // Residency changes only with the plan's sources, the casters or the
+        // placed objects' meshes.
+        let residency = (
+            self.plan.rebuilds(),
+            self.shadows.groups_generation(),
+            self.scatter_meshes.1,
+        );
         if self.structure_keys.residency != Some(residency) {
             self.structure_keys.residency = Some(residency);
             let shadow_meshes: BTreeSet<MeshHandle> = self
@@ -279,10 +304,12 @@ impl Renderer {
                 .iter()
                 .map(|group| group.mesh)
                 .collect();
-            let (plan, arena) = (&self.plan, &mut self.mesh_arena);
+            let (plan, arena, placed) = (&self.plan, &mut self.mesh_arena, &self.scatter_meshes.0);
             let resident = self.meshes.len();
             self.meshes.retain(|handle, mesh| {
-                let keep = plan.contains_mesh(*handle) || shadow_meshes.contains(handle);
+                let keep = plan.contains_mesh(*handle)
+                    || shadow_meshes.contains(handle)
+                    || placed.contains(handle);
                 if !keep && let Ok(placement) = mesh.placement {
                     arena.remove(placement);
                 }
@@ -322,23 +349,33 @@ impl Renderer {
             self.plan.rebuilds(),
             self.shadows.groups_generation(),
             self.mesh_layout,
+            self.scatter_meshes.1,
         );
         let mesh_uploads = self.structure_keys.uploads != Some(uploads);
+        // The plan's and casters' meshes, and terrains' placed objects'
+        // (decision 057).
         let sources = self
             .plan
             .batches
             .iter()
-            .map(|batch| (batch.mesh, batch.source_index))
+            .map(|batch| (batch.mesh, &snapshot.meshes[batch.source_index].mesh))
             .chain(
                 self.shadows
                     .groups()
                     .iter()
-                    .map(|group| (group.mesh, group.source_index)),
+                    .map(|group| (group.mesh, &snapshot.meshes[group.source_index].mesh)),
+            )
+            .chain(
+                snapshot
+                    .terrain
+                    .terrains
+                    .iter()
+                    .flat_map(|terrain| terrain.assets.iter().flatten())
+                    .map(|asset| (asset.mesh.handle, &asset.mesh.mesh)),
             )
             .filter(|_| mesh_uploads);
-        for (handle, source_index) in sources {
+        for (handle, source) in sources {
             if let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle) {
-                let source = &snapshot.meshes[source_index].mesh;
                 self.vertex_staging.clear();
                 self.vertex_staging.reserve_exact(source.vertices().len());
                 self.vertex_staging
@@ -412,6 +449,7 @@ impl Renderer {
                 self.plan.rebuilds(),
                 self.shadows.groups_generation(),
                 self.mesh_layout,
+                self.scatter_meshes.1,
             ));
         }
         self.virtual_draws.pass.upload(
@@ -1278,7 +1316,7 @@ impl Renderer {
         kind: FrameKind,
         packing: &Packing,
         features: &Features<'_>,
-        (virtual_frame, resolving): (bool, bool),
+        (virtual_frame, resolving, scatter): (bool, bool, bool),
     ) -> FrameShape {
         let post = features.post_frame.filter(|_| self.post.is_some());
         let targets = self.frame_targets(&packing.temporal_frame, features.post_frame);
@@ -1296,6 +1334,7 @@ impl Renderer {
             canvas_clear: canvas_clear(),
             phases,
             shadows: features.shadow_frame.is_some(),
+            scatter,
             clusters: virtual_frame,
             shadow_clusters: virtual_frame && !self.virtual_draws.shadow_bins.is_empty(),
             resolves: [
@@ -1358,6 +1397,9 @@ impl Renderer {
     ) {
         match node.pass() {
             Pass::Presentation => self.encode_presentation(encoder),
+            // Placed objects cull before the shadow maps and the first
+            // opaque phase draw them (decision 057).
+            Pass::Scatter => self.scatter.encode(encoder, &self.profiler),
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
@@ -1595,6 +1637,14 @@ impl Renderer {
                     }
                     draws
                 },
+                // Placed objects (decision 057) culled for this map.
+                scatter_draw: &|pass, map, casters| {
+                    if state.scatter {
+                        self.draw_scatter_shadow(pass, map, casters)
+                    } else {
+                        0
+                    }
+                },
             },
             &self.profiler,
         );
@@ -1656,6 +1706,7 @@ impl Renderer {
         // occlusion culling's pyramid holds it.
         if phase == 0 {
             draws += self.draw_terrain(state, &mut pass);
+            draws += self.draw_scatter(state, &mut pass);
         }
         // Last, so depth testing leaves the sky only uncovered pixels.
         if phase + 1 == phases && !resolve_phase {

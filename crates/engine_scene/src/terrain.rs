@@ -7,13 +7,13 @@ use std::sync::Arc;
 
 use engine_core::{
     Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle,
-    NoiseLayer, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
-    TerrainSurface,
+    MeshHandle, NoiseLayer, PlacementAsset, PlacementLayer, Pyramid, Stamp, SurfaceMaterial,
+    SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneError, SceneFiles, SceneMaterial, files::valid_uri};
+use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
 /// A heightfield terrain on this entity (decision 051). Requires version 9.
 ///
@@ -68,6 +68,22 @@ fn is_true(value: &bool) -> bool {
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
+    /// What placement layers stand on the terrain (decision 057).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<SceneTerrainAsset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub placements: Vec<PlacementLayer>,
+}
+
+/// An object placement layers stand on a terrain (decision 057): a `mesh`
+/// and a `material` of this document, by ID.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneTerrainAsset {
+    pub id: String,
+    pub mesh: String,
+    pub material: String,
 }
 
 /// How one surface material looks: a `material` of this document whose
@@ -123,16 +139,26 @@ pub(crate) struct PreparedTerrain {
     pub terrain: Terrain,
     /// Each surface material's document material, if it names one.
     pub materials: Vec<Option<usize>>,
+    /// Each placement asset's document mesh and material.
+    pub assets: Vec<(usize, usize)>,
 }
 
 impl PreparedTerrain {
-    /// The component, its surface materials resolved through the
-    /// document's `materials` handles.
-    pub(crate) fn runtime(&self, materials: &[MaterialHandle]) -> Terrain {
+    /// The component, its surface materials and placement assets resolved
+    /// through the document's `materials` and `meshes` handles.
+    pub(crate) fn runtime(&self, materials: &[MaterialHandle], meshes: &[MeshHandle]) -> Terrain {
         let mut terrain = self.terrain.clone();
         for (look, index) in terrain.surface.materials.iter_mut().zip(&self.materials) {
             look.material = index.map(|index| materials[index]);
         }
+        terrain.surface.assets = self
+            .assets
+            .iter()
+            .map(|&(mesh, material)| PlacementAsset {
+                mesh: meshes[mesh],
+                material: materials[material],
+            })
+            .collect();
         terrain
     }
 }
@@ -189,20 +215,24 @@ impl SceneTerrain {
     }
 
     /// The surface at authored path `path`, its materials naming the
-    /// document's `materials`: the component's surface and each surface
-    /// material's document material index.
+    /// document's `materials` and its assets its `meshes` and materials:
+    /// the component's surface (assets left to instantiation), each surface
+    /// material's document material index and each asset's mesh and
+    /// material indices.
+    #[allow(clippy::type_complexity)]
     fn surface(
         &self,
         path: &str,
         materials: &[SceneMaterial],
-    ) -> Result<(TerrainSurface, Vec<Option<usize>>), SceneError> {
+        meshes: &[SceneMesh],
+    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<(usize, usize)>), SceneError> {
         let invalid = |field: String, rule: String| {
             SceneError::new("invalid_terrain", format!("{path}.surface.{field}"), rule)
         };
         let Some(surface) = &self.surface else {
             let looks = TerrainSurface::default();
             let count = looks.materials.len();
-            return Ok((looks, vec![None; count]));
+            return Ok((looks, vec![None; count], Vec::new()));
         };
         let mut looks = Vec::with_capacity(surface.materials.len());
         let mut indices = Vec::with_capacity(surface.materials.len());
@@ -247,6 +277,29 @@ impl SceneTerrain {
             looks.push(look);
             indices.push(document);
         }
+        let mut assets = Vec::with_capacity(surface.assets.len());
+        for (index, asset) in surface.assets.iter().enumerate() {
+            let at = format!("assets[{index}]");
+            let mesh = meshes
+                .iter()
+                .position(|candidate| candidate.id == asset.mesh)
+                .ok_or_else(|| {
+                    invalid(
+                        format!("{at}.mesh"),
+                        "must name a mesh of this document".into(),
+                    )
+                })?;
+            let material = materials
+                .iter()
+                .position(|candidate| candidate.id == asset.material)
+                .ok_or_else(|| {
+                    invalid(
+                        format!("{at}.material"),
+                        "must name a material of this document".into(),
+                    )
+                })?;
+            assets.push((mesh, material));
+        }
         let biomes = Biomes {
             materials: surface
                 .materials
@@ -254,10 +307,16 @@ impl SceneTerrain {
                 .map(|material| material.id.clone())
                 .collect(),
             biomes: surface.biomes.clone(),
+            assets: surface
+                .assets
+                .iter()
+                .map(|asset| asset.id.clone())
+                .collect(),
+            placements: surface.placements.clone(),
         };
         let surface =
             TerrainSurface::new(&biomes, looks).map_err(|error| invalid(error.path, error.rule))?;
-        Ok((surface, indices))
+        Ok((surface, indices, assets))
     }
 
     /// The component at authored path `path`, validated; `files` supplies
@@ -268,13 +327,14 @@ impl SceneTerrain {
         &self,
         path: &str,
         files: Option<&SceneFiles>,
-        materials: &[SceneMaterial],
+        (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
     ) -> Result<PreparedTerrain, SceneError> {
-        let (surface, indices) = self.surface(path, materials)?;
+        let (surface, indices, assets) = self.surface(path, materials, meshes)?;
         let terrain = self.terrain(path, files, surface)?;
         Ok(PreparedTerrain {
             terrain,
             materials: indices,
+            assets,
         })
     }
 
@@ -285,9 +345,9 @@ impl SceneTerrain {
         &self,
         path: &str,
         files: Option<&SceneFiles>,
-        materials: &[SceneMaterial],
+        (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
     ) -> Result<Terrain, SceneError> {
-        Ok(self.prepare(path, files, materials)?.terrain)
+        Ok(self.prepare(path, files, (materials, meshes))?.terrain)
     }
 
     fn terrain(
@@ -408,6 +468,7 @@ impl SceneTerrain {
         terrain: &Terrain,
         file: Option<&str>,
         materials: impl Fn(MaterialHandle) -> Option<String>,
+        meshes: impl Fn(MeshHandle) -> Option<String>,
     ) -> Self {
         let surface = (terrain.surface != TerrainSurface::default()).then(|| {
             let authored = terrain.surface.rules.authored();
@@ -428,6 +489,17 @@ impl SceneTerrain {
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),
+                assets: authored
+                    .assets
+                    .iter()
+                    .zip(&terrain.surface.assets)
+                    .map(|(id, asset)| SceneTerrainAsset {
+                        id: id.clone(),
+                        mesh: meshes(asset.mesh).unwrap_or_default(),
+                        material: materials(asset.material).unwrap_or_default(),
+                    })
+                    .collect(),
+                placements: authored.placements.clone(),
             }
         });
         let layers = match &terrain.source {

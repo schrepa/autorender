@@ -48,6 +48,7 @@ pub struct SceneInstance {
     entities: BTreeMap<String, Entity>,
     assets: OwnedAssets,
     material_ids: Vec<String>,
+    mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     clip_ids: Vec<String>,
 }
@@ -127,6 +128,14 @@ impl SceneInstance {
         self.texture_ids
             .iter()
             .zip(&self.assets.textures)
+            .map(|(id, handle)| (id.as_str(), *handle))
+    }
+
+    /// Authored mesh IDs and their weak handles, in source order.
+    pub fn meshes(&self) -> impl ExactSizeIterator<Item = (&str, MeshHandle)> {
+        self.mesh_ids
+            .iter()
+            .zip(&self.assets.meshes)
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
@@ -256,6 +265,7 @@ impl SceneDocument {
                 .iter()
                 .map(|material| material.id.clone())
                 .collect(),
+            mesh_ids: self.meshes.iter().map(|mesh| mesh.id.clone()).collect(),
             texture_ids: self
                 .textures
                 .iter()
@@ -389,7 +399,7 @@ impl SceneDocument {
                 entity.insert(probe);
             }
             if let Some(terrain) = &component.terrain {
-                entity.insert(terrain.runtime(&owned.materials));
+                entity.insert(terrain.runtime(&owned.materials, &owned.meshes));
             }
             spawned.push(entity.id());
         }
