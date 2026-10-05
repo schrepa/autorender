@@ -40,13 +40,15 @@ pub const FILES: [&str; 18] = [
     "snow_orm.ktx2",
 ];
 
-/// How one surface material looks: its name, which its maps' files start
-/// with; its linear color and roughness without maps, and the color its
-/// maps' colors are multiplied by; the meters its maps repeat over; how
+/// How one surface material looks: its name; the material whose maps it
+/// uses (whose files start with that name, its own unless it borrows
+/// another's); its linear color and roughness without maps, and the color
+/// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
 /// and the cover growing where it lies (decision 056).
 struct Look {
     name: &'static str,
+    maps: &'static str,
     color: [f32; 3],
     roughness: f32,
     tint: [f32; 3],
@@ -56,9 +58,10 @@ struct Look {
     cover: Option<Cover>,
 }
 
-const LOOKS: [Look; 6] = [
+const LOOKS: [Look; 7] = [
     Look {
         name: "grass",
+        maps: "grass",
         color: [0.105, 0.135, 0.045],
         roughness: 0.92,
         tint: [1.0, 1.0, 1.0],
@@ -75,6 +78,7 @@ const LOOKS: [Look; 6] = [
     },
     Look {
         name: "dry_grass",
+        maps: "dry_grass",
         color: [0.2, 0.16, 0.08],
         roughness: 0.92,
         tint: [0.9, 0.9, 0.9],
@@ -91,6 +95,7 @@ const LOOKS: [Look; 6] = [
     },
     Look {
         name: "dirt",
+        maps: "dirt",
         color: [0.21, 0.165, 0.11],
         roughness: 0.92,
         tint: [1.0, 1.0, 1.0],
@@ -101,6 +106,7 @@ const LOOKS: [Look; 6] = [
     },
     Look {
         name: "scree",
+        maps: "scree",
         color: [0.2, 0.19, 0.18],
         roughness: 0.82,
         tint: [0.78, 0.74, 0.68],
@@ -111,6 +117,7 @@ const LOOKS: [Look; 6] = [
     },
     Look {
         name: "rock",
+        maps: "rock",
         color: [0.25, 0.235, 0.22],
         roughness: 0.82,
         tint: [0.74, 0.7, 0.64],
@@ -121,11 +128,25 @@ const LOOKS: [Look; 6] = [
     },
     Look {
         name: "snow",
+        maps: "snow",
         color: [0.82, 0.84, 0.88],
         roughness: 0.55,
         tint: [1.0, 1.0, 1.0],
         tiling: 6.0,
         height_contrast: 0.4,
+        projection: SurfaceProjection::Top,
+        cover: None,
+    },
+    // Needle litter under the spruces: the dirt's maps, darkened toward
+    // olive, so forests read as dark stands from afar.
+    Look {
+        name: "forest_floor",
+        maps: "dirt",
+        color: [0.03, 0.036, 0.022],
+        roughness: 0.95,
+        tint: [0.18, 0.23, 0.15],
+        tiling: 3.0,
+        height_contrast: 0.5,
         projection: SurfaceProjection::Top,
         cover: None,
     },
@@ -219,9 +240,10 @@ fn surface(
 ) -> Result<TerrainSurface, String> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut materials = Vec::with_capacity(LOOKS.len());
+    let mut loaded = HashMap::new();
     for look in &LOOKS {
         materials.push(SurfaceMaterial {
-            material: maps(&mut assets, files, look)?,
+            material: maps(&mut assets, files, look, &mut loaded)?,
             color: look.color,
             roughness: look.roughness,
             tiling: look.tiling,
@@ -335,14 +357,20 @@ const SPRUCES: usize = 3;
 /// `look`'s maps from `files` as an engine material tinted by its tint,
 /// when the page supplied all three: base color, normal, and occlusion
 /// (red), roughness (green), metalness (blue) and height (alpha) in one.
+/// Looks borrowing the same maps share their textures through `loaded`.
 fn maps(
     assets: &mut AssetLibrary,
     files: &HashMap<String, StressFile>,
     look: &Look,
+    loaded: &mut HashMap<String, TextureHandle>,
 ) -> Result<Option<MaterialHandle>, String> {
     let mut textures = Vec::with_capacity(3);
     for map in ["albedo", "normal", "orm"] {
-        let file_name = format!("{}_{map}.ktx2", look.name);
+        let file_name = format!("{}_{map}.ktx2", look.maps);
+        if let Some(&texture) = loaded.get(&file_name) {
+            textures.push(texture);
+            continue;
+        }
         let Some(file) = files.get(&file_name) else {
             return Ok(None);
         };
@@ -351,11 +379,11 @@ fn maps(
         };
         let texture = Texture::with_alpha(width, height, file.bytes.clone())
             .map_err(|error| format!("{file_name}: {error}"))?;
-        textures.push(
-            assets
-                .insert_texture(texture)
-                .map_err(|error| error.to_string())?,
-        );
+        let texture = assets
+            .insert_texture(texture)
+            .map_err(|error| error.to_string())?;
+        loaded.insert(file_name, texture);
+        textures.push(texture);
     }
     let [red, green, blue] = look.tint;
     let material = Material::new([red, green, blue, 1.0])
@@ -401,6 +429,22 @@ fn rules() -> Biomes {
         mask,
         opacity: 1.0,
     };
+    // Where spruces stand in broad stands below the tree line on gentle
+    // ground, thinning at their edges; their needles litter the ground there.
+    let forest = || {
+        Mask::Multiply(vec![
+            remap(
+                Mask::Add(vec![
+                    scaled(noise(320.0, 31, 3), 0.75),
+                    scaled(noise(45.0, 32, 2), 0.25),
+                ]),
+                0.45,
+                0.62,
+            ),
+            Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
+            Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
+        ])
+    };
     let boulders = |weight: f32| {
         (0..BOULDERS)
             .map(|index| PlacementChoice {
@@ -429,19 +473,13 @@ fn rules() -> Biomes {
                     .collect(),
                 density: 420.0,
                 footprint: 3.5,
-                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
-                mask: Mask::Multiply(vec![
-                    remap(
-                        Mask::Add(vec![
-                            scaled(noise(320.0, 31, 3), 0.75),
-                            scaled(noise(45.0, 32, 2), 0.25),
-                        ]),
-                        0.45,
-                        0.62,
-                    ),
-                    Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
-                    Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
-                ]),
+                materials: vec![
+                    "grass".into(),
+                    "dry_grass".into(),
+                    "dirt".into(),
+                    "forest_floor".into(),
+                ],
+                mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
                 sink: 0.3,
@@ -514,6 +552,7 @@ fn rules() -> Biomes {
                         0.8,
                     ),
                 ),
+                layer("forest_floor", remap(forest(), 0.12, 0.42)),
                 layer(
                     "scree",
                     remap(
