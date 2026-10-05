@@ -146,7 +146,7 @@ fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, 
 
 /// Generations of the shadow maps, environment maps and reflection probe
 /// grid (decision 043) the camera groups bind.
-type CameraGroupsKey = (u64, u64, u64, u64);
+type CameraGroupsKey = (u64, u64, u64, u64, u64);
 
 /// GPU culling of GPU-presented frames: occlusion culling (decision 040),
 /// on unless turned off, with its depth pyramid, and sub-pixel culling
@@ -246,6 +246,8 @@ pub struct Renderer {
     scatter: crate::scatter::ScatterPass,
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
     scatter_draws: scatter_draws::ScatterDraws,
+    // What placed objects cover around the camera (decision 059).
+    occupancy: crate::occupancy::OccupancyPass,
     // The presentation time of the last frame written, which temporal
     // frames sway placed objects by for their motion (decision 058).
     last_seconds: Option<f32>,
@@ -434,6 +436,7 @@ impl Renderer {
         let terrain = crate::terrain::TerrainPass::new(&device, &queue);
         let ground_cover = crate::ground_cover::GroundCoverPass::new(&device);
         let scatter = crate::scatter::ScatterPass::new(&device);
+        let occupancy = crate::occupancy::OccupancyPass::new(&device);
         let camera = CameraBindings::new(
             &device,
             &queue,
@@ -443,6 +446,7 @@ impl Renderer {
                 environment: &environment,
                 probes: &probes,
                 horizons: &terrain.horizons,
+                occupancy: &occupancy,
             },
         );
         let virtual_draws = VirtualDraws::new(&device);
@@ -513,6 +517,7 @@ impl Renderer {
             scatter,
             scatter_meshes: (BTreeSet::new(), 0),
             scatter_draws: scatter_draws::ScatterDraws::default(),
+            occupancy,
             last_seconds: None,
             post: None,
             temporal: None,

@@ -53,6 +53,11 @@ struct Lighting {
     // height falloff and the sun's glow; the air's own color.
     aerial: vec4<f32>,
     aerial_color: vec4<f32>,
+    // Occupancy (decision 059): the map's center (x and z), the inverse of
+    // its side and the strength covers darken by (0 without a map); then
+    // the reference height its heights are above and its texels a side.
+    occupancy: vec4<f32>,
+    occupancy_heights: vec4<f32>,
 }
 // Sun shadows (decisions 020 and 028): world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -97,6 +102,40 @@ struct Shadow {
 // meters receivers rise before comparing. One unused texel without any.
 @group(0) @binding(14) var terrain_horizon_records: texture_2d<f32>;
 @group(0) @binding(15) var terrain_horizon_sampler: sampler;
+// What placed objects cover around the camera (decision 059): the densest
+// cover over each texel, and the covers' highest top and lowest bottom
+// (negated), above the map's reference height.
+@group(0) @binding(16) var occupancy_coverage: texture_2d<f32>;
+@group(0) @binding(17) var occupancy_heights: texture_2d<f32>;
+
+// The share of the sky light placed objects' covers leave at `world`
+// (decision 059): under a cover, its density's worth less; within it, less
+// the deeper below its top; above it or outside the map, all of it.
+fn occupancy_visibility(world: vec3<f32>) -> f32 {
+    let strength = lighting.occupancy.w;
+    if strength <= 0.0 {
+        return 1.0;
+    }
+    let uv = (world.xz - lighting.occupancy.xy) * lighting.occupancy.z + 0.5;
+    if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+        return 1.0;
+    }
+    let coverage = textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv, 0.0).r;
+    if coverage <= 0.0 {
+        return 1.0;
+    }
+    let size = lighting.occupancy_heights.y;
+    let texel = min(vec2<u32>(uv * size), vec2<u32>(u32(size) - 1u));
+    let heights = textureLoad(occupancy_heights, texel, 0).rg;
+    let height = world.y - lighting.occupancy_heights.x;
+    let top = heights.x;
+    let bottom = -heights.y;
+    if height >= top {
+        return 1.0;
+    }
+    let depth = saturate((top - height) / max(top - bottom, 0.5));
+    return 1.0 - strength * coverage * depth;
+}
 
 const PI: f32 = 3.14159265;
 

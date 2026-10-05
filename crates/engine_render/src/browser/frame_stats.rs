@@ -312,6 +312,7 @@ impl Renderer {
             ground_cover_blades: self.ground_cover.totals()[0],
             dropped_ground_cover: self.ground_cover.totals()[1],
             placed_objects: self.scatter.resident,
+            occupancy_redraws: self.occupancy.redraws,
             dropped_terrain_materials: self.terrain.dropped_materials,
             ..self.residency_stats()
         };
@@ -443,7 +444,8 @@ impl Renderer {
             "memory.gpu_terrain_bytes",
             (self.terrain.capacity_bytes()
                 + self.ground_cover.capacity_bytes()
-                + self.scatter.capacity_bytes()) as f64,
+                + self.scatter.capacity_bytes()
+                + self.occupancy.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

@@ -41,6 +41,9 @@ pub(crate) enum Resource {
     /// Placed objects' lists and draws for the camera and the shadow maps
     /// (decision 057).
     Placed,
+    /// What placed objects cover around the camera, kept between its draws
+    /// (decision 059).
+    Occupancy,
     /// Shadow casters each map draws, and the maps (the kept map is kept
     /// between frames, decision 020).
     Casters,
@@ -61,7 +64,7 @@ pub(crate) enum Resource {
 }
 
 /// Resources, by their bits in a [`Set`].
-const RESOURCES: [Resource; 21] = [
+const RESOURCES: [Resource; 22] = [
     Resource::Canvas,
     Resource::Depth,
     Resource::Scene,
@@ -76,6 +79,7 @@ const RESOURCES: [Resource; 21] = [
     Resource::Poses,
     Resource::Visible,
     Resource::Placed,
+    Resource::Occupancy,
     Resource::Casters,
     Resource::ShadowMaps,
     Resource::Clusters,
@@ -98,6 +102,7 @@ impl Resource {
             | Self::Poses
             | Self::Visible
             | Self::ShadowMaps
+            | Self::Occupancy
             | Self::Clusters
             | Self::Pyramid
             | Self::Probes => Lifetime::Kept,
@@ -202,6 +207,8 @@ pub(crate) enum Pass {
     /// Placed objects' culling for the camera and the shadow maps
     /// (decision 057).
     Scatter,
+    /// What placed objects cover drawn around the camera (decision 059).
+    Occupancy,
     /// Shadow caster selection (decision 020).
     ShadowSelect,
     /// Virtual geometry's cluster selection (decision 044).
@@ -246,9 +253,10 @@ pub(crate) enum Pass {
 }
 
 /// Passes, by their bits in the masks frames report.
-const PASSES: [Pass; 22] = [
+const PASSES: [Pass; 23] = [
     Pass::Presentation,
     Pass::Scatter,
+    Pass::Occupancy,
     Pass::ShadowSelect,
     Pass::VirtualSelect,
     Pass::ShadowMaps,
@@ -277,6 +285,7 @@ impl Pass {
         match self {
             Self::Presentation => "presentation",
             Self::Scatter => "scatter",
+            Self::Occupancy => "occupancy",
             Self::ShadowSelect => "shadow_select",
             Self::VirtualSelect => "virtual_select",
             Self::ShadowMaps => "shadow_maps",
@@ -631,8 +640,10 @@ pub(crate) struct FrameShape {
     /// Opaque phases: two around the occlusion test (decision 040).
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
-    /// Placed objects draw (decision 057).
+    /// Placed objects draw (decision 057), and the occupancy map is drawn
+    /// again (decision 059).
     pub(crate) scatter: bool,
+    pub(crate) occupancy: bool,
     /// Virtual geometry selects clusters (decision 044), the shadow maps
     /// draw some, and the visibility buffer resolves them in each phase
     /// (decision 045).
@@ -669,6 +680,12 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
     }
     if shape.scatter {
         graph.add(Pass::Scatter).write(Placed);
+    }
+    if shape.occupancy {
+        graph
+            .add(Pass::Occupancy)
+            .read_if(shape.scatter, Placed)
+            .write(Occupancy);
     }
     // Shadow casters first: virtual geometry selects the clusters of the
     // virtual ones with the camera's, then the maps draw.
@@ -736,6 +753,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read(Poses)
             .read_if(gpu, Visible)
             .read_if(shape.scatter && phase == 0, Placed)
+            .read(Occupancy)
             .read_if(shape.shadows, ShadowMaps)
             .read_if(shape.lights, Lights)
             .read_if(shape.clusters, Clusters)

@@ -122,6 +122,12 @@ pub(crate) struct LightingUniform {
     /// height falloff and the sun's glow; the air's color (w unused).
     pub aerial: [f32; 4],
     pub aerial_color: [f32; 4],
+    /// Occupancy (decision 059): the map's center (x and z), the inverse of
+    /// its side in meters and the strength covers darken by (0 without a
+    /// map); then the reference height its heights are above and its texels
+    /// a side.
+    pub occupancy: [f32; 4],
+    pub occupancy_heights: [f32; 4],
 }
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
@@ -191,6 +197,8 @@ impl LightingUniform {
                 atmosphere.aerial_glow,
             ],
             aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
+            occupancy: [0.0; 4],
+            occupancy_heights: [0.0; 4],
         }
     }
 }
@@ -394,6 +402,8 @@ pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
 pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 
 pub(crate) const SCATTER_SNAP_SHADER: &str = include_str!("scatter_snap.wgsl");
+
+pub(crate) const OCCUPANCY_SHADER: &str = include_str!("occupancy.wgsl");
 /// Terrain's depth drawing into shadow maps (decision 051).
 pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),

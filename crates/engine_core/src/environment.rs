@@ -10,8 +10,8 @@ use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, GroundCover, LevelOfDetail, LocalLights,
-    Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
-    VirtualGeometry, Wind,
+    Occupancy, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
+    TerrainSettings, VirtualGeometry, Wind,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -58,6 +58,7 @@ pub struct Environment {
     pub terrain: TerrainSettings,
     pub ground_cover: GroundCover,
     pub wind: Wind,
+    pub occupancy: Occupancy,
 }
 
 impl Environment {
@@ -169,6 +170,13 @@ impl Environment {
                 },
             ),
             wind: read(world, Wind::STILL),
+            occupancy: read(
+                world,
+                Occupancy {
+                    enabled: false,
+                    ..Occupancy::default()
+                },
+            ),
         }
     }
 
@@ -191,6 +199,7 @@ impl Environment {
             terrain: self.terrain.sanitized(),
             ground_cover: self.ground_cover.sanitized(),
             wind: self.wind.sanitized(),
+            occupancy: self.occupancy.sanitized(),
         }
     }
 }

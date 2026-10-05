@@ -12,8 +12,8 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, GroundCover, InvalidSetting,
-    LevelOfDetail, LocalLights, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
-    SunShafts, TerrainSettings, VirtualGeometry, Wind,
+    LevelOfDetail, LocalLights, Occupancy, Particles, ReflectionProbes, Reflections, Refraction,
+    Shadows, SunShafts, TerrainSettings, VirtualGeometry, Wind,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -277,6 +277,7 @@ section!(LevelOfDetail, since 8, opt_in false);
 section!(TerrainSettings, since 9, opt_in false);
 section!(GroundCover, since 9, opt_in false);
 section!(Wind, since 9, opt_in false);
+section!(Occupancy, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -328,6 +329,10 @@ pub struct SceneEnvironment {
     /// The wind ground cover and placed objects sway in (decision 058).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wind: Option<Wind>,
+    /// What placed objects cover darkens the sky light under them
+    /// (decision 059).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occupancy: Option<Occupancy>,
 }
 
 impl SceneEnvironment {
@@ -353,6 +358,7 @@ impl SceneEnvironment {
             terrain: Some(environment.terrain),
             ground_cover: Some(environment.ground_cover),
             wind: Some(environment.wind),
+            occupancy: Some(environment.occupancy),
         }
     }
 
@@ -374,6 +380,7 @@ impl SceneEnvironment {
         visitor.section("terrain", self.terrain);
         visitor.section("ground_cover", self.ground_cover);
         visitor.section("wind", self.wind);
+        visitor.section("occupancy", self.occupancy);
     }
 
     /// The names of the sections present, the atmosphere first.

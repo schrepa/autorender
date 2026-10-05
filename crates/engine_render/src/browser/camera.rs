@@ -1,8 +1,9 @@
 //! The main passes' first group: the camera and lighting uniforms, shadow
 //! lookups (decisions 020 and 028), what glass refracts (decision 038),
-//! what surfaces reflect (decision 043) and terrain's horizon maps (decision
-//! 052), rebuilt when the shadow maps, environment maps, reflection probe
-//! grid or horizon maps it binds are replaced.
+//! what surfaces reflect (decision 043), terrain's horizon maps (decision
+//! 052) and what placed objects cover (decision 059), rebuilt when the
+//! shadow maps, environment maps, reflection probe grid, horizon maps or
+//! occupancy map it binds are replaced.
 
 use super::*;
 use crate::bindings::CAMERA;
@@ -14,6 +15,7 @@ pub(super) struct GroupSources<'a> {
     pub(super) environment: &'a Environment,
     pub(super) probes: &'a ProbePass,
     pub(super) horizons: &'a Horizons,
+    pub(super) occupancy: &'a crate::occupancy::OccupancyPass,
 }
 
 impl GroupSources<'_> {
@@ -23,6 +25,7 @@ impl GroupSources<'_> {
             self.environment.generation(),
             self.probes.words().1,
             self.horizons.generation(),
+            self.occupancy.views().2,
         )
     }
 }
@@ -198,6 +201,7 @@ fn camera_group(
     let [horizons, horizon_records, horizon_sampler] = sources.horizons.entries();
     let (environment, environment_sampler) = sources.environment.binding();
     let probe_words = sources.probes.words().0;
+    let (coverage, heights, _) = sources.occupancy.views();
     crate::pipelines::group(
         device,
         "engine/camera-bind-group",
@@ -226,6 +230,8 @@ fn camera_group(
             horizons,
             horizon_records,
             horizon_sampler,
+            ("occupancy_coverage", crate::pipelines::view(coverage)),
+            ("occupancy_heights", crate::pipelines::view(heights)),
         ],
     )
 }

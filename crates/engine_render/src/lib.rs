@@ -171,6 +171,9 @@ pub struct RenderStats {
     /// Objects terrains' placement layers stand on resident level-0 tiles
     /// (decision 057), each culled on the GPU every frame.
     pub placed_objects: u32,
+    /// Times the occupancy map around the camera was drawn (decision 059):
+    /// it follows the camera in steps and redraws when objects change.
+    pub occupancy_redraws: u32,
     /// Terrain surface materials (decision 054) past the palette's
     /// capacity, or whose maps the shared arrays cannot hold (block
     /// compressed, or sized unlike the first material's), which show a
@@ -238,6 +241,8 @@ mod materials;
 mod mesh_arena;
 #[cfg(target_arch = "wasm32")]
 mod mipmaps;
+#[cfg(target_arch = "wasm32")]
+mod occupancy;
 #[cfg(target_arch = "wasm32")]
 mod post;
 #[cfg(target_arch = "wasm32")]

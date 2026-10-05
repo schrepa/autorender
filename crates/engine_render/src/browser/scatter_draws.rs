@@ -11,6 +11,7 @@ use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
+use crate::occupancy::Cover;
 use crate::scatter::{GroupLayout, LEVELS, Record, SnapSources, TerrainInfo};
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
@@ -36,6 +37,8 @@ pub(super) struct ScatterDraws {
     // the groups' layouts changed since they last uploaded.
     impostors: Vec<ImpostorRecord>,
     changed: bool,
+    // Each group's cover (decision 059).
+    covers: Vec<Cover>,
 }
 
 impl ScatterDraws {
@@ -43,6 +46,12 @@ impl ScatterDraws {
     /// impostors' records list them after the plan batches'.
     pub(super) fn impostors(&self) -> impl Iterator<Item = &ImpostorRecord> {
         self.impostors.iter()
+    }
+
+    /// Each draw group's cover, which the occupancy map draws (decision
+    /// 059).
+    pub(super) fn covers(&self) -> &[Cover] {
+        &self.covers
     }
 }
 
@@ -327,6 +336,7 @@ impl Renderer {
     fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
+        let mut covers = Vec::new();
         let mut indices = HashMap::new();
         for terrain in terrains {
             for (asset_index, asset) in terrain.assets.iter().enumerate() {
@@ -368,6 +378,7 @@ impl Renderer {
                     errors,
                     impostor: (0.0, 0),
                 });
+                covers.push(Cover::of(bounds.min(), bounds.max()));
             }
         }
         let draws = &mut self.scatter_draws;
@@ -375,6 +386,7 @@ impl Renderer {
         draws.pool.clear(groups.len());
         draws.groups = groups;
         draws.layouts = layouts;
+        draws.covers = covers;
         draws.indices = indices;
         draws.terrains = terrains
             .iter()
