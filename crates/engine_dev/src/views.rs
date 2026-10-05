@@ -12,6 +12,11 @@ pub struct TerrainView {
     /// Meters along x and z.
     pub extent: [f32; 2],
     pub resident_tiles_by_level: Vec<u32>,
+    /// Per level, finest first: the most meters its height differs from
+    /// the next coarser level's, which its patches morph by (0 until
+    /// measured), and meters from the eye it draws to.
+    pub level_errors: Vec<f32>,
+    pub level_ranges: Vec<f32>,
 }
 
 /// Terrain streaming at the last extraction (decision 051).

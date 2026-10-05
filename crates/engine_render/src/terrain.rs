@@ -11,6 +11,12 @@
 //! camera sees, so terrain shadows itself without acne. Where terrains cast
 //! long shadows through their horizon maps (decision 052), only the near
 //! cascades draw terrain, near their receivers.
+//!
+//! Each tile's normals are computed once on upload into a parallel array;
+//! fragments read them through a directory of every level's resident tiles,
+//! from the finest level loaded at their distance whatever level the
+//! geometry draws at, so light and materials hold still as levels of
+//! detail hand over.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -20,7 +26,7 @@ use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
 use engine_core::{RenderTerrain, RenderTerrains, TileKey};
 use wgpu::util::DeviceExt;
 
-use crate::bindings::{SHADOW_VIEW, TERRAIN};
+use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_NORMALS};
 use crate::cached::Cached;
 use crate::render_graph::Targets;
 use crate::terrain_horizons::Horizons;
@@ -37,6 +43,10 @@ const SLOT: u64 = 256;
 /// The camera's view, then a reflection probe's six faces.
 const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+/// Each tile's normals, filtered.
+const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
+/// A directory entry of a tile not resident.
+const NOT_RESIDENT: u32 = u32::MAX;
 
 /// A patch as `PatchInput` reads it.
 #[repr(C)]
@@ -72,6 +82,7 @@ struct TerrainUniform {
     dirt: [f32; 4],
     rock: [f32; 4],
     snow: [f32; 4],
+    directory: [u32; 4],
 }
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
@@ -130,6 +141,8 @@ pub(crate) struct TerrainViews<'a> {
 struct Atlas {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    normals: wgpu::Texture,
+    normals_view: wgpu::TextureView,
     layers: u32,
 }
 
@@ -152,7 +165,7 @@ pub(crate) struct TerrainPass {
     holes: wgpu::Buffer,
     hole_offsets: HashMap<(u64, TileKey), u32>,
     holes_generation: u64,
-    group: Cached<(u64, u64, u64), wgpu::BindGroup>,
+    group: Cached<(u64, u64, u64, u64), wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
@@ -167,6 +180,17 @@ pub(crate) struct TerrainPass {
     pub(crate) dropped: u32,
     /// Long sun shadows (decision 052).
     pub(crate) horizons: Horizons,
+    // Normal maps of tiles uploaded this frame (layer, spacing), the pass
+    // computing them, and their sampler.
+    normal_jobs: Vec<(u32, f32)>,
+    normal_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    normal_sampler: wgpu::Sampler,
+    // Every terrain's levels and their resident tiles' layers, and where
+    // each terrain's start.
+    directory: wgpu::Buffer,
+    directory_written: Vec<u32>,
+    directory_generation: u64,
+    directory_bases: Vec<u32>,
 }
 
 impl TerrainPass {
@@ -210,6 +234,23 @@ impl TerrainPass {
             uploads: 0,
             dropped: 0,
             horizons: Horizons::new(device),
+            normal_jobs: Vec::new(),
+            normal_pass: None,
+            normal_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/terrain-normal-sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+            directory: crate::buffers::storage(
+                device,
+                "engine/terrain-directory",
+                16,
+                wgpu::BufferUsages::empty(),
+            ),
+            directory_written: Vec::new(),
+            directory_generation: 0,
+            directory_bases: Vec::new(),
         }
     }
 
@@ -223,10 +264,10 @@ impl TerrainPass {
         self.slots.len() as u32
     }
 
-    /// Bytes of the height array and the horizon maps.
+    /// Bytes of the height and normal arrays and the horizon maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.as_ref().map_or(0, |atlas| {
-            u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 4
+            u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 8
         }) + self.horizons.capacity_bytes()
     }
 
@@ -258,6 +299,7 @@ impl TerrainPass {
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
+        self.write_directory(device, queue, terrains);
         self.horizons.prepare(
             device,
             queue,
@@ -294,7 +336,13 @@ impl TerrainPass {
                 engine_core::TerrainView::Normals => 2.0,
                 engine_core::TerrainView::Tiles => 3.0,
             };
-            let (uniform, anchors) = terrain_uniform(terrain, eye, view);
+            let directory = [
+                self.directory_bases.get(index).copied().unwrap_or(0),
+                terrain.pyramid.levels(),
+                0,
+                0,
+            ];
+            let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory);
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -526,8 +574,10 @@ impl TerrainPass {
                 },
             );
             self.slots.insert(key, layer);
+            self.normal_jobs.push((layer, listed[&key].spacing()));
             self.uploads += 1;
         }
+        self.compute_normals(device, queue);
         self.synced = terrains
             .terrains
             .iter()
@@ -571,6 +621,146 @@ impl TerrainPass {
         }
     }
 
+    /// Computes the normal maps of the tiles uploaded this frame, after
+    /// their heights, in a submission of its own.
+    fn compute_normals(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let Some(atlas) = &self.atlas else {
+            self.normal_jobs.clear();
+            return;
+        };
+        if self.normal_jobs.is_empty() {
+            return;
+        }
+        let (layout, pipeline) = self.normal_pass.get_or_insert_with(|| {
+            let layout = crate::pipelines::layout(device, &TERRAIN_NORMALS);
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("engine/terrain-normals.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_NORMALS_SHADER.into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/terrain-normals-layout"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let pipeline =
+                crate::pipelines::compute_entry(device, &pipeline_layout, &module, "tile_normals");
+            (layout, pipeline)
+        });
+        // One uniform slot per job.
+        let mut words = vec![0_u32; self.normal_jobs.len() * SLOT as usize / 4];
+        for (index, &(layer, spacing)) in self.normal_jobs.iter().enumerate() {
+            let at = index * SLOT as usize / 4;
+            words[at] = layer;
+            words[at + 1] = spacing.to_bits();
+        }
+        let jobs = crate::buffers::uniform(
+            device,
+            "engine/terrain-normal-jobs",
+            (words.len() * 4) as u64,
+        );
+        queue.write_buffer(&jobs, 0, bytemuck::cast_slice(&words));
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/terrain-normals"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/terrain-normals"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            for (index, &(layer, _)) in self.normal_jobs.iter().enumerate() {
+                let target = atlas.normals.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/terrain-normals-group",
+                    &TERRAIN_NORMALS,
+                    layout,
+                    &[
+                        ("heights", crate::pipelines::view(&atlas.view)),
+                        (
+                            "job",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &jobs,
+                                offset: index as u64 * SLOT,
+                                size: wgpu::BufferSize::new(16),
+                            }),
+                        ),
+                        ("normals", crate::pipelines::view(&target)),
+                    ],
+                );
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups(LAYER_SIZE.div_ceil(16), LAYER_SIZE.div_ceil(16), 1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        self.normal_jobs.clear();
+    }
+
+    /// Writes the directory of every terrain's levels and resident tiles
+    /// when it changes: each level's entries start, tiles and reach, then
+    /// its entries.
+    fn write_directory(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        terrains: &RenderTerrains,
+    ) {
+        let mut words: Vec<u32> = Vec::new();
+        self.directory_bases.clear();
+        for terrain in &terrains.terrains {
+            let pyramid = &terrain.pyramid;
+            let base = words.len();
+            self.directory_bases.push(base as u32);
+            let levels = pyramid.levels() as usize;
+            words.resize(base + 4 * levels, 0);
+            for level in 0..pyramid.levels() {
+                let [tiles_x, tiles_z] = pyramid.tiles(level);
+                let header = base + 4 * level as usize;
+                // Without a reach, a level shades nowhere but the coarsest.
+                let reach = match terrain.reach.get(level as usize) {
+                    Some(&reach) => reach,
+                    None if level + 1 == pyramid.levels() => f32::MAX,
+                    None => 0.0,
+                };
+                words[header] = words.len() as u32;
+                words[header + 1] = tiles_x;
+                words[header + 2] = tiles_z;
+                words[header + 3] = reach.to_bits();
+                for z in 0..tiles_z {
+                    for x in 0..tiles_x {
+                        let key = TileKey::new(level as u8, x as u16, z as u16);
+                        words.push(
+                            self.slots
+                                .get(&(terrain.id, key))
+                                .copied()
+                                .unwrap_or(NOT_RESIDENT),
+                        );
+                    }
+                }
+            }
+        }
+        if words.is_empty() || words == self.directory_written {
+            return;
+        }
+        let bytes = (words.len() * 4) as u64;
+        if bytes > self.directory.size() {
+            self.directory = crate::buffers::storage(
+                device,
+                "engine/terrain-directory",
+                bytes.next_power_of_two(),
+                wgpu::BufferUsages::empty(),
+            );
+            self.directory_generation += 1;
+        }
+        queue.write_buffer(&self.directory, 0, bytemuck::cast_slice(&words));
+        self.directory_written = words;
+    }
+
     /// Grows the height array to hold `needed` layers, doubling, up to
     /// `max_layers`; existing layers are copied over.
     fn ensure_atlas(
@@ -585,48 +775,70 @@ impl TerrainPass {
             return;
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("engine/terrain-heights"),
-            size: wgpu::Extent3d {
-                width: LAYER_SIZE,
-                height: LAYER_SIZE,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HEIGHT_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
+        let array = |label: &'static str, format, usage| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: LAYER_SIZE,
+                    height: LAYER_SIZE,
+                    depth_or_array_layers: layers,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | usage,
+                view_formats: &[],
+            })
+        };
+        let texture = array(
+            "engine/terrain-heights",
+            HEIGHT_FORMAT,
+            wgpu::TextureUsages::empty(),
+        );
+        let normals = array(
+            "engine/terrain-normals",
+            NORMAL_FORMAT,
+            wgpu::TextureUsages::STORAGE_BINDING,
+        );
         if let Some(old) = &self.atlas
             && self.next_layer > 0
         {
             let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/terrain-grow"),
             });
+            let extent = wgpu::Extent3d {
+                width: LAYER_SIZE,
+                height: LAYER_SIZE,
+                depth_or_array_layers: self.next_layer,
+            };
             encoder.copy_texture_to_texture(
                 old.texture.as_image_copy(),
                 texture.as_image_copy(),
-                wgpu::Extent3d {
-                    width: LAYER_SIZE,
-                    height: LAYER_SIZE,
-                    depth_or_array_layers: self.next_layer,
-                },
+                extent,
+            );
+            encoder.copy_texture_to_texture(
+                old.normals.as_image_copy(),
+                normals.as_image_copy(),
+                extent,
             );
             // Before this frame's tile writes, which the queue runs in order.
             queue.submit([encoder.finish()]);
         }
-        let view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("engine/terrain-heights"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
+        let array_view = |texture: &wgpu::Texture| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            })
+        };
         self.atlas = Some(Atlas {
+            view: array_view(&texture),
+            normals_view: array_view(&normals),
             texture,
-            view,
+            normals,
             layers,
         });
         self.atlas_generation += 1;
@@ -640,6 +852,7 @@ impl TerrainPass {
             self.atlas_generation,
             self.uniform_generation,
             self.holes_generation,
+            self.directory_generation,
         );
         if self.group.stale(&key) {
             let group = crate::pipelines::group(
@@ -666,6 +879,15 @@ impl TerrainPass {
                         }),
                     ),
                     crate::buffers::entry("terrain_holes", &self.holes),
+                    (
+                        "terrain_normals",
+                        crate::pipelines::view(&atlas.normals_view),
+                    ),
+                    (
+                        "terrain_normal_sampler",
+                        crate::pipelines::sampler(&self.normal_sampler),
+                    ),
+                    crate::buffers::entry("terrain_directory", &self.directory),
                 ],
             );
             self.group.set(key, group);
@@ -981,7 +1203,12 @@ fn grid_indices() -> Vec<u16> {
 /// A terrain's uniform for a view from `eye`, and each level's anchor
 /// sample (x, z): a point on every level's grid near the eye, from which
 /// patches count their samples.
-fn terrain_uniform(terrain: &RenderTerrain, eye: DVec3, view: f32) -> (TerrainUniform, Vec<i64>) {
+fn terrain_uniform(
+    terrain: &RenderTerrain,
+    eye: DVec3,
+    view: f32,
+    directory: [u32; 4],
+) -> (TerrainUniform, Vec<i64>) {
     let pyramid = &terrain.pyramid;
     let levels = pyramid.levels();
     let top = f64::from(pyramid.spacing(levels - 1));
@@ -1008,6 +1235,7 @@ fn terrain_uniform(terrain: &RenderTerrain, eye: DVec3, view: f32) -> (TerrainUn
             engine_core::math::cos(material.rock_slope.to_radians()),
         ),
         snow: color(material.snow, material.snow_height),
+        directory,
     };
     (uniform, anchors)
 }

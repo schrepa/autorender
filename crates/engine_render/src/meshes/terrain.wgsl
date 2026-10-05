@@ -10,9 +10,18 @@
 // never test.
 override TERRAIN_HOLES: bool = false;
 
+// Every resident tile's normals, in the same layers as its heights, and
+// their sampler.
+@group(1) @binding(21) var terrain_normals: texture_2d_array<f32>;
+@group(1) @binding(22) var terrain_normal_sampler: sampler;
+// Each terrain's levels, finest first, from `terrain.directory.x`: four
+// words each (where its tiles' entries start, its tiles along x and z, and
+// the meters from the eye its tiles load within, as bits); then the entries,
+// row by row, each the layer of a resident tile or all ones.
+@group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
+
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
     // Relative to the view's eye; w: the patch's sample spacing.
     @location(1) relative: vec4<f32>,
     // Where the point lies in its tile's cells, and where the tile's hole
@@ -23,7 +32,6 @@ struct TerrainOutput {
 
 struct TerrainTemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal: vec3<f32>,
     @location(1) relative: vec4<f32>,
     @location(2) cell: vec2<f32>,
     @location(3) @interpolate(flat) holes: u32,
@@ -35,7 +43,6 @@ fn terrain_output(input: PatchInput) -> TerrainOutput {
     let relative = vertex.relative + terrain_view.eye_offset.xyz;
     var output: TerrainOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
-    output.normal = vertex.normal;
     output.relative = vec4<f32>(relative, input.shape.x);
     output.cell = vertex.cell;
     output.holes = input.holes;
@@ -64,7 +71,6 @@ fn vs_terrain_temporal(input: PatchInput) -> TerrainTemporalOutput {
     let output = terrain_output(input);
     var temporal: TerrainTemporalOutput;
     temporal.clip_position = output.clip_position;
-    temporal.normal = output.normal;
     temporal.relative = output.relative;
     temporal.cell = output.cell;
     temporal.holes = output.holes;
@@ -134,13 +140,61 @@ fn terrain_view_albedo(albedo: vec3<f32>, normal: vec3<f32>, spacing: f32, cell:
     return albedo;
 }
 
+// The normal at terrain-local `local` in `level`'s normal maps, or in the
+// nearest coarser level's where its tile is not resident.
+fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    for (var index = level; index < levels; index++) {
+        let header = base + index * 4u;
+        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
+        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
+        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        if layer == 0xffffffffu {
+            continue;
+        }
+        // Layers keep a border sample before the tile's first.
+        let uv = (samples - vec2<f32>(tile * 256u) + vec2<f32>(1.5)) / 259.0;
+        return textureSampleLevel(terrain_normals, terrain_normal_sampler, uv, layer, 0.0).xyz;
+    }
+    return vec3<f32>(0.0, 1.0, 0.0);
+}
+
+// The terrain's normal at terrain-local `local`, `distance` from the eye
+// its tiles load around: from the finest level whose tiles load that far,
+// whatever level the geometry draws at, turning into the next coarser
+// level's over the second half of its reach. Reaches double level by
+// level, so detail fades continuously with distance, as trilinear
+// filtering turns between mipmaps, and the ground's light and materials
+// hold still as levels of detail hand over.
+fn terrain_surface_normal(local: vec2<f32>, distance: f32) -> vec3<f32> {
+    let base = terrain.directory.x;
+    let levels = terrain.directory.y;
+    var level = 0u;
+    var reach = 0.0;
+    loop {
+        reach = bitcast<f32>(terrain_directory[base + level * 4u + 3u]);
+        if distance < reach || level + 1u >= levels {
+            break;
+        }
+        level++;
+    }
+    var normal = terrain_level_normal(local, level);
+    let blend = saturate((distance - 0.5 * reach) / (0.5 * reach));
+    if blend > 0.0 && level + 1u < levels {
+        normal = mix(normal, terrain_level_normal(local, level + 1u), blend);
+    }
+    return stable_normalize(normal);
+}
+
 // The surface a terrain fragment shows: the procedural material of its
 // slope and height, broken up by noise across the ground.
-fn terrain_point(normal_in: vec3<f32>, relative_spacing: vec4<f32>, cell: vec2<f32>)
-        -> SurfacePoint {
+fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     let relative = relative_spacing.xyz;
     let world = relative + camera.position.xyz;
-    let normal = stable_normalize(normal_in);
+    let normal = terrain_surface_normal(world.xz - terrain.origin.xz,
+        length(world - terrain.eye.xyz));
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     let footprint = max(length(world_dx), length(world_dy));
@@ -185,13 +239,13 @@ fn terrain_point(normal_in: vec3<f32>, relative_spacing: vec4<f32>, cell: vec2<f
 }
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {
-    let point = terrain_point(input.normal, input.relative, input.cell);
+    let point = terrain_point(input.relative, input.cell);
     terrain_holes_test(input.cell, input.holes);
     return finish(point, vec3<f32>(0.0));
 }
 
 fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
-    let point = terrain_point(input.normal, input.relative, input.cell);
+    let point = terrain_point(input.relative, input.cell);
     terrain_holes_test(input.cell, input.holes);
     return finish(point, local_light(point, input.clip_position.xy));
 }
@@ -199,7 +253,6 @@ fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
 fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {
     var output: TerrainOutput;
     output.clip_position = input.clip_position;
-    output.normal = input.normal;
     output.relative = input.relative;
     output.cell = input.cell;
     output.holes = input.holes;

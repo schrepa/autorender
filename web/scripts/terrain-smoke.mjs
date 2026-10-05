@@ -109,7 +109,11 @@ try {
   assert.equal(view.terrain.layers[3].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
-  checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level });
+  // Each level's largest measured difference from the next coarser one,
+  // which its patches morph by, and ranges growing level by level.
+  assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
+  assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
+  checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
   const [plateau, hole, outside] = await heights([[0, 0], [48, 0], [5000, 5000]]);
@@ -149,10 +153,13 @@ try {
   assert.ok(sweep.layers.worst.max_difference < 5e-3, `layers differ by ${sweep.layers.worst.max_difference}`);
   checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference });
 
-  // The settings section: finer level of detail draws more triangles;
-  // invalid values are refused; disabled terrain draws nothing.
+  // The settings section: finer level of detail reaches further and draws
+  // more triangles; invalid values are refused; disabled terrain draws
+  // nothing.
   const fine = await command("environment", { terrain: { samples_per_frame: 50_000_000, pixel_error: 2 } });
   const finer = (await settle());
+  const detailed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
+  assert.ok(detailed.level_ranges[0] > view.level_ranges[0], `level 0 reaches ${detailed.level_ranges[0]} m`);
   assert.ok(finer.terrain_triangles > settled.terrain_triangles, "a smaller pixel error draws more triangles");
   assert.deepEqual(fine.result.environment_changed, ["terrain"]);
   const invalid = await command("environment", { terrain: { pixel_error: 0.5 } }, false);

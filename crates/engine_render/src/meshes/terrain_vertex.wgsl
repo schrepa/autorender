@@ -27,7 +27,8 @@ struct TerrainView {
 // world position, its origin, and its material (decision 051): linear grass,
 // dirt, rock and snow colors; grass's w its roughness, rock's the cosine of
 // the slope rock takes over at, snow's the height snow starts at above the
-// origin.
+// origin; and where its levels start in `terrain_directory` and how many
+// there are.
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
@@ -36,6 +37,7 @@ struct TerrainUniform {
     dirt: vec4<f32>,
     rock: vec4<f32>,
     snow: vec4<f32>,
+    directory: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 
@@ -60,20 +62,11 @@ fn terrain_load(layer: u32, texel: vec2<u32>) -> f32 {
     return textureLoad(terrain_heights, vec2<i32>(texel), i32(layer), 0).x;
 }
 
-// The normal at `texel` from its neighbors `spacing` apart.
-fn terrain_normal(layer: u32, texel: vec2<u32>, spacing: f32) -> vec3<f32> {
-    let left = terrain_load(layer, texel - vec2<u32>(1u, 0u));
-    let right = terrain_load(layer, texel + vec2<u32>(1u, 0u));
-    let back = terrain_load(layer, texel - vec2<u32>(0u, 1u));
-    let front = terrain_load(layer, texel + vec2<u32>(0u, 1u));
-    return normalize(vec3<f32>(left - right, 2.0 * spacing, back - front));
-}
-
-// A vertex relative to the terrain's eye, its normal, and where it lies in
-// its tile's cells.
+// A vertex relative to the terrain's eye, and where it lies in its tile's
+// cells. Fragments take their normals from the terrain's normal maps, not
+// from the level drawn (decision 051).
 struct TerrainVertex {
     relative: vec3<f32>,
-    normal: vec3<f32>,
     cell: vec2<f32>,
 }
 
@@ -110,13 +103,10 @@ fn terrain_vertex(input: PatchInput) -> TerrainVertex {
     // tile's heights to the bit.
     let height = fine * (1.0 - morph) + coarse * morph;
     let morphed = base - vec2<f32>(odd) * morph;
-    let fine_normal = terrain_normal(layer, texel, spacing);
-    let coarse_normal = terrain_normal(input.atlas.y, parent_texel, 2.0 * spacing);
     var vertex: TerrainVertex;
     vertex.relative = vec3<f32>(morphed.x * spacing + terrain.anchor.x,
         height + terrain.anchor.y - select(0.0, input.shape.w, skirt),
         morphed.y * spacing + terrain.anchor.z);
-    vertex.normal = normalize(mix(fine_normal, coarse_normal, morph));
     vertex.cell = vec2<f32>(texel - 1u) + morphed - base;
     return vertex;
 }
