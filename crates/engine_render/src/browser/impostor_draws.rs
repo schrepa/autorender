@@ -51,12 +51,17 @@ impl Renderer {
         self.impostors.records.clear();
         self.impostors.dropped = 0;
         let (meshes, materials, plan) = (&self.meshes, &self.materials, &self.plan);
+        // Placed objects' materials (decision 057) keep their impostors too.
         self.impostors.atlas.retain(
             |(mesh, material)| {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| plan.material(snapshot, handle).copied(),
+            |handle| {
+                plan.material(snapshot, handle)
+                    .copied()
+                    .or_else(|| Self::placed_material(snapshot, handle))
+            },
         );
         let settings = snapshot.environment.level_of_detail;
         if !(gpu_mode && settings.enabled && settings.impostors) {
@@ -121,16 +126,24 @@ impl Renderer {
         }
     }
 
-    /// Uploads this frame's impostor records (decision 048) and creates the
+    /// Uploads this frame's impostor records (decision 048), the plan
+    /// batches' then placed draw groups' (decision 057), and creates the
     /// pipeline drawing them in the opaque pass of `kind`; returns its key,
     /// `None` when impostors cannot draw.
     pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {
         let targets = kind.targets()?;
         let lit = kind.lit;
+        let records: Vec<ImpostorRecord> = self
+            .impostors
+            .records
+            .iter()
+            .chain(self.scatter_draws.impostors())
+            .copied()
+            .collect();
         if !self
             .impostors
             .atlas
-            .prepare(&self.device, &self.queue, &self.impostors.records)
+            .prepare(&self.device, &self.queue, &records)
         {
             return None;
         }

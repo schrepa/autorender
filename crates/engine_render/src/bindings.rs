@@ -673,7 +673,8 @@ pub(crate) const COVER_DRAW: Table = Table {
 
 /// Placed objects' culling (decision 057; `scatter_cull.wgsl`): the frame,
 /// every object's record and every draw group, each view's visible lists
-/// and the indirect draws they count in, and the views.
+/// and the indirect draws they count in, the views, and the camera's
+/// impostor cards and their draw.
 pub(crate) const SCATTER_CULL: Table = Table {
     label: "engine/scatter-cull-layout",
     bindings: &[
@@ -683,6 +684,8 @@ pub(crate) const SCATTER_CULL: Table = Table {
         write(3, "ids", C),
         write(4, "draws", C),
         read(5, "views", C),
+        write(6, "cards", C),
+        write(7, "card_args", C),
     ],
 };
 
