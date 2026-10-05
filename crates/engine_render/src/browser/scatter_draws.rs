@@ -185,6 +185,7 @@ impl Renderer {
             heights: sources.heights,
             directory: sources.directory,
             generation: sources.generation,
+            revision: sources.revision,
             terrains: &infos,
         });
         self.scatter
