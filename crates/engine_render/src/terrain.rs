@@ -312,8 +312,7 @@ impl TerrainPass {
             + self.maps.capacity_bytes()
     }
 
-    /// Records this frame's horizon map builds (decision 052) and sky
-    /// visibility bands (decision 055).
+    /// Records this frame's horizon map builds (decision 052).
     pub(crate) fn encode_horizons(
         &mut self,
         device: &wgpu::Device,
@@ -322,7 +321,6 @@ impl TerrainPass {
     ) {
         let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
         self.horizons.encode(device, encoder, heights, profiler);
-        self.sky.encode(device, encoder, heights, profiler);
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
@@ -355,6 +353,8 @@ impl TerrainPass {
         );
         self.sky
             .prepare(device, queue, terrains, &views.settings, &self.slots);
+        let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
+        self.sky.build(device, queue, heights);
         if terrains
             .terrains
             .iter()
