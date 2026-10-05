@@ -48,6 +48,9 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 256u;
 @group(1) @binding(27) var terrain_material_normals: texture_2d_array<f32>;
 @group(1) @binding(28) var terrain_orm: texture_2d_array<f32>;
 @group(1) @binding(29) var terrain_material_sampler: sampler;
+// Each terrain's sky visibility map (decision 055): over the whole terrain,
+// the share of the sky its ground sees about its normal (red).
+@group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -649,8 +652,29 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
     return ground;
 }
 
+// The share of the sky the ground at terrain-local `local` sees, from the
+// terrain's sky visibility map once built (decision 055); all of it before.
+fn terrain_sky_visibility(local: vec2<f32>) -> f32 {
+    if terrain.directory.w == 0u {
+        return 1.0;
+    }
+    let header = terrain.directory.x;
+    let extent = vec2<f32>(f32(terrain_directory[header + 1u]),
+        f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
+    return textureSampleLevel(terrain_sky, terrain_normal_sampler, local / extent,
+        terrain.directory.w - 1u, 0.0).r;
+}
+
+// The light the terrain around a hollow gives back per unit albedo for the
+// sky it hides: sunlit and skylit ground, as level ground would be.
+fn terrain_bounce() -> vec3<f32> {
+    return lighting.sun_color.rgb * (0.35 * saturate(lighting.sun.y))
+        + sky_average(vec3<f32>(0.0, 1.0, 0.0)) * (0.5 * lighting.zenith.w);
+}
+
 // The surface a terrain fragment shows: its surface materials, varied
-// across the ground so their maps do not repeat evenly.
+// across the ground so their maps do not repeat evenly, lit by the sky it
+// sees and by the ground around where that hides the sky.
 fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     let relative = relative_spacing.xyz;
     let world = relative + camera.position.xyz;
@@ -677,13 +701,14 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     if view == 2u || view == 4u {
         normal = geometric;
     }
-    if view != 4u {
+    if view < 4u {
         // Plain colors vary at every scale; maps carry their own detail
         // and vary broadly.
         let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
         let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
         albedo *= mix(plain, mapped, ground.mapped);
     }
+    let sky = terrain_sky_visibility(local);
     albedo = terrain_view_albedo(albedo, normal, relative_spacing.w, cell);
     let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
@@ -691,7 +716,8 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     point.opacity = 1.0;
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = ground.occlusion;
+    point.occlusion = ground.occlusion * sky;
+    point.bounce = (1.0 - sky) * albedo * terrain_bounce();
     point.roughness = roughness;
     point.alpha = roughness * roughness;
     point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);
@@ -706,6 +732,15 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     point.world_dy = world_dy;
     point.shadow_offset = vec3<f32>(0.0);
     point.on_terrain = true;
+    if view == 5u {
+        // The sky view: how much sky the ground sees, as unlit gray, cubed
+        // so the grade leaves differences visible.
+        point.albedo = vec3<f32>(0.0);
+        point.diffuse_color = vec3<f32>(0.0);
+        point.f0 = vec3<f32>(0.0);
+        point.bounce = vec3<f32>(0.0);
+        point.emissive = vec3<f32>(0.6 * sky * sky * sky);
+    }
     return widened(point, dpdx(normal), dpdy(normal));
 }
 

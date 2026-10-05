@@ -46,6 +46,9 @@ struct SurfacePoint {
     // Whether the point is terrain's (decision 052), which lies on the
     // ground of terrain's horizon maps.
     on_terrain: bool,
+    // Light from surfaces around the point where they hide the sky, per
+    // unit diffuse color: terrain's (decision 055), zero elsewhere.
+    bounce: vec3<f32>,
 }
 
 // Shaded light of a surface: graded color (and its linear light before the
@@ -405,7 +408,8 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * (1.0 - abs(point.geometric.y));
     // Occlusion maps darken indirect light only (glTF).
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
-        + lighting.horizon.rgb * rim) + reflection) * point.occlusion;
+        + lighting.horizon.rgb * rim) + reflection) * point.occlusion
+        + point.diffuse_color * point.bounce;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
             point.world_dy, point.distance, point.on_terrain);

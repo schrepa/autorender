@@ -344,6 +344,9 @@ pub enum TerrainView {
     Tiles,
     /// Each surface material in its own color, blended as the ground is.
     Materials,
+    /// The share of the sky the ground sees (decision 055), unlit, from
+    /// black (none) to white (all of it).
+    Sky,
 }
 
 /// Temporary terrain state for development (decision 051): an eye that
@@ -421,6 +424,14 @@ pub struct TerrainSettings {
     /// gives 0.0093).
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.2)))]
     pub shadow_softness: f32,
+    /// Ambient light on terrain scaled by how much sky its ground sees
+    /// (decision 055): each terrain's sky visibility map, built once its
+    /// finest pinned level is resident, where valleys and hollows see less
+    /// sky and take their own light back instead.
+    pub sky_visibility: bool,
+    /// Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).
+    #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
+    pub sky_resolution: u32,
 }
 
 impl Default for TerrainSettings {
@@ -435,6 +446,8 @@ impl Default for TerrainSettings {
             sun_shadows: true,
             shadow_resolution: 1024,
             shadow_softness: 0.01,
+            sky_visibility: true,
+            sky_resolution: 1024,
         }
     }
 }
@@ -459,7 +472,14 @@ impl TerrainSettings {
                 "must be in [64, 4096]",
             ));
         }
-        check_range("shadow_softness", self.shadow_softness, 0.0..=0.2)
+        check_range("shadow_softness", self.shadow_softness, 0.0..=0.2)?;
+        if !(64..=4096).contains(&self.sky_resolution) {
+            return Err(InvalidSetting::new(
+                "sky_resolution",
+                "must be in [64, 4096]",
+            ));
+        }
+        Ok(())
     }
 
     /// Every value in range.
@@ -488,6 +508,8 @@ impl TerrainSettings {
                 0.0,
                 0.2,
             ),
+            sky_visibility: self.sky_visibility,
+            sky_resolution: self.sky_resolution.clamp(64, 4096),
         }
     }
 }

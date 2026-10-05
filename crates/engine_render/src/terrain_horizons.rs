@@ -406,7 +406,7 @@ fn build_uniform(
 
 /// The level horizon maps read: the finest of the levels kept resident
 /// over the whole terrain.
-fn source_level(terrain: &RenderTerrain, settings: &TerrainSettings) -> u32 {
+pub(crate) fn source_level(terrain: &RenderTerrain, settings: &TerrainSettings) -> u32 {
     let top = terrain.pyramid.levels() - 1;
     top.saturating_sub(settings.pinned_levels.saturating_sub(1))
 }
@@ -419,7 +419,7 @@ fn bias(terrain: &RenderTerrain, settings: &TerrainSettings) -> f32 {
 
 /// Each source tile's entry (`terrain_horizon.wgsl`): the layer of the tile
 /// or of its nearest resident ancestor, and how many levels up that is.
-fn tile_table(
+pub(crate) fn tile_table(
     terrain: &RenderTerrain,
     settings: &TerrainSettings,
     slots: &HashMap<(u64, TileKey), u32>,

@@ -25,8 +25,9 @@ struct TerrainView {
 
 // One terrain: its anchor less its eye (w: the level-0 spacing), that eye's
 // world position, its origin (w: what it shows), where its levels start in
-// `terrain_directory` and how many there are, and where its surface
-// materials start in `terrain_palette` (decision 054).
+// `terrain_directory` and how many there are, where its surface materials
+// start in `terrain_palette` (decision 054), and its layer of
+// `terrain_sky` plus one, 0 until built (decision 055).
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
