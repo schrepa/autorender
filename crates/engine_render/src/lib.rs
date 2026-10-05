@@ -164,6 +164,10 @@ pub struct RenderStats {
     /// the rows of them this frame built.
     pub terrain_sky_maps: u32,
     pub terrain_sky_rows: u32,
+    /// Ground cover (decision 056): blades the last read-back frame drew,
+    /// and those past the capacity or budget, which dropped.
+    pub ground_cover_blades: u32,
+    pub dropped_ground_cover: u32,
     /// Terrain surface materials (decision 054) past the palette's
     /// capacity, or whose maps the shared arrays cannot hold (block
     /// compressed, or sized unlike the first material's), which show a
@@ -223,6 +227,8 @@ mod buffers;
 mod environment;
 #[cfg(target_arch = "wasm32")]
 mod gpu_presentation;
+#[cfg(target_arch = "wasm32")]
+mod ground_cover;
 #[cfg(target_arch = "wasm32")]
 mod materials;
 #[cfg(target_arch = "wasm32")]

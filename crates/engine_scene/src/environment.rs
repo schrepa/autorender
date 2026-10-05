@@ -11,9 +11,9 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, InvalidSetting, LevelOfDetail,
-    LocalLights, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
-    TerrainSettings, VirtualGeometry,
+    AmbientOcclusion, Atmosphere, Bloom, Decals, Environment, GroundCover, InvalidSetting,
+    LevelOfDetail, LocalLights, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
+    SunShafts, TerrainSettings, VirtualGeometry,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -275,6 +275,7 @@ section!(ReflectionProbes, since 8, opt_in false);
 section!(VirtualGeometry, since 8, opt_in false);
 section!(LevelOfDetail, since 8, opt_in false);
 section!(TerrainSettings, since 9, opt_in false);
+section!(GroundCover, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -317,9 +318,12 @@ pub struct SceneEnvironment {
     pub virtual_geometry: Option<VirtualGeometry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level_of_detail: Option<LevelOfDetail>,
-    /// Version 9: terrain streaming and level of detail (decision 051).
+    /// Version 9: terrain streaming and level of detail (decision 051),
+    /// and ground cover (decision 056).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainSettings>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ground_cover: Option<GroundCover>,
 }
 
 impl SceneEnvironment {
@@ -343,6 +347,7 @@ impl SceneEnvironment {
             virtual_geometry: Some(environment.virtual_geometry),
             level_of_detail: Some(environment.level_of_detail),
             terrain: Some(environment.terrain),
+            ground_cover: Some(environment.ground_cover),
         }
     }
 
@@ -362,6 +367,7 @@ impl SceneEnvironment {
         visitor.section("virtual_geometry", self.virtual_geometry);
         visitor.section("level_of_detail", self.level_of_detail);
         visitor.section("terrain", self.terrain);
+        visitor.section("ground_cover", self.ground_cover);
     }
 
     /// The names of the sections present, the atmosphere first.

@@ -32,10 +32,10 @@ const terrain = {
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
   ],
   // Decision 054: meadow below, rock on steep ground; a summit biome of
-  // snow above 120 m.
+  // snow above 120 m. The meadow grows grass (decision 056).
   surface: {
     materials: [
-      { id: "meadow", color: [0.12, 0.2, 0.06] },
+      { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 } },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
       { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5 },
     ],
@@ -204,6 +204,24 @@ try {
   await command("terrain", { view: "materials" });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
+  // Ground cover (decision 056): the meadow's grass grows near the eye,
+  // counted a few frames late; turned off, none grows.
+  await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });
+  let grown;
+  for (let frame = 0; frame < 20; frame++) {
+    grown = (await command("render")).result.rendering;
+    if (grown.ground_cover_blades > 0) break;
+  }
+  assert.ok(grown.ground_cover_blades > 0, `grass grows: ${JSON.stringify(grown)}`);
+  assert.equal(grown.dropped_ground_cover, 0);
+  const cover = (await command("inspect", { component: "GroundCover" })).result.value;
+  await command("environment", { ground_cover: { ...cover, enabled: false } });
+  let bare;
+  for (let frame = 0; frame < 8; frame++) bare = (await command("render")).result.rendering;
+  assert.equal(bare.ground_cover_blades, 0, "no blades once cover stops");
+  await command("environment", { ground_cover: cover });
+  checks.push({ check: "ground cover", blades: grown.ground_cover_blades });
+  await command("camera", overview);
   // The sky visibility map (decision 055) builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.
   let sky;

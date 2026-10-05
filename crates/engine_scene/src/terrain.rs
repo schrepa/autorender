@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Biome, Biomes, Blend, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle, NoiseLayer,
-    Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
+    Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, Layer, Layers, MaterialHandle,
+    NoiseLayer, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
+    TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -72,8 +73,9 @@ pub struct SceneTerrainSurface {
 /// How one surface material looks: a `material` of this document whose
 /// maps and factors shade it, or a linear `color` and `roughness`; the
 /// meters its textures repeat over (0.01 to 1000); how sharply its height
-/// map wins where it blends with another (0 to 1); and whether steep ground
-/// projects it from the side.
+/// map wins where it blends with another (0 to 1); whether steep ground
+/// projects it from the side; and the cover growing where it lies
+/// (decision 056).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -94,6 +96,8 @@ pub struct SceneTerrainMaterial {
     pub height_contrast: f32,
     #[serde(default)]
     pub projection: SurfaceProjection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover: Option<Cover>,
 }
 
 fn gray() -> [f32; 3] {
@@ -211,7 +215,14 @@ impl SceneTerrain {
                 tiling: material.tiling,
                 height_contrast: material.height_contrast,
                 projection: material.projection,
+                cover: material.cover,
             };
+            if let Some(Err(error)) = material.cover.as_ref().map(Cover::validate) {
+                return Err(invalid(
+                    format!("{at}.cover.{}", error.field),
+                    error.rule.into_owned(),
+                ));
+            }
             if !look.is_usable() {
                 return Err(invalid(
                     at,
@@ -413,6 +424,7 @@ impl SceneTerrain {
                         tiling: look.tiling,
                         height_contrast: look.height_contrast,
                         projection: look.projection,
+                        cover: look.cover,
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),

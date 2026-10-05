@@ -28,7 +28,7 @@ fn rules() -> [Rule; 19] {
         },
         Rule {
             since: 9,
-            what: "terrain settings and aerial perspective",
+            what: "terrain settings, ground cover and aerial perspective",
             first_use: |document| {
                 document
                     .environment

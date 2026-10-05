@@ -172,6 +172,61 @@
         "replace"
       ]
     },
+    "Cover": {
+      "description": "The cover growing where a surface material lies (decision 056): blades\nper square meter where the material lies alone, the shortest and\ntallest blades and their width at the root (meters), the linear color\nof their tips (roots take the ground's), and how far they lean in the\nwind (0 stiff, 1 the most).",
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "array",
+          "default": [
+            0.12999999523162842,
+            0.20000000298023224,
+            0.05000000074505806
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "density": {
+          "type": "number",
+          "format": "float",
+          "default": 90.0,
+          "maximum": 400.0,
+          "minimum": 0.0
+        },
+        "height": {
+          "type": "array",
+          "default": [
+            0.11999999731779099,
+            0.4000000059604645
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "sway": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "width": {
+          "type": "number",
+          "format": "float",
+          "default": 0.02500000037252903,
+          "maximum": 0.25,
+          "minimum": 0.001
+        }
+      },
+      "additionalProperties": false
+    },
     "Mask": {
       "description": "A value from 0 to 1 at every sample, from the sample's height, slope,\ncurvature and position: where a biome applies, or where a material\ncovers its biome's ground. Ramps run from 0 at their first value to 1 at\ntheir second, smoothly, falling when the first is the larger.",
       "oneOf": [
@@ -1432,6 +1487,16 @@
             }
           ]
         },
+        "ground_cover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGroundCover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "level_of_detail": {
           "anyOf": [
             {
@@ -1515,7 +1580,7 @@
           ]
         },
         "terrain": {
-          "description": "Version 9: terrain streaming and level of detail (decision 051).",
+          "description": "Version 9: terrain streaming and level of detail (decision 051),\nand ground cover (decision 056).",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSettings"
@@ -1544,6 +1609,56 @@
         "nearest",
         "linear"
       ]
+    },
+    "SceneGroundCover": {
+      "description": "Ground cover settings (decision 056). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "density": {
+          "description": "Scales every cover's density, 0 to 4.",
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_blades": {
+          "description": "An optional budget of blades a frame; beyond it the farthest drop.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "radius": {
+          "description": "Meters from the camera within which cover grows, thinning out over\nthe outer half, 2 to 200.",
+          "type": "number",
+          "format": "float",
+          "default": 40.0,
+          "maximum": 200.0,
+          "minimum": 2.0
+        },
+        "wind": {
+          "description": "The wind blades sway in: its horizontal direction times its speed in\nmeters per second, each 0 to 40 in size.",
+          "type": "array",
+          "default": [
+            2.5,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
     },
     "SceneHeightmap": {
       "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`.",
@@ -2695,7 +2810,7 @@
       ]
     },
     "SceneTerrainMaterial": {
-      "description": "How one surface material looks: a `material` of this document whose\nmaps and factors shade it, or a linear `color` and `roughness`; the\nmeters its textures repeat over (0.01 to 1000); how sharply its height\nmap wins where it blends with another (0 to 1); and whether steep ground\nprojects it from the side.",
+      "description": "How one surface material looks: a `material` of this document whose\nmaps and factors shade it, or a linear `color` and `roughness`; the\nmeters its textures repeat over (0.01 to 1000); how sharply its height\nmap wins where it blends with another (0 to 1); whether steep ground\nprojects it from the side; and the cover growing where it lies\n(decision 056).",
       "type": "object",
       "properties": {
         "color": {
@@ -2711,6 +2826,16 @@
           },
           "maxItems": 3,
           "minItems": 3
+        },
+        "cover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Cover"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "height_contrast": {
           "type": "number",

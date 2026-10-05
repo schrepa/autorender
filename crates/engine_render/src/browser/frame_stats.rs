@@ -309,6 +309,8 @@ impl Renderer {
             terrain_horizon_builds: self.terrain.horizons.builds,
             terrain_sky_maps: self.terrain.sky.count(),
             terrain_sky_rows: self.terrain.sky.rows,
+            ground_cover_blades: self.ground_cover.totals()[0],
+            dropped_ground_cover: self.ground_cover.totals()[1],
             dropped_terrain_materials: self.terrain.dropped_materials,
             ..self.residency_stats()
         };
@@ -438,7 +440,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_terrain_bytes",
-            self.terrain.capacity_bytes() as f64,
+            (self.terrain.capacity_bytes() + self.ground_cover.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

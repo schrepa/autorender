@@ -13,6 +13,7 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
+mod ground_cover;
 mod hierarchy;
 mod input;
 mod interpolation;
@@ -62,6 +63,7 @@ pub use engine_terrain::{
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
+pub use ground_cover::{Cover, GroundCover};
 pub use hierarchy::{
     GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, MAX_HIERARCHY_DEPTH,
     MAX_NORMAL_INVERSE_NORM, MAX_TRANSFORM_NODES, Parent, TransformIndex, TransformNodeLimit,
@@ -282,6 +284,7 @@ impl Engine {
             .init_resource::<VirtualGeometry>()
             .init_resource::<LevelOfDetail>()
             .init_resource::<TerrainSettings>()
+            .init_resource::<GroundCover>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -812,6 +815,7 @@ pub mod prelude {
         Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainSurface,
         Terrains, TileKey, Viewport,
     };
+    pub use crate::{Cover, GroundCover};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{

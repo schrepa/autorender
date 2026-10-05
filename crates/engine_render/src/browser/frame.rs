@@ -1363,6 +1363,12 @@ impl Renderer {
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::Opaque { phase } => {
+                // Ground cover grows on the terrain before the first phase
+                // draws it (decision 056).
+                if phase == 0 && state.terrain {
+                    self.ground_cover
+                        .encode(&self.device, encoder, &self.profiler);
+                }
                 let draws = self.encode_opaque(state, encoder, view, node, usize::from(phase));
                 // Phase two (decision 040) issues phase one's draws again for
                 // the instances its test revealed: count each once.
@@ -2212,6 +2218,7 @@ impl Renderer {
             self.gpu_presentation.after_submit();
         }
         self.shadows.after_submit();
+        self.ground_cover.after_submit();
         if let Some(lights) = self.lights.as_mut() {
             lights.after_submit();
         }
