@@ -27,8 +27,23 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     let index = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[index]);
     let slot = colors[index];
-    return transform_vertex(input.position, input.normal, slot.color, slot.surface,
+    var output = transform_vertex(input.position, input.normal, slot.color, slot.surface,
         input.uv, model);
+    let sway = slot_sway(slot.flags);
+    if sway > 0.0 {
+        let world = output.world_v.xyz
+            + slot_wind(model, output.world_v.xyz, sway, camera.position.w);
+        output.world_v = vec4<f32>(world, output.world_v.w);
+        output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
+    }
+    return output;
+}
+
+// The offset the wind gives the vertex at `world` of a slot posed by
+// `model` that sways `sway` (decision 058), at time `time`.
+fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
+    return wind_sway(camera.wind.xy, camera.wind.z, model[3].xyz, world.y - model[3].y, sway,
+        time);
 }
 
 // A selected cluster (decision 044) of a slot: 384 vertices, three per
@@ -292,7 +307,7 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     let slot = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[slot]);
     let material = colors[slot];
-    let vertex = transform_vertex(input.position, input.normal, material.color,
+    var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
@@ -302,6 +317,15 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
         let pose = previous_poses[slot];
         world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
             dot(pose.row_2, point), 1.0);
+    }
+    // Swaying slots move with the wind, last frame's at its time.
+    let sway = slot_sway(material.flags);
+    if sway > 0.0 {
+        let current = vertex.world_v.xyz
+            + slot_wind(model, vertex.world_v.xyz, sway, camera.position.w);
+        vertex.world_v = vec4<f32>(current, vertex.world_v.w);
+        vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
+        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
     }
     let previous = camera.previous_view_projection * world;
     var output: TemporalOutput;

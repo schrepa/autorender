@@ -572,7 +572,7 @@ impl Renderer {
         let temporal_frame = &packing.temporal_frame;
         let (write_slots, slot_key) = (packing.write_slots, packing.slot_key);
 
-        let camera = temporal_frame.as_ref().map_or_else(
+        let mut camera = temporal_frame.as_ref().map_or_else(
             || {
                 CameraUniform::exact(
                     snapshot.view_projection,
@@ -582,6 +582,21 @@ impl Renderer {
             },
             |frame| frame.camera,
         );
+        // The wind placed objects sway in (decision 058), and the time they
+        // swayed at last frame for temporal frames' motion.
+        let seconds = snapshot.elapsed_seconds;
+        let previous = self.last_seconds.replace(seconds).unwrap_or(seconds);
+        let wind = snapshot.environment.wind;
+        camera.wind = [
+            wind.velocity[0],
+            wind.velocity[1],
+            wind.gusts,
+            if temporal_frame.is_some() {
+                previous
+            } else {
+                seconds
+            },
+        ];
         let mut camera_upload_bytes = 0_u64;
         if self.uploads.camera_needs_write(&camera) {
             self.queue

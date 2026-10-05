@@ -78,12 +78,10 @@ pub struct GroundCover {
     /// the outer half, 2 to 200.
     #[cfg_attr(feature = "schema", schemars(range(min = 2.0, max = 200.0)))]
     pub radius: f32,
-    /// Scales every cover's density, 0 to 4.
+    /// Scales every cover's density, 0 to 4. Blades sway in the world's
+    /// `Wind` (decision 058).
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub density: f32,
-    /// The wind blades sway in: its horizontal direction times its speed in
-    /// meters per second, each 0 to 40 in size.
-    pub wind: [f32; 2],
     /// An optional budget of blades a frame; beyond it the farthest drop.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,7 +94,6 @@ impl Default for GroundCover {
             enabled: true,
             radius: 40.0,
             density: 1.0,
-            wind: [2.5, 1.0],
             max_blades: None,
         }
     }
@@ -107,9 +104,6 @@ impl GroundCover {
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("radius", self.radius, 2.0..=200.0)?;
         check_range("density", self.density, 0.0..=4.0)?;
-        for speed in self.wind {
-            check_range("wind", speed, -40.0..=40.0)?;
-        }
         check_budget("max_blades", self.max_blades)
     }
 
@@ -121,10 +115,6 @@ impl GroundCover {
             enabled: self.enabled,
             radius: crate::math::clamp(finite(self.radius, defaults.radius), 2.0, 200.0),
             density: crate::math::clamp(finite(self.density, defaults.density), 0.0, 4.0),
-            wind: [
-                crate::math::clamp(finite(self.wind[0], 0.0), -40.0, 40.0),
-                crate::math::clamp(finite(self.wind[1], 0.0), -40.0, 40.0),
-            ],
             max_blades: self.max_blades.map(|budget| budget.max(1)),
         }
     }

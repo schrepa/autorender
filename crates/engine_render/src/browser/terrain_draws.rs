@@ -59,6 +59,7 @@ impl Renderer {
             terrains,
             (
                 &snapshot.environment.ground_cover,
+                snapshot.environment.wind.velocity,
                 snapshot.view_projection,
                 snapshot.camera_position,
                 snapshot.elapsed_seconds,

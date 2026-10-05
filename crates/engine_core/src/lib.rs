@@ -29,6 +29,7 @@ mod skin;
 mod terrain;
 mod transform_edits;
 mod virtual_geometry;
+mod wind;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
 pub use atmosphere::Atmosphere;
@@ -96,6 +97,7 @@ pub use terrain::{
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
+pub use wind::Wind;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -286,6 +288,7 @@ impl Engine {
             .init_resource::<LevelOfDetail>()
             .init_resource::<TerrainSettings>()
             .init_resource::<GroundCover>()
+            .init_resource::<Wind>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -816,7 +819,7 @@ pub mod prelude {
         Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
-    pub use crate::{Cover, GroundCover};
+    pub use crate::{Cover, GroundCover, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{

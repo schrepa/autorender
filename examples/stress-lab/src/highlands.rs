@@ -278,6 +278,7 @@ fn surface(
             mesh,
             material: rock,
             lods: Vec::new(),
+            sway: 0.0,
         });
     }
     // Spruces of a few shapes over one bark and needle atlas, their needles
@@ -313,10 +314,13 @@ fn surface(
                 error,
             });
         }
+        // Spruces bend in the wind (decision 058): a third of a meter at ten
+        // meters up in full wind.
         placed.push(PlacementAsset {
             mesh: full,
             material: needles,
             lods,
+            sway: 0.35,
         });
     }
     TerrainSurface::new(&rules(), materials)

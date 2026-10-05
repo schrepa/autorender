@@ -70,14 +70,17 @@ pub struct TerrainSurface {
 }
 
 /// An object placement layers stand on a terrain (decision 057): the mesh
-/// it draws and the material it draws with, and the coarser meshes it draws
-/// at a distance, finest first; without them it draws the mesh's automatic
-/// levels of detail (decision 047).
+/// it draws and the material it draws with, the coarser meshes it draws at
+/// a distance, finest first (without them, the mesh's automatic levels of
+/// detail, decision 047), and how far it sways in the wind (decision 058):
+/// meters at ten meters up in full wind, its bend growing with the square
+/// of the height, 0 (rigid) to 10.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
     pub lods: Vec<PlacementLod>,
+    pub sway: f32,
 }
 
 /// A coarser mesh of a placement asset and the largest deviation from the
@@ -209,6 +212,9 @@ impl TerrainSurface {
             return fail("assets".into(), "needs one mesh and material per asset");
         }
         for (index, asset) in assets.iter().enumerate() {
+            if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
+                return fail(format!("assets[{index}].sway"), "must be in [0, 10]");
+            }
             let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
             if let Err((level, rule)) = PlacementLod::check(&errors) {
                 let path = match level {
@@ -1233,13 +1239,15 @@ impl RenderSurfaceMaps {
 }
 
 /// A placement asset of a frame (decision 057): its mesh, its material
-/// and the material's textures, and its coarser meshes with their errors.
+/// and the material's textures, its coarser meshes with their errors, and
+/// its sway (decision 058).
 #[derive(Clone, Debug)]
 pub struct RenderPlacementAsset {
     pub mesh: RenderMesh,
     pub material: RenderMaterial,
     pub textures: Vec<RenderTexture>,
     pub lods: Vec<(RenderMesh, f32)>,
+    pub sway: f32,
 }
 
 impl RenderPlacementAsset {
@@ -1285,6 +1293,7 @@ impl RenderPlacementAsset {
                 },
                 textures,
                 lods,
+                sway: asset.sway,
             })
         })();
         *missing += usize::from(found.is_none());

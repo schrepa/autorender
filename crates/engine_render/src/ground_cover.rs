@@ -130,7 +130,7 @@ impl GroundCoverPass {
         queue: &wgpu::Queue,
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
-        (settings, culling, eye, time): (&GroundCover, Mat4, Vec3, f32),
+        (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
     ) -> bool {
         self.growths.clear();
         let previous = self.previous_time.replace(time).unwrap_or(time);
@@ -139,7 +139,7 @@ impl GroundCoverPass {
             queue,
             terrain,
             terrains,
-            settings,
+            (settings, wind),
             (culling, eye, time, previous),
         );
         if !grows {
@@ -155,7 +155,7 @@ impl GroundCoverPass {
         queue: &wgpu::Queue,
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
-        settings: &GroundCover,
+        (settings, wind): (&GroundCover, [f32; 2]),
         (culling, eye, time, previous): (Mat4, Vec3, f32, f32),
     ) -> bool {
         if !settings.enabled || settings.density <= 0.0 || terrain.cover_sources().is_none() {
@@ -223,7 +223,7 @@ impl GroundCoverPass {
         }
         queue.write_buffer(&self.uniforms, 0, &bytes);
         let frame = FrameUniform {
-            wind: [settings.wind[0], settings.wind[1], time, previous],
+            wind: [wind[0], wind[1], time, previous],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         self.compute

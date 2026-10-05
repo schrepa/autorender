@@ -246,6 +246,9 @@ pub struct Renderer {
     scatter: crate::scatter::ScatterPass,
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
     scatter_draws: scatter_draws::ScatterDraws,
+    // The presentation time of the last frame written, which temporal
+    // frames sway placed objects by for their motion (decision 058).
+    last_seconds: Option<f32>,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames (decision 017).
@@ -510,6 +513,7 @@ impl Renderer {
             scatter,
             scatter_meshes: (BTreeSet::new(), 0),
             scatter_draws: scatter_draws::ScatterDraws::default(),
+            last_seconds: None,
             post: None,
             temporal: None,
             transparent: None,

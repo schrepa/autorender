@@ -172,6 +172,7 @@ impl DevBrowser {
                 level_of_detail,
                 terrain,
                 ground_cover,
+                wind,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -192,6 +193,7 @@ impl DevBrowser {
                     level_of_detail,
                     terrain,
                     ground_cover,
+                    wind,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());

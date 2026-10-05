@@ -443,7 +443,10 @@ fn section_description(name: &str) -> &'static str {
             "Terrain settings (decision 051): whether terrains draw, their level of detail's pixel error, the coarsest levels kept resident everywhere, an optional tile budget, per-frame tile work, and the collision radius around the camera and focus entities. Missing means no terrain draws. The rendering observation reports terrain patches, triangles and shadow patches, and resident, loading and dropped tiles."
         }
         "ground_cover" => {
-            "Ground cover settings (decision 056): whether surface materials' covers grow, the radius around the camera they grow within (thinning over its outer half), a density scale, the wind blades sway in, and an optional per-frame blade budget (the farthest drop first). Missing means no cover. The rendering observation reports blades drawn and dropped."
+            "Ground cover settings (decision 056): whether surface materials' covers grow, the radius around the camera they grow within (thinning over its outer half), a density scale, and an optional per-frame blade budget (the farthest drop first). Blades sway in the wind section. Missing means no cover. The rendering observation reports blades drawn and dropped."
+        }
+        "wind" => {
+            "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }
         "level_of_detail" => {
             "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."

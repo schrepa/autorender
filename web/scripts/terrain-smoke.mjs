@@ -44,7 +44,7 @@ const terrain = {
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
     // Decision 057: crates stand on the meadow, a coarser box far away.
-    assets: [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }] }],
+    assets: [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 }],
     placements: [{ id: "crates", assets: [{ asset: "crate" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
   },
 };
@@ -133,7 +133,7 @@ try {
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
-  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }] }]);
+  assert.deepEqual(view.terrain.surface.assets, [{ id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 }]);
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 
@@ -227,6 +227,16 @@ try {
   assert.equal(bare.ground_cover_blades, 0, "no blades once cover stops");
   await command("environment", { ground_cover: cover });
   checks.push({ check: "ground cover", blades: grown.ground_cover_blades });
+  // The wind (decision 058) blades and swaying crates bend in: its section
+  // reads back as set, and refuses speeds out of range.
+  const calm = (await command("inspect", { component: "Wind" })).result.value;
+  await command("environment", { wind: { velocity: [8, -2], gusts: 0.25 } });
+  assert.deepEqual((await command("inspect", { component: "Wind" })).result.value, { velocity: [8, -2], gusts: 0.25 });
+  const gale = await command("environment", { wind: { velocity: [80, 0], gusts: 0.25 } }, false);
+  assert.equal(gale.error.code, "invalid_environment", "winds past 40 m/s are refused");
+  assert.equal(gale.error.path, "$.wind.velocity");
+  await command("environment", { wind: calm });
+  checks.push({ check: "wind", calm });
   await command("camera", overview);
   // The sky visibility map (decision 055) builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.

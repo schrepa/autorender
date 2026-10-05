@@ -1,7 +1,7 @@
 use engine_core::{
     AmbientOcclusion, Bloom, Decals, GroundCover, LevelOfDetail, LocalLights, Particles,
     ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
-    VirtualGeometry,
+    VirtualGeometry, Wind,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -277,6 +277,8 @@ pub enum BrowserControl {
         terrain: Option<TerrainSettings>,
         #[serde(default)]
         ground_cover: Option<GroundCover>,
+        #[serde(default)]
+        wind: Option<Wind>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to

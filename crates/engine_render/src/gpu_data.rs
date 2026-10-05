@@ -29,6 +29,9 @@ pub(crate) struct CameraUniform {
     pub position: [f32; 4],
     pub jitter: [f32; 4],
     pub options: [f32; 4],
+    /// The wind's velocity (x and z), gust strength and the previous
+    /// frame's presentation time (decision 058).
+    pub wind: [f32; 4],
 }
 
 impl CameraUniform {
@@ -43,6 +46,7 @@ impl CameraUniform {
             position: position.extend(seconds).to_array(),
             jitter: [0.0; 4],
             options: [0.0; 4],
+            wind: [0.0, 0.0, 0.0, seconds],
         }
     }
 
