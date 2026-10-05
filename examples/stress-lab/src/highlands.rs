@@ -58,7 +58,7 @@ struct Look {
     cover: Option<Cover>,
 }
 
-const LOOKS: [Look; 7] = [
+const LOOKS: [Look; 9] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -150,6 +150,37 @@ const LOOKS: [Look; 7] = [
         projection: SurfaceProjection::Top,
         cover: None,
     },
+    // Grass where water gathers (decision 066): deeper green, taller and
+    // denser, in hollows and along streams.
+    Look {
+        name: "wet_grass",
+        maps: "grass",
+        color: [0.07, 0.13, 0.04],
+        roughness: 0.85,
+        tint: [0.72, 0.95, 0.68],
+        tiling: 3.0,
+        height_contrast: 0.35,
+        projection: SurfaceProjection::Top,
+        cover: Some(Cover {
+            density: 170.0,
+            height: [0.16, 0.5],
+            width: 0.035,
+            color: [0.1, 0.2, 0.05],
+            sway: 0.6,
+        }),
+    },
+    // Stream and river beds: the scree's stones, washed darker and wetter.
+    Look {
+        name: "riverbed",
+        maps: "scree",
+        color: [0.13, 0.13, 0.12],
+        roughness: 0.55,
+        tint: [0.55, 0.56, 0.54],
+        tiling: 3.0,
+        height_contrast: 0.9,
+        projection: SurfaceProjection::Top,
+        cover: None,
+    },
 ];
 
 /// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
@@ -196,19 +227,33 @@ pub(crate) fn populate(
     world.insert_resource(Plateau(level));
     let layers = Layers::new(vec![
         mountains,
-        // The hamlet's plateau, wide enough for the field's grid.
-        Layer::Stamp(Stamp {
-            center: plateau,
-            radius: hamlet,
-            falloff: 220.0,
-            op: StampOp::Flatten(level),
-        }),
         // A wide valley floor to the north-east, leveled low.
         Layer::Stamp(Stamp {
             center: local([1500.0, -1300.0]),
             radius: 520.0,
             falloff: 700.0,
             op: StampOp::Flatten(60.0),
+        }),
+        // Streams and rivers (decision 066) carved where water gathers off
+        // the mountains, baked over the eight-meter tiles.
+        Layer::Hydrology(HydrologyStage {
+            layer: HydrologyLayer {
+                level: 3,
+                channel_area: 150_000.0,
+                depth: 1.2,
+                width: 7.0,
+                max_depth: 7.0,
+                max_width: 70.0,
+            },
+            baked: None,
+        }),
+        // The hamlet's plateau, wide enough for the field's grid, level
+        // whatever runs over it.
+        Layer::Stamp(Stamp {
+            center: plateau,
+            radius: hamlet,
+            falloff: 220.0,
+            op: StampOp::Flatten(level),
         }),
         // A cave mouth in the plateau's slope.
         Layer::Stamp(Stamp {
@@ -442,8 +487,17 @@ fn rules() -> Biomes {
         mask,
         opacity: 1.0,
     };
+    // Streams and rivers (decision 066): where enough water gathers, but
+    // not across the pits it would fill as lakes.
+    let channels = || {
+        Mask::Multiply(vec![
+            Mask::Flow([5.12, 5.3]),
+            Mask::Invert(Box::new(Mask::Lake([0.5, 2.0]))),
+        ])
+    };
     // Where spruces stand in broad stands below the tree line on gentle
-    // ground, thinning at their edges; their needles litter the ground there.
+    // ground, thinning at their edges and kept out of stream beds; their
+    // needles litter the ground there.
     let forest = || {
         Mask::Multiply(vec![
             remap(
@@ -456,6 +510,7 @@ fn rules() -> Biomes {
             ),
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
+            Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
         ])
     };
     let boulders = |weight: f32| {
@@ -575,6 +630,19 @@ fn rules() -> Biomes {
                     ),
                 ),
                 layer("forest_floor", remap(forest(), 0.12, 0.42)),
+                // Lush grass in wet hollows and along streams.
+                layer(
+                    "wet_grass",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Wetness([10.0, 13.5]),
+                            scaled(noise(24.0, 41, 2), 0.35),
+                            Mask::Constant(-0.15),
+                        ]),
+                        0.35,
+                        0.6,
+                    ),
+                ),
                 layer(
                     "scree",
                     remap(
@@ -585,6 +653,15 @@ fn rules() -> Biomes {
                         ]),
                         0.62,
                         0.8,
+                    ),
+                ),
+                // Stream and river beds, with ragged edges.
+                layer(
+                    "riverbed",
+                    remap(
+                        Mask::Add(vec![channels(), scaled(noise(12.0, 42, 2), 0.3)]),
+                        0.55,
+                        0.75,
                     ),
                 ),
                 layer(

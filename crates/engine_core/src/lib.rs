@@ -63,9 +63,9 @@ pub use engine_assets::{
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, FarPlacement, FileHeader,
-    HeightImage, HeightmapLayer, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch,
-    Placed, PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile,
-    TileKey,
+    HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
+    HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Placed,
+    PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -822,11 +822,11 @@ pub mod prelude {
         ClipHandle, KeyInterpolation, Keyframes,
     };
     pub use crate::{
-        Biome, BiomeLayer, Biomes, Blend, FarPlacement, HeightImage, HeightmapLayer, Layer, Layers,
-        Mask, NoiseLayer, NoiseMask, PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice,
-        PlacementLayer, PlacementLod, Pyramid, Remap, Stamp, StampOp, SurfaceMaterial,
-        SurfaceProjection, Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource,
-        TerrainSurface, Terrains, TileKey, Viewport,
+        Biome, BiomeLayer, Biomes, Blend, FarPlacement, HeightImage, HeightmapLayer,
+        HydrologyLayer, HydrologyStage, Layer, Layers, Mask, NoiseLayer, NoiseMask, PlacedCollider,
+        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap,
+        Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
+        TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Wind};
     pub use crate::{Decal, DecalBlend, Decals};

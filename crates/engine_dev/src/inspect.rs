@@ -258,6 +258,7 @@ impl DevTools {
                 let terrain = world.get::<engine_core::Terrain>(entity)?;
                 let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
                 let (mut level_errors, mut level_ranges) = (Vec::new(), Vec::new());
+                let mut hydrology = None;
                 if let Some(terrains) = world.get_resource::<engine_core::Terrains>() {
                     for tile in terrains.tiles(entity) {
                         levels[usize::from(tile.key().level)] += 1;
@@ -265,6 +266,18 @@ impl DevTools {
                     if let Some((errors, ranges)) = terrains.level_detail(entity) {
                         level_errors = errors.to_vec();
                         level_ranges = ranges.to_vec();
+                    }
+                    let holds = matches!(&terrain.source, engine_core::TerrainSource::Generated(layers)
+                        if layers.layers().iter().any(|layer| matches!(layer, engine_core::Layer::Hydrology(_))));
+                    if holds {
+                        let (baking, stats) = terrains.hydrology(entity);
+                        hydrology = Some(crate::views::HydrologyView {
+                            baking,
+                            samples: stats.map(|stats| stats.samples),
+                            channel_samples: stats.map(|stats| stats.channel_samples),
+                            lake_samples: stats.map(|stats| stats.lake_samples),
+                            max_area: stats.map(|stats| stats.max_area),
+                        });
                     }
                 }
                 Some(json!(crate::views::TerrainView {
@@ -278,6 +291,7 @@ impl DevTools {
                     resident_tiles_by_level: levels,
                     level_errors,
                     level_ranges,
+                    hydrology,
                 }))
             }),
         }).expect("built-in descriptor is bounded");
@@ -292,6 +306,7 @@ impl DevTools {
                     dropped_tiles: stats.dropped_tiles,
                     patches: stats.patches,
                     fallback_patches: stats.fallback_patches,
+                    hydrology_baking: stats.hydrology_baking,
                 })
             },
         ).expect("built-in descriptor is bounded");

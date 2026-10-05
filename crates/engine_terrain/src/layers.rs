@@ -1,5 +1,6 @@
-//! The layer stack: procedural noise with erosion, imported heightmaps and
-//! stamps, applied in order to every sample; later layers win.
+//! The layer stack: procedural noise with erosion, imported heightmaps,
+//! stamps and the channels a hydrology bake carves (decision 066), applied
+//! in order to every sample; later layers win.
 
 use std::sync::Arc;
 
@@ -7,6 +8,7 @@ use engine_math::{clamp, max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use crate::hydrology::{Hydrology, HydrologyLayer};
 use crate::noise::{gradient_noise, gradient_value, gullies, smooth};
 
 /// How a layer's heights combine with the heights of the layers before it,
@@ -261,7 +263,7 @@ impl HeightImage {
     /// image's own samples, 0 to 65535, edges clamped, read from `level`
     /// (0 the image's samples, each one after twice as far apart).
     #[inline]
-    fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
+    pub(crate) fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
         match level
             .checked_sub(1)
             .and_then(|index| self.levels.get(index))
@@ -381,6 +383,16 @@ pub enum Layer {
     Noise(NoiseLayer),
     Heightmap(HeightmapLayer),
     Stamp(Stamp),
+    /// Where water runs over the layers before it and the channels it
+    /// carves (decision 066): nothing until baked.
+    Hydrology(HydrologyStage),
+}
+
+/// A hydrology layer, and what its bake found once baked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HydrologyStage {
+    pub layer: HydrologyLayer,
+    pub baked: Option<Arc<Hydrology>>,
 }
 
 /// A layer's field outside its valid values: the layer's index, the field
@@ -820,6 +832,15 @@ impl Layers {
                         StampOp::Hole => {}
                     }
                 }
+                Layer::Hydrology(stage) => {
+                    let water = &stage.layer;
+                    check(index, "level", water.level as f32, 0.0, 15.0)?;
+                    check(index, "channel_area", water.channel_area, 100.0, 1.0e10)?;
+                    check(index, "depth", water.depth, 0.0, 100.0)?;
+                    check(index, "width", water.width, 0.1, 1000.0)?;
+                    check(index, "max_depth", water.max_depth, 0.0, 100.0)?;
+                    check(index, "max_width", water.max_width, 0.1, 1000.0)?;
+                }
             }
         }
         let tables = layers
@@ -834,6 +855,45 @@ impl Layers {
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    /// The first hydrology layer not yet baked (decision 066), by index:
+    /// tiles wait for its bake.
+    pub fn unbaked(&self) -> Option<(usize, HydrologyLayer)> {
+        self.layers
+            .iter()
+            .enumerate()
+            .find_map(|(index, layer)| match layer {
+                Layer::Hydrology(stage) if stage.baked.is_none() => Some((index, stage.layer)),
+                _ => None,
+            })
+    }
+
+    /// The stack of the layers before `index`, which a bake there reads.
+    pub fn below(&self, index: usize) -> Self {
+        Self {
+            layers: self.layers[..index].to_vec(),
+            tables: self.tables[..index].to_vec(),
+        }
+    }
+
+    /// This stack with hydrology layer `index` baked as `baked`.
+    pub fn with_bake(&self, index: usize, baked: Arc<Hydrology>) -> Self {
+        let mut layers = self.clone();
+        if let Some(Layer::Hydrology(stage)) = layers.layers.get_mut(index) {
+            stage.baked = Some(baked);
+        }
+        layers
+    }
+
+    /// The first baked hydrology, which masks read.
+    pub fn hydrology(&self) -> Option<&Hydrology> {
+        self.layers.iter().find_map(|layer| match layer {
+            Layer::Hydrology(HydrologyStage {
+                baked: Some(baked), ..
+            }) => Some(baked.as_ref()),
+            _ => None,
+        })
     }
 
     pub(crate) fn noise(&self, index: usize) -> Option<&NoiseTables> {
@@ -882,6 +942,15 @@ impl Layers {
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
+            Layer::Hydrology(stage) => {
+                let Some(baked) = &stage.baked else {
+                    return;
+                };
+                let level = baked.level_for(spacing);
+                for (height, &x) in row.iter_mut().zip(xs) {
+                    *height -= baked.carve_at(x, z, level);
+                }
+            }
             Layer::Stamp(stamp) => {
                 if !reaches(stamp.center, stamp.reach(), min, max) {
                     return;

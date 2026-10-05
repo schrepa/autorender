@@ -456,13 +456,18 @@ impl Generator {
             );
             let gx = (east - west) / (2.0 * spacing);
             let gz = (south - north) / (2.0 * spacing);
+            let x = self.xs[column];
             let inputs = SampleInputs {
-                x: self.xs[column],
+                x,
                 z,
                 height,
                 gradient: (gx * gx + gz * gz).sqrt(),
                 curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
                 spacing,
+                water: self
+                    .layers
+                    .hydrology()
+                    .map_or_else(Default::default, |water| water.at(x, z, spacing)),
             };
             control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
         }
@@ -578,7 +583,12 @@ impl Generator {
                     let (Some(surface), Some(tile)) = (&self.surface, &self.tile) else {
                         return None;
                     };
-                    let (cost, next) = surface.place_row(tile, (layer, row), &mut self.placed);
+                    let (cost, next) = surface.place_row(
+                        tile,
+                        (layer, row),
+                        &mut self.placed,
+                        self.layers.hydrology(),
+                    );
                     *budget = budget.saturating_sub(cost);
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },

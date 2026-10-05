@@ -4,7 +4,7 @@
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, Terrain, TerrainSource, Terrains,
+    Engine, Terrain, Terrains,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -73,12 +73,24 @@ pub(crate) fn execute(
                     let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
                     let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
                     Ok(terrains.sample(x, z).map_or(Value::Null, |sample| {
+                        // What its hydrology bake (decision 066) found there,
+                        // as the finest level sees it.
+                        let water = terrains.layers(sample.terrain).and_then(|layers| {
+                            let terrain = terrains.terrain(sample.terrain)?;
+                            let water = layers.hydrology()?;
+                            Some(water.at(
+                                x - terrain.origin.x,
+                                z - terrain.origin.z,
+                                terrain.pyramid.spacing(0),
+                            ))
+                        });
                         json!({
                             "terrain": terrain_id(world, sample.terrain),
                             "height": sample.height,
                             "normal": sample.normal.to_array(),
                             "hole": sample.hole,
                             "level": sample.level,
+                            "water": water,
                         })
                     }))
                 })
@@ -199,8 +211,9 @@ fn sweep(
                     None => ray_misses += 1,
                 }
             }
+            // The layers tiles generate from, their hydrology baked.
             if let Some(terrain) = world.get::<Terrain>(sample.terrain)
-                && let TerrainSource::Generated(stack) = &terrain.source
+                && let Some(stack) = world.resource::<Terrains>().layers(sample.terrain)
             {
                 let local = point - Vec2::new(terrain.origin.x, terrain.origin.z);
                 let height = terrain.origin.y + stack.height_at(&terrain.pyramid, local);

@@ -1,0 +1,455 @@
+//! Hydrology (decision 066): where water runs over a terrain and what it
+//! carves. A bake reads the heights the layers below it give at one
+//! pyramid level, fills their pits so that every sample drains off the
+//! grid's edge (Priority-Flood with epsilon; Barnes, Lehman and Mulla
+//! 2014), sends each sample's water to its steepest neighbor among those
+//! the flood reached before it, and sums upstream area in the reverse of
+//! the flood's order. Channels then carve where enough area drains, deeper
+//! and wider downstream, and a wetness index and the depths of filled pits
+//! follow from the same grids. Each result is a 16-bit image with coarser
+//! levels, so every terrain level samples it without aliasing, and every
+//! sample is the same on every target: the bake is deterministic.
+
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, VecDeque};
+
+use engine_math::{max, min};
+use serde::{Deserialize, Serialize};
+
+use std::sync::Arc;
+
+use crate::layers::{HeightImage, Layers};
+use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+
+/// A layer that bakes where water runs over the layers below it and carves
+/// channels into them (decision 066).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct HydrologyLayer {
+    /// The pyramid level whose samples the bake reads: finer levels carve
+    /// narrower channels and take longer, 0 to 15.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 15)))]
+    pub level: u32,
+    /// Square meters of upstream area where channels begin, 100 to 1e10.
+    #[cfg_attr(feature = "schema", schemars(range(min = 100.0, max = 1.0e10)))]
+    pub channel_area: f32,
+    /// Meters deep and wide channels are where they begin; downstream their
+    /// depth grows with the fourth root and their width with the square
+    /// root of the area they drain, up to `max_depth` and `max_width`.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
+    pub depth: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
+    pub width: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
+    pub max_depth: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
+    pub max_width: f32,
+}
+
+impl Default for HydrologyLayer {
+    fn default() -> Self {
+        Self {
+            level: 3,
+            channel_area: 200_000.0,
+            depth: 1.0,
+            width: 6.0,
+            max_depth: 6.0,
+            max_width: 60.0,
+        }
+    }
+}
+
+/// What a bake found: samples read, samples channels run through, samples
+/// of filled pits, and the largest upstream area (square meters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct HydrologyStats {
+    pub samples: usize,
+    pub channel_samples: usize,
+    pub lake_samples: usize,
+    pub max_area: f32,
+}
+
+/// The ranges the baked images encode, from 0 to 65535: base-10 logarithms
+/// of upstream area (square meters), wetness indexes and lake depths
+/// (meters). Carving spans 0 to the layer's `max_depth`.
+pub const FLOW_RANGE: [f32; 2] = [0.0, 12.0];
+pub const WETNESS_RANGE: [f32; 2] = [-5.0, 25.0];
+pub const LAKE_RANGE: [f32; 2] = [0.0, 200.0];
+
+/// A bake's results over the terrain, from its first corner: images whose
+/// samples lie `spacing` meters apart.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hydrology {
+    pub spacing: f32,
+    /// Meters channels carve below the ground, over 0 to `max_depth`.
+    pub carve: HeightImage,
+    pub max_depth: f32,
+    /// Upstream area, as [`FLOW_RANGE`] encodes it.
+    pub flow: HeightImage,
+    /// The topographic wetness index ln(a / tan b): a the area draining
+    /// through a meter of contour, b the ground's slope; as
+    /// [`WETNESS_RANGE`] encodes it.
+    pub wetness: HeightImage,
+    /// How deep water would stand in filled pits, as [`LAKE_RANGE`]
+    /// encodes it.
+    pub lakes: HeightImage,
+    pub stats: HydrologyStats,
+}
+
+/// The eight neighbors, orthogonal first, and how far each lies in
+/// samples.
+const NEIGHBORS: [(i32, i32, f32); 8] = [
+    (1, 0, 1.0),
+    (-1, 0, 1.0),
+    (0, 1, 1.0),
+    (0, -1, 1.0),
+    (1, 1, std::f32::consts::SQRT_2),
+    (-1, 1, std::f32::consts::SQRT_2),
+    (1, -1, std::f32::consts::SQRT_2),
+    (-1, -1, std::f32::consts::SQRT_2),
+];
+
+/// Meters of water a filled pit holds before a sample counts as lake,
+/// where channels do not carve.
+const LAKE_DEPTH: f32 = 0.5;
+
+/// A height ordered totally, lowest first in the flood's queue.
+#[derive(Clone, Copy, PartialEq)]
+struct Level(f32);
+
+impl Eq for Level {}
+
+impl PartialOrd for Level {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Level {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.total_cmp(&other.0)
+    }
+}
+
+/// Encodes `value` over `range` as a 16-bit sample.
+fn encode(value: f32, range: [f32; 2]) -> u16 {
+    let unit = (value - range[0]) / (range[1] - range[0]);
+    (max(min(unit, 1.0), 0.0) * 65_535.0 + 0.5) as u16
+}
+
+/// Decodes a sample (0 to 65535, interpolated) over `range`.
+pub fn decode(sample: f32, range: [f32; 2]) -> f32 {
+    range[0] + (range[1] - range[0]) * sample * (1.0 / 65_535.0)
+}
+
+/// Fills `heights`' pits so every sample drains off the edge of a grid
+/// `width` samples wide, each raised just above the sample it spills into;
+/// returns the samples in the order the flood reached them.
+fn flood(heights: &mut [f32], width: usize) -> Vec<u32> {
+    let count = heights.len();
+    let height = count / width;
+    let mut closed = vec![false; count];
+    let mut open = BinaryHeap::new();
+    let mut pits = VecDeque::new();
+    let mut order = Vec::with_capacity(count);
+    let edges = (0..width)
+        .flat_map(|x| [(x, 0), (x, height - 1)])
+        .chain((0..height).flat_map(|z| [(0, z), (width - 1, z)]));
+    for (x, z) in edges {
+        let sample = z * width + x;
+        if !closed[sample] {
+            closed[sample] = true;
+            open.push(Reverse((Level(heights[sample]), sample as u32)));
+        }
+    }
+    loop {
+        let sample = match pits.pop_front() {
+            Some(sample) => sample,
+            None => match open.pop() {
+                Some(Reverse((_, sample))) => sample as usize,
+                None => break,
+            },
+        };
+        order.push(sample as u32);
+        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+        let spill = heights[sample].next_up();
+        for (dx, dz, _) in NEIGHBORS {
+            let (nx, nz) = (x + dx, z + dz);
+            if nx < 0 || nz < 0 || nx >= width as i32 || nz >= height as i32 {
+                continue;
+            }
+            let neighbor = nz as usize * width + nx as usize;
+            if closed[neighbor] {
+                continue;
+            }
+            closed[neighbor] = true;
+            if heights[neighbor] < spill {
+                heights[neighbor] = spill;
+                pits.push_back(neighbor);
+            } else {
+                open.push(Reverse((Level(heights[neighbor]), neighbor as u32)));
+            }
+        }
+    }
+    order
+}
+
+/// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
+/// row along z, at least two each way), whose samples lie `spacing` meters
+/// apart.
+pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer) -> Hydrology {
+    let count = heights.len();
+    let height = count / width;
+    let mut filled = heights.to_vec();
+    let order = flood(&mut filled, width);
+    let mut rank = vec![0_u32; count];
+    for (position, &sample) in order.iter().enumerate() {
+        rank[sample as usize] = position as u32;
+    }
+    // Each sample drains to its steepest neighbor the flood reached before
+    // it (the sample it spilled into qualifies), so the reverse of the
+    // flood's order visits every sample before the one it drains to; edge
+    // samples drain off the grid.
+    let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
+    let mut receivers = vec![u32::MAX; count];
+    let mut slopes = vec![0.0_f32; count];
+    for sample in 0..count {
+        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+        if x == 0 || z == 0 || x == last_x || z == last_z {
+            continue;
+        }
+        let mut best = (u32::MAX, f32::NEG_INFINITY);
+        for (dx, dz, distance) in NEIGHBORS {
+            let neighbor = (z + dz) as usize * width + (x + dx) as usize;
+            if rank[neighbor] >= rank[sample] {
+                continue;
+            }
+            let slope = (filled[sample] - filled[neighbor]) / (distance * spacing);
+            if slope > best.1 {
+                best = (neighbor as u32, slope);
+            }
+        }
+        receivers[sample] = best.0;
+        slopes[sample] = max(best.1, 0.0);
+    }
+    let cell = spacing * spacing;
+    let mut area = vec![cell; count];
+    for &sample in order.iter().rev() {
+        let receiver = receivers[sample as usize];
+        if receiver != u32::MAX {
+            area[receiver as usize] += area[sample as usize];
+        }
+    }
+    // Channels: where enough area drains, a bed `depth` deep and `width`
+    // wide, both growing downstream, with banks as wide again easing to
+    // the ground.
+    let mut carve = vec![0.0_f32; count];
+    let mut channel_samples = 0;
+    let reach_cells = (layer.max_width / spacing).ceil() as i32 + 1;
+    for (sample, &drained) in area.iter().enumerate() {
+        let ratio = drained / layer.channel_area;
+        // Water crossing a filled pit runs as a lake, not a channel.
+        if ratio < 1.0 || layer.depth <= 0.0 || filled[sample] - heights[sample] > LAKE_DEPTH {
+            continue;
+        }
+        channel_samples += 1;
+        let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);
+        let half = 0.5 * min(layer.width * ratio.sqrt(), layer.max_width);
+        let reach = 2.0 * half;
+        let cells = ((reach / spacing).ceil() as i32).min(reach_cells);
+        let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+        for dz in -cells..=cells {
+            for dx in -cells..=cells {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx > last_x || nz > last_z {
+                    continue;
+                }
+                let distance = ((dx * dx + dz * dz) as f32).sqrt() * spacing;
+                if distance >= reach {
+                    continue;
+                }
+                let bank = max(distance - half, 0.0) / half;
+                let ease = 1.0 - bank * bank * (3.0 - 2.0 * bank);
+                let neighbor = nz as usize * width + nx as usize;
+                carve[neighbor] = max(carve[neighbor], depth * ease);
+            }
+        }
+    }
+    let mut lake_samples = 0;
+    let mut max_area = 0.0_f32;
+    let mut flow = Vec::with_capacity(count);
+    let mut wetness = Vec::with_capacity(count);
+    let mut lakes = Vec::with_capacity(count);
+    let mut carved = Vec::with_capacity(count);
+    for sample in 0..count {
+        max_area = max(max_area, area[sample]);
+        let lake = filled[sample] - heights[sample];
+        if lake > LAKE_DEPTH {
+            lake_samples += 1;
+        }
+        flow.push(encode(area[sample].log10(), FLOW_RANGE));
+        let catchment = area[sample] / spacing;
+        let index = (catchment / max(slopes[sample], 1.0e-3)).ln();
+        wetness.push(encode(index, WETNESS_RANGE));
+        lakes.push(encode(lake, LAKE_RANGE));
+        carved.push(encode(carve[sample], [0.0, max(layer.max_depth, 1.0e-3)]));
+    }
+    let image = |samples: Vec<u16>| {
+        HeightImage::new(width as u32, height as u32, samples)
+            .expect("grids hold two samples each way")
+    };
+    Hydrology {
+        spacing,
+        carve: image(carved),
+        max_depth: max(layer.max_depth, 1.0e-3),
+        flow: image(flow),
+        wetness: image(wetness),
+        lakes: image(lakes),
+        stats: HydrologyStats {
+            samples: count,
+            channel_samples,
+            lake_samples,
+            max_area,
+        },
+    }
+}
+
+/// What a bake found about one place: the base-10 logarithm of its
+/// upstream area (square meters), its wetness index, how deep water would
+/// stand there in a filled pit and how deep channels carve it (meters).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct HydrologySample {
+    pub flow: f32,
+    pub wetness: f32,
+    pub lake: f32,
+    pub carve: f32,
+}
+
+impl Hydrology {
+    /// The image level terrain samples `spacing` meters apart read: the
+    /// coarsest whose samples lie no further apart than the terrain's.
+    pub fn level_for(&self, spacing: f32) -> usize {
+        let mut level = 0;
+        while level < self.carve.levels()
+            && self.spacing * (2_u32 << level) as f32 <= spacing * 1.0001
+        {
+            level += 1;
+        }
+        level
+    }
+
+    /// Meters channels carve at terrain-local `(x, z)`, from image level
+    /// `level`.
+    #[inline]
+    pub(crate) fn carve_at(&self, x: f32, z: f32, level: usize) -> f32 {
+        let scale = 1.0 / self.spacing;
+        decode(
+            self.carve.sample(x * scale, z * scale, level),
+            [0.0, self.max_depth],
+        )
+    }
+
+    /// What the bake found at terrain-local `(x, z)`, as terrain samples
+    /// `spacing` meters apart see it.
+    pub fn at(&self, x: f32, z: f32, spacing: f32) -> HydrologySample {
+        let level = self.level_for(spacing);
+        let (u, v) = (x / self.spacing, z / self.spacing);
+        HydrologySample {
+            flow: decode(self.flow.sample(u, v, level), FLOW_RANGE),
+            wetness: decode(self.wetness.sample(u, v, level), WETNESS_RANGE),
+            lake: decode(self.lakes.sample(u, v, level), LAKE_RANGE),
+            carve: self.carve_at(x, z, level),
+        }
+    }
+}
+
+/// A hydrology bake in progress (decision 066): the layers below it
+/// generate every tile of its level, whose samples gather into one grid.
+pub struct HydrologyBake {
+    layer: HydrologyLayer,
+    level: u32,
+    below: Arc<Layers>,
+    pending: Vec<TileKey>,
+    job: Option<(TileKey, Generator)>,
+    width: usize,
+    heights: Vec<f32>,
+}
+
+impl HydrologyBake {
+    /// The bake of hydrology layer `index` of `layers` (as
+    /// [`Layers::unbaked`] names it) over `pyramid`.
+    pub fn new(
+        layers: &Layers,
+        (index, layer): (usize, HydrologyLayer),
+        pyramid: &Pyramid,
+    ) -> Self {
+        let level = layer.level.min(pyramid.levels() - 1);
+        let [x, z] = pyramid.tiles(level);
+        let width = x as usize * TILE_QUADS as usize + 1;
+        let height = z as usize * TILE_QUADS as usize + 1;
+        Self {
+            layer,
+            level,
+            below: Arc::new(layers.below(index)),
+            pending: pyramid.level_tiles(level).collect(),
+            job: None,
+            width,
+            heights: vec![0.0; width * height],
+        }
+    }
+
+    /// Generates the level's tiles within `budget`, then bakes: the bake
+    /// once done.
+    pub fn advance(&mut self, pyramid: &Pyramid, budget: &mut u64) -> Option<Hydrology> {
+        while *budget > 0 {
+            let (key, job) = match &mut self.job {
+                Some(job) => job,
+                None => {
+                    let Some(key) = self.pending.pop() else {
+                        return Some(bake(
+                            &self.heights,
+                            self.width,
+                            pyramid.spacing(self.level),
+                            &self.layer,
+                        ));
+                    };
+                    self.job
+                        .insert((key, Generator::new(self.below.clone(), pyramid, key)))
+                }
+            };
+            let key = *key;
+            if let Some(tile) = job.advance(budget) {
+                self.job = None;
+                // The tile's samples without their border.
+                let (stride, samples) = (TILE_STRIDE as usize, TILE_SAMPLES as usize);
+                let quads = TILE_QUADS as usize;
+                let first = [usize::from(key.x) * quads, usize::from(key.z) * quads];
+                for row in 0..samples {
+                    let from = (row + 1) * stride + 1;
+                    let to = (first[1] + row) * self.width + first[0];
+                    self.heights[to..to + samples]
+                        .copy_from_slice(&tile.heights()[from..from + samples]);
+                }
+            }
+        }
+        None
+    }
+}
+
+impl Layers {
+    /// This stack with every hydrology layer baked at once, as tools that
+    /// write terrain files need it; engines bake within frame budgets.
+    pub fn bake_all(&self, pyramid: &Pyramid) -> Self {
+        let mut layers = self.clone();
+        while let Some(unbaked) = layers.unbaked() {
+            let mut bake = HydrologyBake::new(&layers, unbaked, pyramid);
+            let mut budget = u64::MAX;
+            let baked = bake
+                .advance(pyramid, &mut budget)
+                .expect("an unlimited budget finishes the bake");
+            layers = layers.with_bake(unbaked.0, Arc::new(baked));
+        }
+        layers
+    }
+}

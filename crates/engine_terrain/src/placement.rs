@@ -339,6 +339,7 @@ pub(crate) fn place_row(
     seed: u32,
     (layer_index, row): (usize, usize),
     out: &mut Vec<Placed>,
+    water: Option<&crate::Hydrology>,
 ) -> (u64, Option<(usize, usize)>) {
     let spacing = tile.spacing();
     let size = TILE_QUADS as f32 * spacing;
@@ -419,6 +420,9 @@ pub(crate) fn place_row(
             gradient,
             curvature,
             spacing,
+            water: water.map_or_else(Default::default, |water| {
+                water.at(point[0], point[1], spacing)
+            }),
         };
         let keep = fill * share_of_materials * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
         if rank >= keep {
