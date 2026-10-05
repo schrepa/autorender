@@ -9,23 +9,38 @@ use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::scatter::{GroupLayout, LEVELS, Objects, Record};
 use engine_core::glam::{Mat4, Vec3};
 
-/// One draw group of placed objects: its mesh and material, where its
-/// lists start, its objects and the levels it draws, and whether it casts
-/// shadows and tests its material's texels doing so.
+/// Levels of an automatic chain the camera draws: the mesh and its first
+/// simplification. Deeper ones prune whole parts, such as foliage cards,
+/// and serve only shadow maps whose texels hide their errors.
+const CAMERA_LEVELS: u32 = 2;
+
+/// One draw group of placed objects: each level's mesh, its material,
+/// where its lists start, its objects, and whether it casts shadows and
+/// tests its material's texels doing so.
 pub(super) struct ScatterDraw {
-    mesh: MeshHandle,
+    meshes: Vec<MeshHandle>,
     material: MaterialHandle,
     ids: u32,
     count: u32,
-    levels: usize,
     casts: Option<bool>,
 }
 
+/// An asset as laid out: its mesh, material and version, and its coarser
+/// meshes.
+type AssetKey = (MeshHandle, MaterialHandle, u64, Vec<MeshHandle>);
+
 /// What the scatter pass's objects were laid out from: each terrain's
 /// identity and tiles' revision, its assets, and the meshes' layout.
-pub(super) type ScatterKey = (
-    Vec<(u64, u64, Vec<Option<(MeshHandle, MaterialHandle, u64)>>)>,
-    u64,
+pub(super) type ScatterKey = (Vec<(u64, u64, Vec<Option<AssetKey>>)>, u64);
+
+/// A placed asset's levels as drawn: each one's index count, first index
+/// and base vertex, its mesh, the coarser ones' errors, and how many the
+/// camera draws.
+type Levels = (
+    Vec<(u32, u32, i32)>,
+    Vec<MeshHandle>,
+    [f32; LEVELS as usize - 1],
+    u32,
 );
 
 impl Renderer {
@@ -50,6 +65,7 @@ impl Renderer {
                                         asset.mesh.handle,
                                         asset.material.handle,
                                         asset.material.version,
+                                        asset.lods.iter().map(|(lod, _)| lod.handle).collect(),
                                     )
                                 })
                             })
@@ -114,12 +130,9 @@ impl Renderer {
                 let Some(asset) = asset else {
                     continue;
                 };
-                let Some(mesh) = self.meshes.get(&asset.mesh.handle) else {
+                let Some((levels, meshes, errors, camera)) = self.scatter_levels(asset) else {
                     continue;
                 };
-                if mesh.skinned {
-                    continue;
-                }
                 let group = objects.groups.len() as u32;
                 let bounds = asset.mesh.mesh.bounds();
                 let center = (bounds.min() + bounds.max()) * 0.5;
@@ -151,33 +164,23 @@ impl Renderer {
                 if count == 0 {
                     continue;
                 }
-                let draw = mesh.draw(&self.mesh_arena);
-                let mut levels = vec![(draw.index_count, draw.first_index)];
-                for &(first_index, index_count, _) in mesh.lods.iter().take(LEVELS as usize - 1) {
-                    if index_count == 0 {
-                        break;
-                    }
-                    levels.push((index_count, draw.first_index + first_index));
-                }
-                let error = |level: usize| mesh.lods.get(level).map_or(0.0, |lod| lod.2);
                 // Blending materials cast nothing; masked ones test their
                 // texels (decision 031).
                 let material = &asset.material.material;
                 let casts = (!material.is_transparent())
                     .then(|| matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. }));
                 draws.push(ScatterDraw {
-                    mesh: asset.mesh.handle,
+                    meshes,
                     material: asset.material.handle,
                     ids,
                     count,
-                    levels: levels.len(),
                     casts,
                 });
                 objects.groups.push(GroupLayout {
                     count,
                     levels,
-                    base_vertex: draw.base_vertex,
-                    errors: [error(0), error(1)],
+                    camera,
+                    errors,
                 });
                 ids += count * LEVELS;
             }
@@ -185,9 +188,54 @@ impl Renderer {
         (objects, draws)
     }
 
+    /// The levels placed asset `asset` draws: its coarser meshes when it has
+    /// them, all of which the camera draws, as far as they are resident and
+    /// stream like its mesh; otherwise its mesh's automatic levels. `None`
+    /// while its mesh is not resident or is skinned.
+    fn scatter_levels(&self, asset: &engine_core::RenderPlacementAsset) -> Option<Levels> {
+        let mesh = self.meshes.get(&asset.mesh.handle)?;
+        if mesh.skinned {
+            return None;
+        }
+        let draw = mesh.draw(&self.mesh_arena);
+        let mut levels = vec![(draw.index_count, draw.first_index, draw.base_vertex)];
+        let mut meshes = vec![asset.mesh.handle];
+        let mut errors = [0.0; LEVELS as usize - 1];
+        if asset.lods.is_empty() {
+            for &(first_index, index_count, error) in mesh.lods.iter().take(LEVELS as usize - 1) {
+                if index_count == 0 {
+                    break;
+                }
+                errors[levels.len() - 1] = error;
+                levels.push((
+                    index_count,
+                    draw.first_index + first_index,
+                    draw.base_vertex,
+                ));
+                meshes.push(asset.mesh.handle);
+            }
+            let camera = CAMERA_LEVELS.min(levels.len() as u32);
+            return Some((levels, meshes, errors, camera));
+        }
+        for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
+            let Some(coarser) = self.meshes.get(&lod.handle) else {
+                break;
+            };
+            if coarser.extended != mesh.extended || coarser.skinned {
+                break;
+            }
+            let coarse = coarser.draw(&self.mesh_arena);
+            errors[levels.len() - 1] = *error;
+            levels.push((coarse.index_count, coarse.first_index, coarse.base_vertex));
+            meshes.push(lod.handle);
+        }
+        let camera = levels.len() as u32;
+        Some((levels, meshes, errors, camera))
+    }
+
     /// The material group and pipeline variant of placed group `draw`.
     fn scatter_binding(&self, draw: &ScatterDraw) -> (&wgpu::BindGroup, Variant) {
-        let mesh = self.meshes.get(&draw.mesh);
+        let mesh = self.meshes.get(&draw.meshes[0]);
         let (group, variant) = self.materials.binding(Some(draw.material));
         let variant = variant
             .with_extended(mesh.is_some_and(|mesh| mesh.extended))
@@ -219,31 +267,13 @@ impl Renderer {
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
         let mut draws = 0;
         for (index, draw) in self.scatter_draws.iter().enumerate() {
-            let Some(mesh) = self.meshes.get(&draw.mesh) else {
-                continue;
-            };
             let (group, variant) = self.scatter_binding(draw);
             let Some(pipeline) = self.mesh_pipelines.variants.get(&(kind, variant)) else {
                 continue;
             };
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
-            let source = mesh.draw(&self.mesh_arena);
-            pass.set_vertex_buffer(0, source.vertices.slice(..));
-            if let Some(extras) = source.extras.filter(|_| mesh.extended) {
-                pass.set_vertex_buffer(2, extras.slice(..));
-            }
-            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            for level in 0..draw.levels {
-                let (ids, args, offset) = self.scatter.draw_source(
-                    0,
-                    (index, draw.ids + level as u32 * draw.count),
-                    level,
-                );
-                pass.set_vertex_buffer(1, ids);
-                pass.draw_indexed_indirect(args, offset);
-                draws += 1;
-            }
+            draws += self.draw_scatter_levels(pass, (index, draw), 0, true);
         }
         draws
     }
@@ -265,7 +295,7 @@ impl Renderer {
         let mut bound = None;
         let mut draws = 0;
         for (index, draw) in self.scatter_draws.iter().enumerate() {
-            let (Some(masked), Some(mesh)) = (draw.casts, self.meshes.get(&draw.mesh)) else {
+            let Some(masked) = draw.casts else {
                 continue;
             };
             if masked {
@@ -278,19 +308,40 @@ impl Renderer {
                 pass.set_pipeline(&casters[usize::from(masked)]);
                 bound = Some(masked);
             }
+            draws += self.draw_scatter_levels(pass, (index, draw), view, false);
+        }
+        draws
+    }
+
+    /// Draws group `draw` (the `index`th) at each of its levels from
+    /// `view`'s lists, binding each level's mesh, with its extra stream
+    /// when `extras`; returns the draws.
+    fn draw_scatter_levels(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        (index, draw): (usize, &ScatterDraw),
+        view: usize,
+        extras: bool,
+    ) -> u32 {
+        let mut draws = 0;
+        for (level, handle) in draw.meshes.iter().enumerate() {
+            let Some(mesh) = self.meshes.get(handle) else {
+                continue;
+            };
             let source = mesh.draw(&self.mesh_arena);
             pass.set_vertex_buffer(0, source.vertices.slice(..));
-            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            for level in 0..draw.levels {
-                let (ids, args, offset) = self.scatter.draw_source(
-                    view,
-                    (index, draw.ids + level as u32 * draw.count),
-                    level,
-                );
-                pass.set_vertex_buffer(1, ids);
-                pass.draw_indexed_indirect(args, offset);
-                draws += 1;
+            if extras && let Some(stream) = source.extras.filter(|_| mesh.extended) {
+                pass.set_vertex_buffer(2, stream.slice(..));
             }
+            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
+            let (ids, args, offset) = self.scatter.draw_source(
+                view,
+                (index, draw.ids + level as u32 * draw.count),
+                level,
+            );
+            pass.set_vertex_buffer(1, ids);
+            pass.draw_indexed_indirect(args, offset);
+            draws += 1;
         }
         draws
     }

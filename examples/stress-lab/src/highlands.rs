@@ -7,7 +7,7 @@
 //! built offline (`cargo run -p engine_assetc --release --bin
 //! terrain_materials`) and fetched by the page, or in plain colors without
 //! them. Boulders lie on its meadows, stones on its scree and outcrops on
-//! its rock (decision 057).
+//! its rock, and spruce forests cover the lower slopes (decision 057).
 
 use std::collections::HashMap;
 
@@ -269,23 +269,64 @@ fn surface(
     let rock = assets
         .insert_material(material)
         .map_err(|error| error.to_string())?;
-    let mut boulders = Vec::with_capacity(BOULDERS);
+    let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for seed in 0..BOULDERS as u32 {
         let mesh = assets
             .insert_mesh(crate::rocks::boulder(seed)?)
             .map_err(|error| error.to_string())?;
-        boulders.push(PlacementAsset {
+        placed.push(PlacementAsset {
             mesh,
             material: rock,
+            lods: Vec::new(),
+        });
+    }
+    // Spruces of a few shapes over one bark and needle atlas, their needles
+    // cut out by its alpha.
+    let atlas = Texture::with_alpha(
+        crate::trees::ATLAS,
+        crate::trees::ATLAS,
+        crate::trees::atlas(),
+    )
+    .and_then(|texture| assets.insert_texture(texture))
+    .map_err(error)?;
+    let needles = Material::new([1.0, 1.0, 1.0, 1.0])
+        .and_then(|material| {
+            material.with_surface(Surface {
+                roughness: 0.9,
+                ..Surface::MATTE
+            })
+        })
+        .and_then(|material| material.with_base_color_texture(TextureRef::new(atlas)))
+        .and_then(|material| material.with_alpha_mode(AlphaMode::Mask { cutoff: 0.5 }))
+        .and_then(|material| assets.insert_material(material))
+        .map_err(error)?;
+    for seed in 0..SPRUCES as u32 {
+        let mut mesh = |detail| {
+            crate::trees::conifer(seed, detail)
+                .and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
+        };
+        let full = mesh(0)?;
+        let mut lods = Vec::with_capacity(crate::trees::CONIFER_ERRORS.len());
+        for (detail, error) in crate::trees::CONIFER_ERRORS.into_iter().enumerate() {
+            lods.push(PlacementLod {
+                mesh: mesh(detail + 1)?,
+                error,
+            });
+        }
+        placed.push(PlacementAsset {
+            mesh: full,
+            material: needles,
+            lods,
         });
     }
     TerrainSurface::new(&rules(), materials)
-        .and_then(|surface| surface.with_assets(boulders))
+        .and_then(|surface| surface.with_assets(placed))
         .map_err(|error| error.to_string())
 }
 
-/// Boulder shapes the placement layers choose from.
+/// Boulder and spruce shapes the placement layers choose from.
 const BOULDERS: usize = 5;
+const SPRUCES: usize = 3;
 
 /// `look`'s maps from `files` as an engine material tinted by its tint,
 /// when the page supplied all three: base color, normal, and occlusion
@@ -367,10 +408,39 @@ fn rules() -> Biomes {
     Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
+            .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
             .collect(),
-        // Boulders in clumps over the meadows, stones strewn on scree and
-        // outcrops on rock.
+        // Boulders in clumps over the meadows, stones strewn on scree,
+        // outcrops on rock, and spruce forests in broad stands below the
+        // tree line on gentle ground, thinning at their edges.
         placements: vec![
+            PlacementLayer {
+                id: "spruces".into(),
+                assets: (0..SPRUCES)
+                    .map(|index| PlacementChoice {
+                        asset: format!("spruce{index}"),
+                        weight: 1.0,
+                    })
+                    .collect(),
+                density: 420.0,
+                footprint: 3.5,
+                materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
+                mask: Mask::Multiply(vec![
+                    remap(
+                        Mask::Add(vec![
+                            scaled(noise(320.0, 31, 3), 0.75),
+                            scaled(noise(45.0, 32, 2), 0.25),
+                        ]),
+                        0.45,
+                        0.62,
+                    ),
+                    Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
+                    Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
+                ]),
+                scale: [0.65, 1.15],
+                align: 0.04,
+                sink: 0.3,
+            },
             PlacementLayer {
                 id: "boulders".into(),
                 assets: boulders(1.0),

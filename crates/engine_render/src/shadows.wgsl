@@ -515,7 +515,13 @@ fn fs_masked(input: MaskedOutput) {
     let uv = vec2<f32>(dot(material_maps.transforms[0].xyz, point),
         dot(material_maps.transforms[1].xyz, point));
     let texel = textureSample(base_color_texture, base_color_sampler, uv);
-    if texel.a * input.uv_alpha.z < material_maps.params.z {
+    // Alpha averaged down the mip chain keeps its coverage, as meshes.wgsl's
+    // masked tests scale it: a quarter more per level below the base.
+    let size = vec2<f32>(textureDimensions(base_color_texture));
+    let dx = dpdx(uv) * size;
+    let dy = dpdy(uv) * size;
+    let coverage = 1.0 + 0.25 * max(0.5 * log2(max(dot(dx, dx), dot(dy, dy))), 0.0);
+    if texel.a * input.uv_alpha.z * coverage < material_maps.params.z {
         discard;
     }
 }

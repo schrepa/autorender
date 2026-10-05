@@ -107,6 +107,8 @@ struct MaterialTexels {
     normal: vec3<f32>,
     normal_dx: vec2<f32>,
     normal_dy: vec2<f32>,
+    // What masked tests scale the base color's alpha by.
+    coverage: f32,
 }
 
 fn untextured() -> MaterialTexels {
@@ -114,7 +116,23 @@ fn untextured() -> MaterialTexels {
     texels.factors = vec2<f32>(1.0);
     texels.occlusion = 1.0;
     texels.normal = vec3<f32>(0.0, 0.0, 1.0);
+    texels.coverage = 1.0;
     return texels;
+}
+
+// Masked coverage: alpha averaged down a texture's mip chain falls under the
+// cutoff, so thin cut-outs such as needles and leaves thin out with
+// distance. Masked tests scale alpha up by this much per level below the
+// base (Golus's mip scale), keeping their coverage.
+const MASK_MIP_SCALE: f32 = 0.25;
+
+// What masked tests scale alpha by where the base color texture's
+// coordinates change by `dx` across and `dy` down a pixel.
+fn mask_coverage(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(base_color_texture));
+    let x = dx * size;
+    let y = dy * size;
+    return 1.0 + MASK_MIP_SCALE * max(0.5 * log2(max(dot(x, x), dot(y, y))), 0.0);
 }
 
 // The texels of texture coordinates `uv` and `uv1` with implicit
@@ -128,6 +146,9 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
         base_uv = map_uv(0u, uv, uv1);
     }
     texels.base = textureSample(base_color_texture, base_color_sampler, base_uv);
+    if ALPHA_MASK {
+        texels.coverage = mask_coverage(dpdx(base_uv), dpdy(base_uv));
+    }
     if material_flag(1u, MATERIAL_MAPS) {
         // glTF: green is roughness and blue metalness, red packed occlusion.
         var metallic_roughness = vec4<f32>(1.0);
@@ -190,6 +211,9 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
     }
     texels.base = textureSampleGrad(base_color_texture, base_color_sampler, base_uv, base_dx,
         base_dy);
+    if ALPHA_MASK {
+        texels.coverage = mask_coverage(base_dx, base_dy);
+    }
     if material_flag(1u, MATERIAL_MAPS) {
         var metallic_roughness = vec4<f32>(1.0);
         if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
@@ -314,7 +338,7 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
-    if ALPHA_MASK && result.opacity < material_maps.params.z {
+    if ALPHA_MASK && result.opacity * texels.coverage < material_maps.params.z {
         discard;
     }
     return result;

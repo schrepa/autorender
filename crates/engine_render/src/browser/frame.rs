@@ -282,7 +282,10 @@ impl Renderer {
             .terrains
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten())
-            .map(|asset| asset.mesh.handle)
+            .flat_map(|asset| {
+                std::iter::once(asset.mesh.handle)
+                    .chain(asset.lods.iter().map(|(lod, _)| lod.handle))
+            })
             .collect();
         if placed != self.scatter_meshes.0 {
             self.scatter_meshes = (placed, self.scatter_meshes.1 + 1);
@@ -371,7 +374,10 @@ impl Renderer {
                     .terrains
                     .iter()
                     .flat_map(|terrain| terrain.assets.iter().flatten())
-                    .map(|asset| (asset.mesh.handle, &asset.mesh.mesh)),
+                    .flat_map(|asset| {
+                        std::iter::once(&asset.mesh).chain(asset.lods.iter().map(|(lod, _)| lod))
+                    })
+                    .map(|mesh| (mesh.handle, &mesh.mesh)),
             )
             .filter(|_| mesh_uploads);
         for (handle, source) in sources {
@@ -392,8 +398,15 @@ impl Renderer {
                     streams.push(bytemuck::cast_slice(skin));
                 }
                 // Levels of detail (decision 047) follow the mesh's own
-                // indices in its range.
-                let (indices, lods) = lod_chain(source);
+                // indices in its range; placed objects' meshes (decision 057)
+                // simplify further, for shadow maps and distant views. Draw
+                // groups read their first levels alike.
+                let levels = if self.scatter_meshes.0.contains(&handle) {
+                    crate::scatter::LEVELS as usize - 1
+                } else {
+                    LOD_LEVELS - 1
+                };
+                let (indices, lods) = lod_chain(source, levels);
                 let placement = self
                     .mesh_arena
                     .insert(

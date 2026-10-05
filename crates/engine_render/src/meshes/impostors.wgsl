@@ -166,7 +166,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
         emissive = texels.emissive;
         occlusion = 1.0 + material_maps.params.y * (texels.occlusion - 1.0);
     }
-    if ALPHA_MASK && texels.base.a * color.a < material_maps.params.z {
+    if ALPHA_MASK && texels.base.a * color.a * texels.coverage < material_maps.params.z {
         discard;
     }
     var targets: BakeTargets;

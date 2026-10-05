@@ -70,11 +70,50 @@ pub struct TerrainSurface {
 }
 
 /// An object placement layers stand on a terrain (decision 057): the mesh
-/// it draws and the material it draws with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// it draws and the material it draws with, and the coarser meshes it draws
+/// at a distance, finest first; without them it draws the mesh's automatic
+/// levels of detail (decision 047).
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
+    pub lods: Vec<PlacementLod>,
+}
+
+/// A coarser mesh of a placement asset and the largest deviation from the
+/// asset's mesh it shows, in mesh units: it draws where that projects
+/// within the pixel error.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PlacementLod {
+    pub mesh: MeshHandle,
+    pub error: f32,
+}
+
+/// Coarser meshes a placement asset lists at most: renderers list each
+/// object's levels in a fixed number of planes.
+pub const MAX_PLACEMENT_LODS: usize = 4;
+
+impl PlacementLod {
+    /// Checks a placement asset's coarser meshes' `errors`, in order: at
+    /// most [`MAX_PLACEMENT_LODS`], each finite, positive and greater than
+    /// the last. Errors name the offending index (none for the count) and
+    /// the rule.
+    pub fn check(errors: &[f32]) -> Result<(), (Option<usize>, &'static str)> {
+        if errors.len() > MAX_PLACEMENT_LODS {
+            return Err((None, "lists at most 4 meshes"));
+        }
+        let mut last = 0.0;
+        for (level, &error) in errors.iter().enumerate() {
+            if !(error.is_finite() && error > last) {
+                return Err((
+                    Some(level),
+                    "must be finite, positive and grow with each mesh",
+                ));
+            }
+            last = error;
+        }
+        Ok(())
+    }
 }
 
 /// How a surface material looks: an engine material's maps and factors,
@@ -160,11 +199,24 @@ impl TerrainSurface {
     /// The surface with `assets`, one per asset its rules name, in order
     /// (decision 057).
     pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, BiomeError> {
+        let fail = |path: String, rule: &str| {
+            Err(BiomeError {
+                path,
+                rule: rule.into(),
+            })
+        };
         if assets.len() != self.rules.authored().assets.len() {
-            return Err(BiomeError {
-                path: "assets".into(),
-                rule: "needs one mesh and material per asset".into(),
-            });
+            return fail("assets".into(), "needs one mesh and material per asset");
+        }
+        for (index, asset) in assets.iter().enumerate() {
+            let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
+            if let Err((level, rule)) = PlacementLod::check(&errors) {
+                let path = match level {
+                    Some(level) => format!("assets[{index}].lods[{level}].error"),
+                    None => format!("assets[{index}].lods"),
+                };
+                return fail(path, rule);
+            }
         }
         self.assets = assets;
         Ok(self)
@@ -1181,21 +1233,37 @@ impl RenderSurfaceMaps {
 }
 
 /// A placement asset of a frame (decision 057): its mesh, its material
-/// and the material's textures.
+/// and the material's textures, and its coarser meshes with their errors.
 #[derive(Clone, Debug)]
 pub struct RenderPlacementAsset {
     pub mesh: RenderMesh,
     pub material: RenderMaterial,
     pub textures: Vec<RenderTexture>,
+    pub lods: Vec<(RenderMesh, f32)>,
 }
 
 impl RenderPlacementAsset {
     /// `asset` from `assets`, or `None` with what is missing counted in
     /// `missing`.
-    fn of(asset: PlacementAsset, assets: &AssetLibrary, missing: &mut usize) -> Option<Self> {
+    fn of(asset: &PlacementAsset, assets: &AssetLibrary, missing: &mut usize) -> Option<Self> {
         let found = (|| {
             let mesh = assets.mesh(asset.mesh)?;
             let material = assets.material(asset.material)?;
+            let lods = asset
+                .lods
+                .iter()
+                .map(|lod| {
+                    assets.mesh(lod.mesh).map(|mesh| {
+                        (
+                            RenderMesh {
+                                handle: lod.mesh,
+                                mesh: Arc::clone(mesh),
+                            },
+                            lod.error,
+                        )
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
             let textures = material
                 .textures()
                 .map(|handle| {
@@ -1216,6 +1284,7 @@ impl RenderPlacementAsset {
                     version: assets.material_version(asset.material).unwrap_or(0),
                 },
                 textures,
+                lods,
             })
         })();
         *missing += usize::from(found.is_none());
@@ -1385,7 +1454,7 @@ impl TerrainExtraction {
             render.pyramid = state.terrain.pyramid;
             render.surface.clone_from(&state.terrain.surface.materials);
             render.assets.clear();
-            for &asset in &state.terrain.surface.assets {
+            for asset in &state.terrain.surface.assets {
                 render.assets.push(
                     assets.and_then(|assets| RenderPlacementAsset::of(asset, assets, missing)),
                 );
