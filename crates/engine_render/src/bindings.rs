@@ -195,7 +195,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array};
-use wgpu::TextureFormat::{R32Float, Rgba8Snorm, Rgba16Float};
+use wgpu::TextureFormat::{R32Float, Rgba8Snorm, Rgba8Unorm, Rgba16Float};
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
@@ -598,6 +598,9 @@ pub(crate) const TERRAIN: Table = Table {
         texture(27, "terrain_material_normals", Float, D2Array, F),
         texture(28, "terrain_orm", Float, D2Array, F),
         sampler(29, "terrain_material_sampler", Filtering, F),
+        // Each terrain's sky visibility map (decision 055), read through
+        // the normals' sampler.
+        texture(30, "terrain_sky", Float, D2Array, F),
     ],
 };
 
@@ -623,6 +626,19 @@ pub(crate) const TERRAIN_HORIZON: Table = Table {
         read(1, "tile_layers", C),
         uniform_of(2, "build", 64, C),
         bind(3, "horizon", Kind::Storage(Rgba16Float), C),
+    ],
+};
+
+/// A terrain sky visibility map's build (decision 055; `terrain_sky.wgsl`):
+/// the height array, which layer holds each source tile, the build's
+/// uniform and the layer it writes.
+pub(crate) const TERRAIN_SKY: Table = Table {
+    label: "engine/terrain-sky-layout",
+    bindings: &[
+        texture(0, "heights", Unfilterable, D2Array, C),
+        read(1, "tile_layers", C),
+        uniform_of(2, "build", 48, C),
+        bind(3, "sky", Kind::Storage(Rgba8Unorm), C),
     ],
 };
 

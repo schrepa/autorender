@@ -160,6 +160,10 @@ pub struct RenderStats {
     /// 052), and the maps this frame rebuilt.
     pub terrain_horizons: u32,
     pub terrain_horizon_builds: u32,
+    /// Terrains whose sky visibility maps (decision 055) are built, and
+    /// the rows of them this frame built.
+    pub terrain_sky_maps: u32,
+    pub terrain_sky_rows: u32,
     /// Terrain surface materials (decision 054) past the palette's
     /// capacity, or whose maps the shared arrays cannot hold (block
     /// compressed, or sized unlike the first material's), which show a
@@ -243,6 +247,8 @@ mod terrain;
 mod terrain_horizons;
 #[cfg(target_arch = "wasm32")]
 mod terrain_maps;
+#[cfg(target_arch = "wasm32")]
+mod terrain_sky;
 #[cfg(target_arch = "wasm32")]
 mod transparent;
 #[cfg(target_arch = "wasm32")]

@@ -373,12 +373,31 @@ impl DevTools {
             tools: self,
             schemas,
         });
+        // The whole environment's schema without field descriptions, which
+        // each section's own inspector carries, so it stays within bounds
+        // as sections grow.
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off.", schemas["Environment"].clone()),
+            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", undescribed(schemas["Environment"].clone())),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
         }).expect("built-in descriptor is bounded");
+    }
+}
+
+/// `schema` without its descriptions, at any depth.
+fn undescribed(schema: Value) -> Value {
+    match schema {
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                // Annotations are strings; a field named so is a schema.
+                .filter(|(key, value)| !(key == "description" && value.is_string()))
+                .map(|(key, value)| (key, undescribed(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.into_iter().map(undescribed).collect()),
+        other => other,
     }
 }
 

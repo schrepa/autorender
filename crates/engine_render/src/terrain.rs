@@ -32,6 +32,7 @@ use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_maps::TerrainMaps;
+use crate::terrain_sky::SkyMaps;
 
 /// Vertices along a patch side, and the grid's before the skirts'.
 const GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1;
@@ -180,7 +181,7 @@ pub(crate) struct TerrainPass {
     holes: wgpu::Buffer,
     hole_offsets: HashMap<(u64, TileKey), u32>,
     holes_generation: u64,
-    group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
+    group: Cached<(u64, u64, u64, u64, u64, u64), wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
@@ -216,6 +217,8 @@ pub(crate) struct TerrainPass {
     pub(crate) dropped_materials: u32,
     /// Surface materials' maps (decision 054).
     pub(crate) maps: TerrainMaps,
+    /// Sky visibility (decision 055).
+    pub(crate) sky: SkyMaps,
 }
 
 impl TerrainPass {
@@ -285,6 +288,7 @@ impl TerrainPass {
             palette_written: Vec::new(),
             dropped_materials: 0,
             maps: TerrainMaps::new(device, queue),
+            sky: SkyMaps::new(device, queue),
         }
     }
 
@@ -298,16 +302,18 @@ impl TerrainPass {
         self.slots.len() as u32
     }
 
-    /// Bytes of the height, normal and control arrays, the horizon maps
-    /// and the surface materials' maps.
+    /// Bytes of the height, normal and control arrays, the horizon and sky
+    /// maps and the surface materials' maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.as_ref().map_or(0, |atlas| {
             u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 12
         }) + self.horizons.capacity_bytes()
+            + self.sky.capacity_bytes()
             + self.maps.capacity_bytes()
     }
 
-    /// Records this frame's horizon map builds (decision 052).
+    /// Records this frame's horizon map builds (decision 052) and sky
+    /// visibility bands (decision 055).
     pub(crate) fn encode_horizons(
         &mut self,
         device: &wgpu::Device,
@@ -316,6 +322,7 @@ impl TerrainPass {
     ) {
         let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
         self.horizons.encode(device, encoder, heights, profiler);
+        self.sky.encode(device, encoder, heights, profiler);
     }
 
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
@@ -346,6 +353,8 @@ impl TerrainPass {
             views.sun,
             &self.slots,
         );
+        self.sky
+            .prepare(device, queue, terrains, &views.settings, &self.slots);
         if terrains
             .terrains
             .iter()
@@ -374,12 +383,13 @@ impl TerrainPass {
                 engine_core::TerrainView::Normals => 2.0,
                 engine_core::TerrainView::Tiles => 3.0,
                 engine_core::TerrainView::Materials => 4.0,
+                engine_core::TerrainView::Sky => 5.0,
             };
             let directory = [
                 self.directory_bases.get(index).copied().unwrap_or(0),
                 terrain.pyramid.levels(),
                 self.palette_bases.get(index).copied().unwrap_or(0),
-                0,
+                self.sky.layer(index),
             ];
             let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory);
             let at = index * SLOT as usize;
@@ -1031,6 +1041,7 @@ impl TerrainPass {
             self.holes_generation,
             self.directory_generation,
             self.maps.generation,
+            self.sky.generation(),
         );
         if self.group.stale(&key) {
             let group = crate::pipelines::group(
@@ -1091,6 +1102,7 @@ impl TerrainPass {
                         "terrain_material_sampler",
                         crate::pipelines::sampler(&self.maps.sampler),
                     ),
+                    ("terrain_sky", crate::pipelines::view(self.sky.view())),
                 ],
             );
             self.group.set(key, group);

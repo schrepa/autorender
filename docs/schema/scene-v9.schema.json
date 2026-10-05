@@ -2816,6 +2816,19 @@
           "maximum": 0.2,
           "minimum": 0.0
         },
+        "sky_resolution": {
+          "description": "Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "maximum": 4096,
+          "minimum": 64
+        },
+        "sky_visibility": {
+          "description": "Ambient light on terrain scaled by how much sky its ground sees\n(decision 055): each terrain's sky visibility map, built once its\nfinest pinned level is resident, where valleys and hollows see less\nsky and take their own light back instead.",
+          "type": "boolean",
+          "default": true
+        },
         "sun_shadows": {
           "description": "Long sun shadows through each terrain's horizon map (decision 052),\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
           "type": "boolean",

@@ -204,6 +204,18 @@ try {
   await command("terrain", { view: "materials" });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
+  // The sky visibility map (decision 055) builds a band of rows a frame
+  // once the pinned level is resident; its view shows it unlit.
+  let sky;
+  for (let frame = 0; frame < 200; frame++) {
+    sky = (await command("render")).result.rendering;
+    if (sky.terrain_sky_maps === 1 && sky.terrain_sky_rows === 0) break;
+  }
+  assert.equal(sky.terrain_sky_maps, 1, `the sky map builds: ${JSON.stringify(sky)}`);
+  await command("terrain", { view: "sky" });
+  const skyView = await capture("view-sky");
+  assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
+  checks.push({ check: "sky visibility", maps: sky.terrain_sky_maps });
   await command("terrain", { view: "shaded" });
   const frozen = await command("terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
