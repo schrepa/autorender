@@ -1340,6 +1340,38 @@
         }
       ]
     },
+    "SceneContactShadows": {
+      "description": "Contact shadow settings: whether they trace, how far each ray reaches\ntoward the sun in meters (0.05 to 4), how much of the sun's light a hit\ntakes away (0 to 1; 0 turns them off), and the meters from the camera\nwithin which surfaces trace (1 to 1000). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "distance": {
+          "type": "number",
+          "format": "float",
+          "default": 80.0,
+          "maximum": 1000.0,
+          "minimum": 1.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "length": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 4.0,
+          "minimum": 0.05
+        },
+        "strength": {
+          "type": "number",
+          "format": "float",
+          "default": 0.8500000238418579,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneDecal": {
       "description": "A decal on this entity (decision 039). Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
@@ -1599,6 +1631,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneBloom"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contact_shadows": {
+          "description": "Short rays toward the sun shade what shadow maps cannot hold\n(decision 062).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneContactShadows"
             },
             {
               "type": "null"

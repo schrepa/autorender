@@ -67,47 +67,61 @@ fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth > 0.0));
 }
 
+// Steps along each contact shadow ray (decision 062).
+const CONTACT_STEPS: u32 = 12u;
+
+// How much of the sun reaches `p` (with unit `normal`, `away` meters from
+// the eye) past what the depth buffer holds within `post.contact.x` meters
+// toward the sun (decision 062): a surface counts where the ray passes
+// behind it by less than a thickness growing along the ray, so thin things
+// shade and the fronts of distant ones do not. Hits nearer the ray's start
+// shade more, so its reach leaves no edge.
+fn contact_visibility(p: vec3<f32>, normal: vec3<f32>, away: f32, noise: f32) -> f32 {
+    let toward = post.sun_direction.xyz;
+    if post.contact.w == 0.0 || away > post.contact.z || dot(normal, toward) <= 0.0 {
+        return 1.0;
+    }
+    let reach = post.contact.x;
+    let last = vec2<i32>(post.size.xy) - 1;
+    // Off the surface by what depth precision there needs.
+    let start = p + normal * (0.01 + 0.001 * away);
+    for (var i = 0u; i < CONTACT_STEPS; i++) {
+        let along = (f32(i) + noise) / f32(CONTACT_STEPS) * reach;
+        let q = start + toward * along;
+        let clip = post.view_projection * vec4<f32>(q, 1.0);
+        if clip.w <= 0.0 {
+            break;
+        }
+        let uv = vec2<f32>(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+        if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
+            break;
+        }
+        let surface = world_at(min(vec2<i32>(uv * post.size.xy), last));
+        if surface.w == 0.0 {
+            continue;
+        }
+        let behind = length(q - post.eye.xyz) - length(surface.xyz - post.eye.xyz);
+        if behind > 0.002 * away && behind < 0.1 + along {
+            return 1.0 - post.contact.y * (1.0 - along / reach);
+        }
+    }
+    return 1.0;
+}
+
 // Scalable ambient obscurance (McGuire et al.) over eight samples: each
 // sample closer to the surface's tangent plane than the radius occludes by
-// how far above that plane, and how close, it is. Writes the visibility and
-// the distance from the eye, which the filter compares.
-@fragment
-fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+// how far above that plane, and how close, it is; 1 without occlusion.
+fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distance: f32,
+        noise: f32) -> f32 {
+    if post.occlusion.w == 0.0 {
+        return 1.0;
+    }
     let last = vec2<i32>(post.size.xy) - 1;
-    let pixel = min(vec2<i32>(position.xy) * 2, last);
-    let center = world_at(pixel);
-    if center.w == 0.0 {
-        return vec2<f32>(1.0, 0.0);
-    }
-    let p = center.xyz;
-    // The normal from the nearer neighbor on each axis keeps silhouettes
-    // from bending it.
-    let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
-    let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
-    let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
-    let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
-    let across = select(right, left, dot(left, left) < dot(right, right));
-    let along = select(down, up, dot(up, up) < dot(down, down));
-    let to_eye = post.eye.xyz - p;
-    let distance = length(to_eye);
-    var normal = cross(along, across);
-    let length_squared = dot(normal, normal);
-    if !(length_squared > 0.0) {
-        return vec2<f32>(1.0, distance);
-    }
-    normal = normal * inverseSqrt(length_squared);
-    if dot(normal, to_eye) < 0.0 {
-        normal = -normal;
-    }
     let radius = post.occlusion.x;
     let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
     if pixels < 1.0 {
-        return vec2<f32>(1.0, distance);
+        return 1.0;
     }
-    // Interleaved gradient noise turns the spiral per pixel. It stays the
-    // same every frame: turning it would let the temporal resolve's clamp
-    // chase changing darkness, which flickers.
-    let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
     let turn = vec2<f32>(cos(noise * TAU), sin(noise * TAU));
     let radius2 = radius * radius;
     // Keeps flat surfaces from occluding themselves as depth precision falls.
@@ -127,7 +141,47 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32
     }
     let radius6 = radius2 * radius2 * radius2;
     let obscurance = clamp(sum * (5.0 / f32(SAMPLES)) / radius6, 0.0, 1.0);
-    return vec2<f32>(1.0 - post.occlusion.y * obscurance, distance);
+    return 1.0 - post.occlusion.y * obscurance;
+}
+
+// Ambient occlusion and contact shadows at half resolution: writes the
+// occlusion's visibility, the distance from the eye, which the filter
+// compares, and the contact shadows' visibility.
+@fragment
+fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let last = vec2<i32>(post.size.xy) - 1;
+    let pixel = min(vec2<i32>(position.xy) * 2, last);
+    let center = world_at(pixel);
+    if center.w == 0.0 {
+        return vec4<f32>(1.0, 0.0, 1.0, 0.0);
+    }
+    let p = center.xyz;
+    // The normal from the nearer neighbor on each axis keeps silhouettes
+    // from bending it.
+    let right = world_at(min(pixel + vec2<i32>(1, 0), last)).xyz - p;
+    let left = p - world_at(max(pixel - vec2<i32>(1, 0), vec2<i32>(0))).xyz;
+    let down = world_at(min(pixel + vec2<i32>(0, 1), last)).xyz - p;
+    let up = p - world_at(max(pixel - vec2<i32>(0, 1), vec2<i32>(0))).xyz;
+    let across = select(right, left, dot(left, left) < dot(right, right));
+    let along = select(down, up, dot(up, up) < dot(down, down));
+    let to_eye = post.eye.xyz - p;
+    let distance = length(to_eye);
+    var normal = cross(along, across);
+    let length_squared = dot(normal, normal);
+    if !(length_squared > 0.0) {
+        return vec4<f32>(1.0, distance, 1.0, 0.0);
+    }
+    normal = normal * inverseSqrt(length_squared);
+    if dot(normal, to_eye) < 0.0 {
+        normal = -normal;
+    }
+    // Interleaved gradient noise turns the spiral and offsets the contact
+    // rays' steps per pixel. It stays the same every frame: changing it
+    // would let the temporal resolve's clamp chase changing darkness, which
+    // flickers.
+    let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
+    return vec4<f32>(ambient_visibility(pixel, p, normal, distance, noise), distance,
+        contact_visibility(p, normal, distance, noise), 0.0);
 }
 
 // How far, relative to its own, a neighbor's inverse distance may lie from
@@ -141,17 +195,18 @@ fn inverse_distance(texel: vec2<i32>) -> f32 {
     return select(0.0, 1.0 / distance, distance > 0.0);
 }
 
-// The occlusion over each half-resolution texel's 5x5 neighbors on its
-// surface, weighted by a Gaussian: the eight samples' per-pixel turns average
-// out instead of mottling what the ambient light mostly shades (metal in
-// shadow). Inverse distance changes linearly across a plane on screen, so a
-// neighbor counts while its inverse distance lies near the center's
-// extrapolated by the center's slope toward its nearer neighbor on each axis.
-fn filtered_occlusion(texel: vec2<i32>) -> f32 {
+// The occlusion and contact shadows (x and y) over each half-resolution
+// texel's 5x5 neighbors on its surface, weighted by a Gaussian: the eight
+// samples' per-pixel turns and the rays' offsets average out instead of
+// mottling what they shade. Inverse distance changes linearly across a
+// plane on screen, so a neighbor counts while its inverse distance lies near
+// the center's extrapolated by the center's slope toward its nearer
+// neighbor on each axis.
+fn filtered_occlusion(texel: vec2<i32>) -> vec2<f32> {
     let last = vec2<i32>(textureDimensions(raw_occlusion)) - 1;
     let center = textureLoad(raw_occlusion, texel, 0);
     if !(center.y > 0.0) {
-        return center.x;
+        return center.xz;
     }
     let inverse = 1.0 / center.y;
     let right = inverse_distance(min(texel + vec2<i32>(1, 0), last)) - inverse;
@@ -163,7 +218,7 @@ fn filtered_occlusion(texel: vec2<i32>) -> f32 {
         select(down, up, abs(up) < abs(down)),
     );
     let tolerance = OCCLUSION_PLANE * inverse;
-    var sum = 0.0;
+    var sum = vec2<f32>(0.0);
     var total = 0.0;
     for (var y = -2; y <= 2; y++) {
         for (var x = -2; x <= 2; x++) {
@@ -174,7 +229,7 @@ fn filtered_occlusion(texel: vec2<i32>) -> f32 {
             let expected = inverse + dot(slope, vec2<f32>(offset));
             let plane = saturate(1.25 - abs(sample_inverse - expected) / tolerance);
             let weight = exp(-f32(x * x + y * y) / 8.0) * plane;
-            sum += sample.x * weight;
+            sum += sample.xz * weight;
             total += weight;
         }
     }
@@ -221,20 +276,21 @@ fn upsampled_shafts(texel: vec2<i32>) -> f32 {
 }
 
 // One half-resolution pass for the screen effects that need smoothing: the
-// filtered occlusion (x; 1 without occlusion) and the sun shafts brought up
-// from quarter resolution (y; 0 without shafts).
+// filtered occlusion (x; 1 without occlusion), the sun shafts brought up
+// from quarter resolution (y; 0 without shafts) and the filtered contact
+// shadows (z; 1 without them).
 @fragment
-fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let texel = vec2<i32>(position.xy);
-    var visible = 1.0;
-    if post.occlusion.w != 0.0 {
+    var visible = vec2<f32>(1.0);
+    if post.occlusion.w != 0.0 || post.contact.w != 0.0 {
         visible = filtered_occlusion(texel);
     }
     var shafts_light = 0.0;
     if post.shafts.w != 0.0 {
         shafts_light = upsampled_shafts(texel);
     }
-    return vec2<f32>(visible, shafts_light);
+    return vec4<f32>(visible.x, shafts_light, visible.y, 0.0);
 }
 
 // Reflection rays walk at most this many cells of the depth pyramid.
@@ -600,7 +656,8 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
     let texel = textureLoad(scene, vec2<i32>(position.xy), 0);
     let uv = position.xy * post.size.zw;
     let effects = screen_effects(occlusion, linear, uv, post);
-    let shade = occlusion_factor(texel.a, effects.x, post);
+    let shade = occlusion_factor(texel.a, effects.x, post)
+        * contact_factor(texel.a, effects.z, post);
     let mirrored = reflected(texel.rgb * shade, reflections, linear, uv, post);
     let lit = shafted(mirrored, effects.y, post);
     let color = glowing(lit, bloom, linear, uv, post);

@@ -248,6 +248,7 @@ impl Renderer {
             shadow_moving_casters: shadow_casters.map(|casters| casters[1]),
             shadow_kept_casters: shadow_casters.map(|casters| casters[2]),
             ambient_occlusion: post_frame.is_some_and(|frame| frame.occlusion),
+            contact_shadows: post_frame.is_some_and(|frame| frame.contact),
             bloom: post_frame.is_some_and(|frame| frame.bloom),
             local_lights: if lit { snapshot.lights.len() as u32 } else { 0 },
             dropped_lights: if lit {

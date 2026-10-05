@@ -792,6 +792,12 @@ pub(crate) struct PostUniform {
     pub shafts: [f32; 4],
     /// The sun's exposed color; w unused.
     pub sun: [f32; 4],
+    /// Contact shadows (decision 062): each ray's reach in meters, the
+    /// share of sunlight a hit takes away, the distance within which
+    /// surfaces trace, and 1 when they run.
+    pub contact: [f32; 4],
+    /// The unit direction toward the sun; w unused.
+    pub sun_direction: [f32; 4],
 }
 
 /// Levels of a full mip chain down to 1x1 for a `width` x `height` texture.

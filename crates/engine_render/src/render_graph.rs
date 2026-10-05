@@ -621,11 +621,13 @@ pub(crate) struct Effects {
     pub(crate) bloom: bool,
     pub(crate) reflections: bool,
     pub(crate) shafts: bool,
+    /// Contact shadows (decision 062), traced with the occlusion.
+    pub(crate) contact: bool,
 }
 
 impl Effects {
     fn any(self) -> bool {
-        self.occlusion || self.bloom || self.reflections || self.shafts
+        self.occlusion || self.bloom || self.reflections || self.shafts || self.contact
     }
 }
 
@@ -821,7 +823,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         graph
             .add(Pass::Effects)
             .read_if(
-                effects.occlusion || effects.reflections || effects.shafts,
+                effects.occlusion || effects.reflections || effects.shafts || effects.contact,
                 Depth,
             )
             .read_if(effects.bloom || effects.reflections, Scene)

@@ -31,9 +31,9 @@ pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unor
 pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 /// The filtered occlusion's visibility and the sun shafts' light, which the
 /// composite and resolve read with the same taps.
-const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Occlusion before its filter, and each texel's distance from the eye.
-const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Bloom levels: light beyond 1 without alpha, packed in 32 bits where the
 /// device renders them (`rg11b10ufloat-renderable`).
 fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
@@ -66,6 +66,8 @@ pub(crate) struct PostFrame {
     pub bloom: bool,
     pub reflections: bool,
     pub shafts: bool,
+    // Contact shadows (decision 062), traced with the occlusion.
+    pub contact: bool,
 }
 
 struct Targets {
@@ -387,15 +389,24 @@ impl PostPass {
         let bloom = snapshot.environment.bloom.sanitized();
         let reflections = snapshot.environment.reflections.sanitized();
         let shafts = snapshot.environment.sun_shafts.sanitized();
+        let contact = snapshot.environment.contact_shadows.sanitized();
+        let toward_sun = snapshot
+            .environment
+            .atmosphere
+            .sanitized()
+            .sun_direction
+            .normalize_or_zero();
         let frame = PostFrame {
             occlusion: occlusion.enabled(),
             bloom: bloom.enabled(),
             reflections: reflections.enabled(),
             // Shafts gather light through the shadow maps.
             shafts: shafts.enabled() && snapshot.environment.shadows.enabled,
+            // Contact shadows trace toward a sun above the horizon.
+            contact: contact.traces() && toward_sun.y > 0.0,
         };
         let targets_key = (depth_generation, self.generation);
-        if frame.occlusion && self.occlusion_group.stale(&targets_key) {
+        if (frame.occlusion || frame.contact) && self.occlusion_group.stale(&targets_key) {
             let group = self.group(
                 device,
                 "engine/post-occlusion-group",
@@ -406,7 +417,9 @@ impl PostPass {
             );
             self.occlusion_group.set(targets_key, group);
         }
-        if (frame.occlusion || frame.shafts) && self.effects_filter_group.stale(&targets_key) {
+        if (frame.occlusion || frame.shafts || frame.contact)
+            && self.effects_filter_group.stale(&targets_key)
+        {
             let targets = self.targets.as_ref().expect("sized above");
             let group = self.group(
                 device,
@@ -521,6 +534,13 @@ impl PostPass {
             sun: (atmosphere.sun_color * atmosphere.exposure)
                 .extend(0.0)
                 .to_array(),
+            contact: [
+                contact.length,
+                contact.strength,
+                contact.distance,
+                if frame.contact { 1.0 } else { 0.0 },
+            ],
+            sun_direction: toward_sun.extend(0.0).to_array(),
         };
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -577,7 +597,7 @@ impl PostPass {
         profiler: &GpuProfiler,
     ) {
         let targets = self.targets.as_ref().expect("sized in begin");
-        if frame.occlusion
+        if (frame.occlusion || frame.contact)
             && let Some(group) = self.occlusion_group.get()
         {
             let mut pass = fullscreen_pass(
@@ -665,9 +685,9 @@ impl PostPass {
             pass.set_bind_group(1, group, &[]);
             pass.draw(0..3, 0..1);
         }
-        // The occlusion filtered and the shafts at half resolution, together
-        // (1 and 0 where either is off).
-        if (frame.occlusion || frame.shafts)
+        // The occlusion and contact shadows filtered and the shafts at half
+        // resolution, together (1, 0 and 1 where off).
+        if (frame.occlusion || frame.shafts || frame.contact)
             && let Some(group) = self.effects_filter_group.get()
         {
             let mut pass = fullscreen_pass(

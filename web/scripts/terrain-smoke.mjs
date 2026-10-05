@@ -298,6 +298,21 @@ try {
   assert.equal(coarse.error.path, "$.occupancy.resolution");
   await command("environment", { occupancy });
   checks.push({ check: "occupancy", redraws: settled.occupancy_redraws });
+  // Contact shadows (decision 062) trace with the frame's effects: the
+  // blades and crates darken the sun's light where they reach; the section
+  // reads back as set and refuses rays out of range.
+  const contact = (await command("inspect", { component: "ContactShadows" })).result.value;
+  const traced = (await command("environment", { contact_shadows: contact })).result.rendering;
+  assert.equal(traced.contact_shadows, true, "contact shadows trace");
+  const withContact = await capture("contact-shadows");
+  await command("environment", { contact_shadows: { ...contact, enabled: false } });
+  const withoutContact = await capture("no-contact-shadows");
+  const contactPixels = await differentPixels(page, [withContact, withoutContact]);
+  assert.ok(contactPixels.changed > 100, `contact shadows shade ${contactPixels.changed} pixels`);
+  const reaching = await command("environment", { contact_shadows: { ...contact, length: 10 } }, false);
+  assert.equal(reaching.error.path, "$.contact_shadows.length");
+  await command("environment", { contact_shadows: contact });
+  checks.push({ check: "contact shadows", pixels: contactPixels.changed });
   await command("camera", overview);
   // The sky visibility map (decision 055) builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.
