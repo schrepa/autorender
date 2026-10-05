@@ -74,14 +74,26 @@ pub(crate) fn execute(
                     let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
                     Ok(terrains.sample(x, z).map_or(Value::Null, |sample| {
                         // What its hydrology bake (decision 066) found there,
-                        // as the finest level sees it.
-                        let water = terrains.layers(sample.terrain).and_then(|layers| {
+                        // as the finest level sees it, and the water standing
+                        // there (decision 067): its surface (world height)
+                        // and depth.
+                        let bake = terrains.layers(sample.terrain).and_then(|layers| {
                             let terrain = terrains.terrain(sample.terrain)?;
                             let water = layers.hydrology()?;
-                            Some(water.at(
-                                x - terrain.origin.x,
-                                z - terrain.origin.z,
-                                terrain.pyramid.spacing(0),
+                            let local = (x - terrain.origin.x, z - terrain.origin.z);
+                            // Above the ground as tiles hold it, which layers
+                            // after the bake may raise over the water.
+                            let standing = water
+                                .water
+                                .at(local.0, local.1)
+                                .map(|(surface, _)| terrain.origin.y + surface)
+                                .filter(|&surface| surface > sample.height)
+                                .map(|surface| {
+                                    json!({"surface": surface, "depth": surface - sample.height})
+                                });
+                            Some((
+                                water.at(local.0, local.1, terrain.pyramid.spacing(0)),
+                                standing,
                             ))
                         });
                         json!({
@@ -90,7 +102,8 @@ pub(crate) fn execute(
                             "normal": sample.normal.to_array(),
                             "hole": sample.hole,
                             "level": sample.level,
-                            "water": water,
+                            "water": bake.as_ref().map(|(found, _)| found),
+                            "standing_water": bake.and_then(|(_, standing)| standing),
                         })
                     }))
                 })

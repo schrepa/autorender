@@ -326,6 +326,11 @@ impl Renderer {
             ground_cover_blades: self.ground_cover.totals()[0],
             dropped_ground_cover: self.ground_cover.totals()[1],
             placed_objects: self.scatter.resident,
+            water_chunks: if state.shape.water {
+                self.water.chunks_drawn()
+            } else {
+                0
+            },
             placed_far_objects: self.scatter_draws.far_objects(),
             placed_impostors: self.impostors.placed.live(),
             occupancy_redraws: self.occupancy.redraws,
@@ -461,7 +466,8 @@ impl Renderer {
             (self.terrain.capacity_bytes()
                 + self.ground_cover.capacity_bytes()
                 + self.scatter.capacity_bytes()
-                + self.occupancy.capacity_bytes()) as f64,
+                + self.occupancy.capacity_bytes()
+                + self.water.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_transparent_bytes",

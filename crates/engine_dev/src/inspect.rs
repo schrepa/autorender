@@ -466,6 +466,9 @@ fn section_description(name: &str) -> &'static str {
         "contact_shadows" => {
             "Contact shadow settings (decision 062): short rays toward the sun through the depth buffer shade what shadow maps are too coarse to hold, such as grass on the ground, the feet of small objects and the gaps between stones. Whether they trace, each ray's reach in meters, how much of the sun's light a hit takes away, and the distance from the camera within which surfaces trace. Missing means none. The rendering observation reports whether a frame traced them."
         }
+        "water" => {
+            "Water settings (decision 067): terrains' lakes and rivers, which their hydrology bakes find (decision 066), drawn where they stand. Whether water draws, the color deep water scatters back, the meters of water through which half the light passes, how strongly ripples tilt the surface and the meters across the largest ripples. Missing means none. The rendering observation reports water chunks drawn."
+        }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }

@@ -13,7 +13,7 @@
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Environment, GroundCover,
     InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Particles, ReflectionProbes,
-    Reflections, Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Wind,
+    Reflections, Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -279,6 +279,7 @@ section!(GroundCover, since 9, opt_in false);
 section!(Wind, since 9, opt_in false);
 section!(Occupancy, since 9, opt_in false);
 section!(ContactShadows, since 9, opt_in false);
+section!(Water, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -338,6 +339,9 @@ pub struct SceneEnvironment {
     /// (decision 062).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_shadows: Option<ContactShadows>,
+    /// How terrains' lakes and rivers look (decision 067).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water: Option<Water>,
 }
 
 impl SceneEnvironment {
@@ -365,6 +369,7 @@ impl SceneEnvironment {
             wind: Some(environment.wind),
             occupancy: Some(environment.occupancy),
             contact_shadows: Some(environment.contact_shadows),
+            water: Some(environment.water),
         }
     }
 
@@ -388,6 +393,7 @@ impl SceneEnvironment {
         visitor.section("wind", self.wind);
         visitor.section("occupancy", self.occupancy);
         visitor.section("contact_shadows", self.contact_shadows);
+        visitor.section("water", self.water);
     }
 
     /// The names of the sections present, the atmosphere first.

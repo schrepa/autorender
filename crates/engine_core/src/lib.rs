@@ -31,6 +31,7 @@ mod skin;
 mod terrain;
 mod transform_edits;
 mod virtual_geometry;
+mod water;
 mod wind;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
@@ -66,6 +67,7 @@ pub use engine_terrain::{
     HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
     HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, Placed,
     PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Stamp, StampOp, Tile, TileKey,
+    WaterGrid,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -103,6 +105,7 @@ pub use terrain::{
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
+pub use water::Water;
 pub use wind::Wind;
 
 use bevy_app::PluginsState;
@@ -297,6 +300,7 @@ impl Engine {
             .init_resource::<Wind>()
             .init_resource::<Occupancy>()
             .init_resource::<ContactShadows>()
+            .init_resource::<Water>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -828,7 +832,7 @@ pub mod prelude {
         Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
         TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
-    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Wind};
+    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Water, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{

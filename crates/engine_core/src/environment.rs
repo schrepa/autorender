@@ -11,7 +11,7 @@ use bevy_ecs::prelude::{Resource, World};
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, GroundCover, LevelOfDetail,
     LocalLights, Occupancy, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
-    SunShafts, TerrainSettings, VirtualGeometry, Wind,
+    SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -60,6 +60,7 @@ pub struct Environment {
     pub wind: Wind,
     pub occupancy: Occupancy,
     pub contact_shadows: ContactShadows,
+    pub water: Water,
 }
 
 impl Environment {
@@ -185,6 +186,13 @@ impl Environment {
                     ..ContactShadows::default()
                 },
             ),
+            water: read(
+                world,
+                Water {
+                    enabled: false,
+                    ..Water::default()
+                },
+            ),
         }
     }
 
@@ -209,6 +217,7 @@ impl Environment {
             wind: self.wind.sanitized(),
             occupancy: self.occupancy.sanitized(),
             contact_shadows: self.contact_shadows.sanitized(),
+            water: self.water.sanitized(),
         }
     }
 }

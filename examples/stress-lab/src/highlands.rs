@@ -511,6 +511,8 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
+            // Nor where lakes stand (decision 067).
+            Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
         ])
     };
     let boulders = |weight: f32| {

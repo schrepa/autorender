@@ -332,6 +332,32 @@ try {
   assert.equal(reaching.error.path, "$.contact_shadows.length");
   await command("environment", { contact_shadows: contact });
   checks.push({ check: "contact shadows", pixels: contactPixels.changed });
+  // Water (decision 067) stands in the bake's lakes: queries find its
+  // surface and depth, the overview draws chunks of it, it shades pixels
+  // and the section refuses water clearer than its range.
+  const grid = [];
+  for (let z = -480; z <= 480; z += 40) for (let x = -480; x <= 480; x += 40) grid.push([x, z]);
+  const lakes = [];
+  for (let i = 0; i < grid.length; i += 100) {
+    const samples = (await command("terrain_height", { points: grid.slice(i, i + 100) })).result.samples;
+    lakes.push(...samples.filter(sample => sample?.standing_water));
+  }
+  assert.ok(lakes.length > 0 && lakes.every(sample => sample.standing_water.depth > 0
+    && Math.abs(sample.standing_water.surface - sample.standing_water.depth - sample.height) < 1e-2),
+    `water stands in lakes: ${lakes.length}`);
+  const waterSettings = (await command("inspect", { component: "Water" })).result.value;
+  await command("camera", overview);
+  const wet = (await command("environment", { water: waterSettings })).result.rendering;
+  assert.ok(wet.water_chunks > 0, `water draws: ${wet.water_chunks}`);
+  const withWater = await capture("water");
+  await command("environment", { water: { ...waterSettings, enabled: false } });
+  const withoutWater = await capture("no-water");
+  const waterPixels = await differentPixels(page, [withWater, withoutWater]);
+  assert.ok(waterPixels.changed > 1000, `water shades ${waterPixels.changed} pixels`);
+  const murky = await command("environment", { water: { ...waterSettings, clarity: 0 } }, false);
+  assert.equal(murky.error.path, "$.water.clarity");
+  await command("environment", { water: waterSettings });
+  checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water_chunks, pixels: waterPixels.changed });
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's

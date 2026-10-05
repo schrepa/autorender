@@ -117,6 +117,36 @@ impl Renderer {
         true
     }
 
+    /// Prepares this frame's water (decision 067) and its pipeline into
+    /// `opaque_kind`'s targets; returns whether any of it draws.
+    pub(super) fn prepare_water(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        opaque_kind: PassKind,
+    ) -> bool {
+        let Some(targets) = opaque_kind.targets() else {
+            return false;
+        };
+        let environment = &snapshot.environment;
+        if !self.water.prepare(
+            &self.device,
+            &self.queue,
+            &snapshot.terrain,
+            environment.water,
+            (snapshot.camera_position, environment.wind.velocity),
+        ) {
+            return false;
+        }
+        self.water.ensure_pipeline(
+            &self.device,
+            &self.mesh_shader,
+            &self.camera.layout,
+            targets,
+            (self.display.format(), DEPTH_FORMAT),
+        );
+        true
+    }
+
     /// Draws the camera's terrain patches into the opaque pass; returns the
     /// draws.
     pub(super) fn draw_terrain(

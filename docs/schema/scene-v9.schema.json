@@ -1891,6 +1891,17 @@
             }
           ]
         },
+        "water": {
+          "description": "How terrains' lakes and rivers look (decision 067).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWater"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "wind": {
           "description": "The wind ground cover and placed objects sway in (decision 058).",
           "anyOf": [
@@ -3769,6 +3780,52 @@
         "visibility_buffer": {
           "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneWater": {
+      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); and\nthe meters across its largest ripples (0.1 to 100). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "clarity": {
+          "type": "number",
+          "format": "float",
+          "default": 2.5,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "color": {
+          "type": "array",
+          "default": [
+            0.012000000104308128,
+            0.04500000178813934,
+            0.05000000074505806
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "ripple_size": {
+          "type": "number",
+          "format": "float",
+          "default": 5.0,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "ripples": {
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 1.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false

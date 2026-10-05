@@ -34,7 +34,7 @@ pub use format::{
 };
 pub use hydrology::{
     FLOW_RANGE, Hydrology, HydrologyBake, HydrologyLayer, HydrologySample, HydrologyStats,
-    LAKE_RANGE, WETNESS_RANGE, bake as bake_hydrology,
+    LAKE_RANGE, WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
 };
 pub use layers::{
     Blend, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers, NoiseLayer,
