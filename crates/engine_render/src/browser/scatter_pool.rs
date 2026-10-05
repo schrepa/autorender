@@ -174,6 +174,7 @@ fn dead() -> Record {
         radius: 0.0,
         group: DEAD,
         scale: 0.0,
-        pad: [0; 2],
+        terrain: u32::MAX,
+        sink: 0.0,
     }
 }

@@ -1,20 +1,21 @@
 //! Placed objects (decision 057): what terrains' placement layers stand on
-//! their level-0 tiles, drawn through the mesh pipelines as instances of
-//! their own. Objects keep poses and colors in buffers laid out as slots'
-//! are, so the mesh and depth shaders read them unchanged, rewritten only
-//! when the terrains' tiles or assets change. Each frame a compute pass
-//! culls every object against each view (the camera, then the shadow maps
-//! drawn every frame) and picks its level of detail from the camera
-//! (`scatter_cull.wgsl`), appending it to its draw group's list for that
-//! view and level; each group and level then draws indirectly. Objects draw
-//! in the first opaque phase, and cast into the near cascades and the
-//! moving map, never the kept one: the tiles they stand on come and go with
-//! the camera. They are never occlusion culled.
+//! their tiles, drawn through the mesh pipelines as instances of their own.
+//! Objects hold slots of a pool whose poses and colors are laid out as
+//! slots' are, so the mesh and depth shaders read them unchanged; each
+//! tile's objects upload when it arrives. Each frame a compute pass first
+//! sets every object on its terrain's finest resident heights
+//! (`scatter_snap.wgsl`), then culls it against each view (the camera,
+//! then the shadow maps drawn every frame) and picks its level of detail
+//! from the camera (`scatter_cull.wgsl`), appending it to its draw
+//! group's list for that view and level; each group and level then draws
+//! indirectly. Objects draw in the first opaque phase, and cast into the
+//! near cascades and the moving map, never the kept one: the tiles they
+//! stand on come and go with the camera. They are never occlusion culled.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Mat4, Vec3};
 
-use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SHADOW_POSES, TEMPORAL_POSES};
+use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, PoseData};
 
@@ -41,7 +42,9 @@ struct ViewData {
 /// The draw group of slots no object holds, which culling skips.
 pub(crate) const DEAD: u32 = u32::MAX;
 
-/// WGSL `Record`: an object's bounding sphere, draw group and scale.
+/// WGSL `Record`: an object's bounding sphere, draw group and scale, and
+/// the terrain it stands on (its index this frame; none: `u32::MAX`) and
+/// how far its base sinks below the ground.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct Record {
@@ -49,7 +52,27 @@ pub(crate) struct Record {
     pub radius: f32,
     pub group: u32,
     pub scale: f32,
-    pub pad: [u32; 2],
+    pub terrain: u32,
+    pub sink: f32,
+}
+
+/// WGSL `TerrainInfo` of `scatter_snap.wgsl`: a terrain's origin and
+/// level-0 spacing, and where its levels start in the directory and how
+/// many there are.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+pub(crate) struct TerrainInfo {
+    pub origin: [f32; 4],
+    pub levels: [u32; 4],
+}
+
+/// What setting objects on the terrain reads: the terrain pass's resident
+/// heights and directory, their generations, and each terrain's place.
+pub(crate) struct SnapSources<'a> {
+    pub heights: &'a wgpu::TextureView,
+    pub directory: &'a wgpu::Buffer,
+    pub generation: (u64, u64),
+    pub terrains: &'a [TerrainInfo],
 }
 
 /// WGSL `Group`: where its lists start, its objects, its levels, those
@@ -91,6 +114,15 @@ pub(crate) struct ScatterPass {
     pose_layouts: [wgpu::BindGroupLayout; 2],
     shadow_layout: wgpu::BindGroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
+    // Setting objects on the terrain: its layout and pipeline, its uniform,
+    // the terrains' places, its group (by the buffers' and terrain
+    // sources' generations), and whether this frame runs it.
+    snap_layout: wgpu::BindGroupLayout,
+    snap_pipeline: Option<wgpu::ComputePipeline>,
+    snap: wgpu::Buffer,
+    terrains: wgpu::Buffer,
+    snap_group: Cached<(u64, u64, (u64, u64)), wgpu::BindGroup>,
+    snapping: bool,
     frame: wgpu::Buffer,
     views: wgpu::Buffer,
     records: wgpu::Buffer,
@@ -117,6 +149,8 @@ pub(crate) struct ScatterPass {
     ids_per_view: u32,
     // The shadow map each view after the camera's draws into.
     maps: Vec<usize>,
+    // Advances when the terrains' buffer is replaced.
+    terrains_generation: u64,
     /// Objects resident.
     pub(crate) resident: u32,
 }
@@ -134,6 +168,13 @@ impl ScatterPass {
             ],
             shadow_layout: crate::pipelines::layout(device, &SHADOW_POSES),
             pipeline: None,
+            snap_layout: crate::pipelines::layout(device, &SCATTER_SNAP),
+            snap_pipeline: None,
+            snap: crate::buffers::uniform(device, "engine/scatter-snap", 16),
+            terrains: storage("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
+            snap_group: Cached::default(),
+            snapping: false,
+            terrains_generation: 0,
             frame: crate::buffers::uniform(
                 device,
                 "engine/scatter-frame",
@@ -448,6 +489,61 @@ impl ScatterPass {
         });
     }
 
+    /// Plans setting objects on the terrain this frame from `sources`; none
+    /// while the terrain pass holds no heights.
+    pub(crate) fn prepare_snap(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sources: Option<SnapSources<'_>>,
+    ) {
+        self.snapping = false;
+        let Some(sources) = sources.filter(|sources| !sources.terrains.is_empty()) else {
+            return;
+        };
+        if self.resident == 0 {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(sources.terrains);
+        if grow(
+            device,
+            &mut self.terrains,
+            "engine/scatter-terrains",
+            bytes.len() as u64,
+            wgpu::BufferUsages::empty(),
+        ) {
+            self.terrains_generation += 1;
+        }
+        queue.write_buffer(&self.terrains, 0, bytes);
+        let counts = [self.objects, sources.terrains.len() as u32, 0, 0];
+        queue.write_buffer(&self.snap, 0, bytemuck::cast_slice(&counts));
+        self.snap_pipeline
+            .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
+        let key = (
+            self.generation,
+            self.terrains_generation,
+            sources.generation,
+        );
+        if self.snap_group.stale(&key) {
+            let group = crate::pipelines::group(
+                device,
+                "engine/scatter-snap",
+                &SCATTER_SNAP,
+                &self.snap_layout,
+                &[
+                    crate::buffers::entry("snap", &self.snap),
+                    crate::buffers::entry("records", &self.records),
+                    crate::buffers::entry("poses", &self.poses),
+                    crate::buffers::entry("terrains", &self.terrains),
+                    crate::buffers::entry("directory", sources.directory),
+                    ("heights", crate::pipelines::view(sources.heights)),
+                ],
+            );
+            self.snap_group.set(key, group);
+        }
+        self.snapping = true;
+    }
+
     /// The pose groups of plain and temporal mesh pipelines.
     pub(crate) fn pose_groups(&self) -> Option<&[wgpu::BindGroup; 2]> {
         self.pose_groups.get()
@@ -483,6 +579,13 @@ impl ScatterPass {
             label: Some("engine/scatter-cull"),
             timestamp_writes: profiler.span("scatter").map(|span| span.compute()),
         });
+        if let (true, Some(snap), Some(group)) =
+            (self.snapping, &self.snap_pipeline, self.snap_group.get())
+        {
+            pass.set_pipeline(snap);
+            pass.set_bind_group(0, group, &[]);
+            pass.dispatch_workgroups(self.objects.div_ceil(64), 1, 1);
+        }
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(self.objects.div_ceil(64), 1 + self.maps.len() as u32, 1);
@@ -521,6 +624,19 @@ fn grow(
     }
     *buffer = crate::buffers::storage(device, label, bytes.next_power_of_two(), extra);
     true
+}
+
+fn snap_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("engine/scatter-snap.wgsl"),
+        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SCATTER_SNAP_SHADER.into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("engine/scatter-snap-layout"),
+        bind_group_layouts: &[Some(layout)],
+        immediate_size: 0,
+    });
+    crate::pipelines::compute_entry(device, &pipeline_layout, &module, "snap_scatter")
 }
 
 fn pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {

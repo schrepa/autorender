@@ -6,8 +6,11 @@
 //! A candidate stands where its rank falls under the layer's density at its
 //! point: the share of a square the density fills, times the layer's mask
 //! and the share of the surface materials it stands on there. Placement
-//! is a pure function of a level-0 tile's heights and control values; each
-//! candidate belongs to the tile holding its point.
+//! is a pure function of a tile's heights and control values; each
+//! candidate belongs to the tile of the layer's level holding its point.
+//! Coarser levels stay resident farther from the camera, so their layers'
+//! objects show farther away; renderers set objects on the finest heights
+//! resident.
 
 use engine_math::{clamp, max, sin_cos};
 use serde::{Deserialize, Serialize};
@@ -15,10 +18,11 @@ use serde::{Deserialize, Serialize};
 use crate::surface::{Compiled, Control, Mask, SampleInputs};
 use crate::{TILE_QUADS, Tile};
 
-/// Validity guards: how many layers a surface places and how many assets a
-/// layer chooses from.
+/// Validity guards: how many layers a surface places, how many assets a
+/// layer chooses from, and the coarsest level a layer's tiles may be.
 const MAX_LAYERS: usize = 64;
 const MAX_CHOICES: usize = 64;
+const MAX_LEVEL: u8 = 15;
 
 /// An asset a placement layer chooses, by ID of the surface's assets, and
 /// how often against the layer's others.
@@ -37,8 +41,9 @@ pub struct PlacementChoice {
 /// square); the meters between candidates (0.25 to 256); the surface
 /// materials it stands on (IDs; any when empty), weighted by their share;
 /// where its mask allows; its objects' scale range; how far they lean with
-/// the ground (0 upright, 1 along its normal); and how deep they sink, in
-/// meters at scale 1.
+/// the ground (0 upright, 1 along its normal); how deep they sink, in
+/// meters at scale 1; and the pyramid level whose tiles hold its
+/// candidates (0, the finest, by default).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -60,6 +65,13 @@ pub struct PlacementLayer {
     pub align: f32,
     #[serde(default)]
     pub sink: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
+    pub level: u8,
+}
+
+fn is_zero(level: &u8) -> bool {
+    *level == 0
 }
 
 fn one() -> f32 {
@@ -72,22 +84,25 @@ fn unit_scale() -> [f32; 2] {
 
 /// One object a layer placed: its base's terrain-local position, its turn
 /// about the vertical (radians), how its up leans (x and z of its up
-/// vector), its scale, and its asset and layer indices.
+/// vector), its scale, how far its base sinks below the ground (meters),
+/// and its asset and layer indices.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
     pub yaw: f32,
     pub lean: [f32; 2],
     pub scale: f32,
+    pub sink: f32,
     pub asset: u16,
     pub layer: u16,
 }
 
-/// A compiled layer: its asset indices and cumulative weights, the share
-/// of a square its density fills, its materials as a 256-bit set (none:
-/// any), its mask and its variations.
+/// A compiled layer: its tiles' level, its asset indices and cumulative
+/// weights, the share of a square its density fills, its materials as a
+/// 256-bit set (none: any), its mask and its variations.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CompiledPlacement {
+    pub(crate) level: u8,
     choices: Vec<(u16, f32)>,
     fill: f32,
     footprint: f32,
@@ -196,7 +211,11 @@ pub(crate) fn compile(
         if !layer.sink.is_finite() {
             return Err(fail(format!("{at}.sink"), "must be finite"));
         }
+        if layer.level > MAX_LEVEL {
+            return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
+        }
         compiled.push(CompiledPlacement {
+            level: layer.level,
             choices,
             fill,
             footprint: layer.footprint,
@@ -239,15 +258,15 @@ fn material_share(control: Control, set: &Option<[u64; 4]>) -> f32 {
     share
 }
 
-/// Places every layer of `layers` on level-0 tile `tile`, appending to
-/// `out`; `seed` varies them per terrain.
+/// Places every layer of `layers` whose level is `tile`'s on it,
+/// appending to `out`; `seed` varies them per terrain.
 pub(crate) fn place(layers: &[CompiledPlacement], tile: &Tile, seed: u32, out: &mut Vec<Placed>) {
     let spacing = tile.spacing();
     let size = TILE_QUADS as f32 * spacing;
     let key = tile.key();
     let origin = [f32::from(key.x) * size, f32::from(key.z) * size];
     for (layer_index, layer) in layers.iter().enumerate() {
-        if layer.fill <= 0.0 {
+        if layer.fill <= 0.0 || layer.level != key.level {
             continue;
         }
         let footprint = layer.footprint;
@@ -344,6 +363,7 @@ pub(crate) fn place(layers: &[CompiledPlacement], tile: &Tile, seed: u32, out: &
                     yaw,
                     lean,
                     scale,
+                    sink: layer.sink * scale,
                     asset,
                     layer: layer_index as u16,
                 });

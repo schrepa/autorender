@@ -412,7 +412,8 @@ fn rules() -> Biomes {
             .collect(),
         // Boulders in clumps over the meadows, stones strewn on scree,
         // outcrops on rock, and spruce forests in broad stands below the
-        // tree line on gentle ground, thinning at their edges.
+        // tree line on gentle ground, thinning at their edges: placed on
+        // kilometer tiles, which stay resident farther away.
         placements: vec![
             PlacementLayer {
                 id: "spruces".into(),
@@ -440,6 +441,7 @@ fn rules() -> Biomes {
                 scale: [0.65, 1.15],
                 align: 0.04,
                 sink: 0.3,
+                level: 2,
             },
             PlacementLayer {
                 id: "boulders".into(),
@@ -451,6 +453,7 @@ fn rules() -> Biomes {
                 scale: [0.6, 2.4],
                 align: 0.3,
                 sink: 0.2,
+                level: 0,
             },
             PlacementLayer {
                 id: "stones".into(),
@@ -462,6 +465,7 @@ fn rules() -> Biomes {
                 scale: [0.12, 0.45],
                 align: 0.8,
                 sink: 0.08,
+                level: 0,
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -473,6 +477,7 @@ fn rules() -> Biomes {
                 scale: [2.0, 5.0],
                 align: 0.6,
                 sink: 0.5,
+                level: 0,
             },
         ],
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),

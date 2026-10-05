@@ -686,6 +686,22 @@ pub(crate) const SCATTER_CULL: Table = Table {
     ],
 };
 
+/// Placed objects set on the terrain as drawn (decision 057;
+/// `scatter_snap.wgsl`): the slots and terrains, every object's record and
+/// pose, each terrain's place in the directory, the directory and the
+/// resident heights.
+pub(crate) const SCATTER_SNAP: Table = Table {
+    label: "engine/scatter-snap-layout",
+    bindings: &[
+        uniform_of(0, "snap", 16, C),
+        write(1, "records", C),
+        write(2, "poses", C),
+        read(3, "terrains", C),
+        read(4, "directory", C),
+        texture(5, "heights", Unfilterable, D2Array, C),
+    ],
+};
+
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",
