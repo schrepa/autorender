@@ -10,6 +10,7 @@ use super::frame::FrameState;
 use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
+use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
 use crate::scatter::{GroupLayout, LEVELS, Record, SnapSources, TerrainInfo};
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
@@ -31,6 +32,18 @@ pub(super) struct ScatterDraws {
     indices: HashMap<(u64, usize), u32>,
     terrains: HashMap<u64, u32>,
     pool: ScatterPool,
+    // Each group's impostor (decision 048), zeroed without one, and whether
+    // the groups' layouts changed since they last uploaded.
+    impostors: Vec<ImpostorRecord>,
+    changed: bool,
+}
+
+impl ScatterDraws {
+    /// Each draw group's impostor record, zeroed without one, as the
+    /// impostors' records list them after the plan batches'.
+    pub(super) fn impostors(&self) -> impl Iterator<Item = &ImpostorRecord> {
+        self.impostors.iter()
+    }
 }
 
 /// One draw group of placed objects: each level's mesh, its material, its
@@ -40,6 +53,7 @@ pub(super) struct ScatterDraws {
 struct ScatterDraw {
     meshes: Vec<MeshHandle>,
     material: MaterialHandle,
+    source: engine_core::Material,
     color: ColorData,
     sphere: (Vec3, f32),
     ids: u32,
@@ -71,7 +85,12 @@ impl Renderer {
     /// slots and frees those of tiles that left, uploads what changed,
     /// creates the groups' pipelines for `kind`, and plans this frame's
     /// culling; returns whether any object draws.
-    pub(super) fn prepare_scatter(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
+    pub(super) fn prepare_scatter(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        kind: PassKind,
+        impostors: bool,
+    ) -> bool {
         let terrains = &snapshot.terrain.terrains;
         let key = self.scatter_key(terrains);
         if self.scatter_draws.key.as_ref() != Some(&key) || self.scatter_draws.pool.fragmented() {
@@ -126,7 +145,7 @@ impl Renderer {
             (&draws.pool.poses, &draws.pool.colors, &draws.pool.records),
             dirty,
         );
-        if counts_changed {
+        if counts_changed || std::mem::take(&mut draws.changed) {
             let mut ids = 0;
             for (group, &count) in draws.groups.iter_mut().zip(&draws.pool.counts) {
                 group.ids = ids;
@@ -173,9 +192,93 @@ impl Renderer {
             &self.device,
             &self.queue,
             (snapshot.view_projection, snapshot.camera_position),
-            (pixel_error, height),
+            (pixel_error, height, impostors),
             (self.shadows.drawn_maps(), self.shadows.map_resolution()),
         )
+    }
+
+    /// The impostors of placed draw groups (decision 057) on GPU-presented
+    /// frames with impostors: each group's, baked into `encoder` after its
+    /// material's levels where missing, as plan batches' are (decision
+    /// 048), zeroed where its material blends, its mesh is too small or the
+    /// budget is spent. The groups' layouts take their errors and records,
+    /// listed after the plan batches'.
+    pub(super) fn prepare_scatter_impostors(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        gpu_mode: bool,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) {
+        let settings = snapshot.environment.level_of_detail;
+        let enabled = gpu_mode && settings.enabled && settings.impostors;
+        let first = self.impostors.records.len() as u32;
+        let mut records = Vec::with_capacity(self.scatter_draws.groups.len());
+        for group in &self.scatter_draws.groups {
+            let mut record = ImpostorRecord::default();
+            let mesh = self.meshes.get(&group.meshes[0]);
+            let source = snapshot
+                .terrain
+                .terrains
+                .iter()
+                .flat_map(|terrain| terrain.assets.iter().flatten())
+                .find(|asset| asset.mesh.handle == group.meshes[0])
+                .map(|asset| &asset.mesh.mesh);
+            let eligible = enabled
+                && !group.source.is_transparent()
+                && mesh.is_some_and(|mesh| !mesh.skinned)
+                && source
+                    .is_some_and(|source| source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES);
+            if let (true, Some(mesh), Some(source)) = (eligible, mesh, source) {
+                let key = (group.meshes[0], Some(group.material));
+                if let Some(baked) = self.impostors.atlas.record(key, Some(&group.source)) {
+                    record = baked;
+                } else {
+                    let (bind_group, variant) = self.materials.binding(Some(group.material));
+                    let encoder = encoder.get_or_insert_with(|| {
+                        self.device
+                            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: Some("engine/texture-mips"),
+                            })
+                    });
+                    let bounds = source.bounds();
+                    let bake = BakeSource {
+                        draw: mesh.draw(&self.mesh_arena),
+                        extended: mesh.extended,
+                        group: bind_group,
+                        variant: variant.with_extended(mesh.extended).with_skinned(false),
+                        bounds: (bounds.min(), bounds.max()),
+                        material: Some(group.source),
+                    };
+                    if self.impostors.atlas.bake(
+                        &self.device,
+                        encoder,
+                        self.materials.mips(),
+                        &self.mesh_shader,
+                        key,
+                        &bake,
+                        settings.max_impostors,
+                    ) {
+                        record = self
+                            .impostors
+                            .atlas
+                            .record(key, Some(&group.source))
+                            .unwrap_or_default();
+                    } else {
+                        self.impostors.dropped += 1;
+                    }
+                }
+            }
+            records.push(record);
+        }
+        let draws = &mut self.scatter_draws;
+        for (index, (layout, record)) in draws.layouts.iter_mut().zip(&records).enumerate() {
+            let impostor = (record.error(), first + index as u32);
+            if layout.impostor != impostor {
+                layout.impostor = impostor;
+                draws.changed = true;
+            }
+        }
+        draws.impostors = records;
     }
 
     /// What the draw groups of `terrains` are built from.
@@ -234,6 +337,7 @@ impl Renderer {
                 groups.push(ScatterDraw {
                     meshes,
                     material: asset.material.handle,
+                    source: *material,
                     color: ColorData {
                         color: pack_color(material.color()),
                         surface: pack_surface(material.surface()),
@@ -251,10 +355,12 @@ impl Renderer {
                     levels,
                     camera,
                     errors,
+                    impostor: (0.0, 0),
                 });
             }
         }
         let draws = &mut self.scatter_draws;
+        draws.impostors = vec![ImpostorRecord::default(); groups.len()];
         draws.pool.clear(groups.len());
         draws.groups = groups;
         draws.layouts = layouts;
@@ -356,7 +462,37 @@ impl Renderer {
             pass.set_bind_group(1, group, &[]);
             draws += self.draw_scatter_levels(pass, (index, draw), 0, true);
         }
+        // Impostors (decision 048): every group's cards in one draw, over
+        // the poses and lights the meshes bound.
+        if let Some((targets, lit)) = state.passes.impostor_pass
+            && let (Some(pipeline), Some(group)) = (
+                self.impostors.atlas.pipeline(targets, lit),
+                self.impostors.atlas.group(),
+            )
+        {
+            let (cards, args) = self.scatter.card_source();
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, group, &[]);
+            pass.set_vertex_buffer(0, cards.slice(..));
+            pass.draw_indirect(args, 0);
+            draws += 1;
+        }
         draws
+    }
+
+    /// The engine material of handle `handle` among `snapshot`'s placed
+    /// objects' (decision 057).
+    pub(super) fn placed_material(
+        snapshot: &RenderSnapshot,
+        handle: MaterialHandle,
+    ) -> Option<engine_core::Material> {
+        snapshot
+            .terrain
+            .terrains
+            .iter()
+            .flat_map(|terrain| terrain.assets.iter().flatten())
+            .find(|asset| asset.material.handle == handle)
+            .map(|asset| asset.material.material)
     }
 
     /// Draws this frame's placed objects culled for shadow map `map` with

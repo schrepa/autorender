@@ -76,7 +76,8 @@ pub(crate) struct SnapSources<'a> {
 }
 
 /// WGSL `Group`: where its lists start, its objects, its levels, those
-/// the camera draws, and the coarser ones' errors.
+/// the camera draws, the coarser ones' errors, and its impostor's error
+/// and record.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct GroupData {
@@ -85,7 +86,13 @@ struct GroupData {
     levels: u32,
     camera: u32,
     errors: [f32; 4],
+    impostor: f32,
+    record: u32,
+    pad: [u32; 2],
 }
+
+/// Vertices of an impostor card (`meshes/impostors.wgsl`).
+const CARD_VERTICES: u32 = 6;
 
 /// An indexed indirect draw's arguments.
 #[repr(C)]
@@ -99,12 +106,14 @@ struct DrawArgs {
 }
 
 /// One draw group as the renderer lays it out: each level's index count,
-/// first index and base vertex, the levels the camera draws, and the
-/// coarser levels' errors.
+/// first index and base vertex, the levels the camera draws, the coarser
+/// levels' errors, and its impostor's error (mesh units; 0 without one)
+/// and record (decision 048).
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
     pub camera: u32,
     pub errors: [f32; LEVELS as usize - 1],
+    pub impostor: (f32, u32),
 }
 
 pub(crate) struct ScatterPass {
@@ -132,6 +141,10 @@ pub(crate) struct ScatterPass {
     poses: wgpu::Buffer,
     colors: wgpu::Buffer,
     palette: wgpu::Buffer,
+    // The camera's impostor cards (each one's slot and impostor record) and
+    // their draw.
+    cards: wgpu::Buffer,
+    card_args: wgpu::Buffer,
     // Advances when buffers are replaced.
     generation: u64,
     cull_group: Cached<u64, wgpu::BindGroup>,
@@ -198,6 +211,18 @@ impl ScatterPass {
             poses: storage("engine/scatter-poses", size_of::<PoseData>() as u64),
             colors: storage("engine/scatter-colors", size_of::<ColorData>() as u64),
             palette: storage("engine/scatter-palette", size_of::<PoseData>() as u64),
+            cards: crate::buffers::storage(
+                device,
+                "engine/scatter-cards",
+                8,
+                wgpu::BufferUsages::VERTEX,
+            ),
+            card_args: crate::buffers::storage(
+                device,
+                "engine/scatter-card-args",
+                16,
+                wgpu::BufferUsages::INDIRECT,
+            ),
             generation: 0,
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
@@ -247,6 +272,9 @@ impl ScatterPass {
                 levels: group.levels.len() as u32,
                 camera: group.camera,
                 errors: group.errors,
+                impostor: group.impostor.0,
+                record: group.impostor.1,
+                pad: [0; 2],
             });
             for level in 0..LEVELS as usize {
                 let (index_count, first_index, base_vertex) =
@@ -310,6 +338,13 @@ impl ScatterPass {
                 wgpu::BufferUsages::empty(),
             );
         }
+        grown |= grow(
+            device,
+            &mut self.cards,
+            "engine/scatter-cards",
+            records.len() as u64 * 8,
+            wgpu::BufferUsages::VERTEX,
+        );
         if grown {
             self.generation += 1;
         }
@@ -347,13 +382,14 @@ impl ScatterPass {
     /// square), where objects smaller than half a texel cast nothing. Levels
     /// are picked within `pixel_error` pixels of a viewport `height` pixels
     /// tall (no error: finest levels only); maps draw a coarser level where
-    /// a texel hides its error. Returns whether any object draws.
+    /// a texel hides its error, and the camera draws impostors within the
+    /// error when `impostors`. Returns whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
-        (pixel_error, height): (Option<f32>, f32),
+        (pixel_error, height, impostors): (Option<f32>, f32, bool),
         (maps, resolution): (&[(usize, Mat4)], u32),
     ) -> bool {
         self.maps.clear();
@@ -409,9 +445,14 @@ impl ScatterPass {
         let frame = FrameUniform {
             eye: eye.extend(pixels).to_array(),
             counts: [self.objects, self.group_count, LEVELS, view_count],
-            strides: [self.ids_per_view, draws_per_view, 0, 0],
+            strides: [self.ids_per_view, draws_per_view, u32::from(impostors), 0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
+        queue.write_buffer(
+            &self.card_args,
+            0,
+            bytemuck::cast_slice(&[CARD_VERTICES, 0, 0, 0]),
+        );
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
         self.args.clear();
         for _ in 0..view_count {
@@ -433,6 +474,8 @@ impl ScatterPass {
                     crate::buffers::entry("ids", &self.ids),
                     crate::buffers::entry("draws", &self.draws),
                     crate::buffers::entry("views", &self.views),
+                    crate::buffers::entry("cards", &self.cards),
+                    crate::buffers::entry("card_args", &self.card_args),
                 ],
             );
             self.cull_group.set(self.generation, group);
@@ -589,6 +632,12 @@ impl ScatterPass {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.dispatch_workgroups(self.objects.div_ceil(64), 1 + self.maps.len() as u32, 1);
+    }
+
+    /// The camera's impostor cards, each one's slot and impostor record as
+    /// instance attributes, and their draw's arguments.
+    pub(crate) fn card_source(&self) -> (&wgpu::Buffer, &wgpu::Buffer) {
+        (&self.cards, &self.card_args)
     }
 
     /// Group `group`'s list of level `level` in `view` (0 the camera's) and

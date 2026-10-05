@@ -184,7 +184,8 @@ impl Renderer {
             passes.opaque_kind,
             kind.gpu_mode && !features.probe_list.is_empty(),
         );
-        let scatter = self.prepare_scatter(snapshot, passes.opaque_kind);
+        let scatter =
+            self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         // Terrain's horizon maps (decision 052) may have been replaced.
         self.refresh_camera_group();
         let shape = self.frame_shape(
@@ -487,8 +488,10 @@ impl Renderer {
             shadow_materials,
             &mut mip_encoder,
         );
-        // Impostors (decision 048) bake after their materials' levels.
+        // Impostors (decision 048) bake after their materials' levels, the
+        // plan's and then placed objects' (decision 057).
         self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
+        self.prepare_scatter_impostors(snapshot, gpu_mode, &mut mip_encoder);
         drop(profile_upload);
         self.order_draws();
         AssetUploads {
@@ -1248,6 +1251,7 @@ impl Renderer {
                 .impostors
                 .records
                 .iter()
+                .chain(self.scatter_draws.impostors())
                 .any(|record| record.sphere[3] > 0.0)
         {
             self.prepare_impostor_draws(opaque_kind)
