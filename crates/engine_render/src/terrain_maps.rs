@@ -4,7 +4,9 @@
 //! the size of the first material's maps, their mip chains rendered as they
 //! upload. The arrays rebuild only when the set of materials with maps
 //! changes; materials whose maps differ in size or are block compressed
-//! show their colors instead and count as dropped.
+//! show their colors instead and count as dropped. Each layer's mean color,
+//! roughness and occlusion stand in for its maps where they repeat too
+//! small on screen to show.
 
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
@@ -40,6 +42,16 @@ pub(crate) struct TerrainMaps {
     /// Materials whose maps the arrays cannot hold.
     pub(crate) dropped: u32,
     bytes: u64,
+    // Each layer's mean linear color, roughness and occlusion.
+    means: Vec<Means>,
+}
+
+/// A layer's mean linear base color, roughness and occlusion texels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Means {
+    pub color: [f32; 3],
+    pub roughness: f32,
+    pub occlusion: f32,
 }
 
 impl TerrainMaps {
@@ -69,6 +81,7 @@ impl TerrainMaps {
             generation: 0,
             dropped: 0,
             bytes: 0,
+            means: Vec::new(),
         }
     }
 
@@ -79,6 +92,11 @@ impl TerrainMaps {
             .iter()
             .position(|layer| *layer == key)
             .map(|layer| layer as u32)
+    }
+
+    /// Layer `layer`'s means.
+    pub(crate) fn means(&self, layer: u32) -> Means {
+        self.means[layer as usize]
     }
 
     /// Bytes of the arrays and their mip chains.
@@ -135,6 +153,7 @@ impl TerrainMaps {
             .collect();
         self.dropped = (listed.len() - kept.len()) as u32;
         self.layers = kept.iter().map(|maps| key(maps)).collect();
+        self.means = kept.iter().map(|maps| means(maps)).collect();
         let size = size.unwrap_or((1, 1));
         let levels = if kept.is_empty() {
             1
@@ -181,6 +200,49 @@ impl TerrainMaps {
         self.views = views;
         self.generation += 1;
     }
+}
+
+/// The means of `maps`' base color, decoded from sRGB, and of its
+/// metallic-roughness map's roughness and occlusion; 1 without them.
+fn means(maps: &RenderSurfaceMaps) -> Means {
+    let decode: Vec<f32> = (0..=255_u8)
+        .map(|value| {
+            let value = f32::from(value) / 255.0;
+            if value <= 0.040_45 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        })
+        .collect();
+    let [base_color, _, metallic_roughness] = textures(maps);
+    let mut result = Means {
+        color: [1.0; 3],
+        roughness: 1.0,
+        occlusion: 1.0,
+    };
+    if let Some(texture) = base_color {
+        let pixels = texture.pixels().as_chunks::<4>().0;
+        let mut sum = [0.0_f64; 3];
+        for pixel in pixels {
+            for (total, &value) in sum.iter_mut().zip(pixel) {
+                *total += f64::from(decode[usize::from(value)]);
+            }
+        }
+        result.color = sum.map(|total| (total / pixels.len().max(1) as f64) as f32);
+    }
+    if let Some(texture) = metallic_roughness {
+        let pixels = texture.pixels().as_chunks::<4>().0;
+        let mut sum = [0_u64; 2];
+        for pixel in pixels {
+            sum[0] += u64::from(pixel[0]);
+            sum[1] += u64::from(pixel[1]);
+        }
+        let mean = |total: u64| total as f32 / (255.0 * pixels.len().max(1) as f32);
+        result.occlusion = mean(sum[0]);
+        result.roughness = mean(sum[1]);
+    }
+    result
 }
 
 /// The textures `maps` names, as its layer holds them.

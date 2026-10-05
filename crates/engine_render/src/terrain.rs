@@ -93,9 +93,10 @@ struct TerrainUniform {
 
 /// WGSL `TerrainPaletteEntry`: a surface material's linear color (its
 /// base color factor with maps) and roughness; its tiling, height
-/// contrast, projection and maps' layer plus one (0 without maps); and its
-/// normal scale, occlusion strength and metalness.
-type PaletteEntry = [f32; 12];
+/// contrast, projection and maps' layer plus one (0 without maps); its
+/// normal scale, occlusion strength, metalness and mean occlusion; and its
+/// maps' mean color and roughness, its factors applied.
+type PaletteEntry = [f32; 16];
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
 /// every patch (for probe faces) and each shadow map's. The camera's and
@@ -812,9 +813,7 @@ impl TerrainPass {
                                 (
                                     [color[0], color[1], color[2]],
                                     surface.roughness,
-                                    self.maps
-                                        .layer(maps)
-                                        .map_or(0.0, |layer| (layer + 1) as f32),
+                                    self.maps.layer(maps),
                                     material.normal_scale(),
                                     if packed {
                                         material.occlusion_strength()
@@ -824,8 +823,21 @@ impl TerrainPass {
                                     surface.metalness,
                                 )
                             }
-                            None => (look.color, look.roughness, 0.0, 1.0, 0.0, 0.0),
+                            None => (look.color, look.roughness, None, 1.0, 0.0, 0.0),
                         };
+                        // Where its maps repeat too small to show, their means.
+                        let means = layer.map(|layer| self.maps.means(layer));
+                        let far =
+                            means.map_or([color[0], color[1], color[2], roughness], |means| {
+                                [
+                                    color[0] * means.color[0],
+                                    color[1] * means.color[1],
+                                    color[2] * means.color[2],
+                                    roughness * means.roughness,
+                                ]
+                            });
+                        let far_occlusion =
+                            means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
                         [
                             color[0],
                             color[1],
@@ -834,11 +846,15 @@ impl TerrainPass {
                             look.tiling,
                             look.height_contrast,
                             projection,
-                            layer,
+                            layer.map_or(0.0, |layer| (layer + 1) as f32),
                             scale,
                             occlusion,
                             metalness,
-                            0.0,
+                            far_occlusion,
+                            far[0],
+                            far[1],
+                            far[2],
+                            far[3],
                         ]
                     }),
             );
