@@ -6,10 +6,10 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Biome, Biomes, Blend, Cover, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage,
-    Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer, PlacedCollider, PlacedShape,
-    PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp, SurfaceMaterial,
-    SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
+    Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
+    HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
+    PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp,
+    SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -267,10 +267,12 @@ impl PreparedTerrain {
 }
 
 /// One layer of a terrain's stack: procedural noise with erosion, a stamp
-/// (raise, lower, flatten or cut holes), an imported heightmap, or a
-/// hydrology bake (decision 066) of the layers before it, which carves
-/// channels where water gathers and feeds the `flow`, `wetness` and
-/// `lake` masks. Terrains load no tiles until their bake is done.
+/// (raise, lower, flatten or cut holes), an imported heightmap, an erosion
+/// bake (decision 068) of the layers before it, where rivers wear valleys
+/// and slopes creep, or a hydrology bake (decision 066) of them, which
+/// carves channels where water gathers, fills lakes and rivers with water
+/// (decision 067) and feeds the `flow`, `wetness` and `lake` masks.
+/// Terrains load no tiles until their bakes are done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -279,6 +281,7 @@ pub enum SceneTerrainLayer {
     Stamp(Stamp),
     Heightmap(SceneHeightmap),
     Hydrology(HydrologyLayer),
+    Erosion(ErosionLayer),
 }
 
 /// An imported heightmap: a file of little-endian 16-bit samples, row by row
@@ -584,6 +587,10 @@ impl SceneTerrain {
                         layer: *layer,
                         baked: None,
                     }),
+                    SceneTerrainLayer::Erosion(layer) => Layer::Erosion(ErosionStage {
+                        layer: *layer,
+                        baked: None,
+                    }),
                 })
             })
             .collect::<Result<Vec<_>, SceneError>>()?;
@@ -656,6 +663,7 @@ impl SceneTerrain {
                     Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
                     Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
                     Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
+                    Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
                     Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
                         uri: map.uri.clone().unwrap_or_default(),
                         width: map.image.width(),

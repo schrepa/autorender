@@ -34,9 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator,
-    HydrologyBake, HydrologyStats, Layers, LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap,
-    Selection, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, decode_tile,
+    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, ErosionStats, FileHeader,
+    FormatError, Generator, HydrologyStats, Layers, LodRanges, Mask, NoiseMask, Patch, Pyramid,
+    Remap, Selection, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -696,9 +696,9 @@ pub struct TerrainStats {
     /// levels not resident yet.
     pub patches: u32,
     pub fallback_patches: u32,
-    /// Terrains whose hydrology bakes (decision 066) are in progress: they
+    /// Terrains whose bakes (decisions 066 and 068) are in progress: they
     /// load no tiles until done.
-    pub hydrology_baking: u32,
+    pub baking: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -731,11 +731,22 @@ struct TerrainState {
     errors: Vec<f32>,
     /// The ranges the last selection used.
     ranges: Vec<f32>,
-    /// The layers tiles generate from once its hydrology bakes (decision
-    /// 066), the bake in progress, and what the last one found.
+    /// The layers tiles generate from once its bakes are done (decisions
+    /// 066 and 068), the bake in progress, and what the last hydrology and
+    /// erosion bakes found.
     baked: Option<Arc<Layers>>,
-    bake: Option<HydrologyBake>,
+    bake: Option<TerrainBake>,
     hydrology: Option<HydrologyStats>,
+    erosion: Option<ErosionStats>,
+}
+
+/// A terrain's bakes (decisions 066 and 068): whether one is in progress,
+/// and what its hydrology and erosion bakes found once done.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TerrainBakes {
+    pub baking: bool,
+    pub hydrology: Option<HydrologyStats>,
+    pub erosion: Option<ErosionStats>,
 }
 
 impl TerrainState {
@@ -757,6 +768,7 @@ impl TerrainState {
             baked: None,
             bake: None,
             hydrology: None,
+            erosion: None,
         }
     }
 
@@ -919,14 +931,16 @@ impl Terrains {
         }
     }
 
-    /// Whether `entity`'s hydrology bake (decision 066) is in progress,
-    /// and what the last one found.
-    pub fn hydrology(&self, entity: Entity) -> (bool, Option<HydrologyStats>) {
+    /// `entity`'s bakes (decisions 066 and 068): whether one is in
+    /// progress, and what its hydrology and erosion bakes found.
+    pub fn bakes(&self, entity: Entity) -> TerrainBakes {
         self.entries
             .iter()
             .find(|state| state.entity == entity)
-            .map_or((false, None), |state| {
-                (state.bake.is_some(), state.hydrology)
+            .map_or_else(TerrainBakes::default, |state| TerrainBakes {
+                baking: state.bake.is_some(),
+                hydrology: state.hydrology,
+                erosion: state.erosion,
             })
     }
 
@@ -1136,19 +1150,21 @@ impl Terrains {
                 .collect();
             match state.terrain.source.clone() {
                 TerrainSource::Generated(authored) => {
-                    // Hydrology (decision 066) bakes before any tile loads,
-                    // reading the layers below it.
+                    // Bakes (decisions 066 and 068) run before any tile loads,
+                    // each reading the layers below it, in stack order.
                     let layers = state.baked.clone().unwrap_or(authored);
                     if let Some(unbaked) = layers.unbaked() {
-                        stats.hydrology_baking += 1;
+                        stats.baking += 1;
                         let bake = state
                             .bake
-                            .get_or_insert_with(|| HydrologyBake::new(&layers, unbaked, &pyramid));
-                        let _profile = engine_profile::span("cpu", "hydrology_bake");
+                            .get_or_insert_with(|| TerrainBake::new(&layers, unbaked, &pyramid));
+                        let _profile = engine_profile::span("cpu", "terrain_bake");
                         if let Some(baked) = bake.advance(&pyramid, &mut budget) {
-                            state.hydrology = Some(baked.stats);
-                            state.baked =
-                                Some(Arc::new(layers.with_bake(unbaked.0, Arc::new(baked))));
+                            match &baked {
+                                Baked::Hydrology(found) => state.hydrology = Some(found.stats),
+                                Baked::Erosion(found) => state.erosion = Some(found.stats),
+                            }
+                            state.baked = Some(Arc::new(layers.with_baked(unbaked.0, baked)));
                             state.bake = None;
                         }
                         continue;

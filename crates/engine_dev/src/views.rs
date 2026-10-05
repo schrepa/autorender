@@ -19,6 +19,21 @@ pub struct TerrainView {
     pub level_ranges: Vec<f32>,
     /// Its hydrology bake (decision 066), when its layers hold one.
     pub hydrology: Option<HydrologyView>,
+    /// Its erosion bake (decision 068), when its layers hold one.
+    pub erosion: Option<ErosionView>,
+}
+
+/// A terrain's erosion bake (decision 068): whether a bake is in progress
+/// (tiles wait for it), and once done the samples it eroded, its rounds
+/// and the most it wore away and filled (meters).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ErosionView {
+    pub baking: bool,
+    pub samples: Option<usize>,
+    pub rounds: Option<u32>,
+    pub deepest: Option<f32>,
+    pub highest: Option<f32>,
 }
 
 /// A terrain's hydrology bake (decision 066): whether it is in progress
@@ -45,8 +60,8 @@ pub struct TerrainsView {
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,
-    /// Terrains whose hydrology bakes (decision 066) are in progress.
-    pub hydrology_baking: u32,
+    /// Terrains whose bakes (decisions 066 and 068) are in progress.
+    pub baking: u32,
 }
 
 /// An animation player (decision 035) in the shape of a scene version 8
