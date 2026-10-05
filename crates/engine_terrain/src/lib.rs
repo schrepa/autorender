@@ -18,6 +18,8 @@
 //! corner to their (x+1, z) corner, as `parry3d` heightfields split them;
 //! renderers, collision and [`Tile::height_at`] use the same split.
 
+mod bake;
+mod erosion;
 mod format;
 mod hydrology;
 mod layers;
@@ -28,17 +30,19 @@ mod select;
 mod surface;
 mod tile;
 
+pub use bake::{BakeKind, Baked, TerrainBake};
+pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use format::{
     FileHeader, FileTile, FormatError, TERRAIN_FILE_MAGIC, TERRAIN_FILE_VERSION, decode_tile,
     encode_file,
 };
 pub use hydrology::{
-    FLOW_RANGE, Hydrology, HydrologyBake, HydrologyLayer, HydrologySample, HydrologyStats,
-    LAKE_RANGE, WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
+    FLOW_RANGE, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
+    WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
 };
 pub use layers::{
-    Blend, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers, NoiseLayer,
-    Stamp, StampOp,
+    Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
+    NoiseLayer, Stamp, StampOp,
 };
 pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
 pub use pyramid::{Pyramid, PyramidError, TileKey};

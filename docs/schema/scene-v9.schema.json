@@ -227,6 +227,45 @@
       },
       "additionalProperties": false
     },
+    "ErosionLayer": {
+      "description": "A layer that erodes the layers below it (decision 068).",
+      "type": "object",
+      "properties": {
+        "creep": {
+          "description": "Square meters of hillslope creep each round, 0 to 1000.",
+          "type": "number",
+          "format": "float",
+          "default": 20.0,
+          "maximum": 1000.0,
+          "minimum": 0.0
+        },
+        "incision": {
+          "description": "How fast rivers cut each round: the stream power law's erodibility\ntimes its time step, 0 to 1.",
+          "type": "number",
+          "format": "float",
+          "default": 0.0020000000949949026,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "level": {
+          "description": "The pyramid level whose samples it erodes: finer levels wear finer\nvalleys and take longer, 0 to 15.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4,
+          "maximum": 15,
+          "minimum": 0
+        },
+        "rounds": {
+          "description": "Rounds of incision and creep, 1 to 400.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 60,
+          "maximum": 400,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
     "FarPlacement": {
       "description": "Where a placement layer also stands far away (decision 061): on the\ntiles of `level`, coarser than its own, a `share` (0 to 1] of its\nobjects, the candidates ranked first, where its own level's tiles are\nnot resident.",
       "type": "object",
@@ -3191,7 +3230,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, or a\nhydrology bake (decision 066) of the layers before it, which carves\nchannels where water gathers and feeds the `flow`, `wetness` and\n`lake` masks. Terrains load no tiles until their bake is done.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake (decision 068) of the layers before it, where rivers wear valleys\nand slopes creep, or a hydrology bake (decision 066) of them, which\ncarves channels where water gathers, fills lakes and rivers with water\n(decision 067) and feeds the `flow`, `wetness` and `lake` masks.\nTerrains load no tiles until their bakes are done.",
       "oneOf": [
         {
           "type": "object",
@@ -3239,6 +3278,18 @@
           "additionalProperties": false,
           "required": [
             "hydrology"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "erosion": {
+              "$ref": "#/$defs/ErosionLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "erosion"
           ]
         }
       ]

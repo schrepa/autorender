@@ -1,6 +1,7 @@
 //! The layer stack: procedural noise with erosion, imported heightmaps,
-//! stamps and the channels a hydrology bake carves (decision 066), applied
-//! in order to every sample; later layers win.
+//! stamps, what an erosion bake wears away (decision 068) and the channels
+//! a hydrology bake carves (decision 066), applied in order to every
+//! sample; later layers win.
 
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use engine_math::{clamp, max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use crate::erosion::{Erosion, ErosionLayer};
 use crate::hydrology::{Hydrology, HydrologyLayer};
 use crate::noise::{gradient_noise, gradient_value, gullies, smooth};
 
@@ -259,6 +261,41 @@ impl HeightImage {
         self.levels.len()
     }
 
+    /// Bilinear interpolation at image coordinates `(u, v)` in the image's
+    /// own samples, 0 to 65535, edges clamped, read from `level` (0 the
+    /// image's samples, each one after twice as far apart): it never
+    /// overshoots its samples, as cubic interpolation does beside sharp
+    /// steps.
+    #[inline]
+    pub(crate) fn sample_linear(&self, u: f32, v: f32, level: usize) -> f32 {
+        let (scale, width, height) = match level
+            .checked_sub(1)
+            .and_then(|index| self.levels.get(index))
+        {
+            // Exact: a power of two.
+            Some(coarse) => (1.0 / (1_u32 << level) as f32, coarse.width, coarse.height),
+            None => (1.0, self.width, self.height),
+        };
+        let texel = |x: i32, z: i32| {
+            let x = x.clamp(0, width as i32 - 1) as usize;
+            let z = z.clamp(0, height as i32 - 1) as usize;
+            match level
+                .checked_sub(1)
+                .and_then(|index| self.levels.get(index))
+            {
+                Some(coarse) => coarse.samples[z * width as usize + x],
+                None => f32::from(self.samples[z * width as usize + x]),
+            }
+        };
+        let (u, v) = (u * scale, v * scale);
+        let (u0, v0) = (u.floor(), v.floor());
+        let (x, z) = (u0 as i32, v0 as i32);
+        let (fx, fz) = (u - u0, v - v0);
+        let low = texel(x, z) + (texel(x + 1, z) - texel(x, z)) * fx;
+        let high = texel(x, z + 1) + (texel(x + 1, z + 1) - texel(x, z + 1)) * fx;
+        low + (high - low) * fz
+    }
+
     /// Catmull-Rom interpolation at image coordinates `(u, v)` in the
     /// image's own samples, 0 to 65535, edges clamped, read from `level`
     /// (0 the image's samples, each one after twice as far apart).
@@ -386,6 +423,16 @@ pub enum Layer {
     /// Where water runs over the layers before it and the channels it
     /// carves (decision 066): nothing until baked.
     Hydrology(HydrologyStage),
+    /// What rivers and creep wear away from the layers before it (decision
+    /// 068): nothing until baked.
+    Erosion(ErosionStage),
+}
+
+/// An erosion layer, and what its bake did once baked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ErosionStage {
+    pub layer: ErosionLayer,
+    pub baked: Option<Arc<Erosion>>,
 }
 
 /// A hydrology layer, and what its bake found once baked.
@@ -832,6 +879,13 @@ impl Layers {
                         StampOp::Hole => {}
                     }
                 }
+                Layer::Erosion(stage) => {
+                    let erosion = &stage.layer;
+                    check(index, "level", erosion.level as f32, 0.0, 15.0)?;
+                    check(index, "rounds", erosion.rounds as f32, 1.0, 400.0)?;
+                    check(index, "incision", erosion.incision, 0.0, 1.0)?;
+                    check(index, "creep", erosion.creep, 0.0, 1000.0)?;
+                }
                 Layer::Hydrology(stage) => {
                     let water = &stage.layer;
                     check(index, "level", water.level as f32, 0.0, 15.0)?;
@@ -857,16 +911,9 @@ impl Layers {
         &self.layers
     }
 
-    /// The first hydrology layer not yet baked (decision 066), by index:
-    /// tiles wait for its bake.
-    pub fn unbaked(&self) -> Option<(usize, HydrologyLayer)> {
-        self.layers
-            .iter()
-            .enumerate()
-            .find_map(|(index, layer)| match layer {
-                Layer::Hydrology(stage) if stage.baked.is_none() => Some((index, stage.layer)),
-                _ => None,
-            })
+    /// Layer `index`, to set what its bake found.
+    pub(crate) fn layer_mut(&mut self, index: usize) -> Option<&mut Layer> {
+        self.layers.get_mut(index)
     }
 
     /// The stack of the layers before `index`, which a bake there reads.
@@ -875,15 +922,6 @@ impl Layers {
             layers: self.layers[..index].to_vec(),
             tables: self.tables[..index].to_vec(),
         }
-    }
-
-    /// This stack with hydrology layer `index` baked as `baked`.
-    pub fn with_bake(&self, index: usize, baked: Arc<Hydrology>) -> Self {
-        let mut layers = self.clone();
-        if let Some(Layer::Hydrology(stage)) = layers.layers.get_mut(index) {
-            stage.baked = Some(baked);
-        }
-        layers
     }
 
     /// The first baked hydrology, which masks read.
@@ -942,6 +980,14 @@ impl Layers {
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
+            Layer::Erosion(stage) => {
+                let Some(baked) = &stage.baked else {
+                    return;
+                };
+                for (height, &x) in row.iter_mut().zip(xs) {
+                    *height += baked.change_at(x, z, spacing);
+                }
+            }
             Layer::Hydrology(stage) => {
                 let Some(baked) = &stage.baked else {
                     return;

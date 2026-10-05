@@ -18,8 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
 
-use crate::layers::{HeightImage, Layers};
-use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+use crate::layers::HeightImage;
 
 /// A layer that bakes where water runs over the layers below it and carves
 /// channels into them (decision 066).
@@ -139,9 +138,59 @@ const NEIGHBORS: [(i32, i32, f32); 8] = [
     (-1, -1, std::f32::consts::SQRT_2),
 ];
 
-/// Meters of water a filled pit holds before a sample counts as lake,
-/// where channels do not carve.
-const LAKE_DEPTH: f32 = 0.5;
+/// Meters of water a filled pit must hold somewhere, and square meters it
+/// must cover, to stand as a lake: shallower or smaller pits, such as fine
+/// detail leaves on flat ground, stay dry and rivers run through them.
+const LAKE_DEPTH: f32 = 2.0;
+const LAKE_AREA: f32 = 4000.0;
+/// Meters of water a sample of a lake holds at least.
+const WET: f32 = 1.0e-3;
+
+/// Which samples lie in lakes: the connected samples a pit fills (eight
+/// neighbors each, `spacing` meters apart), where it fills [`LAKE_DEPTH`] or
+/// deeper somewhere over [`LAKE_AREA`] or more.
+fn lakes(heights: &[f32], filled: &[f32], width: usize, spacing: f32) -> Vec<bool> {
+    let count = heights.len();
+    let height = count / width;
+    let depth = |sample: usize| filled[sample] - heights[sample];
+    let mut lake = vec![false; count];
+    let mut seen = vec![false; count];
+    let mut region = Vec::new();
+    for start in 0..count {
+        if seen[start] || depth(start) <= WET {
+            continue;
+        }
+        // The pit's connected samples, and its deepest.
+        region.clear();
+        region.push(start);
+        seen[start] = true;
+        let mut deepest = 0.0_f32;
+        let mut next = 0;
+        while next < region.len() {
+            let sample = region[next];
+            next += 1;
+            deepest = max(deepest, depth(sample));
+            let (x, z) = ((sample % width) as i32, (sample / width) as i32);
+            for (dx, dz, _) in NEIGHBORS {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx >= width as i32 || nz >= height as i32 {
+                    continue;
+                }
+                let neighbor = nz as usize * width + nx as usize;
+                if !seen[neighbor] && depth(neighbor) > WET {
+                    seen[neighbor] = true;
+                    region.push(neighbor);
+                }
+            }
+        }
+        if deepest >= LAKE_DEPTH && region.len() as f32 * spacing * spacing >= LAKE_AREA {
+            for &sample in &region {
+                lake[sample] = true;
+            }
+        }
+    }
+    lake
+}
 
 /// A height ordered totally, lowest first in the flood's queue.
 #[derive(Clone, Copy, PartialEq)]
@@ -224,10 +273,23 @@ fn flood(heights: &mut [f32], width: usize) -> Vec<u32> {
     order
 }
 
-/// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
-/// row along z, at least two each way), whose samples lie `spacing` meters
-/// apart.
-pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer) -> Hydrology {
+/// Where water drains over a grid (decisions 066 and 068): its heights
+/// with every pit filled to spill, the samples in the order the flood
+/// reached them, each sample's receiver (`u32::MAX` on the edge, which
+/// drains off the grid) and the slope down to it, and the area draining
+/// through each sample (square meters).
+pub(crate) struct Drainage {
+    pub(crate) filled: Vec<f32>,
+    pub(crate) order: Vec<u32>,
+    pub(crate) receivers: Vec<u32>,
+    pub(crate) slopes: Vec<f32>,
+    pub(crate) area: Vec<f32>,
+}
+
+/// How water drains over the grid of `heights`, `width` samples wide
+/// (row by row along z, at least two each way), whose samples lie
+/// `spacing` meters apart.
+pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage {
     let count = heights.len();
     let height = count / width;
     let mut filled = heights.to_vec();
@@ -262,14 +324,42 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
         receivers[sample] = best.0;
         slopes[sample] = max(best.1, 0.0);
     }
-    let cell = spacing * spacing;
-    let mut area = vec![cell; count];
+    let mut area = vec![spacing * spacing; count];
     for &sample in order.iter().rev() {
         let receiver = receivers[sample as usize];
         if receiver != u32::MAX {
             area[receiver as usize] += area[sample as usize];
         }
     }
+    Drainage {
+        filled,
+        order,
+        receivers,
+        slopes,
+        area,
+    }
+}
+
+/// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
+/// row along z, at least two each way), whose samples lie `spacing` meters
+/// apart.
+pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer) -> Hydrology {
+    let count = heights.len();
+    let height = count / width;
+    // Water runs over the ground smoothed a sample wide: hollows narrower
+    // than that, such as the finest detail leaves on flat ground, hold no
+    // lakes.
+    let smoothed = smooth_grid(heights, width);
+    let heights = smoothed.as_slice();
+    let Drainage {
+        filled,
+        receivers,
+        slopes,
+        area,
+        ..
+    } = drainage(heights, width, spacing);
+    let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
+    let lake = lakes(heights, &filled, width, spacing);
     // Channels: where enough area drains, a bed `depth` deep and `width`
     // wide, both growing downstream, with banks as wide again easing to
     // the ground.
@@ -279,7 +369,7 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
     for (sample, &drained) in area.iter().enumerate() {
         let ratio = drained / layer.channel_area;
         // Water crossing a filled pit runs as a lake, not a channel.
-        if ratio < 1.0 || layer.depth <= 0.0 || filled[sample] - heights[sample] > LAKE_DEPTH {
+        if ratio < 1.0 || layer.depth <= 0.0 || lake[sample] {
             continue;
         }
         channel_samples += 1;
@@ -307,9 +397,14 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
     }
     let water = Arc::new(water(
         heights,
-        (&filled, &carve, &area, &receivers),
-        width,
-        spacing,
+        &Found {
+            filled: &filled,
+            carve: &carve,
+            area: &area,
+            receivers: &receivers,
+            lakes: &lake,
+        },
+        (width, spacing),
         layer,
     ));
     let mut lake_samples = 0;
@@ -320,15 +415,17 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
     let mut carved = Vec::with_capacity(count);
     for sample in 0..count {
         max_area = max(max_area, area[sample]);
-        let lake = filled[sample] - heights[sample];
-        if lake > LAKE_DEPTH {
+        let standing = if lake[sample] {
             lake_samples += 1;
-        }
+            filled[sample] - heights[sample]
+        } else {
+            0.0
+        };
         flow.push(encode(area[sample].log10(), FLOW_RANGE));
         let catchment = area[sample] / spacing;
         let index = (catchment / max(slopes[sample], 1.0e-3)).ln();
         wetness.push(encode(index, WETNESS_RANGE));
-        lakes.push(encode(lake, LAKE_RANGE));
+        lakes.push(encode(standing, LAKE_RANGE));
         carved.push(encode(carve[sample], [0.0, max(layer.max_depth, 1.0e-3)]));
     }
     let image = |samples: Vec<u16>| {
@@ -367,13 +464,7 @@ impl Hydrology {
     /// The image level terrain samples `spacing` meters apart read: the
     /// coarsest whose samples lie no further apart than the terrain's.
     pub fn level_for(&self, spacing: f32) -> usize {
-        let mut level = 0;
-        while level < self.carve.levels()
-            && self.spacing * (2_u32 << level) as f32 <= spacing * 1.0001
-        {
-            level += 1;
-        }
-        level
+        image_level(self.spacing, self.carve.levels(), spacing)
     }
 
     /// Meters channels carve at terrain-local `(x, z)`, from image level
@@ -401,109 +492,34 @@ impl Hydrology {
     }
 }
 
-/// A hydrology bake in progress (decision 066): the layers below it
-/// generate every tile of its level, whose samples gather into one grid.
-pub struct HydrologyBake {
-    layer: HydrologyLayer,
-    level: u32,
-    below: Arc<Layers>,
-    pending: Vec<TileKey>,
-    job: Option<(TileKey, Generator)>,
-    width: usize,
-    heights: Vec<f32>,
-}
-
-impl HydrologyBake {
-    /// The bake of hydrology layer `index` of `layers` (as
-    /// [`Layers::unbaked`] names it) over `pyramid`.
-    pub fn new(
-        layers: &Layers,
-        (index, layer): (usize, HydrologyLayer),
-        pyramid: &Pyramid,
-    ) -> Self {
-        let level = layer.level.min(pyramid.levels() - 1);
-        let [x, z] = pyramid.tiles(level);
-        let width = x as usize * TILE_QUADS as usize + 1;
-        let height = z as usize * TILE_QUADS as usize + 1;
-        Self {
-            layer,
-            level,
-            below: Arc::new(layers.below(index)),
-            pending: pyramid.level_tiles(level).collect(),
-            job: None,
-            width,
-            heights: vec![0.0; width * height],
-        }
-    }
-
-    /// Generates the level's tiles within `budget`, then bakes: the bake
-    /// once done.
-    pub fn advance(&mut self, pyramid: &Pyramid, budget: &mut u64) -> Option<Hydrology> {
-        while *budget > 0 {
-            let (key, job) = match &mut self.job {
-                Some(job) => job,
-                None => {
-                    let Some(key) = self.pending.pop() else {
-                        return Some(bake(
-                            &self.heights,
-                            self.width,
-                            pyramid.spacing(self.level),
-                            &self.layer,
-                        ));
-                    };
-                    self.job
-                        .insert((key, Generator::new(self.below.clone(), pyramid, key)))
-                }
-            };
-            let key = *key;
-            if let Some(tile) = job.advance(budget) {
-                self.job = None;
-                // The tile's samples without their border.
-                let (stride, samples) = (TILE_STRIDE as usize, TILE_SAMPLES as usize);
-                let quads = TILE_QUADS as usize;
-                let first = [usize::from(key.x) * quads, usize::from(key.z) * quads];
-                for row in 0..samples {
-                    let from = (row + 1) * stride + 1;
-                    let to = (first[1] + row) * self.width + first[0];
-                    self.heights[to..to + samples]
-                        .copy_from_slice(&tile.heights()[from..from + samples]);
-                }
-            }
-        }
-        None
-    }
-}
-
-impl Layers {
-    /// This stack with every hydrology layer baked at once, as tools that
-    /// write terrain files need it; engines bake within frame budgets.
-    pub fn bake_all(&self, pyramid: &Pyramid) -> Self {
-        let mut layers = self.clone();
-        while let Some(unbaked) = layers.unbaked() {
-            let mut bake = HydrologyBake::new(&layers, unbaked, pyramid);
-            let mut budget = u64::MAX;
-            let baked = bake
-                .advance(pyramid, &mut budget)
-                .expect("an unlimited budget finishes the bake");
-            layers = layers.with_bake(unbaked.0, Arc::new(baked));
-        }
-        layers
-    }
+/// What a bake found that water stands by: the filled heights, carving,
+/// upstream areas, receivers and lake samples.
+struct Found<'a> {
+    filled: &'a [f32],
+    carve: &'a [f32],
+    area: &'a [f32],
+    receivers: &'a [u32],
+    lakes: &'a [bool],
 }
 
 /// Where water stands over the grid of `heights` (`width` samples wide,
-/// `spacing` meters apart), from the bake's filled heights, carving,
-/// upstream areas and receivers.
+/// `spacing` meters apart), from what the bake `found`.
 fn water(
     heights: &[f32],
-    (filled, carve, area, receivers): (&[f32], &[f32], &[f32], &[u32]),
-    width: usize,
-    spacing: f32,
+    found: &Found<'_>,
+    (width, spacing): (usize, f32),
     layer: &HydrologyLayer,
 ) -> WaterGrid {
+    let Found {
+        filled,
+        carve,
+        area,
+        receivers,
+        lakes,
+    } = *found;
     let count = heights.len();
     let height = count / width;
-    let lake = |sample: usize| filled[sample] - heights[sample] > LAKE_DEPTH;
+    let lake = |sample: usize| lakes[sample];
     let mut surface = vec![f32::NAN; count];
     let mut flow = vec![[0.0_f32; 2]; count];
     // Lakes stand level at their spill heights.
@@ -644,4 +660,42 @@ impl WaterGrid {
         }
         wet.then_some(range)
     }
+}
+
+/// The level of an image whose samples lie `image_spacing` meters apart,
+/// with `levels` coarser levels, that terrain samples `spacing` meters
+/// apart read: the coarsest whose samples lie no further apart.
+pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> usize {
+    let mut level = 0;
+    while level < levels && image_spacing * (2_u32 << level) as f32 <= spacing * 1.0001 {
+        level += 1;
+    }
+    level
+}
+
+/// The grid of `heights` (`width` samples wide) blurred by binomial
+/// weights `[1, 4, 6, 4, 1] / 16` along each axis, edges clamped.
+fn smooth_grid(heights: &[f32], width: usize) -> Vec<f32> {
+    const WEIGHTS: [f32; 5] = [0.0625, 0.25, 0.375, 0.25, 0.0625];
+    let height = heights.len() / width;
+    let pass = |source: &[f32], along_x: bool| -> Vec<f32> {
+        let mut out = vec![0.0_f32; source.len()];
+        for z in 0..height {
+            for x in 0..width {
+                let mut sum = 0.0;
+                for (tap, weight) in WEIGHTS.iter().enumerate() {
+                    let offset = tap as i64 - 2;
+                    let (sx, sz) = if along_x {
+                        ((x as i64 + offset).clamp(0, width as i64 - 1) as usize, z)
+                    } else {
+                        (x, (z as i64 + offset).clamp(0, height as i64 - 1) as usize)
+                    };
+                    sum += weight * source[sz * width + sx];
+                }
+                out[z * width + x] = sum;
+            }
+        }
+        out
+    };
+    pass(&pass(heights, true), false)
 }

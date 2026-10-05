@@ -225,8 +225,30 @@ pub(crate) fn populate(
         .map_err(|error| error.to_string())?
         .height_at(&pyramid, Vec2::from(plateau));
     world.insert_resource(Plateau(level));
+    // The hamlet's plateau, wide enough for the field's grid: leveled
+    // before erosion, which then wears around it, and again after, so it
+    // stays level whatever runs over it.
+    let plateau_stamp = Layer::Stamp(Stamp {
+        center: plateau,
+        radius: hamlet,
+        falloff: 220.0,
+        op: StampOp::Flatten(level),
+    });
     let layers = Layers::new(vec![
         mountains,
+        plateau_stamp.clone(),
+        // Rivers wear valleys into the mountains and slopes creep toward
+        // them (decision 068), baked over the sixteen-meter tiles, so most
+        // basins drain.
+        Layer::Erosion(ErosionStage {
+            layer: ErosionLayer {
+                level: 4,
+                rounds: 40,
+                incision: 0.0015,
+                creep: 3.0,
+            },
+            baked: None,
+        }),
         // A wide valley floor to the north-east, leveled low.
         Layer::Stamp(Stamp {
             center: local([1500.0, -1300.0]),
@@ -235,10 +257,10 @@ pub(crate) fn populate(
             op: StampOp::Flatten(60.0),
         }),
         // Streams and rivers (decision 066) carved where water gathers off
-        // the mountains, baked over the eight-meter tiles.
+        // the mountains, baked over the sixteen-meter tiles erosion shaped.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
-                level: 3,
+                level: 4,
                 channel_area: 150_000.0,
                 depth: 1.2,
                 width: 7.0,
@@ -247,14 +269,7 @@ pub(crate) fn populate(
             },
             baked: None,
         }),
-        // The hamlet's plateau, wide enough for the field's grid, level
-        // whatever runs over it.
-        Layer::Stamp(Stamp {
-            center: plateau,
-            radius: hamlet,
-            falloff: 220.0,
-            op: StampOp::Flatten(level),
-        }),
+        plateau_stamp,
         // A cave mouth in the plateau's slope.
         Layer::Stamp(Stamp {
             center: [plateau[0] + hamlet + 120.0, plateau[1]],

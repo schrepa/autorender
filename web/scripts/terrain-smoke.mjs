@@ -27,8 +27,11 @@ const terrain = {
   origin: [-512, 0, -512], tiles: [4, 4], spacing: 1,
   layers: [
     { noise: { seed: 3, height: 140, wavelength: 600 } },
+    // Decision 068: rivers wear valleys into the hills for a few rounds,
+    // baked over the two-meter tiles before any tile loads.
+    { erosion: { level: 1, rounds: 6, incision: 0.001953125, creep: 2 } },
     // Decision 066: water drains off the hills, carving channels, baked
-    // over the two-meter tiles before any tile loads.
+    // over the same tiles.
     { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
@@ -113,12 +116,16 @@ const command = commander(page);
 const scene = routedScene(page, fixture);
 const checks = [];
 
-/** Renders until every wanted tile is resident; returns the observation. */
+/** Renders until every wanted tile has been resident for a frame (bakes,
+ * decisions 066 and 068, load them all at once); returns the observation. */
 async function settle() {
   let rendering;
+  let resident = 0;
   for (let frame = 0; frame < 40; frame++) {
     rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
-    if (rendering.terrain_tiles > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0) return rendering;
+    const ready = rendering.terrain_tiles > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0;
+    resident = ready ? resident + 1 : 0;
+    if (resident > 1) return rendering;
   }
   assert.fail(`terrain did not settle: ${JSON.stringify(rendering)}`);
 }
@@ -179,9 +186,10 @@ try {
   assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
-  assert.equal(view.terrain.layers.length, 5);
+  assert.equal(view.terrain.layers.length, 6);
   assert.deepEqual(view.terrain.layers[1], terrain.layers[1]);
-  assert.equal(view.terrain.layers[4].heightmap.uri, "terrain-smoke/dome.r16");
+  assert.deepEqual(view.terrain.layers[2], terrain.layers[2]);
+  assert.equal(view.terrain.layers[5].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
@@ -204,6 +212,13 @@ try {
   const [watered] = (await command("terrain_height", { points: [[-300, -300]] })).result.samples;
   assert.ok(watered.water && watered.water.flow > 0 && Number.isFinite(watered.water.wetness), `queries report water: ${JSON.stringify(watered)}`);
   checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area });
+  // The erosion bake (decision 068) ran its rounds over the same samples
+  // first, wearing ground away.
+  const worn = view.erosion;
+  assert.equal(worn.baking, false, "erosion is done once tiles load");
+  assert.equal(worn.samples, 513 * 513, `erosion reads its level: ${JSON.stringify(worn)}`);
+  assert.ok(worn.rounds === 6 && worn.deepest > 0, `erosion wears ground away: ${JSON.stringify(worn)}`);
+  checks.push({ check: "erosion", rounds: worn.rounds, deepest: worn.deepest, highest: worn.highest });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
   const [plateau, hole, outside] = await heights([[0, 0], [48, 0], [5000, 5000]]);
