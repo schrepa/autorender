@@ -2,14 +2,17 @@
 // shaders: the first bind group's camera, atmosphere (decision 018) and sun
 // shadows (decision 020), and the lighting functions every path shades with.
 
-// Uniform: three column-major mat4 and three vec4, 16-byte alignment,
-// exactly 240 bytes. `view_projection` is the rasterized projection; temporally
+// Uniform: three column-major mat4 and four vec4, 16-byte alignment,
+// exactly 256 bytes. `view_projection` is the rasterized projection; temporally
 // antialiased frames (decision 017) jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
 // and `jitter.zw`, two over the viewport size in pixels. The unjittered
 // inverse turns pixels into sky rays; `position.xyz` is the eye and
 // `position.w` presentation time in seconds (decision 019). `options.x` is 1
-// while a reflection probe captures a cube face (decision 043).
+// while a reflection probe captures a cube face (decision 043). `wind` is
+// the wind's velocity (x and z), gust strength and the previous frame's
+// presentation time, which temporal frames' motion sways by (decision
+// 058).
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
@@ -17,6 +20,7 @@ struct Camera {
     position: vec4<f32>,
     jitter: vec4<f32>,
     options: vec4<f32>,
+    wind: vec4<f32>,
 }
 // The scene's atmosphere (decision 018) in linear color; scalars ride in w.
 struct Lighting {
@@ -95,6 +99,35 @@ struct Shadow {
 @group(0) @binding(15) var terrain_horizon_sampler: sampler;
 
 const PI: f32 = 3.14159265;
+
+// How far the wind (decision 058) pushes a point `height` meters up an
+// object standing at `root` that sways `sway` meters at ten meters up in
+// full wind, at time `time`, the wind blowing at `velocity` (x and z,
+// meters per second) with gusts of strength `gusts`: along the wind,
+// growing with the square of the height, its push rising and falling as
+// gusts travel with the wind, with a quicker flutter of the object's own.
+fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway: f32,
+        time: f32) -> vec3<f32> {
+    let speed = length(velocity);
+    if speed < 1.0e-4 {
+        return vec3<f32>(0.0);
+    }
+    let toward = velocity / speed;
+    let travel = dot(root.xz, toward);
+    let gust = 1.0 + gusts * (0.6 * sin(time * 0.9 - travel * 0.05)
+        + 0.4 * sin(time * 2.3 - travel * 0.17 + root.x * 0.31));
+    let rise = max(height, 0.0) * 0.1;
+    let flutter = 1.0 + 0.12 * sin(time * 4.7 + dot(root.xz, vec2<f32>(0.83, 0.57)));
+    let bend = sway * min(speed / 12.0, 1.0) * gust * rise * rise * flutter;
+    return vec3<f32>(toward.x, 0.0, toward.y) * bend;
+}
+
+// Placed objects' sway (decision 058) rides in their slots' flags as a
+// float; skinned slots' joint palette offsets (decision 036) read as none.
+fn slot_sway(flags: u32) -> f32 {
+    let sway = bitcast<f32>(flags);
+    return select(0.0, sway, sway > 1.0e-6 && sway <= 10.0);
+}
 
 fn maximum_abs(value: vec3<f32>) -> f32 {
     let positive = abs(value);

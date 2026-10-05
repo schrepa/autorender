@@ -76,9 +76,10 @@ pub struct SceneTerrainSurface {
 }
 
 /// An object placement layers stand on a terrain (decision 057): a `mesh`
-/// and a `material` of this document, by ID, and up to four coarser
-/// meshes it draws at a distance, finest first (otherwise the mesh's
-/// automatic levels of detail).
+/// and a `material` of this document, by ID, up to four coarser meshes it
+/// draws at a distance, finest first (otherwise the mesh's automatic levels
+/// of detail), and how far it sways in the wind (decision 058): meters at
+/// ten meters up in full wind, 0 (rigid, the default) to 10.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -88,6 +89,13 @@ pub struct SceneTerrainAsset {
     pub material: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lods: Vec<SceneTerrainLod>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
+    pub sway: f32,
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
 }
 
 /// A coarser mesh of a placement asset, by ID, and the largest deviation
@@ -158,9 +166,9 @@ pub(crate) struct PreparedTerrain {
     pub assets: Vec<PreparedAsset>,
 }
 
-/// A placement asset's document mesh, material and coarser meshes with
-/// their errors.
-pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>);
+/// A placement asset's document mesh, material, coarser meshes with their
+/// errors, and sway.
+pub(crate) type PreparedAsset = (usize, usize, Vec<(usize, f32)>, f32);
 
 impl PreparedTerrain {
     /// The component, its surface materials and placement assets resolved
@@ -173,7 +181,7 @@ impl PreparedTerrain {
         terrain.surface.assets = self
             .assets
             .iter()
-            .map(|(mesh, material, lods)| PlacementAsset {
+            .map(|(mesh, material, lods, sway)| PlacementAsset {
                 mesh: meshes[*mesh],
                 material: materials[*material],
                 lods: lods
@@ -183,6 +191,7 @@ impl PreparedTerrain {
                         error,
                     })
                     .collect(),
+                sway: *sway,
             })
             .collect();
         terrain
@@ -339,7 +348,10 @@ impl SceneTerrain {
                 };
                 return Err(invalid(field, rule.into()));
             }
-            assets.push((mesh, material, lods));
+            if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
+                return Err(invalid(format!("{at}.sway"), "must be in [0, 10]".into()));
+            }
+            assets.push((mesh, material, lods, asset.sway));
         }
         let biomes = Biomes {
             materials: surface
@@ -546,6 +558,7 @@ impl SceneTerrain {
                                 error: lod.error,
                             })
                             .collect(),
+                        sway: asset.sway,
                     })
                     .collect(),
                 placements: authored.placements.clone(),

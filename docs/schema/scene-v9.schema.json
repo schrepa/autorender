@@ -1694,6 +1694,17 @@
               "type": "null"
             }
           ]
+        },
+        "wind": {
+          "description": "The wind ground cover and placed objects sway in (decision 058).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWind"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -1710,7 +1721,7 @@
       "type": "object",
       "properties": {
         "density": {
-          "description": "Scales every cover's density, 0 to 4.",
+          "description": "Scales every cover's density, 0 to 4. Blades sway in the world's\n`Wind` (decision 058).",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -1737,20 +1748,6 @@
           "default": 40.0,
           "maximum": 200.0,
           "minimum": 2.0
-        },
-        "wind": {
-          "description": "The wind blades sway in: its horizontal direction times its speed in\nmeters per second, each 0 to 40 in size.",
-          "type": "array",
-          "default": [
-            2.5,
-            1.0
-          ],
-          "items": {
-            "type": "number",
-            "format": "float"
-          },
-          "maxItems": 2,
-          "minItems": 2
         }
       },
       "additionalProperties": false
@@ -2864,7 +2861,7 @@
       ]
     },
     "SceneTerrainAsset": {
-      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID, and up to four coarser\nmeshes it draws at a distance, finest first (otherwise the mesh's\nautomatic levels of detail).",
+      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), and how far it sways in the wind (decision 058): meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
       "type": "object",
       "properties": {
         "id": {
@@ -2881,6 +2878,12 @@
         },
         "mesh": {
           "type": "string"
+        },
+        "sway": {
+          "type": "number",
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0
         }
       },
       "additionalProperties": false,
@@ -3468,6 +3471,33 @@
         "visibility_buffer": {
           "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
           "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneWind": {
+      "description": "The wind: its horizontal velocity (x and z, meters per second, each -40\nto 40) and how strongly gusts traveling with it vary its push, 0 to 1.\nRequires version 9.",
+      "type": "object",
+      "properties": {
+        "gusts": {
+          "type": "number",
+          "format": "float",
+          "default": 0.44999998807907104,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "velocity": {
+          "type": "array",
+          "default": [
+            2.5,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
         }
       },
       "additionalProperties": false

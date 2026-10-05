@@ -396,6 +396,10 @@ fn count_casters(@builtin(local_invocation_index) lane: u32) {
 struct View {
     // World to this map's clip space.
     clip: mat4x4<f32>,
+    // The wind (decision 058): its velocity (x and z), gust strength and the
+    // presentation time, which placed objects sway in as `scene.wgsl`'s
+    // `wind_sway` has them.
+    wind: vec4<f32>,
 }
 
 // Its own binding: the selection pass above owns binding 0.
@@ -412,11 +416,41 @@ fn project(world: vec3<f32>) -> vec4<f32> {
     return clip;
 }
 
-@vertex
-fn vs_affine(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @builtin(position) vec4<f32> {
+// `scene.wgsl`'s: the wind's push on a swaying object (decision 058).
+fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway: f32,
+        time: f32) -> vec3<f32> {
+    let speed = length(velocity);
+    if speed < 1.0e-4 {
+        return vec3<f32>(0.0);
+    }
+    let toward = velocity / speed;
+    let travel = dot(root.xz, toward);
+    let gust = 1.0 + gusts * (0.6 * sin(time * 0.9 - travel * 0.05)
+        + 0.4 * sin(time * 2.3 - travel * 0.17 + root.x * 0.31));
+    let rise = max(height, 0.0) * 0.1;
+    let flutter = 1.0 + 0.12 * sin(time * 4.7 + dot(root.xz, vec2<f32>(0.83, 0.57)));
+    let bend = sway * min(speed / 12.0, 1.0) * gust * rise * rise * flutter;
+    return vec3<f32>(toward.x, 0.0, toward.y) * bend;
+}
+
+// Slot `slot`'s world position of mesh point `position`, swayed by the
+// wind where its flags carry a sway (decision 058; skinned slots' palette
+// offsets read as none).
+fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = slot_poses[slot];
     let point = vec4<f32>(position, 1.0);
-    return project(vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point)));
+    let world = vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point));
+    let sway = bitcast<f32>(slot_colors[slot].flags);
+    if !(sway > 1.0e-6 && sway <= 10.0) {
+        return world;
+    }
+    let root = vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w);
+    return world + wind_sway(view.wind.xy, view.wind.z, root, world.y - root.y, sway, view.wind.w);
+}
+
+@vertex
+fn vs_affine(@location(0) position: vec3<f32>, @location(2) slot: u32) -> @builtin(position) vec4<f32> {
+    return project(slot_world(slot, position));
 }
 
 // A triangle over the whole map at the far depth: cleared regions of the
@@ -463,10 +497,7 @@ fn masked_output(clip: vec4<f32>, uv: vec2<f32>, color: vec2<u32>) -> MaskedOutp
 @vertex
 fn vs_affine_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>,
         @location(2) slot: u32) -> MaskedOutput {
-    let pose = slot_poses[slot];
-    let point = vec4<f32>(position, 1.0);
-    let clip = project(vec3<f32>(dot(pose.r0, point), dot(pose.r1, point), dot(pose.r2, point)));
-    return masked_output(clip, uv, slot_colors[slot].color);
+    return masked_output(project(slot_world(slot, position)), uv, slot_colors[slot].color);
 }
 
 // A slot's world position of a vertex with joints and weights (decision

@@ -708,7 +708,7 @@ pub(crate) const SCATTER_SNAP: Table = Table {
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",
-    bindings: &[dynamic_uniform(9, "view", 64, V)],
+    bindings: &[dynamic_uniform(9, "view", 80, V)],
 };
 
 /// Group 1 of retained depth passes: slot poses, and slot colors and joint

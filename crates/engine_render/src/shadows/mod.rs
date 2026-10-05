@@ -479,7 +479,19 @@ impl ShadowPass {
             }
         }
         let pipelines = self.pipelines.as_ref().expect("created above");
-        let views = regions.view_matrices();
+        let mut views = regions.view_matrices();
+        // After each map's matrix, the wind placed objects sway in (decision
+        // 058) at this frame's time.
+        let wind = snapshot.environment.wind;
+        let wind = [
+            wind.velocity[0],
+            wind.velocity[1],
+            wind.gusts,
+            snapshot.elapsed_seconds,
+        ];
+        for slot in views.as_chunks_mut::<{ VIEW_STRIDE as usize / 4 }>().0 {
+            slot[16..20].copy_from_slice(&wind);
+        }
         if self.written_views.as_deref() != Some(&views[..]) {
             queue.write_buffer(&pipelines.view_buffer, 0, bytemuck::cast_slice(&views));
             self.written_views = Some(views.to_vec());

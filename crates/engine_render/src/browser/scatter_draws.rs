@@ -62,8 +62,16 @@ struct ScatterDraw {
 }
 
 /// An asset as its group was built: its mesh, material and version, its
-/// coarser meshes, and which of these meshes were resident.
-type AssetKey = (MeshHandle, MaterialHandle, u64, Vec<MeshHandle>, Vec<bool>);
+/// coarser meshes, which of these meshes were resident, and its sway's
+/// bits.
+type AssetKey = (
+    MeshHandle,
+    MaterialHandle,
+    u64,
+    Vec<MeshHandle>,
+    Vec<bool>,
+    u32,
+);
 
 /// What the draw groups were built from: each terrain's identity and
 /// assets, and the meshes' layout.
@@ -303,6 +311,7 @@ impl Renderer {
                                 asset.material.version,
                                 lods,
                                 resident,
+                                asset.sway.to_bits(),
                             )
                         })
                     })
@@ -338,10 +347,12 @@ impl Renderer {
                     meshes,
                     material: asset.material.handle,
                     source: *material,
+                    // Swaying objects carry their sway in the flags skinned
+                    // slots keep palettes in (decision 058).
                     color: ColorData {
                         color: pack_color(material.color()),
                         surface: pack_surface(material.surface()),
-                        flags: 0,
+                        flags: asset.sway.to_bits(),
                     },
                     sphere: (
                         (bounds.min() + bounds.max()) * 0.5,
