@@ -9,8 +9,8 @@ use std::borrow::Cow;
 use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
-    AmbientOcclusion, Atmosphere, Bloom, Decals, LevelOfDetail, LocalLights, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
+    AmbientOcclusion, Atmosphere, Bloom, Decals, GroundCover, LevelOfDetail, LocalLights,
+    Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
     VirtualGeometry,
 };
 
@@ -56,6 +56,7 @@ pub struct Environment {
     pub virtual_geometry: VirtualGeometry,
     pub level_of_detail: LevelOfDetail,
     pub terrain: TerrainSettings,
+    pub ground_cover: GroundCover,
 }
 
 impl Environment {
@@ -159,6 +160,13 @@ impl Environment {
                     ..TerrainSettings::default()
                 },
             ),
+            ground_cover: read(
+                world,
+                GroundCover {
+                    enabled: false,
+                    ..GroundCover::default()
+                },
+            ),
         }
     }
 
@@ -179,6 +187,7 @@ impl Environment {
             virtual_geometry: self.virtual_geometry.sanitized(),
             level_of_detail: self.level_of_detail.sanitized(),
             terrain: self.terrain.sanitized(),
+            ground_cover: self.ground_cover.sanitized(),
         }
     }
 }

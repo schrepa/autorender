@@ -69,8 +69,8 @@ pub struct TerrainSurface {
 /// How a surface material looks: an engine material's maps and factors,
 /// or without one a linear `color` and `roughness`; the meters its
 /// textures repeat over; how sharply its height map wins where it blends
-/// with another (0 even, 1 sharpest); and whether steep ground projects it
-/// from the side.
+/// with another (0 even, 1 sharpest); whether steep ground projects it
+/// from the side; and the cover growing where it lies (decision 056).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceMaterial {
     pub material: Option<MaterialHandle>,
@@ -79,6 +79,7 @@ pub struct SurfaceMaterial {
     pub tiling: f32,
     pub height_contrast: f32,
     pub projection: SurfaceProjection,
+    pub cover: Option<crate::Cover>,
 }
 
 /// How a surface material's textures lie on the ground: from above, or
@@ -103,12 +104,18 @@ impl SurfaceMaterial {
             tiling: 4.0,
             height_contrast: 0.5,
             projection: SurfaceProjection::Top,
+            cover: None,
         }
     }
 
     /// Whether every value is in range: color 0 to 1, roughness 0.03 to
-    /// 1, tiling 0.01 to 1000 meters, height contrast 0 to 1.
+    /// 1, tiling 0.01 to 1000 meters, height contrast 0 to 1, and its
+    /// cover's.
     pub fn is_usable(&self) -> bool {
+        self.cover.is_none_or(|cover| cover.validate().is_ok()) && self.values_usable()
+    }
+
+    fn values_usable(&self) -> bool {
         self.color
             .iter()
             .all(|value| value.is_finite() && (0.0..=1.0).contains(value))

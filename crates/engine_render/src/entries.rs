@@ -208,6 +208,19 @@ pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (&'static str, &'s
     }
 }
 
+/// Ground cover's vertex and fragment stages (decision 056) into
+/// `targets`, `lit` or not.
+pub(crate) fn cover(targets: Targets, lit: bool) -> (&'static str, &'static str) {
+    match (targets, lit) {
+        (Targets::Canvas, false) => ("vs_cover", "fs_cover"),
+        (Targets::Canvas, true) => ("vs_cover", "fs_cover_lit"),
+        (Targets::Post, false) => ("vs_cover", "fs_cover_post"),
+        (Targets::Post, true) => ("vs_cover", "fs_cover_post_lit"),
+        (Targets::Temporal, false) => ("vs_cover_temporal", "fs_cover_temporal"),
+        (Targets::Temporal, true) => ("vs_cover_temporal", "fs_cover_temporal_lit"),
+    }
+}
+
 /// Terrain's depth stage in shadow maps (`terrain_shadow.wgsl`).
 pub(crate) const TERRAIN_SHADOW_VERTEX: &str = "vs_terrain_shadow";
 

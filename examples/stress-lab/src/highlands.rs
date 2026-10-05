@@ -42,8 +42,8 @@ pub const FILES: [&str; 18] = [
 /// How one surface material looks: its name, which its maps' files start
 /// with; its linear color and roughness without maps, and the color its
 /// maps' colors are multiplied by; the meters its maps repeat over; how
-/// sharply its heights win where it blends; and how it lies on steep
-/// ground.
+/// sharply its heights win where it blends; how it lies on steep ground;
+/// and the cover growing where it lies (decision 056).
 struct Look {
     name: &'static str,
     color: [f32; 3],
@@ -52,6 +52,7 @@ struct Look {
     tiling: f32,
     height_contrast: f32,
     projection: SurfaceProjection,
+    cover: Option<Cover>,
 }
 
 const LOOKS: [Look; 6] = [
@@ -63,6 +64,13 @@ const LOOKS: [Look; 6] = [
         tiling: 3.0,
         height_contrast: 0.35,
         projection: SurfaceProjection::Top,
+        cover: Some(Cover {
+            density: 140.0,
+            height: [0.1, 0.34],
+            width: 0.035,
+            color: [0.16, 0.23, 0.06],
+            sway: 0.6,
+        }),
     },
     Look {
         name: "dry_grass",
@@ -72,6 +80,13 @@ const LOOKS: [Look; 6] = [
         tiling: 3.5,
         height_contrast: 0.35,
         projection: SurfaceProjection::Top,
+        cover: Some(Cover {
+            density: 70.0,
+            height: [0.14, 0.46],
+            width: 0.025,
+            color: [0.34, 0.27, 0.12],
+            sway: 0.7,
+        }),
     },
     Look {
         name: "dirt",
@@ -81,6 +96,7 @@ const LOOKS: [Look; 6] = [
         tiling: 3.0,
         height_contrast: 0.5,
         projection: SurfaceProjection::Top,
+        cover: None,
     },
     Look {
         name: "scree",
@@ -90,6 +106,7 @@ const LOOKS: [Look; 6] = [
         tiling: 4.0,
         height_contrast: 0.8,
         projection: SurfaceProjection::Top,
+        cover: None,
     },
     Look {
         name: "rock",
@@ -99,6 +116,7 @@ const LOOKS: [Look; 6] = [
         tiling: 8.0,
         height_contrast: 0.7,
         projection: SurfaceProjection::Biplanar,
+        cover: None,
     },
     Look {
         name: "snow",
@@ -108,6 +126,7 @@ const LOOKS: [Look; 6] = [
         tiling: 6.0,
         height_contrast: 0.4,
         projection: SurfaceProjection::Top,
+        cover: None,
     },
 ];
 
@@ -207,6 +226,7 @@ fn surface(
             tiling: look.tiling,
             height_contrast: look.height_contrast,
             projection: look.projection,
+            cover: look.cover,
         });
     }
     TerrainSurface::new(&rules(), materials).map_err(|error| error.to_string())

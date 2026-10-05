@@ -56,6 +56,11 @@ const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>();
 /// Bytes of the palette.
 pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
+/// WGSL `CoverSpec` (`cover_grow.wgsl`): a surface material's cover
+/// (decision 056), at its palette entry's index: blades per square meter,
+/// the shortest and tallest blades and their root width, then its tip
+/// color and sway.
+type CoverEntry = [f32; 8];
 /// A directory entry of a tile not resident.
 const NOT_RESIDENT: u32 = u32::MAX;
 
@@ -98,6 +103,16 @@ struct TerrainUniform {
 /// normal scale, occlusion strength, metalness and mean occlusion; and its
 /// maps' mean color and roughness, its factors applied.
 type PaletteEntry = [f32; 16];
+
+/// What ground cover's growth reads of the terrain pass (decision 056).
+pub(crate) struct CoverSources<'a> {
+    pub heights: &'a wgpu::TextureView,
+    pub control: &'a wgpu::TextureView,
+    pub directory: &'a wgpu::Buffer,
+    pub palette: &'a wgpu::Buffer,
+    pub covers: &'a wgpu::Buffer,
+    pub generation: (u64, u64),
+}
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
 /// every patch (for probe faces) and each shadow map's. The camera's and
@@ -217,6 +232,11 @@ pub(crate) struct TerrainPass {
     pub(crate) dropped_materials: u32,
     /// Surface materials' maps (decision 054).
     pub(crate) maps: TerrainMaps,
+    // Every material's cover (decision 056) beside its palette entry,
+    // what the buffer holds, and each terrain's densest cover.
+    covers: wgpu::Buffer,
+    covers_written: Vec<CoverEntry>,
+    cover_densities: Vec<f32>,
     /// Sky visibility (decision 055).
     pub(crate) sky: SkyMaps,
 }
@@ -288,6 +308,14 @@ impl TerrainPass {
             palette_written: Vec::new(),
             dropped_materials: 0,
             maps: TerrainMaps::new(device, queue),
+            covers: crate::buffers::storage(
+                device,
+                "engine/terrain-covers",
+                (PALETTE_ENTRIES * size_of::<CoverEntry>()) as u64,
+                wgpu::BufferUsages::empty(),
+            ),
+            covers_written: Vec::new(),
+            cover_densities: Vec::new(),
             sky: SkyMaps::new(device, queue),
         }
     }
@@ -788,6 +816,7 @@ impl TerrainPass {
     /// maps lie in; materials past its capacity, and those whose maps the
     /// arrays cannot hold, are dropped and counted.
     fn write_palette(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
+        self.write_covers(queue, terrains);
         let mut entries: Vec<PaletteEntry> = Vec::new();
         self.palette_bases.clear();
         self.dropped_materials = self.maps.dropped;
@@ -874,6 +903,72 @@ impl TerrainPass {
         }
         queue.write_buffer(&self.palette, 0, bytemuck::cast_slice(&entries));
         self.palette_written = entries;
+    }
+
+    /// Writes every terrain's materials' covers (decision 056) at their
+    /// palette indices when they change, and notes each terrain's densest.
+    fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
+        let mut entries: Vec<CoverEntry> = Vec::new();
+        self.cover_densities.clear();
+        for terrain in &terrains.terrains {
+            let room = PALETTE_ENTRIES - entries.len();
+            let kept = &terrain.surface[..terrain.surface.len().min(room)];
+            self.cover_densities
+                .push(if kept.len() == terrain.surface.len() {
+                    kept.iter()
+                        .filter_map(|look| look.cover)
+                        .map(|cover| cover.density)
+                        .fold(0.0, engine_core::math::max)
+                } else {
+                    0.0
+                });
+            entries.extend(kept.iter().map(|look| {
+                look.cover.map_or([0.0; 8], |cover| {
+                    [
+                        cover.density,
+                        cover.height[0],
+                        cover.height[1],
+                        cover.width,
+                        cover.color[0],
+                        cover.color[1],
+                        cover.color[2],
+                        cover.sway,
+                    ]
+                })
+            }));
+        }
+        if entries.is_empty() || entries == self.covers_written {
+            return;
+        }
+        queue.write_buffer(&self.covers, 0, bytemuck::cast_slice(&entries));
+        self.covers_written = entries;
+    }
+
+    /// What ground cover's growth reads (decision 056): the height and
+    /// control arrays, the directory, palette and covers, and generations
+    /// advancing when any is another buffer or texture; `None` before
+    /// tiles arrive.
+    pub(crate) fn cover_sources(&self) -> Option<CoverSources<'_>> {
+        let atlas = self.atlas.as_ref()?;
+        Some(CoverSources {
+            heights: &atlas.view,
+            control: &atlas.control_view,
+            directory: &self.directory,
+            palette: &self.palette,
+            covers: &self.covers,
+            generation: (self.atlas_generation, self.directory_generation),
+        })
+    }
+
+    /// Terrain `index`'s place in the directory and palette and its
+    /// densest cover (blades per square meter), as the last preparation
+    /// wrote them.
+    pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, f32) {
+        (
+            self.directory_bases.get(index).copied().unwrap_or(0),
+            self.palette_bases.get(index).copied().unwrap_or(0),
+            self.cover_densities.get(index).copied().unwrap_or(0.0),
+        )
     }
 
     /// Writes the directory of every terrain's levels and resident tiles

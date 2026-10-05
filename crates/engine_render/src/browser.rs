@@ -235,6 +235,8 @@ pub struct Renderer {
     impostors: ImpostorDraws,
     // Terrain (decision 051): heights of resident tiles, patches, pipelines.
     terrain: crate::terrain::TerrainPass,
+    // Ground cover grown each frame on terrain (decision 056).
+    ground_cover: crate::ground_cover::GroundCoverPass,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
     // Temporal antialiasing of GPU-presented display frames (decision 017).
@@ -418,6 +420,7 @@ impl Renderer {
         );
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
         let terrain = crate::terrain::TerrainPass::new(&device, &queue);
+        let ground_cover = crate::ground_cover::GroundCoverPass::new(&device);
         let camera = CameraBindings::new(
             &device,
             &queue,
@@ -493,6 +496,7 @@ impl Renderer {
                 dropped: 0,
             },
             terrain,
+            ground_cover,
             post: None,
             temporal: None,
             transparent: None,

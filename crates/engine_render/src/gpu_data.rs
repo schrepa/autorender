@@ -376,6 +376,7 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/impostors.wgsl"),
     include_str!("meshes/terrain_vertex.wgsl"),
     include_str!("meshes/terrain.wgsl"),
+    include_str!("meshes/cover.wgsl"),
 );
 /// Terrain normal maps (decision 051).
 pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");
@@ -383,6 +384,8 @@ pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wg
 pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
 /// Terrain sky visibility map builds (decision 055).
 pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
+/// Ground cover's growth (decision 056).
+pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
 /// Terrain's depth drawing into shadow maps (decision 051).
 pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),

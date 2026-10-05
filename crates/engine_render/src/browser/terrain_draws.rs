@@ -50,6 +50,20 @@ impl Renderer {
         if !drawn {
             return false;
         }
+        // Ground cover on the terrain (decision 056), seen through the
+        // camera's unjittered view.
+        let covered = self.ground_cover.prepare(
+            &self.device,
+            &self.queue,
+            &self.terrain,
+            terrains,
+            (
+                &snapshot.environment.ground_cover,
+                snapshot.view_projection,
+                snapshot.camera_position,
+                snapshot.elapsed_seconds,
+            ),
+        );
         let lit = opaque_kind.lit;
         let lights = self.lights.as_ref().map(LightPass::fragment_layout);
         let layouts = (
@@ -64,6 +78,16 @@ impl Renderer {
         } else {
             &[false]
         };
+        if let (true, Some(targets)) = (covered, opaque_kind.targets()) {
+            self.ground_cover.ensure_pipeline(
+                &self.device,
+                &self.mesh_shader,
+                layouts,
+                (targets, lit),
+                self.display.format(),
+                DEPTH_FORMAT,
+            );
+        }
         for &holes in variants {
             if let Some(targets) = opaque_kind.targets() {
                 self.terrain.ensure_pipeline(
@@ -123,6 +147,8 @@ impl Renderer {
                 draws += self.terrain.draw(pass, range, 0, terrain.uniform);
             }
         }
+        // Its cover, after it so depth tests leave only blades in view.
+        draws += self.ground_cover.draw(pass, targets, kind.lit);
         draws
     }
 

@@ -642,6 +642,35 @@ pub(crate) const TERRAIN_SKY: Table = Table {
     ],
 };
 
+/// Ground cover's growth (decision 056; `cover_grow.wgsl`): terrain's
+/// height and control arrays, directory, palette and covers, each
+/// terrain's growth at a dynamic offset, the blades and their counts, and
+/// the indirect draw's arguments.
+pub(crate) const COVER_GROW: Table = Table {
+    label: "engine/cover-grow-layout",
+    bindings: &[
+        texture(0, "heights", Unfilterable, D2Array, C),
+        texture(1, "control", Uint, D2Array, C),
+        read(2, "directory", C),
+        uniform_of(3, "palette", crate::terrain::PALETTE_BYTES, C),
+        read(4, "covers", C),
+        dynamic_uniform(5, "grow", crate::ground_cover::GROW_BYTES, C),
+        write(6, "blades", C),
+        write(7, "counts", C),
+        write(8, "args", C),
+    ],
+};
+
+/// Group 1 of ground cover's pipelines (decision 056; `meshes/cover.wgsl`):
+/// the frame's blades and the wind and times they sway with.
+pub(crate) const COVER_DRAW: Table = Table {
+    label: "engine/cover-layout",
+    bindings: &[
+        read(31, "cover_blades", V),
+        uniform_of(32, "cover_frame", 16, V),
+    ],
+};
+
 /// Group 0 of depth passes: each map's view matrix at a dynamic offset.
 pub(crate) const SHADOW_VIEW: Table = Table {
     label: "engine/shadow-view-layout",
