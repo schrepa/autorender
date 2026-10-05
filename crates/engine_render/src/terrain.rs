@@ -112,6 +112,8 @@ pub(crate) struct CoverSources<'a> {
     pub palette: &'a wgpu::Buffer,
     pub covers: &'a wgpu::Buffer,
     pub generation: (u64, u64),
+    /// Advances whenever the directory's resident tiles change.
+    pub revision: u64,
 }
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
@@ -221,6 +223,8 @@ pub(crate) struct TerrainPass {
     directory: wgpu::Buffer,
     directory_written: Vec<u32>,
     directory_generation: u64,
+    // Advances whenever the directory's words change.
+    directory_revision: u64,
     directory_bases: Vec<u32>,
     // Every terrain's surface materials (decision 054), where each
     // terrain's start, and what the buffer holds.
@@ -298,6 +302,7 @@ impl TerrainPass {
             ),
             directory_written: Vec::new(),
             directory_generation: 0,
+            directory_revision: 0,
             directory_bases: Vec::new(),
             palette: crate::buffers::uniform(
                 device,
@@ -957,6 +962,7 @@ impl TerrainPass {
             palette: &self.palette,
             covers: &self.covers,
             generation: (self.atlas_generation, self.directory_generation),
+            revision: self.directory_revision,
         })
     }
 
@@ -1029,6 +1035,7 @@ impl TerrainPass {
         }
         queue.write_buffer(&self.directory, 0, bytemuck::cast_slice(&words));
         self.directory_written = words;
+        self.directory_revision += 1;
     }
 
     /// Grows the height array to hold `needed` layers, doubling, up to

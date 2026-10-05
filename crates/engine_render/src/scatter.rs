@@ -70,11 +70,13 @@ pub(crate) struct TerrainInfo {
 }
 
 /// What setting objects on the terrain reads: the terrain pass's resident
-/// heights and directory, their generations, and each terrain's place.
+/// heights and directory, their generations, a revision advancing whenever
+/// resident tiles change, and each terrain's place.
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub directory: &'a wgpu::Buffer,
     pub generation: (u64, u64),
+    pub revision: u64,
     pub terrains: &'a [TerrainInfo],
 }
 
@@ -140,9 +142,10 @@ pub(crate) struct ScatterPass {
     terrains: wgpu::Buffer,
     snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
-    // What objects were last set on: the group's key and the terrains'
-    // places, and whether slots were written since, undoing it.
-    snapped: Option<(SnapKey, Vec<TerrainInfo>)>,
+    // What objects were last set on: the group's key, the resident tiles'
+    // revision and the terrains' places, and whether slots were written
+    // since, undoing it.
+    snapped: Option<(SnapKey, u64, Vec<TerrainInfo>)>,
     slots_written: bool,
     // Advances when objects' poses or records change.
     version: u64,
@@ -613,11 +616,13 @@ impl ScatterPass {
         let unchanged = self
             .snapped
             .as_ref()
-            .is_some_and(|(snapped, terrains)| *snapped == key && terrains == sources.terrains);
+            .is_some_and(|(snapped, revision, terrains)| {
+                *snapped == key && *revision == sources.revision && terrains == sources.terrains
+            });
         if unchanged && !self.slots_written {
             return;
         }
-        self.snapped = Some((key, sources.terrains.to_vec()));
+        self.snapped = Some((key, sources.revision, sources.terrains.to_vec()));
         self.slots_written = false;
         self.version += 1;
         if self.snap_group.stale(&key) {
