@@ -2,11 +2,114 @@
 //! layer stack (eroded mountains, then hand-placed stamps: a plateau
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
-//! on the plateau as the tower field does.
+//! on the plateau as the tower field does. Its ground (decision 054) is
+//! meadow, dry grass, dirt, scree, rock and snow, each textured by maps
+//! built offline (`cargo run -p engine_assetc --release --bin
+//! terrain_materials`) and fetched by the page, or in plain colors without
+//! them.
+
+use std::collections::HashMap;
 
 use engine::prelude::*;
 
-use crate::StressConfig;
+use crate::{StressConfig, StressFile};
+
+/// The images the page fetches for this scene, from `stress/terrain/`:
+/// each surface material's base color, normal, and occlusion, roughness,
+/// metalness and height maps, which `tools/assetc`'s `terrain_materials`
+/// writes.
+pub const FILES: [&str; 18] = [
+    "grass_albedo.ktx2",
+    "grass_normal.ktx2",
+    "grass_orm.ktx2",
+    "dry_grass_albedo.ktx2",
+    "dry_grass_normal.ktx2",
+    "dry_grass_orm.ktx2",
+    "dirt_albedo.ktx2",
+    "dirt_normal.ktx2",
+    "dirt_orm.ktx2",
+    "scree_albedo.ktx2",
+    "scree_normal.ktx2",
+    "scree_orm.ktx2",
+    "rock_albedo.ktx2",
+    "rock_normal.ktx2",
+    "rock_orm.ktx2",
+    "snow_albedo.ktx2",
+    "snow_normal.ktx2",
+    "snow_orm.ktx2",
+];
+
+/// How one surface material looks: its name, which its maps' files start
+/// with; its linear color and roughness without maps, and the color its
+/// maps' colors are multiplied by; the meters its maps repeat over; how
+/// sharply its heights win where it blends; and how it lies on steep
+/// ground.
+struct Look {
+    name: &'static str,
+    color: [f32; 3],
+    roughness: f32,
+    tint: [f32; 3],
+    tiling: f32,
+    height_contrast: f32,
+    projection: SurfaceProjection,
+}
+
+const LOOKS: [Look; 6] = [
+    Look {
+        name: "grass",
+        color: [0.105, 0.135, 0.045],
+        roughness: 0.92,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 3.0,
+        height_contrast: 0.35,
+        projection: SurfaceProjection::Top,
+    },
+    Look {
+        name: "dry_grass",
+        color: [0.2, 0.16, 0.08],
+        roughness: 0.92,
+        tint: [0.9, 0.9, 0.9],
+        tiling: 3.5,
+        height_contrast: 0.35,
+        projection: SurfaceProjection::Top,
+    },
+    Look {
+        name: "dirt",
+        color: [0.21, 0.165, 0.11],
+        roughness: 0.92,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 3.0,
+        height_contrast: 0.5,
+        projection: SurfaceProjection::Top,
+    },
+    Look {
+        name: "scree",
+        color: [0.2, 0.19, 0.18],
+        roughness: 0.82,
+        tint: [0.78, 0.74, 0.68],
+        tiling: 4.0,
+        height_contrast: 0.8,
+        projection: SurfaceProjection::Top,
+    },
+    Look {
+        name: "rock",
+        color: [0.25, 0.235, 0.22],
+        roughness: 0.82,
+        tint: [0.74, 0.7, 0.64],
+        tiling: 8.0,
+        height_contrast: 0.7,
+        projection: SurfaceProjection::Biplanar,
+    },
+    Look {
+        name: "snow",
+        color: [0.82, 0.84, 0.88],
+        roughness: 0.55,
+        tint: [1.0, 1.0, 1.0],
+        tiling: 6.0,
+        height_contrast: 0.4,
+        projection: SurfaceProjection::Top,
+    },
+];
 
 /// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
 const TILES: u32 = 32;
@@ -19,12 +122,14 @@ const PLATEAU: [f32; 2] = [0.0, 0.0];
 #[derive(Resource, Clone, Copy)]
 pub(crate) struct Plateau(pub f32);
 
-/// Spawns the terrain; returns the region shadows cover and the height
-/// the hamlet stands at.
+/// Spawns the terrain, its materials' maps read from `files` where the page
+/// supplied them; returns the region shadows cover and the height the
+/// hamlet stands at.
 pub(crate) fn populate(
     world: &mut World,
     config: &StressConfig,
     hamlet: f32,
+    files: &HashMap<String, StressFile>,
 ) -> Result<((Vec3, Vec3), f32), String> {
     let half = SIZE * 0.5;
     // Terrain-local: the terrain's first corner is at -half.
@@ -73,15 +178,9 @@ pub(crate) fn populate(
         }),
     ])
     .map_err(|error| error.to_string())?;
-    // Snow on the peaks only.
+    let surface = surface(world, files)?;
     world.spawn(
-        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(
-            TerrainSurface::new(
-                &TerrainSurface::default_rules(800.0),
-                TerrainSurface::default_materials(),
-            )
-            .map_err(|error| error.to_string())?,
-        ),
+        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
     );
     Ok((
         (
@@ -90,6 +189,170 @@ pub(crate) fn populate(
         ),
         level,
     ))
+}
+
+/// The highlands' surface: its rules over [`LOOKS`], each material textured
+/// by its maps when `files` holds them.
+fn surface(
+    world: &mut World,
+    files: &HashMap<String, StressFile>,
+) -> Result<TerrainSurface, String> {
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let mut materials = Vec::with_capacity(LOOKS.len());
+    for look in &LOOKS {
+        materials.push(SurfaceMaterial {
+            material: maps(&mut assets, files, look)?,
+            color: look.color,
+            roughness: look.roughness,
+            tiling: look.tiling,
+            height_contrast: look.height_contrast,
+            projection: look.projection,
+        });
+    }
+    TerrainSurface::new(&rules(), materials).map_err(|error| error.to_string())
+}
+
+/// `look`'s maps from `files` as an engine material tinted by its tint,
+/// when the page supplied all three: base color, normal, and occlusion
+/// (red), roughness (green), metalness (blue) and height (alpha) in one.
+fn maps(
+    assets: &mut AssetLibrary,
+    files: &HashMap<String, StressFile>,
+    look: &Look,
+) -> Result<Option<MaterialHandle>, String> {
+    let mut textures = Vec::with_capacity(3);
+    for map in ["albedo", "normal", "orm"] {
+        let file_name = format!("{}_{map}.ktx2", look.name);
+        let Some(file) = files.get(&file_name) else {
+            return Ok(None);
+        };
+        let Some([width, height]) = file.size else {
+            return Ok(None);
+        };
+        let texture = Texture::with_alpha(width, height, file.bytes.clone())
+            .map_err(|error| format!("{file_name}: {error}"))?;
+        textures.push(
+            assets
+                .insert_texture(texture)
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    let [red, green, blue] = look.tint;
+    let material = Material::new([red, green, blue, 1.0])
+        .and_then(|material| {
+            material.with_surface(Surface {
+                roughness: 1.0,
+                ..Surface::MATTE
+            })
+        })
+        .and_then(|material| material.with_base_color_texture(TextureRef::new(textures[0])))
+        .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
+        .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
+        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
+        .map_err(|error| error.to_string())?;
+    assets
+        .insert_material(material)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// Where each material lies: meadow everywhere, dry grass in broad patches
+/// with ragged edges, dirt where slopes thin the grass, scree on steep
+/// ground below the cliffs, rock on the cliffs and snow on the peaks'
+/// gentler slopes.
+fn rules() -> Biomes {
+    let noise = |wavelength: f32, seed: u32, octaves: u32| {
+        Mask::Noise(NoiseMask {
+            wavelength,
+            seed,
+            octaves,
+        })
+    };
+    let scaled = |mask: Mask, by: f32| Mask::Multiply(vec![mask, Mask::Constant(by)]);
+    let remap = |mask: Mask, from: f32, to: f32| {
+        Mask::Remap(Remap {
+            mask: Box::new(mask),
+            from,
+            to,
+        })
+    };
+    let layer = |material: &str, mask: Mask| BiomeLayer {
+        material: material.into(),
+        mask,
+        opacity: 1.0,
+    };
+    Biomes {
+        materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),
+        biomes: vec![Biome {
+            id: "highlands".into(),
+            fitness: Mask::one(),
+            layers: vec![
+                layer("grass", Mask::one()),
+                layer(
+                    "dry_grass",
+                    remap(
+                        Mask::Add(vec![
+                            scaled(noise(160.0, 11, 3), 0.6),
+                            scaled(noise(28.0, 12, 2), 0.25),
+                            scaled(noise(5.0, 16, 1), 0.15),
+                        ]),
+                        0.48,
+                        0.72,
+                    ),
+                ),
+                layer(
+                    "dirt",
+                    remap(
+                        Mask::Add(vec![
+                            scaled(noise(60.0, 13, 2), 0.45),
+                            scaled(noise(9.0, 14, 2), 0.25),
+                            scaled(Mask::Slope([18.0, 34.0]), 0.5),
+                        ]),
+                        0.66,
+                        0.8,
+                    ),
+                ),
+                layer(
+                    "scree",
+                    remap(
+                        Mask::Add(vec![
+                            scaled(Mask::Slope([27.0, 38.0]), 0.8),
+                            scaled(noise(40.0, 15, 2), 0.4),
+                            scaled(noise(8.0, 17, 1), 0.15),
+                        ]),
+                        0.62,
+                        0.8,
+                    ),
+                ),
+                layer(
+                    "rock",
+                    remap(
+                        Mask::Add(vec![
+                            Mask::Slope([33.0, 45.0]),
+                            scaled(noise(70.0, 1, 2), 0.3),
+                        ]),
+                        0.55,
+                        0.75,
+                    ),
+                ),
+                layer(
+                    "snow",
+                    Mask::Multiply(vec![
+                        remap(
+                            Mask::Add(vec![
+                                Mask::Height([700.0, 900.0]),
+                                scaled(noise(60.0, 3, 2), 0.4),
+                                Mask::Constant(-0.2),
+                            ]),
+                            0.4,
+                            0.6,
+                        ),
+                        Mask::Invert(Box::new(Mask::Slope([35.0, 50.0]))),
+                    ]),
+                ),
+            ],
+        }],
+    }
 }
 
 /// The plateau's radius for the hamlet of `config`'s renderables, the tower

@@ -45,7 +45,7 @@ impl Renderer {
                     .sun_direction
                     .normalize(),
             },
-            self.display.max_layers,
+            (self.display.max_layers, self.materials.mips()),
         );
         if !drawn {
             return false;

@@ -177,7 +177,9 @@ enum Compiled {
 
 /// What a sample's masks read: its terrain-local position in meters, its
 /// height above the terrain's origin, the length of its height gradient
-/// (the slope's tangent) and its curvature per meter.
+/// (the slope's tangent), its curvature per meter, and the meters between
+/// samples at its level, below twice which noise fades to its mean, so
+/// coarse levels show the same patches as fine ones, filtered.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SampleInputs {
     pub x: f32,
@@ -185,6 +187,7 @@ pub struct SampleInputs {
     pub height: f32,
     pub gradient: f32,
     pub curvature: f32,
+    pub spacing: f32,
 }
 
 /// 0 at `ends[0]`, 1 at `ends[1]`, smooth between; a step where they meet.
@@ -315,9 +318,13 @@ impl Compiled {
             } => {
                 let (mut sum, mut weight, mut amplitude, mut scale) = (0.0, 0.0, 1.0, *frequency);
                 for octave in 0..*octaves {
-                    // Each octave shifted, so their lattices never line up.
+                    // Each octave shifted, so their lattices never line up;
+                    // octaves fewer than four samples across fade out by
+                    // two, as a filtered image's would.
                     let shift = octave as f32 * 17.13;
+                    let fade = clamp(0.5 / (scale * inputs.spacing) - 1.0, 0.0, 1.0);
                     sum += amplitude
+                        * fade
                         * gradient_value(
                             inputs.x * scale + shift,
                             inputs.z * scale - shift,

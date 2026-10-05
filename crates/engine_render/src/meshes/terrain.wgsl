@@ -24,15 +24,27 @@ override TERRAIN_HOLES: bool = false;
 // and 8 to 15), the second's share (16 to 23) and its strongest biome.
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
 
-// A surface material: its linear color and roughness, then its tiling,
-// height contrast and projection.
+// A surface material: its linear color (its base color factor with maps)
+// and roughness; its tiling in meters, height contrast, projection and its
+// maps' layer plus one (0 without maps); its normal scale, occlusion
+// strength and metalness.
 struct TerrainPaletteEntry {
     color: vec4<f32>,
     params: vec4<f32>,
+    maps: vec4<f32>,
 }
+// As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
+const TERRAIN_PALETTE_ENTRIES: u32 = 341u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
-@group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, 512>;
+@group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
+// Surface materials' maps, a layer per material with maps: base color,
+// tangent-space normal (green up the image, toward -z), and occlusion,
+// roughness, metalness and height; and their sampler.
+@group(1) @binding(26) var terrain_albedo: texture_2d_array<f32>;
+@group(1) @binding(27) var terrain_material_normals: texture_2d_array<f32>;
+@group(1) @binding(28) var terrain_orm: texture_2d_array<f32>;
+@group(1) @binding(29) var terrain_material_sampler: sampler;
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -221,26 +233,51 @@ fn terrain_material_color(material: u32) -> vec3<f32> {
     return 0.15 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
 }
 
-// The ground of one control texel: its two materials' linear colors (rgb)
-// and roughnesses (a), mixed by its blend.
-fn terrain_texel_ground(texel: vec2<u32>, layer: u32) -> vec4<f32> {
-    let control = textureLoad(terrain_control, texel, layer, 0).x;
-    let blend = f32((control >> 16u) & 0xffu) * (1.0 / 255.0);
-    let a_id = control & 0xffu;
-    let b_id = (control >> 8u) & 0xffu;
-    var a = terrain_palette[min(terrain.directory.z + a_id, 511u)].color;
-    var b = terrain_palette[min(terrain.directory.z + b_id, 511u)].color;
-    if u32(terrain.origin.w) == 4u {
-        a = vec4<f32>(terrain_material_color(a_id), a.w);
-        b = vec4<f32>(terrain_material_color(b_id), b.w);
-    }
-    return mix(a, b, blend);
+// Surface material `material` of this fragment's terrain.
+fn terrain_material(material: u32) -> TerrainPaletteEntry {
+    return terrain_palette[min(terrain.directory.z + material, TERRAIN_PALETTE_ENTRIES - 1u)];
 }
 
-// The ground at terrain-local `local` from `level`'s control values, or
-// the nearest coarser level's where its tile is not resident: the four
-// samples around it, each mixing its two materials, mixed bilinearly.
-fn terrain_level_ground(local: vec2<f32>, level: u32) -> vec4<f32> {
+// Up to four surface materials meeting at a point, and their shares.
+struct TerrainBlend {
+    ids: vec4<u32>,
+    weights: vec4<f32>,
+}
+
+// Adds `weight` of material `material` to `blend`: to its slot, or over
+// the lightest when heavier than it.
+fn terrain_blend_add(blend: ptr<function, TerrainBlend>, material: u32, weight: f32) {
+    var lightest = 0u;
+    for (var slot = 0u; slot < 4u; slot++) {
+        if (*blend).ids[slot] == material {
+            (*blend).weights[slot] += weight;
+            return;
+        }
+        if (*blend).weights[slot] < (*blend).weights[lightest] {
+            lightest = slot;
+        }
+    }
+    if weight > (*blend).weights[lightest] {
+        (*blend).ids[lightest] = material;
+        (*blend).weights[lightest] = weight;
+    }
+}
+
+// Adds `weight` shared between one control texel's two materials by its
+// blend.
+fn terrain_texel_blend(blend: ptr<function, TerrainBlend>, texel: vec2<u32>, layer: u32,
+        weight: f32) {
+    let control = textureLoad(terrain_control, texel, layer, 0).x;
+    let share = f32((control >> 16u) & 0xffu) * (1.0 / 255.0);
+    terrain_blend_add(blend, control & 0xffu, weight * (1.0 - share));
+    terrain_blend_add(blend, (control >> 8u) & 0xffu, weight * share);
+}
+
+// Adds `weight` of the materials at terrain-local `local` in `level`'s
+// control values, or the nearest coarser level's where its tile is not
+// resident: the four samples around it, bilinearly.
+fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level: u32,
+        weight: f32) {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
     for (var index = level; index < levels; index++) {
@@ -258,55 +295,318 @@ fn terrain_level_ground(local: vec2<f32>, level: u32) -> vec4<f32> {
         let corner = min(vec2<u32>(within), vec2<u32>(255u));
         let f = within - vec2<f32>(corner);
         let texel = corner + vec2<u32>(1u);
-        let near = mix(terrain_texel_ground(texel, layer),
-            terrain_texel_ground(texel + vec2<u32>(1u, 0u), layer), f.x);
-        let far = mix(terrain_texel_ground(texel + vec2<u32>(0u, 1u), layer),
-            terrain_texel_ground(texel + vec2<u32>(1u, 1u), layer), f.x);
-        return mix(near, far, f.y);
+        terrain_texel_blend(blend, texel, layer, weight * (1.0 - f.x) * (1.0 - f.y));
+        terrain_texel_blend(blend, texel + vec2<u32>(1u, 0u), layer, weight * f.x * (1.0 - f.y));
+        terrain_texel_blend(blend, texel + vec2<u32>(0u, 1u), layer, weight * (1.0 - f.x) * f.y);
+        terrain_texel_blend(blend, texel + vec2<u32>(1u, 1u), layer, weight * f.x * f.y);
+        return;
     }
-    return terrain_palette[min(terrain.directory.z, 511u)].color;
+    terrain_blend_add(blend, 0u, weight);
 }
 
-// The ground at terrain-local `local` at `shading`'s levels.
-fn terrain_surface_ground(local: vec2<f32>, shading: TerrainShadingLevel) -> vec4<f32> {
-    var ground = terrain_level_ground(local, shading.level);
-    if shading.blend > 0.0 {
-        ground = mix(ground, terrain_level_ground(local, shading.level + 1u), shading.blend);
+// What a terrain fragment's ground shows: its linear albedo, roughness,
+// occlusion and metalness, its normal, and the share of it that has maps.
+struct TerrainGround {
+    albedo: vec3<f32>,
+    roughness: f32,
+    normal: vec3<f32>,
+    occlusion: f32,
+    metalness: f32,
+    mapped: f32,
+}
+
+// Where a material's maps lie at a fragment: their meters per repeat,
+// their layer, and their planes' shares by axis (x, y, z). Top materials
+// lie from above; biplanar ones also from the sides, each side's share
+// growing as the ground turns to face it, so cliffs do not stretch them.
+struct TerrainMapping {
+    scale: f32,
+    layer: u32,
+    planes: vec3<f32>,
+}
+
+fn terrain_mapping(entry: TerrainPaletteEntry, normal: vec3<f32>) -> TerrainMapping {
+    var mapping: TerrainMapping;
+    mapping.scale = 1.0 / entry.params.x;
+    mapping.layer = u32(entry.params.w) - 1u;
+    mapping.planes = vec3<f32>(0.0, 1.0, 0.0);
+    if entry.params.z > 0.5 {
+        let sharp = pow(abs(normal), vec3<f32>(4.0));
+        // Planes barely showing are skipped.
+        let shares = max(sharp / (sharp.x + sharp.y + sharp.z) - 0.03, vec3<f32>(0.0));
+        mapping.planes = shares / (shares.x + shares.y + shares.z);
     }
+    return mapping;
+}
+
+// Coordinates on axis `axis`'s plane: x sees (z, -y), y sees (x, z) and z
+// sees (x, -y), so on the sides the maps' up is the world's.
+fn terrain_project(p: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return vec2<f32>(p.z, -p.y);
+    }
+    if axis == 2u {
+        return vec2<f32>(p.x, -p.y);
+    }
+    return p.xz;
+}
+
+// The cosine and sine of the turn of the second lattice on top.
+const TERRAIN_TURN: vec2<f32> = vec2<f32>(0.5, 0.8660254);
+// How much wider the second lattice repeats on the sides.
+const TERRAIN_STRETCH: f32 = 1.31;
+
+// Plane coordinates `uv` (or their derivatives) in lattice `lattice`: 0
+// the maps' own; 1 their second, turned 60 degrees on top and stretched
+// across on the sides, so their strata stay level, where two lattices meet
+// their repeats never line up.
+fn terrain_lattice(uv: vec2<f32>, axis: u32, lattice: u32) -> vec2<f32> {
+    if lattice == 0u {
+        return uv;
+    }
+    if axis == 1u {
+        return vec2<f32>(TERRAIN_TURN.x * uv.x - TERRAIN_TURN.y * uv.y,
+            TERRAIN_TURN.y * uv.x + TERRAIN_TURN.x * uv.y);
+    }
+    return vec2<f32>(uv.x * TERRAIN_STRETCH, uv.y);
+}
+
+// `map`'s texel at `world` (with its screen derivatives) as `mapping`
+// lays it in `lattice`, mixed over its planes.
+fn terrain_map(map: texture_2d_array<f32>, mapping: TerrainMapping, world: vec3<f32>,
+        world_dx: vec3<f32>, world_dy: vec3<f32>, lattice: u32) -> vec4<f32> {
+    let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
+    var texel = vec4<f32>(0.0);
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = mapping.planes[axis];
+        if share <= 0.0 {
+            continue;
+        }
+        texel += share * textureSampleGrad(map, terrain_material_sampler,
+            terrain_lattice(terrain_project(world, axis) * mapping.scale, axis, lattice) + shift,
+            mapping.layer,
+            terrain_lattice(terrain_project(world_dx, axis) * mapping.scale, axis, lattice),
+            terrain_lattice(terrain_project(world_dy, axis) * mapping.scale, axis, lattice));
+    }
+    return texel;
+}
+
+// The normal of a material's normal maps in `lattice` at `world` on the
+// terrain's `normal`, deflections scaled by `scale`: each plane's
+// tangent-space normal (x along its first coordinate, y up its image, z
+// out), turned back from the lattice, added to the terrain's normal in
+// that plane (whiteout blending), mixed over the planes.
+fn terrain_mapped_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
+        world_dy: vec3<f32>, lattice: u32, normal: vec3<f32>, scale: f32) -> vec3<f32> {
+    let shift = vec2<f32>(0.37, 0.71) * f32(lattice);
+    var mixed = vec3<f32>(0.0);
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = mapping.planes[axis];
+        if share <= 0.0 {
+            continue;
+        }
+        let sampled = textureSampleGrad(terrain_material_normals, terrain_material_sampler,
+            terrain_lattice(terrain_project(world, axis) * mapping.scale, axis, lattice) + shift,
+            mapping.layer,
+            terrain_lattice(terrain_project(world_dx, axis) * mapping.scale, axis, lattice),
+            terrain_lattice(terrain_project(world_dy, axis) * mapping.scale, axis, lattice))
+            .xyz * 2.0 - 1.0;
+        var n = vec3<f32>(sampled.xy * scale, sampled.z);
+        if lattice == 1u {
+            // Slopes in the second lattice, in the plane's: its turn, or
+            // its stretch.
+            if axis == 1u {
+                n = vec3<f32>(TERRAIN_TURN.x * n.x - TERRAIN_TURN.y * n.y,
+                    TERRAIN_TURN.y * n.x + TERRAIN_TURN.x * n.y, n.z);
+            } else {
+                n.x *= TERRAIN_STRETCH;
+            }
+        }
+        var turned: vec3<f32>;
+        if axis == 0u {
+            // Along +z, up +y, out along x.
+            turned = vec3<f32>(abs(n.z) * normal.x, n.y + normal.y, n.x + normal.z);
+        } else if axis == 2u {
+            // Along +x, up +y, out along z.
+            turned = vec3<f32>(n.x + normal.x, n.y + normal.y, abs(n.z) * normal.z);
+        } else {
+            // Along +x, up -z, out along y.
+            turned = vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y);
+        }
+        mixed += share * stable_normalize(turned);
+    }
+    return mixed;
+}
+
+// How much of a material repeating every `tiling` meters shows its second
+// lattice at `world`: in patches about three repeats across, varying up
+// cliffs as well as across the ground; where a pixel's `footprint` spans a
+// patch, its maps are too fine to repeat visibly and the first shows alone.
+fn terrain_second_lattice(world: vec3<f32>, tiling: f32, footprint: f32) -> f32 {
+    let size = tiling * 3.1;
+    let fade = saturate(2.0 - 2.0 * footprint / size);
+    let p = (world.xz + world.y * vec2<f32>(0.71, -0.43)) / size;
+    return smoothstep(0.4, 0.6, terrain_value(p + vec2<f32>(7.3, -2.9))) * fade;
+}
+
+// The share of `second` (0 to 1) after the two lattices' heights `first`
+// and `raised` meet as materials do, as sharply as `contrast` asks.
+fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) -> f32 {
+    let a = 1.0 - second + contrast * first;
+    let b = second + contrast * raised;
+    let top = max(a, b) - 0.08;
+    let lifted = max(vec2<f32>(a, b) - top, vec2<f32>(0.0));
+    return mix(second, lifted.y / max(lifted.x + lifted.y, 1.0e-6), saturate(contrast));
+}
+
+// The ground at `world` (with its screen derivatives and a pixel's
+// `footprint` there) on the terrain's `geometric` normal, from the control
+// values of `shading`'s levels: up to four materials, each where it has
+// maps raised by its height map as sharply as its height contrast asks,
+// so stones and tufts stand through what they meet before it covers them.
+fn terrain_ground(world: vec3<f32>, world_dx: vec3<f32>, world_dy: vec3<f32>, footprint: f32,
+        geometric: vec3<f32>, shading: TerrainShadingLevel) -> TerrainGround {
+    var blend: TerrainBlend;
+    blend.ids = vec4<u32>(0xffffffffu);
+    blend.weights = vec4<f32>(0.0);
+    let local = world.xz - terrain.origin.xz;
+    terrain_level_blend(&blend, local, shading.level, 1.0 - shading.blend);
+    if shading.blend > 0.0 {
+        terrain_level_blend(&blend, local, shading.level + 1u, shading.blend);
+    }
+    // Each material's occlusion, roughness, metalness and height texel and
+    // the share of its second lattice; materials without maps lie flat at
+    // middle height.
+    var texels: array<vec4<f32>, 4>;
+    var seconds = vec4<f32>(0.0);
+    var raised = vec4<f32>(-1.0e9);
+    var contrast = 0.0;
+    for (var slot = 0u; slot < 4u; slot++) {
+        let weight = blend.weights[slot];
+        texels[slot] = vec4<f32>(1.0, 1.0, 1.0, 0.5);
+        if weight <= 0.0 {
+            continue;
+        }
+        let entry = terrain_material(blend.ids[slot]);
+        if entry.params.w > 0.0 {
+            let mapping = terrain_mapping(entry, geometric);
+            let second = terrain_second_lattice(world, entry.params.x, footprint);
+            var first = vec4<f32>(0.0);
+            var other = vec4<f32>(0.0);
+            if second < 1.0 {
+                first = terrain_map(terrain_orm, mapping, world, world_dx, world_dy, 0u);
+            }
+            if second > 0.0 {
+                other = terrain_map(terrain_orm, mapping, world, world_dx, world_dy, 1u);
+            }
+            var share = second;
+            if second > 0.0 && second < 1.0 {
+                share = terrain_lattice_share(second, first.a, other.a, entry.params.y);
+            }
+            texels[slot] = mix(first, other, share);
+            seconds[slot] = share;
+        }
+        raised[slot] = weight + entry.params.y * texels[slot].a;
+        contrast += weight * entry.params.y;
+    }
+    // Height blending: materials within a narrow band of the highest show,
+    // turned toward the plain shares as contrast falls to 0.
+    let highest = max(max(raised.x, raised.y), max(raised.z, raised.w));
+    let lifted = max(raised - vec4<f32>(highest - 0.08), vec4<f32>(0.0));
+    let weights = mix(blend.weights, lifted / max(dot(lifted, vec4<f32>(1.0)), 1.0e-6),
+        saturate(contrast));
+    var ground: TerrainGround;
+    ground.albedo = vec3<f32>(0.0);
+    ground.roughness = 0.0;
+    ground.occlusion = 0.0;
+    ground.metalness = 0.0;
+    ground.mapped = 0.0;
+    var normal = vec3<f32>(0.0);
+    let materials_view = u32(terrain.origin.w) == 4u;
+    for (var slot = 0u; slot < 4u; slot++) {
+        let weight = weights[slot];
+        if weight <= 0.0 {
+            continue;
+        }
+        let entry = terrain_material(blend.ids[slot]);
+        var color = entry.color.rgb;
+        var turned = geometric;
+        let texel = texels[slot];
+        if entry.params.w > 0.0 {
+            let mapping = terrain_mapping(entry, geometric);
+            let second = seconds[slot];
+            var albedo = vec3<f32>(0.0);
+            turned = vec3<f32>(0.0);
+            if second < 1.0 {
+                albedo += (1.0 - second)
+                    * terrain_map(terrain_albedo, mapping, world, world_dx, world_dy, 0u).rgb;
+                turned += (1.0 - second) * terrain_mapped_normal(mapping, world, world_dx,
+                    world_dy, 0u, geometric, entry.maps.x);
+            }
+            if second > 0.0 {
+                albedo += second
+                    * terrain_map(terrain_albedo, mapping, world, world_dx, world_dy, 1u).rgb;
+                turned += second * terrain_mapped_normal(mapping, world, world_dx, world_dy, 1u,
+                    geometric, entry.maps.x);
+            }
+            color *= albedo;
+            ground.mapped += weight;
+        }
+        if materials_view {
+            color = terrain_material_color(blend.ids[slot]);
+        }
+        ground.albedo += weight * color;
+        ground.roughness += weight * entry.color.w * texel.g;
+        ground.occlusion += weight * (1.0 + entry.maps.y * (texel.r - 1.0));
+        ground.metalness += weight * entry.maps.z * texel.b;
+        normal += weight * turned;
+    }
+    ground.normal = stable_normalize(normal);
     return ground;
 }
 
-// The surface a terrain fragment shows: its surface materials, broken up by
-// noise across the ground.
+// The surface a terrain fragment shows: its surface materials, varied
+// across the ground so their maps do not repeat evenly.
 fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     let relative = relative_spacing.xyz;
     let world = relative + camera.position.xyz;
-    let local = world.xz - terrain.origin.xz;
-    let shading = terrain_shading_level(length(world - terrain.eye.xyz));
-    let normal = terrain_surface_normal(local, shading);
-    let ground = terrain_surface_ground(local, shading);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
     let footprint = max(length(world_dx), length(world_dy));
+    let local = world.xz - terrain.origin.xz;
+    let shading = terrain_shading_level(length(world - terrain.eye.xyz));
+    let geometric = terrain_surface_normal(local, shading);
+    let ground = terrain_ground(world, world_dx, world_dy, footprint, geometric, shading);
+    let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
     let fine = terrain_detail(world.xz + vec2<f32>(-5.1, 3.7), 1.6, footprint);
-    var albedo = ground.rgb;
-    if u32(terrain.origin.w) != 4u {
-        albedo *= (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
+    let view = u32(terrain.origin.w);
+    var albedo = ground.albedo;
+    // The normals and materials views show the terrain's own normals.
+    var normal = ground.normal;
+    if view == 2u || view == 4u {
+        normal = geometric;
+    }
+    if view != 4u {
+        // Plain colors vary at every scale; maps carry their own detail
+        // and vary broadly.
+        let plain = (0.8 + 0.4 * patchy) * (0.85 + 0.3 * fine);
+        let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
+        albedo *= mix(plain, mapped, ground.mapped);
     }
     albedo = terrain_view_albedo(albedo, normal, relative_spacing.w, cell);
-    let roughness = ground.a;
+    let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
     point.albedo = albedo;
     point.opacity = 1.0;
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = 1.0;
+    point.occlusion = ground.occlusion;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
-    point.f0 = vec3<f32>(0.04);
-    point.diffuse_color = albedo;
-    point.geometric = normal;
+    point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);
+    point.diffuse_color = albedo * (1.0 - ground.metalness);
+    point.geometric = geometric;
     point.normal = normal;
     point.distance = length(relative);
     point.view = stable_normalize(-relative);

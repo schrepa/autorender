@@ -28,8 +28,10 @@ use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_NORMALS};
 use crate::cached::Cached;
+use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
 use crate::terrain_horizons::Horizons;
+use crate::terrain_maps::TerrainMaps;
 
 /// Vertices along a patch side, and the grid's before the skirts'.
 const GRID: u32 = engine_core::terrain_data::PATCH_QUADS + 1;
@@ -48,9 +50,11 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
 /// Each tile's control values (decision 054): its samples' two strongest
 /// materials, their blend and biome, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
-/// Surface materials every terrain together can show: the palette's 16 KiB
-/// uniform, the smallest uniform binding devices guarantee, at 32 bytes each.
-const PALETTE_ENTRIES: usize = 512;
+/// Surface materials every terrain together can show: as many as fit the
+/// 16 KiB uniform binding every device allows.
+const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>();
+/// Bytes of the palette.
+pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
 /// A directory entry of a tile not resident.
 const NOT_RESIDENT: u32 = u32::MAX;
 
@@ -87,9 +91,11 @@ struct TerrainUniform {
     directory: [u32; 4],
 }
 
-/// WGSL `TerrainPaletteEntry`: a surface material's linear color and
-/// roughness, then its tiling, height contrast and projection.
-type PaletteEntry = [f32; 8];
+/// WGSL `TerrainPaletteEntry`: a surface material's linear color (its
+/// base color factor with maps) and roughness; its tiling, height
+/// contrast, projection and maps' layer plus one (0 without maps); and its
+/// normal scale, occlusion strength and metalness.
+type PaletteEntry = [f32; 12];
 
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
 /// every patch (for probe faces) and each shadow map's. The camera's and
@@ -173,7 +179,7 @@ pub(crate) struct TerrainPass {
     holes: wgpu::Buffer,
     hole_offsets: HashMap<(u64, TileKey), u32>,
     holes_generation: u64,
-    group: Cached<(u64, u64, u64, u64), wgpu::BindGroup>,
+    group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
@@ -207,10 +213,12 @@ pub(crate) struct TerrainPass {
     /// Surface materials past the palette's capacity, which show the
     /// palette's first instead.
     pub(crate) dropped_materials: u32,
+    /// Surface materials' maps (decision 054).
+    pub(crate) maps: TerrainMaps,
 }
 
 impl TerrainPass {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let indices = grid_indices();
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("engine/terrain-indices"),
@@ -270,11 +278,12 @@ impl TerrainPass {
             palette: crate::buffers::uniform(
                 device,
                 "engine/terrain-palette",
-                (PALETTE_ENTRIES * size_of::<PaletteEntry>()) as u64,
+                PALETTE_BYTES as u64,
             ),
             palette_bases: Vec::new(),
             palette_written: Vec::new(),
             dropped_materials: 0,
+            maps: TerrainMaps::new(device, queue),
         }
     }
 
@@ -288,12 +297,13 @@ impl TerrainPass {
         self.slots.len() as u32
     }
 
-    /// Bytes of the height, normal and control arrays and the horizon
-    /// maps.
+    /// Bytes of the height, normal and control arrays, the horizon maps
+    /// and the surface materials' maps.
     pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.as_ref().map_or(0, |atlas| {
             u64::from(atlas.layers) * u64::from(LAYER_SIZE * LAYER_SIZE) * 12
         }) + self.horizons.capacity_bytes()
+            + self.maps.capacity_bytes()
     }
 
     /// Records this frame's horizon map builds (decision 052).
@@ -310,21 +320,22 @@ impl TerrainPass {
     /// Uploads tiles the frame's terrains list and the GPU lacks, releases
     /// those they no longer list, and lays out this frame's patches for the
     /// camera, reflection probe faces and the shadow maps of `views`.
-    /// `max_layers` is the device's texture array layers. Returns whether
-    /// any terrain draws.
+    /// `max_layers` is the device's texture array layers; `mips` renders
+    /// surface materials' mip levels. Returns whether any terrain draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
-        max_layers: u32,
+        (max_layers, mips): (u32, &MipGenerator),
     ) -> bool {
         self.uploads = 0;
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
         self.write_directory(device, queue, terrains);
+        self.maps.prepare(device, queue, mips, terrains);
         self.write_palette(queue, terrains);
         self.horizons.prepare(
             device,
@@ -762,12 +773,13 @@ impl TerrainPass {
     }
 
     /// Writes every terrain's surface materials into the palette when they
-    /// change, each terrain's after the one before; materials past its
-    /// capacity are dropped and counted.
+    /// change, each terrain's after the one before, with the layers their
+    /// maps lie in; materials past its capacity, and those whose maps the
+    /// arrays cannot hold, are dropped and counted.
     fn write_palette(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
         let mut entries: Vec<PaletteEntry> = Vec::new();
         self.palette_bases.clear();
-        self.dropped_materials = 0;
+        self.dropped_materials = self.maps.dropped;
         for terrain in &terrains.terrains {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = terrain.surface.len().min(room);
@@ -778,21 +790,58 @@ impl TerrainPass {
             } else {
                 0
             });
-            entries.extend(terrain.surface[..kept].iter().map(|look| {
-                [
-                    look.color[0],
-                    look.color[1],
-                    look.color[2],
-                    look.roughness,
-                    look.tiling,
-                    look.height_contrast,
-                    match look.projection {
-                        engine_core::SurfaceProjection::Top => 0.0,
-                        engine_core::SurfaceProjection::Biplanar => 1.0,
-                    },
-                    0.0,
-                ]
-            }));
+            let maps = terrain.maps.iter().chain(std::iter::repeat(&None));
+            entries.extend(
+                terrain.surface[..kept]
+                    .iter()
+                    .zip(maps)
+                    .map(|(look, maps)| {
+                        let projection = match look.projection {
+                            engine_core::SurfaceProjection::Top => 0.0,
+                            engine_core::SurfaceProjection::Biplanar => 1.0,
+                        };
+                        // An engine material's factors, its maps in their layer.
+                        let (color, roughness, layer, scale, occlusion, metalness) = match maps {
+                            Some(maps) => {
+                                let material = &maps.material;
+                                let color = material.color();
+                                let surface = material.surface();
+                                // Occlusion reads the packed map's red.
+                                let packed = material.occlusion_texture().map(|map| map.texture)
+                                    == material.metallic_roughness_texture().map(|map| map.texture);
+                                (
+                                    [color[0], color[1], color[2]],
+                                    surface.roughness,
+                                    self.maps
+                                        .layer(maps)
+                                        .map_or(0.0, |layer| (layer + 1) as f32),
+                                    material.normal_scale(),
+                                    if packed {
+                                        material.occlusion_strength()
+                                    } else {
+                                        0.0
+                                    },
+                                    surface.metalness,
+                                )
+                            }
+                            None => (look.color, look.roughness, 0.0, 1.0, 0.0, 0.0),
+                        };
+                        [
+                            color[0],
+                            color[1],
+                            color[2],
+                            roughness,
+                            look.tiling,
+                            look.height_contrast,
+                            projection,
+                            layer,
+                            scale,
+                            occlusion,
+                            metalness,
+                            0.0,
+                        ]
+                    }),
+            );
         }
         if entries.is_empty() || entries == self.palette_written {
             return;
@@ -965,6 +1014,7 @@ impl TerrainPass {
             self.uniform_generation,
             self.holes_generation,
             self.directory_generation,
+            self.maps.generation,
         );
         if self.group.stale(&key) {
             let group = crate::pipelines::group(
@@ -1011,6 +1061,19 @@ impl TerrainPass {
                             offset: 0,
                             size: None,
                         }),
+                    ),
+                    (
+                        "terrain_albedo",
+                        crate::pipelines::view(&self.maps.views[0]),
+                    ),
+                    (
+                        "terrain_material_normals",
+                        crate::pipelines::view(&self.maps.views[1]),
+                    ),
+                    ("terrain_orm", crate::pipelines::view(&self.maps.views[2])),
+                    (
+                        "terrain_material_sampler",
+                        crate::pipelines::sampler(&self.maps.sampler),
                     ),
                 ],
             );

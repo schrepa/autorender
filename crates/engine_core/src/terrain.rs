@@ -32,7 +32,7 @@ use bevy_ecs::{
 use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use engine_assets::MaterialHandle;
+use engine_assets::{AssetLibrary, Material, MaterialHandle};
 use engine_terrain::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, FileHeader, FormatError, Generator, Layers,
     LodRanges, Mask, NoiseMask, Patch, Pyramid, Remap, Selection, TILE_STRIDE, Tile, TileKey,
@@ -40,7 +40,7 @@ use engine_terrain::{
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
-use crate::{Camera, GlobalTransforms, RenderSnapshot};
+use crate::{Camera, GlobalTransforms, RenderSnapshot, RenderTexture};
 
 /// Where a terrain's tiles come from.
 #[derive(Clone, Debug, PartialEq)]
@@ -1088,6 +1088,41 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
     }
 }
 
+/// A surface material's engine material (decision 054): its factors, and
+/// the base color, normal and metallic-roughness textures it names, those
+/// loaded. Terrain reads height from the metallic-roughness map's alpha,
+/// and occlusion from its red where the material's occlusion map is the
+/// same texture.
+#[derive(Clone, Debug)]
+pub struct RenderSurfaceMaps {
+    pub material: Material,
+    pub base_color: Option<RenderTexture>,
+    pub normal: Option<RenderTexture>,
+    pub metallic_roughness: Option<RenderTexture>,
+}
+
+impl RenderSurfaceMaps {
+    /// `material`'s maps from `assets`; each one named but missing counts
+    /// in `missing`.
+    fn of(material: Material, assets: &AssetLibrary, missing: &mut usize) -> Self {
+        let mut texture = |map: Option<engine_assets::TextureRef>| {
+            let handle = map?.texture;
+            let found = assets.texture(handle).map(|texture| RenderTexture {
+                handle,
+                texture: Arc::clone(texture),
+            });
+            *missing += usize::from(found.is_none());
+            found
+        };
+        Self {
+            base_color: texture(material.base_color_texture()),
+            normal: texture(material.normal_texture()),
+            metallic_roughness: texture(material.metallic_roughness_texture()),
+            material,
+        }
+    }
+}
+
 /// One terrain of a frame (decision 051).
 #[derive(Clone, Debug)]
 pub struct RenderTerrain {
@@ -1098,6 +1133,9 @@ pub struct RenderTerrain {
     /// How each of its surface's materials looks, by the index tiles'
     /// control values hold.
     pub surface: Vec<SurfaceMaterial>,
+    /// Each surface material's engine material, where it names one that
+    /// exists.
+    pub maps: Vec<Option<RenderSurfaceMaps>>,
     /// Its resident tiles: renderers upload those they lack and release
     /// the rest. The list changes only when `tiles_revision` advances.
     pub tiles: Arc<[Arc<Tile>]>,
@@ -1205,6 +1243,8 @@ impl TerrainExtraction {
     /// Lists every terrain's resident tiles and the camera's patches.
     pub(crate) fn extract(&mut self, world: &World, aspect: f32, snapshot: &mut RenderSnapshot) {
         let listing = &mut snapshot.terrain;
+        let missing = &mut snapshot.missing_assets;
+        let assets = world.get_resource::<AssetLibrary>();
         let Some(terrains) = world.get_resource::<Terrains>() else {
             listing.terrains.clear();
             listing.stats = TerrainStats::default();
@@ -1227,6 +1267,7 @@ impl TerrainExtraction {
                     origin: Vec3::ZERO,
                     pyramid: state.terrain.pyramid,
                     surface: Vec::new(),
+                    maps: Vec::new(),
                     tiles: Arc::from(Vec::new()),
                     tiles_revision: 0,
                     patches: Vec::new(),
@@ -1238,6 +1279,20 @@ impl TerrainExtraction {
             render.origin = state.terrain.origin;
             render.pyramid = state.terrain.pyramid;
             render.surface.clone_from(&state.terrain.surface.materials);
+            render.maps.clear();
+            for look in &state.terrain.surface.materials {
+                let material = look.material.and_then(|handle| {
+                    let material =
+                        assets.and_then(|assets| Some((assets, *assets.material(handle)?)));
+                    *missing += usize::from(material.is_none());
+                    material
+                });
+                render
+                    .maps
+                    .push(material.map(|(assets, material)| {
+                        RenderSurfaceMaps::of(material, assets, missing)
+                    }));
+            }
             if render.tiles_revision != state.revision || render.id != state.entity.to_bits() {
                 let mut tiles: Vec<Arc<Tile>> = state.tiles.values().cloned().collect();
                 tiles.sort_unstable_by_key(|tile| tile.key());

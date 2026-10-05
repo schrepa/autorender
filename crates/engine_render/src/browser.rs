@@ -417,7 +417,7 @@ impl Renderer {
             engine_core::ReflectionProbes::default().resolution,
         );
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
-        let terrain = crate::terrain::TerrainPass::new(&device);
+        let terrain = crate::terrain::TerrainPass::new(&device, &queue);
         let camera = CameraBindings::new(
             &device,
             &queue,

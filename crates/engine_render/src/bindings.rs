@@ -592,7 +592,12 @@ pub(crate) const TERRAIN: Table = Table {
         sampler(22, "terrain_normal_sampler", Filtering, F),
         read(23, "terrain_directory", F),
         texture(24, "terrain_control", Uint, D2Array, F),
-        uniform_of(25, "terrain_palette", 16_384, F),
+        uniform_of(25, "terrain_palette", crate::terrain::PALETTE_BYTES, F),
+        // Surface materials' maps (decision 054) and their sampler.
+        texture(26, "terrain_albedo", Float, D2Array, F),
+        texture(27, "terrain_material_normals", Float, D2Array, F),
+        texture(28, "terrain_orm", Float, D2Array, F),
+        sampler(29, "terrain_material_sampler", Filtering, F),
     ],
 };
 

@@ -87,9 +87,9 @@ pub use scene::{
 };
 pub use skin::{RenderJoint, Skin};
 pub use terrain::{
-    RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Terrain, TerrainDebug,
-    TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
-    TerrainView, Terrains, TileRequest, Viewport,
+    RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Terrain,
+    TerrainDebug, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats,
+    TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
