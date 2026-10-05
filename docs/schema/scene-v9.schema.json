@@ -671,7 +671,7 @@
       ]
     },
     "PlacementLayer": {
-      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); and how deep they sink, in\nmeters at scale 1.",
+      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how deep they sink, in\nmeters at scale 1; and the pyramid level whose tiles hold its\ncandidates (0, the finest, by default).",
       "type": "object",
       "properties": {
         "align": {
@@ -700,6 +700,12 @@
         },
         "id": {
           "type": "string"
+        },
+        "level": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0
         },
         "mask": {
           "$ref": "#/$defs/Mask",

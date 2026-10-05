@@ -26,13 +26,15 @@ struct View {
 }
 
 // One object: its bounding sphere's center (world) and radius, its draw
-// group, and its scale.
+// group and scale, and the terrain it stands on and how far its base sinks
+// (`scatter_snap.wgsl`).
 struct Record {
     center: vec3<f32>,
     radius: f32,
     group: u32,
     scale: f32,
-    pad: vec2<u32>,
+    terrain: u32,
+    sink: f32,
 }
 
 // A draw group: where its objects' lists start, how many objects it has,

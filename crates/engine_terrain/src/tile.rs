@@ -131,8 +131,8 @@ impl Tile {
         self.control.as_deref()
     }
 
-    /// The objects the surface's placement layers stand on this tile
-    /// (decision 057): level-0 tiles of surfaces that place any.
+    /// The objects the surface's placement layers of this tile's level
+    /// stand on it (decision 057).
     pub fn placed(&self) -> &[crate::Placed] {
         self.placed.as_deref().unwrap_or(&[])
     }
@@ -557,9 +557,10 @@ impl Generator {
                         Some(control) => tile.with_control(control)?,
                         None => tile,
                     };
-                    // Objects stand on level-0 tiles (decision 057).
+                    // Objects stand on the tiles of their layers' levels
+                    // (decision 057).
                     return Some(match &self.surface {
-                        Some(surface) if surface.places() && self.key.level == 0 => {
+                        Some(surface) if surface.places_on(self.key.level) => {
                             let mut placed = Vec::new();
                             surface.place(&tile, &mut placed);
                             tile.with_placed(placed)

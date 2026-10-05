@@ -483,12 +483,12 @@ impl BiomeRules {
         &self.authored
     }
 
-    /// Whether any placement layer stands objects on the surface.
-    pub fn places(&self) -> bool {
-        !self.placements.is_empty()
+    /// Whether any placement layer stands objects on tiles of `level`.
+    pub fn places_on(&self, level: u8) -> bool {
+        self.placements.iter().any(|layer| layer.level == level)
     }
 
-    /// The objects every placement layer stands on level-0 tile `tile`
+    /// The objects the placement layers of `tile`'s level stand on it
     /// (decision 057), appended to `out`.
     pub fn place(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) {
         crate::placement::place(&self.placements, tile, 0x5eed_0057, out);

@@ -10,7 +10,7 @@ use super::frame::FrameState;
 use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
-use crate::scatter::{GroupLayout, LEVELS, Record};
+use crate::scatter::{GroupLayout, LEVELS, Record, SnapSources, TerrainInfo};
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
 
@@ -26,8 +26,10 @@ pub(super) struct ScatterDraws {
     key: Option<ScatterKey>,
     groups: Vec<ScatterDraw>,
     layouts: Vec<GroupLayout>,
-    // The group of each terrain's asset.
+    // The group of each terrain's asset, and each terrain's index among the
+    // frame's terrains.
     indices: HashMap<(u64, usize), u32>,
+    terrains: HashMap<u64, u32>,
     pool: ScatterPool,
 }
 
@@ -102,6 +104,20 @@ impl Renderer {
                 );
             }
         }
+        // Objects stand on the finest heights resident this frame.
+        let infos: Vec<TerrainInfo> = terrains
+            .iter()
+            .enumerate()
+            .map(|(index, terrain)| TerrainInfo {
+                origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
+                levels: [
+                    self.terrain.cover_terrain(index).0,
+                    terrain.pyramid.levels(),
+                    0,
+                    0,
+                ],
+            })
+            .collect();
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
         self.scatter.write_slots(
@@ -124,6 +140,14 @@ impl Renderer {
                 &draws.pool.counts,
             );
         }
+        let sources = self.terrain.cover_sources().map(|sources| SnapSources {
+            heights: sources.heights,
+            directory: sources.directory,
+            generation: sources.generation,
+            terrains: &infos,
+        });
+        self.scatter
+            .prepare_snap(&self.device, &self.queue, sources);
         // Each group's pipeline variant.
         let variants: Vec<Variant> = self
             .scatter_draws
@@ -235,6 +259,11 @@ impl Renderer {
         draws.groups = groups;
         draws.layouts = layouts;
         draws.indices = indices;
+        draws.terrains = terrains
+            .iter()
+            .enumerate()
+            .map(|(index, terrain)| (terrain.id, index as u32))
+            .collect();
     }
 
     /// The levels placed asset `asset` draws: its coarser meshes when it has
@@ -426,7 +455,8 @@ fn tile_objects(
             radius: radius * placed.scale,
             group,
             scale: placed.scale,
-            pad: [0; 2],
+            terrain: draws.terrains.get(&terrain.id).copied().unwrap_or(u32::MAX),
+            sink: placed.sink,
         });
     }
     objects
