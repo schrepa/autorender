@@ -1,12 +1,17 @@
 //! Placed objects' draws (decision 057): what terrains' placement layers
-//! stand on their level-0 tiles, laid out into the scatter pass whenever
-//! tiles, assets or their meshes' residency change, culled each frame and
-//! drawn after terrain in the first opaque phase.
+//! stand on their tiles, held in the scatter pool's slots as tiles arrive
+//! and leave, culled each frame and drawn after terrain in the first opaque
+//! phase. Draw groups, one per terrain asset, follow the assets.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::frame::FrameState;
+use super::scatter_pool::{ScatterPool, TileObjects};
 use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
-use crate::scatter::{GroupLayout, LEVELS, Objects, Record};
+use crate::scatter::{GroupLayout, LEVELS, Record};
+use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
 
 /// Levels of an automatic chain the camera draws: the mesh and its first
@@ -14,24 +19,39 @@ use engine_core::glam::{Mat4, Vec3};
 /// and serve only shadow maps whose texels hide their errors.
 const CAMERA_LEVELS: u32 = 2;
 
-/// One draw group of placed objects: each level's mesh, its material,
-/// where its lists start, its objects, and whether it casts shadows and
-/// tests its material's texels doing so.
-pub(super) struct ScatterDraw {
+/// Placed objects' draw groups and slots.
+#[derive(Default)]
+pub(super) struct ScatterDraws {
+    // What the groups were built from.
+    key: Option<ScatterKey>,
+    groups: Vec<ScatterDraw>,
+    layouts: Vec<GroupLayout>,
+    // The group of each terrain's asset.
+    indices: HashMap<(u64, usize), u32>,
+    pool: ScatterPool,
+}
+
+/// One draw group of placed objects: each level's mesh, its material, its
+/// objects' color and bounding sphere (mesh space), where its lists start,
+/// its live objects, and whether it casts shadows and tests its material's
+/// texels doing so.
+struct ScatterDraw {
     meshes: Vec<MeshHandle>,
     material: MaterialHandle,
+    color: ColorData,
+    sphere: (Vec3, f32),
     ids: u32,
     count: u32,
     casts: Option<bool>,
 }
 
-/// An asset as laid out: its mesh, material and version, and its coarser
-/// meshes.
-type AssetKey = (MeshHandle, MaterialHandle, u64, Vec<MeshHandle>);
+/// An asset as its group was built: its mesh, material and version, its
+/// coarser meshes, and which of these meshes were resident.
+type AssetKey = (MeshHandle, MaterialHandle, u64, Vec<MeshHandle>, Vec<bool>);
 
-/// What the scatter pass's objects were laid out from: each terrain's
-/// identity and tiles' revision, its assets, and the meshes' layout.
-pub(super) type ScatterKey = (Vec<(u64, u64, Vec<Option<AssetKey>>)>, u64);
+/// What the draw groups were built from: each terrain's identity and
+/// assets, and the meshes' layout.
+type ScatterKey = (Vec<(u64, Vec<Option<AssetKey>>)>, u64);
 
 /// A placed asset's levels as drawn: each one's index count, first index
 /// and base vertex, its mesh, the coarser ones' errors, and how many the
@@ -44,46 +64,70 @@ type Levels = (
 );
 
 impl Renderer {
-    /// Lays out the placed objects of `snapshot`'s terrains when anything
-    /// they come from changed, creates their pipelines for `kind`, and
-    /// plans this frame's culling; returns whether any draw.
+    /// Brings the scatter pool up to `snapshot`'s terrains: rebuilds the
+    /// draw groups when their assets changed, gives tiles that arrived
+    /// slots and frees those of tiles that left, uploads what changed,
+    /// creates the groups' pipelines for `kind`, and plans this frame's
+    /// culling; returns whether any object draws.
     pub(super) fn prepare_scatter(&mut self, snapshot: &RenderSnapshot, kind: PassKind) -> bool {
         let terrains = &snapshot.terrain.terrains;
-        let key: ScatterKey = (
-            terrains
+        let key = self.scatter_key(terrains);
+        if self.scatter_draws.key.as_ref() != Some(&key) || self.scatter_draws.pool.fragmented() {
+            self.build_scatter_groups(terrains);
+            self.scatter_draws.key = Some(key);
+        }
+        for terrain in terrains {
+            let draws = &mut self.scatter_draws;
+            if !draws.pool.tiles_changed(terrain.id, terrain.tiles_revision) {
+                continue;
+            }
+            let current: HashMap<TileKey, usize> = terrain
+                .tiles
                 .iter()
-                .map(|terrain| {
-                    (
-                        terrain.id,
-                        terrain.tiles_revision,
-                        terrain
-                            .assets
-                            .iter()
-                            .map(|asset| {
-                                asset.as_ref().map(|asset| {
-                                    (
-                                        asset.mesh.handle,
-                                        asset.material.handle,
-                                        asset.material.version,
-                                        asset.lods.iter().map(|(lod, _)| lod.handle).collect(),
-                                    )
-                                })
-                            })
-                            .collect(),
-                    )
-                })
-                .collect(),
-            self.mesh_layout,
+                .filter(|tile| !tile.placed().is_empty())
+                .map(|tile| (tile.key(), Arc::as_ptr(tile) as usize))
+                .collect();
+            draws.pool.retain(terrain.id, |key, identity| {
+                current.get(&key) == Some(&identity)
+            });
+            for tile in terrain.tiles.iter() {
+                if tile.placed().is_empty() || draws.pool.contains(terrain.id, tile.key()) {
+                    continue;
+                }
+                let objects = tile_objects(draws, terrain, tile);
+                draws.pool.insert(
+                    (terrain.id, tile.key()),
+                    Arc::as_ptr(tile) as usize,
+                    objects,
+                );
+            }
+        }
+        let draws = &mut self.scatter_draws;
+        let (dirty, counts_changed) = draws.pool.take_changes();
+        self.scatter.write_slots(
+            &self.device,
+            &self.queue,
+            (&draws.pool.poses, &draws.pool.colors, &draws.pool.records),
+            dirty,
         );
-        if self.scatter_key.as_ref() != Some(&key) {
-            let (objects, draws) = self.lay_out_scatter(terrains);
-            self.scatter.upload(&self.device, &self.queue, &objects);
-            self.scatter_draws = draws;
-            self.scatter_key = Some(key);
+        if counts_changed {
+            let mut ids = 0;
+            for (group, &count) in draws.groups.iter_mut().zip(&draws.pool.counts) {
+                group.ids = ids;
+                group.count = count;
+                ids += count * LEVELS;
+            }
+            self.scatter.set_groups(
+                &self.device,
+                &self.queue,
+                &draws.layouts,
+                &draws.pool.counts,
+            );
         }
         // Each group's pipeline variant.
         let variants: Vec<Variant> = self
             .scatter_draws
+            .groups
             .iter()
             .map(|draw| self.scatter_binding(draw).1)
             .collect();
@@ -110,21 +154,44 @@ impl Renderer {
         )
     }
 
-    /// The scatter pass's objects and draw groups from `terrains`: one group
-    /// per terrain asset whose mesh is resident and material uploaded, its
-    /// objects from every level-0 tile.
-    fn lay_out_scatter(
-        &self,
-        terrains: &[engine_core::RenderTerrain],
-    ) -> (Objects, Vec<ScatterDraw>) {
-        let mut objects = Objects {
-            poses: Vec::new(),
-            colors: Vec::new(),
-            records: Vec::new(),
-            groups: Vec::new(),
-        };
-        let mut draws = Vec::new();
-        let mut ids = 0;
+    /// What the draw groups of `terrains` are built from.
+    fn scatter_key(&self, terrains: &[engine_core::RenderTerrain]) -> ScatterKey {
+        let terrains = terrains
+            .iter()
+            .map(|terrain| {
+                let assets = terrain
+                    .assets
+                    .iter()
+                    .map(|asset| {
+                        asset.as_ref().map(|asset| {
+                            let lods: Vec<MeshHandle> =
+                                asset.lods.iter().map(|(lod, _)| lod.handle).collect();
+                            let resident = std::iter::once(&asset.mesh.handle)
+                                .chain(&lods)
+                                .map(|handle| self.meshes.contains_key(handle))
+                                .collect();
+                            (
+                                asset.mesh.handle,
+                                asset.material.handle,
+                                asset.material.version,
+                                lods,
+                                resident,
+                            )
+                        })
+                    })
+                    .collect();
+                (terrain.id, assets)
+            })
+            .collect();
+        (terrains, self.mesh_layout)
+    }
+
+    /// Builds one draw group per asset of `terrains` that draws, and empties
+    /// the pool for them: every tile takes new slots.
+    fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
+        let mut groups = Vec::new();
+        let mut layouts = Vec::new();
+        let mut indices = HashMap::new();
         for terrain in terrains {
             for (asset_index, asset) in terrain.assets.iter().enumerate() {
                 let Some(asset) = asset else {
@@ -133,59 +200,41 @@ impl Renderer {
                 let Some((levels, meshes, errors, camera)) = self.scatter_levels(asset) else {
                     continue;
                 };
-                let group = objects.groups.len() as u32;
                 let bounds = asset.mesh.mesh.bounds();
-                let center = (bounds.min() + bounds.max()) * 0.5;
-                let radius = (bounds.max() - bounds.min()).length() * 0.5;
-                let color = ColorData {
-                    color: pack_color(asset.material.material.color()),
-                    surface: pack_surface(asset.material.material.surface()),
-                    flags: 0,
-                };
-                let first = objects.records.len();
-                for tile in terrain.tiles.iter().filter(|tile| tile.key().level == 0) {
-                    for placed in tile.placed() {
-                        if usize::from(placed.asset) != asset_index {
-                            continue;
-                        }
-                        let model = placed_model(terrain.origin, placed);
-                        objects.poses.push(pose_rows(model));
-                        objects.colors.push(color);
-                        objects.records.push(Record {
-                            center: model.transform_point3(center).to_array(),
-                            radius: radius * placed.scale,
-                            group,
-                            scale: placed.scale,
-                            pad: [0; 2],
-                        });
-                    }
-                }
-                let count = (objects.records.len() - first) as u32;
-                if count == 0 {
-                    continue;
-                }
+                let material = &asset.material.material;
                 // Blending materials cast nothing; masked ones test their
                 // texels (decision 031).
-                let material = &asset.material.material;
                 let casts = (!material.is_transparent())
                     .then(|| matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. }));
-                draws.push(ScatterDraw {
+                indices.insert((terrain.id, asset_index), groups.len() as u32);
+                groups.push(ScatterDraw {
                     meshes,
                     material: asset.material.handle,
-                    ids,
-                    count,
+                    color: ColorData {
+                        color: pack_color(material.color()),
+                        surface: pack_surface(material.surface()),
+                        flags: 0,
+                    },
+                    sphere: (
+                        (bounds.min() + bounds.max()) * 0.5,
+                        (bounds.max() - bounds.min()).length() * 0.5,
+                    ),
+                    ids: 0,
+                    count: 0,
                     casts,
                 });
-                objects.groups.push(GroupLayout {
-                    count,
+                layouts.push(GroupLayout {
                     levels,
                     camera,
                     errors,
                 });
-                ids += count * LEVELS;
             }
         }
-        (objects, draws)
+        let draws = &mut self.scatter_draws;
+        draws.pool.clear(groups.len());
+        draws.groups = groups;
+        draws.layouts = layouts;
+        draws.indices = indices;
     }
 
     /// The levels placed asset `asset` draws: its coarser meshes when it has
@@ -266,7 +315,10 @@ impl Renderer {
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
         let mut draws = 0;
-        for (index, draw) in self.scatter_draws.iter().enumerate() {
+        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+            if draw.count == 0 {
+                continue;
+            }
             let (group, variant) = self.scatter_binding(draw);
             let Some(pipeline) = self.mesh_pipelines.variants.get(&(kind, variant)) else {
                 continue;
@@ -294,8 +346,8 @@ impl Renderer {
         pass.set_bind_group(1, poses, &[]);
         let mut bound = None;
         let mut draws = 0;
-        for (index, draw) in self.scatter_draws.iter().enumerate() {
-            let Some(masked) = draw.casts else {
+        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+            let Some(masked) = draw.casts.filter(|_| draw.count > 0) else {
                 continue;
             };
             if masked {
@@ -345,6 +397,39 @@ impl Renderer {
         }
         draws
     }
+}
+
+/// The objects terrain `terrain`'s tile `tile` holds for the draw groups of
+/// `draws`: those of assets without a group are left out.
+fn tile_objects(
+    draws: &ScatterDraws,
+    terrain: &engine_core::RenderTerrain,
+    tile: &engine_core::Tile,
+) -> TileObjects {
+    let placed = tile.placed();
+    let mut objects = (
+        Vec::with_capacity(placed.len()),
+        Vec::with_capacity(placed.len()),
+        Vec::with_capacity(placed.len()),
+    );
+    for placed in placed {
+        let Some(&group) = draws.indices.get(&(terrain.id, usize::from(placed.asset))) else {
+            continue;
+        };
+        let draw = &draws.groups[group as usize];
+        let (center, radius) = draw.sphere;
+        let model = placed_model(terrain.origin, placed);
+        objects.0.push(pose_rows(model));
+        objects.1.push(draw.color);
+        objects.2.push(Record {
+            center: model.transform_point3(center).to_array(),
+            radius: radius * placed.scale,
+            group,
+            scale: placed.scale,
+            pad: [0; 2],
+        });
+    }
+    objects
 }
 
 /// The world matrix of `placed` on a terrain whose origin is `origin`: its
