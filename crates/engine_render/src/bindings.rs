@@ -243,6 +243,10 @@ pub(crate) const CAMERA: Table = Table {
         texture(13, "terrain_horizons", Float, D2Array, F),
         texture(14, "terrain_horizon_records", Unfilterable, D2, F),
         sampler(15, "terrain_horizon_sampler", Filtering, F),
+        // What placed objects cover around the camera (decision 059): its
+        // density, filtered, and the covers' tops and bottoms.
+        texture(16, "occupancy_coverage", Float, D2, F),
+        texture(17, "occupancy_heights", Unfilterable, D2, F),
     ],
 };
 
@@ -702,6 +706,18 @@ pub(crate) const SCATTER_SNAP: Table = Table {
         read(3, "terrains", C),
         read(4, "directory", C),
         texture(5, "heights", Unfilterable, D2Array, C),
+    ],
+};
+
+/// Occupancy (decision 059; `occupancy.wgsl`): the map's area and counts,
+/// and the placed objects' records, poses and draw groups' covers.
+pub(crate) const OCCUPANCY: Table = Table {
+    label: "engine/occupancy-layout",
+    bindings: &[
+        uniform_of(0, "splat", 32, V),
+        read(1, "records", V),
+        read(2, "poses", V),
+        read(3, "covers", V),
     ],
 };
 

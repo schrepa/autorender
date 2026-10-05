@@ -445,6 +445,9 @@ fn section_description(name: &str) -> &'static str {
         "ground_cover" => {
             "Ground cover settings (decision 056): whether surface materials' covers grow, the radius around the camera they grow within (thinning over its outer half), a density scale, and an optional per-frame blade budget (the farthest drop first). Blades sway in the wind section. Missing means no cover. The rendering observation reports blades drawn and dropped."
         }
+        "occupancy" => {
+            "Occupancy settings (decision 059): a top-down map around the camera of what placed objects cover, their tops and bottoms, which darkens the sky light of what lies under or within them: forest floors, the lower crowns of trees and the ground at a boulder's foot. Its reach from the camera, texels a side, and how much sky light full cover takes away. Missing means no darkening. The rendering observation reports the map's redraws and the objects drawn into it."
+        }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }

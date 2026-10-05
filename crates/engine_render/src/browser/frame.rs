@@ -604,12 +604,29 @@ impl Renderer {
             self.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
-        let lighting = LightingUniform::new(
+        let mut lighting = LightingUniform::new(
             &snapshot.environment.atmosphere,
             &snapshot.environment.bloom,
             &snapshot.environment.reflections,
             &snapshot.environment.refraction,
         );
+        // What placed objects cover around the camera (decision 059): the
+        // map shading reads, drawn this frame when it no longer holds the
+        // camera's surroundings or the objects changed.
+        if let Some((area, strength)) = self.occupancy.prepare(
+            &self.device,
+            &self.queue,
+            &snapshot.environment.occupancy,
+            snapshot.camera_position,
+            (
+                self.scatter_draws.covers(),
+                self.scatter.objects(),
+                self.scatter.version(),
+            ),
+        ) {
+            lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];
+            lighting.occupancy_heights = [area.reference, area.resolution as f32, 0.0, 0.0];
+        }
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;
         let mut slot_upload_bytes = 0_u64;
@@ -1029,6 +1046,7 @@ impl Renderer {
                 environment: &self.environment,
                 probes: &self.probes,
                 horizons: &self.terrain.horizons,
+                occupancy: &self.occupancy,
             },
         );
     }
@@ -1367,6 +1385,7 @@ impl Renderer {
             phases,
             shadows: features.shadow_frame.is_some(),
             scatter,
+            occupancy: self.occupancy.redrawing(),
             clusters: virtual_frame,
             shadow_clusters: virtual_frame && !self.virtual_draws.shadow_bins.is_empty(),
             resolves: [
@@ -1412,6 +1431,7 @@ impl Renderer {
                     environment: &self.environment,
                     probes: &self.probes,
                     horizons: &self.terrain.horizons,
+                    occupancy: &self.occupancy,
                 },
             );
         }
@@ -1432,6 +1452,14 @@ impl Renderer {
             // Placed objects cull before the shadow maps and the first
             // opaque phase draw them (decision 057).
             Pass::Scatter => self.scatter.encode(encoder, &self.profiler),
+            Pass::Occupancy => {
+                self.occupancy.encode(
+                    &self.device,
+                    encoder,
+                    self.scatter.slot_buffers(),
+                    &self.profiler,
+                );
+            }
             Pass::ShadowSelect => self.encode_shadow_selection(state, encoder),
             Pass::VirtualSelect => self.encode_cluster_selection(encoder),
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),

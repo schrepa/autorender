@@ -20,6 +20,7 @@ mod interpolation;
 mod level_of_detail;
 mod lights;
 pub mod math;
+mod occupancy;
 mod packed;
 mod particles;
 mod probes;
@@ -79,6 +80,7 @@ pub use interpolation::{
 };
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
+pub use occupancy::Occupancy;
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
@@ -289,6 +291,7 @@ impl Engine {
             .init_resource::<TerrainSettings>()
             .init_resource::<GroundCover>()
             .init_resource::<Wind>()
+            .init_resource::<Occupancy>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -819,7 +822,7 @@ pub mod prelude {
         Pyramid, Remap, Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
-    pub use crate::{Cover, GroundCover, Wind};
+    pub use crate::{Cover, GroundCover, Occupancy, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{

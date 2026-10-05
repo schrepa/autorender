@@ -1613,6 +1613,17 @@
             }
           ]
         },
+        "occupancy": {
+          "description": "What placed objects cover darkens the sky light under them\n(decision 059).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneOccupancy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "particles": {
           "anyOf": [
             {
@@ -2382,6 +2393,38 @@
       "required": [
         "id"
       ]
+    },
+    "SceneOccupancy": {
+      "description": "Occupancy settings: whether the map is drawn, the meters it reaches\nfrom the camera on each side (64 to 4096), its texels a side (128 to\n4096), and how much of the sky light full cover takes away (0 to 1).\nRequires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "radius": {
+          "type": "number",
+          "format": "float",
+          "default": 512.0,
+          "maximum": 4096.0,
+          "minimum": 64.0
+        },
+        "resolution": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "maximum": 4096,
+          "minimum": 128
+        },
+        "strength": {
+          "type": "number",
+          "format": "float",
+          "default": 0.75,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
     },
     "SceneParticleBlend": {
       "description": "How particles combine with what is behind them.",

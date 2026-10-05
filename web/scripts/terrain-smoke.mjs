@@ -112,6 +112,8 @@ try {
   assert.equal(settled.dropped_terrain_tiles, 0);
   assert.equal(settled.dropped_terrain_materials, 0);
   assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
+  // Occupancy (decision 059): the crates' covers are drawn around the camera.
+  assert.ok(settled.occupancy_redraws > 0, `the occupancy map draws: ${settled.occupancy_redraws}`);
   checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles });
 
   // Discovery and inspection.
@@ -237,6 +239,14 @@ try {
   assert.equal(gale.error.path, "$.wind.velocity");
   await command("environment", { wind: calm });
   checks.push({ check: "wind", calm });
+  // Occupancy reads back as set, and refuses a resolution out of range.
+  const occupancy = (await command("inspect", { component: "Occupancy" })).result.value;
+  await command("environment", { occupancy: { ...occupancy, strength: 0.5 } });
+  assert.equal((await command("inspect", { component: "Occupancy" })).result.value.strength, 0.5);
+  const coarse = await command("environment", { occupancy: { ...occupancy, resolution: 16 } }, false);
+  assert.equal(coarse.error.path, "$.occupancy.resolution");
+  await command("environment", { occupancy });
+  checks.push({ check: "occupancy", redraws: settled.occupancy_redraws });
   await command("camera", overview);
   // The sky visibility map (decision 055) builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.

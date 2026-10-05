@@ -430,10 +430,12 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
     let rim = (grazing * grazing) * (grazing * grazing) * lighting.sun.w
         * (1.0 - abs(point.geometric.y));
-    // Occlusion maps darken indirect light only (glTF).
+    // Occlusion maps darken indirect light only (glTF), as do the covers of
+    // placed objects over the point (decision 059).
+    let covered_sky = occupancy_visibility(point.world);
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
-        + lighting.horizon.rgb * rim) + reflection) * point.occlusion
-        + point.diffuse_color * point.bounce;
+        + lighting.horizon.rgb * rim) + reflection) * point.occlusion * covered_sky
+        + point.diffuse_color * point.bounce * covered_sky;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
             point.world_dy, point.distance, point.on_terrain);

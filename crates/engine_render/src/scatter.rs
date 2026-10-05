@@ -141,6 +141,8 @@ pub(crate) struct ScatterPass {
     // places, and whether slots were written since, undoing it.
     snapped: Option<(SnapKey, Vec<TerrainInfo>)>,
     slots_written: bool,
+    // Advances when objects' poses or records change.
+    version: u64,
     frame: wgpu::Buffer,
     views: wgpu::Buffer,
     records: wgpu::Buffer,
@@ -198,6 +200,7 @@ impl ScatterPass {
             snapping: false,
             snapped: None,
             slots_written: false,
+            version: 0,
             terrains_generation: 0,
             frame: crate::buffers::uniform(
                 device,
@@ -366,6 +369,7 @@ impl ScatterPass {
         };
         if let Some(range) = range.filter(|range| !range.is_empty()) {
             self.slots_written = true;
+            self.version += 1;
             let write = |buffer: &wgpu::Buffer, stride: usize, bytes: &[u8]| {
                 queue.write_buffer(buffer, (range.start * stride) as u64, bytes);
             };
@@ -589,6 +593,7 @@ impl ScatterPass {
         }
         self.snapped = Some((key, sources.terrains.to_vec()));
         self.slots_written = false;
+        self.version += 1;
         if self.snap_group.stale(&key) {
             let group = crate::pipelines::group(
                 device,
@@ -607,6 +612,23 @@ impl ScatterPass {
             self.snap_group.set(key, group);
         }
         self.snapping = true;
+    }
+
+    /// Slots the culling spans, live or dead.
+    pub(crate) fn objects(&self) -> u32 {
+        self.objects
+    }
+
+    /// A version advancing whenever objects' poses or records change:
+    /// written, or set on the terrain.
+    pub(crate) fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// The objects' records and poses, and a generation advancing when the
+    /// buffers are replaced.
+    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
+        (&self.records, &self.poses, self.generation)
     }
 
     /// The pose groups of plain and temporal mesh pipelines.
