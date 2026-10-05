@@ -91,6 +91,11 @@ struct GroupData {
     pad: [u32; 2],
 }
 
+/// What setting objects on the terrain binds: the generations of the
+/// objects' buffers, the terrains' places and the terrain pass's heights
+/// and directory.
+type SnapKey = (u64, u64, (u64, u64));
+
 /// Vertices of an impostor card (`meshes/impostors.wgsl`).
 const CARD_VERTICES: u32 = 6;
 
@@ -130,8 +135,12 @@ pub(crate) struct ScatterPass {
     snap_pipeline: Option<wgpu::ComputePipeline>,
     snap: wgpu::Buffer,
     terrains: wgpu::Buffer,
-    snap_group: Cached<(u64, u64, (u64, u64)), wgpu::BindGroup>,
+    snap_group: Cached<SnapKey, wgpu::BindGroup>,
     snapping: bool,
+    // What objects were last set on: the group's key and the terrains'
+    // places, and whether slots were written since, undoing it.
+    snapped: Option<(SnapKey, Vec<TerrainInfo>)>,
+    slots_written: bool,
     frame: wgpu::Buffer,
     views: wgpu::Buffer,
     records: wgpu::Buffer,
@@ -187,6 +196,8 @@ impl ScatterPass {
             terrains: storage("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
             snap_group: Cached::default(),
             snapping: false,
+            snapped: None,
+            slots_written: false,
             terrains_generation: 0,
             frame: crate::buffers::uniform(
                 device,
@@ -354,6 +365,7 @@ impl ScatterPass {
             dirty.map(|range| range.start as usize..range.end as usize)
         };
         if let Some(range) = range.filter(|range| !range.is_empty()) {
+            self.slots_written = true;
             let write = |buffer: &wgpu::Buffer, stride: usize, bytes: &[u8]| {
                 queue.write_buffer(buffer, (range.start * stride) as u64, bytes);
             };
@@ -532,8 +544,9 @@ impl ScatterPass {
         });
     }
 
-    /// Plans setting objects on the terrain this frame from `sources`; none
-    /// while the terrain pass holds no heights.
+    /// Plans setting objects on the terrain this frame from `sources`: when
+    /// slots were written or the resident heights or terrains changed since
+    /// they last were; never while the terrain pass holds no heights.
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
@@ -567,6 +580,15 @@ impl ScatterPass {
             self.terrains_generation,
             sources.generation,
         );
+        let unchanged = self
+            .snapped
+            .as_ref()
+            .is_some_and(|(snapped, terrains)| *snapped == key && terrains == sources.terrains);
+        if unchanged && !self.slots_written {
+            return;
+        }
+        self.snapped = Some((key, sources.terrains.to_vec()));
+        self.slots_written = false;
         if self.snap_group.stale(&key) {
             let group = crate::pipelines::group(
                 device,

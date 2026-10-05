@@ -100,26 +100,29 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if record.radius < (*view).limits.x {
         return;
     }
+    let group = groups[record.group];
+    let away = distance(record.center, frame.eye.xyz);
+    // The camera draws an impostor its texels show within the error, as a
+    // card, which casts nothing: shadow maps drop it before any other test.
+    let impostor = group.impostor * record.scale;
+    let card = frame.eye.w > 0.0 && frame.strides.z != 0u && impostor > 0.0
+        && impostor * frame.eye.w + record.radius <= away;
+    if card && id.y != 0u {
+        return;
+    }
     for (var plane = 0u; plane < 6u; plane++) {
         let bound = (*view).planes[plane];
         if dot(bound.xyz, record.center) + bound.w < -record.radius {
             return;
         }
     }
-    let group = groups[record.group];
+    if card {
+        let index = atomicAdd(&card_args.instance_count, 1u);
+        cards[index] = vec2<u32>(id.x, group.record);
+        return;
+    }
     var level = 0u;
     if frame.eye.w > 0.0 {
-        let away = distance(record.center, frame.eye.xyz);
-        // The camera draws an impostor its texels show within the error,
-        // as a card, which casts nothing.
-        let impostor = group.impostor * record.scale;
-        if frame.strides.z != 0u && impostor > 0.0 && impostor * frame.eye.w + record.radius <= away {
-            if id.y == 0u {
-                let card = atomicAdd(&card_args.instance_count, 1u);
-                cards[card] = vec2<u32>(id.x, group.record);
-            }
-            return;
-        }
         // The camera's level among those it draws, or a coarser one whose
         // error the view's texels hide.
         for (var l = 1u; l < group.levels; l++) {

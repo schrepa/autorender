@@ -302,6 +302,7 @@ enum Stage {
     Holes { row: u32 },
     Biomes { row: usize },
     Done,
+    Place { layer: usize, row: usize },
 }
 
 /// Generates one tile from a layer stack in steps, so streaming can spread
@@ -334,6 +335,10 @@ pub struct Generator {
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
     weights: Vec<(u8, f32)>,
+    // The finished tile while its objects are placed (decision 057), a row
+    // of candidate squares at a time, and the objects placed so far.
+    tile: Option<Tile>,
+    placed: Vec<crate::Placed>,
 }
 
 impl Generator {
@@ -388,6 +393,8 @@ impl Generator {
             surface: None,
             control: None,
             weights: Vec::new(),
+            tile: None,
+            placed: Vec::new(),
         }
     }
 
@@ -558,15 +565,28 @@ impl Generator {
                         None => tile,
                     };
                     // Objects stand on the tiles of their layers' levels
-                    // (decision 057).
-                    return Some(match &self.surface {
+                    // (decision 057), placed in the stage after.
+                    match &self.surface {
                         Some(surface) if surface.places_on(self.key.level) => {
-                            let mut placed = Vec::new();
-                            surface.place(&tile, &mut placed);
-                            tile.with_placed(placed)
+                            self.tile = Some(tile);
+                            self.stage = Stage::Place { layer: 0, row: 0 };
                         }
-                        _ => tile,
-                    });
+                        _ => return Some(tile),
+                    }
+                }
+                Stage::Place { layer, row } => {
+                    let (Some(surface), Some(tile)) = (&self.surface, &self.tile) else {
+                        return None;
+                    };
+                    let (cost, next) = surface.place_row(tile, (layer, row), &mut self.placed);
+                    *budget = budget.saturating_sub(cost);
+                    match next {
+                        Some((layer, row)) => self.stage = Stage::Place { layer, row },
+                        None => {
+                            let tile = self.tile.take()?;
+                            return Some(tile.with_placed(std::mem::take(&mut self.placed)));
+                        }
+                    }
                 }
             }
         }
