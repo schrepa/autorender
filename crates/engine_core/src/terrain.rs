@@ -301,7 +301,7 @@ impl Default for TerrainSettings {
             pixel_error: 6.0,
             pinned_levels: 2,
             max_tiles: None,
-            samples_per_frame: 65_536,
+            samples_per_frame: 24_576,
             collision_radius: 192.0,
             sun_shadows: true,
             shadow_resolution: 1024,

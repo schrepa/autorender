@@ -334,6 +334,15 @@ struct GullyOctave {
 const OCTAVES: usize = 28;
 const GULLY_OCTAVES: usize = 5;
 
+/// What the coarse octaves leave at a point of the coarse grid, which
+/// samples between grid points interpolate and the fine octaves continue,
+/// so every octave sums the same way at every level and levels differ only
+/// by the octaves they leave out: the warp's offsets, the fractal and
+/// ridged sums, the ridged weight and the damping's lattice slope after the
+/// coarse octaves, and the gullies' heights.
+pub(crate) const STATE: usize = 8;
+pub(crate) type CoarseState = [f32; STATE];
+
 /// A noise layer with its octaves laid out.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct NoiseTables {
@@ -421,12 +430,12 @@ impl NoiseTables {
         (coarse, coarse..fine, gullies)
     }
 
-    /// The sideways warp of point `(x, z)`.
+    /// How far point `(x, z)` warps sideways.
     #[inline]
-    fn warped(&self, x: f32, z: f32) -> (f32, f32) {
+    fn warp(&self, x: f32, z: f32) -> [f32; 2] {
         let warp = self.params.warp;
         if warp == 0.0 {
-            return (x, z);
+            return [0.0; 2];
         }
         let w = self.params.wavelength;
         let (u, v) = (x / w, z / w);
@@ -436,15 +445,23 @@ impl NoiseTables {
         let b = gradient_value(u * 0.75 - 23.9, v * 0.75 + 41.7, seed ^ 2)
             + 0.5 * gradient_value(u * 1.5 + 29.3, v * 1.5 - 13.1, seed ^ 3);
         let reach = warp * w * 0.35;
-        (x + reach * a, z + reach * b)
+        [reach * a, reach * b]
     }
 
-    /// The coarse part at `(x, z)`: the first `octaves` octaves, shaped,
-    /// with `gully_octaves` gully octaves; and how much fine detail is left
-    /// there (the derivative damping of the next octave).
-    pub(crate) fn coarse(&self, x: f32, z: f32, octaves: usize, gully_octaves: usize) -> [f32; 2] {
+    /// The coarse state at `(x, z)`: the first `octaves` octaves at the
+    /// warped point, and `gully_octaves` gully octaves, gully `k` running
+    /// across the slope of octaves 0 to `k + 1` (four of its cells long and
+    /// more), whatever the level.
+    pub(crate) fn coarse(
+        &self,
+        x: f32,
+        z: f32,
+        octaves: usize,
+        gully_octaves: usize,
+    ) -> CoarseState {
         let params = &self.params;
-        let (px, pz) = self.warped(x, z);
+        let warp = self.warp(x, z);
+        let (px, pz) = (x + warp[0], z + warp[1]);
         // Two sums of the same octaves: fractal noise whose octaves fade
         // where the ground already slopes (Quilez), and Musgrave's ridged
         // multifractal, whose octaves are weighted by the ridge below them,
@@ -455,15 +472,17 @@ impl NoiseTables {
         let mut ridged = 0.0;
         let mut ridged_gradient = [0.0_f32; 2];
         let mut weight = 1.0;
-        let mut damping = 1.0;
-        for octave in &self.octaves[..octaves] {
+        // The blended sum and its gradient after octaves 1 to GULLY_OCTAVES,
+        // which the gullies run across.
+        let mut slopes = [[0.0_f32; 3]; GULLY_OCTAVES];
+        for (index, octave) in self.octaves[..octaves].iter().enumerate() {
             let (qx, qz) = octave.lattice(px, pz);
             let [n, nx, nz] = gradient_noise(qx, qz, octave.seed);
             let gx = octave.m[0] * nx + octave.m[2] * nz;
             let gz = octave.m[1] * nx + octave.m[3] * nz;
             lattice_slope[0] += nx;
             lattice_slope[1] += nz;
-            damping = 1.0
+            let damping = 1.0
                 / (1.0
                     + params.smoothing
                         * (lattice_slope[0] * lattice_slope[0]
@@ -479,53 +498,89 @@ impl NoiseTables {
             ridged_gradient[0] += change * gx;
             ridged_gradient[1] += change * gz;
             weight = clamp(signal * 2.0, 0.0, 1.0);
+            if let Some(slot) = index.checked_sub(1).and_then(|k| slopes.get_mut(k)) {
+                *slot = [
+                    blend(rolling, ridged, params.ridges),
+                    blend_gradient(rolling_gradient[0], ridged_gradient[0], params.ridges),
+                    blend_gradient(rolling_gradient[1], ridged_gradient[1], params.ridges),
+                ];
+            }
         }
-        // Both in about 0..1, blended by `ridges`.
-        let mixed = 0.5 + 0.8 * rolling + params.ridges * (ridged - 0.5 - 0.8 * rolling);
-        let gradient = [
-            0.8 * rolling_gradient[0]
-                + params.ridges * (ridged_gradient[0] - 0.8 * rolling_gradient[0]),
-            0.8 * rolling_gradient[1]
-                + params.ridges * (ridged_gradient[1] - 0.8 * rolling_gradient[1]),
-        ];
-        let detail = damping + params.ridges * (weight - damping);
-        // Widen valley floors.
-        let h = clamp(mixed, 0.0, 1.0);
-        let shaped = h + params.valleys * (h * h - h);
-        let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
-        let mut height = params.offset + params.height * shaped;
-        let mut gx = shape_slope * gradient[0];
-        let mut gz = shape_slope * gradient[1];
-        for octave in &self.gullies[..gully_octaves] {
+        let mut gully_heights = 0.0;
+        for (octave, [mixed, mx, mz]) in self.gullies[..gully_octaves].iter().zip(slopes) {
+            // The slope of the shaped octaves it follows.
+            let h = clamp(mixed, 0.0, 1.0);
+            let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
+            let (gx, gz) = (shape_slope * mx, shape_slope * mz);
             let slope = (gx * gx + gz * gz).sqrt();
             let inverse = 1.0 / max(slope, 1.0e-6);
             let across = [-gz * inverse, gx * inverse];
-            let [c, s] = gullies(px / octave.cell, pz / octave.cell, across, octave.seed);
+            let [c, _] = gullies(px / octave.cell, pz / octave.cell, across, octave.seed);
             // Gullies cut slopes, not flats.
             let depth = octave.depth * params.erosion * smooth((slope - 0.05) * (1.0 / 0.45));
-            height += depth * c;
-            let change = -depth * s * std::f32::consts::TAU / octave.cell;
-            gx += change * across[0];
-            gz += change * across[1];
+            gully_heights += depth * c;
         }
-        [height, detail]
+        [
+            warp[0],
+            warp[1],
+            rolling,
+            ridged,
+            weight,
+            lattice_slope[0],
+            lattice_slope[1],
+            gully_heights,
+        ]
     }
 
-    /// The fine octaves `range` at `(x, z)`, before the coarse part's
-    /// remaining detail scales them.
+    /// The height at `(x, z)` from the coarse `state` there: the fine
+    /// octaves `range` continue its sums exactly as coarse octaves add to
+    /// them, then valley floors widen and gullies cut in.
     #[inline]
-    pub(crate) fn fine(&self, x: f32, z: f32, range: std::ops::Range<usize>) -> f32 {
-        let ridges = self.params.ridges;
-        let mut sum = 0.0;
+    pub(crate) fn finish(
+        &self,
+        x: f32,
+        z: f32,
+        state: &CoarseState,
+        range: std::ops::Range<usize>,
+    ) -> f32 {
+        let params = &self.params;
+        let (px, pz) = (x + state[0], z + state[1]);
+        let [mut rolling, mut ridged, mut weight] = [state[2], state[3], state[4]];
+        let mut lattice_slope = [state[5], state[6]];
         for octave in &self.octaves[range] {
-            let (qx, qz) = octave.lattice(x, z);
-            let n = gradient_value(qx, qz, octave.seed);
+            let (qx, qz) = octave.lattice(px, pz);
+            let [n, nx, nz] = gradient_noise(qx, qz, octave.seed);
+            lattice_slope[0] += nx;
+            lattice_slope[1] += nz;
+            let damping = 1.0
+                / (1.0
+                    + params.smoothing
+                        * (lattice_slope[0] * lattice_slope[0]
+                            + lattice_slope[1] * lattice_slope[1]));
+            let a = octave.amplitude * damping;
+            rolling += a * n;
             let crest = 1.0 - n.abs();
-            let rolling = 0.8 * n;
-            sum += octave.amplitude * (rolling + ridges * (crest * crest - 0.5 - rolling));
+            let signal = crest * crest * weight;
+            ridged += octave.amplitude * signal;
+            weight = clamp(signal * 2.0, 0.0, 1.0);
         }
-        self.params.height * sum
+        // Widen valley floors.
+        let h = clamp(blend(rolling, ridged, params.ridges), 0.0, 1.0);
+        let shaped = h + params.valleys * (h * h - h);
+        params.offset + params.height * shaped + state[7]
     }
+}
+
+/// The fractal and ridged sums blended by `ridges`, both in about 0..1.
+#[inline(always)]
+fn blend(rolling: f32, ridged: f32, ridges: f32) -> f32 {
+    0.5 + 0.8 * rolling + ridges * (ridged - 0.5 - 0.8 * rolling)
+}
+
+/// The gradients of the sums [`blend`] blends, blended alike.
+#[inline(always)]
+fn blend_gradient(rolling: f32, ridged: f32, ridges: f32) -> f32 {
+    0.8 * rolling + ridges * (ridged - 0.8 * rolling)
 }
 
 /// A validated stack of layers, applied in order.
