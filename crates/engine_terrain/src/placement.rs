@@ -258,116 +258,137 @@ fn material_share(control: Control, set: &Option<[u64; 4]>) -> f32 {
     share
 }
 
-/// Places every layer of `layers` whose level is `tile`'s on it,
-/// appending to `out`; `seed` varies them per terrain.
-pub(crate) fn place(layers: &[CompiledPlacement], tile: &Tile, seed: u32, out: &mut Vec<Placed>) {
+/// The work of placing one candidate square, against one per sample of a
+/// layer: hashing it, and for those its rank keeps, sampling the tile.
+const SQUARE_COST: u64 = 1;
+const SAMPLE_COST: u64 = 8;
+
+/// Places row `row` (from the first) of layer `layer`'s candidate squares
+/// over `tile`, appending to `out`; `seed` varies them per terrain.
+/// Layers of other levels than `tile`'s hold no rows. Returns the work it
+/// took (samples' worth) and the next row, none after the last layer's
+/// last.
+pub(crate) fn place_row(
+    layers: &[CompiledPlacement],
+    tile: &Tile,
+    seed: u32,
+    (layer_index, row): (usize, usize),
+    out: &mut Vec<Placed>,
+) -> (u64, Option<(usize, usize)>) {
     let spacing = tile.spacing();
     let size = TILE_QUADS as f32 * spacing;
     let key = tile.key();
     let origin = [f32::from(key.x) * size, f32::from(key.z) * size];
-    for (layer_index, layer) in layers.iter().enumerate() {
-        if layer.fill <= 0.0 || layer.level != key.level {
+    let Some(layer) = layers.get(layer_index) else {
+        return (0, None);
+    };
+    if layer.fill <= 0.0 || layer.level != key.level {
+        return (0, Some((layer_index + 1, 0)));
+    }
+    let footprint = layer.footprint;
+    let layer_seed = hash(seed ^ (layer_index as u32).wrapping_mul(0x632b_e5ab));
+    let first = [
+        (origin[0] / footprint).floor() as i64,
+        (origin[1] / footprint).floor() as i64,
+    ];
+    let last = [
+        ((origin[0] + size) / footprint).floor() as i64,
+        ((origin[1] + size) / footprint).floor() as i64,
+    ];
+    let square_z = first[1] + row as i64;
+    for square_x in first[0]..=last[0] {
+        let square = hash(
+            layer_seed
+                ^ (square_x as u32).wrapping_mul(0x8da6_b343)
+                ^ (square_z as u32).wrapping_mul(0xd816_3841),
+        );
+        let rank = unit(hash(square ^ 0x1656_67b1));
+        if rank >= layer.fill {
             continue;
         }
-        let footprint = layer.footprint;
-        let layer_seed = hash(seed ^ (layer_index as u32).wrapping_mul(0x632b_e5ab));
-        let first = [
-            (origin[0] / footprint).floor() as i64,
-            (origin[1] / footprint).floor() as i64,
+        // The candidate's point, which belongs to the tile holding
+        // it.
+        let point = [
+            (square_x as f32 + unit(square)) * footprint,
+            (square_z as f32 + unit(hash(square ^ 0x5bd1_e995))) * footprint,
         ];
-        let last = [
-            ((origin[0] + size) / footprint).floor() as i64,
-            ((origin[1] + size) / footprint).floor() as i64,
-        ];
-        for square_z in first[1]..=last[1] {
-            for square_x in first[0]..=last[0] {
-                let square = hash(
-                    layer_seed
-                        ^ (square_x as u32).wrapping_mul(0x8da6_b343)
-                        ^ (square_z as u32).wrapping_mul(0xd816_3841),
-                );
-                let rank = unit(hash(square ^ 0x1656_67b1));
-                if rank >= layer.fill {
-                    continue;
-                }
-                // The candidate's point, which belongs to the tile holding
-                // it.
-                let point = [
-                    (square_x as f32 + unit(square)) * footprint,
-                    (square_z as f32 + unit(hash(square ^ 0x5bd1_e995))) * footprint,
-                ];
-                let local = [point[0] - origin[0], point[1] - origin[1]];
-                if local[0] < 0.0 || local[1] < 0.0 || local[0] >= size || local[1] >= size {
-                    continue;
-                }
-                let Some(sample) = tile.sample(glam::Vec2::from(local)) else {
-                    continue;
-                };
-                if sample.hole {
-                    continue;
-                }
-                let nearest = [
-                    (local[0] / spacing).round() as i32,
-                    (local[1] / spacing).round() as i32,
-                ];
-                let Some(control) = tile.control_at(nearest[0], nearest[1]) else {
-                    continue;
-                };
-                let share = material_share(control, &layer.materials);
-                if share <= 0.0 {
-                    continue;
-                }
-                let normal = sample.normal;
-                let gradient =
-                    (normal.x * normal.x + normal.z * normal.z).sqrt() / max(normal.y, 1.0e-3);
-                let height = |x: i32, z: i32| tile.height(x.clamp(-1, 257), z.clamp(-1, 257));
-                let (x, z) = (nearest[0], nearest[1]);
-                let curvature =
-                    (height(x - 1, z) + height(x + 1, z) + height(x, z - 1) + height(x, z + 1)
-                        - 4.0 * height(x, z))
-                        / (spacing * spacing);
-                let inputs = SampleInputs {
-                    x: point[0],
-                    z: point[1],
-                    height: sample.height,
-                    gradient,
-                    curvature,
-                    spacing,
-                };
-                let keep = layer.fill * share * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
-                if rank >= keep {
-                    continue;
-                }
-                let pick = unit(hash(square ^ 0x27d4_eb2f));
-                let asset = layer
-                    .choices
-                    .iter()
-                    .find(|(_, cumulative)| pick < *cumulative)
-                    .map_or(layer.choices[layer.choices.len() - 1].0, |(asset, _)| {
-                        *asset
-                    });
-                let scale = layer.scale[0]
-                    + (layer.scale[1] - layer.scale[0]) * unit(hash(square ^ 0xc2b2_ae35));
-                let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
-                // Its up leans toward the ground's normal as far as the
-                // layer aligns; a wobble keeps upright objects from
-                // standing too straight.
-                let (wobble_sin, wobble_cos) =
-                    sin_cos(unit(hash(square ^ 0x9e37_79b9)) * std::f32::consts::TAU);
-                let lean = [
-                    normal.x * layer.align + 0.03 * wobble_cos,
-                    normal.z * layer.align + 0.03 * wobble_sin,
-                ];
-                out.push(Placed {
-                    position: [point[0], sample.height - layer.sink * scale, point[1]],
-                    yaw,
-                    lean,
-                    scale,
-                    sink: layer.sink * scale,
-                    asset,
-                    layer: layer_index as u16,
-                });
-            }
+        let local = [point[0] - origin[0], point[1] - origin[1]];
+        if local[0] < 0.0 || local[1] < 0.0 || local[0] >= size || local[1] >= size {
+            continue;
         }
+        let Some(sample) = tile.sample(glam::Vec2::from(local)) else {
+            continue;
+        };
+        if sample.hole {
+            continue;
+        }
+        let nearest = [
+            (local[0] / spacing).round() as i32,
+            (local[1] / spacing).round() as i32,
+        ];
+        let Some(control) = tile.control_at(nearest[0], nearest[1]) else {
+            continue;
+        };
+        let share = material_share(control, &layer.materials);
+        if share <= 0.0 {
+            continue;
+        }
+        let normal = sample.normal;
+        let gradient = (normal.x * normal.x + normal.z * normal.z).sqrt() / max(normal.y, 1.0e-3);
+        let height = |x: i32, z: i32| tile.height(x.clamp(-1, 257), z.clamp(-1, 257));
+        let (x, z) = (nearest[0], nearest[1]);
+        let curvature = (height(x - 1, z) + height(x + 1, z) + height(x, z - 1) + height(x, z + 1)
+            - 4.0 * height(x, z))
+            / (spacing * spacing);
+        let inputs = SampleInputs {
+            x: point[0],
+            z: point[1],
+            height: sample.height,
+            gradient,
+            curvature,
+            spacing,
+        };
+        let keep = layer.fill * share * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
+        if rank >= keep {
+            continue;
+        }
+        let pick = unit(hash(square ^ 0x27d4_eb2f));
+        let asset = layer
+            .choices
+            .iter()
+            .find(|(_, cumulative)| pick < *cumulative)
+            .map_or(layer.choices[layer.choices.len() - 1].0, |(asset, _)| {
+                *asset
+            });
+        let scale =
+            layer.scale[0] + (layer.scale[1] - layer.scale[0]) * unit(hash(square ^ 0xc2b2_ae35));
+        let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
+        // Its up leans toward the ground's normal as far as the
+        // layer aligns; a wobble keeps upright objects from
+        // standing too straight.
+        let (wobble_sin, wobble_cos) =
+            sin_cos(unit(hash(square ^ 0x9e37_79b9)) * std::f32::consts::TAU);
+        let lean = [
+            normal.x * layer.align + 0.03 * wobble_cos,
+            normal.z * layer.align + 0.03 * wobble_sin,
+        ];
+        out.push(Placed {
+            position: [point[0], sample.height - layer.sink * scale, point[1]],
+            yaw,
+            lean,
+            scale,
+            sink: layer.sink * scale,
+            asset,
+            layer: layer_index as u16,
+        });
     }
+    let squares = (last[0] - first[0] + 1) as u64;
+    let kept = (squares as f32 * layer.fill).ceil() as u64;
+    let cost = squares * SQUARE_COST + kept * (SAMPLE_COST + layer.mask.cost());
+    let next = if square_z < last[1] {
+        (layer_index, row + 1)
+    } else {
+        (layer_index + 1, 0)
+    };
+    (cost, Some(next))
 }

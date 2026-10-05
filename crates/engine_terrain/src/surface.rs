@@ -296,7 +296,7 @@ impl Compiled {
     }
 
     /// Work units of one evaluation, against one per sample of a layer.
-    fn cost(&self) -> u64 {
+    pub(crate) fn cost(&self) -> u64 {
         match self {
             Self::Constant(_) => 0,
             Self::Height(_) | Self::Gradient(_) | Self::Curvature(_) => 1,
@@ -488,10 +488,17 @@ impl BiomeRules {
         self.placements.iter().any(|layer| layer.level == level)
     }
 
-    /// The objects the placement layers of `tile`'s level stand on it
-    /// (decision 057), appended to `out`.
-    pub fn place(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) {
-        crate::placement::place(&self.placements, tile, 0x5eed_0057, out);
+    /// The objects row `row` of placement layer `layer`'s candidate squares
+    /// stand on `tile` (decision 057), appended to `out`: layers of other
+    /// levels than `tile`'s hold none. Returns the work it took (samples'
+    /// worth) and the next row, none after the last layer's last.
+    pub fn place_row(
+        &self,
+        tile: &crate::Tile,
+        (layer, row): (usize, usize),
+        out: &mut Vec<crate::Placed>,
+    ) -> (u64, Option<(usize, usize)>) {
+        crate::placement::place_row(&self.placements, tile, 0x5eed_0057, (layer, row), out)
     }
 
     /// Work units of one sample's control value, against one per sample

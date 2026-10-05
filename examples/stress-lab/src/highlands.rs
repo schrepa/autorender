@@ -413,7 +413,7 @@ fn rules() -> Biomes {
         // Boulders in clumps over the meadows, stones strewn on scree,
         // outcrops on rock, and spruce forests in broad stands below the
         // tree line on gentle ground, thinning at their edges: placed on
-        // kilometer tiles, which stay resident farther away.
+        // two-kilometer tiles, which stay resident farther away.
         placements: vec![
             PlacementLayer {
                 id: "spruces".into(),
@@ -441,7 +441,7 @@ fn rules() -> Biomes {
                 scale: [0.65, 1.15],
                 align: 0.04,
                 sink: 0.3,
-                level: 2,
+                level: 3,
             },
             PlacementLayer {
                 id: "boulders".into(),
