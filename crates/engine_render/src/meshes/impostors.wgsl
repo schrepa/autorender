@@ -287,7 +287,7 @@ struct ImpostorCard {
 fn impostor_card(input: ImpostorInput) -> ImpostorCard {
     let slot = input.slot & ~MOVED_SLOT;
     let model = pose_matrix(poses[slot]);
-    let record = impostor_records[input.batch];
+    let record = impostor_records[impostor_index(input.batch)];
     let center = record.sphere.xyz;
     let radius = record.sphere.w;
     // Cofactor columns: the inverse's rows times the determinant, rescaled
@@ -396,7 +396,7 @@ fn vs_impostor_temporal(input: ImpostorInput) -> ImpostorTemporalOutput {
 // discards fragments the blend leaves under half covered, scaling coverage
 // up on coarser levels as masked materials do.
 fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
-    let record = impostor_records[input.batch];
+    let record = impostor_records[impostor_index(input.batch)];
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
@@ -424,6 +424,12 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // reading the rest.
     let coverage = albedo.a;
     if coverage * (1.0 + MASK_MIP_SCALE * level) < 0.5 {
+        discard;
+    }
+    // Fading in (decision 063), a card covers that share of its pixels; the
+    // mesh behind it shows through the rest.
+    let fade = impostor_fade(input.batch);
+    if fade < 1.0 && fade <= pixel_noise(input.clip_position.xy) {
         discard;
     }
     var emissive = vec4<f32>(0.0);
