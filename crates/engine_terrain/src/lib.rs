@@ -34,7 +34,7 @@ pub use format::{
 pub use layers::{
     Blend, HeightImage, HeightmapLayer, Layer, LayerError, Layers, NoiseLayer, Stamp, StampOp,
 };
-pub use placement::{Placed, PlacementChoice, PlacementLayer};
+pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use select::{LodRanges, Patch, Selection, WantedTile, select_patches, wanted_tiles};
 pub use surface::{

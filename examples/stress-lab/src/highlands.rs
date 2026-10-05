@@ -484,6 +484,12 @@ fn rules() -> Biomes {
                 align: 0.04,
                 sink: 0.3,
                 level: 3,
+                // A third of them stand on the pinned four-kilometer tiles too,
+                // so forests reach the horizon (decision 061).
+                far: Some(FarPlacement {
+                    level: 4,
+                    share: 0.3,
+                }),
             },
             PlacementLayer {
                 id: "boulders".into(),
@@ -496,6 +502,7 @@ fn rules() -> Biomes {
                 align: 0.3,
                 sink: 0.2,
                 level: 0,
+                far: None,
             },
             PlacementLayer {
                 id: "stones".into(),
@@ -508,6 +515,7 @@ fn rules() -> Biomes {
                 align: 0.8,
                 sink: 0.08,
                 level: 0,
+                far: None,
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -520,6 +528,7 @@ fn rules() -> Biomes {
                 align: 0.6,
                 sink: 0.5,
                 level: 0,
+                far: None,
             },
         ],
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),

@@ -12,7 +12,9 @@ use super::*;
 use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
 use crate::occupancy::Cover;
-use crate::scatter::{GroupLayout, LEVELS, Record, SnapSources, TerrainInfo};
+use crate::scatter::{
+    GroupLayout, LEVELS, NEAR_LEVEL_SHIFT, Record, SnapSources, TERRAIN_INDEX, TerrainInfo,
+};
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
 
@@ -46,6 +48,11 @@ impl ScatterDraws {
     /// (decision 060), zeroed without one.
     pub(super) fn impostors(&self) -> &[ImpostorRecord] {
         &self.impostors
+    }
+
+    /// Resident objects standing far away (decision 061).
+    pub(super) fn far_objects(&self) -> u32 {
+        self.pool.far
     }
 
     /// Each draw group's cover, which the occupancy map draws (decision
@@ -649,10 +656,19 @@ fn tile_objects(
         Vec::with_capacity(placed.len()),
         Vec::with_capacity(placed.len()),
     );
+    // The terrain's index, and for objects standing far away the level
+    // whose tiles hold them instead (decision 061).
+    let index = draws
+        .terrains
+        .get(&terrain.id)
+        .copied()
+        .unwrap_or(TERRAIN_INDEX)
+        .min(TERRAIN_INDEX);
     for placed in placed {
         let Some(&group) = draws.indices.get(&(terrain.id, usize::from(placed.asset))) else {
             continue;
         };
+        let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
         let draw = &draws.groups[group as usize];
         let (center, radius) = draw.sphere;
         let model = placed_model(terrain.origin, placed);
@@ -663,7 +679,7 @@ fn tile_objects(
             radius: radius * placed.scale,
             group,
             scale: placed.scale,
-            terrain: draws.terrains.get(&terrain.id).copied().unwrap_or(u32::MAX),
+            terrain: index | near << NEAR_LEVEL_SHIFT,
             sink: placed.sink,
         });
     }

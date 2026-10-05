@@ -312,6 +312,7 @@ impl Renderer {
             ground_cover_blades: self.ground_cover.totals()[0],
             dropped_ground_cover: self.ground_cover.totals()[1],
             placed_objects: self.scatter.resident,
+            placed_far_objects: self.scatter_draws.far_objects(),
             placed_impostors: self.impostors.placed.live(),
             occupancy_redraws: self.occupancy.redraws,
             dropped_terrain_materials: self.terrain.dropped_materials,

@@ -171,6 +171,9 @@ pub struct RenderStats {
     /// Objects terrains' placement layers stand on resident level-0 tiles
     /// (decision 057), each culled on the GPU every frame.
     pub placed_objects: u32,
+    /// Of those, objects standing far away (decision 061), which hide where
+    /// the tiles holding them instead are resident.
+    pub placed_far_objects: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.

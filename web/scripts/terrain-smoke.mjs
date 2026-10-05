@@ -49,7 +49,9 @@ const terrain = {
       { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 },
       { id: "ball", mesh: "ball", material: "plain" },
     ],
-    placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1] }],
+    // A quarter of them also stand on the pinned level-2 tiles, hidden where
+    // level-0 tiles hold them (decision 061).
+    placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1], far: { level: 2, share: 0.25 } }],
   },
 };
 /** A unit icosphere subdivided once: 80 triangles, enough for an impostor. */
@@ -147,6 +149,9 @@ try {
   assert.equal(settled.dropped_terrain_tiles, 0);
   assert.equal(settled.dropped_terrain_materials, 0);
   assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
+  // The pinned tiles stand a share of them everywhere (decision 061).
+  assert.ok(settled.placed_far_objects > 0 && settled.placed_far_objects < settled.placed_objects,
+    `far crates: ${settled.placed_far_objects} of ${settled.placed_objects}`);
   // Occupancy (decision 059): the crates' covers are drawn around the camera.
   assert.ok(settled.occupancy_redraws > 0, `the occupancy map draws: ${settled.occupancy_redraws}`);
   // GPU-presented frames bake the balls' impostor (decision 060), which far
@@ -158,7 +163,7 @@ try {
   }
   assert.equal(presented.placed_impostors, 1, `the balls' impostor bakes: ${JSON.stringify(presented)}`);
   assert.equal(presented.dropped_impostors, 0);
-  checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles, placed_impostors: presented.placed_impostors });
+  checks.push({ check: "streams and draws", tiles: settled.terrain_tiles, patches: settled.terrain_patches, triangles: settled.terrain_triangles, placed_impostors: presented.placed_impostors, placed_far: settled.placed_far_objects });
 
   // Discovery and inspection.
   const listing = await command("describe");
@@ -182,6 +187,7 @@ try {
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
   assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5 });
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
+  assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.

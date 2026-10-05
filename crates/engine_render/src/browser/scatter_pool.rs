@@ -11,7 +11,7 @@ use engine_core::TileKey;
 use engine_core::glam::Vec3;
 
 use crate::gpu_data::{ColorData, PoseData};
-use crate::scatter::{DEAD, Record};
+use crate::scatter::{DEAD, NEAR_LEVEL_SHIFT, Record};
 
 /// A tile's objects as the pool takes them: poses, colors and records.
 pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>);
@@ -22,8 +22,10 @@ pub(super) struct ScatterPool {
     pub(super) poses: Vec<PoseData>,
     pub(super) colors: Vec<ColorData>,
     pub(super) records: Vec<Record>,
-    /// Live objects of each draw group.
+    /// Live objects of each draw group, and of those standing far away
+    /// (decision 061).
     pub(super) counts: Vec<u32>,
+    pub(super) far: u32,
     // Each resident tile's identity (its pointer) and slots, by terrain and
     // key.
     tiles: HashMap<(u64, TileKey), (usize, Range<u32>)>,
@@ -97,6 +99,7 @@ impl ScatterPool {
         self.records[range].copy_from_slice(&records);
         for record in &records {
             self.counts[record.group as usize] += 1;
+            self.far += u32::from(stands_far(record));
         }
         self.moved.extend(bounds(&records));
         self.counts_changed = true;
@@ -154,6 +157,7 @@ impl ScatterPool {
     fn free_slots(&mut self, slots: Range<u32>) {
         for record in &mut self.records[slots.start as usize..slots.end as usize] {
             self.counts[record.group as usize] -= 1;
+            self.far -= u32::from(stands_far(record));
             *record = dead();
         }
         self.counts_changed = true;
@@ -191,6 +195,11 @@ fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
             (center - reach, center + reach)
         })
         .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
+}
+
+/// Whether `record`'s object stands far away (decision 061).
+fn stands_far(record: &Record) -> bool {
+    record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & 0xff != 0
 }
 
 /// The record of a dead slot, which culling skips.
