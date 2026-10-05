@@ -78,6 +78,12 @@ struct CardArgs {
     first_instance: u32,
 }
 
+// The share of the distance at which an impostor takes over from its mesh
+// before it over which its card fades in, drawn over the mesh (decision
+// 063), and the card word's flag of a fading card.
+const FADE_BAND: f32 = 0.15;
+const FADING: u32 = 0x80000000u;
+
 // The draw group of slots no object holds, and the terrain word's flag of
 // objects standing far away hidden where tiles holding them instead are
 // resident (decision 061; `scatter.rs`).
@@ -125,8 +131,13 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     // every impostor as one.
     let impostor = group.impostor * record.scale;
     let impostors = frame.strides.z != 0u && impostor > 0.0;
-    let seen_as_card = impostors && frame.eye.w > 0.0
-        && impostor * frame.eye.w + record.radius <= away;
+    let takes_over = impostor * frame.eye.w + record.radius;
+    let seen_as_card = impostors && frame.eye.w > 0.0 && takes_over <= away;
+    // Over the band before that, the camera draws both: the card fading in
+    // over the mesh, its record's index small enough to share its word.
+    let fade_from = takes_over * (1.0 - FADE_BAND);
+    let fading = impostors && frame.eye.w > 0.0 && !seen_as_card && away > fade_from
+        && group.record < 0x10000u;
     for (var view = 0u; view < frame.counts.w; view++) {
         let limits = views[view].limits;
         let kept = limits.z > 0.0;
@@ -139,6 +150,11 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             let index = atomicAdd(&card_args[view].instance_count, 1u);
             cards[view * frame.strides.w + index] = vec2<u32>(id.x, group.record);
             continue;
+        }
+        if fading && view == 0u {
+            let fade = u32(saturate((away - fade_from) / (takes_over - fade_from)) * 32767.0);
+            let index = atomicAdd(&card_args[0].instance_count, 1u);
+            cards[index] = vec2<u32>(id.x, group.record | FADING | (fade << 16u));
         }
         var level = 0u;
         if kept {

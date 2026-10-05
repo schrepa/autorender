@@ -565,7 +565,7 @@ const CARD = array<vec2<f32>, 6>(
 fn vs_impostor_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
         @location(3) index: u32) -> CardOutput {
     let pose = slot_poses[slot];
-    let record = impostor_records[index];
+    let record = impostor_records[impostor_index(index)];
     // The mesh-space direction toward the sun: depth grows away from it.
     // Cofactor columns map it as the inverse would, but for scale.
     let toward = -vec3<f32>(view.clip[0].z, view.clip[1].z, view.clip[2].z);

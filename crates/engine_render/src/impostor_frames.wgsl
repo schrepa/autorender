@@ -6,6 +6,24 @@ const IMPOSTOR_FRAMES: u32 = 8u;
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
 
+// The flag of a placed object's card fading in where its impostor is about
+// to take over from its mesh (decision 063): its record's index in the low
+// 16 bits, and how far in (of 32768) in the 15 above.
+const IMPOSTOR_FADING: u32 = 0x80000000u;
+
+// The record index of a card's `batch` word.
+fn impostor_index(batch: u32) -> u32 {
+    return select(batch, batch & 0xffffu, (batch & IMPOSTOR_FADING) != 0u);
+}
+
+// How much of a card shows: all but while it fades in.
+fn impostor_fade(batch: u32) -> f32 {
+    if (batch & IMPOSTOR_FADING) == 0u {
+        return 1.0;
+    }
+    return f32((batch >> 16u) & 0x7fffu) / 32768.0;
+}
+
 struct ImpostorRecord {
     // Mesh-space center and radius of the sphere every frame frames.
     sphere: vec4<f32>,
