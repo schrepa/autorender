@@ -135,8 +135,8 @@ impl Display {
 /// The depth buffer, and a generation that advances when it is replaced
 /// (passes that sample it rebind).
 pub(super) struct DepthTarget {
-    // Keep texture ownership explicit alongside its reusable view.
-    _texture: wgpu::Texture,
+    // Water (decision 074) copies it before drawing over it.
+    pub(super) texture: wgpu::Texture,
     pub(super) view: wgpu::TextureView,
     pub(super) generation: u64,
 }
@@ -150,12 +150,13 @@ impl DepthTarget {
             1,
             1,
             DEPTH_FORMAT,
-            // Ambient occlusion (decision 021) samples it after the opaque pass.
-            crate::targets::RENDER_TARGET,
+            // Ambient occlusion (decision 021) samples it after the opaque
+            // pass, and water (decision 074) copies it.
+            crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
-            _texture: texture,
+            texture,
             view,
             generation: 0,
         }

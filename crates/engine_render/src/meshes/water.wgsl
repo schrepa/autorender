@@ -2,9 +2,11 @@
 // bakes found them (decision 066), drawn as chunks of a grid whose vertices
 // read the water's surface, depth and flow at the bake's samples. Water
 // covers the ground below by how little of its light comes back through
-// the water's depth, reflecting the sky, the sun and, through screen-space
-// reflections, the scene; its ripples ride the wind on lakes and run
-// downstream on rivers.
+// the water between its surface and the ground behind it, which a copy of
+// the opaque depth gives (decision 074), reflecting the sky, the sun and,
+// through screen-space reflections, the scene; its ripples ride the wind on
+// lakes and run downstream on rivers, and foam gathers where it runs
+// shallow along shores and where rivers run fast.
 
 // The water's surface (terrain-local meters), a texel a bake sample.
 @group(1) @binding(33) var water_surface: texture_2d<f32>;
@@ -17,15 +19,31 @@
 // spacing (w); the bake's samples along x and z and quads along each side
 // of a chunk; the color deep water scatters back (rgb) and the meters
 // through which half the light passes (w); the ripples' strength, the
-// meters across the largest, and the wind's velocity along x and z.
+// meters across the largest, and the wind's velocity along x and z; and
+// how much foam gathers and the meters of water shallower than which
+// shores foam.
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
     grid: vec4<u32>,
     color: vec4<f32>,
     ripples: vec4<f32>,
+    foam: vec4<f32>,
 }
 @group(1) @binding(35) var<uniform> water: WaterUniform;
+// The opaque scene's depth, copied before water draws.
+@group(2) @binding(36) var water_depth: texture_depth_2d;
+
+// The opaque surface behind the water at `pixel` (its center), less the
+// eye, without the jitter of temporally antialiased frames (decision 017).
+fn water_ground(pixel: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(water_depth));
+    let depth = textureLoad(water_depth, vec2<i32>(pixel), 0);
+    let ndc = vec2<f32>(pixel.x / size.x * 2.0 - 1.0, 1.0 - pixel.y / size.y * 2.0)
+        - camera.jitter.xy;
+    let point = camera.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
+    return point.xyz / point.w - camera.position.xyz;
+}
 
 // A chunk: its first sample (x and z) and the samples between its
 // vertices.
@@ -156,9 +174,23 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     let strength = water.ripples.x * mix(1.0, 1.3, running);
     let normal = normalize(vec3<f32>(-slopes.x * strength, 1.0, -slopes.y * strength));
     let view = stable_normalize(-input.relative);
+    // The ground behind the water: the meters the view travels through it,
+    // and how deep the water stands over the ground there. Behind the sky,
+    // both run far.
+    let ground = water_ground(input.clip_position.xy);
+    let through = max(length(ground - input.relative), 0.0);
+    let below = max(input.relative.y - ground.y, 0.0);
     // What comes back from inside the water, lit as a diffuse surface:
-    // the scattered color, for as much light as the depth stops.
-    let transmit = exp2(-depth / water.color.w);
+    // the scattered color, for as much light as the water stops.
+    let transmit = exp2(-through / water.color.w);
+    // Foam where the water runs shallow along shores and where rivers run
+    // fast, broken by drifting noise and fading before it would alias.
+    let shore = 1.0 - smoothstep(0.0, water.foam.y, below);
+    let rapids = smoothstep(2.5, 6.0, length(flow));
+    let grain = water_noise((world.xz - drift * time * 0.8) * 1.3).x * 0.65
+        + water_noise(world.xz * 4.1 + vec2<f32>(time * 0.35, 0.0)).x * 0.35;
+    let foam = water.foam.x * saturate((max(shore, rapids * 0.8) - grain * 0.7) * 2.5)
+        * saturate(1.6 - footprint * 3.0);
     var point: SurfacePoint;
     point.albedo = water.color.rgb;
     point.opacity = 1.0;
@@ -166,10 +198,10 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
     point.bounce = vec3<f32>(0.0);
-    point.roughness = 0.05;
+    point.roughness = mix(0.05, 0.7, foam);
     point.alpha = point.roughness * point.roughness;
     point.f0 = vec3<f32>(0.02);
-    point.diffuse_color = water.color.rgb * (1.0 - transmit);
+    point.diffuse_color = mix(water.color.rgb * (1.0 - transmit), vec3<f32>(0.8), foam);
     point.geometric = vec3<f32>(0.0, 1.0, 0.0);
     point.normal = normal;
     point.distance = distance;
@@ -187,7 +219,10 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     // the ground show through.
     let reflectance = saturate(luminance(environment_brdf(point.f0, point.roughness,
         point.n_v)));
-    result.coverage = 1.0 - (1.0 - reflectance) * transmit;
+    // Foam covers what lies below, and the water thins out to nothing where
+    // it meets the shore.
+    result.coverage = max(1.0 - (1.0 - reflectance) * transmit, foam)
+        * smoothstep(0.0, 0.08, below);
     return result;
 }
 

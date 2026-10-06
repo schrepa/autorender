@@ -134,6 +134,7 @@ impl Renderer {
             &snapshot.terrain,
             environment.water,
             (snapshot.camera_position, environment.wind.velocity),
+            &self.depth.texture,
         ) {
             return false;
         }

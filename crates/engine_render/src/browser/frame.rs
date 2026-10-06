@@ -2127,6 +2127,8 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) -> u32 {
+        // The ground behind the water, before it draws (decision 074).
+        self.water.copy_depth(encoder, &self.depth.texture);
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine/water"),
