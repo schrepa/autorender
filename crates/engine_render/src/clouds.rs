@@ -1,8 +1,8 @@
 //! Clouds (decision 084; `clouds.wgsl`): a volume of tiling noise made once,
 //! and the dome of the sky's clouds marched from the camera, a slice of its
-//! rows each ordinary frame and all of them on exact frames, when the
-//! clouds change or when the camera has moved far since the last whole
-//! march. The sky and the sky's environment map show the dome; frames
+//! rows each ordinary frame and all of them on exact frames or when the
+//! clouds change. A moving camera never marches it whole in one displayed
+//! frame: its slices follow the camera. The sky and the sky's environment map show the dome; frames
 //! without clouds bind a clear one.
 
 use bytemuck::{Pod, Zeroable};
@@ -15,8 +15,6 @@ use crate::gpu_data::LightingUniform;
 /// Texels along each side of the noise volume.
 const NOISE_SIZE: u32 = 128;
 const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-/// Meters the camera moves before the whole dome marches again.
-const MOVED: f32 = 250.0;
 /// Whole marches between redraws of the sky's environment map.
 const ENVIRONMENT_EVERY: u64 = 8;
 /// Cells along a side of the shadows' grid (`scene.wgsl`'s
@@ -70,10 +68,10 @@ pub(crate) struct CloudPass {
     sky_group: Cached<(u64, bool), wgpu::BindGroup>,
     // Advances whenever the dome is another texture.
     generation: u64,
-    // The settings and eye of the last whole march, how many whole marches
-    // there were, and how many were recorded: the sky's environment map,
-    // drawn before a frame's march, follows those.
-    marched: Option<(Clouds, glam::Vec3)>,
+    // The settings of the last whole march, how many whole marches there
+    // were, and how many were recorded: the sky's environment map, drawn
+    // before a frame's march, follows those.
+    marched: Option<Clouds>,
     whole: u64,
     recorded: u64,
     // Whether the dome was marched whole since it was made: until then
@@ -296,8 +294,8 @@ impl CloudPass {
 
     /// Plans this frame's march of `settings`' clouds seen from `eye` at
     /// simulation time `seconds` in `lighting`'s sun and sky: the whole dome
-    /// when `whole` (exact frames), when it is new or the clouds changed,
-    /// or when the camera moved far; otherwise a slice of its rows.
+    /// when `whole` (exact frames), when it is new or the clouds changed;
+    /// otherwise a slice of its rows.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -339,14 +337,10 @@ impl CloudPass {
             self.generation += 1;
             self.ready = false;
         }
-        let whole = whole
-            || fresh
-            || self
-                .marched
-                .is_none_or(|(marched, from)| marched != settings || from.distance(eye) > MOVED);
+        let whole = whole || fresh || self.marched.is_none_or(|marched| marched != settings);
         self.frame += 1;
         let (first, stride) = if whole {
-            self.marched = Some((settings, eye));
+            self.marched = Some(settings);
             self.whole += 1;
             (0, 1)
         } else {

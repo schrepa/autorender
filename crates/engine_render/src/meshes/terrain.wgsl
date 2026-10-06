@@ -508,30 +508,38 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 
 // Where a fragment is and how it is seen, as the ground's passes read it:
 // its world position and that's screen derivatives, a pixel's footprint
-// there (meters), and the terrain's normal.
+// there (meters, its long side), the footprint the maps' anisotropic
+// filtering resolves (its short side, or a sixteenth of its long side where
+// filtering runs out), and the terrain's normal.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
     footprint: f32,
+    texel: f32,
     geometric: vec3<f32>,
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
 // roughness, metalness and height texel, the share of its second lattice,
-// how much of its maps shows, its weight raised by its height, and its
-// share of the height contrast.
+// how much of all its maps shows and how much of its color map, the second
+// lattice's share by its pattern alone, its weight raised by its height,
+// and its share of the height contrast.
 struct TerrainSlot {
     texel: vec4<f32>,
     second: f32,
     detail: f32,
+    colored: f32,
+    pattern: f32,
     raised: f32,
     contrast: f32,
 }
 
 // The first pass of material `material` at weight `weight`: its heights
 // where its maps show; materials without maps, or too far to show them,
-// lie flat at middle height.
+// lie flat at middle height. All its maps show while a repeat spans enough
+// pixels along the footprint's long side; its color map alone farther out,
+// as long as its filtering keeps it (decision 090).
 fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
     var slot: TerrainSlot;
     slot.texel = vec4<f32>(1.0, 1.0, 1.0, 0.5);
@@ -542,10 +550,15 @@ fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
     let entry = terrain_material(material);
     if entry.params.w > 0.0 {
         slot.detail = terrain_map_detail(site.footprint, entry.params.x);
+        slot.colored = terrain_map_detail(site.texel, entry.params.x);
+    }
+    if slot.colored > 0.0 {
+        slot.pattern = terrain_second_lattice(site.world, entry.params.x, site.texel);
+        slot.second = slot.pattern;
     }
     if slot.detail > 0.0 {
         let mapping = terrain_mapping(entry, site.geometric);
-        let second = terrain_second_lattice(site.world, entry.params.x, site.footprint);
+        let second = slot.pattern;
         var first = vec4<f32>(0.0);
         var other = vec4<f32>(0.0);
         if second < 1.0 {
@@ -581,10 +594,25 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     var occlusion = entry.maps.w;
     var metalness = entry.maps.z;
     var turned = site.geometric;
+    if slot.colored > slot.detail {
+        // Past its maps' full detail, its color map alone, the lattices
+        // shared by their pattern.
+        let mapping = terrain_mapping(entry, site.geometric);
+        var albedo = vec3<f32>(0.0);
+        if slot.pattern < 1.0 {
+            albedo += (1.0 - slot.pattern) * terrain_map(terrain_albedo, mapping, site.world,
+                site.world_dx, site.world_dy, 0u).rgb;
+        }
+        if slot.pattern > 0.0 {
+            albedo += slot.pattern * terrain_map(terrain_albedo, mapping, site.world,
+                site.world_dx, site.world_dy, 1u).rgb;
+        }
+        color = mix(color, entry.color.rgb * albedo, slot.colored);
+    }
     if slot.detail > 0.0 {
         let mapping = terrain_mapping(entry, site.geometric);
         // Normal maps where their deflections still show.
-        let relief = terrain_relief(site.footprint, entry.params.x) * entry.maps.x;
+        let relief = terrain_relief(site.texel, entry.params.x) * entry.maps.x;
         var albedo = vec3<f32>(0.0);
         var mapped = vec3<f32>(0.0);
         if slot.second < 1.0 {
@@ -933,7 +961,8 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     let world = relative + camera.position.xyz;
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
-    let footprint = max(length(world_dx), length(world_dy));
+    let along = vec2<f32>(length(world_dx), length(world_dy));
+    let footprint = max(along.x, along.y);
     let local = world.xz - terrain.origin.xz;
     let shading = terrain_shading_level(length(world - terrain.eye.xyz));
     let geometric = terrain_surface_normal(local, shading);
@@ -942,6 +971,7 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     site.world_dx = world_dx;
     site.world_dy = world_dy;
     site.footprint = footprint;
+    site.texel = max(min(along.x, along.y), footprint / 16.0);
     site.geometric = geometric;
     // Sunk where the ground's relief and tracks show (decisions 082 and
     // 083).

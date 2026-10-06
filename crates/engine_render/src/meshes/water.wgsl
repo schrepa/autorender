@@ -79,17 +79,39 @@ struct WaterTemporalOutput {
     @location(2) previous: vec3<f32>,
 }
 
-// The corners of a quad's two triangles.
+// The corners of a quad's two triangles, split along the diagonal from its
+// (1, 0) corner to its (0, 1) corner, or turned, along the other one.
 const WATER_CORNERS = array<vec2<u32>, 6>(
     vec2<u32>(0u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 0u),
     vec2<u32>(1u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 1u),
 );
+const WATER_CORNERS_TURNED = array<vec2<u32>, 6>(
+    vec2<u32>(0u, 0u), vec2<u32>(0u, 1u), vec2<u32>(1u, 1u),
+    vec2<u32>(0u, 0u), vec2<u32>(1u, 1u), vec2<u32>(1u, 0u),
+);
+
+// Meters of water over the ground at bake sample `sample`.
+fn water_depth_at(sample: vec2<u32>) -> f32 {
+    return textureLoad(water_info, min(sample, water.grid.xy - vec2<u32>(1u)), 0).x * 32.0;
+}
 
 fn water_output(input: WaterChunk) -> WaterOutput {
     let quads = water.grid.z / input.stride;
     let quad = input.vertex / 6u;
-    let corner = vec2<u32>(quad % quads, quad / quads) + WATER_CORNERS[input.vertex % 6u];
-    let sample = min(input.first + corner * input.stride, water.grid.xy - vec2<u32>(1u));
+    let stride = input.stride;
+    let first = input.first + vec2<u32>(quad % quads, quad / quads) * stride;
+    // Each quad splits along the diagonal joining its wetter corners: a
+    // river stepping diagonally from sample to sample then keeps its water
+    // along the edge between them, where the other diagonal would join two
+    // dry corners across its course.
+    let straight = water_depth_at(first + vec2<u32>(stride, 0u))
+        + water_depth_at(first + vec2<u32>(0u, stride));
+    let turned = water_depth_at(first) + water_depth_at(first + vec2<u32>(stride));
+    var corner = WATER_CORNERS[input.vertex % 6u];
+    if turned > straight {
+        corner = WATER_CORNERS_TURNED[input.vertex % 6u];
+    }
+    let sample = min(first + corner * stride, water.grid.xy - vec2<u32>(1u));
     let surface = textureLoad(water_surface, sample, 0).r;
     let info = textureLoad(water_info, sample, 0);
     let spacing = water.origin.w;
