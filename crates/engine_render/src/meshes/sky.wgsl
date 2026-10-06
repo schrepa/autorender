@@ -151,13 +151,14 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
 }
 
-// The view's clouds over the canvas, encoded as it is.
+// The view's clouds over the canvas, encoded as it is; pixels they leave
+// clear keep the target as it was, unblended.
 @fragment
 fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
     let layer = view_cloud_layer(input.clip_position.xy);
     let covering = 1.0 - layer.a;
     if covering <= 1.0e-4 {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        discard;
     }
     return vec4<f32>(encoded(layer.rgb / covering) * covering, layer.a);
 }
@@ -165,7 +166,11 @@ fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
 // The view's clouds over the screen effects' scene target.
 @fragment
 fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
-    return view_cloud_layer(input.clip_position.xy);
+    let layer = view_cloud_layer(input.clip_position.xy);
+    if layer.a >= 1.0 - 1.0e-4 {
+        discard;
+    }
+    return layer;
 }
 
 // Screen-effect frames: the sky has no ambient occlusion; its sun glows.

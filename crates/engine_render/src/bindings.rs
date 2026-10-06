@@ -656,6 +656,7 @@ pub(crate) const CLOUD_VIEW: Table = Table {
         texture(7, "view_depth", Depth, D2, C),
         bind(8, "view_out", Kind::Storage(Rgba16Float), C),
         bind(9, "front_out", Kind::Storage(R32Float), C),
+        write(10, "composite_draw", C),
     ],
 };
 
