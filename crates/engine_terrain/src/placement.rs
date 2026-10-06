@@ -15,12 +15,21 @@
 //! everywhere), place the share of its candidates whose rank falls under
 //! that share of its density, a subset of its own objects in the same
 //! places, which renderers hide where its own level's tiles are resident.
+//!
+//! Authors stand objects on a surface too (decision 085): each at its own
+//! point, on the tiles of its level (the finest for small things, coarser
+//! for large ones, which then show as far as those tiles stay resident),
+//! drawn, shadowed and collided with as the layers' objects are.
 
 use engine_math::{clamp, max, sin_cos};
 use serde::{Deserialize, Serialize};
 
 use crate::surface::{Compiled, Control, Mask, SampleInputs};
 use crate::{TILE_QUADS, Tile};
+
+/// The placement layer authored objects (decision 085) report collision
+/// hits in, beside bridges' `u16::MAX`.
+pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
 /// Validity guards: how many layers a surface places, how many assets a
 /// layer chooses from, and the coarsest level a layer's tiles may be.
@@ -109,6 +118,145 @@ fn one() -> f32 {
 
 fn unit_scale() -> [f32; 2] {
     [1.0, 1.0]
+}
+
+/// An object an author stands on the surface (decision 085): its asset, by
+/// ID of the surface's assets; its base's terrain-local point `[x, z]`,
+/// where it stands on the ground; its turn about the vertical (degrees);
+/// its scale (0.001 to 1000); how deep its base sinks, in meters at scale
+/// 1; how far it leans with the ground (0 upright, 1 along its normal);
+/// and the pyramid level whose tiles hold it (0, the finest, by default;
+/// coarser for objects seen from farther away).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredPlacement {
+    pub asset: String,
+    pub position: [f32; 2],
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub yaw: f32,
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1000.0)))]
+    pub scale: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub sink: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub align: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
+    pub level: u8,
+}
+
+fn is_one(value: &f32) -> bool {
+    *value == 1.0
+}
+
+/// An authored object ready to stand: its asset index, point, turn
+/// (radians), scale, sink, lean and level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CompiledAuthored {
+    asset: u16,
+    position: [f32; 2],
+    yaw: f32,
+    scale: f32,
+    sink: f32,
+    align: f32,
+    pub(crate) level: u8,
+}
+
+/// Validates `placed` against the surface's `assets` IDs; errors name the
+/// offending path and rule.
+pub(crate) fn compile_authored(
+    placed: &[AuthoredPlacement],
+    assets: &[String],
+) -> Result<Vec<CompiledAuthored>, (String, String)> {
+    let fail = |path: String, rule: &str| (path, rule.to_owned());
+    placed
+        .iter()
+        .enumerate()
+        .map(|(index, object)| {
+            let at = format!("placed[{index}]");
+            let asset = assets
+                .iter()
+                .position(|id| *id == object.asset)
+                .ok_or_else(|| fail(format!("{at}.asset"), "must name an asset"))?;
+            if !object.position.iter().all(|value| value.is_finite()) {
+                return Err(fail(format!("{at}.position"), "must be finite"));
+            }
+            if !object.yaw.is_finite() {
+                return Err(fail(format!("{at}.yaw"), "must be finite"));
+            }
+            if !(object.scale.is_finite() && (0.001..=1000.0).contains(&object.scale)) {
+                return Err(fail(format!("{at}.scale"), "must be in [0.001, 1000]"));
+            }
+            if !object.sink.is_finite() {
+                return Err(fail(format!("{at}.sink"), "must be finite"));
+            }
+            if !(object.align.is_finite() && (0.0..=1.0).contains(&object.align)) {
+                return Err(fail(format!("{at}.align"), "must be in [0, 1]"));
+            }
+            if object.level > MAX_LEVEL {
+                return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
+            }
+            Ok(CompiledAuthored {
+                asset: asset as u16,
+                position: object.position,
+                yaw: object.yaw.to_radians(),
+                scale: object.scale,
+                sink: object.sink,
+                align: object.align,
+                level: object.level,
+            })
+        })
+        .collect()
+}
+
+/// The authored objects standing on `tile` (decision 085), appended to
+/// `out`: those of its level whose point it holds, on its ground; none on
+/// holes. Returns the work it took (samples' worth).
+pub(crate) fn place_authored(
+    placed: &[CompiledAuthored],
+    tile: &Tile,
+    out: &mut Vec<Placed>,
+) -> u64 {
+    let size = TILE_QUADS as f32 * tile.spacing();
+    let key = tile.key();
+    let origin = [f32::from(key.x) * size, f32::from(key.z) * size];
+    let mut cost = 0;
+    for object in placed.iter().filter(|object| object.level == key.level) {
+        cost += 1;
+        let local = [
+            object.position[0] - origin[0],
+            object.position[1] - origin[1],
+        ];
+        if local[0] < 0.0 || local[1] < 0.0 || local[0] >= size || local[1] >= size {
+            continue;
+        }
+        let Some(sample) = tile.sample(glam::Vec2::from(local)) else {
+            continue;
+        };
+        if sample.hole {
+            continue;
+        }
+        cost += SAMPLE_COST;
+        let normal = sample.normal;
+        out.push(Placed {
+            position: [
+                object.position[0],
+                sample.height - object.sink * object.scale,
+                object.position[1],
+            ],
+            yaw: object.yaw,
+            lean: [normal.x * object.align, normal.z * object.align],
+            scale: object.scale,
+            sink: object.sink * object.scale,
+            asset: object.asset,
+            layer: AUTHORED_LAYER,
+            near_level: None,
+        });
+    }
+    cost
 }
 
 /// One object a layer placed: its base's terrain-local position, its turn

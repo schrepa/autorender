@@ -331,6 +331,7 @@ impl TerrainSurface {
         Biomes {
             assets: Vec::new(),
             placements: Vec::new(),
+            placed: Vec::new(),
             materials: ["grass", "dirt", "rock", "snow"].map(String::from).to_vec(),
             biomes: vec![Biome {
                 id: "ground".into(),

@@ -75,6 +75,9 @@ const terrain = {
     // A quarter of them also stand on the pinned level-2 tiles, hidden where
     // level-0 tiles hold them (decision 061).
     placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1], far: { level: 2, share: 0.25 } }],
+    // Decision 085: an author stands a big crate on the plateau, and a ball
+    // on the level-1 tiles, which stay resident farther away.
+    placed: [{ asset: "crate", position: [530, 500], yaw: 30, scale: 3 }, { asset: "ball", position: [500, 530], scale: 2, level: 1 }],
   },
 };
 /** A unit icosphere subdivided once: 80 triangles, enough for an impostor. */
@@ -612,6 +615,19 @@ try {
     assert.equal(steep.error.path, "$.options.max_slope");
     assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
+  }
+  // Authored objects (decision 085) stand where authors put them, on the
+  // ground drawn there, and collide in their own layer.
+  {
+    const [ground] = await heights([[18, -12]]);
+    const top = (await command("raycast", { origin: [18, ground.height + 50, -12], direction: [0, -1, 0], max_distance: 100 })).result.hit;
+    // The box's middle stands on the ground, as the layers' crates' do: its
+    // top half the scale above it.
+    assert.ok(top?.placed?.layer === 65534 && Math.abs(top.point[1] - (ground.height + 1.5)) < 0.3,
+      `the authored crate stands on the plateau: ${JSON.stringify(top)} over ${ground.height}`);
+    const view = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
+    assert.equal(view.terrain.surface.placed.length, 2, "the inspector lists the authored objects");
+    checks.push({ check: "authored placements", top: top.point[1], ground: ground.height });
   }
   // Tracks (decision 083) press into the ground as deep as its materials
   // let them, from the deform control and from deformers each tick: the

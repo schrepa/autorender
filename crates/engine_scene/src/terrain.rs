@@ -79,6 +79,9 @@ pub struct SceneTerrainSurface {
     pub assets: Vec<SceneTerrainAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placements: Vec<PlacementLayer>,
+    /// Objects authors stand on it (decision 085), each at its own point.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub placed: Vec<engine_core::terrain_data::AuthoredPlacement>,
 }
 
 /// An object placement layers stand on a terrain (decision 057): a `mesh`
@@ -485,6 +488,7 @@ impl SceneTerrain {
                 .map(|asset| asset.id.clone())
                 .collect(),
             placements: surface.placements.clone(),
+            placed: surface.placed.clone(),
         };
         let surface =
             TerrainSurface::new(&biomes, looks).map_err(|error| invalid(error.path, error.rule))?;
@@ -720,6 +724,7 @@ impl SceneTerrain {
                     })
                     .collect(),
                 placements: authored.placements.clone(),
+                placed: authored.placed.clone(),
             }
         });
         let layers = match &terrain.source {

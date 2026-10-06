@@ -75,12 +75,12 @@ pub use engine_assets::{
 /// tiles, patches and the `ETR1` format.
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend, Control, Erosion, ErosionLayer,
-    ErosionStage, ErosionStats, FarPlacement, FileHeader, HeightImage, HeightmapLayer, Hydrology,
-    HydrologyLayer, HydrologySample, HydrologyStage, HydrologyStats, Layer, LayerError, Layers,
-    Mask, NoiseLayer, NoiseMask, Patch, PathLayer, PathProfile, PathStage, PathStats, Placed,
-    PlacementChoice, PlacementLayer, Pyramid, PyramidError, Remap, Route, RouteOptions, Stamp,
-    StampOp, Tile, TileKey, WaterGrid,
+    AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend,
+    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, FarPlacement, FileHeader,
+    HeightImage, HeightmapLayer, Hydrology, HydrologyLayer, HydrologySample, HydrologyStage,
+    HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask, Patch, PathLayer,
+    PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
+    PyramidError, Remap, Route, RouteOptions, Stamp, StampOp, Tile, TileKey, WaterGrid,
 };
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
@@ -891,12 +891,12 @@ pub mod prelude {
         ClipHandle, KeyInterpolation, Keyframes,
     };
     pub use crate::{
-        Biome, BiomeLayer, Biomes, Blend, ErosionLayer, ErosionStage, FarPlacement, HeightImage,
-        HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers, Mask, NoiseLayer, NoiseMask,
-        PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice,
-        PlacementLayer, PlacementLod, Pyramid, Remap, Stamp, StampOp, SurfaceMaterial,
-        SurfaceProjection, Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource,
-        TerrainSurface, Terrains, TileKey, Viewport,
+        AuthoredPlacement, Biome, BiomeLayer, Biomes, Blend, ErosionLayer, ErosionStage,
+        FarPlacement, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers,
+        Mask, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider, PlacedShape,
+        PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap, Stamp,
+        StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
+        TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
