@@ -46,6 +46,25 @@ pub const FILES: [&str; 18] = [
     "snow_orm.ktx2",
 ];
 
+/// Scanned rock maps the page supplies when present, from `stress/rocks/`
+/// (kept locally, never committed): boulders' and cliffs' base color,
+/// normal, and occlusion, roughness, metalness and height. Without them
+/// rocks wear the terrain rock's maps.
+pub const ROCK_FILES: [&str; 6] = [
+    "boulder_albedo.ktx2",
+    "boulder_normal.ktx2",
+    "boulder_orm.ktx2",
+    "cliff_albedo.ktx2",
+    "cliff_normal.ktx2",
+    "cliff_orm.ktx2",
+];
+
+/// Meters one repeat of the scanned boulder and cliff maps covers: the
+/// boulder scan's own size, and the cliff's a little larger, so its
+/// repeats show less across a face many meters wide.
+const BOULDER_SCAN_TILING: f32 = 1.8;
+const CLIFF_SCAN_TILING: f32 = 2.5;
+
 /// How one surface material looks: its name; the material whose maps it
 /// uses (whose files start with that name, its own unless it borrows
 /// another's); its linear color and roughness without maps, and the color
@@ -944,9 +963,11 @@ fn surface(
             deform: look.deform,
         });
     }
-    // Boulders of a few shapes, in the rock's maps where the page supplied
+    // Boulders of a few shapes in their scanned maps where present
+    // (`ROCK_FILES`), otherwise in the rock's maps where the page supplied
     // them: lighter than the cliffs' and gentler in relief, as weathered
     // stones are.
+    let boulder_scan = scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)?;
     let base = Material::new([0.8, 0.77, 0.72, 1.0])
         .and_then(|material| {
             material.with_surface(Surface {
@@ -956,11 +977,12 @@ fn surface(
         })
         .map_err(|error| error.to_string())?;
     let error = |error: AssetError| error.to_string();
-    let material = match materials[4]
+    let terrain_rock = materials[4]
         .material
-        .and_then(|rock| assets.material(rock).copied())
-    {
-        Some(rock) => {
+        .and_then(|rock| assets.material(rock).copied());
+    let material = match (boulder_scan, terrain_rock) {
+        (Some(scan), _) => scan,
+        (None, Some(rock)) => {
             let mut material = base;
             if let Some(map) = rock.base_color_texture() {
                 material = material.with_base_color_texture(map).map_err(error)?;
@@ -981,7 +1003,7 @@ fn surface(
                 .and_then(|material| material.with_top_layer(MOSS))
                 .map_err(error)?
         }
-        None => Material::new([0.3, 0.28, 0.26, 1.0])
+        (None, None) => Material::new([0.3, 0.28, 0.26, 1.0])
             .and_then(|material| material.with_surface(base.surface()))
             .and_then(|material| material.with_top_layer(MOSS))
             .map_err(error)?,
@@ -1072,11 +1094,12 @@ fn surface(
     // ground the two read as one face. They collide as spheres well inside
     // their faces.
     let mut cave_rocks = Vec::with_capacity(CLIFFS);
-    let cliff_rock = match materials[4]
-        .material
-        .and_then(|rock| assets.material(rock).copied())
-    {
-        Some(terrain_rock) => {
+    // Scanned where present, its color pulled toward the terrain rock's
+    // when converted.
+    let cliff_scan = scanned(&mut assets, files, "cliff", CLIFF_SCAN_TILING, LICHEN)?;
+    let cliff_rock = match (cliff_scan, terrain_rock) {
+        (Some(scan), _) => assets.insert_material(scan).map_err(error)?,
+        (None, Some(terrain_rock)) => {
             let [red, green, blue] = LOOKS[4].tint;
             let mut material = Material::new([red, green, blue, 1.0])
                 .and_then(|material| {
@@ -1106,7 +1129,7 @@ fn surface(
                 .map_err(error)?;
             assets.insert_material(material).map_err(error)?
         }
-        None => rock,
+        (None, None) => rock,
     };
     for seed in 0..CLIFFS as u32 {
         let mut mesh = |detail| {
@@ -1668,6 +1691,52 @@ fn maps(
         .map_err(|error| error.to_string())?;
     assets
         .insert_material(material)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+/// The scanned rock set `name`'s material from `files` (`ROCK_FILES`,
+/// under `rocks/`), when the page supplied all three of its maps: laid
+/// from the world's axes, one repeat every `tiling` meters, its roughness,
+/// metalness and occlusion from its packed map, with `top` settling on its
+/// faces turned up (decision 093). Its colors stand as scanned.
+fn scanned(
+    assets: &mut AssetLibrary,
+    files: &HashMap<String, StressFile>,
+    name: &str,
+    tiling: f32,
+    top: TopLayer,
+) -> Result<Option<Material>, String> {
+    let mut textures = Vec::with_capacity(3);
+    for map in ["albedo", "normal", "orm"] {
+        let file_name = format!("rocks/{name}_{map}.ktx2");
+        let Some(file) = files.get(&file_name) else {
+            return Ok(None);
+        };
+        let Some([width, height]) = file.size else {
+            return Ok(None);
+        };
+        let texture = Texture::with_alpha(width, height, file.bytes.clone())
+            .map_err(|error| format!("{file_name}: {error}"))?;
+        textures.push(
+            assets
+                .insert_texture(texture)
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    Material::new([1.0; 4])
+        .and_then(|material| {
+            material.with_surface(Surface {
+                roughness: 1.0,
+                ..Surface::MATTE
+            })
+        })
+        .and_then(|material| material.with_base_color_texture(TextureRef::new(textures[0])))
+        .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
+        .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
+        .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))
+        .and_then(|material| material.with_world_mapping(tiling))
+        .and_then(|material| material.with_top_layer(top))
         .map(Some)
         .map_err(|error| error.to_string())
 }

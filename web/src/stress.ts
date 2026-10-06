@@ -107,6 +107,17 @@ async function highlandsFiles(): Promise<StressFiles | undefined> {
     notice(`The ground shows plain colors: ${String(error)} Build its materials with \`cargo run -p engine_assetc --release --bin terrain_materials\`.`);
     return undefined;
   }
+  // Scanned rock maps, kept locally and optional: without them rocks wear
+  // the terrain rock's maps.
+  const rocks = JSON.parse(filesClass.rock_names()) as string[];
+  await Promise.all(rocks.map(async name => {
+    try {
+      const response = await fetch(new URL(`${import.meta.env.BASE_URL}stress/rocks/${name}`, location.href));
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const image = response.ok && isKtx2(bytes) ? readRgba8Ktx2(name, bytes) : undefined;
+      if (image) files.add_image(`rocks/${name}`, image.width, image.height, image.pixels);
+    } catch { /* Absent or unreadable: the terrain rock's maps stand in. */ }
+  }));
   highlandsSupplied = true;
   return files;
 }

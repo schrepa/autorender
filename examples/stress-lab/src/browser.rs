@@ -60,6 +60,13 @@ impl StressFiles {
     pub fn highlands_names() -> String {
         serde_json::to_string(&crate::HIGHLANDS_FILES).unwrap_or_else(|_| "[]".into())
     }
+
+    /// The scanned rock maps the highlands read when present, as a JSON
+    /// array of names under `stress/rocks/`; the page adds each found as
+    /// `rocks/NAME`.
+    pub fn rock_names() -> String {
+        serde_json::to_string(&crate::ROCK_FILES).unwrap_or_else(|_| "[]".into())
+    }
 }
 
 #[wasm_bindgen]
