@@ -70,6 +70,10 @@ fn is_true(value: &bool) -> bool {
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
+    /// ID of the document material its roads' bridges (decision 072) draw
+    /// with; omitted, a weathered stone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
     /// What placement layers stand on the terrain (decision 057).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<SceneTerrainAsset>,
@@ -227,8 +231,10 @@ fn half() -> f32 {
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedTerrain {
     pub terrain: Terrain,
-    /// Each surface material's document material, if it names one.
+    /// Each surface material's document material, if it names one, and
+    /// the bridges' (decision 072).
     pub materials: Vec<Option<usize>>,
+    pub bridge: Option<usize>,
     /// Each placement asset's document mesh and material, and its coarser
     /// meshes with their errors.
     pub assets: Vec<PreparedAsset>,
@@ -246,6 +252,7 @@ impl PreparedTerrain {
         for (look, index) in terrain.surface.materials.iter_mut().zip(&self.materials) {
             look.material = index.map(|index| materials[index]);
         }
+        terrain.surface.bridge = self.bridge.map(|index| materials[index]);
         terrain.surface.assets = self
             .assets
             .iter()
@@ -480,10 +487,30 @@ impl SceneTerrain {
         (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
     ) -> Result<PreparedTerrain, SceneError> {
         let (surface, indices, assets) = self.surface(path, materials, meshes)?;
+        let bridge = match self
+            .surface
+            .as_ref()
+            .and_then(|surface| surface.bridge.as_ref())
+        {
+            Some(id) => Some(
+                materials
+                    .iter()
+                    .position(|material| material.id == *id)
+                    .ok_or_else(|| {
+                        SceneError::new(
+                            "invalid_terrain",
+                            format!("{path}.surface.bridge"),
+                            "must name a material of this document",
+                        )
+                    })?,
+            ),
+            None => None,
+        };
         let terrain = self.terrain(path, files, surface)?;
         Ok(PreparedTerrain {
             terrain,
             materials: indices,
+            bridge,
             assets,
         })
     }
@@ -651,6 +678,7 @@ impl SceneTerrain {
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),
+                bridge: terrain.surface.bridge.and_then(&materials),
                 assets: authored
                     .assets
                     .iter()

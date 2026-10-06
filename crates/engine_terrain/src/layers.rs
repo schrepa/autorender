@@ -917,6 +917,7 @@ impl Layers {
                     check(index, "width", path.width, 0.5, 200.0)?;
                     check(index, "shoulder", path.shoulder, 0.0, 500.0)?;
                     check(index, "smoothing", path.smoothing, 0.0, 5000.0)?;
+                    check(index, "bridge_fill", path.bridge_fill, 0.0, 1000.0)?;
                 }
                 Layer::Hydrology(stage) => {
                     let water = &stage.layer;
@@ -1044,7 +1045,8 @@ impl Layers {
                     return;
                 }
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    if let Some((distance, road)) = profile.nearest(Vec2::new(x, z)) {
+                    // Bridges (decision 072) leave the ground under them.
+                    if let Some((distance, road, false)) = profile.nearest(Vec2::new(x, z)) {
                         *height += (road - *height) * profile.weight(distance);
                     }
                 }
