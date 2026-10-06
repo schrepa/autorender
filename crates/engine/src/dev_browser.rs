@@ -264,6 +264,16 @@ impl DevBrowser {
                 rendered(app.dev_render(width, height), "track pressed")?;
                 Ok(result)
             }
+            BrowserControl::WorldChanges {
+                remove,
+                restore,
+                clear,
+                ..
+            } => {
+                let result = engine_dev::change_world(&mut app.engine, &remove, &restore, clear)?;
+                rendered(app.dev_render(width, height), "world changed")?;
+                Ok(result)
+            }
             BrowserControl::TerrainUndo { terrain, .. } => self.terrain_editing(
                 app,
                 scene,

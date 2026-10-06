@@ -54,6 +54,44 @@ pub struct Press {
 
 /// Presses `press` into the log as a deformer would at the fixed clock's
 /// time; its result.
+/// Removes and restores streamed items (decision 087): `remove` and
+/// `restore` name item IDs (at most 256 each, each 1 to 192 bytes);
+/// `clear` restores every item first.
+pub fn change_world(
+    engine: &mut Engine,
+    remove: &[String],
+    restore: &[String],
+    clear: bool,
+) -> Result<Value, DevError> {
+    for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
+        if ids.len() > 256 {
+            return Err(DevError::new("invalid_request", path, "at most 256 IDs"));
+        }
+        if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
+            return Err(DevError::new(
+                "invalid_request",
+                format!("{path}[{index}]"),
+                "IDs are 1 to 192 bytes",
+            ));
+        }
+    }
+    let mut changes = engine
+        .app
+        .world_mut()
+        .resource_mut::<engine_core::WorldChanges>();
+    if clear {
+        changes.clear();
+    }
+    let removed = remove.iter().filter(|id| changes.remove(id)).count();
+    let restored = restore.iter().filter(|id| changes.restore(id)).count();
+    Ok(json!({
+        "temporary": true,
+        "newly_removed": removed,
+        "restored": restored,
+        "removed": changes.removed().len(),
+    }))
+}
+
 pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError> {
     let from = [
         coordinate(press.from[0], "$.from[0]")?,

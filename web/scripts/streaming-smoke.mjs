@@ -3,11 +3,12 @@
  * streamed entities bin into grids by their reach and spawn only while
  * their cells are within range of the camera, with hysteresis, a per-frame
  * spawn budget, prefetch along the camera's motion, and freezing and
- * disabling through the `world_streaming` environment section; grounded
- * entities stand on the terrain; loaded streamed entities inspect and
- * collide by their authored IDs; prefab placements, parents and animation
- * players stream within their item; reloads remove the old items; and
- * invalid documents are refused.
+ * disabling through the `world_streaming` environment section; removals
+ * persist and restore (decision 087); grounded entities stand on the
+ * terrain; loaded streamed entities inspect and collide by their authored
+ * IDs; prefab placements, parents and animation players stream within
+ * their item; reloads remove the old items; and invalid documents are
+ * refused.
  */
 import assert from "node:assert/strict";
 import { artifacts, commander, devUrl, launch, openPaused, routedScene } from "./harness.mjs";
@@ -156,6 +157,25 @@ try {
   assert.ok(state.velocity[0] > 100, `the camera's motion is measured: ${state.velocity}`);
   assert.notEqual(await loaded("crate-mid"), null, "the middle crate loads ahead of the camera");
   checks.push({ check: "prefetch", velocity: state.velocity });
+
+  // Removals persist (decision 087): a removed item despawns at once and
+  // its cell no longer spawns it; restored, it spawns again.
+  await look(0, 0);
+  const removal = await command("world_changes", { remove: ["streaming-fixture/crate-near"] });
+  assert.equal(removal.result.newly_removed, 1);
+  assert.equal(await loaded("crate-near"), null, "a removed item despawns at once");
+  const changes = (await command("inspect", { component: "WorldChanges" })).result.value;
+  assert.deepEqual(changes, { removed: 1, ids: ["streaming-fixture/crate-near"] });
+  await look(1000, 0);
+  await look(0, 0);
+  assert.equal(await loaded("crate-near"), null, "its cell no longer spawns it");
+  const marked = (await command("inspect", { entity: "spinner", component: "StreamedId" })).result.entity.components.StreamedId;
+  assert.equal(marked.id, "streaming-fixture/spinner", "an item's root carries its ID");
+  await command("world_changes", { restore: ["streaming-fixture/crate-near"] });
+  assert.notEqual(await loaded("crate-near"), null, "restored, it spawns again");
+  const empty = await command("world_changes", { remove: [""] }, false);
+  assert.equal(empty.error.path, "$.remove[0]");
+  checks.push({ check: "removals" });
 
   // Settings are validated.
   const refused = await command("environment", { world_streaming: { unload: 0.5 } }, false);

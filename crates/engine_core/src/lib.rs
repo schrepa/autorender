@@ -118,8 +118,8 @@ pub use scene::{
 pub use skin::{RenderJoint, Skin};
 pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
 pub use streaming::{
-    CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedItem, StreamingGrid,
-    WorldCells, WorldStreaming, remove_streamed,
+    CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedId, StreamedItem,
+    StreamingGrid, WorldCells, WorldChanges, WorldStreaming, remove_streamed,
 };
 pub use terrain::{
     MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
@@ -340,6 +340,7 @@ impl Engine {
             .init_resource::<Tracks>()
             .init_resource::<WorldStreaming>()
             .init_resource::<WorldCells>()
+            .init_resource::<WorldChanges>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -926,7 +927,8 @@ pub mod prelude {
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
-        Grounded, StreamSet, Streamed, StreamedItem, WorldCells, WorldStreaming, remove_streamed,
+        Grounded, StreamSet, Streamed, StreamedId, StreamedItem, WorldCells, WorldChanges,
+        WorldStreaming, remove_streamed,
     };
     pub use crate::{
         Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,

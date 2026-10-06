@@ -777,6 +777,7 @@ fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), Strin
         while next <= walked + length {
             let point = from + along * (next - walked) + along.perp() * LANTERN_SIDE;
             items.push(StreamedItem {
+                id: Some(format!("highlands/lantern{}", items.len()).into()),
                 position: Vec3::new(point.x - half, 0.0, point.y - half),
                 reach: LANTERN_LIGHT.2,
                 content: Arc::new(Lantern {

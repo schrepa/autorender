@@ -44,6 +44,8 @@ fn main() {
         "Tracks": schemars::schema_for!(views::TracksView),
         "WorldCells": schemars::schema_for!(views::WorldCellsView),
         "Grounded": schemars::schema_for!(views::GroundedView),
+        "WorldChanges": schemars::schema_for!(views::WorldChangesView),
+        "StreamedId": schemars::schema_for!(views::StreamedIdView),
         "AnimationPlayer": schemars::schema_for!(views::AnimationPlayerView),
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),

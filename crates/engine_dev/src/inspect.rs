@@ -274,6 +274,17 @@ impl DevTools {
                 })
             },
         ).expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::WorldChanges>(
+            InspectorDescriptor::new("WorldChanges", "What gameplay changed of the streamed world (decision 087), which games save: items removed for good (an item is removed when gameplay despawns its root), by ID (`scene/root` for scenes), which their cells no longer spawn. The count and the first 64 IDs. Change it with the world_changes control.", schemas["WorldChanges"].clone()),
+            |changes| json!(crate::views::WorldChangesView {
+                removed: changes.removed().len(),
+                ids: changes.removed().take(64).map(str::to_owned).collect(),
+            }),
+        ).expect("built-in descriptor is bounded");
+        self.register_component::<engine_core::StreamedId>(
+            InspectorDescriptor::new("StreamedId", "The streamed item (decision 087) whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it.", schemas["StreamedId"].clone()),
+            |id| json!(crate::views::StreamedIdView { id: id.0.to_string() }),
+        ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
             descriptor: InspectorDescriptor::new("Grounded", "Stands on the terrain (decision 086) as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only.", schemas["Grounded"].clone()),
             kind: InspectorKind::Component,
