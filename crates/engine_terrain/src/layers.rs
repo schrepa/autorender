@@ -1,7 +1,7 @@
 //! The layer stack: procedural noise with erosion, imported heightmaps,
-//! stamps, what an erosion bake wears away (decision 068) and the channels
-//! a hydrology bake carves (decision 066), applied in order to every
-//! sample; later layers win.
+//! stamps, what an erosion bake wears away (decision 068), the channels a
+//! hydrology bake carves (decision 066) and roads (decision 069), applied
+//! in order to every sample; later layers win.
 
 use std::sync::Arc;
 
@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::erosion::{Erosion, ErosionLayer};
 use crate::hydrology::{Hydrology, HydrologyLayer};
 use crate::noise::{gradient_noise, gradient_value, gullies, smooth};
+use crate::path::{MAX_PATH_POINTS, PathLayer, PathProfile, PathSample};
 
 /// How a layer's heights combine with the heights of the layers before it,
 /// weighted by the layer's coverage: added, the higher or lower of the two,
@@ -426,6 +427,16 @@ pub enum Layer {
     /// What rivers and creep wear away from the layers before it (decision
     /// 068): nothing until baked.
     Erosion(ErosionStage),
+    /// A road leveling the layers before it to its profile (decision 069):
+    /// nothing until baked.
+    Path(PathStage),
+}
+
+/// A path layer, and its profile once baked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathStage {
+    pub layer: Arc<PathLayer>,
+    pub baked: Option<Arc<PathProfile>>,
 }
 
 /// An erosion layer, and what its bake did once baked.
@@ -886,6 +897,23 @@ impl Layers {
                     check(index, "incision", erosion.incision, 0.0, 1.0)?;
                     check(index, "creep", erosion.creep, 0.0, 1000.0)?;
                 }
+                Layer::Path(stage) => {
+                    let path = &stage.layer;
+                    check(
+                        index,
+                        "points",
+                        path.points.len() as f32,
+                        2.0,
+                        MAX_PATH_POINTS as f32,
+                    )?;
+                    for point in &path.points {
+                        check(index, "points", point[0], -limit, limit)?;
+                        check(index, "points", point[1], -limit, limit)?;
+                    }
+                    check(index, "width", path.width, 0.5, 200.0)?;
+                    check(index, "shoulder", path.shoulder, 0.0, 500.0)?;
+                    check(index, "smoothing", path.smoothing, 0.0, 5000.0)?;
+                }
                 Layer::Hydrology(stage) => {
                     let water = &stage.layer;
                     check(index, "level", water.level as f32, 0.0, 15.0)?;
@@ -934,6 +962,29 @@ impl Layers {
         })
     }
 
+    /// The baked road whose edge lies nearest terrain-local `(x, z)`: meters
+    /// from its line and half its width; far beyond every path's masks'
+    /// reach.
+    pub fn path_at(&self, x: f32, z: f32) -> PathSample {
+        let point = Vec2::new(x, z);
+        self.layers
+            .iter()
+            .fold(PathSample::FAR, |nearest, layer| match layer {
+                Layer::Path(PathStage {
+                    baked: Some(profile),
+                    ..
+                }) => {
+                    let sample = profile.sample(point);
+                    if sample.edge() < nearest.edge() {
+                        sample
+                    } else {
+                        nearest
+                    }
+                }
+                _ => nearest,
+            })
+    }
+
     pub(crate) fn noise(&self, index: usize) -> Option<&NoiseTables> {
         self.tables.get(index).and_then(Option::as_ref)
     }
@@ -980,6 +1031,20 @@ impl Layers {
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
+            Layer::Path(stage) => {
+                let Some(profile) = &stage.baked else {
+                    return;
+                };
+                let (low, high) = profile.bounds();
+                if low.x > max.x || low.y > max.y || high.x < min.x || high.y < min.y {
+                    return;
+                }
+                for (height, &x) in row.iter_mut().zip(xs) {
+                    if let Some((distance, road)) = profile.nearest(Vec2::new(x, z)) {
+                        *height += (road - *height) * profile.weight(distance);
+                    }
+                }
+            }
             Layer::Erosion(stage) => {
                 let Some(baked) = &stage.baked else {
                     return;

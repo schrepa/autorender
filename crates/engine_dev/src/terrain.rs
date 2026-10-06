@@ -1,10 +1,11 @@
-//! Read-only terrain observations (decision 051): heights at points, and a
+//! Read-only terrain observations (decision 051): heights at points, a
 //! sweep comparing what terrain queries, collision rays and generated
-//! terrains' layers say the ground is.
+//! terrains' layers say the ground is, and routes for paths (decision
+//! 069).
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, Terrain, Terrains,
+    Engine, RouteOptions, Terrain, Terrains,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -26,7 +27,9 @@ const PLACED_RAY_HITS: usize = 16;
 pub(crate) fn terrain_request(request: &DevRequest) -> bool {
     matches!(
         request,
-        DevRequest::TerrainHeight { .. } | DevRequest::TerrainSweep { .. }
+        DevRequest::TerrainHeight { .. }
+            | DevRequest::TerrainSweep { .. }
+            | DevRequest::TerrainRoute { .. }
     )
 }
 
@@ -96,6 +99,14 @@ pub(crate) fn execute(
                                 standing,
                             ))
                         });
+                        // Meters from the nearest road's edge (decision
+                        // 069), where a path's masks reach.
+                        let path = terrains.layers(sample.terrain).and_then(|layers| {
+                            let terrain = terrains.terrain(sample.terrain)?;
+                            let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
+                            (road.distance < engine_core::terrain_data::PATH_FAR)
+                                .then_some(road.edge())
+                        });
                         json!({
                             "terrain": terrain_id(world, sample.terrain),
                             "height": sample.height,
@@ -104,6 +115,7 @@ pub(crate) fn execute(
                             "level": sample.level,
                             "water": bake.as_ref().map(|(found, _)| found),
                             "standing_water": bake.and_then(|(_, standing)| standing),
+                            "path": path,
                         })
                     }))
                 })
@@ -133,6 +145,87 @@ pub(crate) fn execute(
                 ));
             }
             sweep(engine, Vec2::new(cx, cz), half_extent as f32, samples)
+        }
+        DevRequest::TerrainRoute {
+            from,
+            to,
+            level,
+            max_grade,
+            grade_cost,
+            water_cost,
+            turn_cost,
+            ..
+        } => {
+            let from = Vec2::new(
+                coordinate(from[0], "$.from[0]")?,
+                coordinate(from[1], "$.from[1]")?,
+            );
+            let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
+            let defaults = RouteOptions::default();
+            let ranged =
+                |value: Option<f64>, low: f64, high: f64, path: &str, fallback: f32| match value {
+                    None => Ok(fallback),
+                    Some(value) if value.is_finite() && (low..=high).contains(&value) => {
+                        Ok(value as f32)
+                    }
+                    Some(_) => Err(DevError::new(
+                        "invalid_request",
+                        path,
+                        format!("must be in [{low}, {high}]"),
+                    )),
+                };
+            let options = RouteOptions {
+                level: match level {
+                    None => defaults.level,
+                    Some(level) if level <= 15 => level,
+                    Some(_) => {
+                        return Err(DevError::new(
+                            "invalid_request",
+                            "$.level",
+                            "must be in [0, 15]",
+                        ));
+                    }
+                },
+                max_grade: ranged(max_grade, 0.001, 10.0, "$.max_grade", defaults.max_grade)?,
+                grade_cost: ranged(grade_cost, 0.0, 1.0e6, "$.grade_cost", defaults.grade_cost)?,
+                water_cost: ranged(water_cost, 0.0, 1.0e6, "$.water_cost", defaults.water_cost)?,
+                turn_cost: ranged(turn_cost, 0.0, 1.0e6, "$.turn_cost", defaults.turn_cost)?,
+            };
+            let world = engine.app.world();
+            let terrains = world.resource::<Terrains>();
+            let Some(sample) = terrains.sample(from.x, from.y) else {
+                return Err(DevError::new(
+                    "invalid_request",
+                    "$.from",
+                    "no resident terrain lies under from",
+                ));
+            };
+            let Some(terrain) = terrains.terrain(sample.terrain) else {
+                return Err(DevError::new(
+                    "invalid_request",
+                    "$.from",
+                    "no terrain lies under from",
+                ));
+            };
+            let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
+            let route = terrains.route(sample.terrain, from, to, &options);
+            Ok(json!({
+                "terrain": terrain_id(world, sample.terrain),
+                "options": options,
+                "origin": origin.to_array(),
+                // Centimeters are plenty, and keep long routes within the
+                // response limit.
+                "route": route.map(|route| json!({
+                    "points": route
+                        .points
+                        .iter()
+                        .map(|point| point.map(|value| (f64::from(value) * 100.0).round() / 100.0))
+                        .collect::<Vec<_>>(),
+                    "length": route.length,
+                    "steepest": route.steepest,
+                    "hairpin_steps": route.hairpin_steps,
+                })),
+            }))
         }
         _ => unreachable!("only terrain requests reach here"),
     }

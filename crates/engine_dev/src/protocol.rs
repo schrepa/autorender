@@ -82,7 +82,10 @@ pub enum DevRequest {
     },
     /// Terrain surfaces (decision 051) under world points `[x, z]`, 1 to
     /// 256: each one's terrain, height, normal, hole and the level of the
-    /// resident tile answering, or null where no tile is resident.
+    /// resident tile answering, what its hydrology bake found there and the
+    /// water standing there (decisions 066 and 067), and the meters from the
+    /// nearest road's edge (decision 069, negative on roads, null beyond
+    /// their masks' reach), or null where no tile is resident.
     TerrainHeight {
         version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
@@ -101,6 +104,49 @@ pub enum DevRequest {
         #[serde(default = "default_sweep_samples")]
         #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 2, max = 64)))]
         samples: u32,
+    },
+    /// The cheapest route over the generated terrain under world `from`
+    /// `[x, z]` to world `to` (decision 069), over its layers with their
+    /// bakes, as a path layer would follow it: walking between the samples
+    /// of pyramid `level`, each step's cost growing by `grade_cost` times
+    /// its squared grade and by `water_cost` where water stands, each turn
+    /// costing `turn_cost` meters per unit of one less its angle's cosine,
+    /// refusing grades steeper than `max_grade` (rise per meter). Defaults:
+    /// level 3, max_grade 0.12, grade_cost 100, water_cost 50, turn_cost 40.
+    /// Returns the terrain's origin `[x, z]` and the route's points
+    /// terrain-local (a path layer's `points`; add the origin for world
+    /// points), its length, its steepest grade within the limit and the
+    /// turning steps of its hairpins crossing steeper ground (up to 45
+    /// degrees), or a null route where none keeps within the limits. Its
+    /// work grows with the square of the ends' distance.
+    TerrainRoute {
+        version: u32,
+        from: [f64; 2],
+        to: [f64; 2],
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(max = 15)))]
+        level: Option<u32>,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.001, max = 10.0)))]
+        max_grade: Option<f64>,
+        #[serde(default)]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(range(min = 0.0, max = 1000000.0))
+        )]
+        grade_cost: Option<f64>,
+        #[serde(default)]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(range(min = 0.0, max = 1000000.0))
+        )]
+        water_cost: Option<f64>,
+        #[serde(default)]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(range(min = 0.0, max = 1000000.0))
+        )]
+        turn_cost: Option<f64>,
     },
     /// Non-consuming page of the latest fixed-tick sensor transition snapshot.
     CollisionEvents {
@@ -209,6 +255,7 @@ impl DevRequest {
             | Self::ShapeCast { version, .. }
             | Self::TerrainHeight { version, .. }
             | Self::TerrainSweep { version, .. }
+            | Self::TerrainRoute { version, .. }
             | Self::CollisionEvents { version, .. } => *version,
         }
     }

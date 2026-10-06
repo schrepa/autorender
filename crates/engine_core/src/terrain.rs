@@ -36,7 +36,8 @@ use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, ErosionStats, FileHeader,
     FormatError, Generator, HydrologyStats, Layers, LodRanges, Mask, NoiseMask, Patch, Pyramid,
-    Remap, Selection, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, decode_tile,
+    Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample,
+    WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -931,6 +932,38 @@ impl Terrains {
         }
     }
 
+    /// The cheapest route over `entity`'s generated terrain from world
+    /// `from` to `to` (x and z), as [`engine_terrain::route`] finds it over
+    /// its layers with their bakes (decision 069): its points are
+    /// terrain-local, as path layers name them. `None` for terrains read
+    /// from files, before their bakes are done, and where no route keeps
+    /// within the steepest grade. Its work grows with the square of the
+    /// ends' distance: for authoring and loading, not every frame.
+    pub fn route(
+        &self,
+        entity: Entity,
+        from: Vec2,
+        to: Vec2,
+        options: &RouteOptions,
+    ) -> Option<Route> {
+        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        let TerrainSource::Generated(authored) = &state.terrain.source else {
+            return None;
+        };
+        let layers = state.baked.as_ref().unwrap_or(authored);
+        if layers.unbaked().is_some() {
+            return None;
+        }
+        let origin = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
+        engine_terrain::route(
+            layers,
+            &state.terrain.pyramid,
+            from - origin,
+            to - origin,
+            options,
+        )
+    }
+
     /// `entity`'s bakes (decisions 066 and 068): whether one is in
     /// progress, and what its hydrology and erosion bakes found.
     pub fn bakes(&self, entity: Entity) -> TerrainBakes {
@@ -1155,16 +1188,18 @@ impl Terrains {
                     let layers = state.baked.clone().unwrap_or(authored);
                     if let Some(unbaked) = layers.unbaked() {
                         stats.baking += 1;
-                        let bake = state
-                            .bake
-                            .get_or_insert_with(|| TerrainBake::new(&layers, unbaked, &pyramid));
+                        let bake = state.bake.get_or_insert_with(|| {
+                            TerrainBake::new(&layers, unbaked.clone(), &pyramid)
+                        });
                         let _profile = engine_profile::span("cpu", "terrain_bake");
                         if let Some(baked) = bake.advance(&pyramid, &mut budget) {
                             match &baked {
                                 Baked::Hydrology(found) => state.hydrology = Some(found.stats),
                                 Baked::Erosion(found) => state.erosion = Some(found.stats),
+                                Baked::Path(_) => {}
                             }
-                            state.baked = Some(Arc::new(layers.with_baked(unbaked.0, baked)));
+                            let index = unbaked.0;
+                            state.baked = Some(Arc::new(layers.with_baked(index, baked)));
                             state.bake = None;
                         }
                         continue;

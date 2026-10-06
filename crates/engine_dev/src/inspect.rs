@@ -258,7 +258,7 @@ impl DevTools {
                 let terrain = world.get::<engine_core::Terrain>(entity)?;
                 let mut levels = vec![0_u32; terrain.pyramid.levels() as usize];
                 let (mut level_errors, mut level_ranges) = (Vec::new(), Vec::new());
-                let (mut hydrology, mut erosion) = (None, None);
+                let (mut hydrology, mut erosion, mut paths) = (None, None, Vec::new());
                 if let Some(terrains) = world.get_resource::<engine_core::Terrains>() {
                     for tile in terrains.tiles(entity) {
                         levels[usize::from(tile.key().level)] += 1;
@@ -281,6 +281,23 @@ impl DevTools {
                             lake_samples: stats.map(|stats| stats.lake_samples),
                             max_area: stats.map(|stats| stats.max_area),
                         });
+                    }
+                    // Each path layer's profile (decision 069), once baked.
+                    if let Some(layers) = terrains.layers(entity) {
+                        for (index, layer) in layers.layers().iter().enumerate() {
+                            if let engine_core::Layer::Path(stage) = layer {
+                                let stats = stage.baked.as_ref().map(|profile| profile.stats);
+                                paths.push(crate::views::PathView {
+                                    layer: index,
+                                    baked: stats.is_some(),
+                                    length: stats.map(|stats| stats.length),
+                                    samples: stats.map(|stats| stats.samples),
+                                    steepest: stats.map(|stats| stats.steepest),
+                                    deepest_cut: stats.map(|stats| stats.deepest_cut),
+                                    highest_fill: stats.map(|stats| stats.highest_fill),
+                                });
+                            }
+                        }
                     }
                     if holds(|layer| matches!(layer, engine_core::Layer::Erosion(_))) {
                         let stats = bakes.erosion;
@@ -306,11 +323,12 @@ impl DevTools {
                     level_ranges,
                     hydrology,
                     erosion,
+                    paths,
                 }))
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains, resident and loading tiles, tiles dropped by the budget or the device, patches drawn and patches standing in for finer levels not resident yet. Query heights with terrain_height and compare queries, collision and layers with terrain_sweep.", schemas["Terrains"].clone()),
+            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains, resident and loading tiles, tiles dropped by the budget or the device, patches drawn and patches standing in for finer levels not resident yet. Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -712,7 +730,8 @@ impl DevTools {
             | DevRequest::ShapeCast { .. }
             | DevRequest::CollisionEvents { .. }
             | DevRequest::TerrainHeight { .. }
-            | DevRequest::TerrainSweep { .. } => unreachable!("spatial requests return above"),
+            | DevRequest::TerrainSweep { .. }
+            | DevRequest::TerrainRoute { .. } => unreachable!("spatial requests return above"),
         }
     }
 
