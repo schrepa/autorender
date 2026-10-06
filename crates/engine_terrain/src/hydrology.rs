@@ -4,14 +4,18 @@
 //! grid's edge (Priority-Flood with epsilon; Barnes, Lehman and Mulla
 //! 2014), sends each sample's water to its steepest neighbor among those
 //! the flood reached before it, and sums upstream area in the reverse of
-//! the flood's order. Channels then carve where enough area drains, deeper
+//! the flood's order. Inside a filled pit the flood spreads from the spill
+//! point over the lowest ground first and water drains back the way the
+//! flood came, so rivers crossing a pit follow its low line rather than
+//! straight rays from the spill point. Channels then carve where enough
+//! area drains, deeper
 //! and wider downstream, and a wetness index and the depths of filled pits
 //! follow from the same grids. Each result is a 16-bit image with coarser
 //! levels, so every terrain level samples it without aliasing, and every
 //! sample is the same on every target: the bake is deterministic.
 
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::BinaryHeap;
 
 use engine_math::{max, min};
 use serde::{Deserialize, Serialize};
@@ -223,13 +227,20 @@ pub fn decode(sample: f32, range: [f32; 2]) -> f32 {
 
 /// Fills `heights`' pits so every sample drains off the edge of a grid
 /// `width` samples wide, each raised just above the sample it spills into;
-/// returns the samples in the order the flood reached them.
-fn flood(heights: &mut [f32], width: usize) -> Vec<u32> {
+/// returns the samples in the order the flood reached them, and for each
+/// raised sample the one it spills into (`u32::MAX` for the others). The
+/// flood fills a pit from its spill point over the lowest ground first,
+/// in the order it reached samples of equal heights.
+fn flood(heights: &mut [f32], width: usize) -> (Vec<u32>, Vec<u32>) {
     let count = heights.len();
     let height = count / width;
     let mut closed = vec![false; count];
     let mut open = BinaryHeap::new();
-    let mut pits = VecDeque::new();
+    // Raised samples by their own ground, then by when the flood reached
+    // them.
+    let mut pits = BinaryHeap::new();
+    let mut reached = 0_u32;
+    let mut parents = vec![u32::MAX; count];
     let mut order = Vec::with_capacity(count);
     let edges = (0..width)
         .flat_map(|x| [(x, 0), (x, height - 1)])
@@ -242,8 +253,8 @@ fn flood(heights: &mut [f32], width: usize) -> Vec<u32> {
         }
     }
     loop {
-        let sample = match pits.pop_front() {
-            Some(sample) => sample,
+        let sample = match pits.pop() {
+            Some(Reverse((_, _, sample))) => sample as usize,
             None => match open.pop() {
                 Some(Reverse((_, sample))) => sample as usize,
                 None => break,
@@ -263,14 +274,20 @@ fn flood(heights: &mut [f32], width: usize) -> Vec<u32> {
             }
             closed[neighbor] = true;
             if heights[neighbor] < spill {
+                pits.push(Reverse((
+                    Level(heights[neighbor]),
+                    reached,
+                    neighbor as u32,
+                )));
+                reached += 1;
                 heights[neighbor] = spill;
-                pits.push_back(neighbor);
+                parents[neighbor] = sample as u32;
             } else {
                 open.push(Reverse((Level(heights[neighbor]), neighbor as u32)));
             }
         }
     }
-    order
+    (order, parents)
 }
 
 /// Where water drains over a grid (decisions 066 and 068): its heights
@@ -293,21 +310,25 @@ pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage 
     let count = heights.len();
     let height = count / width;
     let mut filled = heights.to_vec();
-    let order = flood(&mut filled, width);
+    let (order, parents) = flood(&mut filled, width);
     let mut rank = vec![0_u32; count];
     for (position, &sample) in order.iter().enumerate() {
         rank[sample as usize] = position as u32;
     }
     // Each sample drains to its steepest neighbor the flood reached before
-    // it (the sample it spilled into qualifies), so the reverse of the
-    // flood's order visits every sample before the one it drains to; edge
-    // samples drain off the grid.
+    // it, and each raised sample to the one it spills into, back the way the
+    // flood came, so the reverse of the flood's order visits every sample
+    // before the one it drains to; edge samples drain off the grid.
     let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
     let mut receivers = vec![u32::MAX; count];
     let mut slopes = vec![0.0_f32; count];
     for sample in 0..count {
         let (x, z) = ((sample % width) as i32, (sample / width) as i32);
         if x == 0 || z == 0 || x == last_x || z == last_z {
+            continue;
+        }
+        if parents[sample] != u32::MAX {
+            receivers[sample] = parents[sample];
             continue;
         }
         let mut best = (u32::MAX, f32::NEG_INFINITY);
