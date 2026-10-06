@@ -201,7 +201,8 @@ impl GroundCoverPass {
         for (index, render) in terrains.terrains.iter().enumerate() {
             let (directory, palette, [densest, blade], sky) = terrain.cover_terrain(index);
             let density = densest * settings.density;
-            if density <= 0.0 || render.patches.is_empty() {
+            // Surroundings (decision 094) grow no blades.
+            if density <= 0.0 || render.patches.is_empty() || render.surroundings {
                 continue;
             }
             let spacing = render.pyramid.spacing(0);

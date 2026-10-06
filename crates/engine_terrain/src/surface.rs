@@ -573,6 +573,18 @@ impl BiomeRules {
         &self.authored
     }
 
+    /// These rules choosing materials alone, placing no objects: what a
+    /// terrain's surroundings (decision 094) follow.
+    pub fn without_placements(&self) -> Self {
+        let mut rules = self.clone();
+        rules.authored.assets.clear();
+        rules.authored.placements.clear();
+        rules.authored.placed.clear();
+        rules.placements.clear();
+        rules.placed.clear();
+        rules
+    }
+
     /// Whether any placement layer or authored object (decision 085)
     /// stands on tiles of `level`.
     pub fn places_on(&self, level: u8) -> bool {

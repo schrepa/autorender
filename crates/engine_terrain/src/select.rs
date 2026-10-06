@@ -106,6 +106,14 @@ fn distance_squared(point: Vec3, min: Vec3, max: Vec3) -> f32 {
     nearest.distance_squared(point)
 }
 
+/// Whether the square from `low` to `high` lies within `cutout`, the
+/// ground a terrain's surroundings (decision 094) leave to it.
+fn cut_out(cutout: Option<(Vec2, Vec2)>, low: Vec2, high: Vec2) -> bool {
+    cutout.is_some_and(|(first, last)| {
+        low.x >= first.x && low.y >= first.y && high.x <= last.x && high.y <= last.y
+    })
+}
+
 /// The patch of `level` holding patch-grid position `(x, z)`: its tile and
 /// column and row there.
 fn patch_tile(level: u32, x: u32, z: u32) -> (TileKey, u32, u32) {
@@ -125,12 +133,15 @@ fn patch_tile(level: u32, x: u32, z: u32) -> (TileKey, u32, u32) {
 /// coarsest level and split into their four children while the eye is
 /// within the children's level's range and their tile is resident. They
 /// come out nearest the eye first, so nearer ground hides what lies behind
-/// it before it is shaded.
+/// it before it is shaded. Patches within `cutout` (terrain-local) never
+/// draw: surroundings (decision 094) leave that ground to the terrain they
+/// surround, whose edges every level's patches align with.
 pub fn select_patches<'a>(
     pyramid: &Pyramid,
     ranges: &LodRanges,
     eye: Vec3,
     tile: impl Fn(TileKey) -> Option<&'a Tile>,
+    cutout: Option<(Vec2, Vec2)>,
     selection: &mut Selection,
 ) {
     selection.patches.clear();
@@ -156,7 +167,7 @@ pub fn select_patches<'a>(
         let spacing = pyramid.spacing(level);
         let size = PATCH_QUADS as f32 * spacing;
         let corner = Vec2::new(x as f32, z as f32) * size;
-        if corner.x >= extent.x || corner.y >= extent.y {
+        if corner.x >= extent.x || corner.y >= extent.y || cut_out(cutout, corner, corner + size) {
             continue;
         }
         let (key, px, pz) = patch_tile(level, x, z);
@@ -219,7 +230,8 @@ pub struct WantedTile {
 /// Appends the tiles of every level within `reach` times its range of
 /// `eye` (terrain-local, with `forward` its horizontal view direction), and
 /// every tile of the coarsest `pinned` levels, to `out`, most important
-/// first.
+/// first; none wholly within `cutout` (decision 094).
+#[allow(clippy::too_many_arguments)]
 pub fn wanted_tiles(
     pyramid: &Pyramid,
     ranges: &LodRanges,
@@ -227,6 +239,7 @@ pub fn wanted_tiles(
     forward: Vec2,
     reach: f32,
     pinned: u32,
+    cutout: Option<(Vec2, Vec2)>,
     out: &mut Vec<WantedTile>,
 ) {
     let start = out.len();
@@ -257,6 +270,9 @@ pub fn wanted_tiles(
             for x in first[0]..=last[0] {
                 let low = Vec2::new(x as f32, z as f32) * size;
                 let high = low + size;
+                if cut_out(cutout, low, high) {
+                    continue;
+                }
                 let nearest = eye2.clamp(low, high);
                 let distance = nearest.distance(eye2);
                 if !everywhere && distance > radius {

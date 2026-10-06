@@ -421,7 +421,7 @@ impl DevTools {
             |probe| json!(SceneReflectionProbe::from(probe)),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity (decision 051) as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material and collision, with its streaming state: resident tiles by level.", schemas["Terrain"].clone()),
+            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity (decision 051) as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material, collision and surroundings, with its streaming state: resident tiles by level, and its surroundings' (decision 094) once they stream.", schemas["Terrain"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -508,11 +508,21 @@ impl DevTools {
                             stamp: edit.stamp,
                         })
                         .collect(),
+                    surroundings: world
+                        .get_resource::<engine_core::Terrains>()
+                        .and_then(|terrains| terrains.surroundings(entity))
+                        .map(|status| crate::views::SurroundingsView {
+                            reach: status.reach,
+                            tiles: status.tiles,
+                            spacing: status.spacing,
+                            resident_tiles: status.resident_tiles,
+                            patches: status.patches,
+                        }),
                 }))
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains, resident and loading tiles, tiles dropped by the budget or the device, patches drawn and patches standing in for finer levels not resident yet. Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
+            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains, resident and loading tiles, tiles dropped by the budget or the device, patches drawn and patches standing in for finer levels not resident yet, and of those the tiles and patches of terrains' surroundings (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -526,6 +536,8 @@ impl DevTools {
                     bridges: stats.bridges,
                     tunnels: stats.tunnels,
                     falls: stats.falls,
+                    surroundings_tiles: stats.surroundings_tiles,
+                    surroundings_patches: stats.surroundings_patches,
                 })
             },
         ).expect("built-in descriptor is bounded");

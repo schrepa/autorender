@@ -602,10 +602,13 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // a face itself turns from the sun, its mesh's own shadow darkens it
     // whatever its normal says, so the wrap fades out over the faces about
     // the sun's edge instead of stepping down at every one of them.
-    // Impostors' cards are not their surfaces' faces.
+    // Impostors' cards are not their surfaces' faces, nor are terrain's
+    // triangles, its levels of detail, its ground's: its normal maps and
+    // horizon maps shade it.
     var facing = 1.0;
     let face = cross(point.world_dx, point.world_dy);
-    if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0)) {
+    if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0))
+        && !point.on_terrain {
         let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
         facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
     }

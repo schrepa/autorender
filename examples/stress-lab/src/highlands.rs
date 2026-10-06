@@ -230,6 +230,9 @@ const LOOKS: [Look; 10] = [
 const TILES: u32 = 32;
 const SPACING: f32 = 1.0;
 const SIZE: f32 = TILES as f32 * 256.0 * SPACING;
+/// Meters the terrain's surroundings (decision 094) reach past its edges:
+/// the farthest whose tiles still align with it, 65 km across in all.
+const SURROUNDINGS: f32 = 28_672.0;
 /// The plateau's center, where the hamlet stands.
 const PLATEAU: [f32; 2] = [0.0, 0.0];
 
@@ -660,8 +663,16 @@ pub(crate) fn populate(
         EAST_ROAD.map(local).to_vec(),
     ];
     let surface = surface(world, files, plateau_ring(plateau, hamlet - 8.0, &roads))?;
+    // Mountains go on past the edges to the horizon (decision 094), the
+    // bakes easing into them over a few hundred meters, so channels running
+    // off the edges end soon after.
     world.spawn(
-        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
+        Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers)
+            .with_surface(surface)
+            .with_surroundings(Surroundings {
+                reach: SURROUNDINGS,
+                blend: 256.0,
+            }),
     );
     lanterns(world, &ROAD, half)?;
     hiker(world, &ROAD, half)?;

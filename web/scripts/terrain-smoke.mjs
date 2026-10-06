@@ -79,6 +79,9 @@ const terrain = {
     // on the level-1 tiles, which stay resident farther away.
     placed: [{ asset: "crate", position: [530, 500], yaw: 30, scale: 3 }, { asset: "ball", position: [500, 530], scale: 2, level: 1 }],
   },
+  // Decision 094: ground generated past its edges to the horizon, its bakes
+  // eased out over 128 m.
+  surroundings: { reach: 3000, blend: 128 },
 };
 /** A unit icosphere subdivided once: 80 triangles, enough for an impostor. */
 function ball() {
@@ -255,6 +258,46 @@ try {
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
+  // Surroundings (decision 094): ground generated past the terrain's edges
+  // from its layers, four meters a sample, meets its edges where both read
+  // the same ground and fills the view from on high; queries past the
+  // edges read it, it places nothing, and settings turn it off.
+  {
+    const around = view.surroundings;
+    assert.ok(around && around.reach.every(reach => reach >= 3000) && around.spacing === 4 && around.resident_tiles > 0,
+      `the surroundings stream: ${JSON.stringify(around)}`);
+    const status = (await command("inspect", { component: "Terrains" })).result.value;
+    assert.ok(status.terrains === 1 && status.surroundings_tiles > 0 && status.surroundings_patches > 0,
+      `the surroundings draw: ${JSON.stringify(status)}`);
+    const pairs = [];
+    for (const along of [-300, 0, 300]) {
+      pairs.push([[511.5, along], [512.5, along]], [[-511.5, along], [-512.5, along]],
+        [[along, 511.5], [along, 512.5]], [[along, -511.5], [along, -512.5]]);
+    }
+    const sampled = await heights(pairs.flat());
+    for (let index = 0; index < pairs.length; index++) {
+      const [inside, outside] = [sampled[2 * index], sampled[2 * index + 1]];
+      assert.ok(inside && outside && Math.abs(inside.height - outside.height) < 3,
+        `the edge meets at ${JSON.stringify(pairs[index])}: ${JSON.stringify([inside, outside])}`);
+    }
+    const beyond = await heights([[2500, 2500], [-3000, 1000]]);
+    assert.ok(beyond.every(sample => sample && Number.isFinite(sample.height)), `queries past the edges: ${JSON.stringify(beyond)}`);
+    await command("camera", { ...overview, position: [0, 1500, 1800], target: [0, 0, -2000], far: 20000 });
+    const surroundedFrame = await settle();
+    const surrounded = await capture("surroundings");
+    const edged = await command("environment", { terrain: { samples_per_frame: 50_000_000, surroundings: false } });
+    assert.deepEqual(edged.result.environment_changed, ["terrain"]);
+    const alone = await settle();
+    assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_patches, 0, "settings turn the surroundings off");
+    assert.equal(alone.placed_objects, surroundedFrame.placed_objects, "the surroundings place nothing");
+    const bare = await capture("no-surroundings");
+    const filled = await differentPixels(page, [surrounded, bare]);
+    assert.ok(filled.changed > 0.2 * filled.total, `the surroundings fill ${filled.changed} of ${filled.total} pixels`);
+    await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+    await command("camera", overview);
+    await settle();
+    checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, patches: status.surroundings_patches, pixels: filled.changed });
+  }
   // The hydrology bake (decision 066) read every sample of the two-meter
   // tiles, found channels, and queries report what it found where they ask.
   const water = view.hydrology;
@@ -836,9 +879,10 @@ try {
   let sky;
   for (let frame = 0; frame < 200; frame++) {
     sky = (await command("render")).result.rendering;
-    if (sky.terrain_sky_maps === 1 && sky.terrain_sky_rows === 0) break;
+    if (sky.terrain_sky_maps === 2 && sky.terrain_sky_rows === 0) break;
   }
-  assert.equal(sky.terrain_sky_maps, 1, `the sky map builds: ${JSON.stringify(sky)}`);
+  // One for the terrain and one for its surroundings (decision 094).
+  assert.equal(sky.terrain_sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
   await command("terrain", { view: "sky" });
   const skyView = await capture("view-sky");
   assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
@@ -869,7 +913,8 @@ try {
   const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
   // The control renders a frame with the new sun.
   const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
-  assert.equal(rebuilt.terrain_horizons, 1);
+  // The terrain's and its surroundings' (decision 094).
+  assert.equal(rebuilt.terrain_horizons, 2);
   assert.ok(rebuilt.terrain_horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
   assert.equal((await command("render")).result.rendering.terrain_horizon_builds, 0, "an unchanged sun keeps the map");
   const above = { ...overview, position: [-60, 320, 220], target: [0, 30, 0] };

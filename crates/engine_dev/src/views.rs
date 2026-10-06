@@ -27,6 +27,22 @@ pub struct TerrainView {
     /// terrain-local, which a scene saves as a `{"stamp": ...}` layer after
     /// its others.
     pub edits: Vec<TerrainEditView>,
+    /// Its surroundings (decision 094) once they stream, after its bakes:
+    /// how far they reach past its edges along x and z, their level-0 tiles
+    /// along a side and sample spacing, and their resident tiles and the
+    /// patches drawn.
+    pub surroundings: Option<SurroundingsView>,
+}
+
+/// A terrain's surroundings as they stream (decision 094).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct SurroundingsView {
+    pub reach: [f32; 2],
+    pub tiles: u32,
+    pub spacing: f32,
+    pub resident_tiles: u32,
+    pub patches: u32,
 }
 
 /// One terrain edit (decision 080): its id and its stamp (terrain-local).
@@ -232,6 +248,10 @@ pub struct TerrainsView {
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
+    /// Of the resident tiles and patches, those of terrains' surroundings
+    /// (decision 094).
+    pub surroundings_tiles: u32,
+    pub surroundings_patches: u32,
 }
 
 /// An animation player (decision 035) in the shape of a scene version 8

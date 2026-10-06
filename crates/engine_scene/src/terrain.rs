@@ -9,8 +9,8 @@ use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
     PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
-    TerrainSurface,
+    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain,
+    TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,37 @@ pub struct SceneTerrain {
     /// Whether it collides where collision is installed. Omitted, true.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub collision: bool,
+    /// Ground generated around it to the horizon (decision 094); terrains
+    /// read from files have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surroundings: Option<SceneSurroundings>,
+}
+
+/// Ground generated past a terrain's edges to the horizon (decision 094):
+/// a coarser terrain around it from the same layers, its samples four
+/// times as far apart as the terrain's finest, reaching about `reach`
+/// meters past every edge (the terrain's inspection reports how far: its
+/// tiles align with the terrain's sample grids). The terrain's stamps,
+/// heightmaps, bakes and roads fade into its noise over `blend` meters past
+/// its edges (1024 when omitted), so the two meet where it ends. It never
+/// collides, places objects, grows blades or holds water.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneSurroundings {
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000000.0)))]
+    pub reach: f32,
+    #[serde(default = "default_blend", skip_serializing_if = "is_default_blend")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000000.0)))]
+    pub blend: f32,
+}
+
+fn default_blend() -> f32 {
+    1024.0
+}
+
+fn is_default_blend(value: &f32) -> bool {
+    *value == default_blend()
 }
 
 fn yes() -> bool {
@@ -559,6 +590,22 @@ impl SceneTerrain {
             return Err(invalid("origin", "must be finite".into()));
         }
         let origin = Vec3::from_array(self.origin);
+        let surroundings = self.surroundings.map(|surroundings| Surroundings {
+            reach: surroundings.reach,
+            blend: surroundings.blend,
+        });
+        if surroundings.is_some_and(|surroundings| !surroundings.is_usable()) {
+            return Err(invalid(
+                "surroundings",
+                "needs a reach in (0, 1000000] and a blend in [0, 1000000]".into(),
+            ));
+        }
+        if surroundings.is_some() && self.file.is_some() {
+            return Err(invalid(
+                "surroundings",
+                "terrains read from files have none".into(),
+            ));
+        }
         let source = match (&self.file, self.layers.is_empty()) {
             (Some(_), false) => {
                 return Err(invalid(
@@ -585,6 +632,7 @@ impl SceneTerrain {
                         surface,
                         collision: self.collision,
                         edits: std::sync::Arc::from(Vec::new()),
+                        surroundings: None,
                     });
                 };
                 let (header, url, data) = files.terrain(uri, &format!("{path}.file"))?;
@@ -612,6 +660,7 @@ impl SceneTerrain {
                     surface,
                     collision: self.collision,
                     edits: std::sync::Arc::from(Vec::new()),
+                    surroundings: None,
                 });
             }
             (None, false) => self.layers(path, files)?,
@@ -631,6 +680,7 @@ impl SceneTerrain {
             surface,
             collision: self.collision,
             edits: std::sync::Arc::from(Vec::new()),
+            surroundings,
         })
     }
 
@@ -769,6 +819,10 @@ impl SceneTerrain {
             },
             surface,
             collision: terrain.collision,
+            surroundings: terrain.surroundings.map(|surroundings| SceneSurroundings {
+                reach: surroundings.reach,
+                blend: surroundings.blend,
+            }),
         }
     }
 }

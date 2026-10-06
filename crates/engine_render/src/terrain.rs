@@ -470,7 +470,13 @@ impl TerrainPass {
                 (view, directory, relief),
                 self.deformation.shading(),
             );
-            uniform.cover = [views.canopy[0], views.canopy[1], views.canopy[2], 0.0];
+            uniform.cover = if terrain.surroundings && views.canopy[1] > 0.0 {
+                // Surroundings (decision 094) grow no blades: their grassy
+                // ground shows as canopy from the eye on.
+                [0.0, 1.0e-3, views.canopy[2], 0.0]
+            } else {
+                [views.canopy[0], views.canopy[1], views.canopy[2], 0.0]
+            };
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));

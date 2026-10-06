@@ -4003,6 +4003,28 @@
       },
       "additionalProperties": false
     },
+    "SceneSurroundings": {
+      "description": "Ground generated past a terrain's edges to the horizon (decision 094):\na coarser terrain around it from the same layers, its samples four\ntimes as far apart as the terrain's finest, reaching about `reach`\nmeters past every edge (the terrain's inspection reports how far: its\ntiles align with the terrain's sample grids). The terrain's stamps,\nheightmaps, bakes and roads fade into its noise over `blend` meters past\nits edges (1024 when omitted), so the two meet where it ends. It never\ncollides, places objects, grows blades or holds water.",
+      "type": "object",
+      "properties": {
+        "blend": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.0
+        },
+        "reach": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reach"
+      ]
+    },
     "SceneTerrain": {
       "description": "A heightfield terrain on this entity (decision 051). Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
       "type": "object",
@@ -4047,6 +4069,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "surroundings": {
+          "description": "Ground generated around it to the horizon (decision 094); terrains\nread from files have none.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurroundings"
             },
             {
               "type": "null"
@@ -4422,6 +4455,11 @@
         },
         "sun_shadows": {
           "description": "Long sun shadows through each terrain's horizon map (decision 052),\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
+          "type": "boolean",
+          "default": true
+        },
+        "surroundings": {
+          "description": "Ground generated around terrains with surroundings (decision 094)\nstreams and draws; off, every terrain ends at its edges.",
           "type": "boolean",
           "default": true
         }

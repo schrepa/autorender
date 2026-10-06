@@ -128,9 +128,9 @@ pub use streaming::{
 pub use terrain::{
     MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
-    SurfaceProjection, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainFocus,
-    TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface, TerrainView,
-    Terrains, TileRequest, Viewport,
+    SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug,
+    TerrainEdit, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats,
+    TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
@@ -932,8 +932,8 @@ pub mod prelude {
         FarPlacement, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers,
         Mask, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider, PlacedShape,
         PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap, Stamp,
-        StampOp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainFocus, TerrainSample,
-        TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
+        StampOp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainFocus,
+        TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
