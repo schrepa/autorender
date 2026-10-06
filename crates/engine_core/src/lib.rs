@@ -34,6 +34,7 @@ mod terrain;
 mod transform_edits;
 mod virtual_geometry;
 mod water;
+mod waterfalls;
 mod wind;
 
 pub use animation::{AnimationPlayer, AnimationSystems};
@@ -700,9 +701,11 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         mode.validate()?;
         self.complete_pending_tick();
-        // Bridges (decision 072) and spline meshes (decision 071) spawn and
-        // build before transforms refresh, so paused frames draw them too.
+        // Bridges (decision 072), waterfalls (decision 075) and spline meshes
+        // (decision 071) spawn and build before transforms refresh, so paused
+        // frames draw them too.
         bridges::sync(self.app.world_mut());
+        waterfalls::sync(self.app.world_mut());
         spline_mesh::build(self.app.world_mut());
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), mode);
@@ -734,6 +737,7 @@ impl Engine {
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
             bridges::sync(self.app.world_mut());
+            waterfalls::sync(self.app.world_mut());
             spline_mesh::build(self.app.world_mut());
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);

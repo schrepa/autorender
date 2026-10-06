@@ -180,9 +180,20 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     let ground = water_ground(input.clip_position.xy);
     let through = max(length(ground - input.relative), 0.0);
     let below = max(input.relative.y - ground.y, 0.0);
+    // Where the bake holds no water, its surfaces reach past the shore only
+    // to meet the ground: over steep ground they stand off the slope, and
+    // nothing of them draws there.
+    if (depth < 0.05 && below > 1.0) {
+        discard;
+    }
     // What comes back from inside the water, lit as a diffuse surface:
-    // the scattered color, for as much light as the water stops.
-    let transmit = exp2(-through / water.color.w);
+    // the scattered color, for as much light as the water stops. The bake
+    // bounds the path where its surfaces reach past the shore, which on
+    // steep ground can stand meters over the slope: water is only where it
+    // holds some.
+    let path = min(through, depth * 2.0 + 0.3);
+    let transmit = exp2(-path / water.color.w);
+    let real = smoothstep(0.02, 0.25, depth);
     // Foam where the water runs shallow along shores and where rivers run
     // fast, broken by drifting noise and fading before it would alias.
     let shore = 1.0 - smoothstep(0.0, water.foam.y, below);
@@ -190,7 +201,7 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     let grain = water_noise((world.xz - drift * time * 0.8) * 1.3).x * 0.65
         + water_noise(world.xz * 4.1 + vec2<f32>(time * 0.35, 0.0)).x * 0.35;
     let foam = water.foam.x * saturate((max(shore, rapids * 0.8) - grain * 0.7) * 2.5)
-        * saturate(1.6 - footprint * 3.0);
+        * saturate(1.6 - footprint * 3.0) * real;
     var point: SurfacePoint;
     point.albedo = water.color.rgb;
     point.opacity = 1.0;

@@ -227,7 +227,10 @@ try {
   assert.ok(water.channel_samples > 0 && water.max_area > 20000, `water gathers into channels: ${JSON.stringify(water)}`);
   const [watered] = (await command("terrain_height", { points: [[-300, -300]] })).result.samples;
   assert.ok(watered.water && watered.water.flow > 0 && Number.isFinite(watered.water.wetness), `queries report water: ${JSON.stringify(watered)}`);
-  checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area });
+  // Waterfalls (decision 075) are where its rivers drop steeply; the
+  // engine spawns what draws each one.
+  assert.equal((await command("inspect", { component: "Terrains" })).result.value.falls, water.falls, `falls spawn as found: ${JSON.stringify(water)}`);
+  checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area, falls: water.falls });
   // The erosion bake (decision 068) ran its rounds over the same samples
   // first, wearing ground away.
   const worn = view.erosion;

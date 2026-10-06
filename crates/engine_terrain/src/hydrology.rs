@@ -64,14 +64,36 @@ impl Default for HydrologyLayer {
 }
 
 /// What a bake found: samples read, samples channels run through, samples
-/// of filled pits, and the largest upstream area (square meters).
+/// of filled pits, the largest upstream area (square meters), and the
+/// waterfalls rivers drop over (decision 075).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct HydrologyStats {
     pub samples: usize,
     pub channel_samples: usize,
     pub lake_samples: usize,
     pub max_area: f32,
+    pub falls: usize,
 }
+
+/// A waterfall (decision 075): where a river drops steeper than
+/// [`FALL_SLOPE`] over at least [`FALL_HEIGHT`] meters, its surface at its
+/// lip and at its foot (terrain-local meters), the ground along its course
+/// from lip to foot a sample at a time, the meters across the river at its
+/// lip and the area draining over it (square meters).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Fall {
+    pub top: [f32; 3],
+    pub bottom: [f32; 3],
+    pub path: Vec<[f32; 3]>,
+    pub width: f32,
+    pub area: f32,
+}
+
+/// The steepest a river runs (rise per meter between a sample and its
+/// receiver) before it falls, and the meters it must fall to make a
+/// waterfall.
+pub const FALL_SLOPE: f32 = 0.5;
+pub const FALL_HEIGHT: f32 = 6.0;
 
 /// The ranges the baked images encode, from 0 to 65535: base-10 logarithms
 /// of upstream area (square meters), wetness indexes and lake depths
@@ -99,6 +121,8 @@ pub struct Hydrology {
     pub lakes: HeightImage,
     /// Where water stands: lakes in filled pits and rivers in channels.
     pub water: Arc<WaterGrid>,
+    /// Where rivers fall (decision 075).
+    pub falls: Arc<[Fall]>,
     pub stats: HydrologyStats,
 }
 
@@ -416,18 +440,15 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
             }
         }
     }
-    let water = Arc::new(water(
-        heights,
-        &Found {
-            filled: &filled,
-            carve: &carve,
-            area: &area,
-            receivers: &receivers,
-            lakes: &lake,
-        },
-        (width, spacing),
-        layer,
-    ));
+    let found = Found {
+        filled: &filled,
+        carve: &carve,
+        area: &area,
+        receivers: &receivers,
+        lakes: &lake,
+    };
+    let water = Arc::new(water(heights, &found, (width, spacing), layer));
+    let falls: Arc<[Fall]> = falls(heights, &found, (width, spacing), layer, &water).into();
     let mut lake_samples = 0;
     let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
@@ -466,8 +487,79 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
             channel_samples,
             lake_samples,
             max_area,
+            falls: falls.len(),
         },
+        falls,
     }
+}
+
+/// Where rivers fall (decision 075): from each channel sample dropping
+/// steeper than [`FALL_SLOPE`] to its receiver that no steep sample drains
+/// into, down its receivers while they stay steep, kept where the ground
+/// falls [`FALL_HEIGHT`] or more; the river's surface at the lip and at the
+/// foot, where a lake's level stands if it falls into one.
+fn falls(
+    heights: &[f32],
+    found: &Found<'_>,
+    (width, spacing): (usize, f32),
+    layer: &HydrologyLayer,
+    water: &WaterGrid,
+) -> Vec<Fall> {
+    let Found {
+        area,
+        receivers,
+        lakes,
+        ..
+    } = *found;
+    let count = heights.len();
+    let channel = |sample: usize| area[sample] >= layer.channel_area && !lakes[sample];
+    let place = |sample: usize| ((sample % width) as f32, (sample / width) as f32);
+    let steep = |sample: usize| {
+        let receiver = receivers[sample];
+        if receiver == u32::MAX || !channel(sample) {
+            return false;
+        }
+        let ((x, z), (rx, rz)) = (place(sample), place(receiver as usize));
+        let run = ((rx - x) * (rx - x) + (rz - z) * (rz - z)).sqrt() * spacing;
+        heights[sample] - heights[receiver as usize] > FALL_SLOPE * run
+    };
+    let mut fed = vec![false; count];
+    for sample in 0..count {
+        if steep(sample) {
+            fed[receivers[sample] as usize] = true;
+        }
+    }
+    let mut falls = Vec::new();
+    for lip in 0..count {
+        if !steep(lip) || fed[lip] {
+            continue;
+        }
+        let mut course = vec![lip];
+        let mut foot = lip;
+        while steep(foot) {
+            foot = receivers[foot] as usize;
+            course.push(foot);
+        }
+        if heights[lip] - heights[foot] < FALL_HEIGHT {
+            continue;
+        }
+        let ((x, z), (fx, fz)) = (place(lip), place(foot));
+        let ratio = area[lip] / layer.channel_area;
+        falls.push(Fall {
+            top: [x * spacing, water.surface[lip], z * spacing],
+            bottom: [fx * spacing, water.surface[foot], fz * spacing],
+            path: course
+                .iter()
+                .map(|&sample| {
+                    let (sx, sz) = place(sample);
+                    [sx * spacing, heights[sample], sz * spacing]
+                })
+                .collect(),
+            width: min(layer.width * ratio.sqrt(), layer.max_width),
+            area: area[lip],
+        });
+    }
+    falls
 }
 
 /// What a bake found about one place: the base-10 logarithm of its
@@ -571,6 +663,12 @@ fn water(
             let along = [rx as f32 - x as f32, rz as f32 - z as f32];
             let length = (along[0] * along[0] + along[1] * along[1]).sqrt();
             let drop = max(heights[sample] - heights[receiver as usize], 0.0);
+            // Where it falls (decision 075) the river carries no surface: a
+            // grid of its samples cannot follow a waterfall down its rocks,
+            // which its spray shows instead.
+            if drop > FALL_SLOPE * length * spacing {
+                continue;
+            }
             // Steeper channels run faster, up to a torrent.
             let speed = min(0.6 + 12.0 * (drop / (length * spacing)).sqrt(), 4.0);
             [along[0] / length * speed, along[1] / length * speed]

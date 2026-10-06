@@ -62,8 +62,8 @@ pub struct ErosionView {
 
 /// A terrain's hydrology bake (decision 066): whether it is in progress
 /// (tiles wait for it), and once done the samples it read, those channels
-/// run through, those of filled pits and the largest area draining through
-/// one (square meters).
+/// run through, those of filled pits, the largest area draining through
+/// one (square meters) and the waterfalls rivers drop over (decision 075).
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HydrologyView {
@@ -72,6 +72,7 @@ pub struct HydrologyView {
     pub channel_samples: Option<usize>,
     pub lake_samples: Option<usize>,
     pub max_area: Option<f32>,
+    pub falls: Option<usize>,
 }
 
 /// Terrain streaming at the last extraction (decision 051).
@@ -86,10 +87,11 @@ pub struct TerrainsView {
     pub fallback_patches: u32,
     /// Terrains whose bakes (decisions 066 and 068) are in progress.
     pub baking: u32,
-    /// Bridges terrains' roads span (decision 072), and tunnels they bore
-    /// (decision 073).
+    /// Bridges terrains' roads span (decision 072), tunnels they bore
+    /// (decision 073), and waterfalls their rivers drop over (decision 075).
     pub bridges: u32,
     pub tunnels: u32,
+    pub falls: u32,
 }
 
 /// An animation player (decision 035) in the shape of a scene version 8
