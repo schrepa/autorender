@@ -882,6 +882,14 @@
           "maximum": 5000.0,
           "minimum": 0.0
         },
+        "tunnel_cut": {
+          "description": "Meters the road would cut into the ground beyond which it tunnels\ninstead (decision 073), 0 to 2000; 0 never tunnels.",
+          "type": "number",
+          "format": "float",
+          "default": 25.0,
+          "maximum": 2000.0,
+          "minimum": 0.0
+        },
         "width": {
           "description": "Meters of level road across, 0.5 to 200.",
           "type": "number",
