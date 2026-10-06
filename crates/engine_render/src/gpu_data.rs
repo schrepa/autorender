@@ -511,16 +511,17 @@ pub(crate) const ENVIRONMENT_SHADER: &str = concat!(
     include_str!("environment.wgsl")
 );
 
-/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl` (decision 031), 192 bytes:
+/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl` (decision 031), 224 bytes:
 /// each map's texture coordinate transform, the emissive color and the map
-/// parameters of one material.
+/// parameters of one material, and its top layer (decision 093).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct MaterialUniform {
     /// Rows of each map's 2x3 transform (base color, metallic-roughness,
     /// normal, occlusion and emissive), w unused.
     pub transforms: [[f32; 4]; 10],
-    /// Linear emissive color, w unused.
+    /// Linear emissive color; w the meters one repeat of world-mapped maps
+    /// covers (decision 093), 0 for texture coordinates.
     pub emissive: [f32; 4],
     /// Normal scale, occlusion strength, alpha cutoff, and the maps reading
     /// the second texture coordinates as bits in map order.
@@ -529,6 +530,10 @@ pub(crate) struct MaterialUniform {
     /// thickness; w the material's variant bits as `f32` bits, which uber
     /// pipelines read (decision 049).
     pub volume: [f32; 4],
+    /// The top layer (decision 093): its linear color and coverage, then its
+    /// roughness.
+    pub top: [f32; 4],
+    pub layer: [f32; 4],
 }
 
 impl MaterialUniform {
@@ -549,6 +554,8 @@ impl MaterialUniform {
         emissive: [0.0; 4],
         params: [1.0, 1.0, 0.5, 0.0],
         volume: [0.0, 1.5, 0.0, 0.0],
+        top: [0.0; 4],
+        layer: [0.0; 4],
     };
 
     pub(crate) fn new(material: &Material) -> Self {
@@ -561,7 +568,12 @@ impl MaterialUniform {
             }
         }
         let [r, g, b] = material.emissive();
-        uniform.emissive = [r, g, b, 0.0];
+        uniform.emissive = [r, g, b, material.world_tiling().unwrap_or(0.0)];
+        if let Some(top) = material.top_layer() {
+            let [r, g, b] = top.color;
+            uniform.top = [r, g, b, top.coverage];
+            uniform.layer = [top.roughness, 0.0, 0.0, 0.0];
+        }
         let cutoff = match material.alpha_mode() {
             AlphaMode::Mask { cutoff } => cutoff,
             _ => 0.5,
@@ -635,6 +647,10 @@ impl Variant {
     // Passes drawn rarely (decision 049) read the map bits from the
     // material uniform: their pipelines key on pipeline state alone.
     const UBER: u16 = 2048;
+    // Maps laid from the world's axes, and a layer on faces turned up
+    // (decision 093).
+    const WORLD_MAPPING: u16 = 4096;
+    const TOP_LAYER: u16 = 8192;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -646,7 +662,8 @@ impl Variant {
             || material.emissive() != [0.0; 3]
             || base.is_some_and(|map| map.transform != UvTransform::IDENTITY)
             || matches!(mode, AlphaMode::Mask { .. })
-            || (mode == AlphaMode::Blend && base.is_some());
+            || (mode == AlphaMode::Blend && base.is_some())
+            || material.world_tiling().is_some();
         let mut bits = 0;
         if maps {
             bits |= Self::MAPS;
@@ -676,6 +693,12 @@ impl Variant {
         if material.transmission().factor > 0.0 {
             bits |= Self::TRANSMISSION;
         }
+        if material.world_tiling().is_some() {
+            bits |= Self::WORLD_MAPPING;
+        }
+        if material.top_layer().is_some() {
+            bits |= Self::TOP_LAYER;
+        }
         Self(bits)
     }
 
@@ -697,9 +720,11 @@ impl Variant {
     }
 
     /// Fragment override constants.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 10] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 12] {
         let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
+            ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
+            ("TOP_LAYER", set(Self::TOP_LAYER)),
             ("MATERIAL_MAPS", set(Self::MAPS)),
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),

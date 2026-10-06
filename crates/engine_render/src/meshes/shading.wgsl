@@ -112,6 +112,8 @@ struct MaterialTexels {
     normal_dy: vec2<f32>,
     // What masked tests scale the base color's alpha by.
     coverage: f32,
+    // World-mapped normal maps' normal (decision 093), world space.
+    world_normal: vec3<f32>,
 }
 
 fn untextured() -> MaterialTexels {
@@ -177,6 +179,113 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
         texels.normal = textureSample(normal_texture, normal_sampler, normal_uv).xyz * 2.0 - 1.0;
         texels.normal_dx = dpdx(normal_uv);
         texels.normal_dy = dpdy(normal_uv);
+    }
+    return texels;
+}
+
+// Coordinates on axis `axis`'s plane of world-mapped maps (decision 093),
+// as terrain's maps lie (`meshes/terrain.wgsl`'s `terrain_project`): x
+// sees (z, -y), y sees (x, z) and z sees (x, -y), so on the sides the maps'
+// up is the world's.
+fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return vec2<f32>(p.z, -p.y);
+    }
+    if axis == 2u {
+        return vec2<f32>(p.x, -p.y);
+    }
+    return p.xz;
+}
+
+// The shares of the three projections a surface of `normal` blends:
+// sharpened toward the axis it faces most, those barely showing skipped.
+fn world_shares(normal: vec3<f32>) -> vec3<f32> {
+    let sharp = pow(abs(normal), vec3<f32>(4.0));
+    let shares = max(sharp / max(sharp.x + sharp.y + sharp.z, 1.0e-6) - 0.03, vec3<f32>(0.0));
+    return shares / max(shares.x + shares.y + shares.z, 1.0e-6);
+}
+
+// Map `index` of `map` at `world` (changing by `dx` across and `dy` down a
+// pixel) on axis `axis`'s plane, one repeat every `emissive.w` meters,
+// through its transform.
+fn world_map_texel(map: texture_2d<f32>, map_sampler: sampler, index: u32, world: vec3<f32>,
+        dx: vec3<f32>, dy: vec3<f32>, axis: u32) -> vec4<f32> {
+    let scale = 1.0 / max(material_maps.emissive.w, 1.0e-6);
+    let uv = world_plane(world, axis) * scale;
+    let grad_x = world_plane(dx, axis) * scale;
+    let grad_y = world_plane(dy, axis) * scale;
+    return textureSampleGrad(map, map_sampler, map_uv(index, uv, uv),
+        map_gradient(index, grad_x, grad_x), map_gradient(index, grad_y, grad_y));
+}
+
+// A world-mapped normal map's tangent-space `sampled` normal on axis
+// `axis`'s plane, deflections scaled by `scale`, added to the surface's
+// `normal` in that plane (whiteout blending), as terrain's are.
+fn world_plane_normal(sampled: vec3<f32>, axis: u32, normal: vec3<f32>, scale: f32)
+        -> vec3<f32> {
+    let n = vec3<f32>(sampled.xy * scale, sampled.z);
+    if axis == 0u {
+        return stable_normalize(vec3<f32>(abs(n.z) * normal.x, n.y + normal.y, n.x + normal.z));
+    }
+    if axis == 2u {
+        return stable_normalize(vec3<f32>(n.x + normal.x, n.y + normal.y, abs(n.z) * normal.z));
+    }
+    return stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y));
+}
+
+// The texels of a world-mapped material (decision 093) at `world` on a
+// surface of `normal`, changing by `dx` across and `dy` down a pixel: each
+// map blended over the projections the surface faces, its normal map's
+// normal in world space.
+fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
+        -> MaterialTexels {
+    var texels = untextured();
+    let shares = world_shares(normal);
+    var base = vec4<f32>(0.0);
+    var metallic_roughness = vec4<f32>(0.0);
+    var occlusion = 0.0;
+    var emissive = vec3<f32>(0.0);
+    var mapped = vec3<f32>(0.0);
+    for (var axis = 0u; axis < 3u; axis++) {
+        let share = shares[axis];
+        if share <= 0.0 {
+            continue;
+        }
+        base += share * world_map_texel(base_color_texture, base_color_sampler, 0u, world, dx, dy,
+            axis);
+        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+            metallic_roughness += share * world_map_texel(metallic_roughness_texture,
+                metallic_roughness_sampler, 1u, world, dx, dy, axis);
+        }
+        if material_flag(256u, OCCLUSION_MAP) {
+            occlusion += share * world_map_texel(occlusion_texture, occlusion_sampler, 3u, world,
+                dx, dy, axis).r;
+        }
+        if material_flag(512u, EMISSIVE_MAP) {
+            emissive += share * world_map_texel(emissive_texture, emissive_sampler, 4u, world, dx,
+                dy, axis).rgb;
+        }
+        if material_flag(2u, NORMAL_MAP) {
+            let sampled = world_map_texel(normal_texture, normal_sampler, 2u, world, dx, dy, axis)
+                .xyz * 2.0 - 1.0;
+            mapped += share * world_plane_normal(sampled, axis, normal, material_maps.params.x);
+        }
+    }
+    texels.base = base;
+    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        texels.factors = metallic_roughness.gb;
+    }
+    if material_flag(1024u, PACKED_OCCLUSION) {
+        texels.occlusion = metallic_roughness.r;
+    } else if material_flag(256u, OCCLUSION_MAP) {
+        texels.occlusion = occlusion;
+    }
+    texels.emissive = vec3<f32>(1.0);
+    if material_flag(512u, EMISSIVE_MAP) {
+        texels.emissive = emissive;
+    }
+    if material_flag(2u, NORMAL_MAP) {
+        texels.world_normal = mapped;
     }
     return texels;
 }
@@ -306,6 +415,33 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.geometric = geometric_normal(surface_normal, front);
     point.normal = shading_normal(point.geometric, world, world_dx, world_dy, texels.normal,
         texels.normal_dx, texels.normal_dy, surface.w);
+    if material_flag(4096u, WORLD_MAPPING) && material_flag(2u, NORMAL_MAP)
+        && dot(texels.world_normal, texels.world_normal) > 0.0 {
+        // World-mapped normal maps (decision 093) shade their own normal,
+        // turned to the side the surface shows.
+        var mapped = stable_normalize(texels.world_normal);
+        if dot(mapped, point.geometric) < 0.0 {
+            mapped = -mapped;
+        }
+        point.normal = mapped;
+    }
+    if material_flag(8192u, TOP_LAYER) {
+        // The top layer (decision 093) settles on faces turned up, broken
+        // by noise and gathering in the darker hollows of the base color.
+        let breakup = variety_noise(world.xz * 2.3 + vec2<f32>(world.y * 0.7, 3.1)) * 0.6
+            + variety_noise(world.xz * 0.55 - vec2<f32>(world.y * 0.4, 7.7)) * 0.4;
+        let hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
+        let lift = point.normal.y + 0.5 * (breakup - 0.5) + 0.3 * (hollow - 0.5);
+        let reach = material_maps.top.w;
+        let amount = smoothstep(1.0 - reach, 1.2 - reach, lift) * step(1.0e-4, reach);
+        point.albedo = mix(point.albedo, material_maps.top.rgb, amount);
+        point.diffuse_color = mix(point.diffuse_color, material_maps.top.rgb, amount);
+        point.f0 = mix(point.f0, vec3<f32>(0.04), amount);
+        roughness = mix(roughness, material_maps.layer.x, amount);
+        point.roughness = max(roughness, 0.03);
+        point.alpha = point.roughness * point.roughness;
+        point.normal = stable_normalize(mix(point.normal, point.geometric, 0.5 * amount));
+    }
     let to_eye = camera.position.xyz - world;
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
@@ -335,9 +471,14 @@ fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> Surfa
 // opacity; `front` whether the surface faces the camera.
 fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool) -> SurfacePoint {
-    let texels = material_texels(uv, uv1);
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
+    var texels: MaterialTexels;
+    if material_flag(4096u, WORLD_MAPPING) {
+        texels = world_texels(world, stable_normalize(surface_normal), world_dx, world_dy);
+    } else {
+        texels = material_texels(uv, uv1);
+    }
     let point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
         front);
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
