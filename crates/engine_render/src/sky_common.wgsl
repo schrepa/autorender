@@ -24,6 +24,9 @@ struct SkyUniform {
     radii: vec4<f32>,
     // Direction toward the sun, and the authored exposure.
     sun: vec4<f32>,
+    // Seconds since the last frame, over which exposure eases (decision
+    // 091); 0 takes it at once.
+    frame: vec4<f32>,
 }
 
 const SKY_PI: f32 = 3.14159265358979;

@@ -16,7 +16,7 @@ struct CloudUniform {
     // noise volume's repeat, and the seed's offset (meters).
     drift: vec4<f32>,
     // The dome's texels along u and v, the first row this dispatch marches
-    // and the rows between those it marches.
+    // and how many rows from it.
     dome: vec4<u32>,
     // Toward the sun, and its light.
     sun: vec4<f32>,
@@ -25,9 +25,10 @@ struct CloudUniform {
     // clouds fade into.
     zenith: vec4<f32>,
     horizon: vec4<f32>,
-    // The shadows' grid: its first cell's corner (world x and z), meters a
-    // cell and cells along a side; then the first row this dispatch marches
-    // and the rows between those it marches.
+    // The shadows' grid (decision 091): its first cell (world cell indices
+    // along x and z), meters a cell and cells along a side, each cell kept
+    // in the slot of its index modulo the cells; then the first row of
+    // slots this dispatch marches and the rows between those it marches.
     shadow: vec4<f32>,
     shadow_rows: vec4<u32>,
 }
@@ -304,20 +305,25 @@ fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     var pair = vec2<f32>(1.0);
+    let size = i32(cells);
+    let first = vec2<i32>(i32(clouds.shadow.x), i32(clouds.shadow.y));
     for (var half = 0u; half < 2u; half++) {
-        let cell = vec2<f32>(f32(id.x * 2u + half), f32(row)) + 0.5;
-        let start = vec3<f32>(clouds.shadow.x + cell.x * clouds.shadow.z, clouds.layer.x,
-            clouds.shadow.y + cell.y * clouds.shadow.z);
+        // The world cell the slot holds: the one of the grid's cells whose
+        // index modulo the cells is the slot's.
+        let slot = vec2<i32>(i32(id.x * 2u + half), i32(row));
+        let cell = first + (((slot - first) % size) + size) % size;
+        let start = vec3<f32>((f32(cell.x) + 0.5) * clouds.shadow.z, clouds.layer.x,
+            (f32(cell.y) + 0.5) * clouds.shadow.z);
         pair[half] = sun_passing(start);
     }
     shadow_cells[row * (cells / 2u) + id.x] = pack2x16float(pair);
 }
 
-// A slice of the dome's rows: from `clouds.dome.z`, every `clouds.dome.w`th.
+// A band of the dome's rows: `clouds.dome.w` from `clouds.dome.z`.
 @compute @workgroup_size(8, 8)
 fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
-    let row = clouds.dome.z + id.y * clouds.dome.w;
-    if id.x >= clouds.dome.x || row >= clouds.dome.y {
+    let row = clouds.dome.z + id.y;
+    if id.x >= clouds.dome.x || id.y >= clouds.dome.w || row >= clouds.dome.y {
         return;
     }
     let uv = (vec2<f32>(f32(id.x), f32(row)) + 0.5) / vec2<f32>(clouds.dome.xy);

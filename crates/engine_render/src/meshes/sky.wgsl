@@ -15,10 +15,12 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     return output;
 }
 
-// The clouds' dome (decision 084) and its sampler: a clear one without
-// clouds.
+// The clouds' newer and older shown domes (decisions 084 and 091), their
+// sampler and their uniform: clear ones without clouds.
 @group(1) @binding(38) var sky_clouds: texture_2d<f32>;
 @group(1) @binding(39) var sky_cloud_sampler: sampler;
+@group(1) @binding(44) var sky_clouds_old: texture_2d<f32>;
+@group(1) @binding(45) var<uniform> sky_domes: CloudDomes;
 // The physically based sky (decision 088): its uniform, sky-view and
 // transmittance tables and their sampler.
 @group(1) @binding(40) var<uniform> sky_air: SkyUniform;
@@ -37,9 +39,18 @@ fn air_light_along(ray: vec3<f32>, disc: bool) -> vec3<f32> {
     return air_sky(sky_view_table, sky_transmittance_table, sky_table_sampler, sky_air, ray, disc);
 }
 
-// The clouds along `ray`: their light and the share of the sky passing.
+// The clouds along `ray`: their light and the share of the sky passing,
+// the newer dome blending in over the older, each looked up where it sees
+// what the ray does (decision 091).
 fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
-    return textureSampleLevel(sky_clouds, sky_cloud_sampler, cloud_dome_uv(ray), 0.0);
+    if sky_domes.older.w < 0.5 {
+        return textureSampleLevel(sky_clouds, sky_cloud_sampler, cloud_dome_uv(ray), 0.0);
+    }
+    let newer = textureSampleLevel(sky_clouds, sky_cloud_sampler,
+        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.newer.xyz, ray)), 0.0);
+    let older = textureSampleLevel(sky_clouds_old, sky_cloud_sampler,
+        cloud_dome_uv(cloud_dome_direction(sky_domes, sky_domes.older.xyz, ray)), 0.0);
+    return mix(older, newer, sky_domes.newer.w);
 }
 
 // The sky along `ray` behind its clouds; under the sea, the water's light.

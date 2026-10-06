@@ -654,6 +654,9 @@ pub(crate) const CLOUD_SKY: Table = Table {
         texture(41, "sky_view_table", Float, D2, F),
         texture(42, "sky_transmittance_table", Float, D2, F),
         sampler(43, "sky_table_sampler", Filtering, F),
+        // The older shown dome and the domes' uniform (decision 091).
+        texture(44, "sky_clouds_old", Float, D2, F),
+        uniform_of(45, "sky_domes", crate::clouds::DOME_UNIFORM_BYTES, F),
     ],
 };
 
@@ -943,6 +946,14 @@ pub(crate) const ENVIRONMENT_SKY: Table = Table {
         texture(41, "environment_view_table", Float, D2, F),
         texture(42, "environment_transmittance_table", Float, D2, F),
         sampler(43, "environment_table_sampler", Filtering, F),
+        // The older shown dome and the domes' uniform (decision 091).
+        texture(44, "environment_clouds_old", Float, D2, F),
+        uniform_of(
+            45,
+            "environment_domes",
+            crate::clouds::DOME_UNIFORM_BYTES,
+            F,
+        ),
     ],
 };
 

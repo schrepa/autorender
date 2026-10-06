@@ -19,12 +19,12 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const TRANSMITTANCE_SIZE: (u32, u32) = (256, 64);
 const MULTIPLE_SIZE: (u32, u32) = (32, 32);
 const VIEW_SIZE: (u32, u32) = (192, 108);
-/// Meters of the camera's height per sky-view build, and per redraw of the
-/// sky's environment map.
-const VIEW_HEIGHT_STEP: f32 = 25.0;
+/// Meters of the camera's height per redraw of the sky's environment map;
+/// the sky-view table follows the height exactly (decision 091).
 const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
-/// Bytes of the derived light: six vec4 (`sky.wgsl`'s `derived`).
-const DERIVED_BYTES: u64 = 6 * 16;
+/// Bytes of the derived light: seven vec4 (`sky.wgsl`'s `derived`), the
+/// last the exposure as it eased to last frame.
+const DERIVED_BYTES: u64 = 7 * 16;
 
 /// WGSL `SkyUniform` (`sky_common.wgsl`).
 #[repr(C)]
@@ -36,6 +36,7 @@ struct SkyUniform {
     ground: [f32; 4],
     radii: [f32; 4],
     sun: [f32; 4],
+    frame: [f32; 4],
 }
 
 /// Bytes of the sky's uniform.
@@ -122,7 +123,9 @@ pub(crate) struct SkyPass {
     // The air the tables hold, and the air, sun and height the sky-view
     // table holds.
     tables: Option<[u32; 20]>,
-    view_key: Option<([u32; 20], [u32; 3], i32)>,
+    view_key: Option<([u32; 20], [u32; 3], u32)>,
+    // The presentation time of the last frame, which exposure eases from.
+    last_seconds: Option<f64>,
     // Advances with each sky-view build the environment map follows.
     generation: u64,
     environment_height: i32,
@@ -178,6 +181,7 @@ impl SkyPass {
             ),
             tables: None,
             view_key: None,
+            last_seconds: None,
             generation: 0,
             environment_height: 0,
             active: false,
@@ -220,7 +224,7 @@ impl SkyPass {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (settings, sun, eye, exposure): (&Sky, Vec3, Vec3, f32),
+        (settings, sun, eye, exposure, seconds): (&Sky, Vec3, Vec3, f32, f64),
         copies: &[SkyCopy<'_>],
         profiler: &crate::profiling::GpuProfiler,
     ) -> Option<wgpu::CommandEncoder> {
@@ -234,6 +238,9 @@ impl SkyPass {
         }
         let sun = sun.normalize_or(Vec3::Y);
         let height = engine_core::math::max(eye.y + settings.altitude, 0.5);
+        let elapsed = self.last_seconds.replace(seconds).map_or(0.0, |last| {
+            engine_core::math::max((seconds - last) as f32, 0.0)
+        });
         let uniform = SkyUniform {
             rayleigh: [
                 settings.rayleigh[0],
@@ -266,6 +273,10 @@ impl SkyPass {
                 height * 0.001,
             ],
             sun: sun.extend(exposure).to_array(),
+            // Seconds since the last frame, over which exposure eases; 0
+            // (a first or repeated time, as exact frames are) takes it at
+            // once.
+            frame: [elapsed, 0.0, 0.0, 0.0],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         let air: [u32; 20] = bytemuck::cast([
@@ -275,11 +286,7 @@ impl SkyPass {
             [uniform.ground[0], uniform.ground[1], uniform.ground[2], 0.0],
             [uniform.radii[0], uniform.radii[1], 0.0, 0.0],
         ]);
-        let view_key = (
-            air,
-            sun.to_array().map(f32::to_bits),
-            (height / VIEW_HEIGHT_STEP).floor() as i32,
-        );
+        let view_key = (air, sun.to_array().map(f32::to_bits), height.to_bits());
         let build_tables = self.tables != Some(air);
         let build_view = build_tables || self.view_key != Some(view_key);
         let passes = self.passes.get_or_insert_with(|| {
