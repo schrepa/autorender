@@ -156,7 +156,7 @@ struct Bent {
 /// The curve through `points` every [`STEP`] meters or so (a centripetal
 /// Catmull-Rom spline, its ends continued straight), and the meters along
 /// it at each.
-fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
+pub(crate) fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
     let count = points.len();
     let at = |index: isize| -> Vec3 {
         if index < 0 {
@@ -199,7 +199,7 @@ fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
 }
 
 /// The curve's point and direction `distance` meters along it.
-fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
+pub(crate) fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
     let last = samples.len() - 1;
     let index = along
         .partition_point(|&value| value <= distance)

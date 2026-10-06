@@ -1,11 +1,13 @@
 //! Waterfalls (decision 075): where terrains' hydrology bakes find rivers
 //! falling, the engine spawns what draws them and despawns it as terrains'
 //! bakes finish and terrains go. White water pours down each fall's course
-//! as a translucent ribbon the river's width (a spline mesh, decision 071)
-//! just over the ground, spray runs down each step of it, bowed a little by
-//! gravity, and mist rises from its foot (particles, decision 026): the
-//! river carries no water surface over the drop, which a grid of its
-//! samples could not follow. Water that does not draw spawns none.
+//! as a translucent ribbon the river's width just over the ground, along
+//! the curve a spline mesh would take (decision 071), every fall of a
+//! terrain in one mesh drawn at once; spray runs down each step of it,
+//! bowed a little by gravity, and mist rises from its foot (particles,
+//! decision 026): the river carries no water surface over the drop, which a
+//! grid of its samples could not follow. Water that does not draw spawns
+//! none.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,29 +19,36 @@ use engine_assets::{
 };
 use glam::Vec3;
 
-use crate::math::clamp;
+use crate::math::{clamp, max};
+use crate::spline_mesh::{curve, point_at};
 use crate::terrain::Terrains;
 use crate::terrain_data::Fall;
-use crate::{ParticleBlend, ParticleEmitter, SplineMesh, Transform, Water};
+use crate::{Mesh3d, ParticleBlend, ParticleEmitter, Transform, Water};
 
 /// The gravity spray falls under.
 const GRAVITY: f32 = 9.8;
 
-/// The entities spawned for each terrain's falls, and the ribbons (by
-/// width) and white water's material they share.
+/// What each terrain's falls spawned, and the white water's material they
+/// share.
 #[derive(Resource, Default)]
 pub(crate) struct TerrainFalls {
-    spawned: HashMap<Entity, (Arc<[Fall]>, Vec<Entity>)>,
-    ribbons: Vec<(f32, MeshHandle)>,
+    spawned: HashMap<Entity, Spawned>,
     white: Option<MaterialHandle>,
 }
 
-/// Meters a ribbon lies over the ground, the meters of it a section spans
-/// along its course (its texture's length), and the rows of vertices across
-/// it that bend a section with the course.
+/// A terrain's falls, the entities spawned for them and their ribbons'
+/// mesh.
+struct Spawned {
+    set: Arc<[Fall]>,
+    entities: Vec<Entity>,
+    mesh: Option<MeshHandle>,
+}
+
+/// Meters a ribbon lies over the ground, the meters along it its texture
+/// spans, and the meters between its rows of vertices.
 const RIBBON_RISE: f32 = 0.6;
 const RIBBON_SECTION: f32 = 16.0;
-const RIBBON_ROWS: u32 = 8;
+const RIBBON_STEP: f32 = 2.0;
 
 /// White water's texture: streaks running along the flow (u) that vary
 /// quickly across it (v), foam broken by gaps the water and rock show
@@ -88,27 +97,49 @@ fn foam_texture() -> Texture {
     Texture::with_alpha(ALONG, ACROSS, rgba).expect("the foam texture is valid")
 }
 
-/// A ribbon section `width` meters across: a flat strip, x along its
-/// course, facing up, its texture once along it.
-fn ribbon(width: f32) -> Mesh {
-    let half = 0.5 * width;
-    let mut vertices = Vec::with_capacity(2 * RIBBON_ROWS as usize + 2);
-    let mut indices = Vec::with_capacity(6 * RIBBON_ROWS as usize);
-    for row in 0..=RIBBON_ROWS {
-        let along = row as f32 / RIBBON_ROWS as f32;
-        for side in [-1.0, 1.0] {
-            vertices.push(MeshVertex {
-                position: [along * RIBBON_SECTION, 0.0, side * half],
-                normal: [0.0, 1.0, 0.0],
-                uv: [along, 0.5 + 0.5 * side],
-            });
-        }
-        if row > 0 {
-            let base = 2 * row - 2;
-            indices.extend_from_slice(&[base, base + 1, base + 3, base, base + 3, base + 2]);
+/// Every fall's ribbon in one mesh, terrain-local: a strip the river's
+/// width along the curve through its course, just over the ground and
+/// facing up, its texture repeating every [`RIBBON_SECTION`] meters.
+fn ribbons(set: &[Fall]) -> Option<Mesh> {
+    let (mut vertices, mut indices) = (Vec::new(), Vec::new());
+    for fall in set.iter().filter(|fall| fall.path.len() >= 2) {
+        let points: Vec<Vec3> = fall
+            .path
+            .iter()
+            .map(|&point| Vec3::from_array(point) + Vec3::Y * RIBBON_RISE)
+            .collect();
+        let (samples, along) = curve(&points);
+        let length = along.last().copied().unwrap_or(0.0);
+        let rows = max((length / RIBBON_STEP).ceil(), 1.0) as u32;
+        let half = 0.5 * fall.width;
+        for row in 0..=rows {
+            let distance = length * row as f32 / rows as f32;
+            let (point, tangent) = point_at(&samples, &along, distance);
+            // Up stays up, as spline meshes' frames keep it.
+            let up = (Vec3::Y - tangent * Vec3::Y.dot(tangent)).normalize_or(Vec3::Z);
+            let across = tangent.cross(up);
+            let base = vertices.len() as u32;
+            for side in [-1.0, 1.0] {
+                vertices.push(MeshVertex {
+                    position: (point + across * (side * half)).to_array(),
+                    normal: up.to_array(),
+                    uv: [distance / RIBBON_SECTION, 0.5 + 0.5 * side],
+                });
+            }
+            if row > 0 {
+                let previous = base - 2;
+                indices.extend_from_slice(&[
+                    previous,
+                    previous + 1,
+                    base + 1,
+                    previous,
+                    base + 1,
+                    base,
+                ]);
+            }
         }
     }
-    Mesh::new(vertices, indices).expect("ribbon sections are valid meshes")
+    Mesh::new(vertices, indices).ok()
 }
 
 /// Meters above a fall's ground its spray runs, and the seconds a spray
@@ -188,13 +219,14 @@ pub(crate) fn sync(world: &mut World) {
         _ => Vec::new(),
     };
     let mut falls = world.remove_resource::<TerrainFalls>().unwrap_or_default();
-    let mut stale = Vec::new();
-    falls.spawned.retain(|terrain, (set, entities)| {
+    let (mut stale, mut meshes) = (Vec::new(), Vec::new());
+    falls.spawned.retain(|terrain, spawned| {
         let keep = wanted
             .iter()
-            .any(|(entity, wanted, _)| entity == terrain && Arc::ptr_eq(wanted, set));
+            .any(|(entity, wanted, _)| entity == terrain && Arc::ptr_eq(wanted, &spawned.set));
         if !keep {
-            stale.append(entities);
+            stale.append(&mut spawned.entities);
+            meshes.extend(spawned.mesh.take());
         }
         keep
     });
@@ -202,6 +234,9 @@ pub(crate) fn sync(world: &mut World) {
         if let Ok(entity) = world.get_entity_mut(entity) {
             entity.despawn();
         }
+    }
+    for mesh in meshes {
+        world.resource_mut::<AssetLibrary>().remove_mesh(mesh);
     }
     for (terrain, set, origin) in wanted {
         if set.is_empty() || falls.spawned.contains_key(&terrain) {
@@ -233,42 +268,27 @@ pub(crate) fn sync(world: &mut World) {
                 .and_then(|material| assets.insert_material(material).ok()),
         };
         falls.white = white;
-        let mut ribbons = Vec::with_capacity(set.len());
-        for fall in set.iter() {
-            let mesh = match falls.ribbons.iter().find(|(width, _)| *width == fall.width) {
-                Some(&(_, mesh)) => Some(mesh),
-                None => assets
-                    .insert_mesh(ribbon(fall.width))
-                    .ok()
-                    .inspect(|&mesh| {
-                        falls.ribbons.push((fall.width, mesh));
-                    }),
+        let mesh = ribbons(&set).and_then(|mesh| assets.insert_mesh(mesh).ok());
+        if let (Some(mesh), Some(material)) = (mesh, white) {
+            let transform = Transform {
+                translation: origin,
+                ..Transform::default()
             };
-            ribbons.push(mesh);
+            entities.push(world.spawn((transform, Mesh3d { mesh, material })).id());
         }
-        for (index, (fall, mesh)) in set.iter().zip(ribbons).enumerate() {
-            if let (Some(mesh), Some(material)) = (mesh, white) {
-                let points = fall
-                    .path
-                    .iter()
-                    .map(|&point| Vec3::from_array(point) + Vec3::Y * RIBBON_RISE)
-                    .collect();
-                let transform = Transform {
-                    translation: origin,
-                    ..Transform::default()
-                };
-                let spline = SplineMesh {
-                    points,
-                    mesh,
-                    material,
-                };
-                entities.push(world.spawn((transform, spline)).id());
-            }
+        for (index, fall) in set.iter().enumerate() {
             for (transform, emitter) in emitters(fall, origin, index as u32) {
                 entities.push(world.spawn((transform, emitter)).id());
             }
         }
-        falls.spawned.insert(terrain, (set, entities));
+        falls.spawned.insert(
+            terrain,
+            Spawned {
+                set,
+                entities,
+                mesh,
+            },
+        );
     }
     world.insert_resource(falls);
 }
