@@ -4002,7 +4002,7 @@
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); and\nthe meters across its largest ripples (0.1 to 100). Requires version 9.",
+      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); the\nmeters across its largest ripples (0.1 to 100); how much foam shores and\nrapids gather (decision 074; 0, none, to 1); and the meters of water\nshallower than which shores foam (0.05 to 10). Requires version 9.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -4029,6 +4029,20 @@
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "foam": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "foam_width": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 10.0,
+          "minimum": 0.05
         },
         "ripple_size": {
           "type": "number",

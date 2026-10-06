@@ -4,9 +4,12 @@
 //! into chunks of [`CHUNK_QUADS`] quads a side, those holding water kept.
 //! Each frame the chunks the camera sees draw, coarser with distance,
 //! after the opaque scene and its decals: water blends over the ground by
-//! how little light comes back through its depth and writes the depth and
-//! surface targets, so later passes and screen-space reflections see its
-//! surface.
+//! how little light comes back through it and writes the depth and surface
+//! targets, so later passes and screen-space reflections see its surface.
+//! Before it draws, the opaque depth copies into a texture of its own, from
+//! which its pixels find the ground behind them (decision 074): the
+//! distance light travels through the water, and where it runs shallow
+//! enough to foam.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -16,7 +19,7 @@ use bytemuck::{Pod, Zeroable};
 use engine_core::glam::Vec3;
 use engine_core::{RenderTerrains, Water, WaterGrid};
 
-use crate::bindings::WATER;
+use crate::bindings::{WATER, WATER_DEPTH};
 use crate::render_graph::Targets;
 
 /// Quads along each side of a chunk at full detail; coarser chunks draw a
@@ -35,6 +38,7 @@ struct WaterUniform {
     grid: [u32; 4],
     color: [f32; 4],
     ripples: [f32; 4],
+    foam: [f32; 4],
 }
 
 /// WGSL `WaterChunk`'s instance part: its first sample and the samples
@@ -65,8 +69,18 @@ struct TerrainWater {
     drawn: bool,
 }
 
+/// The opaque depth's copy water reads (decision 074), its group and its
+/// size.
+struct DepthCopy {
+    texture: wgpu::Texture,
+    group: wgpu::BindGroup,
+    size: (u32, u32),
+}
+
 pub(crate) struct WaterPass {
     pub(crate) layout: wgpu::BindGroupLayout,
+    depth_layout: wgpu::BindGroupLayout,
+    depth: Option<DepthCopy>,
     terrains: HashMap<u64, TerrainWater>,
     instances: wgpu::Buffer,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
@@ -78,6 +92,8 @@ impl WaterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
             layout: crate::pipelines::layout(device, &WATER),
+            depth_layout: crate::pipelines::layout(device, &WATER_DEPTH),
+            depth: None,
             terrains: HashMap::new(),
             instances: chunk_buffer(device, 256),
             pipelines: HashMap::new(),
@@ -91,12 +107,30 @@ impl WaterPass {
         self.chunks_drawn
     }
 
-    /// Bytes of the water's textures.
+    /// Bytes of the water's textures and its depth copy.
     pub(crate) fn capacity_bytes(&self) -> u64 {
+        let depth = self.depth.as_ref().map_or(0, |copy| {
+            u64::from(copy.size.0) * u64::from(copy.size.1) * 4
+        });
         self.terrains
             .values()
             .map(|water| (water.grid.width * water.grid.height * 8) as u64)
-            .sum()
+            .sum::<u64>()
+            + depth
+    }
+
+    /// Copies the opaque `depth` into the copy water reads, before it
+    /// draws.
+    pub(crate) fn copy_depth(&self, encoder: &mut wgpu::CommandEncoder, depth: &wgpu::Texture) {
+        if let Some(copy) = &self.depth
+            && depth.size() == copy.texture.size()
+        {
+            encoder.copy_texture_to_texture(
+                depth.as_image_copy(),
+                copy.texture.as_image_copy(),
+                depth.size(),
+            );
+        }
     }
 
     /// Prepares this frame's water of `terrains` as `settings` shade it,
@@ -109,6 +143,7 @@ impl WaterPass {
         terrains: &RenderTerrains,
         settings: Water,
         (eye, wind): (Vec3, [f32; 2]),
+        depth: &wgpu::Texture,
     ) -> bool {
         self.chunks_drawn = 0;
         self.records.clear();
@@ -177,11 +212,42 @@ impl WaterPass {
                 ],
                 color: [red, green, blue, settings.clarity],
                 ripples: [settings.ripples, settings.ripple_size, wind[0], wind[1]],
+                foam: [settings.foam, settings.foam_width, 0.0, 0.0],
             };
             queue.write_buffer(&water.uniform, 0, bytemuck::bytes_of(&uniform));
         }
         if self.records.is_empty() {
             return false;
+        }
+        // The depth copy, at the frame's size.
+        let depth_size = (depth.width(), depth.height());
+        if self
+            .depth
+            .as_ref()
+            .is_none_or(|copy| copy.size != depth_size)
+        {
+            let texture = crate::targets::texture_2d(
+                device,
+                "engine/water-depth",
+                depth_size,
+                1,
+                1,
+                depth.format(),
+                wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let group = crate::pipelines::group(
+                device,
+                "engine/water-depth",
+                &WATER_DEPTH,
+                &self.depth_layout,
+                &[("water_depth", crate::pipelines::view(&view))],
+            );
+            self.depth = Some(DepthCopy {
+                texture,
+                group,
+                size: depth_size,
+            });
         }
         let bytes = std::mem::size_of_val(self.records.as_slice()) as u64;
         if bytes > self.instances.size() {
@@ -206,7 +272,7 @@ impl WaterPass {
         }
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/water-layout"),
-            bind_group_layouts: &[Some(camera), Some(&self.layout)],
+            bind_group_layouts: &[Some(camera), Some(&self.layout), Some(&self.depth_layout)],
             immediate_size: 0,
         });
         let (vertex, fragment) = crate::entries::water(targets);
@@ -268,11 +334,12 @@ impl WaterPass {
         camera: &wgpu::BindGroup,
         targets: Targets,
     ) -> u32 {
-        let Some(pipeline) = self.pipelines.get(&targets) else {
+        let (Some(pipeline), Some(depth)) = (self.pipelines.get(&targets), &self.depth) else {
             return 0;
         };
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera, &[]);
+        pass.set_bind_group(2, &depth.group, &[]);
         pass.set_vertex_buffer(0, self.instances.slice(..));
         let mut draws = 0;
         for water in self.terrains.values().filter(|water| water.drawn) {

@@ -675,8 +675,15 @@ pub(crate) const WATER: Table = Table {
     bindings: &[
         texture(33, "water_surface", Unfilterable, D2, V),
         texture(34, "water_info", Unfilterable, D2, V),
-        uniform_of(35, "water", 128, VF),
+        uniform_of(35, "water", 144, VF),
     ],
+};
+
+/// Group 2 of water's pipelines (decision 074): a copy of the opaque
+/// scene's depth, the ground behind the water.
+pub(crate) const WATER_DEPTH: Table = Table {
+    label: "engine/water-depth-layout",
+    bindings: &[texture(36, "water_depth", Depth, D2, F)],
 };
 
 pub(crate) const COVER_DRAW: Table = Table {
