@@ -46,7 +46,7 @@ try {
   const checks = [];
 
   // The inspector describes it and reports what it built: the curve's
-  // length, a copy of the unit box per meter, chunks of at most 64 m.
+  // length, a copy of the unit box per meter, chunks of at most 256 m.
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "SplineMesh"), "describe lists SplineMesh");
   const first = await command("render");
@@ -77,14 +77,14 @@ try {
 
   // A longer curve rebuilds into more copies and a second chunk.
   const longer = structuredClone(fixture);
-  longer.entities[2].spline.points = [...curve, [40, 0.5, 2], [70, 0.5, -2]];
+  longer.entities[2].spline.points = [...curve, [40, 0.5, 2], [70, 0.5, -2], [160, 0.5, 6], [290, 0.5, -4]];
   await scene.reload(command, longer);
   await command("render");
   const rebuilt = await spline();
   const longerPoints = longer.entities[2].spline.points;
   assert.ok(rebuilt.length >= polyline(longerPoints) && rebuilt.length < 1.1 * polyline(longerPoints), `the longer curve: ${rebuilt.length}`);
   assert.equal(rebuilt.copies, Math.round(rebuilt.length));
-  assert.equal(rebuilt.chunks, Math.ceil(rebuilt.copies / 64));
+  assert.equal(rebuilt.chunks, Math.ceil(rebuilt.copies / 256));
   checks.push({ check: "rebuilds", length: rebuilt.length, chunks: rebuilt.chunks });
 
   // A curve of one point is refused and the scene kept.

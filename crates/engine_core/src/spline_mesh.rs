@@ -15,8 +15,10 @@ use crate::hierarchy::set_parents;
 use crate::math::max;
 use crate::{Mesh3d, Transform};
 
-/// Meters of curve a chunk spans at most.
-pub const CHUNK_LENGTH: f32 = 64.0;
+/// Meters of curve a chunk spans at most: long enough that a bridge or
+/// wall is a draw or two (each chunk is one), short enough that long curves
+/// still cull in pieces.
+pub const CHUNK_LENGTH: f32 = 256.0;
 /// Most points a curve names.
 pub const MAX_SPLINE_POINTS: usize = 4096;
 /// Meters between the points the curve is evaluated at.

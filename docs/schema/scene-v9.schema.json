@@ -3082,7 +3082,7 @@
       ]
     },
     "SceneSpline": {
-      "description": "A mesh bent along a curve on this entity (decision 071). Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 64 meters of curve draw\nwith the material.",
+      "description": "A mesh bent along a curve on this entity (decision 071). Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
       "type": "object",
       "properties": {
         "material": {

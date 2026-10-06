@@ -13,7 +13,7 @@ use crate::SceneError;
 /// joined by a centripetal Catmull-Rom spline. Copies of the mesh lie end
 /// to end along it, the mesh's x axis along the curve, its y up and its z
 /// across, each stretched along x so a whole number of them spans it; the
-/// curve's frames keep y up. Chunks of at most 64 meters of curve draw
+/// curve's frames keep y up. Chunks of at most 256 meters of curve draw
 /// with the material.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
