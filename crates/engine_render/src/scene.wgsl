@@ -281,11 +281,14 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
 
 // The clouds' shown domes (decision 091): the older's origin (world) and
 // whether domes show (1); the newer's origin and its share of the blend;
-// the eye lookups correct for, and the cloud layer's middle (world y).
+// the eye lookups correct for, and the cloud layer's middle (world y);
+// and whether the view's own march shows the sky's clouds (1, decision
+// 095), so the view's sky shows no dome.
 struct CloudDomes {
     older: vec4<f32>,
     newer: vec4<f32>,
     eye: vec4<f32>,
+    view: vec4<f32>,
 }
 
 // Meters along a view the domes' parallax correction reaches at most.

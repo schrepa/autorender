@@ -344,6 +344,7 @@ impl Renderer {
                 0
             },
             cloud_rows: self.clouds.rows,
+            cloud_view_blocks: self.clouds.view_blocks,
             sky_tables: self.sky.built,
             cells: snapshot.cells.cells,
             cells_loaded: snapshot.cells.loaded,

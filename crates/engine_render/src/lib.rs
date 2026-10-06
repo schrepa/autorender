@@ -202,6 +202,9 @@ pub struct RenderStats {
     /// Rows of the clouds' dome (decision 084) this frame marched: all of
     /// them on exact frames, a slice on ordinary ones, none without clouds.
     pub cloud_rows: u32,
+    /// Blocks of the view whose clouds this frame marched (decision 095):
+    /// none without clouds or with their march in the view off.
+    pub cloud_view_blocks: u32,
     /// The physically based sky's tables this frame built (decision 088):
     /// two when its air changed, one more when the sun, the camera's height
     /// or the air changed; none without the sky.

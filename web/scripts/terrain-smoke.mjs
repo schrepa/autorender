@@ -790,8 +790,9 @@ try {
   }
   // Clouds (decision 084) are opt-in: the fixture has none until the
   // environment control adds a layer; exact frames march the whole dome,
-  // which the sky shows; no coverage marches nothing, and settings out of
-  // range are refused.
+  // which the sky shows; the view marches them too (decision 095), lying
+  // over the ground from above the layer; no coverage marches nothing, and
+  // settings out of range are refused.
   {
     const up = { position: [0, 60, 0], target: [300, 400, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 };
     await command("camera", up);
@@ -811,13 +812,26 @@ try {
     const unshaded = await capture("no-cloud-shadows");
     const shadowPixels = await differentPixels(page, [shaded, unshaded]);
     assert.ok(shadowPixels.changed > 20000, `clouds shade the ground: ${shadowPixels.changed} pixels`);
+    // From above the layer the view's clouds lie over the ground below,
+    // which the dome cannot show; off, only the dome shows them.
+    await command("camera", { position: [0, 1900, 1], target: [400, 0, 300], vertical_fov_radians: 1.0, near: 0.5, far: 8000 });
+    const over = (await command("environment", { clouds: layer })).result.rendering;
+    assert.ok(over.cloud_view_blocks > 0, `the view marches its clouds: ${over.cloud_view_blocks}`);
+    const below = await capture("clouds-below");
+    const domed = (await command("environment", { clouds: { ...layer, in_view: false } })).result.rendering;
+    assert.equal(domed.cloud_view_blocks, 0, "off, the view marches none");
+    const domeOnly = await capture("clouds-dome-only");
+    const viewPixels = await differentPixels(page, [below, domeOnly]);
+    assert.ok(viewPixels.changed > 20000, `clouds lie below the camera: ${viewPixels.changed} pixels`);
+    const blockless = await command("environment", { clouds: { ...layer, view_block: 0 } }, false);
+    assert.equal(blockless.error.path, "$.clouds.view_block");
     const none = (await command("environment", { clouds: { ...layer, coverage: 0 } })).result.rendering;
     assert.equal(none.cloud_rows, 0, "no coverage marches nothing");
     const odd = await command("environment", { clouds: { ...layer, resolution: 1000 } }, false);
     assert.equal(odd.error.path, "$.clouds.resolution");
     await command("environment", { clouds: { ...layer, enabled: false } });
     await command("camera", overview);
-    checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed });
+    checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.cloud_view_blocks, below: viewPixels.changed });
   }
   // The physically based sky (decision 088) is opt-in: its tables of the
   // air build once, the sky-view again for each step of the sun, which the

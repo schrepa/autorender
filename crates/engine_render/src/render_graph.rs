@@ -61,10 +61,12 @@ pub(crate) enum Resource {
     Effects,
     /// Environment maps and reflection probes' cubes (decision 043).
     Probes,
+    /// The view's marched clouds (decision 095).
+    CloudView,
 }
 
 /// Resources, by their bits in a [`Set`].
-const RESOURCES: [Resource; 22] = [
+const RESOURCES: [Resource; 23] = [
     Resource::Canvas,
     Resource::Depth,
     Resource::Scene,
@@ -87,6 +89,7 @@ const RESOURCES: [Resource; 22] = [
     Resource::Pyramid,
     Resource::Effects,
     Resource::Probes,
+    Resource::CloudView,
 ];
 
 impl Resource {
@@ -118,7 +121,8 @@ impl Resource {
             | Self::Placed
             | Self::Casters
             | Self::Lights
-            | Self::Effects => Lifetime::Frame,
+            | Self::Effects
+            | Self::CloudView => Lifetime::Frame,
         }
     }
 }
@@ -252,10 +256,14 @@ pub(crate) enum Pass {
     ProbeCaptures,
     /// Water over the opaque scene (decision 067).
     Water,
+    /// The view's clouds marched after the opaque scene and water, then
+    /// laid over it (decision 095).
+    CloudMarch,
+    CloudComposite,
 }
 
 /// Passes, by their bits in the masks frames report.
-const PASSES: [Pass; 24] = [
+const PASSES: [Pass; 26] = [
     Pass::Presentation,
     Pass::Scatter,
     Pass::Occupancy,
@@ -274,6 +282,8 @@ const PASSES: [Pass; 24] = [
     Pass::Resolve { phase: 1 },
     Pass::Decals,
     Pass::Water,
+    Pass::CloudMarch,
+    Pass::CloudComposite,
     Pass::Transparent,
     Pass::TransparentComposite,
     Pass::Effects,
@@ -309,6 +319,8 @@ impl Pass {
             Self::Composite => "composite",
             Self::TemporalResolve => "temporal_resolve",
             Self::Water => "water",
+            Self::CloudMarch => "cloud_march",
+            Self::CloudComposite => "cloud_composite",
             Self::ProbeCaptures => "probe_captures",
         }
     }
@@ -339,6 +351,8 @@ impl Pass {
             Self::Composite => "stage_composite",
             Self::TemporalResolve => "stage_temporal_resolve",
             Self::Water => "stage_water",
+            Self::CloudMarch => "stage_cloud_march",
+            Self::CloudComposite => "stage_cloud_composite",
             Self::ProbeCaptures => "stage_probe_captures",
         }
     }
@@ -690,6 +704,8 @@ pub(crate) struct FrameShape {
     pub(crate) decals: bool,
     /// Water draws over the opaque scene (decision 067).
     pub(crate) water: bool,
+    /// The view's clouds march and cover the scene (decision 095).
+    pub(crate) clouds: bool,
     /// Transparent draws or particles (decision 026), and glass reading
     /// the opaque scene (decision 038).
     pub(crate) transparency: bool,
@@ -841,6 +857,16 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             water = water.color(target, Access::Load);
         }
         water.depth(Depth, Access::Load);
+    }
+    // The view's clouds (decision 095) march up to what the opaque scene
+    // and water show, then cover it before transparent surfaces draw.
+    if shape.clouds {
+        graph.add(Pass::CloudMarch).read(Depth).write(CloudView);
+        graph
+            .add(Pass::CloudComposite)
+            .read(CloudView)
+            .read(Depth)
+            .color(scene, Access::Load);
     }
     if shape.transparency {
         graph

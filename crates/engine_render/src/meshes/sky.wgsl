@@ -54,6 +54,8 @@ fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
 }
 
 // The sky along `ray` behind its clouds; under the sea, the water's light.
+// While the view marches its own clouds (decision 095), they cover it
+// after it draws.
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     if lighting.underwater.w > 0.0 {
         return sky(ray);
@@ -63,6 +65,9 @@ fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
         light = air_light_along(ray, true);
     } else {
         light = sky(ray);
+    }
+    if sky_domes.view.x > 0.5 {
+        return light;
     }
     return behind_clouds(light, sky_cloud(ray), ray);
 }
@@ -95,6 +100,73 @@ fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
 
 // The sky's surface texel: facing up, fully rough (it reflects nothing).
 const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
+
+// Clouds in the view (decision 095; `clouds.wgsl`'s `march_view`): each
+// marched block's light and the share of the scene passing, how far its
+// clouds lie, the depth buffer and the blocks' sampler.
+@group(1) @binding(46) var view_clouds: texture_2d<f32>;
+@group(1) @binding(47) var view_cloud_front: texture_2d<f32>;
+@group(1) @binding(48) var view_cloud_depth: texture_depth_2d;
+@group(1) @binding(49) var view_cloud_sampler: sampler;
+
+// The view's clouds over the pixel at `position` (framebuffer): the
+// blocks' light and passing share, fading out where they lie beyond what
+// the pixel shows, its block having marched past it.
+fn view_clouds_at(position: vec2<f32>) -> vec4<f32> {
+    let pixels = vec2<f32>(textureDimensions(view_cloud_depth));
+    let uv = position / pixels;
+    // Four filtered taps half a block apart: a tent over the blocks around,
+    // softening their edges and the noise of their rays' offsets.
+    let half_block = 0.5 / vec2<f32>(textureDimensions(view_clouds));
+    let cloud = 0.25 * (
+        textureSampleLevel(view_clouds, view_cloud_sampler, uv - half_block, 0.0)
+        + textureSampleLevel(view_clouds, view_cloud_sampler, uv + half_block, 0.0)
+        + textureSampleLevel(view_clouds, view_cloud_sampler,
+            uv + vec2<f32>(half_block.x, -half_block.y), 0.0)
+        + textureSampleLevel(view_clouds, view_cloud_sampler,
+            uv + vec2<f32>(-half_block.x, half_block.y), 0.0));
+    let depth = textureLoad(view_cloud_depth, vec2<i32>(position), 0);
+    if depth <= 0.0 {
+        return cloud;
+    }
+    let blocks = vec2<f32>(textureDimensions(view_cloud_front));
+    let block = vec2<i32>(min(floor(uv * blocks), blocks - 1.0));
+    let front = textureLoad(view_cloud_front, block, 0).r;
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let point = camera.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
+    let distance = length(point.xyz / point.w - camera.position.xyz);
+    let shown = saturate((distance - 0.8 * front) / max(0.2 * front, 1.0));
+    return mix(vec4<f32>(0.0, 0.0, 0.0, 1.0), cloud, shown);
+}
+
+// The view's clouds as a layer over the scene: their own light, graded,
+// times the share they cover, with the share passing as alpha; none under
+// the sea.
+fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
+    let cloud = view_clouds_at(position);
+    let covering = 1.0 - cloud.a;
+    if covering <= 1.0e-4 || lighting.underwater.w > 0.0 {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
+}
+
+// The view's clouds over the canvas, encoded as it is.
+@fragment
+fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
+    let layer = view_cloud_layer(input.clip_position.xy);
+    let covering = 1.0 - layer.a;
+    if covering <= 1.0e-4 {
+        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    }
+    return vec4<f32>(encoded(layer.rgb / covering) * covering, layer.a);
+}
+
+// The view's clouds over the screen effects' scene target.
+@fragment
+fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
+    return view_cloud_layer(input.clip_position.xy);
+}
 
 // Screen-effect frames: the sky has no ambient occlusion; its sun glows.
 @fragment
