@@ -2065,9 +2065,16 @@
       "additionalProperties": false
     },
     "SceneHeightmap": {
-      "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`.",
+      "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`. `source` and `attribution` (up to 1024\ncharacters each) record where its heights came from and the credit\ntheir data requires, as the `terrain_import` tool writes them (decision\n070).",
       "type": "object",
       "properties": {
+        "attribution": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
+        },
         "blend": {
           "$ref": "#/$defs/Blend",
           "default": "add"
@@ -2108,6 +2115,13 @@
           },
           "maxItems": 2,
           "minItems": 2
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 1024
         },
         "uri": {
           "type": "string"
