@@ -176,6 +176,9 @@ pub(crate) struct CloudPass {
     composite_layout: wgpu::BindGroupLayout,
     view_clouds: wgpu::Buffer,
     view_uniform: wgpu::Buffer,
+    // The composite's indirect draw, which the march gives a triangle once
+    // any block meets a cloud.
+    composite_args: wgpu::Buffer,
     view_targets: Option<ViewTargets>,
     view_generation: u64,
     view_group: Cached<(u64, u64), wgpu::BindGroup>,
@@ -319,6 +322,12 @@ impl CloudPass {
                 device,
                 "engine/cloud-view",
                 CLOUD_VIEW_BYTES as u64,
+            ),
+            composite_args: crate::buffers::storage(
+                device,
+                "engine/cloud-composite-draw",
+                16,
+                wgpu::BufferUsages::INDIRECT,
             ),
             view_targets: None,
             view_generation: 0,
@@ -598,6 +607,12 @@ impl CloudPass {
             blocks: [blocks[0], blocks[1], side, u32::from(view_sky)],
         };
         queue.write_buffer(&self.view_uniform, 0, bytemuck::bytes_of(&view));
+        // No vertices until the march meets a cloud; one instance.
+        queue.write_buffer(
+            &self.composite_args,
+            0,
+            bytemuck::cast_slice(&[0_u32, 1, 0, 0]),
+        );
         self.view_job = Some(blocks);
         self.view_blocks = blocks[0] * blocks[1];
     }
@@ -642,6 +657,7 @@ impl CloudPass {
                     ("view_depth", crate::pipelines::view(depth)),
                     ("view_out", crate::pipelines::view(&targets.clouds.1)),
                     ("front_out", crate::pipelines::view(&targets.front.1)),
+                    crate::buffers::entry("composite_draw", &self.composite_args),
                 ],
             );
             self.view_group.set(key, group);
@@ -724,7 +740,8 @@ impl CloudPass {
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, camera, &[]);
         pass.set_bind_group(1, group, &[]);
-        pass.draw(0..3, 0..1);
+        // The march's count: no triangle while no block met a cloud.
+        pass.draw_indirect(&self.composite_args, 0);
     }
 
     /// The back dome, complete, shows as the newer one; the newer shown one

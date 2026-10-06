@@ -55,6 +55,9 @@ struct CloudView {
 @group(0) @binding(7) var view_depth: texture_depth_2d;
 @group(0) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(9) var front_out: texture_storage_2d<r32float, write>;
+// The composite's indirect draw: its vertices, set to its triangle's once
+// any block meets a cloud, so views without any draw nothing.
+@group(0) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
 
 // Rays below the horizon by this much (sine of their elevation) see no
 // clouds (`scene.wgsl`'s `CLOUD_HORIZON`).
@@ -411,4 +414,7 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     textureStore(view_out, id.xy, marched.cloud);
     textureStore(front_out, id.xy, vec4<f32>(marched.front, 0.0, 0.0, 0.0));
+    if marched.cloud.a < 0.999 {
+        atomicStore(&composite_draw[0], 3u);
+    }
 }
