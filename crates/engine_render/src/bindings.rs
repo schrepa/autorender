@@ -642,6 +642,36 @@ pub(crate) const CLOUD_MARCH: Table = Table {
     ],
 };
 
+/// The view's march of the clouds (decision 095; `clouds.wgsl`'s
+/// `march_view`): the march from the camera, the noise volume and its
+/// sampler, the view, its depth buffer, and the marched blocks' clouds and
+/// their distances.
+pub(crate) const CLOUD_VIEW: Table = Table {
+    label: "engine/cloud-view-layout",
+    bindings: &[
+        uniform_of(0, "clouds", crate::clouds::CLOUD_UNIFORM_BYTES, C),
+        texture(1, "noise_volume", Float, D3, C),
+        sampler(2, "noise_sampler", Filtering, C),
+        uniform_of(6, "cloud_view", crate::clouds::CLOUD_VIEW_BYTES, C),
+        texture(7, "view_depth", Depth, D2, C),
+        bind(8, "view_out", Kind::Storage(Rgba16Float), C),
+        bind(9, "front_out", Kind::Storage(R32Float), C),
+    ],
+};
+
+/// Group 1 of the view's clouds' composite (decision 095;
+/// `meshes/sky.wgsl`): the marched blocks' clouds and distances, the depth
+/// buffer and the blocks' sampler.
+pub(crate) const CLOUD_COMPOSITE: Table = Table {
+    label: "engine/cloud-composite-layout",
+    bindings: &[
+        texture(46, "view_clouds", Float, D2, F),
+        texture(47, "view_cloud_front", Unfilterable, D2, F),
+        texture(48, "view_cloud_depth", Depth, D2, F),
+        sampler(49, "view_cloud_sampler", Filtering, F),
+    ],
+};
+
 /// Group 1 of the sky's pipelines (decision 084; `meshes/sky.wgsl`): the
 /// clouds' dome and its sampler; the physically based sky's uniform, its
 /// sky-view and transmittance tables and their sampler (decision 088).

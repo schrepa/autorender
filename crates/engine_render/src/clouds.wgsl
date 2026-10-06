@@ -41,6 +41,21 @@ struct CloudUniform {
 // its base, two cells (along x) a word in half floats.
 @group(0) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
 
+// Clouds in the view (decision 095): its unjittered inverse
+// view-projection; the marched blocks along x and y, the pixels along a
+// block's side, and whether rays seeing the sky march (1) or leave it to
+// the dome (0).
+struct CloudView {
+    inverse_view_projection: mat4x4<f32>,
+    blocks: vec4<u32>,
+}
+@group(0) @binding(6) var<uniform> cloud_view: CloudView;
+// The view's depth buffer (reversed: 0 at the far plane), and each block's
+// light and passing share, and how far the clouds it met lie (meters).
+@group(0) @binding(7) var view_depth: texture_depth_2d;
+@group(0) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(9) var front_out: texture_storage_2d<r32float, write>;
+
 // Rays below the horizon by this much (sine of their elevation) see no
 // clouds (`scene.wgsl`'s `CLOUD_HORIZON`).
 const HORIZON: f32 = 0.05;
@@ -51,6 +66,12 @@ const TAU: f32 = 6.2831853;
 const FEWEST_STEPS: f32 = 24.0;
 const MOST_STEPS: f32 = 64.0;
 const STEP_LENGTH: f32 = 150.0;
+// Near the eye (inside the layer, decision 095) steps start this many
+// meters long and grow with the distance, by this share of it, up to the
+// ray's even step; no ray takes more than this many.
+const NEAREST_STEP: f32 = 25.0;
+const STEP_SHARE: f32 = 0.1;
+const MOST_STEPS_IN_ALL: u32 = 128u;
 const LIGHT_STEPS: u32 = 5u;
 const REACH: f32 = 60000.0;
 // Beyond this many meters the clouds' fine detail, finer than the dome's
@@ -212,40 +233,56 @@ fn henyey_greenstein(cosine: f32, g: f32) -> f32 {
     return (1.0 - g2) / (2.0 * TAU * pow(1.0 + g2 - 2.0 * g * cosine, 1.5));
 }
 
-// The clouds seen from the eye along `direction`: the light they scatter
-// toward it and the share of what lies behind that passes.
-fn march(direction: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
+// What a ray met of the clouds: the light they scatter toward the eye and
+// the share of what lies behind that passes, and how far they lie: the
+// distance of the light they scattered, on average.
+struct Marched {
+    cloud: vec4<f32>,
+    front: f32,
+}
+
+// The clouds seen from the eye along `direction` up to `limit` meters.
+fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32) -> Marched {
     let eye = clouds.eye.xyz;
     let base = clouds.layer.x;
     let top = clouds.layer.y;
+    let reach = min(REACH, limit);
+    var marched: Marched;
+    marched.cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    marched.front = reach;
     // Where the ray runs within the layer.
     var near = 0.0;
-    var far = REACH;
+    var far = reach;
     if abs(direction.y) > 1.0e-5 {
         let to_base = (base - eye.y) / direction.y;
         let to_top = (top - eye.y) / direction.y;
         near = max(min(to_base, to_top), 0.0);
-        far = min(max(to_base, to_top), REACH);
+        far = min(max(to_base, to_top), reach);
     } else if eye.y < base || eye.y > top {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return marched;
     }
     if far <= near {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return marched;
     }
-    // A step every few hundred meters, longer on the longest rays; each
-    // ray starts its steps at its own offset, which hides their banding.
-    let steps = u32(clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS));
-    let step = (far - near) / f32(steps);
+    // A step every few hundred meters, longer on the longest rays, and
+    // near the eye a few tens of meters, growing with the distance as the
+    // clouds' detail on screen shrinks (decision 095); each ray starts its
+    // steps at its own offset, which hides their banding.
+    let even = (far - near) / clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS);
     let jitter = hash3(vec3<u32>(texel, 17u)).x;
     let cosine = dot(direction, clouds.sun.xyz);
     let phase = mix(henyey_greenstein(cosine, 0.8), henyey_greenstein(cosine, -0.3), 0.3);
     let extinction = EXTINCTION * clouds.layer.w;
     var light = vec3<f32>(0.0);
     var passing = 1.0;
-    for (var index = 0u; index < steps; index++) {
-        let along = near + (f32(index) + jitter) * step;
-        let p = eye + direction * along;
-        let density = cloud_density(p, 1.0 - smoothstep(0.5 * DETAIL_REACH, DETAIL_REACH, along));
+    var weighted = 0.0;
+    var along = near + jitter * min(even, max(NEAREST_STEP, near * STEP_SHARE));
+    for (var index = 0u; index < MOST_STEPS_IN_ALL && along < far; index++) {
+        let step = min(even, max(NEAREST_STEP, along * STEP_SHARE));
+        let here = along;
+        along += step;
+        let p = eye + direction * here;
+        let density = cloud_density(p, 1.0 - smoothstep(0.5 * DETAIL_REACH, DETAIL_REACH, here));
         if density <= 0.0 {
             continue;
         }
@@ -268,6 +305,7 @@ fn march(direction: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
             + diffuse;
         let through = exp(-sigma * step);
         light += passing * source * (1.0 - through);
+        weighted += passing * (1.0 - through) * here;
         passing *= through;
         if passing < 0.01 {
             break;
@@ -276,7 +314,11 @@ fn march(direction: vec3<f32>, texel: vec2<u32>) -> vec4<f32> {
     // Far clouds fade into the haze toward the horizon.
     let fade = exp(-near / 30000.0);
     light = mix(clouds.horizon.rgb * (1.0 - passing), light, fade);
-    return vec4<f32>(light, passing);
+    marched.cloud = vec4<f32>(light, passing);
+    if passing < 1.0 {
+        marched.front = weighted / (1.0 - passing);
+    }
+    return marched;
 }
 
 // The share of sunlight passing the layer up from `start` on its base.
@@ -327,5 +369,46 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let uv = (vec2<f32>(f32(id.x), f32(row)) + 0.5) / vec2<f32>(clouds.dome.xy);
-    textureStore(dome, vec2<u32>(id.x, row), march(dome_direction(uv), vec2<u32>(id.x, row)));
+    textureStore(dome, vec2<u32>(id.x, row),
+        march(dome_direction(uv), vec2<u32>(id.x, row), REACH).cloud);
+}
+
+// The view's clouds (decision 095): each block's ray, through its center,
+// marched up to the farthest of its pixels the scene shows; blocks seeing
+// the sky march to the clouds' reach, or leave them to the dome while the
+// camera is under the layer.
+@compute @workgroup_size(8, 8)
+fn march_view(@builtin(global_invocation_id) id: vec3<u32>) {
+    let blocks = cloud_view.blocks.xy;
+    if any(id.xy >= blocks) {
+        return;
+    }
+    let side = cloud_view.blocks.z;
+    let pixels = textureDimensions(view_depth);
+    let first = id.xy * side;
+    var farthest = 1.0;
+    for (var y = 0u; y < side; y++) {
+        for (var x = 0u; x < side; x++) {
+            let pixel = min(first + vec2<u32>(x, y), pixels - 1u);
+            farthest = min(farthest, textureLoad(view_depth, pixel, 0));
+        }
+    }
+    var marched: Marched;
+    marched.cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    marched.front = REACH;
+    let sky = farthest <= 0.0;
+    if !sky || cloud_view.blocks.w != 0u {
+        let center = (vec2<f32>(first) + 0.5 * f32(side)) / vec2<f32>(pixels);
+        let ndc = vec2<f32>(center.x * 2.0 - 1.0, 1.0 - center.y * 2.0);
+        let far = cloud_view.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
+        let direction = normalize(far.xyz / far.w - clouds.eye.xyz);
+        var limit = REACH;
+        if !sky {
+            let point = cloud_view.inverse_view_projection * vec4<f32>(ndc, farthest, 1.0);
+            limit = length(point.xyz / point.w - clouds.eye.xyz);
+        }
+        marched = march(direction, id.xy, limit);
+    }
+    textureStore(view_out, id.xy, marched.cloud);
+    textureStore(front_out, id.xy, vec4<f32>(marched.front, 0.0, 0.0, 0.0));
 }

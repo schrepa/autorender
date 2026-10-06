@@ -4,6 +4,9 @@
 //! frame (all of them on exact frames), which the sky, its reflections and
 //! the environment maps show; and from above the world toward the sun into
 //! a map of the light it lets through, which shades the ground under it.
+//! The view marches them again a ray per block of pixels after the opaque
+//! scene (decision 095), so they stand in front of mountains, around a
+//! camera inside the layer and below one above it.
 
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -19,8 +22,13 @@ use crate::math::clamp;
 /// 50000); the seed of its shapes; how much of the sun's light its shadows
 /// take from the ground (0 to 1); the dome's texels around the horizon
 /// (256 to 4096, a multiple of 64; a quarter as many from the horizon up);
-/// and the frames over which ordinary frames march the whole dome (1 to
-/// 64). Opt-in: a scene without a `clouds` section has none. Requires
+/// the frames over which ordinary frames march the whole dome (1 to 64);
+/// and whether the view marches them a ray per block of `view_block`
+/// pixels along a side (1 to 16) after the opaque scene (decision 095):
+/// then they stand in front of whatever lies beyond them, all around a
+/// camera inside the layer and below one above it, and the sky's dome
+/// shows them behind every surface only while the camera is under the
+/// layer. Opt-in: a scene without a `clouds` section has none. Requires
 /// version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
@@ -49,6 +57,9 @@ pub struct Clouds {
     pub resolution: u32,
     #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 64)))]
     pub slices: u32,
+    pub in_view: bool,
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
+    pub view_block: u32,
 }
 
 impl Default for Clouds {
@@ -65,6 +76,8 @@ impl Default for Clouds {
             shadows: 0.75,
             resolution: 2048,
             slices: 64,
+            in_view: true,
+            view_block: 4,
         }
     }
 }
@@ -89,6 +102,9 @@ impl Clouds {
         }
         if !(1..=64).contains(&self.slices) {
             return Err(InvalidSetting::new("slices", "must be in [1, 64]"));
+        }
+        if !(1..=16).contains(&self.view_block) {
+            return Err(InvalidSetting::new("view_block", "must be in [1, 16]"));
         }
         Ok(())
     }
@@ -116,6 +132,8 @@ impl Clouds {
             shadows: within(self.shadows, 0.0, 1.0, defaults.shadows),
             resolution: self.resolution.clamp(256, 4096) / 64 * 64,
             slices: self.slices.clamp(1, 64),
+            in_view: self.in_view,
+            view_block: self.view_block.clamp(1, 16),
         }
     }
 }

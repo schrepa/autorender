@@ -200,6 +200,7 @@ impl Renderer {
             (virtual_frame, resolving, scatter),
         );
         shape.water = water;
+        shape.clouds = self.prepare_cloud_composite(shape.targets);
         let mut state = FrameState {
             snapshot,
             frame,
@@ -802,6 +803,20 @@ impl Renderer {
             ),
             lighting,
             !kind.gpu_mode,
+        );
+        // And their march in the view (decision 095), after the opaque
+        // scene and water.
+        self.clouds.prepare_view(
+            &self.device,
+            &self.queue,
+            (
+                &snapshot.environment.clouds,
+                snapshot.camera_position,
+                snapshot.presented_seconds,
+            ),
+            snapshot.view_projection,
+            [self.depth.texture.width(), self.depth.texture.height()],
+            lighting,
         );
         self.clouds
             .prepare_sky_group(&self.device, self.sky.bindings());
@@ -1538,6 +1553,7 @@ impl Renderer {
             lights: features.light_frame.is_some() && self.lights.is_some(),
             decals: features.decal_frame.is_some() && self.decals.is_some(),
             water: false,
+            clouds: false,
             transparency: features.transparency && self.transparent.is_some(),
             refraction: features.refraction && post.is_some(),
             effects: post.map_or(Effects::default(), |frame| Effects {
@@ -1648,6 +1664,13 @@ impl Renderer {
             Pass::OcclusionTest => self.encode_occlusion_test(state, encoder),
             Pass::Decals => self.encode_decals(state, encoder, view, node),
             Pass::Water => report.draws += self.encode_water(state, encoder, view, node),
+            Pass::CloudMarch => self.clouds.encode_view(
+                &self.device,
+                encoder,
+                (&self.depth.view, self.depth.generation),
+                &self.profiler,
+            ),
+            Pass::CloudComposite => self.encode_cloud_composite(state, encoder, view, node),
             Pass::Transparent => {
                 report.draws += self.encode_transparent(state, encoder, view, node);
             }
@@ -2285,6 +2308,57 @@ impl Renderer {
         });
         self.water
             .draw(&mut pass, &self.camera.group, state.shape.targets)
+    }
+
+    /// The view's clouds (decision 095) laid over the scene's color.
+    fn encode_cloud_composite(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        node: &Node,
+    ) {
+        let (colors, count) = self.color_attachments(node, view);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/cloud-composite"),
+            color_attachments: &colors[..count],
+            depth_stencil_attachment: None,
+            timestamp_writes: self.profiler.span("cloud_composite").map(Span::render),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        self.clouds.draw_composite(
+            &mut pass,
+            &self.camera.group,
+            self.cloud_target(state.shape.targets),
+        );
+    }
+
+    /// The format of the scene's color for frames drawing into `targets`,
+    /// and whether that is the canvas.
+    fn cloud_target(&self, targets: Targets) -> (wgpu::TextureFormat, bool) {
+        if targets == Targets::Canvas {
+            (self.display.format(), true)
+        } else {
+            (crate::post::SCENE_FORMAT, false)
+        }
+    }
+
+    /// Clouds in the view (decision 095): their composite's pipeline into
+    /// `targets` and its group; whether they draw this frame.
+    fn prepare_cloud_composite(&mut self, targets: Targets) -> bool {
+        if !self.clouds.marches_view() {
+            return false;
+        }
+        let target = self.cloud_target(targets);
+        self.clouds.prepare_composite(
+            &self.device,
+            &self.mesh_shader,
+            &self.camera.layout,
+            target,
+            (&self.depth.view, self.depth.generation),
+        );
+        true
     }
 
     /// Transparent surfaces and alpha particles accumulated (decision 026);
