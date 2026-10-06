@@ -108,8 +108,8 @@ mod capture {
     const SLOTS: usize = 3;
     const SAMPLE_LIMIT: usize = 4_096;
     /// Spans one frame records at most, a bound of the dev protocol; frames
-    /// record about thirty.
-    const SPANS: usize = 64;
+    /// record about sixty with their stages.
+    const SPANS: usize = 128;
     const QUERIES: u32 = 2 * SPANS as u32;
     const QUERY_BYTES: u64 = QUERIES as u64 * 8;
     /// The span every captured frame records: its opaque passes.
@@ -461,6 +461,28 @@ mod capture {
                         .filter_map(|(name, &stamps)| Some((*name, duration(stamps)?))),
                 );
                 spans.extend(across(&SHADOW_MAPS).map(|maps| ("shadow_maps", maps)));
+                // Where the frame's GPU span goes outside the render graph's
+                // passes: before the first, after the last, and between
+                // each pass and the one before it.
+                let mut stages: Vec<(&str, u64, u64)> = names
+                    .iter()
+                    .zip(&stamps)
+                    .filter(|(name, _)| name.starts_with("stage_"))
+                    .map(|(name, &(begin, end))| (*name, begin, end))
+                    .filter(|&(_, begin, end)| begin != 0 && end >= begin)
+                    .collect();
+                stages.sort_by_key(|&(_, begin, _)| begin);
+                if let (Some((first, last)), Some(&(_, begin, _)), Some(&(_, _, end))) =
+                    (span, stages.first(), stages.last())
+                {
+                    spans.extend(duration((first, begin)).map(|lead| ("stage_lead", lead)));
+                    spans.extend(duration((end, last)).map(|tail| ("stage_tail", tail)));
+                    let gaps = stages
+                        .windows(2)
+                        .filter_map(|pair| duration((pair[0].2, pair[1].1)))
+                        .sum::<f64>();
+                    spans.push(("stage_gaps", gaps));
+                }
                 spans.extend(frame_ms.map(|frame| ("frame_gpu", frame)));
                 spans.extend(
                     gap_ms
@@ -493,7 +515,7 @@ mod capture {
                 "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
                 "capture_id": self.capture.map(|id| id.to_string()),
                 "active": active,
-                "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving, shadow_kept and shadow_levels (decision 065) per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch), effects_filter, and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
+                "scope": "opaque render pass, plus presentation_compute (the frame's compute passes) and per-stage presentation samples for GPU-presented frames (decision 014; stages run as separate passes while capturing), taa_resolve for temporally antialiased frames (decision 017), shadow_select and shadow_maps (decision 020), ambient_occlusion, bloom and post_composite (decision 021), reflections and sun_shafts (decisions 024 and 025), light_bins (decision 023), decals (decision 039), transparent and transparent_composite (decision 026), shadow_near, shadow_moving, shadow_kept and shadow_levels (decision 065) per map, occlusion (decision 040: the depth pyramid, test and second compaction, with virtual geometry's cluster retest; opaque_meshes then spans both drawing phases), probe_captures (decision 043) and virtual_selection (decision 044: every cluster selection dispatch), effects_filter, stage_* (every render graph pass whole, decision 050, with the copies and passes it records, timed or not; stage_lead, stage_gaps and stage_tail are the frame's GPU span before, between and after them, so stalls inside passes with almost no gaps mean other work shares the GPU), pre_mips, pre_poses, pre_inputs and pre_environment (the command buffers submitted before the frame's: texture mips, staged poses, presentation input copies and environment maps), and frame_gpu (the frame's first timed begin to last timed end, including GPU time of other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); excludes uploads, queue latency, presentation and timestamp readback",
                 "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
                 "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
                 "precision": "browser may quantize timestamp values; zero durations remain valid samples",

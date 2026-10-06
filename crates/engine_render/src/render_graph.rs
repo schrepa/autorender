@@ -313,6 +313,36 @@ impl Pass {
         }
     }
 
+    /// The span profiling captures time the whole pass as.
+    pub(crate) fn stage(self) -> &'static str {
+        match self {
+            Self::Presentation => "stage_presentation",
+            Self::Scatter => "stage_scatter",
+            Self::Occupancy => "stage_occupancy",
+            Self::ShadowSelect => "stage_shadow_select",
+            Self::VirtualSelect => "stage_virtual_select",
+            Self::ShadowMaps => "stage_shadow_maps",
+            Self::Lights => "stage_lights",
+            Self::Opaque { phase: 0 } => "stage_opaque",
+            Self::Opaque { .. } => "stage_opaque_phase_two",
+            Self::VisibilityIds { phase: 0 } => "stage_visibility",
+            Self::VisibilityIds { .. } => "stage_visibility_phase_two",
+            Self::Classify { phase: 0 } => "stage_visibility_tiles",
+            Self::Classify { .. } => "stage_visibility_tiles_phase_two",
+            Self::Resolve { phase: 0 } => "stage_visibility_resolve",
+            Self::Resolve { .. } => "stage_visibility_resolve_phase_two",
+            Self::OcclusionTest => "stage_occlusion_test",
+            Self::Decals => "stage_decals",
+            Self::Transparent => "stage_transparent",
+            Self::TransparentComposite => "stage_transparent_composite",
+            Self::Effects => "stage_effects",
+            Self::Composite => "stage_composite",
+            Self::TemporalResolve => "stage_temporal_resolve",
+            Self::Water => "stage_water",
+            Self::ProbeCaptures => "stage_probe_captures",
+        }
+    }
+
     fn bit(self) -> u32 {
         let index = PASSES
             .iter()
