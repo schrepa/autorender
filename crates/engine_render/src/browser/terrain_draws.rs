@@ -33,6 +33,19 @@ impl Renderer {
             &snapshot.deformation,
             snapshot.presented_seconds,
         );
+        // Ground under cover turns to its canopy as blades thin out
+        // (decision 090): over the cover's radius, or past it where tiers
+        // reach on.
+        let cover = snapshot.environment.ground_cover.sanitized();
+        let canopy = if cover.enabled && cover.density > 0.0 {
+            if cover.pixels > 0.0 {
+                [0.6 * cover.radius, 1.4 * cover.radius, cover.density]
+            } else {
+                [0.5 * cover.radius, cover.radius, cover.density]
+            }
+        } else {
+            [0.0; 3]
+        };
         let drawn = self.terrain.prepare(
             &self.device,
             &self.queue,
@@ -51,6 +64,7 @@ impl Renderer {
                     .sanitized()
                     .sun_direction
                     .normalize(),
+                canopy,
             },
             (self.display.max_layers, self.materials.mips()),
         );
@@ -71,6 +85,7 @@ impl Renderer {
                 snapshot.camera_position,
                 snapshot.elapsed_seconds,
             ),
+            self.display.size().1 as f32,
         );
         let lit = opaque_kind.lit;
         let lights = self.lights.as_ref().map(LightPass::fragment_layout);

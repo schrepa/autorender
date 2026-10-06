@@ -1,16 +1,20 @@
-// Ground cover (decision 056): each frame, the blades within a radius of the
-// eye, grown from a terrain's control values and heights. A workgroup takes
-// one cell between level-0 samples; its lanes try the cell's candidate
-// blades, each placed, sized and ranked by a hash of the cell and its
-// index, so blades stay where they are as the eye moves. A candidate
-// grows where its rank falls under its material's density at its point
-// (both cover materials of a control value share it by their blend).
-// Density falls with distance as the radius's fifth over the distance, so
-// every ring of the disc holds about as many blades, which widen to cover
-// as much ground; it thins out over the radius's outer half. Candidates
+// Ground cover (decision 056): each frame, the blades around the eye, grown
+// from a terrain's control values and heights. A workgroup takes one cell
+// of a tier's grid; its lanes try the cell's candidate blades, each placed,
+// sized and ranked by a hash of the cell, its tier and its index, so blades
+// stay where they are as the eye moves. A candidate grows where its rank
+// falls under its material's density at its point (both cover materials of
+// a control value share it by their blend). Density falls with distance as
+// the radius's fifth over the distance, so every ring of the radius's disc
+// holds about as many blades, which widen to cover as much ground. Past
+// the radius, tiers of cells twice as wide each (decision 090) grow the
+// same candidates a cell, sparser as the cube of the distance, blades
+// still widening so they stay as wide on screen, until the tiers' reach;
+// without tiers cover thins out over the radius's outer half. Candidates
 // near their threshold grow short, so blades rise as the eye nears instead
 // of popping in. Survivors in the view append to the frame's blades; past
-// capacity they are only counted.
+// capacity they are only counted. Blades take the ground's large-scale
+// variety from its sky map, as the ground does (`terrain_variety.wgsl`).
 
 struct Grow {
     // The terrain's origin (world) and its level-0 sample spacing.
@@ -24,9 +28,14 @@ struct Grow {
     // are, where its materials start in the palette, and the blades'
     // capacity.
     counts: vec4<u32>,
-    // The density scale and the candidates' share of the densest cover
-    // (blades per candidate per square meter).
+    // The density scale, the candidates' share of the densest cover
+    // (blades per candidate per square meter) in the radius's cells, and
+    // the terrain's sky map's layer plus one (0 until built).
     scale: vec4<f32>,
+    // This tier (decision 090): the meters from the eye it starts at, the
+    // radius, where tiers end (0 without tiers), and how many level-0
+    // samples wide its cells are.
+    tier: vec4<f32>,
     // The view's frustum planes (world).
     planes: array<vec4<f32>, 6>,
     // Runtime deformation's map (decision 083, `terrain_vertex.wgsl`'s
@@ -50,6 +59,7 @@ struct PaletteEntry {
     maps: vec4<f32>,
     far: vec4<f32>,
     relief: vec4<f32>,
+    canopy: vec4<f32>,
 }
 
 struct CoverBlade {
@@ -69,12 +79,13 @@ struct Counts {
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var control: texture_2d_array<u32>;
 @group(0) @binding(2) var<storage, read> directory: array<u32>;
-@group(0) @binding(3) var<uniform> palette: array<PaletteEntry, 204>;
+@group(0) @binding(3) var<uniform> palette: array<PaletteEntry, 170>;
 @group(0) @binding(4) var<storage, read> covers: array<CoverSpec>;
 @group(0) @binding(5) var<uniform> grow: Grow;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
 @group(0) @binding(9) var<storage, read> deformation: array<u32>;
+@group(0) @binding(10) var sky_maps: texture_2d_array<f32>;
 
 const NOT_RESIDENT: u32 = 0xffffffffu;
 const TAU: f32 = 6.2831853;
@@ -168,11 +179,50 @@ fn pack_color(color: vec3<f32>, w: f32) -> u32 {
 }
 
 // The share of the densest cover growing `away` meters from the eye: all
-// of it within a fifth of the radius, then the fifth over the distance,
-// thinning to none over the radius's outer half.
-fn cover_share(away: f32, radius: f32) -> f32 {
+// of it within a fifth of the radius, then the fifth over the distance;
+// past the radius, a fifth of the radius's cube over the distance's, which
+// meets it there. Without tiers it thins to none over the radius's outer
+// half; with them, over the last three tenths of their reach.
+fn cover_share(away: f32) -> f32 {
+    let radius = grow.tier.y;
+    let reach = grow.tier.z;
     let near = 0.2 * radius;
-    return min(1.0, near / max(away, 1.0e-3)) * (1.0 - smoothstep(0.5 * radius, radius, away));
+    let distance = max(away, 1.0e-3);
+    var share = min(1.0, near / distance);
+    if distance > radius {
+        let ratio = radius / distance;
+        share = 0.2 * ratio * ratio * ratio;
+    }
+    if reach > radius {
+        return share * (1.0 - smoothstep(0.7 * reach, reach, away));
+    }
+    return share * (1.0 - smoothstep(0.5 * radius, radius, away));
+}
+
+// The ground's large-scale variety at terrain-local `local` (decision
+// 090): its sky map's hollows and ridges, interpolated between texels;
+// level ground before the map is built.
+fn variety_at(local: vec2<f32>) -> vec2<f32> {
+    let layer = u32(grow.scale.z);
+    if layer == 0u {
+        return vec2<f32>(0.5);
+    }
+    let base = grow.counts.x;
+    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0
+        * grow.origin.w;
+    let size = vec2<i32>(textureDimensions(sky_maps));
+    let at = local / extent * vec2<f32>(size) - 0.5;
+    let first = vec2<i32>(floor(at));
+    let f = at - floor(at);
+    let last = size - vec2<i32>(1);
+    let a = textureLoad(sky_maps, clamp(first, vec2<i32>(0), last), layer - 1u, 0).gb;
+    let b = textureLoad(sky_maps, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), layer - 1u,
+        0).gb;
+    let c = textureLoad(sky_maps, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), layer - 1u,
+        0).gb;
+    let d = textureLoad(sky_maps, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), layer - 1u,
+        0).gb;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 // The cell's ground at its center, read once for its lanes.
@@ -182,7 +232,9 @@ var<workgroup> cell_found: u32;
 @compute @workgroup_size(64)
 fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
-    let spacing = grow.origin.w;
+    // The tier's cells, as many level-0 samples wide as it asks.
+    let scale = grow.tier.w;
+    let spacing = grow.origin.w * scale;
     let cell = grow.grid.xy + vec2<i32>(group.xy);
     if any(cell < vec2<i32>(0)) {
         return;
@@ -190,8 +242,10 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     let corner = vec2<f32>(cell) * spacing;
     let center = grow.origin.xz + corner + vec2<f32>(0.5 * spacing);
     let radius = grow.eye.w;
+    let inner = grow.tier.x;
     let half_diagonal = 0.7072 * spacing;
-    if distance(center, grow.eye.xz) > radius + half_diagonal {
+    let across = distance(center, grow.eye.xz);
+    if across > radius + half_diagonal || across + half_diagonal < inner {
         return;
     }
     if lane == 0u {
@@ -210,8 +264,12 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     if nearest > radius {
         return;
     }
-    let bound = cover_share(nearest, radius);
-    let cell_seed = hash((u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u));
+    // Candidates in cells wider by `scale` each stand for as many more
+    // square meters.
+    let widened = scale * scale;
+    let bound = min(1.0, cover_share(nearest) * widened);
+    let cell_seed = hash((u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u)
+        ^ (u32(scale) * 0x9e3779b9u));
     for (var index = lane; index < u32(grow.grid.w); index += 64u) {
         let seed = hash(cell_seed + index * 0x632be5abu);
         let rank = unit(hash(seed ^ 0x165667b1u));
@@ -227,7 +285,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         }
         let root = vec3<f32>(world_xz.x, grow.origin.y + ground.height - 0.02, world_xz.y);
         let away = distance(root, grow.eye.xyz);
-        if away > radius {
+        if away > radius || away < inner {
             continue;
         }
         // The control value's two materials share the candidates by
@@ -238,8 +296,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             pick < share);
         let entry = min(grow.counts.z + material, 255u);
         let spec = covers[entry];
-        let falloff = cover_share(away, radius);
-        let keep = spec.shape.x * grow.scale.x * grow.scale.y * falloff;
+        let falloff = cover_share(away);
+        let keep = spec.shape.x * grow.scale.x * grow.scale.y * widened * falloff;
         if rank >= keep {
             continue;
         }
@@ -256,13 +314,14 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
             continue;
         }
-        let variation = 0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u));
+        let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
+            * ground_variety(variety_at(local), world_xz, 1.0);
         var blade: CoverBlade;
         blade.root = root;
         blade.height = height;
         blade.facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
-        // Wider where fewer stand, covering as much ground.
-        blade.width = spec.shape.w * min(1.0 / max(min(1.0, 0.2 * radius / away), 1.0e-3), 5.0);
+        // Wider where fewer stand, as wide on screen at every distance.
+        blade.width = spec.shape.w * max(1.0, away / (0.2 * grow.tier.y));
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
         let slot = atomicAdd(&counts.appended, 1u);

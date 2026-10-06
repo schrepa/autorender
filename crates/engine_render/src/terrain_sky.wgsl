@@ -5,7 +5,11 @@
 // the share of the sky above both those horizons and the ground's own
 // plane, cosine-weighted about the ground's normal. Heights come from the
 // terrain's finest pinned level, or from a resident ancestor where one of
-// its tiles is missing; beyond the terrain its edge carries on.
+// its tiles is missing; beyond the terrain its edge carries on. Each texel
+// also keeps the ground's large-scale variety (decision 090): how far it
+// lies below the ground a couple of texels around (hollows, where water
+// gathers) and below or above the ground a couple of hundred meters around
+// (ridges).
 
 struct Build {
     // The terrain's extent (meters along x and z), its source level's
@@ -24,7 +28,8 @@ struct Build {
 // holds it.
 @group(0) @binding(1) var<storage, read> tile_layers: array<u32>;
 @group(0) @binding(2) var<uniform> build: Build;
-// The terrain's layer: red its ground's sky visibility.
+// The terrain's layer: red its ground's sky visibility; green and blue its
+// hollows and ridges, 0.5 on level ground.
 @group(0) @binding(3) var sky: texture_storage_2d<rgba8unorm, write>;
 
 const MISSING: u32 = 0xffffffffu;
@@ -33,6 +38,11 @@ const DIRECTIONS: u32 = 16u;
 const PI: f32 = 3.14159265;
 // How much each step outward grows.
 const GROWTH: f32 = 1.33;
+// Meters around a texel its ridges are measured against, and the meters a
+// hollow and a ridge take to reach the ends of their ranges.
+const RIDGE_REACH: f32 = 200.0;
+const HOLLOW_SCALE: f32 = 8.0;
+const RIDGE_SCALE: f32 = 80.0;
 
 // The terrain's height at terrain-local `point`, held within the terrain
 // and interpolated between samples; `fallback` where no level holds its
@@ -110,5 +120,19 @@ fn build_sky(@builtin(global_invocation_id) id: vec3<u32>) {
         open += slice(plane, along, normal.y);
         seen += slice(max(atan(highest), plane), along, normal.y);
     }
-    textureStore(sky, texel, vec4<f32>(saturate(seen / max(open, 1.0e-6)), 0.0, 0.0, 1.0));
+    // The variety: the ground's height against rings around it, two texels
+    // and RIDGE_REACH out.
+    var near = 0.0;
+    var wide = 0.0;
+    for (var index = 0u; index < 8u; index++) {
+        let angle = (f32(index) + 0.5) * (2.0 * PI / 8.0);
+        let direction = vec2<f32>(cos(angle), sin(angle));
+        near += source_height(point + direction * (2.0 * across), ground);
+        wide += source_height(point + direction * max(RIDGE_REACH, 4.0 * across), ground);
+    }
+    let hollow = near * 0.125 - ground;
+    let ridge = ground - wide * 0.125;
+    textureStore(sky, texel, vec4<f32>(saturate(seen / max(open, 1.0e-6)),
+        saturate(0.5 + 0.5 * hollow / HOLLOW_SCALE), saturate(0.5 + 0.5 * ridge / RIDGE_SCALE),
+        1.0));
 }

@@ -1,11 +1,14 @@
 //! Ground cover (decision 056): the blades of every terrain's surface
-//! materials' covers within a radius of the eye, grown each frame by a
-//! compute pass (`cover_grow.wgsl`) into one buffer and drawn with one
-//! indirect draw of strips in the opaque pass (`meshes/cover.wgsl`). Blades
-//! past the buffer's capacity (the most the radius and densities can grow,
-//! or the settings' budget) drop and count; cells grow in order outward
-//! from the eye's corner of the grid, so the farthest tend to drop first.
-//! Nothing here exists until a frame has cover to grow.
+//! materials' covers around the eye, grown each frame by a compute pass
+//! (`cover_grow.wgsl`) into one buffer and drawn with one indirect draw of
+//! strips in the opaque pass (`meshes/cover.wgsl`). Within the radius cells
+//! are level-0 samples; past it tiers of cells twice as wide each reach on
+//! (decision 090) while the average blade stands at least the settings'
+//! pixels tall on screen. Blades past the buffer's capacity (the most the
+//! tiers and densities can grow, or the settings' budget) drop and count;
+//! cells grow in order outward from the eye's corner of each grid, so the
+//! farthest tend to drop first. Nothing here exists until a frame has cover
+//! to grow.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -37,6 +40,7 @@ struct GrowUniform {
     grid: [i32; 4],
     counts: [u32; 4],
     scale: [f32; 4],
+    tier: [f32; 4],
     planes: [[f32; 4]; 6],
     deform_grid: [i32; 4],
     deform: [f32; 4],
@@ -49,12 +53,17 @@ struct FrameUniform {
     wind: [f32; 4],
 }
 
-/// One terrain's growth this frame: its uniform's offset and its grid's
-/// cells along each side.
+/// One tier of one terrain's growth this frame: its uniform's offset and
+/// its grid's cells along each side.
 struct Growth {
     offset: u32,
     cells: u32,
 }
+
+/// Tiers a terrain's cover grows in at most: the radius's and doublings
+/// past it. A validity bound (the radius times 128 reaches past any
+/// terrain), not a budget.
+const MAX_TIERS: usize = 8;
 
 pub(crate) struct GroundCoverPass {
     grow_layout: wgpu::BindGroupLayout,
@@ -78,6 +87,9 @@ pub(crate) struct GroundCoverPass {
     readbacks: ReadbackRing<u32>,
     // Blades grown and those past capacity, read back a few frames late.
     totals: Rc<Cell<Option<[u32; 2]>>>,
+    // This frame's farthest reach (meters) and most tiers.
+    reach: f32,
+    tiers: u32,
 }
 
 impl GroundCoverPass {
@@ -110,7 +122,15 @@ impl GroundCoverPass {
             previous_time: None,
             readbacks: ReadbackRing::new("engine/cover-readback"),
             totals: Rc::new(Cell::new(None)),
+            reach: 0.0,
+            tiers: 0,
         }
+    }
+
+    /// Meters from the eye this frame's cover reaches, and its most tiers
+    /// (decision 090).
+    pub(crate) fn reach(&self) -> (f32, u32) {
+        (self.reach, self.tiers)
     }
 
     /// Blades the last read-back frame drew, and those past capacity.
@@ -125,7 +145,8 @@ impl GroundCoverPass {
 
     /// Plans this frame's growth for every terrain whose materials have
     /// cover, with `settings` on, seen through `culling` (world) from
-    /// `eye` at presentation time `time`. Returns whether any grows.
+    /// `eye` at presentation time `time` on a view `height` pixels tall.
+    /// Returns whether any grows.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -133,8 +154,11 @@ impl GroundCoverPass {
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
         (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
+        height: f32,
     ) -> bool {
         self.growths.clear();
+        self.reach = 0.0;
+        self.tiers = 0;
         let previous = self.previous_time.replace(time).unwrap_or(time);
         let grows = self.plan(
             device,
@@ -142,7 +166,7 @@ impl GroundCoverPass {
             terrain,
             terrains,
             (settings, wind),
-            (culling, eye, time, previous),
+            (culling, eye, time, previous, height),
         );
         if !grows {
             // Nothing grows: none drawn, whatever the last read-back said.
@@ -158,13 +182,16 @@ impl GroundCoverPass {
         terrain: &TerrainPass,
         terrains: &engine_core::RenderTerrains,
         (settings, wind): (&GroundCover, [f32; 2]),
-        (culling, eye, time, previous): (Mat4, Vec3, f32, f32),
+        (culling, eye, time, previous, height): (Mat4, Vec3, f32, f32, f32),
     ) -> bool {
+        let settings = settings.sanitized();
         if !settings.enabled || settings.density <= 0.0 || terrain.cover_sources().is_none() {
             return false;
         }
         let planes = planes(culling);
         let radius = settings.radius;
+        // Pixels a meter spans a meter from the eye along the view's height.
+        let pixels_per_meter = culling.row(1).truncate().length() * height * 0.5;
         let shading = terrain
             .cover_sources()
             .map(|sources| sources.shading)
@@ -172,7 +199,7 @@ impl GroundCoverPass {
         let mut uniforms = Vec::new();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
-            let (directory, palette, densest) = terrain.cover_terrain(index);
+            let (directory, palette, [densest, blade], sky) = terrain.cover_terrain(index);
             let density = densest * settings.density;
             if density <= 0.0 || render.patches.is_empty() {
                 continue;
@@ -180,27 +207,59 @@ impl GroundCoverPass {
             let spacing = render.pyramid.spacing(0);
             let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
             let local = eye - render.origin;
-            let first = [
-                ((local.x - radius) / spacing).floor() as i32,
-                ((local.z - radius) / spacing).floor() as i32,
-            ];
-            let cells = (2.0 * radius / spacing).ceil() as u32 + 1;
-            let uniform = GrowUniform {
-                origin: render.origin.extend(spacing).to_array(),
-                eye: eye.extend(radius).to_array(),
-                grid: [first[0], first[1], cells as i32, candidates as i32],
-                counts: [directory, render.pyramid.levels(), palette, 0],
-                scale: [settings.density, spacing * spacing / candidates, 0.0, 0.0],
-                planes,
-                deform_grid: shading.grid,
-                deform: shading.scale,
+            // Tiers reach on while the average blade stands at least the
+            // settings' pixels tall (decision 090).
+            let reach = if settings.pixels > 0.0 {
+                blade * pixels_per_meter / settings.pixels
+            } else {
+                0.0
             };
-            self.growths.push(Growth {
-                offset: (uniforms.len() as u64 * SLOT) as u32,
-                cells,
-            });
-            uniforms.push(uniform);
-            most += disc_area(radius) * density;
+            let reach = if reach > radius { reach } else { 0.0 };
+            let mut tiers = vec![(0.0, radius, 1.0)];
+            while reach > 0.0 && tiers.len() < MAX_TIERS {
+                let (_, outer, scale) = tiers[tiers.len() - 1];
+                if outer >= reach {
+                    break;
+                }
+                tiers.push((
+                    outer,
+                    engine_core::math::min(2.0 * outer, reach),
+                    2.0 * scale,
+                ));
+            }
+            let reached = tiers[tiers.len() - 1].1;
+            self.reach = engine_core::math::max(self.reach, reached);
+            self.tiers = self.tiers.max(tiers.len() as u32);
+            for (inner, outer, scale) in tiers {
+                let cell = spacing * scale;
+                let first = [
+                    ((local.x - outer) / cell).floor() as i32,
+                    ((local.z - outer) / cell).floor() as i32,
+                ];
+                let cells = (2.0 * outer / cell).ceil() as u32 + 1;
+                let uniform = GrowUniform {
+                    origin: render.origin.extend(spacing).to_array(),
+                    eye: eye.extend(outer).to_array(),
+                    grid: [first[0], first[1], cells as i32, candidates as i32],
+                    counts: [directory, render.pyramid.levels(), palette, 0],
+                    scale: [
+                        settings.density,
+                        spacing * spacing / candidates,
+                        sky as f32,
+                        0.0,
+                    ],
+                    tier: [inner, radius, reach, scale],
+                    planes,
+                    deform_grid: shading.grid,
+                    deform: shading.scale,
+                };
+                self.growths.push(Growth {
+                    offset: (uniforms.len() as u64 * SLOT) as u32,
+                    cells,
+                });
+                uniforms.push(uniform);
+            }
+            most += cover_area(radius, reach) * density;
         }
         if self.growths.is_empty() {
             return false;
@@ -242,7 +301,7 @@ impl GroundCoverPass {
             sources.generation.1,
             sources.generation.2,
             self.blades_generation,
-            0,
+            sources.generation.3,
         );
         if self.grow_group.stale(&key) {
             let group = crate::pipelines::group(
@@ -268,6 +327,7 @@ impl GroundCoverPass {
                     crate::buffers::entry("counts", &self.counts),
                     crate::buffers::entry("args", &self.args),
                     crate::buffers::entry("deformation", sources.deformation),
+                    ("sky", crate::pipelines::view(sources.sky)),
                 ],
             );
             self.grow_group.set(key, group);
@@ -412,19 +472,34 @@ impl GroundCoverPass {
     }
 }
 
-/// The square meters of densest cover a disc of `radius` grows: its area
-/// weighted by `cover_grow.wgsl`'s `cover_share`, summed ring by ring.
-fn disc_area(radius: f32) -> f32 {
-    const RINGS: u32 = 64;
-    let width = radius / RINGS as f32;
+/// The square meters of densest cover the radius and tiers out to `reach`
+/// (0 without tiers) grow: their area weighted by `cover_grow.wgsl`'s
+/// `cover_share`, summed ring by ring.
+fn cover_area(radius: f32, reach: f32) -> f32 {
+    const RINGS: u32 = 256;
+    let end = engine_core::math::max(radius, reach);
+    let width = end / RINGS as f32;
     (0..RINGS)
         .map(|ring| {
             let away = (ring as f32 + 0.5) * width;
-            let share = engine_core::math::min(1.0, 0.2 * radius / away)
-                * (1.0 - smoothstep(0.5 * radius, radius, away));
-            std::f32::consts::TAU * away * width * share
+            std::f32::consts::TAU * away * width * cover_share(away, radius, reach)
         })
         .sum()
+}
+
+/// `cover_grow.wgsl`'s `cover_share`: the share of the densest cover
+/// growing `away` meters from the eye.
+fn cover_share(away: f32, radius: f32, reach: f32) -> f32 {
+    let mut share = engine_core::math::min(1.0, 0.2 * radius / away);
+    if away > radius {
+        let ratio = radius / away;
+        share = 0.2 * ratio * ratio * ratio;
+    }
+    if reach > radius {
+        share * (1.0 - smoothstep(0.7 * reach, reach, away))
+    } else {
+        share * (1.0 - smoothstep(0.5 * radius, radius, away))
+    }
 }
 
 fn smoothstep(from: f32, to: f32, value: f32) -> f32 {

@@ -285,6 +285,7 @@ pub enum TerrainViewRequest {
     Tiles,
     Materials,
     Sky,
+    Detail,
 }
 
 fn default_limit() -> usize {
@@ -402,8 +403,9 @@ pub enum BrowserControl {
     /// render while paused: `pixel_error` replaces the settings' (1 to
     /// 64), `freeze` keeps streaming and patches following the camera's
     /// current position while the camera moves on, and `view` shows terrain
-    /// shaded or its levels, normals or tiles and patches. Omitted fields
-    /// stay as they are.
+    /// shaded or its levels, normals, tiles and patches, materials, sky
+    /// visibility or detail (decision 090). Omitted fields stay as they
+    /// are.
     Terrain {
         version: u32,
         #[serde(default)]
