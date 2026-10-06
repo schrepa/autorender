@@ -219,6 +219,15 @@ pub(crate) fn water(targets: Targets) -> (&'static str, &'static str) {
     }
 }
 
+/// Rivers' vertex and fragment stages (decision 092) into `targets`.
+pub(crate) fn river(targets: Targets) -> (&'static str, &'static str) {
+    match targets {
+        Targets::Canvas => ("vs_river", "fs_water"),
+        Targets::Post => ("vs_river", "fs_water_post"),
+        Targets::Temporal => ("vs_river_temporal", "fs_water_temporal"),
+    }
+}
+
 /// The sea's vertex and fragment stages (decision 076) into `targets`.
 pub(crate) fn ocean(targets: Targets) -> (&'static str, &'static str) {
     match targets {

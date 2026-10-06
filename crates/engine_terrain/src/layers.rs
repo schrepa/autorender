@@ -1095,6 +1095,20 @@ impl Layers {
                 for (height, &x) in row.iter_mut().zip(xs) {
                     *height -= baked.carve_at(x, z, level);
                 }
+                // Rivers (decision 092) cut their beds below their water and
+                // ease their banks to the ground at every level.
+                let (low, high) = baked.rivers.bounds();
+                if baked.rivers.is_empty()
+                    || low.x > max.x
+                    || low.y > max.y
+                    || high.x < min.x
+                    || high.y < min.y
+                {
+                    return;
+                }
+                for (height, &x) in row.iter_mut().zip(xs) {
+                    *height = baked.rivers.cap(x, z, *height, spacing);
+                }
             }
             Layer::Stamp(stamp) => {
                 if !reaches(stamp.center, stamp.reach(), min, max) {

@@ -50,6 +50,11 @@ pub enum Mask {
     Wetness([f32; 2]),
     /// A ramp over how deep water would stand in a filled pit, in meters.
     Lake([f32; 2]),
+    /// A ramp over meters from the nearest river's edge (decision 092),
+    /// negative in its water: `[2, 0]` covers river beds with two meters of
+    /// banks. Beyond every river's reach (sixteen meters past its edge),
+    /// and without rivers, it reads 1e9.
+    River([f32; 2]),
     /// A ramp over meters from the nearest road's edge (decision 069),
     /// negative on roads: `[1, 0]` covers roads with a meter of soft edge.
     /// It averages the ramp across each sample's footprint, so roads
@@ -187,6 +192,7 @@ pub(crate) enum Compiled {
     Flow([f32; 2]),
     Wetness([f32; 2]),
     Lake([f32; 2]),
+    River([f32; 2]),
     Path([f32; 2]),
     Noise {
         frequency: f32,
@@ -304,6 +310,12 @@ impl Compiled {
                 }
                 Self::Lake(*ends)
             }
+            Mask::River(ends) => {
+                if !finite(ends) {
+                    return Err(fail("river distances must be finite"));
+                }
+                Self::River(*ends)
+            }
             Mask::Path(ends) => {
                 if !finite(ends) {
                     return Err(fail("path distances must be finite"));
@@ -358,6 +370,7 @@ impl Compiled {
             | Self::Flow(_)
             | Self::Wetness(_)
             | Self::Lake(_)
+            | Self::River(_)
             | Self::Path(_) => 1,
             Self::Noise { octaves, .. } => 2 * u64::from(*octaves),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
@@ -376,6 +389,7 @@ impl Compiled {
             Self::Flow(ends) => ramp(inputs.water.flow, *ends),
             Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
             Self::Lake(ends) => ramp(inputs.water.lake, *ends),
+            Self::River(ends) => ramp(inputs.water.river, *ends),
             Self::Path(ends) => {
                 // The ramp at four points across the sample's footprint,
                 // across the road.

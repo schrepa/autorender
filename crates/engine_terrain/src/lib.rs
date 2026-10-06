@@ -28,6 +28,7 @@ mod noise;
 mod path;
 mod placement;
 mod pyramid;
+mod rivers;
 mod select;
 mod surface;
 mod tile;
@@ -40,7 +41,7 @@ pub use format::{
 };
 pub use hydrology::{
     FALL_HEIGHT, FALL_SLOPE, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
-    HydrologyStats, LAKE_RANGE, WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
+    HydrologyStats, LAKE_RANGE, RIVER_FAR, WETNESS_RANGE, WaterGrid,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
@@ -55,6 +56,7 @@ pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Placed, PlacementChoice, PlacementLayer,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
+pub use rivers::{BANK_OFFSET, RIVER_STEP, River, RiverPoint, Rivers};
 pub use select::{LodRanges, Patch, Selection, WantedTile, select_patches, wanted_tiles};
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,

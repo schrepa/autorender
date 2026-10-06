@@ -426,8 +426,7 @@ pub(crate) fn execute(
                             // Above the ground as tiles hold it, which layers
                             // after the bake may raise over the water.
                             let standing = water
-                                .water
-                                .at(local.0, local.1)
+                                .water_at(local.0, local.1)
                                 .map(|(surface, _)| terrain.origin.y + surface)
                                 .filter(|&surface| surface > sample.height)
                                 .map(|surface| {

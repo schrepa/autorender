@@ -187,7 +187,8 @@ pub struct RenderStats {
     /// Of those, objects standing far away (decision 061), which hide where
     /// the tiles holding them instead are resident.
     pub placed_far_objects: u32,
-    /// Chunks of terrains' water drawn (decision 067).
+    /// Chunks of terrains' water drawn: lakes' (decision 067) and rivers'
+    /// ribbons (decision 092).
     pub water_chunks: u32,
     /// The sea's sectors drawn (decision 076), and their triangles.
     pub ocean_sectors: u32,

@@ -532,7 +532,9 @@ try {
     await command("camera", down(-0.3));
     const below = await capture("sea-below");
     const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
-    assert.ok(crossing.changed > 0.5 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
+    // Rivers (decision 092) carve their mouths deep under the sea, which
+    // darkens it from above: a third of the view changing shows the crossing.
+    assert.ok(crossing.changed > 0.3 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
     // Floating entities (decision 077) ride the sea each fixed tick at the
     // tick's time, which frames present: the buoy stands on the surface
     // queries find there.
