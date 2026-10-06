@@ -10,7 +10,7 @@ use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, GroundCover, LevelOfDetail,
-    LocalLights, Occupancy, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
+    LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
     SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
 
@@ -61,6 +61,7 @@ pub struct Environment {
     pub occupancy: Occupancy,
     pub contact_shadows: ContactShadows,
     pub water: Water,
+    pub ocean: Ocean,
 }
 
 impl Environment {
@@ -193,6 +194,13 @@ impl Environment {
                     ..Water::default()
                 },
             ),
+            ocean: read(
+                world,
+                Ocean {
+                    enabled: false,
+                    ..Ocean::default()
+                },
+            ),
         }
     }
 
@@ -218,6 +226,7 @@ impl Environment {
             occupancy: self.occupancy.sanitized(),
             contact_shadows: self.contact_shadows.sanitized(),
             water: self.water.sanitized(),
+            ocean: self.ocean.sanitized(),
         }
     }
 }

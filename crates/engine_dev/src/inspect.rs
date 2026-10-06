@@ -532,6 +532,9 @@ fn section_description(name: &str) -> &'static str {
         "water" => {
             "Water settings (decision 067): terrains' lakes and rivers, which their hydrology bakes find (decision 066), drawn where they stand. Whether water draws, the color deep water scatters back, the meters of water through which half the light passes, how strongly ripples tilt the surface and the meters across the largest ripples. Missing means none. The rendering observation reports water chunks drawn."
         }
+        "ocean" => {
+            "The sea (decision 076): an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
+        }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }
@@ -762,7 +765,8 @@ impl DevTools {
             | DevRequest::CollisionEvents { .. }
             | DevRequest::TerrainHeight { .. }
             | DevRequest::TerrainSweep { .. }
-            | DevRequest::TerrainRoute { .. } => unreachable!("spatial requests return above"),
+            | DevRequest::TerrainRoute { .. }
+            | DevRequest::WaterQuery { .. } => unreachable!("spatial requests return above"),
         }
     }
 

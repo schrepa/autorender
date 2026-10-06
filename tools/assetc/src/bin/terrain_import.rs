@@ -13,7 +13,7 @@
 //! cargo run -p engine_assetc --release --bin terrain_import -- \
 //!     --out DIR --id NAME [--center A,B] [--size METERS] [--spacing METERS]
 //!     [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR]
-//!     [--attribution TEXT] INPUT...
+//!     [--attribution TEXT] [--sea LEVEL] INPUT...
 //! ```
 //!
 //! It writes `DIR/NAME/height.r16`, the report `DIR/NAME/import.json` and a
@@ -29,6 +29,12 @@
 //! default). PNG and RAW inputs span `--extent` meters with samples 0 and
 //! 65535 at `--range` meters. Data whose licence requires credit needs
 //! `--attribution`, which the layer and report carry.
+//!
+//! With `--sea`, the sea (decision 076) stands at `LEVEL` meters: ground at
+//! or within half a meter above it that joins the import's edges becomes
+//! seabed, falling away from the shore toward a shelf 60 meters down (most
+//! elevation models hold the sea as a flat surface), and the scene's sea
+//! draws there, its shores sandy and its summits free of snow.
 
 use std::fs::File;
 use std::io::BufReader;
@@ -47,7 +53,7 @@ fn main() {
 
 const USAGE: &str = "usage: terrain_import --out DIR --id NAME [--center A,B] [--size METERS] \
      [--spacing METERS] [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR] \
-     [--attribution TEXT] INPUT...";
+     [--attribution TEXT] [--sea LEVEL] INPUT...";
 
 /// What the command line asks for.
 struct Options {
@@ -62,6 +68,7 @@ struct Options {
     detail: f64,
     materials: Option<PathBuf>,
     attribution: Option<String>,
+    sea: Option<f64>,
 }
 
 fn pair(text: &str, name: &str) -> Result<[f64; 2], String> {
@@ -90,6 +97,7 @@ fn options() -> Result<Options, String> {
         detail: 8.0,
         materials: None,
         attribution: None,
+        sea: None,
     };
     while let Some(argument) = arguments.next() {
         let mut value = |name: &str| {
@@ -124,6 +132,16 @@ fn options() -> Result<Options, String> {
             }
             "--materials" => options.materials = Some(PathBuf::from(value("--materials")?)),
             "--attribution" => options.attribution = Some(value("--attribution")?),
+            "--sea" => {
+                let text = value("--sea")?;
+                let level: f64 = text
+                    .parse()
+                    .map_err(|error| format!("--sea {text}: {error}"))?;
+                if !(level.is_finite() && level.abs() <= 10_000.0) {
+                    return Err("--sea must be within 10000 meters of zero".into());
+                }
+                options.sea = Some(level);
+            }
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown option {flag}\n{USAGE}"));
             }
@@ -608,6 +626,9 @@ fn run() -> Result<(), String> {
         }
         remaining = heights.iter().filter(|height| height.is_nan()).count();
     }
+    let seabed = options
+        .sea
+        .map_or(0, |level| seabed(&mut heights, samples, spacing, level));
     let lowest = heights.iter().copied().fold(f64::INFINITY, f64::min);
     let highest = heights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let (low, high) = ((lowest - 1.0).floor(), (highest + 1.0).ceil());
@@ -684,6 +705,8 @@ fn run() -> Result<(), String> {
         "low": low,
         "high": high,
         "filled_gaps": missing,
+        "sea": options.sea,
+        "seabed_samples": seabed,
         "source": source,
         "attribution": options.attribution,
         "heightmap": format!("{}/height.r16", options.id),
@@ -702,6 +725,100 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+/// Meters below the sea its seabed falls toward, and the meters from the
+/// shore over which it falls most of the way.
+const SHELF_DEPTH: f64 = 60.0;
+const SHELF_REACH: f64 = 250.0;
+
+/// Turns the ground at or within half a meter above sea `level` that joins
+/// the edges of the `samples` by `samples` heights `spacing` meters apart
+/// into seabed, falling from half a meter below the sea at the shore toward
+/// [`SHELF_DEPTH`] with the distance to the nearest land; returns the
+/// seabed's samples.
+fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usize {
+    let wet = |height: f64| height <= level + 0.5;
+    // The sea: wet ground the edges reach through wet ground.
+    let mut sea = vec![false; heights.len()];
+    let mut queue = std::collections::VecDeque::new();
+    for index in 0..samples {
+        for sample in [
+            index,
+            (samples - 1) * samples + index,
+            index * samples,
+            index * samples + samples - 1,
+        ] {
+            if !sea[sample] && wet(heights[sample]) {
+                sea[sample] = true;
+                queue.push_back(sample);
+            }
+        }
+    }
+    while let Some(sample) = queue.pop_front() {
+        let (column, row) = (sample % samples, sample / samples);
+        let neighbors = [
+            (column > 0).then(|| sample - 1),
+            (column + 1 < samples).then(|| sample + 1),
+            (row > 0).then(|| sample - samples),
+            (row + 1 < samples).then(|| sample + samples),
+        ];
+        for neighbor in neighbors.into_iter().flatten() {
+            if !sea[neighbor] && wet(heights[neighbor]) {
+                sea[neighbor] = true;
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    // Samples from the nearest land: a two-pass chamfer transform.
+    let mut distance: Vec<f64> = sea
+        .iter()
+        .map(|&sea| if sea { f64::INFINITY } else { 0.0 })
+        .collect();
+    let diagonal = std::f64::consts::SQRT_2;
+    let at = |column: isize, row: isize| -> Option<usize> {
+        (column >= 0 && row >= 0 && (column as usize) < samples && (row as usize) < samples)
+            .then(|| row as usize * samples + column as usize)
+    };
+    for row in 0..samples as isize {
+        for column in 0..samples as isize {
+            let here = at(column, row).expect("inside");
+            for (dx, dy, step) in [
+                (-1, 0, 1.0),
+                (0, -1, 1.0),
+                (-1, -1, diagonal),
+                (1, -1, diagonal),
+            ] {
+                if let Some(there) = at(column + dx, row + dy) {
+                    distance[here] = distance[here].min(distance[there] + step);
+                }
+            }
+        }
+    }
+    for row in (0..samples as isize).rev() {
+        for column in (0..samples as isize).rev() {
+            let here = at(column, row).expect("inside");
+            for (dx, dy, step) in [
+                (1, 0, 1.0),
+                (0, 1, 1.0),
+                (1, 1, diagonal),
+                (-1, 1, diagonal),
+            ] {
+                if let Some(there) = at(column + dx, row + dy) {
+                    distance[here] = distance[here].min(distance[there] + step);
+                }
+            }
+        }
+    }
+    let mut count = 0;
+    for (index, height) in heights.iter_mut().enumerate() {
+        if sea[index] {
+            let meters = distance[index] * spacing;
+            *height = level - 0.5 - (SHELF_DEPTH - 0.5) * (1.0 - (-meters / SHELF_REACH).exp());
+            count += 1;
+        }
+    }
+    count
+}
+
 /// How one surface material looks: its name and the maps it uses, its
 /// color without maps and the tint its maps' colors take, its roughness,
 /// the meters its maps repeat over, how sharply its heights win where it
@@ -718,7 +835,7 @@ struct Look {
     grass: Option<[f32; 3]>,
 }
 
-const LOOKS: [Look; 8] = [
+const LOOKS: [Look; 9] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -797,6 +914,17 @@ const LOOKS: [Look; 8] = [
         grass: None,
     },
     Look {
+        name: "sand",
+        maps: "snow",
+        color: [0.62, 0.54, 0.4],
+        tint: [0.8, 0.7, 0.53],
+        roughness: 0.9,
+        tiling: 4.0,
+        height_contrast: 0.3,
+        biplanar: false,
+        grass: None,
+    },
+    Look {
         name: "snow",
         maps: "snow",
         color: [0.82, 0.84, 0.88],
@@ -854,8 +982,13 @@ fn scene(
     };
     let camera_height = (ground + 350.0).max(summit - 1500.0);
     // Heights relative to the range for masks: tree line, grass line and
-    // snow line, where the range reaches them.
-    let snow = high.min(2900.0).max(low + 0.7 * (high - low));
+    // snow line, where the range reaches them; seaside imports hold none.
+    let snow = match options.sea {
+        Some(_) => high + 1000.0,
+        None => high.min(2900.0).max(low + 0.7 * (high - low)),
+    };
+    // Sand along the sea's shores and over its bed.
+    let shore = options.sea.map_or(low - 1000.0, |level| level + 3.0);
     let middle = heights[(samples / 2) * samples + samples / 2];
     let (mut textures, mut materials) = (
         Vec::new(),
@@ -911,6 +1044,7 @@ fn scene(
             layer("wet_grass", remap(json!({"add": [{"wetness": [10.0, 13.5]}, scaled(noise(24.0, 41, 2), 0.35), {"constant": -0.15}]}), 0.35, 0.6)),
             layer("scree", remap(json!({"add": [scaled(json!({"slope": [26.0, 36.0]}), 0.7), scaled(json!({"height": [snow - 700.0, snow - 200.0]}), 0.4), scaled(noise(40.0, 15, 2), 0.3)]}), 0.6, 0.8)),
             layer("riverbed", remap(json!({"add": [{"multiply": [{"flow": [5.5, 5.7]}, {"invert": {"lake": [0.5, 2.0]}}]}, scaled(noise(12.0, 42, 2), 0.3)]}), 0.55, 0.75)),
+            layer("sand", json!({"multiply": [remap(json!({"add": [{"invert": {"height": [shore - 1.0, shore + 4.0]}}, scaled(noise(30.0, 51, 2), 0.3)]}), 0.5, 0.7), {"invert": {"slope": [16.0, 26.0]}}]})),
             layer("rock", remap(json!({"add": [{"slope": [34.0, 46.0]}, scaled(noise(70.0, 1, 2), 0.3)]}), 0.55, 0.75)),
             layer("snow", json!({"multiply": [remap(json!({"add": [{"height": [snow - 250.0, snow + 250.0]}, scaled(noise(80.0, 3, 2), 0.35), {"constant": -0.15}]}), 0.4, 0.6), {"invert": {"slope": [38.0, 52.0]}}]})),
         ],
@@ -928,6 +1062,13 @@ fn scene(
     });
     if let Some(attribution) = &options.attribution {
         heightmap["attribution"] = json!(attribution);
+    }
+    let mut environment = json!({
+        "atmosphere": {"preset": "golden_hour"},
+        "shadows": {"bounds": {"min": [-half, low - 50.0, -half], "max": [half, high + 50.0, half]}, "distance": 9000.0, "near_distance": 160.0, "resolution": 4096, "levels": 2, "level_extent": 512.0},
+    });
+    if let Some(level) = options.sea {
+        environment["ocean"] = json!({"enabled": true, "level": level});
     }
     let tiles = (size / 256.0) as u32;
     let mut layers = vec![json!({"heightmap": heightmap})];
@@ -970,9 +1111,6 @@ fn scene(
                 "surface": {"materials": surface_materials, "biomes": biomes},
             },
         }],
-        "environment": {
-            "atmosphere": {"preset": "golden_hour"},
-            "shadows": {"bounds": {"min": [-half, low - 50.0, -half], "max": [half, high + 50.0, half]}, "distance": 9000.0, "near_distance": 160.0, "resolution": 4096, "levels": 2, "level_extent": 512.0},
-        },
+        "environment": environment,
     })
 }

@@ -466,6 +466,43 @@ try {
   assert.equal(murky.error.path, "$.water.clarity");
   await command("environment", { water: waterSettings });
   checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water_chunks, pixels: waterPixels.changed });
+  // The sea (decision 076) stands at its level wherever the ground lies
+  // lower: queries sum the waves frames draw, which move with time and stay
+  // within their height, its sectors draw, and a camera just over the
+  // surface the CPU finds sees the sea where one just under it sees the
+  // ground below.
+  {
+    const still = (await command("inspect", { component: "Ocean" })).result.value;
+    assert.equal(still.enabled, false, "the sea is off by default");
+    const sea = { ...still, enabled: true, level: 40 };
+    await command("environment", { ocean: sea });
+    const shore = [];
+    for (let z = -440; z <= 440; z += 80) for (let x = -440; x <= 440; x += 80) shore.push([x, z]);
+    const tide = (await command("water_query", { points: shore, seconds: 12.5 })).result;
+    assert.ok(tide.level === 40 && tide.amplitude > 0.1 && tide.waves.length === sea.waves, `the sea's waves: ${JSON.stringify(tide).slice(0, 400)}`);
+    assert.ok(tide.samples.every(sample => Math.abs(sample.ocean.height - 40) <= tide.amplitude + 1e-2
+      && Math.abs(Math.hypot(...sample.ocean.normal) - 1) < 1e-3 && sample.ocean.normal[1] > 0.5),
+      `surfaces stay within the waves' height: ${JSON.stringify(tide.samples.slice(0, 3))}`);
+    const later = (await command("water_query", { points: shore, seconds: 13.5 })).result;
+    assert.ok(later.samples.some((sample, index) => Math.abs(sample.ocean.height - tide.samples[index].ocean.height) > 1e-2), "waves move");
+    const [depth, deepest] = tide.samples.map((sample, index) => [sample.depth ?? -1, shore[index]]).sort((a, b) => b[0] - a[0])[0];
+    assert.ok(depth > 8, `the sea stands deep somewhere: ${depth}`);
+    const surface = (await command("water_query", { points: [deepest] })).result.samples[0].ocean.height;
+    const down = offset => ({ position: [deepest[0], surface + offset, deepest[1]], target: [deepest[0], surface - 50, deepest[1] + 0.01], vertical_fov_radians: 0.2, near: 0.05, far: 2000 });
+    await command("camera", down(0.3));
+    const afloat = (await command("render")).result.rendering;
+    assert.ok(afloat.ocean_sectors > 0 && afloat.ocean_triangles > 0, `the sea draws: ${afloat.ocean_sectors} sectors`);
+    const above = await capture("sea-above");
+    await command("camera", down(-0.3));
+    const below = await capture("sea-below");
+    const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
+    assert.ok(crossing.changed > 0.5 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
+    const sparse = await command("environment", { ocean: { ...sea, waves: 0 } }, false);
+    assert.equal(sparse.error.path, "$.ocean.waves");
+    await command("environment", { ocean: still });
+    await command("camera", overview);
+    checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed });
+  }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's

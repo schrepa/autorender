@@ -391,6 +391,7 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/terrain.wgsl"),
     include_str!("meshes/cover.wgsl"),
     include_str!("meshes/water.wgsl"),
+    include_str!("meshes/ocean.wgsl"),
 );
 /// Terrain normal maps (decision 051).
 pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");

@@ -14,14 +14,21 @@
 // flow along x and z (y and z, 0.5 still, a unit 16 m/s across).
 @group(1) @binding(34) var water_info: texture_2d<f32>;
 
-// One terrain's water: the camera's view and projection without its
-// translation; the terrain's origin less the eye (xyz) and the bake's
-// spacing (w); the bake's samples along x and z and quads along each side
-// of a chunk; the color deep water scatters back (rgb) and the meters
-// through which half the light passes (w); the ripples' strength, the
-// meters across the largest, and the wind's velocity along x and z; and
-// how much foam gathers and the meters of water shallower than which
-// shores foam.
+// One terrain's water, or the sea (decision 076): the camera's view and
+// projection without its translation; the terrain's origin less the eye
+// (xyz) and the bake's spacing (w); the bake's samples along x and z and
+// quads along each side of a chunk; the color deep water scatters back
+// (rgb) and the meters through which half the light passes (w); the
+// ripples' strength, the meters across the largest, and the wind's
+// velocity along x and z; and how much foam gathers and the meters of
+// water shallower than which shores foam, with, for the sea, the
+// compression below which crests foam and the waves' summed height. The
+// sea's parts (`meshes/ocean.wgsl`): its still level less the eye, its
+// grid's finest cell, cells around and rings a cell apart; the rings'
+// growth, the meters it reaches, cells around a sector and its waves;
+// each wave's vector (xy, radians per meter), height and phase at the eye;
+// and how far each wave's points move along it, four to a vector. For the
+// sea, `origin` holds its wind's heading (xy, a unit vector).
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
@@ -29,6 +36,10 @@ struct WaterUniform {
     color: vec4<f32>,
     ripples: vec4<f32>,
     foam: vec4<f32>,
+    ocean: vec4<f32>,
+    ocean_grid: vec4<f32>,
+    ocean_waves: array<vec4<f32>, 16>,
+    ocean_reach: array<vec4<f32>, 4>,
 }
 @group(1) @binding(35) var<uniform> water: WaterUniform;
 // The opaque scene's depth, copied before water draws.
