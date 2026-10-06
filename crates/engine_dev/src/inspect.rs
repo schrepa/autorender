@@ -281,6 +281,78 @@ impl DevTools {
                 ids: changes.removed().take(64).map(str::to_owned).collect(),
             }),
         ).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("NavAgent", "A navigation agent (decision 089) as a scene version 9 `nav_agent` field: it walks over the terrain to its destination (world x, z) at its speed, on the ground, around obstacles widened by its radius, no steeper than max_slope, wading no deeper than max_water; with its walk's status, length, points, next point, meters left and samples searched. Send it with nav_go.", schemas["NavAgent"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::NavAgent>(entity).is_some())),
+            read: Box::new(|world, entity, _scene| {
+                let entity = entity?;
+                let agent = *world.get::<engine_core::NavAgent>(entity)?;
+                let walk = world.get::<engine_core::NavWalk>(entity)?;
+                let position = world.get::<Transform>(entity).map(|transform| transform.translation);
+                let left = position.map_or(0.0, |position| {
+                    let mut from = position;
+                    let mut left = 0.0;
+                    for point in walk.points.iter().skip(walk.next) {
+                        left += from.distance(*point);
+                        from = *point;
+                    }
+                    left
+                });
+                Some(json!(crate::views::NavAgentView {
+                    agent,
+                    status: walk.status,
+                    searched_for: walk.destination,
+                    length: walk.length,
+                    points: walk.points.len(),
+                    next: walk.next,
+                    left,
+                    searched: walk.searched,
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("NavAgents", "What navigation did at the last fixed tick (decision 089): agents, those searching, walking, arrived and unable to reach their destination, the samples of search work the tick did, and the first 16 agents with their status, position, destination and meters left. Settings: the navigation environment section.", schemas["NavAgents"].clone()),
+            kind: InspectorKind::Resource,
+            has: Box::new(|world, _| world.get_resource::<engine_core::NavAgents>().is_some()),
+            read: Box::new(|world, _, _| {
+                let stats = world.get_resource::<engine_core::NavAgents>()?.stats();
+                let mut query = world.try_query::<(
+                    Entity,
+                    &engine_core::NavAgent,
+                    &engine_core::NavWalk,
+                    &Transform,
+                )>()?;
+                let first = query
+                    .iter(world)
+                    .take(16)
+                    .map(|(entity, agent, walk, transform)| {
+                        let mut from = transform.translation;
+                        let mut left = 0.0;
+                        for point in walk.points.iter().skip(walk.next) {
+                            left += from.distance(*point);
+                            from = *point;
+                        }
+                        crate::views::NavAgentRow {
+                            id: world.get::<SceneEntity>(entity).map(|metadata| metadata.authored_id.clone()),
+                            status: walk.status,
+                            position: transform.translation.to_array(),
+                            destination: agent.destination,
+                            left,
+                        }
+                    })
+                    .collect();
+                Some(json!(crate::views::NavAgentsView {
+                    agents: stats.agents,
+                    searching: stats.searching,
+                    walking: stats.walking,
+                    arrived: stats.arrived,
+                    unreachable: stats.unreachable,
+                    work: stats.work,
+                    first,
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::StreamedId>(
             InspectorDescriptor::new("StreamedId", "The streamed item (decision 087) whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it.", schemas["StreamedId"].clone()),
             |id| json!(crate::views::StreamedIdView { id: id.0.to_string() }),
@@ -644,6 +716,9 @@ fn section_description(name: &str) -> &'static str {
         }
         "sky" => {
             "Physically based sky (decision 088): air over a planet, Rayleigh and Mie scattering and ozone absorption integrated into lookup tables the sky, reflections and aerial perspective read; the sun's color after its path through the air and the sky's ambient color light the scene. Radii in km, coefficients per km, ground albedo, sun intensity and angular radius, aerial distance scale, the origin's altitude. Opt-in: missing keeps the atmosphere's colors and haze."
+        }
+        "navigation" => {
+            "Navigation (decision 089): whether navigation agents walk, and the samples of search work each fixed tick does at most over every agent's walk being searched (long walks take several ticks). Inspect NavAgents for what the last tick did."
         }
         "time_of_day" => {
             "Time of day (decision 088): the sun's direction from the hour for a latitude and day of the year, north's yaw in the world, advancing `speed` hours a second in steps of `step` minutes (kept shadows redraw once a step). Opt-in: missing keeps the atmosphere's sun direction."

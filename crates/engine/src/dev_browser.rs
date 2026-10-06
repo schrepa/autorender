@@ -188,6 +188,7 @@ impl DevBrowser {
                 world_streaming,
                 sky,
                 time_of_day,
+                navigation,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -218,6 +219,7 @@ impl DevBrowser {
                     world_streaming,
                     sky,
                     time_of_day,
+                    navigation,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
@@ -266,6 +268,15 @@ impl DevBrowser {
                     },
                 )?;
                 rendered(app.dev_render(width, height), "track pressed")?;
+                Ok(result)
+            }
+            BrowserControl::NavGo {
+                entity,
+                destination,
+                ..
+            } => {
+                let result = engine_dev::nav_go(&mut app.engine, scene, &entity, destination)?;
+                rendered(app.dev_render(width, height), "agent sent")?;
                 Ok(result)
             }
             BrowserControl::WorldChanges {

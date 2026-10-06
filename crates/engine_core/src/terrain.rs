@@ -1129,8 +1129,65 @@ impl Terrains {
         let layers = self.layers(entity)?;
         let origin = state.terrain.origin;
         let corner = Vec2::new(origin.x, origin.z);
+        let mut path = engine_terrain::walk(
+            &layers,
+            &state.terrain.pyramid,
+            from - corner,
+            to - corner,
+            &Self::obstacles(state),
+            options,
+        )?;
+        for point in &mut path.points {
+            *point = [
+                point[0] + origin.x,
+                point[1] + origin.y,
+                point[2] + origin.z,
+            ];
+        }
+        Some(path)
+    }
+
+    /// A walk over the generated terrain under world `from` and `to` (x
+    /// and z) as `options` walk, to search in budgeted steps (decision
+    /// 089): the terrain, its origin, which the search's terrain-local
+    /// points are from, and the search. `None` unless both ends lie on one
+    /// generated terrain.
+    pub fn walk_search(
+        &self,
+        from: Vec2,
+        to: Vec2,
+        options: &NavOptions,
+    ) -> Option<(Entity, Vec3, engine_terrain::WalkSearch)> {
+        let state = self.entries.iter().find(|state| {
+            let pyramid = &state.terrain.pyramid;
+            let [x, z] = pyramid.tiles(0);
+            let size = Vec2::new(x as f32, z as f32)
+                * engine_terrain::TILE_QUADS as f32
+                * pyramid.spacing(0);
+            let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
+            [from, to].iter().all(|&point| {
+                let local = point - corner;
+                local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
+            })
+        })?;
+        let layers = self.layers(state.entity)?;
+        let origin = state.terrain.origin;
+        let corner = Vec2::new(origin.x, origin.z);
+        let search = engine_terrain::WalkSearch::new(
+            layers,
+            &state.terrain.pyramid,
+            (from - corner, to - corner),
+            Self::obstacles(state),
+            options,
+        );
+        Some((state.entity, origin, search))
+    }
+
+    /// The footprints of the placed objects that collide on `state`'s
+    /// resident tiles.
+    fn obstacles(state: &TerrainState) -> Vec<Obstacle> {
         let assets = &state.terrain.surface.assets;
-        let obstacles: Vec<Obstacle> = state
+        state
             .tiles
             .values()
             .flat_map(|tile| tile.placed().iter())
@@ -1147,23 +1204,7 @@ impl Terrains {
                     radius: reach * placed.scale,
                 })
             })
-            .collect();
-        let mut path = engine_terrain::walk(
-            &layers,
-            &state.terrain.pyramid,
-            from - corner,
-            to - corner,
-            &obstacles,
-            options,
-        )?;
-        for point in &mut path.points {
-            *point = [
-                point[0] + origin.x,
-                point[1] + origin.y,
-                point[2] + origin.z,
-            ];
-        }
-        Some(path)
+            .collect()
     }
 
     /// The cheapest route over `entity`'s generated terrain from world

@@ -12,9 +12,9 @@
 
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
-    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay,
-    VirtualGeometry, Water, Wind, WorldStreaming,
+    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean,
+    Particles, ReflectionProbes, Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings,
+    TimeOfDay, VirtualGeometry, Water, Wind, WorldStreaming,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -287,6 +287,7 @@ section!(Clouds, since 9, opt_in true);
 section!(WorldStreaming, since 9, opt_in false);
 section!(Sky, since 9, opt_in true);
 section!(TimeOfDay, since 9, opt_in true);
+section!(Navigation, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -367,6 +368,9 @@ pub struct SceneEnvironment {
     pub sky: Option<Sky>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_of_day: Option<TimeOfDay>,
+    /// How agents search their walks (decision 089).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigation: Option<Navigation>,
 }
 
 impl SceneEnvironment {
@@ -401,6 +405,7 @@ impl SceneEnvironment {
             world_streaming: Some(environment.world_streaming),
             sky: Some(environment.sky),
             time_of_day: Some(environment.time_of_day),
+            navigation: Some(environment.navigation),
         }
     }
 
@@ -431,6 +436,7 @@ impl SceneEnvironment {
         visitor.section("world_streaming", self.world_streaming);
         visitor.section("sky", self.sky);
         visitor.section("time_of_day", self.time_of_day);
+        visitor.section("navigation", self.navigation);
     }
 
     /// The names of the sections present, the atmosphere first.

@@ -25,6 +25,7 @@ mod interpolation;
 mod level_of_detail;
 mod lights;
 pub mod math;
+mod navigation;
 mod occupancy;
 mod ocean;
 mod packed;
@@ -103,6 +104,7 @@ pub use interpolation::{
 };
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
+pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};
 pub use occupancy::Occupancy;
 pub use ocean::{
     Floating, MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves,
@@ -300,6 +302,11 @@ impl Engine {
             .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
             // The time of day moves the sun (decision 088).
             .add_systems(Presentation, sky::advance_time_of_day)
+            // Navigation agents walk (decision 089).
+            .add_systems(
+                FixedSimulation,
+                navigation::walk_agents.in_set(NavSystems::Walk),
+            )
             .edit_schedule(FixedSimulation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
             })
@@ -345,6 +352,8 @@ impl Engine {
             .init_resource::<WorldStreaming>()
             .init_resource::<WorldCells>()
             .init_resource::<WorldChanges>()
+            .init_resource::<Navigation>()
+            .init_resource::<NavAgents>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -942,7 +951,7 @@ pub mod prelude {
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
-    pub use crate::{Sky, TimeOfDay};
+    pub use crate::{NavAgent, NavStatus, NavSystems, NavWalk, Navigation, Sky, TimeOfDay};
     pub use crate::{SplineChunks, SplineMesh};
     pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine

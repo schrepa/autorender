@@ -848,6 +848,72 @@
         }
       ]
     },
+    "NavAgent": {
+      "description": "Walks its entity over the terrain under it to `destination`, world x\nand z (decision 089): `speed` meters a second (0.01 to 100), turning at\nmost `turn` degrees a second (1 to 10000), its origin `offset` meters\nabove the ground; around obstacles within `radius` meters (0 to 100),\nup steps no steeper than `max_slope` (rise per meter, 0.01 to 10),\nthrough water no deeper than `max_water` meters (0 to 100), over the\npyramid level `level` (0 the finest, up to 15). Changing the\ndestination searches anew; none stands still. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "destination": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "level": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "maximum": 15,
+          "minimum": 0
+        },
+        "max_slope": {
+          "type": "number",
+          "format": "float",
+          "default": 0.800000011920929,
+          "maximum": 10.0,
+          "minimum": 0.01
+        },
+        "max_water": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "offset": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        },
+        "radius": {
+          "type": "number",
+          "format": "float",
+          "default": 0.4000000059604645,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "speed": {
+          "type": "number",
+          "format": "float",
+          "default": 1.399999976158142,
+          "maximum": 100.0,
+          "minimum": 0.01
+        },
+        "turn": {
+          "type": "number",
+          "format": "float",
+          "default": 360.0,
+          "maximum": 10000.0,
+          "minimum": 1.0
+        }
+      },
+      "additionalProperties": false
+    },
     "NoiseLayer": {
       "description": "Procedural ground: fractal gradient noise whose fine octaves fade on\nslopes (Quilez's derivative damping), optionally folded into ridges and\nwarped sideways, shaped toward wide valley floors, then cut by the\nerosion filter's gullies running down its slopes.",
       "type": "object",
@@ -2210,6 +2276,17 @@
             }
           ]
         },
+        "navigation": {
+          "description": "How agents search their walks (decision 089).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneNavigation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "occupancy": {
           "description": "What placed objects cover darkens the sky light under them\n(decision 059).",
           "anyOf": [
@@ -2891,6 +2968,23 @@
         "linear"
       ]
     },
+    "SceneNavigation": {
+      "description": "Navigation (decision 089): whether agents walk, and the samples of\nsearch work each fixed tick does at most over every walk being searched\n(at least 1024). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "samples_per_tick": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 32768,
+          "minimum": 1024
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneObject": {
       "description": "One local transform, optional renderable, or prefab instance root.\nTags are game-defined startup hook names.",
       "type": "object",
@@ -3001,6 +3095,17 @@
           "type": "string",
           "default": "",
           "maxLength": 128
+        },
+        "nav_agent": {
+          "description": "Walks over the terrain to a destination (decision 089). Roots only.\nRequires version 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NavAgent"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "parent": {
           "description": "Parent ID in the scene, or in this prefab's local definition.",
@@ -3567,9 +3672,16 @@
       ]
     },
     "SceneSky": {
-      "description": "A physically based sky (decision 088): whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); and the height of the world's\norigin above the ground of the planet (meters). Defaults are Earth's.\nOpt-in. Requires version 9.",
+      "description": "A physically based sky (decision 088): whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); the height of the world's origin\nabove the ground of the planet (meters); and how far exposure adapts to\nthe sky's light (0 not at all, 1 fully), so that dawn, dusk and night\nstay readable. Defaults are Earth's. Opt-in. Requires version 9.",
       "type": "object",
       "properties": {
+        "adaptation": {
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
         "aerial": {
           "type": "number",
           "format": "float",

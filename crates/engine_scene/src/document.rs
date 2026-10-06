@@ -634,6 +634,10 @@ pub struct SceneObject {
     /// version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deformer: Option<engine_core::Deformer>,
+    /// Walks over the terrain to a destination (decision 089). Roots only.
+    /// Requires version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nav_agent: Option<engine_core::NavAgent>,
     /// Stands on the terrain (decision 086): its translation's y becomes
     /// `offset` meters above the ground under it. Roots only. Requires
     /// version 9.

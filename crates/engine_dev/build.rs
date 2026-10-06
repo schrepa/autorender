@@ -45,6 +45,8 @@ fn main() {
         "Grounded": schemars::schema_for!(views::GroundedView),
         "WorldChanges": schemars::schema_for!(views::WorldChangesView),
         "StreamedId": schemars::schema_for!(views::StreamedIdView),
+        "NavAgent": schemars::schema_for!(views::NavAgentView),
+        "NavAgents": schemars::schema_for!(views::NavAgentsView),
         "AnimationPlayer": schemars::schema_for!(views::AnimationPlayerView),
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),

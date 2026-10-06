@@ -1,8 +1,8 @@
 use engine_core::{
     AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
-    LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
-    Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry, Water, Wind,
-    WorldStreaming,
+    LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean, Particles, ReflectionProbes,
+    Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
+    Water, Wind, WorldStreaming,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -395,6 +395,8 @@ pub enum BrowserControl {
         sky: Option<Sky>,
         #[serde(default)]
         time_of_day: Option<TimeOfDay>,
+        #[serde(default)]
+        navigation: Option<Navigation>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to
@@ -478,6 +480,16 @@ pub enum BrowserControl {
         flatness: f64,
         #[serde(default)]
         clear: bool,
+    },
+    /// Send navigation agent `entity` (authored ID) walking to world
+    /// `destination` `[x, z]`, or stop it with null (decision 089), and
+    /// render while paused; steps then walk it. Not a source change.
+    /// Returns its status.
+    NavGo {
+        version: u32,
+        entity: String,
+        #[serde(default)]
+        destination: Option<[f32; 2]>,
     },
     /// Remove streamed items for good, or restore them (decision 087), by
     /// ID (`scene/root` for scenes; at most 256 each), and render while
@@ -597,7 +609,7 @@ pub enum BrowserControl {
 
 impl BrowserControl {
     /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 18] = [
+    pub const OPS: [&'static str; 19] = [
         "present",
         "culling",
         "environment",
@@ -607,6 +619,7 @@ impl BrowserControl {
         "terrain_redo",
         "deform",
         "world_changes",
+        "nav_go",
         "camera",
         "benchmark",
         "step",
@@ -629,6 +642,7 @@ impl BrowserControl {
             | Self::TerrainRedo { version, .. }
             | Self::Deform { version, .. }
             | Self::WorldChanges { version, .. }
+            | Self::NavGo { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }

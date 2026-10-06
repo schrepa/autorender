@@ -145,6 +145,49 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
+/// A navigation agent (decision 089) in the shape of a scene version 9
+/// `nav_agent` field, with its walk: its status, the destination it was
+/// searched for, its length and points, the next point it walks to, the
+/// meters left and the samples its search took.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct NavAgentView {
+    pub agent: engine_core::NavAgent,
+    pub status: engine_core::NavStatus,
+    pub searched_for: Option<[f32; 2]>,
+    pub length: f32,
+    pub points: usize,
+    pub next: usize,
+    pub left: f32,
+    pub searched: usize,
+}
+
+/// What navigation did at the last fixed tick (decision 089), and the
+/// first 16 agents: each one's authored ID if a scene spawned it, status,
+/// position, destination and meters left.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct NavAgentsView {
+    pub agents: u32,
+    pub searching: u32,
+    pub walking: u32,
+    pub arrived: u32,
+    pub unreachable: u32,
+    pub work: u64,
+    pub first: Vec<NavAgentRow>,
+}
+
+/// One agent of [`NavAgentsView`].
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct NavAgentRow {
+    pub id: Option<String>,
+    pub status: engine_core::NavStatus,
+    pub position: [f32; 3],
+    pub destination: Option<[f32; 2]>,
+    pub left: f32,
+}
+
 /// What gameplay changed of the streamed world (decision 087): how many
 /// items are removed for good, and the first 64 of their IDs in order.
 #[derive(Serialize)]

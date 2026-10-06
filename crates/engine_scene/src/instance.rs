@@ -494,6 +494,10 @@ fn spawn_entity(
     if let Some(grounded) = source.grounded {
         entity.insert(grounded);
     }
+    // Agents (decision 089) move each tick: they present smoothly.
+    if let Some(agent) = source.nav_agent {
+        entity.insert((agent, InterpolateTransform));
+    }
     if let Some(spline) = &source.spline {
         entity.insert(spline.runtime(
             lookups.meshes[spline.mesh.as_str()],

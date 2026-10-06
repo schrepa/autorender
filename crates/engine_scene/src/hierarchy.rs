@@ -186,6 +186,14 @@ fn expand_list(
                 format!("expanded entity ID '{}' is already used", entity.source.id),
             ));
         }
+        // Agents (decision 089) walk unparented.
+        if entity.source.nav_agent.is_some() && entity.source.parent.is_some() {
+            return Err(SceneError::new(
+                "invalid_nav_agent",
+                format!("{}.nav_agent", entity.path),
+                "only roots walk; give the placement or root the agent instead",
+            ));
+        }
         // Grounded objects (decision 086) stand on the ground
         // themselves.
         if entity.source.grounded.is_some() && entity.source.parent.is_some() {
@@ -241,6 +249,15 @@ fn validate_object(
             material_ids,
             &format!("{path}.decal.material"),
         )?;
+    }
+    if let Some(agent) = entity.nav_agent {
+        agent.validate().map_err(|invalid| {
+            SceneError::new(
+                "invalid_nav_agent",
+                format!("{path}.nav_agent.{}", invalid.field),
+                invalid.rule,
+            )
+        })?;
     }
     if let Some(deformer) = entity.deformer {
         deformer.validate().map_err(|invalid| {

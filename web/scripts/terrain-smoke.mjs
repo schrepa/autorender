@@ -130,6 +130,8 @@ const fixture = {
     { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
     // An interior's box lets in a tenth of the sky and sun (decision 079).
     { id: "hall", reflection_probe: { extent: [20, 200, 20], blend: 0.5, interior: { sky: 0.1, sun: 0.1 } }, transform: { translation: [-300, 40, 300] } },
+    // Walks where it is sent (decision 089).
+    { id: "hiker", mesh: "box", material: "plain", nav_agent: { speed: 6, offset: 0.5 }, transform: { translation: [20, 31, 20] } },
     // Presses a dimple into the plateau's meadow each tick (decision 083).
     { id: "roller", deformer: { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 }, transform: { translation: [10, 30.2, 10] } },
   ],
@@ -634,6 +636,37 @@ try {
     assert.equal(steep.error.path, "$.options.max_slope");
     assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
+  }
+  // Navigation agents (decision 089): sent somewhere, an agent's walk is
+  // searched over ticks, then it walks there on the ground and arrives; a
+  // destination off the terrain is unreachable; settings out of range are
+  // refused.
+  {
+    // North of the channel the hydrology bake found across the plateau.
+    const goal = [-25, 12];
+    const sent = await command("nav_go", { entity: "hiker", destination: goal });
+    assert.deepEqual(sent.result.destination, goal);
+    let agent;
+    for (let round = 0; round < 30; round++) {
+      await command("step", { ticks: 60 });
+      agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
+      if (agent.status === "arrived") break;
+    }
+    assert.equal(agent.status, "arrived", `the hiker arrives: ${JSON.stringify(agent)}`);
+    assert.ok(agent.searched > 0 && agent.length > 40, `its walk was searched: ${JSON.stringify(agent)}`);
+    const at = (await command("inspect", { entity: "hiker", component: "Transform" })).result.entity.components.Transform.translation;
+    assert.ok(Math.hypot(at[0] - goal[0], at[2] - goal[1]) < 1.5, `it stands at its goal: ${at}`);
+    const [ground] = (await command("terrain_height", { points: [[at[0], at[2]]] })).result.samples;
+    assert.ok(Math.abs(at[1] - (ground.height + 0.5)) < 0.25, `on the ground: ${at[1]} over ${ground.height}`);
+    await command("nav_go", { entity: "hiker", destination: [5000, 5000] });
+    await command("step", { ticks: 2 });
+    const lost = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
+    assert.equal(lost.status, "unreachable", `off the terrain nothing reaches: ${JSON.stringify(lost)}`);
+    const stats = (await command("inspect", { component: "NavAgents" })).result.value;
+    assert.equal(stats.agents, 1, `the tick counted its agents: ${JSON.stringify(stats)}`);
+    assert.equal((await command("environment", { navigation: { samples_per_tick: 10 } }, false)).error.path, "$.navigation.samples_per_tick");
+    await command("nav_go", { entity: "hiker", destination: null });
+    checks.push({ check: "agents", length: agent.length, searched: agent.searched, at });
   }
   // Authored objects (decision 085) stand where authors put them, on the
   // ground drawn there, and collide in their own layer.
