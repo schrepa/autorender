@@ -52,6 +52,9 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     snapshot.elapsed_seconds = world
         .get_resource::<FrameTime>()
         .map_or(0.0, |time| time.elapsed_seconds as f32);
+    snapshot.presented_seconds = world
+        .get_resource::<crate::PresentedTime>()
+        .map_or(0.0, |time| time.seconds);
     snapshot.environment = Environment::current(world).sanitized();
 }
 

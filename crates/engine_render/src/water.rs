@@ -25,7 +25,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
-use engine_core::{MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, WaterGrid};
+use engine_core::{Environment, MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, WaterGrid};
 
 use crate::bindings::{WATER, WATER_DEPTH};
 use crate::render_graph::Targets;
@@ -188,15 +188,15 @@ impl WaterPass {
 
     /// Prepares this frame's water of `terrains` as `settings` shade it and
     /// the sea `ocean` (decision 076), seen from `eye` with the wind's
-    /// `wind` velocity `seconds` into presentation; returns whether any of
-    /// it draws.
+    /// `wind` velocity, its waves at the simulation time `seconds` the
+    /// frame presents (decision 077); returns whether any of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
         (settings, ocean): (Water, Ocean),
-        (eye, wind, seconds): (Vec3, [f32; 2], f32),
+        (eye, wind, seconds): (Vec3, [f32; 2], f64),
         depth: &wgpu::Texture,
     ) -> bool {
         self.chunks_drawn = 0;
@@ -260,15 +260,15 @@ impl WaterPass {
     }
 
     /// Prepares the sea (decision 076) seen through `view` (eye-relative)
-    /// from `eye`, its ripples as `water`'s, `seconds` into presentation;
-    /// returns whether any of it draws.
+    /// from `eye`, its ripples as `water`'s, its waves at simulation time
+    /// `seconds`; returns whether any of it draws.
     fn prepare_ocean(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         view: Mat4,
         (water, ocean): (Water, Ocean),
-        (eye, wind, seconds): (Vec3, [f32; 2], f32),
+        (eye, wind, seconds): (Vec3, [f32; 2], f64),
     ) -> bool {
         if !ocean.enabled {
             self.ocean = None;
@@ -313,7 +313,7 @@ impl WaterPass {
                 _ => draw.runs.push(sector..sector + 1),
             }
         }
-        let phases = waves.phases(f64::from(eye.x), f64::from(eye.z), f64::from(seconds));
+        let phases = waves.phases(f64::from(eye.x), f64::from(eye.z), seconds);
         let mut ocean_waves = [[0.0; 4]; MAX_OCEAN_WAVES];
         let mut ocean_reach = [[0.0; 4]; MAX_OCEAN_WAVES / 4];
         for (index, wave) in waves.waves().iter().enumerate() {
@@ -695,6 +695,34 @@ fn upload(
         draws: Vec::new(),
         drawn: false,
     }
+}
+
+/// The light of the sea around an eye at `eye` under its surface (decision
+/// 077), its waves at simulation time `seconds`, as the lighting uniform's
+/// `underwater`: what its water scatters of the sun and sky, dimmed by the
+/// water above the eye (rgb), and the meters through which half the light
+/// passes (w); zero above the sea.
+pub(crate) fn underwater(environment: &Environment, eye: Vec3, seconds: f64) -> [f32; 4] {
+    let ocean = environment.ocean;
+    if !ocean.enabled {
+        return [0.0; 4];
+    }
+    let waves = ocean.spectrum();
+    if eye.y > ocean.level + waves.amplitude() {
+        return [0.0; 4];
+    }
+    let surface = waves.surface(f64::from(eye.x), f64::from(eye.z), seconds);
+    let depth = surface.height - eye.y;
+    if depth <= 0.0 {
+        return [0.0; 4];
+    }
+    let atmosphere = &environment.atmosphere;
+    let light = atmosphere.sun_color * max(atmosphere.sun_direction.normalize_or(Vec3::Y).y, 0.0)
+        + atmosphere.zenith * atmosphere.ambient;
+    // Water scatters back many times what its color says it returns of a
+    // single bounce.
+    let color = Vec3::from_array(ocean.color) * light * 3.0 * (-depth / ocean.clarity).exp2();
+    [color.x, color.y, color.z, ocean.clarity]
 }
 
 /// The sea's GPU state: its uniform, and one-texel placeholders for the

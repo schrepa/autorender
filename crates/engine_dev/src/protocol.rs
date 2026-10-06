@@ -92,8 +92,8 @@ pub enum DevRequest {
         points: Vec<[f64; 2]>,
     },
     /// The sea's surface (decision 076) over world points `[x, z]`, 1 to
-    /// 256, `seconds` into presentation (the current frame's time by
-    /// default), as frames draw it: its height, normal, how much the waves
+    /// 256, at simulation time `seconds` (by default the time the last frame
+    /// presented, decision 077), as frames draw it: its height, normal, how much the waves
     /// compress it there (1 still, toward 0 on sharpening crests, where foam
     /// gathers) and the still sea's point the waves moved there, or null
     /// without a sea; the ground below where a terrain tile is resident,

@@ -223,6 +223,11 @@ impl DevTools {
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
         ).expect("built-in descriptor is bounded");
+        self.register_component::<engine_core::Floating>(
+            InspectorDescriptor::new("Floating", "Rides the sea (decision 077) as a scene version 9 `floating` field: each fixed tick the entity rises and falls with the sea's surface under it, `draft` meters below the surface, leaning by `tilt` (0 upright, 1 with the surface's normal) about its heading. Unparented entities only; nothing moves without an enabled sea.", schemas["Floating"].clone())
+                .with_default(json!(engine_core::Floating::default())),
+            |floating| json!(floating),
+        ).expect("built-in descriptor is bounded");
         self.register_component::<Tint>(
             InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
                 .with_default(json!(Tint::WHITE.0)),

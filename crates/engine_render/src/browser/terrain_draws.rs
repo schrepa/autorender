@@ -136,7 +136,7 @@ impl Renderer {
             (
                 snapshot.camera_position,
                 environment.wind.velocity,
-                snapshot.elapsed_seconds,
+                snapshot.presented_seconds,
             ),
             &self.depth.texture,
         ) {

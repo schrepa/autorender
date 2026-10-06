@@ -395,6 +395,9 @@ impl SceneDocument {
             if let Some(decal) = &component.decal {
                 entity.insert(decal.runtime(owned.materials[decal.material]));
             }
+            if let Some(floating) = source.floating {
+                entity.insert(floating);
+            }
             if let Some(spline) = &source.spline {
                 entity.insert(spline.runtime(
                     mesh_lookup[spline.mesh.as_str()],

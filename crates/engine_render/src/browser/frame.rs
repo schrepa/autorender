@@ -613,6 +613,16 @@ impl Renderer {
             &snapshot.environment.reflections,
             &snapshot.environment.refraction,
         );
+        // Under the sea, its water veils everything (decision 077).
+        lighting.underwater = crate::water::underwater(
+            &snapshot.environment,
+            snapshot.camera_position,
+            snapshot.presented_seconds,
+        );
+        let ocean = snapshot.environment.ocean;
+        if ocean.enabled {
+            lighting.sea = [ocean.level, ocean.clarity, 1.0, 0.0];
+        }
         // What placed objects cover around the camera (decision 059): the
         // map shading reads, drawn this frame when it no longer holds the
         // camera's surroundings or the objects changed.

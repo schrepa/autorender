@@ -5,7 +5,7 @@
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, FrameTime, Ocean, RouteOptions, Terrain, Terrains,
+    Engine, Ocean, PresentedTime, RouteOptions, Terrain, Terrains,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -134,7 +134,8 @@ pub(crate) fn execute(
                 ));
             }
             let world = engine.app.world();
-            // Frames draw the sea at the presentation time they carry.
+            // Frames draw the sea at the simulation time they present
+            // (decision 077).
             let seconds = match seconds {
                 Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
                 Some(_) => {
@@ -144,11 +145,9 @@ pub(crate) fn execute(
                         "seconds must be finite and within +/-1e9",
                     ));
                 }
-                None => f64::from(
-                    world
-                        .get_resource::<FrameTime>()
-                        .map_or(0.0, |time| time.elapsed_seconds as f32),
-                ),
+                None => world
+                    .get_resource::<PresentedTime>()
+                    .map_or(0.0, |time| time.seconds),
             };
             let waves = world
                 .get_resource::<Ocean>()

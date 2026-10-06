@@ -620,6 +620,9 @@ pub struct SceneObject {
     /// Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spline: Option<crate::SceneSpline>,
+    /// Rides the sea (decision 077). Requires version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating: Option<engine_core::Floating>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

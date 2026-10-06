@@ -122,6 +122,8 @@ const fixture = {
     { id: "ground", terrain },
     // Probes capture terrain on GPU-presented frames (decision 043).
     { id: "probe", reflection_probe: { extent: [60, 40, 60] }, transform: { translation: [0, 45, 0] } },
+    // Rides the sea once one stands (decision 077).
+    { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
   ],
 };
 const overview = { position: [0, 80, 140], target: [0, 30, 0], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 };
@@ -497,11 +499,28 @@ try {
     const below = await capture("sea-below");
     const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
     assert.ok(crossing.changed > 0.5 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
+    // Floating entities (decision 077) ride the sea each fixed tick at the
+    // tick's time, which frames present: the buoy stands on the surface
+    // queries find there.
+    await command("step", { ticks: 1 });
+    const buoy = (await command("inspect", { entity: "buoy", component: "Transform" })).result.entity.components.Transform;
+    const swell = (await command("water_query", { points: [[400, -400]] })).result.samples[0].ocean;
+    assert.ok(Math.abs(buoy.translation[1] - (swell.height - 0.25)) < 2e-3, `the buoy floats: ${JSON.stringify(buoy)} on ${JSON.stringify(swell)}`);
+    // Under the sea its water veils everything (decision 077): a camera a
+    // meter under the surface sees nothing like one a meter over it.
+    const level = (await command("water_query", { points: [deepest] })).result.samples[0].ocean.height;
+    const across = offset => ({ position: [deepest[0], level + offset, deepest[1]], target: [deepest[0] + 40, level + offset, deepest[1] + 40], vertical_fov_radians: 0.9, near: 0.05, far: 2000 });
+    await command("camera", across(1));
+    const dry = await capture("sea-afloat");
+    await command("camera", across(-1));
+    const diving = await capture("sea-diving");
+    const veiled = await differentPixels(page, [dry, diving], { tolerance: 24 });
+    assert.ok(veiled.changed > 0.5 * veiled.total, `under the sea, its water veils the view: ${veiled.changed} of ${veiled.total} pixels change`);
     const sparse = await command("environment", { ocean: { ...sea, waves: 0 } }, false);
     assert.equal(sparse.error.path, "$.ocean.waves");
     await command("environment", { ocean: still });
     await command("camera", overview);
-    checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed });
+    checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
   }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
