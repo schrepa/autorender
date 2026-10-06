@@ -87,6 +87,17 @@ pub struct HydrologyView {
     pub falls: Option<usize>,
 }
 
+/// The log of runtime deformation's stamps (decision 083).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TracksView {
+    pub stamps: usize,
+    pub pressed: u64,
+    pub dropped: u64,
+    /// The newest stamp: where tracks are being made.
+    pub latest: Option<engine_core::Track>,
+}
+
 /// Terrain streaming at the last extraction (decision 051).
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

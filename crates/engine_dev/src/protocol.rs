@@ -1,7 +1,7 @@
 use engine_core::{
-    AmbientOcclusion, Bloom, ContactShadows, Decals, GroundCover, LevelOfDetail, LocalLights,
-    Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
-    TerrainSettings, VirtualGeometry, Water, Wind,
+    AmbientOcclusion, Bloom, ContactShadows, Decals, Deformation, GroundCover, LevelOfDetail,
+    LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
+    SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -117,6 +117,21 @@ pub enum DevRequest {
     /// without a sea; the ground below where a terrain tile is resident,
     /// and the water's depth over it.
     WaterQuery {
+        version: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        seconds: Option<f64>,
+    },
+    /// The tracks deformers and agents pressed (decision 083) at world points
+    /// `[x, z]`, 1 to 256, refilled to simulation time `seconds` (by default
+    /// the time the last frame presented), as the log holds them: how deep
+    /// the deepest sinks deformable ground (`track`) and how high rims raise
+    /// it (`rim`); where a tile is resident, the most its surface materials
+    /// let tracks sink it (`deform`), the depth it shows (`depth`, the
+    /// lesser) and the ground's height. Also the stamps the log holds and
+    /// those its budget dropped.
+    DeformationQuery {
         version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
         points: Vec<[f64; 2]>,
@@ -289,6 +304,7 @@ impl DevRequest {
             | Self::TerrainSweep { version, .. }
             | Self::TerrainRoute { version, .. }
             | Self::WaterQuery { version, .. }
+            | Self::DeformationQuery { version, .. }
             | Self::NavPath { version, .. }
             | Self::CollisionEvents { version, .. } => *version,
         }
@@ -368,6 +384,8 @@ pub enum BrowserControl {
         water: Option<Water>,
         #[serde(default)]
         ocean: Option<Ocean>,
+        #[serde(default)]
+        deformation: Option<Deformation>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to
@@ -428,6 +446,29 @@ pub enum BrowserControl {
         version: u32,
         #[serde(default)]
         terrain: Option<String>,
+    },
+    /// Press a track (decision 083) as a deformer would, now, and render
+    /// while paused: a capsule `radius` meters across (0.01 to 50) from world
+    /// `from` `[x, z]` to `to` (a footprint at `from` when omitted), sinking
+    /// ground as deformable as that `depth` meters along its middle (0 to
+    /// 10), round (`flatness` 0) to flat (1; 0.5 by default). `clear`
+    /// forgets every track first. Not a source change: the log and the map
+    /// keep it until cleared or refilled. Returns the stamp, the stamps the
+    /// log holds and whether deformation is enabled.
+    Deform {
+        version: u32,
+        from: [f64; 2],
+        #[serde(default)]
+        to: Option<[f64; 2]>,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.01, max = 50.0)))]
+        radius: f64,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 10.0)))]
+        depth: f64,
+        #[serde(default = "default_flatness")]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 1.0)))]
+        flatness: f64,
+        #[serde(default)]
+        clear: bool,
     },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
@@ -531,7 +572,7 @@ pub enum BrowserControl {
 
 impl BrowserControl {
     /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 16] = [
+    pub const OPS: [&'static str; 17] = [
         "present",
         "culling",
         "environment",
@@ -539,6 +580,7 @@ impl BrowserControl {
         "terrain_edit",
         "terrain_undo",
         "terrain_redo",
+        "deform",
         "camera",
         "benchmark",
         "step",
@@ -559,6 +601,7 @@ impl BrowserControl {
             | Self::TerrainEdit { version, .. }
             | Self::TerrainUndo { version, .. }
             | Self::TerrainRedo { version, .. }
+            | Self::Deform { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }
@@ -580,6 +623,10 @@ pub enum BenchmarkMode {
     Step,
     Render,
     Present,
+}
+
+fn default_flatness() -> f64 {
+    0.5
 }
 
 fn default_warmup() -> u32 {

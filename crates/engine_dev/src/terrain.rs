@@ -1,14 +1,16 @@
 //! Read-only terrain observations (decision 051): heights at points, a
 //! sweep comparing what terrain queries, collision rays and generated
 //! terrains' layers say the ground is, routes for paths (decision 069), and
-//! the sea's surface (decision 076); and temporary edits of generated
-//! terrains, with undo and redo (decision 080).
+//! the sea's surface (decision 076) and tracks (decision 083); temporary
+//! edits of generated terrains, with undo and redo (decision 080), and
+//! tracks pressed (decision 083).
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use std::sync::Arc;
 
 use engine_core::{
-    Engine, Ocean, PresentedTime, RouteOptions, Terrain, TerrainEdit, TerrainSource, Terrains,
+    Deformation, Engine, FixedTime, Ocean, PresentedTime, RouteOptions, Terrain, TerrainEdit,
+    TerrainSource, Terrains, Track, Tracks,
     bevy_ecs::prelude::{Entity, World},
     glam::{Vec2, Vec3},
     terrain_data::{Stamp, StampOp},
@@ -35,8 +37,69 @@ pub(crate) fn terrain_request(request: &DevRequest) -> bool {
             | DevRequest::TerrainSweep { .. }
             | DevRequest::TerrainRoute { .. }
             | DevRequest::WaterQuery { .. }
+            | DevRequest::DeformationQuery { .. }
             | DevRequest::NavPath { .. }
     )
+}
+
+/// A track an agent presses (decision 083).
+pub struct Press {
+    pub from: [f64; 2],
+    pub to: Option<[f64; 2]>,
+    pub radius: f64,
+    pub depth: f64,
+    pub flatness: f64,
+    pub clear: bool,
+}
+
+/// Presses `press` into the log as a deformer would at the fixed clock's
+/// time; its result.
+pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError> {
+    let from = [
+        coordinate(press.from[0], "$.from[0]")?,
+        coordinate(press.from[1], "$.from[1]")?,
+    ];
+    let to = match press.to {
+        Some(to) => [coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?],
+        None => from,
+    };
+    for (value, range, path) in [
+        (press.radius, 0.01..=50.0, "$.radius"),
+        (press.depth, 0.0..=10.0, "$.depth"),
+        (press.flatness, 0.0..=1.0, "$.flatness"),
+    ] {
+        if !(value.is_finite() && range.contains(&value)) {
+            return Err(DevError::new(
+                "invalid_request",
+                path,
+                format!("must be in [{}, {}]", range.start(), range.end()),
+            ));
+        }
+    }
+    let world = engine.app.world_mut();
+    let seconds = world.resource::<FixedTime>().elapsed_seconds;
+    let resource = world.get_resource::<Deformation>().copied();
+    let settings = resource.unwrap_or_default().sanitized();
+    let track = Track {
+        from,
+        to,
+        radius: press.radius as f32,
+        depth: press.depth as f32,
+        flatness: press.flatness as f32,
+        seconds,
+    };
+    let mut tracks = world.resource_mut::<Tracks>();
+    if press.clear {
+        tracks.clear();
+    }
+    tracks.press(track, &settings);
+    Ok(json!({
+        "temporary": true,
+        "track": track,
+        "stamps": tracks.len(),
+        "dropped": tracks.dropped(),
+        "enabled": resource.is_some_and(|settings| settings.enabled),
+    }))
 }
 
 /// A terrain edit control (decision 080).
@@ -355,6 +418,63 @@ pub(crate) fn execute(
                     "level": walk.level,
                     "searched": walk.searched,
                 })),
+            }))
+        }
+        DevRequest::DeformationQuery {
+            points, seconds, ..
+        } => {
+            if points.is_empty() || points.len() > MAX_POINTS {
+                return Err(DevError::new(
+                    "invalid_request",
+                    "$.points",
+                    format!("name 1 to {MAX_POINTS} points"),
+                ));
+            }
+            let world = engine.app.world();
+            let seconds = match seconds {
+                Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
+                Some(_) => {
+                    return Err(DevError::new(
+                        "invalid_request",
+                        "$.seconds",
+                        "seconds must be finite and within +/-1e9",
+                    ));
+                }
+                None => world
+                    .get_resource::<PresentedTime>()
+                    .map_or(0.0, |time| time.seconds),
+            };
+            let settings = world
+                .get_resource::<Deformation>()
+                .copied()
+                .unwrap_or_default()
+                .sanitized();
+            let tracks = world.resource::<Tracks>();
+            let terrains = world.resource::<Terrains>();
+            // Tenths of millimeters keep responses small.
+            let round = |value: f32| (f64::from(value) * 1.0e4).round() / 1.0e4;
+            let samples = points
+                .iter()
+                .enumerate()
+                .map(|(index, point)| {
+                    let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
+                    let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
+                    let depth = tracks.at(Vec2::new(x, z), seconds, &settings);
+                    let deform = terrains.deform_at(x, z);
+                    Ok(json!({
+                        "track": round(depth.track),
+                        "rim": round(depth.rim),
+                        "deform": deform.map(round),
+                        "depth": deform.map(|deform| round(engine_core::math::min(depth.track, deform))),
+                        "ground": terrains.height_at(x, z).map(round),
+                    }))
+                })
+                .collect::<Result<Vec<_>, DevError>>()?;
+            Ok(json!({
+                "seconds": seconds,
+                "samples": samples,
+                "stamps": tracks.len(),
+                "dropped": tracks.dropped(),
             }))
         }
         DevRequest::WaterQuery {

@@ -290,6 +290,7 @@ impl<'a> RenderFrame<'a> {
             reflection_probes,
             dropped_reflection_probes,
             terrain,
+            deformation,
             instances,
             joints,
             meshes,
@@ -339,6 +340,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.reflection_probes.clone_from(reflection_probes);
         snapshot.dropped_reflection_probes = *dropped_reflection_probes;
         snapshot.terrain.clone_from(terrain);
+        snapshot.deformation.clone_from(deformation);
         snapshot.instances.clear();
         snapshot
             .instances
@@ -1122,6 +1124,16 @@ impl RetainedRender {
     /// Lists the frame's reflection probes (decision 043).
     pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {
         probes.extract(world, &mut self.snapshot);
+    }
+
+    /// Lays the frame's deformation map and lists its stamps (decision
+    /// 083).
+    pub(crate) fn extract_deformation(
+        &mut self,
+        world: &mut World,
+        deformation: &mut crate::deformation::DeformationExtraction,
+    ) {
+        deformation.extract(world, &mut self.snapshot.deformation);
     }
 
     /// Lists the frame's terrains (decision 051).

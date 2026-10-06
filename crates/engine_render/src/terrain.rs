@@ -61,6 +61,9 @@ pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry
 /// the shortest and tallest blades and their root width, then its tip
 /// color and sway.
 type CoverEntry = [f32; 8];
+/// The generations of what the terrain group binds: the atlas, uniforms,
+/// hole bits, directory, material maps, sky maps and deformation map.
+type GroupKey = (u64, u64, u64, u64, u64, u64, u64);
 /// A directory entry of a tile not resident.
 const NOT_RESIDENT: u32 = u32::MAX;
 
@@ -96,6 +99,8 @@ struct TerrainUniform {
     origin: [f32; 4],
     directory: [u32; 4],
     relief: [f32; 4],
+    deform_grid: [i32; 4],
+    deform: [f32; 4],
 }
 
 /// Bytes of a terrain's uniform.
@@ -106,7 +111,7 @@ pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
 /// contrast, projection and maps' layer plus one (0 without maps); its
 /// normal scale, occlusion strength, metalness and mean occlusion; its
 /// maps' mean color and roughness, its factors applied; and the meters its
-/// relief spans (decision 082).
+/// relief spans (decision 082) and tracks sink it at most (decision 083).
 type PaletteEntry = [f32; 20];
 
 /// What ground cover's growth reads of the terrain pass (decision 056).
@@ -116,7 +121,10 @@ pub(crate) struct CoverSources<'a> {
     pub directory: &'a wgpu::Buffer,
     pub palette: &'a wgpu::Buffer,
     pub covers: &'a wgpu::Buffer,
-    pub generation: (u64, u64),
+    /// Runtime deformation's map (decision 083) and its shading inputs.
+    pub deformation: &'a wgpu::Buffer,
+    pub shading: crate::deformation::DeformationShading,
+    pub generation: (u64, u64, u64),
     /// Advances whenever the directory's resident tiles change.
     pub revision: u64,
 }
@@ -206,7 +214,7 @@ pub(crate) struct TerrainPass {
     holes: wgpu::Buffer,
     hole_offsets: HashMap<(u64, TileKey), u32>,
     holes_generation: u64,
-    group: Cached<(u64, u64, u64, u64, u64, u64), wgpu::BindGroup>,
+    group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
@@ -251,6 +259,8 @@ pub(crate) struct TerrainPass {
     cover_densities: Vec<f32>,
     /// Sky visibility (decision 055).
     pub(crate) sky: SkyMaps,
+    /// Runtime deformation's map (decision 083).
+    pub(crate) deformation: crate::deformation::DeformationPass,
 }
 
 impl TerrainPass {
@@ -331,6 +341,7 @@ impl TerrainPass {
             covers_written: Vec::new(),
             cover_densities: Vec::new(),
             sky: SkyMaps::new(device, queue),
+            deformation: crate::deformation::DeformationPass::new(device),
         }
     }
 
@@ -352,6 +363,7 @@ impl TerrainPass {
         }) + self.horizons.capacity_bytes()
             + self.sky.capacity_bytes()
             + self.maps.capacity_bytes()
+            + self.deformation.capacity_bytes()
     }
 
     /// Records this frame's horizon map builds (decision 052).
@@ -440,7 +452,12 @@ impl TerrainPass {
                 0.0,
                 0.0,
             ];
-            let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory, relief);
+            let (uniform, anchors) = terrain_uniform(
+                terrain,
+                eye,
+                (view, directory, relief),
+                self.deformation.shading(),
+            );
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -938,7 +955,7 @@ impl TerrainPass {
                             far[2],
                             far[3],
                             look.relief,
-                            0.0,
+                            look.deform,
                             0.0,
                             0.0,
                         ]
@@ -1003,7 +1020,13 @@ impl TerrainPass {
             directory: &self.directory,
             palette: &self.palette,
             covers: &self.covers,
-            generation: (self.atlas_generation, self.directory_generation),
+            deformation: self.deformation.map().0,
+            shading: self.deformation.shading(),
+            generation: (
+                self.atlas_generation,
+                self.directory_generation,
+                self.deformation.map().1,
+            ),
             revision: self.directory_revision,
         })
     }
@@ -1186,6 +1209,7 @@ impl TerrainPass {
             self.directory_generation,
             self.maps.generation,
             self.sky.generation(),
+            self.deformation.map().1,
         );
         if self.group.stale(&key) {
             let group = crate::pipelines::group(
@@ -1247,6 +1271,7 @@ impl TerrainPass {
                         crate::pipelines::sampler(&self.maps.sampler),
                     ),
                     ("terrain_sky", crate::pipelines::view(self.sky.view())),
+                    crate::buffers::entry("terrain_deformation", self.deformation.map().0),
                 ],
             );
             self.group.set(key, group);
@@ -1565,9 +1590,8 @@ fn grid_indices() -> Vec<u16> {
 fn terrain_uniform(
     terrain: &RenderTerrain,
     eye: DVec3,
-    view: f32,
-    directory: [u32; 4],
-    relief: [f32; 4],
+    (view, directory, relief): (f32, [u32; 4], [f32; 4]),
+    deformation: crate::deformation::DeformationShading,
 ) -> (TerrainUniform, Vec<i64>) {
     let pyramid = &terrain.pyramid;
     let levels = pyramid.levels();
@@ -1588,6 +1612,8 @@ fn terrain_uniform(
         origin: terrain.origin.extend(view).to_array(),
         directory,
         relief,
+        deform_grid: deformation.grid,
+        deform: deformation.scale,
     };
     (uniform, anchors)
 }

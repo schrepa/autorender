@@ -227,6 +227,41 @@
       },
       "additionalProperties": false
     },
+    "Deformer": {
+      "description": "Presses tracks into deformable ground (decision 083) as a scene version\n9 `deformer` field: each fixed tick, while its entity's world position\nlies at most `contact` meters above the terrain under it (or below it),\nit presses a footprint `radius` meters across, from where it pressed the\ntick before, sinking ground as deformable as that `depth` meters along\nits middle (deeper by however far it lies below the ground), round\n(`flatness` 0, deepest along its middle like a wheel's rut) to flat (1,\na foot's or a plate's level floor). Put it where an object meets the\nground: a wheel's or a foot's lowest point. Radius 0.01 to 50, depth\nand contact 0 to 10, flatness 0 to 1.",
+      "type": "object",
+      "properties": {
+        "contact": {
+          "type": "number",
+          "format": "float",
+          "default": 0.10000000149011612,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "depth": {
+          "type": "number",
+          "format": "float",
+          "default": 0.15000000596046448,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "flatness": {
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "radius": {
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 50.0,
+          "minimum": 0.01
+        }
+      },
+      "additionalProperties": false
+    },
     "ErosionLayer": {
       "description": "A layer that erodes the layers below it (decision 068).",
       "type": "object",
@@ -1703,6 +1738,57 @@
       },
       "additionalProperties": false
     },
+    "SceneDeformation": {
+      "description": "Runtime deformation (decision 083): whether deformers press tracks; the\nmeters of ground the map around the camera spans (8 to 1024) and its\ntexels along a side (128 to 8192, a multiple of 128; renderers keep\nfewer where the device's buffers cannot hold them); the seconds tracks\ntake to refill to about a third of their depth (0, never, to 86400);\nhow high the ground rises beside a track for its depth (0 to 1); an\noptional budget of stamps the log keeps, the oldest dropping beyond it;\nand whether the log keeps the stamps the map moves away from, so tracks\nare there when the camera returns. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "extent": {
+          "type": "number",
+          "format": "float",
+          "default": 64.0,
+          "maximum": 1024.0,
+          "minimum": 8.0
+        },
+        "max_stamps": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
+        "persist": {
+          "type": "boolean",
+          "default": true
+        },
+        "refill": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 86400.0,
+          "minimum": 0.0
+        },
+        "resolution": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "maximum": 8192,
+          "minimum": 128
+        },
+        "rim": {
+          "type": "number",
+          "format": "float",
+          "default": 0.30000001192092896,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneEmitter": {
       "description": "A particle emitter on this entity (decision 026). Requires version 6.\nOmitted fields take the engine's defaults.",
       "type": "object",
@@ -1911,6 +1997,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecals"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deformation": {
+          "description": "Tracks deformers press into deformable ground (decision 083).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDeformation"
             },
             {
               "type": "null"
@@ -2628,6 +2725,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "deformer": {
+          "description": "Presses tracks into deformable ground (decision 083). Requires\nversion 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Deformer"
             },
             {
               "type": "null"
@@ -3667,6 +3775,13 @@
               "type": "null"
             }
           ]
+        },
+        "deform": {
+          "description": "Meters tracks sink it at most (decision 083): 0, rigid, to 2.",
+          "type": "number",
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0
         },
         "height_contrast": {
           "type": "number",

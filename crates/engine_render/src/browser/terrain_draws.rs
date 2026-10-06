@@ -26,6 +26,13 @@ impl Renderer {
         });
         let culling = terrains.relative_view_projection;
         let maps = self.shadows.drawn_maps().to_vec();
+        // Runtime deformation's map (decision 083) before the terrain's
+        // uniforms, which shade with it.
+        self.terrain.deformation.prepare(
+            &self.device,
+            &snapshot.deformation,
+            snapshot.presented_seconds,
+        );
         let drawn = self.terrain.prepare(
             &self.device,
             &self.queue,

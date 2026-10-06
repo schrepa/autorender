@@ -38,6 +38,8 @@ struct GrowUniform {
     counts: [u32; 4],
     scale: [f32; 4],
     planes: [[f32; 4]; 6],
+    deform_grid: [i32; 4],
+    deform: [f32; 4],
 }
 
 /// WGSL `CoverFrame` of `meshes/cover.wgsl`.
@@ -68,7 +70,7 @@ pub(crate) struct GroundCoverPass {
     args: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     frame: wgpu::Buffer,
-    grow_group: Cached<(u64, u64, u64, u64), wgpu::BindGroup>,
+    grow_group: Cached<(u64, u64, u64, u64, u64), wgpu::BindGroup>,
     draw_group: Cached<u64, wgpu::BindGroup>,
     growths: Vec<Growth>,
     // Last frame's presentation time, which blades swayed at then.
@@ -163,6 +165,10 @@ impl GroundCoverPass {
         }
         let planes = planes(culling);
         let radius = settings.radius;
+        let shading = terrain
+            .cover_sources()
+            .map(|sources| sources.shading)
+            .unwrap_or_default();
         let mut uniforms = Vec::new();
         let mut most = 0.0;
         for (index, render) in terrains.terrains.iter().enumerate() {
@@ -186,6 +192,8 @@ impl GroundCoverPass {
                 counts: [directory, render.pyramid.levels(), palette, 0],
                 scale: [settings.density, spacing * spacing / candidates, 0.0, 0.0],
                 planes,
+                deform_grid: shading.grid,
+                deform: shading.scale,
             };
             self.growths.push(Growth {
                 offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -232,6 +240,7 @@ impl GroundCoverPass {
         let key = (
             sources.generation.0,
             sources.generation.1,
+            sources.generation.2,
             self.blades_generation,
             0,
         );
@@ -258,6 +267,7 @@ impl GroundCoverPass {
                     crate::buffers::entry("blades", &self.blades),
                     crate::buffers::entry("counts", &self.counts),
                     crate::buffers::entry("args", &self.args),
+                    crate::buffers::entry("deformation", sources.deformation),
                 ],
             );
             self.grow_group.set(key, group);

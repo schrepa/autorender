@@ -611,6 +611,19 @@ pub(crate) const TERRAIN: Table = Table {
         // Each terrain's sky visibility map (decision 055), read through
         // the normals' sampler.
         texture(30, "terrain_sky", Float, D2Array, F),
+        // Runtime deformation's map (decision 083).
+        read(37, "terrain_deformation", F),
+    ],
+};
+
+/// Runtime deformation's map (decision 083; `deformation.wgsl`): each job's
+/// uniform at a dynamic offset, the stamps it presses and the map.
+pub(crate) const DEFORMATION: Table = Table {
+    label: "engine/deformation-layout",
+    bindings: &[
+        dynamic_uniform(0, "job", 48, C),
+        read(1, "stamps", C),
+        write(2, "map", C),
     ],
 };
 
@@ -668,6 +681,9 @@ pub(crate) const COVER_GROW: Table = Table {
         write(6, "blades", C),
         write(7, "counts", C),
         write(8, "args", C),
+        // Runtime deformation's map (decision 083): blades lie down in
+        // tracks.
+        read(9, "deformation", C),
     ],
 };
 

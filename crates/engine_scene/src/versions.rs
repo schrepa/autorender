@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 22] {
+fn rules() -> [Rule; 23] {
     [
         Rule {
             since: 9,
@@ -64,6 +64,13 @@ fn rules() -> [Rule; 22] {
             what: "floating objects",
             first_use: |document| {
                 document.entity_use(|entity| entity.floating.is_some().then_some("floating"))
+            },
+        },
+        Rule {
+            since: 9,
+            what: "deformers",
+            first_use: |document| {
+                document.entity_use(|entity| entity.deformer.is_some().then_some("deformer"))
             },
         },
         Rule {

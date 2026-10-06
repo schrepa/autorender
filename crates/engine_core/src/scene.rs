@@ -354,6 +354,9 @@ pub struct RenderSnapshot {
     /// This frame's terrains (decision 051): their resident tiles and the
     /// patches the camera draws.
     pub terrain: crate::RenderTerrains,
+    /// This frame's deformation map and the stamps it presses (decision
+    /// 083).
+    pub deformation: crate::RenderDeformation,
     /// Every instance's `color[3]` is its opacity (decision 026); see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,

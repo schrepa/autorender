@@ -36,6 +36,12 @@ struct TerrainUniform {
     // The ground's relief (decision 082): meters from the camera it shows
     // within and the most steps its rays take.
     relief: vec4<f32>,
+    // Runtime deformation's map (decision 083): its first texel (world
+    // texel indices along x and z), and its texels and blocks along a side
+    // (0 while off); texels per meter, what is left of a track since the
+    // map's reference time, and the rim's height for a track's depth.
+    deform_grid: vec4<i32>,
+    deform: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

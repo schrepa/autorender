@@ -341,6 +341,8 @@ impl Renderer {
             } else {
                 0
             },
+            deformation_stamps: self.terrain.deformation.pressed,
+            deformation_texels: self.terrain.deformation.texels,
             placed_far_objects: self.scatter_draws.far_objects(),
             placed_impostors: self.impostors.placed.live(),
             occupancy_redraws: self.occupancy.redraws,

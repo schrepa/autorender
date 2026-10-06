@@ -213,6 +213,10 @@ pub struct SceneTerrainMaterial {
     #[serde(default, skip_serializing_if = "is_flat")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub relief: f32,
+    /// Meters tracks sink it at most (decision 083): 0, rigid, to 2.
+    #[serde(default, skip_serializing_if = "is_flat")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2.0)))]
+    pub deform: f32,
 }
 
 fn is_flat(relief: &f32) -> bool {
@@ -388,6 +392,7 @@ impl SceneTerrain {
                 projection: material.projection,
                 cover: material.cover,
                 relief: material.relief,
+                deform: material.deform,
             };
             if let Some(Err(error)) = material.cover.as_ref().map(Cover::validate) {
                 return Err(invalid(
@@ -398,7 +403,7 @@ impl SceneTerrain {
             if !look.is_usable() {
                 return Err(invalid(
                     at,
-                    "color must be in [0, 1], roughness in [0.03, 1], tiling in [0.01, 1000], and height_contrast and relief in [0, 1]".into(),
+                    "color must be in [0, 1], roughness in [0.03, 1], tiling in [0.01, 1000], height_contrast and relief in [0, 1], and deform in [0, 2]".into(),
                 ));
             }
             let document = material
@@ -689,6 +694,7 @@ impl SceneTerrain {
                         projection: look.projection,
                         cover: look.cover,
                         relief: look.relief,
+                        deform: look.deform,
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),

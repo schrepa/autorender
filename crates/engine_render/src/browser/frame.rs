@@ -1492,8 +1492,17 @@ impl Renderer {
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::Opaque { phase } => {
-                // Ground cover grows on the terrain before the first phase
-                // draws it (decision 056).
+                // Tracks press into the deformation map (decision 083), and
+                // ground cover grows on the terrain, before the first phase
+                // draws them (decision 056).
+                if phase == 0 {
+                    self.terrain.deformation.encode(
+                        &self.device,
+                        &self.queue,
+                        encoder,
+                        &self.profiler,
+                    );
+                }
                 if phase == 0 && state.terrain {
                     self.ground_cover
                         .encode(&self.device, encoder, &self.profiler);

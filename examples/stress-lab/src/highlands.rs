@@ -49,8 +49,9 @@ pub const FILES: [&str; 18] = [
 /// another's); its linear color and roughness without maps, and the color
 /// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
-/// the cover growing where it lies (decision 056); and the meters its
-/// heights sink between its stones and tufts (decision 082).
+/// the cover growing where it lies (decision 056); the meters its
+/// heights sink between its stones and tufts (decision 082); and the
+/// meters tracks sink it at most (decision 083).
 struct Look {
     name: &'static str,
     maps: &'static str,
@@ -62,6 +63,7 @@ struct Look {
     projection: SurfaceProjection,
     cover: Option<Cover>,
     relief: f32,
+    deform: f32,
 }
 
 const LOOKS: [Look; 10] = [
@@ -82,6 +84,7 @@ const LOOKS: [Look; 10] = [
             sway: 0.6,
         }),
         relief: 0.03,
+        deform: 0.04,
     },
     Look {
         name: "dry_grass",
@@ -100,6 +103,7 @@ const LOOKS: [Look; 10] = [
             sway: 0.7,
         }),
         relief: 0.03,
+        deform: 0.03,
     },
     Look {
         name: "dirt",
@@ -112,6 +116,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.05,
+        deform: 0.06,
     },
     Look {
         name: "scree",
@@ -124,6 +129,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.12,
+        deform: 0.02,
     },
     Look {
         name: "rock",
@@ -136,6 +142,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Biplanar,
         cover: None,
         relief: 0.0,
+        deform: 0.0,
     },
     Look {
         name: "snow",
@@ -148,6 +155,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.04,
+        deform: 0.3,
     },
     // Needle litter under the spruces: the dirt's maps, darkened toward
     // olive, so forests read as dark stands from afar.
@@ -162,6 +170,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.06,
+        deform: 0.05,
     },
     // Grass where water gathers (decision 066): deeper green, taller and
     // denser, in hollows and along streams.
@@ -182,6 +191,7 @@ const LOOKS: [Look; 10] = [
             sway: 0.6,
         }),
         relief: 0.03,
+        deform: 0.07,
     },
     // Stream and river beds: the scree's stones, washed darker and wetter.
     Look {
@@ -195,6 +205,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.1,
+        deform: 0.03,
     },
     // Roads (decision 069): packed gravel, the scree's stones finer and
     // warmer, where no grass grows.
@@ -209,6 +220,7 @@ const LOOKS: [Look; 10] = [
         projection: SurfaceProjection::Top,
         cover: None,
         relief: 0.03,
+        deform: 0.04,
     },
 ];
 
@@ -670,6 +682,7 @@ fn surface(
             projection: look.projection,
             cover: look.cover,
             relief: look.relief,
+            deform: look.deform,
         });
     }
     // Boulders of a few shapes, in the rock's maps where the page supplied
@@ -906,9 +919,266 @@ fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f3
     best.1.to_array()
 }
 
-/// The highlands' systems: the cave opening once the terrain is baked.
+/// The highlands' systems: the cave opening once the terrain is baked, and
+/// a sled and a walker making tracks in the snow (decision 083).
 pub(crate) fn add_systems(app: &mut App) {
-    app.add_systems(Presentation, open_cave);
+    app.add_systems(Presentation, (open_cave, place_track_makers))
+        .add_systems(FixedSimulation, make_tracks);
+}
+
+/// Marks the snow searched for the sled and the walker (decision 083), and
+/// counts the frames searched so far.
+#[derive(Resource)]
+struct Snowfield;
+#[derive(Resource, Default)]
+struct SnowSearch(u32);
+
+/// Circles `center` at `radius` meters, `speed` meters a second, on two
+/// runners that press ruts.
+#[derive(Component)]
+struct Sled {
+    center: Vec2,
+    radius: f32,
+    speed: f32,
+}
+
+/// Walks the other way around `center` at `radius` meters, `speed` meters a
+/// second, a footprint every stride, the feet taking turns.
+#[derive(Component)]
+struct Walker {
+    center: Vec2,
+    radius: f32,
+    speed: f32,
+    steps: u32,
+}
+
+/// Meters between a walker's footprints.
+const STRIDE: f32 = 0.75;
+/// Frames the search for snow waits for its tiles before giving up.
+const SNOW_SEARCH_FRAMES: u32 = 600;
+
+/// Sets a sled and a walker making tracks (decision 083) on the snow
+/// nearest the plateau, once the terrain's bakes are done: the first level
+/// snow within four kilometers mostly snowy and gently sloping for twenty
+/// meters around.
+fn place_track_makers(world: &mut World) {
+    if world.contains_resource::<Snowfield>() {
+        return;
+    }
+    let Some((terrain, layers)) = ({
+        let mut query = world.query::<(Entity, &Terrain)>();
+        let terrains = world.resource::<Terrains>();
+        query
+            .iter(world)
+            .find_map(|(entity, terrain)| Some((terrain.clone(), terrains.layers(entity)?)))
+    }) else {
+        return;
+    };
+    if layers.hydrology().is_none() {
+        return;
+    }
+    let height = |point: Vec2| {
+        terrain.origin.y
+            + layers.height_at(
+                &terrain.pyramid,
+                Vec2::new(point.x - terrain.origin.x, point.y - terrain.origin.z),
+            )
+    };
+    let found = {
+        let terrains = world.resource::<Terrains>();
+        let snowy = |point: Vec2| {
+            terrains
+                .deform_at(point.x, point.y)
+                .is_some_and(|deform| deform >= 0.25)
+        };
+        let slope = |point: Vec2| {
+            Vec2::new(
+                height(point + Vec2::X * 10.0) - height(point - Vec2::X * 10.0),
+                height(point + Vec2::Y * 10.0) - height(point - Vec2::Y * 10.0),
+            )
+            .length()
+                / 20.0
+        };
+        // Of eight points each twelve and twenty meters out, at least
+        // twelve snowy and none steeper than one in three.
+        let around = |point: Vec2| {
+            let mut snow = 0;
+            for radius in [12.0, 20.0] {
+                for step in 0..8 {
+                    let (sin, cos) = math::sin_cos(step as f32 * std::f32::consts::TAU / 8.0);
+                    let point = point + Vec2::new(cos, sin) * radius;
+                    if slope(point) > 0.33 {
+                        return false;
+                    }
+                    snow += usize::from(snowy(point));
+                }
+            }
+            snow >= 12
+        };
+        (1..=80).find_map(|ring| {
+            let count = ring * 8;
+            (0..count).find_map(|step| {
+                let (sin, cos) = math::sin_cos(step as f32 * std::f32::consts::TAU / count as f32);
+                let point = Vec2::new(cos, sin) * (ring as f32 * 50.0);
+                (snowy(point) && slope(point) < 0.15 && around(point)).then_some(point)
+            })
+        })
+    };
+    let Some(center) = found else {
+        // Tiles may not hold the snow yet: look again a while.
+        let mut search = world.get_resource_or_insert_with(SnowSearch::default);
+        search.0 += 1;
+        if search.0 >= SNOW_SEARCH_FRAMES {
+            world.insert_resource(Snowfield);
+        }
+        return;
+    };
+    world.insert_resource(Snowfield);
+    let made = (|| {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        let cube = assets.insert_mesh(Mesh::cube()).ok()?;
+        let red = assets
+            .insert_material(Material::new([0.55, 0.09, 0.06, 1.0]).ok()?)
+            .ok()?;
+        let coat = assets
+            .insert_material(Material::new([0.1, 0.12, 0.16, 1.0]).ok()?)
+            .ok()?;
+        Some((cube, red, coat))
+    })();
+    let Some((cube, red, coat)) = made else {
+        return;
+    };
+    let spawn = |world: &mut World, radius: f32, body: (Vec3, Vec3, MaterialHandle)| {
+        let start = center + Vec2::X * radius;
+        let root = world
+            .spawn((
+                Transform {
+                    translation: Vec3::new(start.x, height(start), start.y),
+                    ..Transform::default()
+                },
+                InterpolateTransform,
+            ))
+            .id();
+        let part = world
+            .spawn((
+                Transform {
+                    translation: body.0,
+                    scale: body.1,
+                    ..Transform::default()
+                },
+                Mesh3d {
+                    mesh: cube,
+                    material: body.2,
+                },
+            ))
+            .id();
+        (root, part)
+    };
+    // The sled: a red box on two runners, which press ruts as wide as
+    // themselves, deeper than footprints.
+    let (sled, hull) = spawn(world, 10.0, (Vec3::Y * 0.3, Vec3::new(0.9, 0.35, 1.9), red));
+    // Its finest tiles stay resident wherever the camera is, so the sled,
+    // the walker and their tracks follow the ground they draw on.
+    world.entity_mut(sled).insert((
+        Sled {
+            center,
+            radius: 10.0,
+            speed: 3.0,
+        },
+        TerrainFocus,
+    ));
+    let runners: Vec<Entity> = [-0.36, 0.36]
+        .into_iter()
+        .map(|across| {
+            world
+                .spawn((
+                    Transform {
+                        translation: Vec3::X * across,
+                        ..Transform::default()
+                    },
+                    Deformer {
+                        radius: 0.08,
+                        depth: 0.14,
+                        contact: 0.4,
+                        flatness: 0.6,
+                    },
+                ))
+                .id()
+        })
+        .collect();
+    // The walker: a dark figure, pressing its footprints itself.
+    let (walker, figure) = spawn(
+        world,
+        16.0,
+        (Vec3::Y * 0.85, Vec3::new(0.45, 1.7, 0.3), coat),
+    );
+    world.entity_mut(walker).insert(Walker {
+        center,
+        radius: 16.0,
+        speed: 1.4,
+        steps: 0,
+    });
+    let mut parents = vec![(hull, Some(sled)), (figure, Some(walker))];
+    parents.extend(runners.into_iter().map(|runner| (runner, Some(sled))));
+    let _ = set_parents(world, &parents);
+}
+
+/// The sled and the walker each tick (decision 083): around their circles
+/// over the ground, facing where they go; the walker presses a footprint
+/// each stride, beside its path, the feet taking turns.
+fn make_tracks(
+    time: Res<FixedTime>,
+    terrains: Res<Terrains>,
+    settings: Option<Res<Deformation>>,
+    mut tracks: ResMut<Tracks>,
+    mut sleds: Query<(&mut Transform, &Sled), Without<Walker>>,
+    mut walkers: Query<(&mut Transform, &mut Walker), Without<Sled>>,
+) {
+    let seconds = time.elapsed_seconds;
+    let around = |center: Vec2, radius: f32, angle: f32| {
+        let (sin, cos) = math::sin_cos(angle);
+        let point = center + Vec2::new(cos, sin) * radius;
+        (point, Vec2::new(-sin, cos))
+    };
+    let place = |transform: &mut Transform, point: Vec2, heading: Vec2| {
+        if let Some(ground) = terrains.height_at(point.x, point.y) {
+            transform.translation = Vec3::new(point.x, ground, point.y);
+            transform.rotation = Quat::from_rotation_y(heading.x.atan2(heading.y));
+        }
+    };
+    for (mut transform, sled) in &mut sleds {
+        let angle =
+            ((seconds * f64::from(sled.speed / sled.radius)) % std::f64::consts::TAU) as f32;
+        let (point, heading) = around(sled.center, sled.radius, angle);
+        place(&mut transform, point, heading);
+    }
+    let settings = settings.map_or_else(Deformation::default, |settings| *settings);
+    for (mut transform, mut walker) in &mut walkers {
+        // The other way around.
+        let walked = seconds * f64::from(walker.speed);
+        let angle = -((walked / f64::from(walker.radius)) % std::f64::consts::TAU) as f32;
+        let (point, heading) = around(walker.center, walker.radius, angle);
+        let heading = -heading;
+        place(&mut transform, point, heading);
+        let steps = (walked / f64::from(STRIDE)) as u32;
+        if steps != walker.steps {
+            walker.steps = steps;
+            let side = if steps.is_multiple_of(2) { 0.13 } else { -0.13 };
+            let foot = point + Vec2::new(heading.y, -heading.x) * side;
+            let toe = foot + heading * 0.2;
+            tracks.press(
+                Track {
+                    from: foot.to_array(),
+                    to: toe.to_array(),
+                    radius: 0.065,
+                    depth: 0.1,
+                    flatness: 0.9,
+                    seconds,
+                },
+                &settings,
+            );
+        }
+    }
 }
 
 /// Opens the cave (decision 079) once its terrain's bakes are done, from

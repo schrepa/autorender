@@ -36,7 +36,7 @@ struct TerrainPaletteEntry {
     maps: vec4<f32>,
     far: vec4<f32>,
     // The meters its heights span where the ground's relief shows (decision
-    // 082).
+    // 082), and the meters tracks sink it at most (decision 083).
     relief: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
@@ -54,6 +54,10 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 204u;
 // Each terrain's sky visibility map (decision 055): over the whole terrain,
 // the share of the sky its ground sees about its normal (red).
 @group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;
+// Runtime deformation's map (decision 083; `deformation.wgsl`), in its
+// reference units: each block's deepest track or highest rim, widened by a
+// block; each texel's track depth and rim height; and each texel's slopes.
+@group(1) @binding(37) var<storage, read> terrain_deformation: array<u32>;
 
 struct TerrainOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -718,24 +722,144 @@ fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec2<f32>) -> f32 {
     return layer.depth * (1.0 - height);
 }
 
+// World texel `texel`'s slot in the deformation map, whose texels wrap.
+fn terrain_deform_slot(texel: vec2<i32>) -> vec2<i32> {
+    let size = terrain.deform_grid.z;
+    return ((texel % size) + size) % size;
+}
+
+// World point `point` (x and z) in the deformation map's texels, from its
+// first texel's corner.
+fn terrain_deform_local(point: vec2<f32>) -> vec2<f32> {
+    return point * terrain.deform.x - vec2<f32>(terrain.deform_grid.xy);
+}
+
+// The most tracks or rims near world `point` raise or sink the ground
+// (meters, as refilled): 0 beyond the map, or while deformation is off.
+fn terrain_deform_reach(point: vec2<f32>) -> f32 {
+    let size = terrain.deform_grid.z;
+    if size <= 0 {
+        return 0.0;
+    }
+    let local = terrain_deform_local(point);
+    if any(local < vec2<f32>(0.0)) || any(local >= vec2<f32>(f32(size))) {
+        return 0.0;
+    }
+    let block = terrain_deform_slot(vec2<i32>(floor(local)) + terrain.deform_grid.xy) / 16;
+    let word = u32(block.y * terrain.deform_grid.w + block.x);
+    return bitcast<f32>(terrain_deformation[word]) * terrain.deform.y;
+}
+
+// The deformation map's texel words from `start` (tracks', or slopes'),
+// bilinear at world `point`, as refilled and fading over the map's outer
+// eighth.
+fn terrain_deform_sample(point: vec2<f32>, start: i32) -> vec2<f32> {
+    let size = terrain.deform_grid.z;
+    let local = terrain_deform_local(point);
+    let corner = local - 0.5;
+    let base = floor(corner);
+    let f = corner - base;
+    var values: array<vec2<f32>, 4>;
+    for (var index = 0; index < 4; index++) {
+        let texel = vec2<i32>(base) + vec2<i32>(index & 1, index >> 1);
+        let slot = terrain_deform_slot(texel + terrain.deform_grid.xy);
+        let word = u32(start + slot.y * size + slot.x);
+        let inside = all(texel >= vec2<i32>(0)) && all(texel < vec2<i32>(size));
+        values[index] = select(vec2<f32>(0.0), unpack2x16float(terrain_deformation[word]),
+            inside);
+    }
+    let edge = min(local, vec2<f32>(f32(size)) - local) / (0.125 * f32(size));
+    let fade = smoothstep(0.0, 1.0, saturate(min(edge.x, edge.y)));
+    return mix(mix(values[0], values[1], f.x), mix(values[2], values[3], f.x), f.y)
+        * (terrain.deform.y * fade);
+}
+
+// Tracks' depth and rims' height at world `point` (meters).
+fn terrain_deform_track(point: vec2<f32>) -> vec2<f32> {
+    let blocks = terrain.deform_grid.w;
+    return terrain_deform_sample(point, blocks * blocks);
+}
+
+// The slopes tracks and rims leave at world `point` (rise per meter along
+// x and z).
+fn terrain_deform_slope(point: vec2<f32>) -> vec2<f32> {
+    let size = terrain.deform_grid.z;
+    let blocks = terrain.deform_grid.w;
+    return terrain_deform_sample(point, blocks * blocks + size * size);
+}
+
+// The height (meters, up) tracks and rims of `track` leave ground whose
+// materials let tracks sink it `deform` meters at most: rims as high as
+// half that, only where no track sinks it, and nothing on ground too firm
+// to keep a track.
+fn terrain_track_height(track: vec2<f32>, deform: f32) -> f32 {
+    let carve = min(track.x, deform);
+    let rim = min(track.y, 0.5 * deform) * (1.0 - saturate(4.0 * track.x / max(track.y, 1.0e-6)));
+    return (rim - carve) * saturate(deform / 0.02);
+}
+
+// How much of the map's slopes the ground keeps: none where tracks reach
+// deeper than its materials let them, which leaves their floors level.
+fn terrain_track_slope_share(track: vec2<f32>, deform: f32) -> f32 {
+    return saturate(deform / 0.02) * (1.0 - smoothstep(0.85 * deform, deform, track.x));
+}
+
+// Where a fragment's view ray meets the ground: `world` sunk to where it
+// shades, and `deform` the meters its materials let tracks sink it at
+// most where the deformation map holds tracks nearby (otherwise 0).
+struct TerrainRelief {
+    world: vec3<f32>,
+    deform: f32,
+}
+
+// How far below the ground's top the relief layers `a` and `b` and the
+// tracks of the ground's `deform` (faded by `fade`) sink it at `point`.
+fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec2<f32>, deform: f32,
+        fade: f32) -> f32 {
+    var sink = terrain_relief_sink(a, point) + terrain_relief_sink(b, point);
+    if deform > 0.0 {
+        sink -= terrain_track_height(terrain_deform_track(point), deform) * fade;
+    }
+    return sink;
+}
+
 // Where a fragment's view ray meets the ground's relief (decision 082):
 // within the relief distance, the ray marches down through the heights of
 // its two heaviest top-projected materials, each as deep as its relief
-// reaches and flattening toward the distance's end, and the ground shades
-// from where the ray meets them, sunk that deep.
-fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> vec3<f32> {
+// reaches and flattening toward the distance's end, and through the
+// tracks deformers pressed (decision 083), from the top of their rims to
+// the bottom of the deepest; the ground shades from where the ray meets
+// them, sunk that deep.
+fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainRelief {
+    var relief: TerrainRelief;
+    relief.world = site.world;
+    relief.deform = 0.0;
     let reach = terrain.relief.x;
     let to_point = site.world - camera.position.xyz;
     let distance = length(to_point);
-    if reach <= 0.0 || distance >= reach {
-        return site.world;
+    let tracked = terrain_deform_reach(site.world.xz);
+    let marching = reach > 0.0 && distance < reach;
+    if !marching && tracked < 5.0e-4 {
+        return relief;
     }
     var blend: TerrainBlend;
     blend.ids = vec4<u32>(0xffffffffu);
     blend.weights = vec4<f32>(0.0);
     terrain_level_blend(&blend, site.world.xz - terrain.origin.xz, shading.level, 1.0);
-    // The two heaviest materials.
     let weights = blend.weights;
+    if tracked >= 5.0e-4 {
+        var deform = 0.0;
+        for (var index = 0u; index < 4u; index++) {
+            if weights[index] > 0.0 {
+                deform += weights[index] * terrain_material(blend.ids[index]).relief.y;
+            }
+        }
+        relief.deform = deform;
+    }
+    if !marching {
+        return relief;
+    }
+    // The two heaviest materials.
     var heaviest = 0u;
     for (var index = 1u; index < 4u; index++) {
         if weights[index] > weights[heaviest] {
@@ -755,33 +879,46 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> vec3<f32
     let fade = (1.0 - smoothstep(0.6 * reach, reach, distance)) * smoothstep(0.08, 0.35, into);
     let a = terrain_relief_layer(blend.ids[heaviest], weights[heaviest], fade, site);
     let b = terrain_relief_layer(blend.ids[next], weights[next], fade, site);
-    let depth = a.depth + b.depth;
-    if depth < 0.002 {
-        return site.world;
+    // Tracks as deep and rims as high as the map's nearby tracks reach and
+    // the ground's materials let them.
+    let deform = select(0.0, relief.deform, fade > 0.0);
+    let sunk = min(tracked, deform) * fade;
+    let raised = min(tracked, 0.5 * deform) * fade;
+    let top = -raised;
+    let depth = a.depth + b.depth + sunk;
+    if depth - top < 0.002 {
+        return relief;
     }
     // Down the ray a step of the relief's depth at a time, the ray's
-    // travel across per meter of depth bounded.
+    // travel across per meter of depth bounded; from above the rims, the
+    // ray starting before the ground it meets.
     let travel = ray / max(into, 0.08);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
-    let steps = max(u32(round(mix(3.0, terrain.relief.y, fade))), 2u);
-    var previous = 0.0;
-    var gap = -(terrain_relief_sink(a, site.world.xz) + terrain_relief_sink(b, site.world.xz));
-    var hit = depth;
-    for (var step = 1u; step <= steps; step++) {
-        let at = depth * f32(step) / f32(steps);
-        let point = site.world.xz + along * at;
-        let next_gap = at - (terrain_relief_sink(a, point) + terrain_relief_sink(b, point));
-        if next_gap >= 0.0 {
-            // Between the last step and this one, where the ray reaches the
-            // ground.
-            hit = mix(previous, at, gap / min(gap - next_gap, -1.0e-6));
-            break;
+    let base = mix(3.0, terrain.relief.y, fade);
+    // A step every two centimeters of tracks, up to twice the relief's.
+    let steps = max(u32(round(clamp((depth - top) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
+    var previous = top;
+    var gap = top - terrain_sink(a, b, site.world.xz + along * top, deform, fade);
+    var hit = top;
+    if gap < 0.0 {
+        hit = depth;
+        for (var step = 1u; step <= steps; step++) {
+            let at = top + (depth - top) * f32(step) / f32(steps);
+            let point = site.world.xz + along * at;
+            let next_gap = at - terrain_sink(a, b, point, deform, fade);
+            if next_gap >= 0.0 {
+                // Between the last step and this one, where the ray reaches
+                // the ground.
+                hit = mix(previous, at, gap / min(gap - next_gap, -1.0e-6));
+                break;
+            }
+            previous = at;
+            gap = next_gap;
         }
-        previous = at;
-        gap = next_gap;
     }
-    return site.world + vec3<f32>(along.x, travel.y, along.y) * hit;
+    relief.world = site.world + vec3<f32>(along.x, travel.y, along.y) * hit;
+    return relief;
 }
 
 // The surface a terrain fragment shows: its surface materials, varied
@@ -802,8 +939,10 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     site.world_dy = world_dy;
     site.footprint = footprint;
     site.geometric = geometric;
-    // Sunk where the ground's relief shows (decision 082).
-    site.world = terrain_parallax(site, shading);
+    // Sunk where the ground's relief and tracks show (decisions 082 and
+    // 083).
+    let relief = terrain_parallax(site, shading);
+    site.world = relief.world;
     let ground = terrain_ground(site, shading);
     let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
@@ -812,6 +951,23 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     var albedo = ground.albedo;
     // The normals and materials views show the terrain's own normals.
     var normal = ground.normal;
+    var occlusion = ground.occlusion;
+    if relief.deform > 0.0 {
+        // Tracks (decision 083) tilt the ground along their walls and rims,
+        // and darken it where they press it down.
+        let track = terrain_deform_track(site.world.xz);
+        let slope = terrain_deform_slope(site.world.xz)
+            * terrain_track_slope_share(track, relief.deform);
+        // Walls steeper than the map's texels resolve (narrower tracks than
+        // a few texels) tilt as steeply as about fifty degrees, not flat on
+        // their sides.
+        let steep = length(slope);
+        let tilt = slope * min(1.0, 1.2 / max(steep, 1.0e-6));
+        normal = stable_normalize(normal - vec3<f32>(tilt.x, 0.0, tilt.y));
+        let pressed = saturate(-terrain_track_height(track, relief.deform) / 0.06);
+        albedo *= 1.0 - 0.15 * pressed;
+        occlusion *= 1.0 - 0.25 * pressed;
+    }
     if view == 2u || view == 4u {
         normal = geometric;
     }
@@ -830,7 +986,7 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     point.opacity = 1.0;
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = ground.occlusion * sky;
+    point.occlusion = occlusion * sky;
     point.bounce = (1.0 - sky) * albedo * terrain_bounce();
     point.roughness = roughness;
     point.alpha = roughness * roughness;
