@@ -704,8 +704,10 @@ pub struct TerrainStats {
     /// Terrains whose bakes (decisions 066 and 068) are in progress: they
     /// load no tiles until done.
     pub baking: u32,
-    /// Bridges terrains' roads span (decision 072).
+    /// Bridges terrains' roads span (decision 072), and tunnels they bore
+    /// (decision 073).
     pub bridges: u32,
+    pub tunnels: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -1098,8 +1100,15 @@ impl Terrains {
             bridges: self
                 .entries
                 .iter()
-                .map(|state| state.bridges.len() as u32)
-                .sum(),
+                .flat_map(|state| state.bridges.iter())
+                .filter(|bridge| !bridge.tunnel)
+                .count() as u32,
+            tunnels: self
+                .entries
+                .iter()
+                .flat_map(|state| state.bridges.iter())
+                .filter(|bridge| bridge.tunnel)
+                .count() as u32,
             ..TerrainStats::default()
         };
         let forward = camera.target - eye;

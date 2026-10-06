@@ -8,8 +8,11 @@
 //! lies from the nearest road's edge. Where a road would fill too high
 //! over the ground or cross standing water it bridges instead (decision
 //! 072): its deck runs straight between the points where it meets the
-//! ground, arched to clear water, and the ground and water under it stay
-//! as they are. A route finder lays paths for agents and games: the
+//! ground, climbing to clear water, and the ground and water under it stay
+//! as they are. Where it would cut too deep it tunnels (decision 073): it
+//! runs straight between its portals, the ground above stays, and the
+//! terrain opens at the portals. A route finder lays paths for agents and
+//! games: the
 //! cheapest way between two points over the ground, steep grades and water
 //! costing more, the steepest grades refused.
 
@@ -83,6 +86,11 @@ pub struct PathLayer {
     #[serde(default = "default_bridge_fill")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
     pub bridge_fill: f32,
+    /// Meters the road would cut into the ground beyond which it tunnels
+    /// instead (decision 073), 0 to 2000; 0 never tunnels.
+    #[serde(default = "default_tunnel_cut")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2000.0)))]
+    pub tunnel_cut: f32,
 }
 
 fn default_width() -> f32 {
@@ -101,6 +109,19 @@ fn default_bridge_fill() -> f32 {
     4.0
 }
 
+fn default_tunnel_cut() -> f32 {
+    25.0
+}
+
+/// Meters a tunnel's span reaches past where its road cuts less than this
+/// into the ground: its portals.
+const PORTAL_CUT: f32 = 3.0;
+/// Meters above a tunnel's road within which the ground opens at its
+/// portals.
+pub const PORTAL_HEIGHT: f32 = 8.0;
+/// Meters past a tunnel road's edges its portals open.
+const PORTAL_MARGIN: f32 = 1.5;
+
 /// Meters a bridge's span reaches past where its road fills less than this
 /// over the ground: where it meets the ground.
 const ABUTMENT: f32 = 0.5;
@@ -118,15 +139,18 @@ const DECK_GRADE: f32 = 0.08;
 const PIER_SPACING: f32 = 24.0;
 const PIER_DEPTH: f32 = 3.0;
 
-/// A bridge (decision 072): its deck's centerline from one end to the
-/// other (terrain-local x and z, the road's height as y) every few meters,
-/// its road's width, and its piers: where each stands on its centerline
-/// (terrain-local, at the deck's height) and the ground or water bed there.
+/// A bridge (decision 072), or a tunnel (decision 073): its road's
+/// centerline from one end to the other (terrain-local x and z, the road's
+/// height as y) every few meters, its road's width, its piers (where each
+/// stands on its centerline, terrain-local at the deck's height, and the
+/// ground or water bed there; tunnels have none), and whether it tunnels
+/// through the ground rather than spanning over it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bridge {
     pub deck: Vec<Vec3>,
     pub width: f32,
     pub piers: Vec<(Vec3, f32)>,
+    pub tunnel: bool,
 }
 
 impl PathLayer {
@@ -163,8 +187,9 @@ impl PathLayer {
 
 /// What a path's bake found: meters along it, the points its profile read
 /// the ground at, its steepest grade (rise per meter), the most it cuts
-/// into and fills over the ground along its line off its bridges (meters),
-/// and its bridges and the meters they span.
+/// into and fills over the ground along its line off its bridges and
+/// tunnels (meters), its bridges and the meters they span, and its tunnels
+/// and the meters they run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct PathStats {
     pub length: f32,
@@ -174,12 +199,14 @@ pub struct PathStats {
     pub highest_fill: f32,
     pub bridges: usize,
     pub bridged: f32,
+    pub tunnels: usize,
+    pub tunneled: f32,
 }
 
 /// A path's profile: its line, the meters along it at each point, the
 /// road's height and the ground's every `step` meters along it, the
-/// stretches it bridges (meters along it), and a grid of the segments near
-/// each cell.
+/// stretches it bridges and tunnels (meters along it) and the square its
+/// tunnels lie in, and a grid of the segments near each cell.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathProfile {
     line: Vec<Vec2>,
@@ -188,6 +215,8 @@ pub struct PathProfile {
     heights: Vec<f32>,
     ground: Vec<f32>,
     spans: Vec<[f32; 2]>,
+    tunnels: Vec<[f32; 2]>,
+    tunnel_box: Option<(Vec2, Vec2)>,
     half: f32,
     shoulder: f32,
     // Square cells `cell` meters wide from `min`, `columns` across, each
@@ -227,17 +256,21 @@ impl PathProfile {
         } else {
             average(&average(raw))
         };
-        let spans = bridge(layer, step, raw, water, &mut heights);
+        let tunnels = tunnel(layer, step, raw, &mut heights);
+        let spans = bridge(layer, step, raw, water, &mut heights, &tunnels);
         let mut stats = PathStats {
             samples: raw.len(),
             bridges: spans.len(),
             bridged: spans.iter().map(|[start, end]| end - start).sum(),
+            tunnels: tunnels.len(),
+            tunneled: tunnels.iter().map(|[start, end]| end - start).sum(),
             ..PathStats::default()
         };
         for (index, (&road, &ground)) in heights.iter().zip(raw).enumerate() {
             let along = index as f32 * step;
             if !spans
                 .iter()
+                .chain(&tunnels)
                 .any(|&[start, end]| (start..=end).contains(&along))
             {
                 stats.deepest_cut = max(stats.deepest_cut, ground - road);
@@ -257,6 +290,27 @@ impl PathProfile {
             along.push(length);
         }
         stats.length = length;
+        // The square the tunnels lie in, past their roads' edges.
+        let tunnel_box = tunnels
+            .iter()
+            .fold(None, |bounds: Option<(Vec2, Vec2)>, &[start, end]| {
+                let count = max(((end - start) / PROFILE_STEP).ceil(), 1.0) as usize;
+                (0..=count).fold(bounds, |bounds, index| {
+                    let point = point_on(
+                        &line,
+                        &along,
+                        start + (end - start) * index as f32 / count as f32,
+                    );
+                    Some(match bounds {
+                        Some((low, high)) => (low.min(point), high.max(point)),
+                        None => (point, point),
+                    })
+                })
+            })
+            .map(|(low, high)| {
+                let margin = Vec2::splat(0.5 * layer.width + PORTAL_MARGIN + 1.0);
+                (low - margin, high + margin)
+            });
         // The segments within reach of each cell's points: within the reach
         // of its center plus half its diagonal.
         let half = 0.5 * layer.width;
@@ -301,6 +355,8 @@ impl PathProfile {
             heights,
             ground: raw.to_vec(),
             spans,
+            tunnels,
+            tunnel_box,
             half,
             shoulder: layer.shoulder,
             radius: reach,
@@ -335,28 +391,46 @@ impl PathProfile {
         self.heights[index] + (self.heights[next] - self.heights[index]) * t
     }
 
-    /// Whether `along` meters along the road lies on a bridge.
+    /// Whether `along` meters along the road lies on a bridge or in a
+    /// tunnel, which leave the ground as it is.
     #[inline]
     fn bridged(&self, along: f32) -> bool {
         self.spans
             .iter()
+            .chain(&self.tunnels)
             .any(|&[start, end]| along > start && along < end)
     }
 
     /// The road's line `along` meters along it.
     fn point_along(&self, along: f32) -> Vec2 {
-        let segment = self
-            .along
-            .partition_point(|&value| value <= along)
-            .saturating_sub(1)
-            .min(self.line.len() - 2);
-        let run = self.along[segment + 1] - self.along[segment];
-        let t = if run > 0.0 {
-            min(max((along - self.along[segment]) / run, 0.0), 1.0)
-        } else {
-            0.0
+        point_on(&self.line, &self.along, along)
+    }
+
+    /// Whether its tunnels' portals open the ground at terrain-local
+    /// `point` (decision 073): within the road's width and
+    /// [`PORTAL_MARGIN`] of a tunnel's line, where the ground stands less
+    /// than [`PORTAL_HEIGHT`] above the road.
+    pub(crate) fn portal_hole(&self, point: Vec2) -> bool {
+        let Some((low, high)) = self.tunnel_box else {
+            return false;
         };
-        self.line[segment] + (self.line[segment + 1] - self.line[segment]) * t
+        if point.cmplt(low).any() || point.cmpgt(high).any() {
+            return false;
+        }
+        let Some((distance, along)) = self.locate(point) else {
+            return false;
+        };
+        distance < self.half + PORTAL_MARGIN
+            && self
+                .tunnels
+                .iter()
+                .any(|&[start, end]| along > start && along < end)
+            && self.ground_along(along) - self.height_along(along) < PORTAL_HEIGHT
+    }
+
+    /// The square its tunnels' portals may open the ground in.
+    pub(crate) fn portal_bounds(&self) -> Option<(Vec2, Vec2)> {
+        self.tunnel_box
     }
 
     /// The ground's height `along` meters along the road, as the bake read
@@ -372,13 +446,17 @@ impl PathProfile {
         self.ground[index] + (self.ground[next] - self.ground[index]) * t
     }
 
-    /// Its bridges (decision 072): each deck's centerline every few meters,
-    /// and piers no more than [`PIER_SPACING`] apart wherever the ground
-    /// falls [`PIER_DEPTH`] below the deck.
+    /// Its bridges (decision 072) and tunnels (decision 073): each road's
+    /// centerline every few meters, and bridges' piers no more than
+    /// [`PIER_SPACING`] apart wherever the ground falls [`PIER_DEPTH`] below
+    /// the deck.
     pub fn bridges(&self) -> Vec<Bridge> {
+        let tunnels = self.tunnels.iter().map(|&span| (span, true));
         self.spans
             .iter()
-            .map(|&[start, end]| {
+            .map(|&span| (span, false))
+            .chain(tunnels)
+            .map(|([start, end], tunnel)| {
                 let length = end - start;
                 let count = max((length / PROFILE_STEP).ceil(), 1.0) as usize;
                 let deck = (0..=count)
@@ -388,7 +466,11 @@ impl PathProfile {
                         Vec3::new(point.x, self.height_along(along), point.y)
                     })
                     .collect();
-                let bays = max((length / PIER_SPACING).ceil(), 1.0) as usize;
+                let bays = if tunnel {
+                    1
+                } else {
+                    max((length / PIER_SPACING).ceil(), 1.0) as usize
+                };
                 let piers = (1..bays)
                     .filter_map(|index| {
                         let along = start + length * index as f32 / bays as f32;
@@ -403,6 +485,7 @@ impl PathProfile {
                     deck,
                     width: 2.0 * self.half,
                     piers,
+                    tunnel,
                 }
             })
             .collect()
@@ -412,6 +495,13 @@ impl PathProfile {
     /// line's nearest point and whether a bridge carries it there, within
     /// masks' reach.
     pub(crate) fn nearest(&self, point: Vec2) -> Option<(f32, f32, bool)> {
+        let (distance, along) = self.locate(point)?;
+        Some((distance, self.height_along(along), self.bridged(along)))
+    }
+
+    /// The distance from the line to `point` and the meters along the line
+    /// at its nearest point, within masks' reach.
+    fn locate(&self, point: Vec2) -> Option<(f32, f32)> {
         let cell = ((point - self.min) / self.cell).floor();
         if !(cell.x >= 0.0 && cell.y >= 0.0) {
             return None;
@@ -432,7 +522,7 @@ impl PathProfile {
         }
         let (distance, segment, t) = best.filter(|(distance, _, _)| *distance < self.radius)?;
         let along = self.along[segment] + (self.along[segment + 1] - self.along[segment]) * t;
-        Some((distance, self.height_along(along), self.bridged(along)))
+        Some((distance, along))
     }
 
     /// How much the road levels the ground `distance` meters from its line:
@@ -457,22 +547,106 @@ impl PathProfile {
     }
 }
 
+/// The point of the line through `line` (meters along it at each, `along`)
+/// `distance` meters along it.
+fn point_on(line: &[Vec2], along: &[f32], distance: f32) -> Vec2 {
+    let segment = along
+        .partition_point(|&value| value <= distance)
+        .saturating_sub(1)
+        .min(line.len() - 2);
+    let run = along[segment + 1] - along[segment];
+    let t = if run > 0.0 {
+        min(max((distance - along[segment]) / run, 0.0), 1.0)
+    } else {
+        0.0
+    };
+    line[segment] + (line[segment + 1] - line[segment]) * t
+}
+
 /// Finds where `layer`'s road, of heights `heights` over the ground `raw`
-/// (`step` meters apart, water standing at `water`), bridges, and lays its
-/// decks into `heights`; returns the bridged stretches, meters along it.
+/// (`step` meters apart), tunnels, and lays its tunnels' straight roads
+/// into `heights`; returns the tunneled stretches, meters along it.
+fn tunnel(layer: &PathLayer, step: f32, raw: &[f32], heights: &mut [f32]) -> Vec<[f32; 2]> {
+    if layer.tunnel_cut <= 0.0 || step <= 0.0 || heights.len() < 3 {
+        return Vec::new();
+    }
+    let count = heights.len();
+    let cut = |heights: &[f32], index: usize| raw[index] - heights[index];
+    let mut runs: Vec<[usize; 2]> = Vec::new();
+    let mut index = 0;
+    while index < count {
+        if cut(heights, index) <= layer.tunnel_cut {
+            index += 1;
+            continue;
+        }
+        // Out to its portals, where the road cuts little.
+        let mut first = index;
+        while first > 0 && cut(heights, first - 1) > PORTAL_CUT {
+            first -= 1;
+        }
+        let mut last = index;
+        while last + 1 < count && cut(heights, last + 1) > PORTAL_CUT {
+            last += 1;
+        }
+        match runs.last_mut() {
+            Some(previous) if (first as f32 - previous[1] as f32) * step < SPAN_GAP => {
+                previous[1] = last;
+            }
+            _ => runs.push([first, last]),
+        }
+        index = last + 1;
+    }
+    let mut spans = Vec::with_capacity(runs.len());
+    for [first, last] in runs {
+        if last <= first {
+            continue;
+        }
+        // A straight road between its portals.
+        let (from, to) = (heights[first], heights[last]);
+        for (index, height) in heights.iter_mut().enumerate().take(last + 1).skip(first) {
+            *height = from + (to - from) * (index - first) as f32 / (last - first) as f32;
+        }
+        spans.push([first as f32 * step, last as f32 * step]);
+    }
+    spans
+}
+
+/// Finds where `layer`'s road, of heights `heights` over the ground `raw`
+/// (`step` meters apart, water standing at `water`), bridges outside its
+/// `tunnels`, and lays its decks into `heights`; returns the bridged
+/// stretches, meters along it.
 fn bridge(
     layer: &PathLayer,
     step: f32,
     raw: &[f32],
     water: &[Option<f32>],
     heights: &mut [f32],
+    tunnels: &[[f32; 2]],
 ) -> Vec<[f32; 2]> {
     if layer.bridge_fill <= 0.0 || step <= 0.0 || heights.len() < 3 {
         return Vec::new();
     }
     let count = heights.len();
-    let wet = |index: usize| water.get(index).copied().flatten();
-    let fill = |index: usize| heights[index] - raw[index];
+    let tunneled = |index: usize| {
+        let along = index as f32 * step;
+        tunnels
+            .iter()
+            .any(|&[start, end]| (start..=end).contains(&along))
+    };
+    let wet = |index: usize| {
+        water
+            .get(index)
+            .copied()
+            .flatten()
+            .filter(|_| !tunneled(index))
+    };
+    let fill = |index: usize| {
+        if tunneled(index) {
+            0.0
+        } else {
+            heights[index] - raw[index]
+        }
+    };
     // Stretches filling too high or crossing water, reaching out to where
     // the road meets the ground.
     let mut runs: Vec<[usize; 2]> = Vec::new();

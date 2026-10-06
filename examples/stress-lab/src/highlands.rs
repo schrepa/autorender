@@ -9,7 +9,8 @@
 //! them. Boulders lie on its meadows, stones on its scree and outcrops on
 //! its rock, and spruce forests cover the lower slopes (decision 057).
 //! Gravel roads (decision 069) wind from the plateau down to the crater
-//! lake and west over a river on a stone bridge (decision 072).
+//! lake, west over a river on a stone bridge (decision 072) and east
+//! through a ridge in a tunnel (decision 073).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -205,6 +206,11 @@ const SPACING: f32 = 1.0;
 const SIZE: f32 = TILES as f32 * 256.0 * SPACING;
 /// The plateau's center, where the hamlet stands.
 const PLATEAU: [f32; 2] = [0.0, 0.0];
+
+/// The road east from the plateau's rim (world meters): straight on a
+/// highway's grade, over the valley beyond on a viaduct (decision 072) and
+/// through the ridge after it in a tunnel (decision 073).
+const EAST_ROAD: [[f32; 2]; 3] = [[150.0, 55.0], [376.0, 137.0], [1128.0, 410.0]];
 
 /// The road west from the plateau's rim into the western valleys
 /// (decision 069), terrain-local: the route `terrain_route` found over the
@@ -567,6 +573,22 @@ pub(crate) fn populate(
                 shoulder: 6.0,
                 smoothing: 80.0,
                 bridge_fill: 4.0,
+                tunnel_cut: 25.0,
+            }),
+            baked: None,
+        }),
+        // The road east, straight through the ridge beyond the plateau in a
+        // tunnel (decision 073).
+        Layer::Path(PathStage {
+            layer: Arc::new(PathLayer {
+                points: EAST_ROAD.map(local).to_vec(),
+                width: 6.0,
+                shoulder: 6.0,
+                // A highway's grade: viaducts over the valleys, the tunnel
+                // through the ridge.
+                smoothing: 600.0,
+                bridge_fill: 4.0,
+                tunnel_cut: 25.0,
             }),
             baked: None,
         }),
@@ -578,6 +600,7 @@ pub(crate) fn populate(
                 shoulder: 6.0,
                 smoothing: 80.0,
                 bridge_fill: 4.0,
+                tunnel_cut: 25.0,
             }),
             baked: None,
         }),

@@ -320,6 +320,8 @@ impl DevTools {
                                     highest_fill: stats.map(|stats| stats.highest_fill),
                                     bridges: stats.map(|stats| stats.bridges),
                                     bridged: stats.map(|stats| stats.bridged),
+                                    tunnels: stats.map(|stats| stats.tunnels),
+                                    tunneled: stats.map(|stats| stats.tunneled),
                                 });
                             }
                         }
@@ -365,6 +367,7 @@ impl DevTools {
                     fallback_patches: stats.fallback_patches,
                     baking: stats.baking,
                     bridges: stats.bridges,
+                    tunnels: stats.tunnels,
                 })
             },
         ).expect("built-in descriptor is bounded");

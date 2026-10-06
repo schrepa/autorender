@@ -41,7 +41,11 @@ const terrain = {
     // Decision 069: a road through the south-western hills, leveled to its
     // own smoothed profile, which gravel covers; it bridges the trench
     // (decision 072).
-    { path: { points: [[100, 300], [250, 260], [400, 150], [450, 60]], width: 6, shoulder: 6, smoothing: 60, bridge_fill: 4 } },
+    { path: { points: [[100, 300], [250, 260], [400, 150], [450, 60]], width: 6, shoulder: 6, smoothing: 60, bridge_fill: 4, tunnel_cut: 25 } },
+    // A mound forty meters high, and a straight road through it on a long
+    // grade, which tunnels (decision 073).
+    { stamp: { center: [750, 200], radius: 30, falloff: 40, op: { raise: 40 } } },
+    { path: { points: [[600, 200], [900, 200]], width: 6, shoulder: 6, smoothing: 400, bridge_fill: 4, tunnel_cut: 15 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
@@ -196,11 +200,12 @@ try {
   assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
-  assert.equal(view.terrain.layers.length, 8);
+  assert.equal(view.terrain.layers.length, 10);
   assert.deepEqual(view.terrain.layers[1], terrain.layers[1]);
   assert.deepEqual(view.terrain.layers[2], terrain.layers[2]);
   assert.deepEqual(view.terrain.layers[4], terrain.layers[4]);
-  assert.equal(view.terrain.layers[7].heightmap.uri, "terrain-smoke/dome.r16");
+  assert.deepEqual(view.terrain.layers[6], terrain.layers[6]);
+  assert.equal(view.terrain.layers[9].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
@@ -266,13 +271,31 @@ try {
   // the ground under the deck stays a trench, which is no road, and rays
   // land on the deck above it.
   assert.ok(road.bridges >= 1 && road.bridged > 15, `the road bridges the trench: ${JSON.stringify(road)}`);
-  assert.equal((await command("inspect", { component: "Terrains" })).result.value.bridges, road.bridges);
+  assert.equal((await command("inspect", { component: "Terrains" })).result.value.bridges, view.paths.reduce((sum, path) => sum + path.bridges, 0));
   const trench = [430 - 512, 96 - 512];
   const [floor] = await heights([trench]);
   assert.equal(floor.path, null, `under its bridge the ground is no road: ${JSON.stringify(floor)}`);
   const landing = (await command("raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   assert.ok(landing?.placed?.layer === 65535 && landing.point[1] > floor.height + 5, `rays land on the deck: ${JSON.stringify(landing)} over ${floor.height}`);
   checks.push({ check: "bridge", bridged: road.bridged, deck: landing.point[1], floor: floor.height });
+  // Decision 073: the straight road bores through the mound: no road on the
+  // ground above it, which rays land on, and the ground opens at its
+  // portals.
+  const bore = view.paths[1];
+  assert.ok(bore && bore.layer === 6 && bore.tunnels === 1 && bore.tunneled > 40, `the road tunnels the mound: ${JSON.stringify(bore)}`);
+  assert.equal((await command("inspect", { component: "Terrains" })).result.value.tunnels, 1);
+  const [mound] = await heights([[750 - 512, 200 - 512]]);
+  assert.ok(mound.path === null && !mound.hole, `above the tunnel the ground is no road: ${JSON.stringify(mound)}`);
+  // Rays from above land on the mound where its collision tiles are
+  // resident, and on the tunnel's floor, well below it, where they are not.
+  const top = (await command("raycast", { origin: [750 - 512, 400, 200 - 512], direction: [0, -1, 0], max_distance: 600 })).result.hit;
+  const landed = top?.placed ? top.placed.layer === 65535 && top.point[1] < mound.height - 10 : Math.abs(top?.point[1] - mound.height) < 0.05;
+  assert.ok(landed, `rays land on the mound or the floor under it: ${JSON.stringify(top)} under ${mound.height}`);
+  const bored = [];
+  for (let x = 600; x <= 900; x += 3) bored.push([x - 512, 200 - 512]);
+  const portals = (await heights(bored)).filter(sample => sample?.hole).length;
+  assert.ok(portals > 0, "the ground opens at its portals");
+  checks.push({ check: "tunnel", tunneled: bore.tunneled, portals, mound: mound.height });
   // Routes (decision 069) keep within their grade between their ends.
   const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
   assert.equal(routed.terrain, "ground");

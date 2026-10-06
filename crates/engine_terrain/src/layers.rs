@@ -918,6 +918,7 @@ impl Layers {
                     check(index, "shoulder", path.shoulder, 0.0, 500.0)?;
                     check(index, "smoothing", path.smoothing, 0.0, 5000.0)?;
                     check(index, "bridge_fill", path.bridge_fill, 0.0, 1000.0)?;
+                    check(index, "tunnel_cut", path.tunnel_cut, 0.0, 2000.0)?;
                 }
                 Layer::Hydrology(stage) => {
                     let water = &stage.layer;
@@ -994,7 +995,8 @@ impl Layers {
         self.tables.get(index).and_then(Option::as_ref)
     }
 
-    /// Whether a hole stamp reaches the square from `min` to `max`.
+    /// Whether a hole stamp or a tunnel's portal (decision 073) reaches the
+    /// square from `min` to `max`.
     pub(crate) fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(
@@ -1002,6 +1004,12 @@ impl Layers {
                     op: StampOp::Hole, ..
                 },
             ) => reaches(stamp.center, stamp.radius, min, max),
+            Layer::Path(PathStage {
+                baked: Some(profile),
+                ..
+            }) => profile.portal_bounds().is_some_and(|(low, high)| {
+                low.x <= max.x && low.y <= max.y && high.x >= min.x && high.y >= min.y
+            }),
             _ => false,
         })
     }
@@ -1018,6 +1026,10 @@ impl Layers {
                 let dz = z - stamp.center[1];
                 dx * dx + dz * dz < stamp.radius * stamp.radius
             }
+            Layer::Path(PathStage {
+                baked: Some(profile),
+                ..
+            }) => profile.portal_hole(Vec2::new(x, z)),
             _ => false,
         })
     }
