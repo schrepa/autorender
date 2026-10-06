@@ -18,6 +18,9 @@ const TRANSMITTANCE_STEPS: u32 = 40u;
 const MULTIPLE_STEPS: u32 = 20u;
 const MULTIPLE_DIRECTIONS: u32 = 64u;
 const VIEW_STEPS: u32 = 30u;
+// Starlight and the glow of the night sky (at unit intensity), which keep
+// nights from black.
+const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
 // Kilometers above the ground scattering starts, avoiding the sphere's
 // own surface.
 const RADIUS_OFFSET: f32 = 0.01;
@@ -236,7 +239,7 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         view_sin * sqrt(max(1.0 - light_cos * light_cos, 0.0)),
     );
     let result = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS, false);
-    textureStore(table_out, id.xy, vec4<f32>(result.light * air.ozone.w, 1.0));
+    textureStore(table_out, id.xy, vec4<f32>((result.light + NIGHT) * air.ozone.w, 1.0));
 }
 
 /// The sky's light looking along `direction` from the camera, without the
@@ -268,8 +271,7 @@ fn derive_light() {
     let azimuth = atan2(sun.z, sun.x);
     let toward = view_light(around(azimuth, 0.035));
     let away = view_light(around(azimuth + SKY_PI, 0.035));
-    // Starlight and the glow of the night sky keep nights from black.
-    let night = vec3<f32>(0.004, 0.006, 0.012) * air.ozone.w;
+    let night = NIGHT * air.ozone.w;
     let ground = air.ground.rgb
         * (sun_color * max(sun.y, 0.0) / SKY_PI + 0.5 * (zenith + horizon)) + night * 0.3;
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
