@@ -5,7 +5,7 @@ import { open } from "node:fs/promises";
 import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 
-const verbs = new Set(["status", "describe", "inspect", "assets", "raycast", "overlap", "shape_cast", "collision_events", "terrain_height", "terrain_sweep", "terrain_route", "water_query", "deformation_query", "nav_path", "pause", "resume", "step", "input", "camera", "culling", "environment", "terrain", "terrain_edit", "terrain_undo", "terrain_redo", "deform", "present", "benchmark", "profile", "reload", "capture", "diagnostics", "close"]);
+const verbs = new Set(["status", "describe", "inspect", "assets", "raycast", "overlap", "shape_cast", "collision_events", "terrain_height", "terrain_sweep", "terrain_route", "water_query", "deformation_query", "nav_path", "pause", "resume", "step", "input", "camera", "culling", "environment", "terrain", "terrain_edit", "terrain_undo", "terrain_redo", "deform", "world_changes", "present", "benchmark", "profile", "reload", "capture", "diagnostics", "close"]);
 
 function options(args) {
   const result = {};
@@ -132,7 +132,7 @@ async function main() {
     await startIteration(values);
     return;
   }
-  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("arguments", "Use watch, serve, development, sessions, request, status, describe, inspect, assets, raycast, overlap, shape_cast, collision_events, terrain_height, terrain_sweep, terrain_route, water_query, deformation_query, nav_path, pause, resume, step, input, camera, culling, environment, terrain, terrain_edit, terrain_undo, terrain_redo, deform, present, benchmark, reload, capture, diagnostics, or close.");
+  if (verb !== "sessions" && verb !== "development" && verb !== "request" && !verbs.has(verb)) throw new AgentError("arguments", "Use watch, serve, development, sessions, request, status, describe, inspect, assets, raycast, overlap, shape_cast, collision_events, terrain_height, terrain_sweep, terrain_route, water_query, deformation_query, nav_path, pause, resume, step, input, camera, culling, environment, terrain, terrain_edit, terrain_undo, terrain_redo, deform, world_changes, present, benchmark, reload, capture, diagnostics, or close.");
   const response = await client(verb, values);
   console.log(JSON.stringify(response));
   if (response.ok === false) process.exitCode = 1;

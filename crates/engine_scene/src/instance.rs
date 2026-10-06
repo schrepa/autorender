@@ -294,6 +294,11 @@ impl SceneDocument {
                 .iter()
                 .enumerate()
                 .map(|(item, prepared)| StreamedItem {
+                    // Removals persist by `scene/root` (decision 087).
+                    id: Some(Arc::from(format!(
+                        "{}/{}",
+                        self.id, scene.prepared.entities[prepared.entities[0]].source.id
+                    ))),
                     position: prepared.position,
                     reach: prepared.reach,
                     content: Arc::new(StreamedTree {

@@ -474,6 +474,22 @@ pub enum BrowserControl {
         #[serde(default)]
         clear: bool,
     },
+    /// Remove streamed items for good, or restore them (decision 087), by
+    /// ID (`scene/root` for scenes; at most 256 each), and render while
+    /// paused: `clear` restores every item first. Loaded cells despawn and
+    /// spawn them at once. Not a source change: WorldChanges keeps them,
+    /// as a game's save would. Returns how many items are removed.
+    WorldChanges {
+        version: u32,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = 256)))]
+        remove: Vec<String>,
+        #[serde(default)]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = 256)))]
+        restore: Vec<String>,
+        #[serde(default)]
+        clear: bool,
+    },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
         version: u32,
@@ -576,7 +592,7 @@ pub enum BrowserControl {
 
 impl BrowserControl {
     /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 17] = [
+    pub const OPS: [&'static str; 18] = [
         "present",
         "culling",
         "environment",
@@ -585,6 +601,7 @@ impl BrowserControl {
         "terrain_undo",
         "terrain_redo",
         "deform",
+        "world_changes",
         "camera",
         "benchmark",
         "step",
@@ -606,6 +623,7 @@ impl BrowserControl {
             | Self::TerrainUndo { version, .. }
             | Self::TerrainRedo { version, .. }
             | Self::Deform { version, .. }
+            | Self::WorldChanges { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }

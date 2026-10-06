@@ -17,8 +17,14 @@
 //! at least one cell loads a frame); the rest wait. A cell unloads,
 //! despawning what its items spawned, once every source is farther than
 //! [`WorldStreaming::unload`] times its range.
+//!
+//! What gameplay removes stays removed (decision 087): an item whose root
+//! (the first entity it spawned) gameplay despawned is gone — streaming
+//! despawns the rest of it and records its ID in [`WorldChanges`], which
+//! games save, and its cell never spawns it again. Removing or restoring
+//! an ID there takes effect at the next extraction, in loaded cells too.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
@@ -152,13 +158,102 @@ pub trait Streamed: Send + Sync + 'static {
     fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>);
 }
 
-/// An item to stream: where it stands (world space), the meters its
-/// content reaches from there, which choose its grid, and what it spawns.
+/// An item to stream: its ID, which [`WorldChanges`] records its removal
+/// by (unique among items; scenes' are `scene/root`, and items without
+/// one are never removed for good); where it stands (world space); the
+/// meters its content reaches from there, which choose its grid; and what
+/// it spawns.
 #[derive(Clone)]
 pub struct StreamedItem {
+    pub id: Option<Arc<str>>,
     pub position: Vec3,
     pub reach: f32,
     pub content: Arc<dyn Streamed>,
+}
+
+/// The ID of the streamed item (decision 087) whose root this entity is:
+/// despawning it removes the item for good ([`WorldChanges`]).
+#[derive(Component, Clone, Debug, PartialEq, Eq)]
+pub struct StreamedId(pub Arc<str>);
+
+/// What gameplay changed of the streamed world (decision 087), which games
+/// save and load: the IDs of the items removed for good, which their cells
+/// no longer spawn. Inserted by default; streaming adds an item's ID when
+/// gameplay despawns its root. Removing or restoring an ID takes effect at
+/// the next extraction.
+#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldChanges {
+    #[serde(default)]
+    removed: BTreeSet<String>,
+    #[serde(skip, default = "fresh_revision")]
+    revision: u64,
+}
+
+/// Revisions unique in the process, so a loaded save never matches a
+/// revision loaded cells already reflect.
+static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn fresh_revision() -> u64 {
+    REVISIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Default for WorldChanges {
+    fn default() -> Self {
+        Self {
+            removed: BTreeSet::new(),
+            revision: fresh_revision(),
+        }
+    }
+}
+
+impl PartialEq for WorldChanges {
+    fn eq(&self, other: &Self) -> bool {
+        self.removed == other.removed
+    }
+}
+
+impl WorldChanges {
+    /// Removes item `id` for good; whether it was not removed already.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let added = !self.removed.contains(id) && self.removed.insert(id.to_owned());
+        if added {
+            self.revision = fresh_revision();
+        }
+        added
+    }
+
+    /// Lets item `id` spawn again; whether it was removed.
+    pub fn restore(&mut self, id: &str) -> bool {
+        let restored = self.removed.remove(id);
+        if restored {
+            self.revision = fresh_revision();
+        }
+        restored
+    }
+
+    /// Restores every item.
+    pub fn clear(&mut self) {
+        if !self.removed.is_empty() {
+            self.removed.clear();
+            self.revision = fresh_revision();
+        }
+    }
+
+    pub fn is_removed(&self, id: &str) -> bool {
+        self.removed.contains(id)
+    }
+
+    /// The removed items' IDs, in order.
+    pub fn removed(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.removed.iter().map(String::as_str)
+    }
+
+    /// Changes whenever the removed IDs do; unique in the process, so a
+    /// loaded save never reads as one already applied.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
 }
 
 /// Items registered together ([`WorldCells::add`]), removed together
@@ -197,8 +292,39 @@ struct Cell {
 
 struct Item {
     set: u64,
+    id: Option<Arc<str>>,
     content: Arc<dyn Streamed>,
     spawned: Vec<Entity>,
+}
+
+impl Item {
+    /// Spawns it, marking its root with its ID; returns how many entities
+    /// it spawned.
+    fn spawn(&mut self, world: &mut World) -> u32 {
+        self.content.spawn(world, &mut self.spawned);
+        if let (Some(id), Some(&root)) = (&self.id, self.spawned.first())
+            && let Ok(mut root) = world.get_entity_mut(root)
+        {
+            root.insert(StreamedId(id.clone()));
+        }
+        self.spawned.len() as u32
+    }
+
+    /// Despawns what it spawned; returns how many entities were left.
+    fn despawn(&mut self, world: &mut World) -> u32 {
+        let mut count = 0;
+        for entity in self.spawned.drain(..) {
+            // Gameplay may have despawned some already.
+            if world.try_despawn(entity).is_ok() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    fn removed(&self, changes: &WorldChanges) -> bool {
+        self.id.as_ref().is_some_and(|id| changes.is_removed(id))
+    }
 }
 
 impl Cell {
@@ -214,30 +340,61 @@ impl Cell {
 
     /// Despawns what its items spawned; returns how many entities that was.
     fn unload(&mut self, world: &mut World) -> u32 {
-        let mut count = 0;
-        for item in &mut self.items {
-            for entity in item.spawned.drain(..) {
-                // Gameplay may have despawned some already.
-                if world.try_despawn(entity).is_ok() {
-                    count += 1;
-                }
-            }
-        }
+        let count = self.items.iter_mut().map(|item| item.despawn(world)).sum();
         self.loaded = false;
         self.spawned = 0;
         count
     }
 
-    /// Spawns its items; returns how many entities they spawned.
-    fn load(&mut self, world: &mut World) -> u32 {
+    /// Spawns its items but those `changes` removed; returns how many
+    /// entities they spawned.
+    fn load(&mut self, world: &mut World, changes: &WorldChanges) -> u32 {
         let mut count = 0;
         for item in &mut self.items {
-            item.content.spawn(world, &mut item.spawned);
-            count += item.spawned.len() as u32;
+            if !item.removed(changes) {
+                count += item.spawn(world);
+            }
         }
         self.loaded = true;
         self.spawned = count;
         count
+    }
+
+    /// In a loaded cell: removes the items whose roots gameplay despawned,
+    /// recording them in `changes`, despawns those `changes` removed since
+    /// `revision` and spawns those it restored. Returns the entities
+    /// despawned and spawned.
+    fn reconcile(
+        &mut self,
+        world: &mut World,
+        changes: &mut WorldChanges,
+        revision: u64,
+    ) -> [u32; 2] {
+        let mut counts = [0, 0];
+        for item in &mut self.items {
+            let gone = item
+                .spawned
+                .first()
+                .is_some_and(|&root| world.get_entity(root).is_err());
+            if gone {
+                counts[0] += item.despawn(world);
+                if let Some(id) = &item.id {
+                    changes.remove(id);
+                }
+            } else if changes.revision() != revision {
+                if item.removed(changes) {
+                    counts[0] += item.despawn(world);
+                } else if item.spawned.is_empty() {
+                    counts[1] += item.spawn(world);
+                }
+            }
+        }
+        self.spawned = self
+            .items
+            .iter()
+            .map(|item| item.spawned.len() as u32)
+            .sum();
+        counts
     }
 
     fn entities(&self) -> u32 {
@@ -262,6 +419,8 @@ pub struct WorldCells {
     next_set: u64,
     motion: Motion,
     stats: CellStats,
+    /// The [`WorldChanges`] revision loaded cells match.
+    changes: u64,
     // Scratch.
     sources: Vec<Vec2>,
     wanted: Vec<(f32, usize)>,
@@ -326,6 +485,7 @@ impl WorldCells {
             cell.reach = max(cell.reach, past);
             cell.items.push(Item {
                 set,
+                id: item.id,
                 content: item.content,
                 spawned: Vec::new(),
             });
@@ -432,6 +592,9 @@ impl StreamingExtraction {
             },
             WorldStreaming::sanitized,
         );
+        if !world.contains_resource::<WorldChanges>() {
+            world.init_resource::<WorldChanges>();
+        }
         world.resource_scope(|world, mut cells: Mut<WorldCells>| {
             let cells = &mut *cells;
             cells.stats.spawned = 0;
@@ -439,7 +602,21 @@ impl StreamingExtraction {
             cells.stats.pending = 0;
             if !cells.cells.is_empty() {
                 self.sources(world, cells, settings);
-                load_and_unload(world, cells, settings);
+                world.resource_scope(|world, mut tracked: Mut<WorldChanges>| {
+                    // What gameplay and changes removed or restored first.
+                    let (before, revision) = (tracked.revision(), cells.changes);
+                    let changes = tracked.bypass_change_detection();
+                    for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
+                        let [despawned, spawned] = cell.reconcile(world, changes, revision);
+                        cells.stats.despawned += despawned;
+                        cells.stats.spawned += spawned;
+                    }
+                    cells.changes = changes.revision();
+                    load_and_unload(world, cells, changes, settings);
+                    if tracked.revision() != before {
+                        tracked.set_changed();
+                    }
+                });
             }
             cells.stats.cells = cells.cells.len() as u32;
             cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
@@ -501,7 +678,12 @@ impl StreamingExtraction {
 
 /// Unloads the cells every source left and loads those one came near,
 /// nearest their range's middle first, within the frame's spawn budget.
-fn load_and_unload(world: &mut World, cells: &mut WorldCells, settings: WorldStreaming) {
+fn load_and_unload(
+    world: &mut World,
+    cells: &mut WorldCells,
+    changes: &WorldChanges,
+    settings: WorldStreaming,
+) {
     let WorldCells {
         cells: list,
         sources,
@@ -530,7 +712,7 @@ fn load_and_unload(world: &mut World, cells: &mut WorldCells, settings: WorldStr
             if loaded > 0 && stats.spawned >= settings.spawns_per_frame {
                 break;
             }
-            stats.spawned += list[index].load(world);
+            stats.spawned += list[index].load(world, changes);
             loaded += 1;
         }
     }

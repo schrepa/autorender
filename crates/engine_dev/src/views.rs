@@ -145,6 +145,23 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
+/// What gameplay changed of the streamed world (decision 087): how many
+/// items are removed for good, and the first 64 of their IDs in order.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WorldChangesView {
+    pub removed: usize,
+    pub ids: Vec<String>,
+}
+
+/// The streamed item (decision 087) whose root this entity is: its ID,
+/// which despawning the entity removes for good.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct StreamedIdView {
+    pub id: String,
+}
+
 /// A grounded entity (decision 086) in the shape of a scene version 9
 /// `grounded` field, with the level of the terrain tile it last stood on
 /// (`None` before it sampled, or while no tile answered).
