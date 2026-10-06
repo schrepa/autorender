@@ -184,6 +184,10 @@ pub struct SurfaceMaterial {
     pub height_contrast: f32,
     pub projection: SurfaceProjection,
     pub cover: Option<crate::Cover>,
+    /// The meters its maps' heights span where relief (decision 082) sinks
+    /// the ground between its stones and tufts: 0, flat, to 1. Top
+    /// projections only.
+    pub relief: f32,
 }
 
 /// How a surface material's textures lie on the ground: from above, or
@@ -209,6 +213,7 @@ impl SurfaceMaterial {
             height_contrast: 0.5,
             projection: SurfaceProjection::Top,
             cover: None,
+            relief: 0.0,
         }
     }
 
@@ -229,6 +234,7 @@ impl SurfaceMaterial {
             && (0.01..=1000.0).contains(&self.tiling)
             && self.height_contrast.is_finite()
             && (0.0..=1.0).contains(&self.height_contrast)
+            && (0.0..=1.0).contains(&self.relief)
     }
 }
 
@@ -600,6 +606,13 @@ pub struct TerrainSettings {
     /// Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).
     #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
     pub sky_resolution: u32,
+    /// Meters from the camera within which the ground's relief (decision
+    /// 082) shows, its view rays marching through its materials' heights,
+    /// 0 (none) to 200; and the most steps a ray takes, 2 to 64.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 200.0)))]
+    pub relief_distance: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 64)))]
+    pub relief_steps: u32,
 }
 
 impl Default for TerrainSettings {
@@ -616,6 +629,8 @@ impl Default for TerrainSettings {
             shadow_softness: 0.01,
             sky_visibility: true,
             sky_resolution: 1024,
+            relief_distance: 40.0,
+            relief_steps: 12,
         }
     }
 }
@@ -646,6 +661,10 @@ impl TerrainSettings {
                 "sky_resolution",
                 "must be in [64, 4096]",
             ));
+        }
+        check_range("relief_distance", self.relief_distance, 0.0..=200.0)?;
+        if !(2..=64).contains(&self.relief_steps) {
+            return Err(InvalidSetting::new("relief_steps", "must be in [2, 64]"));
         }
         Ok(())
     }
@@ -678,6 +697,12 @@ impl TerrainSettings {
             ),
             sky_visibility: self.sky_visibility,
             sky_resolution: self.sky_resolution.clamp(64, 4096),
+            relief_distance: crate::math::clamp(
+                finite(self.relief_distance, defaults.relief_distance),
+                0.0,
+                200.0,
+            ),
+            relief_steps: self.relief_steps.clamp(2, 64),
         }
     }
 }

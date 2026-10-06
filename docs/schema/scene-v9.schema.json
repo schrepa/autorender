@@ -3688,6 +3688,13 @@
           "$ref": "#/$defs/SurfaceProjection",
           "default": "top"
         },
+        "relief": {
+          "description": "Meters its maps' heights span where the ground's relief shows\n(decision 082): 0, flat, to 1; top projections only.",
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
         "roughness": {
           "type": "number",
           "format": "float",
@@ -3748,6 +3755,21 @@
           "default": 6.0,
           "maximum": 64.0,
           "minimum": 1.0
+        },
+        "relief_distance": {
+          "description": "Meters from the camera within which the ground's relief (decision\n082) shows, its view rays marching through its materials' heights,\n0 (none) to 200; and the most steps a ray takes, 2 to 64.",
+          "type": "number",
+          "format": "float",
+          "default": 40.0,
+          "maximum": 200.0,
+          "minimum": 0.0
+        },
+        "relief_steps": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 12,
+          "maximum": 64,
+          "minimum": 2
         },
         "samples_per_frame": {
           "description": "Work generated or decoded per frame, in samples' worth (67,000 a\ndecoded tile, about 500,000 a generated one).",

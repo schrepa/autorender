@@ -49,7 +49,8 @@ pub const FILES: [&str; 18] = [
 /// another's); its linear color and roughness without maps, and the color
 /// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
-/// and the cover growing where it lies (decision 056).
+/// the cover growing where it lies (decision 056); and the meters its
+/// heights sink between its stones and tufts (decision 082).
 struct Look {
     name: &'static str,
     maps: &'static str,
@@ -60,6 +61,7 @@ struct Look {
     height_contrast: f32,
     projection: SurfaceProjection,
     cover: Option<Cover>,
+    relief: f32,
 }
 
 const LOOKS: [Look; 10] = [
@@ -79,6 +81,7 @@ const LOOKS: [Look; 10] = [
             color: [0.16, 0.23, 0.06],
             sway: 0.6,
         }),
+        relief: 0.03,
     },
     Look {
         name: "dry_grass",
@@ -96,6 +99,7 @@ const LOOKS: [Look; 10] = [
             color: [0.34, 0.27, 0.12],
             sway: 0.7,
         }),
+        relief: 0.03,
     },
     Look {
         name: "dirt",
@@ -107,6 +111,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.5,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.05,
     },
     Look {
         name: "scree",
@@ -118,6 +123,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.8,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.12,
     },
     Look {
         name: "rock",
@@ -129,6 +135,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.7,
         projection: SurfaceProjection::Biplanar,
         cover: None,
+        relief: 0.0,
     },
     Look {
         name: "snow",
@@ -140,6 +147,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.4,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.04,
     },
     // Needle litter under the spruces: the dirt's maps, darkened toward
     // olive, so forests read as dark stands from afar.
@@ -153,6 +161,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.5,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.06,
     },
     // Grass where water gathers (decision 066): deeper green, taller and
     // denser, in hollows and along streams.
@@ -172,6 +181,7 @@ const LOOKS: [Look; 10] = [
             color: [0.1, 0.2, 0.05],
             sway: 0.6,
         }),
+        relief: 0.03,
     },
     // Stream and river beds: the scree's stones, washed darker and wetter.
     Look {
@@ -184,6 +194,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.9,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.1,
     },
     // Roads (decision 069): packed gravel, the scree's stones finer and
     // warmer, where no grass grows.
@@ -197,6 +208,7 @@ const LOOKS: [Look; 10] = [
         height_contrast: 0.6,
         projection: SurfaceProjection::Top,
         cover: None,
+        relief: 0.03,
     },
 ];
 
@@ -657,6 +669,7 @@ fn surface(
             height_contrast: look.height_contrast,
             projection: look.projection,
             cover: look.cover,
+            relief: look.relief,
         });
     }
     // Boulders of a few shapes, in the rock's maps where the page supplied

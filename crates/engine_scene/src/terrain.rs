@@ -208,6 +208,15 @@ pub struct SceneTerrainMaterial {
     pub projection: SurfaceProjection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
+    /// Meters its maps' heights span where the ground's relief shows
+    /// (decision 082): 0, flat, to 1; top projections only.
+    #[serde(default, skip_serializing_if = "is_flat")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub relief: f32,
+}
+
+fn is_flat(relief: &f32) -> bool {
+    *relief == 0.0
 }
 
 fn gray() -> [f32; 3] {
@@ -378,6 +387,7 @@ impl SceneTerrain {
                 height_contrast: material.height_contrast,
                 projection: material.projection,
                 cover: material.cover,
+                relief: material.relief,
             };
             if let Some(Err(error)) = material.cover.as_ref().map(Cover::validate) {
                 return Err(invalid(
@@ -388,7 +398,7 @@ impl SceneTerrain {
             if !look.is_usable() {
                 return Err(invalid(
                     at,
-                    "color must be in [0, 1], roughness in [0.03, 1], tiling in [0.01, 1000] and height_contrast in [0, 1]".into(),
+                    "color must be in [0, 1], roughness in [0.03, 1], tiling in [0.01, 1000], and height_contrast and relief in [0, 1]".into(),
                 ));
             }
             let document = material
@@ -678,6 +688,7 @@ impl SceneTerrain {
                         height_contrast: look.height_contrast,
                         projection: look.projection,
                         cover: look.cover,
+                        relief: look.relief,
                     })
                     .collect(),
                 biomes: authored.biomes.clone(),

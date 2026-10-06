@@ -57,7 +57,7 @@ const terrain = {
       { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 } },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
       { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5 },
-      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9 },
+      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1 },
     ],
     biomes: [
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
@@ -217,6 +217,11 @@ try {
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
+  // Relief (decision 082): what a material sinks between its stones reads
+  // back as authored, and its steps take a range.
+  assert.ok(Math.abs(view.terrain.surface.materials[3].relief - 0.1) < 1e-6, `relief reads back: ${view.terrain.surface.materials[3].relief}`);
+  const stepless = await command("environment", { terrain: { relief_steps: 1 } }, false);
+  assert.equal(stepless.error.path, "$.terrain.relief_steps");
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
   assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 1, filter: 4294967295 } });
