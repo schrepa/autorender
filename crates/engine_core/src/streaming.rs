@@ -1,0 +1,538 @@
+//! World streaming (decision 086): content that exists only near the
+//! camera. Items — an entity and its descendants, spawned and despawned as
+//! one — register with [`WorldCells`] at a world position with the meters
+//! their content reaches from there. The engine bins them into cells of
+//! three grids by that reach ([`STREAMING_GRIDS`]): small items into
+//! 256 m cells loading within 512 m, those reaching over 4 m into 1 km
+//! cells loading within 2 km, and those reaching over 16 m into 4 km cells
+//! loading within 8 km, so what shows from farther away loads from farther
+//! away. Cells are columns: distances are horizontal.
+//!
+//! Each extracted frame, before transforms refresh, cells come within
+//! their range of a streaming source (the camera, every [`TerrainFocus`],
+//! and where the camera's motion takes it [`WorldStreaming::prefetch`]
+//! seconds ahead) load: their items spawn, the cells nearest their range's
+//! middle first, until the frame has spawned
+//! [`WorldStreaming::spawns_per_frame`] entities (a cell spawns whole, and
+//! at least one cell loads a frame); the rest wait. A cell unloads,
+//! despawning what its items spawned, once every source is farther than
+//! [`WorldStreaming::unload`] times its range.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use bevy_ecs::prelude::*;
+use glam::{Vec2, Vec3};
+use serde::{Deserialize, Serialize};
+
+use crate::environment::{InvalidSetting, check_range};
+use crate::math::{clamp, max, min};
+use crate::{Camera, FrameTime, GlobalTransforms, TerrainFocus};
+
+/// One grid items stream in: its cells' side and the meters from a source
+/// within which they load (at [`WorldStreaming::distance`] 1), and the
+/// most meters its items reach; items reaching farther go to the next
+/// grid.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct StreamingGrid {
+    pub cell: f32,
+    pub range: f32,
+    pub reach: f32,
+}
+
+/// The grids (decision 086), smallest first. An item reaching `r` meters
+/// shows about as large from its grid's range as one reaching the grid's
+/// most does there: a 128th of the range.
+pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
+    StreamingGrid {
+        cell: 256.0,
+        range: 512.0,
+        reach: 4.0,
+    },
+    StreamingGrid {
+        cell: 1024.0,
+        range: 2048.0,
+        reach: 16.0,
+    },
+    StreamingGrid {
+        cell: 4096.0,
+        range: 8192.0,
+        reach: f32::INFINITY,
+    },
+];
+
+/// Meters a second past which the camera's motion between frames counts as
+/// a jump, which prefetch ignores.
+const JUMP_SPEED: f32 = 1000.0;
+
+/// World streaming (decision 086): whether streamed items load at all
+/// (off unloads every cell); how far cells load, as a multiple of each
+/// grid's range (0.05 to 20); how much farther than that every source must
+/// be before a loaded cell unloads, as a multiple (1 to 4); the seconds
+/// ahead along the camera's motion cells load early for (0 to 10); the
+/// entities a frame spawns at most (cells spawn whole, and at least one a
+/// frame), pacing loads; and whether cells stay as they are, loading and
+/// unloading nothing (for captures and inspection). Requires version 9.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneWorldStreaming")
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct WorldStreaming {
+    pub enabled: bool,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.05, max = 20.0)))]
+    pub distance: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 4.0)))]
+    pub unload: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
+    pub prefetch: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub spawns_per_frame: u32,
+    pub frozen: bool,
+}
+
+impl Default for WorldStreaming {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            distance: 1.0,
+            unload: 1.25,
+            prefetch: 1.5,
+            spawns_per_frame: 2048,
+            frozen: false,
+        }
+    }
+}
+
+impl WorldStreaming {
+    /// The first field out of range.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("distance", self.distance, 0.05..=20.0)?;
+        check_range("unload", self.unload, 1.0..=4.0)?;
+        check_range("prefetch", self.prefetch, 0.0..=10.0)?;
+        if self.spawns_per_frame == 0 {
+            return Err(InvalidSetting::new(
+                "spawns_per_frame",
+                "must be at least 1",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Every value in range: out-of-range values clamp, unusable ones fall
+    /// back to the defaults.
+    pub fn sanitized(self) -> Self {
+        let defaults = Self::default();
+        let within = |value: f32, low: f32, high: f32, fallback: f32| {
+            if value.is_finite() {
+                clamp(value, low, high)
+            } else {
+                fallback
+            }
+        };
+        Self {
+            enabled: self.enabled,
+            distance: within(self.distance, 0.05, 20.0, defaults.distance),
+            unload: within(self.unload, 1.0, 4.0, defaults.unload),
+            prefetch: within(self.prefetch, 0.0, 10.0, defaults.prefetch),
+            spawns_per_frame: self.spawns_per_frame.max(1),
+            frozen: self.frozen,
+        }
+    }
+}
+
+/// What a streamed item spawns (decision 086).
+pub trait Streamed: Send + Sync + 'static {
+    /// How many entities [`Self::spawn`] spawns, which spawn budgets count.
+    fn entities(&self) -> u32;
+    /// Spawns the item's entities into `world`, appending each to
+    /// `spawned`; streaming despawns them when the item's cell unloads.
+    fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>);
+}
+
+/// An item to stream: where it stands (world space), the meters its
+/// content reaches from there, which choose its grid, and what it spawns.
+#[derive(Clone)]
+pub struct StreamedItem {
+    pub position: Vec3,
+    pub reach: f32,
+    pub content: Arc<dyn Streamed>,
+}
+
+/// Items registered together ([`WorldCells::add`]), removed together
+/// ([`remove_streamed`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct StreamSet(u64);
+
+/// World streaming's state after the last extraction (decision 086):
+/// cells holding items and those loaded; cells within range still waiting
+/// to load; items registered; entities streamed items hold spawned; and
+/// the entities the frame spawned and despawned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct CellStats {
+    pub cells: u32,
+    pub loaded: u32,
+    pub pending: u32,
+    pub items: u32,
+    pub entities: u32,
+    pub spawned: u32,
+    pub despawned: u32,
+}
+
+/// One cell of a grid: its items, whether they are spawned and the
+/// entities they hold spawned, and its distance from the nearest source at
+/// the last extraction.
+struct Cell {
+    grid: u8,
+    key: [i32; 2],
+    /// The most meters an item reaches past the cell's side.
+    reach: f32,
+    items: Vec<Item>,
+    loaded: bool,
+    spawned: u32,
+    distance: f32,
+}
+
+struct Item {
+    set: u64,
+    content: Arc<dyn Streamed>,
+    spawned: Vec<Entity>,
+}
+
+impl Cell {
+    /// Horizontal meters from `point` to the cell's side grown by its
+    /// items' reach.
+    fn distance_to(&self, point: Vec2) -> f32 {
+        let side = STREAMING_GRIDS[self.grid as usize].cell;
+        let low = Vec2::new(self.key[0] as f32, self.key[1] as f32) * side - self.reach;
+        let high = low + side + 2.0 * self.reach;
+        let outside = (low - point).max(point - high).max(Vec2::ZERO);
+        outside.length()
+    }
+
+    /// Despawns what its items spawned; returns how many entities that was.
+    fn unload(&mut self, world: &mut World) -> u32 {
+        let mut count = 0;
+        for item in &mut self.items {
+            for entity in item.spawned.drain(..) {
+                // Gameplay may have despawned some already.
+                if world.try_despawn(entity).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+        self.loaded = false;
+        self.spawned = 0;
+        count
+    }
+
+    /// Spawns its items; returns how many entities they spawned.
+    fn load(&mut self, world: &mut World) -> u32 {
+        let mut count = 0;
+        for item in &mut self.items {
+            item.content.spawn(world, &mut item.spawned);
+            count += item.spawned.len() as u32;
+        }
+        self.loaded = true;
+        self.spawned = count;
+        count
+    }
+
+    fn entities(&self) -> u32 {
+        self.items.iter().map(|item| item.content.entities()).sum()
+    }
+}
+
+/// The camera's last position and frame, and its velocity then.
+#[derive(Default)]
+struct Motion {
+    last: Option<(u64, f64, Vec3)>,
+    velocity: Vec3,
+}
+
+/// Every streamed item, binned into cells of [`STREAMING_GRIDS`]
+/// (decision 086), and what loaded at the last extraction. Inserted by
+/// default; register items with [`Self::add`].
+#[derive(Resource, Default)]
+pub struct WorldCells {
+    cells: Vec<Cell>,
+    index: HashMap<(u8, [i32; 2]), usize>,
+    next_set: u64,
+    motion: Motion,
+    stats: CellStats,
+    // Scratch.
+    sources: Vec<Vec2>,
+    wanted: Vec<(f32, usize)>,
+}
+
+/// A loaded or unloaded cell as inspection reports it: its grid (0 small,
+/// 1 medium, 2 large), its key along x and z (its corner over the grid's
+/// side), its items, their entities, whether it is loaded and its meters
+/// from the nearest streaming source at the last extraction.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CellView {
+    pub grid: u8,
+    pub key: [i32; 2],
+    pub items: u32,
+    pub entities: u32,
+    pub loaded: bool,
+    pub distance: f32,
+}
+
+impl WorldCells {
+    /// Registers `items` as one set, binned into cells by their reach and
+    /// position; they load from the next extraction on. Items whose
+    /// position or reach is not finite are left out.
+    pub fn add(&mut self, items: impl IntoIterator<Item = StreamedItem>) -> StreamSet {
+        let set = self.next_set;
+        self.next_set += 1;
+        for item in items {
+            if !item.position.is_finite() || !item.reach.is_finite() {
+                continue;
+            }
+            let reach = max(item.reach, 0.0);
+            let grid = STREAMING_GRIDS
+                .iter()
+                .position(|grid| reach <= grid.reach)
+                .unwrap_or(STREAMING_GRIDS.len() - 1);
+            let side = STREAMING_GRIDS[grid].cell;
+            let key = [
+                (item.position.x / side).floor() as i32,
+                (item.position.z / side).floor() as i32,
+            ];
+            let cells = &mut self.cells;
+            let index = *self.index.entry((grid as u8, key)).or_insert_with(|| {
+                cells.push(Cell {
+                    grid: grid as u8,
+                    key,
+                    reach: 0.0,
+                    items: Vec::new(),
+                    loaded: false,
+                    spawned: 0,
+                    distance: f32::INFINITY,
+                });
+                cells.len() - 1
+            });
+            let cell = &mut self.cells[index];
+            // How far the item reaches past the cell's side.
+            let corner = Vec2::new(key[0] as f32, key[1] as f32) * side;
+            let local = Vec2::new(item.position.x, item.position.z) - corner;
+            let past = max(
+                max(reach - local.x, reach - local.y),
+                max(local.x + reach - side, local.y + reach - side),
+            );
+            cell.reach = max(cell.reach, past);
+            cell.items.push(Item {
+                set,
+                content: item.content,
+                spawned: Vec::new(),
+            });
+        }
+        StreamSet(set)
+    }
+
+    /// World streaming's state after the last extraction.
+    pub fn stats(&self) -> CellStats {
+        self.stats
+    }
+
+    /// Items registered and not removed.
+    pub fn items(&self) -> usize {
+        self.cells.iter().map(|cell| cell.items.len()).sum()
+    }
+
+    /// The camera's velocity prefetch followed at the last extraction.
+    pub fn velocity(&self) -> Vec3 {
+        self.motion.velocity
+    }
+
+    /// Up to `count` cells nearest a streaming source at the last
+    /// extraction, nearest first.
+    pub fn nearest(&self, count: usize) -> Vec<CellView> {
+        let mut cells: Vec<CellView> = self
+            .cells
+            .iter()
+            .map(|cell| CellView {
+                grid: cell.grid,
+                key: cell.key,
+                items: cell.items.len() as u32,
+                entities: cell.entities(),
+                loaded: cell.loaded,
+                distance: cell.distance,
+            })
+            .collect();
+        cells.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        cells.truncate(count);
+        cells
+    }
+
+    /// Cells of each grid, and those of them loaded.
+    pub fn grids(&self) -> [[u32; 2]; 3] {
+        let mut grids = [[0; 2]; 3];
+        for cell in &self.cells {
+            grids[cell.grid as usize][0] += 1;
+            grids[cell.grid as usize][1] += u32::from(cell.loaded);
+        }
+        grids
+    }
+}
+
+/// Removes the items of `set`, despawning what loaded ones spawned.
+pub fn remove_streamed(world: &mut World, set: StreamSet) {
+    if !world.contains_resource::<WorldCells>() {
+        return;
+    }
+    world.resource_scope(|world, mut cells: Mut<WorldCells>| {
+        let cells = &mut *cells;
+        for cell in &mut cells.cells {
+            for item in cell.items.iter_mut().filter(|item| item.set == set.0) {
+                cell.spawned -= item.spawned.len() as u32;
+                for entity in item.spawned.drain(..) {
+                    let _ = world.try_despawn(entity);
+                }
+            }
+            cell.items.retain(|item| item.set != set.0);
+        }
+        cells.cells.retain(|cell| !cell.items.is_empty());
+        cells.index = cells
+            .cells
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| ((cell.grid, cell.key), index))
+            .collect();
+    });
+}
+
+/// What streaming reads each extraction: the terrain focus entities, which
+/// are streaming sources.
+pub(crate) struct StreamingExtraction {
+    focus: QueryState<Entity, With<TerrainFocus>>,
+}
+
+impl StreamingExtraction {
+    pub(crate) fn new(world: &mut World) -> Self {
+        Self {
+            focus: world.query_filtered::<Entity, With<TerrainFocus>>(),
+        }
+    }
+
+    /// Loads cells streaming sources came near and unloads those they left
+    /// (decision 086). Runs at extraction, before transforms refresh.
+    pub(crate) fn stream(&mut self, world: &mut World) {
+        if !world.contains_resource::<WorldCells>() {
+            return;
+        }
+        let _profile = engine_profile::span("cpu", "world_streaming");
+        let settings = world.get_resource::<WorldStreaming>().copied().map_or(
+            WorldStreaming {
+                enabled: false,
+                ..WorldStreaming::default()
+            },
+            WorldStreaming::sanitized,
+        );
+        world.resource_scope(|world, mut cells: Mut<WorldCells>| {
+            let cells = &mut *cells;
+            cells.stats.spawned = 0;
+            cells.stats.despawned = 0;
+            cells.stats.pending = 0;
+            if !cells.cells.is_empty() {
+                self.sources(world, cells, settings);
+                load_and_unload(world, cells, settings);
+            }
+            cells.stats.cells = cells.cells.len() as u32;
+            cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
+            cells.stats.items = cells.items() as u32;
+            cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
+        });
+    }
+
+    /// This frame's streaming sources into `cells.sources`: the camera,
+    /// every terrain focus, and where the camera's motion takes it
+    /// `prefetch` seconds ahead.
+    fn sources(&mut self, world: &World, cells: &mut WorldCells, settings: WorldStreaming) {
+        let eye = world.resource::<Camera>().eye();
+        let frame = world.resource::<FrameTime>();
+        let (number, elapsed) = (frame.frame, frame.elapsed_seconds);
+        let motion = &mut cells.motion;
+        match motion.last {
+            Some((last_frame, last_elapsed, last)) if number != last_frame => {
+                let seconds = (elapsed - last_elapsed) as f32;
+                let velocity = if seconds > 0.0 {
+                    (eye - last) / seconds
+                } else {
+                    Vec3::ZERO
+                };
+                motion.velocity = if velocity.is_finite() && velocity.length() <= JUMP_SPEED {
+                    velocity
+                } else {
+                    Vec3::ZERO
+                };
+                motion.last = Some((number, elapsed, eye));
+            }
+            // Later extractions of a frame (paused renders) keep its first
+            // position: motion is measured frame to frame.
+            Some(_) => {}
+            None => {
+                motion.velocity = Vec3::ZERO;
+                motion.last = Some((number, elapsed, eye));
+            }
+        }
+        let flat = |point: Vec3| Vec2::new(point.x, point.z);
+        cells.sources.clear();
+        cells.sources.push(flat(eye));
+        let ahead = eye + motion.velocity * settings.prefetch;
+        if ahead.distance_squared(eye) > 1.0 {
+            cells.sources.push(flat(ahead));
+        }
+        let globals = world.resource::<GlobalTransforms>();
+        for entity in self.focus.iter(world) {
+            if let Some(position) = globals
+                .get(entity)
+                .and_then(|global| global.translation())
+                .filter(|position| position.is_finite())
+            {
+                cells.sources.push(flat(position));
+            }
+        }
+    }
+}
+
+/// Unloads the cells every source left and loads those one came near,
+/// nearest their range's middle first, within the frame's spawn budget.
+fn load_and_unload(world: &mut World, cells: &mut WorldCells, settings: WorldStreaming) {
+    let WorldCells {
+        cells: list,
+        sources,
+        wanted,
+        stats,
+        ..
+    } = cells;
+    wanted.clear();
+    for (index, cell) in list.iter_mut().enumerate() {
+        cell.distance = sources
+            .iter()
+            .map(|&source| cell.distance_to(source))
+            .fold(f32::INFINITY, min);
+        let range = STREAMING_GRIDS[cell.grid as usize].range * settings.distance;
+        let leaving = !settings.enabled || cell.distance > range * settings.unload;
+        if cell.loaded && leaving && !settings.frozen {
+            stats.despawned += cell.unload(world);
+        } else if !cell.loaded && settings.enabled && cell.distance <= range {
+            wanted.push((cell.distance / range, index));
+        }
+    }
+    wanted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut loaded = 0;
+    if !settings.frozen {
+        for &(_, index) in wanted.iter() {
+            if loaded > 0 && stats.spawned >= settings.spawns_per_frame {
+                break;
+            }
+            stats.spawned += list[index].load(world);
+            loaded += 1;
+        }
+    }
+    stats.pending = (wanted.len() - loaded) as u32;
+}

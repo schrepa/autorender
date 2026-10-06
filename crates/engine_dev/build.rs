@@ -42,6 +42,8 @@ fn main() {
         "Floating": schemars::schema_for!(engine_core::Floating),
         "Deformer": schemars::schema_for!(engine_core::Deformer),
         "Tracks": schemars::schema_for!(views::TracksView),
+        "WorldCells": schemars::schema_for!(views::WorldCellsView),
+        "Grounded": schemars::schema_for!(views::GroundedView),
         "AnimationPlayer": schemars::schema_for!(views::AnimationPlayerView),
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),

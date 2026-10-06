@@ -357,6 +357,8 @@ pub struct RenderSnapshot {
     /// This frame's deformation map and the stamps it presses (decision
     /// 083).
     pub deformation: crate::RenderDeformation,
+    /// World streaming's state at this frame (decision 086).
+    pub cells: crate::CellStats,
     /// Every instance's `color[3]` is its opacity (decision 026); see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,

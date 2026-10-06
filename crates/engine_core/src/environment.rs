@@ -11,7 +11,7 @@ use bevy_ecs::prelude::{Resource, World};
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
     LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
-    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
+    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind, WorldStreaming,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -64,6 +64,7 @@ pub struct Environment {
     pub ocean: Ocean,
     pub deformation: Deformation,
     pub clouds: Clouds,
+    pub world_streaming: WorldStreaming,
 }
 
 impl Environment {
@@ -217,6 +218,13 @@ impl Environment {
                     ..Clouds::default()
                 },
             ),
+            world_streaming: read(
+                world,
+                WorldStreaming {
+                    enabled: false,
+                    ..WorldStreaming::default()
+                },
+            ),
         }
     }
 
@@ -245,6 +253,7 @@ impl Environment {
             ocean: self.ocean.sanitized(),
             deformation: self.deformation.sanitized(),
             clouds: self.clouds.sanitized(),
+            world_streaming: self.world_streaming.sanitized(),
         }
     }
 }

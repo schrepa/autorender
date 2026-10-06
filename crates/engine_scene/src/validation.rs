@@ -3,14 +3,14 @@ use std::sync::Arc;
 
 use engine_core::{
     AnimationClip, LocalLight, Mesh, ParticleEmitter, ReflectionProbe, Texture, Tint, Transform,
-    glam::Mat4,
+    glam::{Mat4, Vec3},
 };
 
 use crate::{
     MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles, SceneTransform,
     animation::{PreparedPlayer, PreparedSkin},
     decal::PreparedDecal,
-    hierarchy::ExpandedObject,
+    hierarchy::{ExpandedObject, ExpandedScene},
     material::PreparedMaterial,
 };
 
@@ -26,6 +26,29 @@ pub(crate) struct PreparedScene {
     pub entities: Vec<ExpandedObject>,
     pub clips: Vec<AnimationClip>,
     pub skin_binds: Vec<Arc<[Mat4]>>,
+    /// Streamed entities (decision 086).
+    pub streamed: PreparedStreamed,
+}
+
+/// A document's streamed entities (decision 086), expanded: their
+/// transforms, components and parents (indices into this list), and the
+/// items they form.
+#[derive(Default)]
+pub(crate) struct PreparedStreamed {
+    pub entities: Vec<ExpandedObject>,
+    pub transforms: Vec<Transform>,
+    pub components: Vec<PreparedEntity>,
+    pub parents: Vec<Option<usize>>,
+    pub items: Vec<PreparedItem>,
+}
+
+/// A streamed root with its descendants (decision 086): their indices,
+/// the root first and the rest in expanded order; where the root stands;
+/// and the meters its content reaches from there.
+pub(crate) struct PreparedItem {
+    pub entities: Vec<usize>,
+    pub position: Vec3,
+    pub reach: f32,
 }
 
 /// An expanded entity's validated components besides its transform, mesh
@@ -152,7 +175,7 @@ impl SceneDocument {
                 )?;
             }
         }
-        let expanded = self.expand(&mesh_ids, &material_ids)?;
+        let [expanded, streamed] = self.expand(&mesh_ids, &material_ids)?;
         let rigs = self.prepare_rigs()?;
         let entity_indices: HashMap<&str, usize> = expanded
             .entities
@@ -191,12 +214,16 @@ impl SceneDocument {
                 .transpose()?;
         }
 
+        let streamed_components = self.prepare_streamed(&streamed, &rigs)?;
+
         let CpuAssets {
             textures,
             meshes,
             materials,
         } = self.prepare_assets(files)?;
         self.check_skin_joints(&expanded.entities, &components, &meshes)?;
+        self.check_skin_joints(&streamed.entities, &streamed_components, &meshes)?;
+        let streamed = self.streamed_items(streamed, streamed_components, &meshes);
         let clips = self
             .animations
             .iter()
@@ -216,7 +243,197 @@ impl SceneDocument {
             entities: expanded.entities,
             clips,
             skin_binds: rigs.skin_binds,
+            streamed,
         })
+    }
+
+    /// The components of the streamed entities (decision 086), whose
+    /// animation targets and skin joints resolve within their item. No
+    /// terrains: they stream their own tiles.
+    fn prepare_streamed(
+        &self,
+        streamed: &ExpandedScene,
+        rigs: &Rigs<'_>,
+    ) -> Result<Vec<PreparedEntity>, SceneError> {
+        let indices: HashMap<&str, usize> = streamed
+            .entities
+            .iter()
+            .enumerate()
+            .map(|(index, entity)| (entity.source.id.as_str(), index))
+            .collect();
+        let roots = item_roots(&streamed.entities, &indices);
+        let resolve = |entity: &ExpandedObject, id: &str| {
+            let own = indices[entity.source.id.as_str()];
+            entity
+                .prefab_instance
+                .as_ref()
+                .and_then(|instance| indices.get(format!("{instance}.{id}").as_str()))
+                .or_else(|| indices.get(id))
+                .copied()
+                .filter(|&target| roots[target] == roots[own])
+        };
+        streamed
+            .entities
+            .iter()
+            .map(|entity| {
+                if entity.source.terrain.is_some() {
+                    return Err(SceneError::new(
+                        "invalid_streamed",
+                        format!("{}.terrain", entity.path),
+                        "terrains stream their own tiles; author them in entities",
+                    ));
+                }
+                self.prepare_entity(entity, &resolve, rigs)
+            })
+            .collect()
+    }
+
+    /// The streamed entities' items (decision 086): each root with its
+    /// descendants, standing at the root's position and reaching as far as
+    /// their meshes, lights, emitters, decals, probes and splines do.
+    fn streamed_items(
+        &self,
+        streamed: ExpandedScene,
+        components: Vec<PreparedEntity>,
+        meshes: &[Mesh],
+    ) -> PreparedStreamed {
+        let indices: HashMap<&str, usize> = streamed
+            .entities
+            .iter()
+            .enumerate()
+            .map(|(index, entity)| (entity.source.id.as_str(), index))
+            .collect();
+        let parents: Vec<Option<usize>> = streamed
+            .entities
+            .iter()
+            .map(|entity| {
+                entity
+                    .source
+                    .parent
+                    .as_ref()
+                    .map(|parent| indices[parent.as_str()])
+            })
+            .collect();
+        let roots = item_roots(&streamed.entities, &indices);
+        // World matrices, parents first.
+        let mut worlds: Vec<Option<Mat4>> = vec![None; streamed.entities.len()];
+        let mut chain = Vec::new();
+        for start in 0..worlds.len() {
+            let mut cursor = Some(start);
+            while let Some(index) = cursor.filter(|&index| worlds[index].is_none()) {
+                chain.push(index);
+                cursor = parents[index];
+            }
+            while let Some(index) = chain.pop() {
+                let local = streamed.transforms[index];
+                let local = Mat4::from_scale_rotation_translation(
+                    local.scale,
+                    local.rotation,
+                    local.translation,
+                );
+                worlds[index] = Some(parents[index].map_or(local, |parent| {
+                    worlds[parent].expect("parent composed before child") * local
+                }));
+            }
+        }
+        let mesh_indices: HashMap<&str, usize> = self
+            .meshes
+            .iter()
+            .enumerate()
+            .map(|(index, mesh)| (mesh.id.as_str(), index))
+            .collect();
+        let mut items: Vec<PreparedItem> = Vec::new();
+        let mut item_of = HashMap::new();
+        for (index, &root) in roots.iter().enumerate() {
+            let item = *item_of.entry(root).or_insert_with(|| {
+                items.push(PreparedItem {
+                    entities: Vec::new(),
+                    position: worlds[root]
+                        .expect("every world matrix is composed")
+                        .w_axis
+                        .truncate(),
+                    reach: 0.0,
+                });
+                items.len() - 1
+            });
+            items[item].entities.push(index);
+            let position = items[item].position;
+            let world = worlds[index].expect("every world matrix is composed");
+            let from = world.w_axis.truncate().distance(position);
+            let box_reach = |min: Vec3, max: Vec3| {
+                (0..8)
+                    .map(|corner| {
+                        let pick = |bit: u32, low: f32, high: f32| {
+                            if corner & (1 << bit) == 0 { low } else { high }
+                        };
+                        let point = Vec3::new(
+                            pick(0, min.x, max.x),
+                            pick(1, min.y, max.y),
+                            pick(2, min.z, max.z),
+                        );
+                        world.transform_point3(point).distance(position)
+                    })
+                    .fold(0.0, engine_core::math::max)
+            };
+            let source = &streamed.entities[index].source;
+            let component = &components[index];
+            let mut reach = from;
+            let mut extend = |value: f32| reach = engine_core::math::max(reach, value);
+            if let Some(mesh) = source
+                .mesh
+                .as_ref()
+                .and_then(|id| mesh_indices.get(id.as_str()))
+            {
+                let bounds = meshes[*mesh].bounds();
+                extend(box_reach(bounds.min(), bounds.max()));
+            }
+            if let Some(light) = component.light {
+                extend(from + light.range);
+            }
+            if let Some(emitter) = component.emitter {
+                extend(
+                    from + emitter.offset.length()
+                        + emitter.radius
+                        + emitter.speed * emitter.lifetime
+                        + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
+                );
+            }
+            if component.decal.is_some() {
+                extend(box_reach(Vec3::splat(-0.5), Vec3::splat(0.5)));
+            }
+            if let Some(probe) = component.probe {
+                extend(from + probe.extent.length());
+            }
+            if let Some(spline) = &source.spline {
+                let size = mesh_indices.get(spline.mesh.as_str()).map_or(0.0, |&mesh| {
+                    let bounds = meshes[mesh].bounds();
+                    (bounds.max() - bounds.min()).length()
+                });
+                for point in &spline.points {
+                    extend(
+                        world
+                            .transform_point3(Vec3::from_array(*point))
+                            .distance(position)
+                            + size,
+                    );
+                }
+            }
+            if reach.is_finite() {
+                items[item].reach = engine_core::math::max(items[item].reach, reach);
+            }
+        }
+        // Each item's root first.
+        for item in &mut items {
+            item.entities
+                .sort_by_key(|&index| (parents[index].is_some(), index));
+        }
+        PreparedStreamed {
+            entities: streamed.entities,
+            transforms: streamed.transforms,
+            components,
+            parents,
+            items,
+        }
     }
 
     /// Animation and skin sources (decisions 035 and 036): their unique IDs,
@@ -543,6 +760,26 @@ impl SceneDocument {
         }
         Ok(())
     }
+}
+
+/// The root of each expanded entity's tree, by index; `indices` maps IDs
+/// to indices. The graph is validated: parents exist and form no cycle.
+fn item_roots(entities: &[ExpandedObject], indices: &HashMap<&str, usize>) -> Vec<usize> {
+    let parent = |index: usize| {
+        entities[index]
+            .source
+            .parent
+            .as_ref()
+            .map(|parent| indices[parent.as_str()])
+    };
+    (0..entities.len())
+        .map(|mut index| {
+            while let Some(next) = parent(index) {
+                index = next;
+            }
+            index
+        })
+        .collect()
 }
 
 pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
 
 use crate::validation::{identifier, reference, transform, unique_ids};
-use crate::{SceneDocument, SceneError, SceneObject};
+use crate::{SceneDocument, SceneError, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -17,6 +17,9 @@ pub(crate) struct ExpandedScene {
     pub entities: Vec<ExpandedObject>,
     pub transforms: Vec<Transform>,
 }
+
+/// A document's prefab definitions by ID, with their source indices.
+type Prefabs<'a> = BTreeMap<&'a str, (usize, &'a ScenePrefab)>;
 
 impl SceneDocument {
     /// Returns validated entities with prefab definitions expanded once.
@@ -35,15 +38,45 @@ impl SceneDocument {
             .collect())
     }
 
+    /// The document's entities and its streamed entities (decision 086),
+    /// each list expanded and validated on its own: parents stay within
+    /// a list, and expanded IDs are unique across both.
     pub(crate) fn expand(
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
-    ) -> Result<ExpandedScene, SceneError> {
-        unique_ids(
-            self.entities.iter().map(|entity| entity.id.as_str()),
-            "$.entities",
-        )?;
+    ) -> Result<[ExpandedScene; 2], SceneError> {
+        let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids)?;
+        let ids = (mesh_ids, material_ids, &prefab_ids);
+        let entities = expand_list(&self.entities, "$.entities", ids, &prefabs)?;
+        let streamed = expand_list(&self.streamed, "$.streamed", ids, &prefabs)?;
+        let known: BTreeSet<&str> = entities
+            .entities
+            .iter()
+            .map(|entity| entity.source.id.as_str())
+            .collect();
+        for entity in &streamed.entities {
+            if known.contains(entity.source.id.as_str()) {
+                return Err(SceneError::new(
+                    "duplicate_id",
+                    format!("{}.id", entity.path),
+                    format!(
+                        "expanded entity ID '{}' is already used by an entity",
+                        entity.source.id
+                    ),
+                ));
+            }
+        }
+        Ok([entities, streamed])
+    }
+
+    /// Validates prefab definitions: their IDs, entities and local graphs.
+    /// Returns their IDs and the definitions by ID.
+    fn validate_prefabs(
+        &self,
+        mesh_ids: &BTreeSet<&str>,
+        material_ids: &BTreeSet<&str>,
+    ) -> Result<(BTreeSet<&str>, Prefabs<'_>), SceneError> {
         let prefab_ids = unique_ids(
             self.prefabs.iter().map(|prefab| prefab.id.as_str()),
             "$.prefabs",
@@ -82,76 +115,97 @@ impl SceneDocument {
             )?;
         }
 
-        let prefab_lookup: BTreeMap<_, _> = self
+        let prefab_lookup: Prefabs<'_> = self
             .prefabs
             .iter()
             .enumerate()
             .map(|(index, prefab)| (prefab.id.as_str(), (index, prefab)))
             .collect();
-        let mut expanded_count = self.entities.len();
-        for (index, entity) in self.entities.iter().enumerate() {
-            let path = format!("$.entities[{index}]");
-            validate_object(entity, &path, mesh_ids, material_ids, &prefab_ids)?;
-            if let Some(id) = &entity.prefab {
-                expanded_count += prefab_lookup[id.as_str()].1.entities.len();
-            }
-        }
-        let mut entities = Vec::with_capacity(expanded_count);
-        let mut transforms = Vec::with_capacity(expanded_count);
-        for (index, entity) in self.entities.iter().enumerate() {
-            let mut source = entity.clone();
-            source.prefab = None;
-            entities.push(ExpandedObject {
-                source,
-                path: format!("$.entities[{index}]"),
-                prefab_id: entity.prefab.clone(),
-                prefab_instance: entity.prefab.as_ref().map(|_| entity.id.clone()),
-                prefab_local_id: None,
-            });
-            transforms.push(entity.transform.transform());
-            if let Some(id) = &entity.prefab {
-                let (prefab_index, prefab) = prefab_lookup[id.as_str()];
-                for (local_index, local) in prefab.entities.iter().enumerate() {
-                    let path = format!("$.prefabs[{prefab_index}].entities[{local_index}]");
-                    let mut source = local.clone();
-                    source.id = format!("{}.{}", entity.id, local.id);
-                    identifier(&source.id, &format!("{path}.id"))?;
-                    source.parent = Some(local.parent.as_ref().map_or_else(
-                        || entity.id.clone(),
-                        |parent| format!("{}.{}", entity.id, parent),
-                    ));
-                    entities.push(ExpandedObject {
-                        source,
-                        path,
-                        prefab_id: Some(id.clone()),
-                        prefab_instance: Some(entity.id.clone()),
-                        prefab_local_id: Some(local.id.clone()),
-                    });
-                    transforms.push(local.transform.transform());
-                }
-            }
-        }
-        let mut ids = BTreeSet::new();
-        for entity in &entities {
-            if !ids.insert(entity.source.id.as_str()) {
-                return Err(SceneError::new(
-                    "duplicate_id",
-                    format!("{}.id", entity.path),
-                    format!("expanded entity ID '{}' is already used", entity.source.id),
-                ));
-            }
-        }
-        validate_graph(
-            entities
-                .iter()
-                .map(|entity| (&entity.source, entity.path.clone())),
-            &transforms,
-        )?;
-        Ok(ExpandedScene {
-            entities,
-            transforms,
-        })
+        Ok((prefab_ids, prefab_lookup))
     }
+}
+
+/// `list` (at authored path `list_path`) with prefab placements expanded,
+/// validated against the document's mesh, material and prefab IDs.
+fn expand_list(
+    list: &[SceneObject],
+    list_path: &str,
+    (mesh_ids, material_ids, prefab_ids): (&BTreeSet<&str>, &BTreeSet<&str>, &BTreeSet<&str>),
+    prefab_lookup: &Prefabs<'_>,
+) -> Result<ExpandedScene, SceneError> {
+    unique_ids(list.iter().map(|entity| entity.id.as_str()), list_path)?;
+    let mut expanded_count = list.len();
+    for (index, entity) in list.iter().enumerate() {
+        let path = format!("{list_path}[{index}]");
+        validate_object(entity, &path, mesh_ids, material_ids, prefab_ids)?;
+        if let Some(id) = &entity.prefab {
+            expanded_count += prefab_lookup[id.as_str()].1.entities.len();
+        }
+    }
+    let mut entities = Vec::with_capacity(expanded_count);
+    let mut transforms = Vec::with_capacity(expanded_count);
+    for (index, entity) in list.iter().enumerate() {
+        let mut source = entity.clone();
+        source.prefab = None;
+        entities.push(ExpandedObject {
+            source,
+            path: format!("{list_path}[{index}]"),
+            prefab_id: entity.prefab.clone(),
+            prefab_instance: entity.prefab.as_ref().map(|_| entity.id.clone()),
+            prefab_local_id: None,
+        });
+        transforms.push(entity.transform.transform());
+        if let Some(id) = &entity.prefab {
+            let (prefab_index, prefab) = prefab_lookup[id.as_str()];
+            for (local_index, local) in prefab.entities.iter().enumerate() {
+                let path = format!("$.prefabs[{prefab_index}].entities[{local_index}]");
+                let mut source = local.clone();
+                source.id = format!("{}.{}", entity.id, local.id);
+                identifier(&source.id, &format!("{path}.id"))?;
+                source.parent = Some(local.parent.as_ref().map_or_else(
+                    || entity.id.clone(),
+                    |parent| format!("{}.{}", entity.id, parent),
+                ));
+                entities.push(ExpandedObject {
+                    source,
+                    path,
+                    prefab_id: Some(id.clone()),
+                    prefab_instance: Some(entity.id.clone()),
+                    prefab_local_id: Some(local.id.clone()),
+                });
+                transforms.push(local.transform.transform());
+            }
+        }
+    }
+    let mut ids = BTreeSet::new();
+    for entity in &entities {
+        if !ids.insert(entity.source.id.as_str()) {
+            return Err(SceneError::new(
+                "duplicate_id",
+                format!("{}.id", entity.path),
+                format!("expanded entity ID '{}' is already used", entity.source.id),
+            ));
+        }
+        // Grounded objects (decision 086) stand on the ground
+        // themselves.
+        if entity.source.grounded.is_some() && entity.source.parent.is_some() {
+            return Err(SceneError::new(
+                "invalid_grounded",
+                format!("{}.grounded", entity.path),
+                "only roots stand on the ground; ground the placement or root instead",
+            ));
+        }
+    }
+    validate_graph(
+        entities
+            .iter()
+            .map(|entity| (&entity.source, entity.path.clone())),
+        &transforms,
+    )?;
+    Ok(ExpandedScene {
+        entities,
+        transforms,
+    })
 }
 
 fn validate_object(

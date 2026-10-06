@@ -205,6 +205,7 @@ fn import_primitive(
         spline: None,
         floating: None,
         deformer: None,
+        grounded: None,
         transform: SceneTransform::default(),
         tags: vec!["imported".into()],
     };
@@ -265,6 +266,7 @@ fn hierarchy(
         spline: None,
         floating: None,
         deformer: None,
+        grounded: None,
         transform: SceneTransform::default(),
         tags: vec!["imported".into()],
     });
@@ -294,6 +296,7 @@ fn hierarchy(
             spline: None,
             floating: None,
             deformer: None,
+            grounded: None,
             transform: local_transform(&node, &path)?,
             tags: vec!["imported".into()],
         });

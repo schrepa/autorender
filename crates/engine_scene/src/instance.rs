@@ -1,17 +1,24 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use engine_core::{
     AnimationPlayer, AssetError, AssetLibrary, ClipHandle, InterpolateTransform, MaterialHandle,
-    Mesh3d, MeshHandle, Skin, TextureHandle,
+    Mesh3d, MeshHandle, Skin, StreamSet, Streamed, StreamedItem, TextureHandle, Transform,
+    WorldCells,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
         world::WorldId,
     },
-    propagate_transforms, set_parents,
+    glam::Mat4,
+    propagate_transforms, remove_streamed, set_parents,
 };
 
-use crate::{SceneDocument, SceneError, SceneFiles, validation::PreparedScene};
+use crate::{
+    SceneDocument, SceneError, SceneFiles,
+    hierarchy::ExpandedObject,
+    validation::{PreparedEntity, PreparedScene, PreparedStreamed},
+};
 
 /// Authored identity retained for game setup and development inspection.
 ///
@@ -51,6 +58,8 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     clip_ids: Vec<String>,
+    /// Its streamed items (decision 086), if it has any.
+    streamed: Option<StreamSet>,
 }
 
 /// The assets one instantiation inserted, in source order, removed together.
@@ -172,17 +181,28 @@ impl SceneInstance {
             .map(|(id, entity)| (id.as_str(), *entity))
     }
 
+    /// The set its streamed items (decision 086) registered with
+    /// [`WorldCells`] as, if it has any. Their entities exist while their
+    /// cells are loaded; [`Self::entity`] does not find them.
+    pub fn streamed(&self) -> Option<StreamSet> {
+        self.streamed
+    }
+
     /// Whether this instance's runtime entity references belong to this world.
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()
     }
 
-    /// Removes only owned entities and assets. Already removed items are safe.
+    /// Removes only owned entities, streamed items (despawning what loaded
+    /// ones spawned) and assets. Already removed items are safe.
     ///
     /// # Panics
     /// Panics before mutation if passed a different world from instantiation.
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene belongs to another world");
+        if let Some(set) = self.streamed {
+            remove_streamed(world, set);
+        }
         for entity in self.entities.into_values() {
             world.despawn(entity);
         }
@@ -217,8 +237,15 @@ impl SceneDocument {
     ) -> Result<SceneInstance, SceneError> {
         let mut prepared = self.prepare(Some(files))?;
         let owned = self.insert_assets(world, &mut prepared)?;
-        let spawned = self.spawn(world, &prepared, &owned);
-        attach_rigs(world, &prepared, &owned, &spawned);
+        let lookups = Lookups::new(self, &owned);
+        let spawned = self.spawn(world, &prepared, &lookups);
+        attach_rigs(
+            world,
+            prepared.components.iter().zip(spawned.iter().copied()),
+            |index| spawned[index],
+            &owned.clips,
+            &prepared.skin_binds,
+        );
         let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
@@ -254,6 +281,31 @@ impl SceneDocument {
         if let Some(environment) = prepared.environment {
             environment.apply_all(world);
         }
+        // Streamed items (decision 086) load from the next extraction on.
+        let streamed = (!prepared.streamed.items.is_empty()).then(|| {
+            let scene = Arc::new(StreamedScene {
+                lookups,
+                prepared: std::mem::take(&mut prepared.streamed),
+                skin_binds: prepared.skin_binds.clone(),
+            });
+            let items: Vec<StreamedItem> = scene
+                .prepared
+                .items
+                .iter()
+                .enumerate()
+                .map(|(item, prepared)| StreamedItem {
+                    position: prepared.position,
+                    reach: prepared.reach,
+                    content: Arc::new(StreamedTree {
+                        scene: scene.clone(),
+                        item,
+                    }),
+                })
+                .collect();
+            world
+                .get_resource_or_insert_with(WorldCells::default)
+                .add(items)
+        });
         Ok(SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -276,6 +328,7 @@ impl SceneDocument {
                 .iter()
                 .map(|animation| animation.id.clone())
                 .collect(),
+            streamed,
         })
     }
 
@@ -335,112 +388,145 @@ impl SceneDocument {
 
     /// Spawns each expanded entity with its transform, identity, mesh and
     /// components; returns them in expanded order.
-    fn spawn(
-        &self,
-        world: &mut World,
-        prepared: &PreparedScene,
-        owned: &OwnedAssets,
-    ) -> Vec<Entity> {
-        let mesh_lookup: BTreeMap<_, _> = self
-            .meshes
-            .iter()
-            .zip(&owned.meshes)
-            .map(|(source, handle)| (source.id.as_str(), *handle))
-            .collect();
-        let material_lookup: BTreeMap<_, _> = self
-            .materials
-            .iter()
-            .zip(&owned.materials)
-            .map(|(source, handle)| (source.id.as_str(), *handle))
-            .collect();
-        let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for ((expanded, &transform), component) in prepared
+    fn spawn(&self, world: &mut World, prepared: &PreparedScene, lookups: &Lookups) -> Vec<Entity> {
+        prepared
             .entities
             .iter()
             .zip(&prepared.transforms)
             .zip(&prepared.components)
-        {
-            let source = &expanded.source;
-            let mut entity = world.spawn((
-                transform,
-                SceneEntity {
-                    scene_id: self.id.clone(),
-                    authored_id: source.id.clone(),
-                    name: source.name.clone(),
-                    tags: source.tags.clone(),
-                    authored_parent: source.parent.clone(),
-                    prefab_id: expanded.prefab_id.clone(),
-                    prefab_instance: expanded.prefab_instance.clone(),
-                    prefab_local_id: expanded.prefab_local_id.clone(),
-                },
-            ));
-            if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
-                entity.insert(Mesh3d {
-                    mesh: mesh_lookup[mesh.as_str()],
-                    material: material_lookup[material.as_str()],
-                });
-            }
-            if let Some(collider) = component.collider {
-                entity.insert(collider);
-            }
-            if let Some(light) = component.light {
-                entity.insert(light);
-            }
-            if let Some(emitter) = component.emitter {
-                entity.insert(emitter);
-            }
-            if let Some(tint) = component.tint {
-                entity.insert(tint);
-            }
-            if let Some(decal) = &component.decal {
-                entity.insert(decal.runtime(owned.materials[decal.material]));
-            }
-            if let Some(floating) = source.floating {
-                entity.insert(floating);
-            }
-            if let Some(deformer) = source.deformer {
-                entity.insert(deformer);
-            }
-            if let Some(spline) = &source.spline {
-                entity.insert(spline.runtime(
-                    mesh_lookup[spline.mesh.as_str()],
-                    material_lookup[spline.material.as_str()],
-                ));
-            }
-            if let Some(probe) = component.probe {
-                entity.insert(probe);
-            }
-            if let Some(terrain) = &component.terrain {
-                entity.insert(terrain.runtime(&owned.materials, &owned.meshes));
-            }
-            spawned.push(entity.id());
-        }
-        spawned
+            .map(|((expanded, &transform), component)| {
+                spawn_entity(world, lookups, expanded, transform, component)
+            })
+            .collect()
     }
 }
 
-/// Gives the `spawned` entities their animation players and skins, which
-/// name other spawned entities; animated targets present smoothly between
-/// fixed ticks.
-fn attach_rigs(
+/// What spawning a document's entities needs of one instantiation: the
+/// scene's ID, its assets' handles by authored ID and in source order, and
+/// its clips.
+struct Lookups {
+    scene_id: String,
+    meshes: BTreeMap<String, MeshHandle>,
+    materials: BTreeMap<String, MaterialHandle>,
+    owned_meshes: Vec<MeshHandle>,
+    owned_materials: Vec<MaterialHandle>,
+    clips: Vec<ClipHandle>,
+}
+
+impl Lookups {
+    fn new(document: &SceneDocument, owned: &OwnedAssets) -> Self {
+        Self {
+            scene_id: document.id.clone(),
+            meshes: document
+                .meshes
+                .iter()
+                .zip(&owned.meshes)
+                .map(|(source, handle)| (source.id.clone(), *handle))
+                .collect(),
+            materials: document
+                .materials
+                .iter()
+                .zip(&owned.materials)
+                .map(|(source, handle)| (source.id.clone(), *handle))
+                .collect(),
+            owned_meshes: owned.meshes.clone(),
+            owned_materials: owned.materials.clone(),
+            clips: owned.clips.clone(),
+        }
+    }
+}
+
+/// Spawns one expanded entity with its transform, identity, mesh and
+/// components besides its animation player and skin.
+fn spawn_entity(
     world: &mut World,
-    prepared: &PreparedScene,
-    owned: &OwnedAssets,
-    spawned: &[Entity],
+    lookups: &Lookups,
+    expanded: &ExpandedObject,
+    transform: Transform,
+    component: &PreparedEntity,
+) -> Entity {
+    let source = &expanded.source;
+    let mut entity = world.spawn((
+        transform,
+        SceneEntity {
+            scene_id: lookups.scene_id.clone(),
+            authored_id: source.id.clone(),
+            name: source.name.clone(),
+            tags: source.tags.clone(),
+            authored_parent: source.parent.clone(),
+            prefab_id: expanded.prefab_id.clone(),
+            prefab_instance: expanded.prefab_instance.clone(),
+            prefab_local_id: expanded.prefab_local_id.clone(),
+        },
+    ));
+    if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
+        entity.insert(Mesh3d {
+            mesh: lookups.meshes[mesh.as_str()],
+            material: lookups.materials[material.as_str()],
+        });
+    }
+    if let Some(collider) = component.collider {
+        entity.insert(collider);
+    }
+    if let Some(light) = component.light {
+        entity.insert(light);
+    }
+    if let Some(emitter) = component.emitter {
+        entity.insert(emitter);
+    }
+    if let Some(tint) = component.tint {
+        entity.insert(tint);
+    }
+    if let Some(decal) = &component.decal {
+        entity.insert(decal.runtime(lookups.owned_materials[decal.material]));
+    }
+    if let Some(floating) = source.floating {
+        entity.insert(floating);
+    }
+    if let Some(deformer) = source.deformer {
+        entity.insert(deformer);
+    }
+    if let Some(grounded) = source.grounded {
+        entity.insert(grounded);
+    }
+    if let Some(spline) = &source.spline {
+        entity.insert(spline.runtime(
+            lookups.meshes[spline.mesh.as_str()],
+            lookups.materials[spline.material.as_str()],
+        ));
+    }
+    if let Some(probe) = component.probe {
+        entity.insert(probe);
+    }
+    if let Some(terrain) = &component.terrain {
+        entity.insert(terrain.runtime(&lookups.owned_materials, &lookups.owned_meshes));
+    }
+    entity.id()
+}
+
+/// Gives the `rigged` entities their animation players and skins, which
+/// name other entities by expanded index (`entity_of` finds them);
+/// animated targets present smoothly between fixed ticks.
+fn attach_rigs<'a>(
+    world: &mut World,
+    rigged: impl Iterator<Item = (&'a PreparedEntity, Entity)> + Clone,
+    entity_of: impl Fn(usize) -> Entity,
+    clips: &[ClipHandle],
+    skin_binds: &[Arc<[Mat4]>],
 ) {
-    for (component, &entity) in prepared.components.iter().zip(spawned) {
+    for (component, entity) in rigged.clone() {
         if let Some(player) = &component.player {
             for &target in &player.targets {
                 world
-                    .entity_mut(spawned[target])
+                    .entity_mut(entity_of(target))
                     .insert(InterpolateTransform);
             }
             world.entity_mut(entity).insert(AnimationPlayer {
-                clip: owned.clips[player.clip],
+                clip: clips[player.clip],
                 targets: player
                     .targets
                     .iter()
-                    .map(|&target| Some(spawned[target]))
+                    .map(|&target| Some(entity_of(target)))
                     .collect(),
                 time: player.time,
                 speed: player.speed,
@@ -448,12 +534,84 @@ fn attach_rigs(
             });
         }
     }
-    for (component, &entity) in prepared.components.iter().zip(spawned) {
+    for (component, entity) in rigged {
         if let Some(skin) = &component.skin {
             world.entity_mut(entity).insert(Skin::new(
-                skin.joints.iter().map(|&joint| spawned[joint]).collect(),
-                prepared.skin_binds[skin.skin].clone(),
+                skin.joints.iter().map(|&joint| entity_of(joint)).collect(),
+                skin_binds[skin.skin].clone(),
             ));
         }
+    }
+}
+
+/// An instance's streamed entities (decision 086), ready to spawn item by
+/// item with its assets' handles.
+struct StreamedScene {
+    lookups: Lookups,
+    prepared: PreparedStreamed,
+    skin_binds: Vec<Arc<[Mat4]>>,
+}
+
+/// One item of a [`StreamedScene`]: a streamed root and its descendants.
+struct StreamedTree {
+    scene: Arc<StreamedScene>,
+    item: usize,
+}
+
+impl Streamed for StreamedTree {
+    fn entities(&self) -> u32 {
+        self.scene.prepared.items[self.item].entities.len() as u32
+    }
+
+    fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>) {
+        let scene = &*self.scene;
+        let prepared = &scene.prepared;
+        let item = &prepared.items[self.item];
+        let mine: Vec<Entity> = item
+            .entities
+            .iter()
+            .map(|&index| {
+                spawn_entity(
+                    world,
+                    &scene.lookups,
+                    &prepared.entities[index],
+                    prepared.transforms[index],
+                    &prepared.components[index],
+                )
+            })
+            .collect();
+        // References stay within an item (validated).
+        let entity_of = |index: usize| {
+            mine[item
+                .entities
+                .iter()
+                .position(|&own| own == index)
+                .expect("references stay within an item")]
+        };
+        let parents: Vec<_> = item
+            .entities
+            .iter()
+            .zip(&mine)
+            .filter_map(|(&index, &entity)| {
+                prepared.parents[index].map(|parent| (entity, Some(entity_of(parent))))
+            })
+            .collect();
+        if set_parents(world, &parents).is_err() {
+            for entity in mine {
+                let _ = world.try_despawn(entity);
+            }
+            return;
+        }
+        attach_rigs(
+            world,
+            item.entities
+                .iter()
+                .zip(&mine)
+                .map(|(&index, &entity)| (&prepared.components[index], entity)),
+            entity_of,
+            &scene.lookups.clips,
+            &scene.skin_binds,
+        );
+        spawned.extend(mine);
     }
 }
