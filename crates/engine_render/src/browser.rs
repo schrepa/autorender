@@ -233,6 +233,9 @@ pub struct Renderer {
     // sky's.
     environment: Environment,
     probes: ProbePass,
+    // Clouds (decision 084): their dome, which the sky and its environment
+    // map show.
+    clouds: crate::clouds::CloudPass,
     // Virtual geometry (decision 044) and the visibility buffer resolving
     // its clusters (decision 045).
     virtual_draws: VirtualDraws,
@@ -432,10 +435,12 @@ impl Renderer {
             ),
             materials.layout(),
         );
+        let clouds = crate::clouds::CloudPass::new(&device, &queue);
         let environment = Environment::new(
             &device,
             &lighting_buffer,
             engine_core::ReflectionProbes::default().resolution,
+            clouds.dome(),
         );
         let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
         let terrain = crate::terrain::TerrainPass::new(&device, &queue);
@@ -515,6 +520,7 @@ impl Renderer {
             lights: None,
             environment,
             probes,
+            clouds,
             virtual_draws,
             visibility,
             impostors: ImpostorDraws {

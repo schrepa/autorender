@@ -234,7 +234,7 @@ impl Renderer {
         self.mesh_pipelines.sky[index] = Some(sky_pipeline(
             &self.device,
             &self.mesh_shader,
-            &self.camera.layout,
+            (&self.camera.layout, self.clouds.sky_layout()),
             fragment,
             &color_targets,
         ));
@@ -350,17 +350,18 @@ impl Renderer {
 }
 
 /// The sky pass of `fragment` into `targets`: one triangle at the far plane,
-/// tested but not written against depth, over the camera bindings.
+/// tested but not written against depth, over the camera bindings and the
+/// clouds' dome (decision 084).
 fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
-    camera_layout: &wgpu::BindGroupLayout,
+    (camera_layout, clouds_layout): (&wgpu::BindGroupLayout, &wgpu::BindGroupLayout),
     fragment: &str,
     targets: &[Option<wgpu::ColorTargetState>],
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("engine/sky-pipeline-layout"),
-        bind_group_layouts: &[Some(camera_layout)],
+        bind_group_layouts: &[Some(camera_layout), Some(clouds_layout)],
         immediate_size: 0,
     });
     crate::pipelines::fullscreen(

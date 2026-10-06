@@ -55,16 +55,26 @@ pub(crate) struct Environment {
     layouts: Layouts,
     sky_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
-    // The atmosphere values the sky map was drawn with.
-    drawn: Option<[[f32; 4]; 5]>,
+    // The lighting uniform the sky reads, and the clouds' dome its group
+    // binds (decision 084).
+    lighting: wgpu::Buffer,
+    clouds: (u64, bool),
+    // The atmosphere and clouds values the sky map was drawn with.
+    drawn: Option<[[f32; 4]; 6]>,
     // Advances whenever the maps are replaced: groups binding them rebuild.
     generation: u64,
 }
 
 impl Environment {
     /// Maps of `size` texels a face holding the sky, drawn with the
-    /// atmosphere of the uniform buffer `lighting`.
-    pub(crate) fn new(device: &wgpu::Device, lighting: &wgpu::Buffer, size: u32) -> Self {
+    /// atmosphere of the uniform buffer `lighting` behind the clouds' dome
+    /// `clouds` (its view, sampler and key).
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        lighting: &wgpu::Buffer,
+        size: u32,
+        clouds: (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
+    ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/environment.wgsl"),
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
@@ -111,13 +121,7 @@ impl Environment {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let sky_group = crate::pipelines::group(
-            device,
-            "engine/environment-sky-group",
-            &ENVIRONMENT_SKY,
-            &layouts.sky,
-            &[("lighting", lighting.as_entire_binding())],
-        );
+        let sky_group = sky_group(device, &layouts.sky, lighting, clouds);
         let maps = create_maps(device, (&layouts, &sampler), size, 1);
         Self {
             maps,
@@ -127,8 +131,23 @@ impl Environment {
             layouts,
             sky_group,
             sampler,
+            lighting: lighting.clone(),
+            clouds: clouds.2,
             drawn: None,
             generation: 0,
+        }
+    }
+
+    /// Binds the clouds' dome `clouds` (its view, sampler and key) to the
+    /// sky's group unless it already is.
+    pub(crate) fn set_clouds(
+        &mut self,
+        device: &wgpu::Device,
+        clouds: (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
+    ) {
+        if self.clouds != clouds.2 {
+            self.sky_group = sky_group(device, &self.layouts.sky, &self.lighting, clouds);
+            self.clouds = clouds.2;
         }
     }
 
@@ -201,19 +220,30 @@ impl Environment {
     }
 
     /// Whether [`Self::ensure`] with `size` and `cubes` or
-    /// [`Self::encode_sky`] with `lighting` would record commands.
-    pub(crate) fn needs_encoding(&self, size: u32, cubes: u32, lighting: &LightingUniform) -> bool {
-        self.maps.size != size || self.maps.cubes != cubes || self.drawn != Some(sky(lighting))
+    /// [`Self::encode_sky`] with `lighting` and `clouds` would record
+    /// commands.
+    pub(crate) fn needs_encoding(
+        &self,
+        size: u32,
+        cubes: u32,
+        lighting: &LightingUniform,
+        clouds: [f32; 4],
+    ) -> bool {
+        self.maps.size != size
+            || self.maps.cubes != cubes
+            || self.drawn != Some(sky(lighting, clouds))
     }
 
-    /// Records the sky map's redraw when `lighting`'s sky differs from the
-    /// one it holds; returns whether it did.
+    /// Records the sky map's redraw when `lighting`'s sky or the clouds'
+    /// key `clouds` (decision 084) differ from those it holds; returns
+    /// whether it did.
     pub(crate) fn encode_sky(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         lighting: &LightingUniform,
+        clouds: [f32; 4],
     ) -> bool {
-        let sky = sky(lighting);
+        let sky = sky(lighting, clouds);
         if self.drawn == Some(sky) {
             return false;
         }
@@ -426,13 +456,37 @@ fn faces_pass(
     pass.draw(0..3, item..item + 1);
 }
 
-/// The parts of `lighting` the sky map draws from.
-fn sky(lighting: &LightingUniform) -> [[f32; 4]; 5] {
+/// The parts of `lighting` the sky map draws from, and the clouds' key.
+fn sky(lighting: &LightingUniform, clouds: [f32; 4]) -> [[f32; 4]; 6] {
     [
         lighting.sun,
         lighting.sun_color,
         lighting.zenith,
         lighting.horizon,
         lighting.ground,
+        clouds,
     ]
+}
+
+/// The sky's group: the lighting uniform and the clouds' dome.
+fn sky_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    lighting: &wgpu::Buffer,
+    (view, sampler, _): (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
+) -> wgpu::BindGroup {
+    crate::pipelines::group(
+        device,
+        "engine/environment-sky-group",
+        &ENVIRONMENT_SKY,
+        layout,
+        &[
+            ("lighting", lighting.as_entire_binding()),
+            ("environment_clouds", crate::pipelines::view(view)),
+            (
+                "environment_cloud_sampler",
+                crate::pipelines::sampler(sampler),
+            ),
+        ],
+    )
 }

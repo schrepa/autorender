@@ -34,6 +34,8 @@ pub(super) struct CameraBindings {
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) buffer: wgpu::Buffer,
     lighting_buffer: wgpu::Buffer,
+    /// Clouds' shadows (decision 084), copied in by the clouds' pass.
+    pub(super) cloud_shadows: wgpu::Buffer,
     // The scene's atmosphere (decision 018), written when it changes.
     lighting: Option<LightingUniform>,
     // The group, for the shadow maps, environment maps and probe grid of
@@ -66,6 +68,7 @@ impl CameraBindings {
             size_of::<CameraUniform>() as u64,
         );
         let layout = crate::pipelines::layout(device, &CAMERA);
+        let cloud_shadows = crate::clouds::shadow_uniform(device, queue);
         let refraction_texture = crate::targets::texel(
             device,
             queue,
@@ -84,7 +87,7 @@ impl CameraBindings {
         let group = camera_group(
             device,
             &layout,
-            (&buffer, &lighting_buffer),
+            (&buffer, &lighting_buffer, &cloud_shadows),
             (&refraction_fallback, &refraction_sampler),
             sources,
         );
@@ -92,6 +95,7 @@ impl CameraBindings {
             layout,
             buffer,
             lighting_buffer,
+            cloud_shadows,
             lighting: None,
             group,
             key: sources.key(),
@@ -123,7 +127,7 @@ impl CameraBindings {
         self.group = camera_group(
             device,
             &self.layout,
-            (&self.buffer, &self.lighting_buffer),
+            (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
             (&self.refraction_fallback, &self.refraction_sampler),
             sources,
         );
@@ -144,7 +148,7 @@ impl CameraBindings {
             let group = camera_group(
                 device,
                 &self.layout,
-                (&self.buffer, &self.lighting_buffer),
+                (&self.buffer, &self.lighting_buffer, &self.cloud_shadows),
                 (scene, &self.refraction_sampler),
                 sources,
             );
@@ -170,7 +174,11 @@ impl CameraBindings {
                     camera_group(
                         device,
                         &self.layout,
-                        (sources.probes.camera(face), &self.lighting_buffer),
+                        (
+                            sources.probes.camera(face),
+                            &self.lighting_buffer,
+                            &self.cloud_shadows,
+                        ),
                         (&self.refraction_fallback, &self.refraction_sampler),
                         sources,
                     )
@@ -193,7 +201,7 @@ impl CameraBindings {
 fn camera_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    (camera, lighting): (&wgpu::Buffer, &wgpu::Buffer),
+    (camera, lighting, cloud_shadows): (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer),
     (refraction, refraction_sampler): (&wgpu::TextureView, &wgpu::Sampler),
     sources: &GroupSources<'_>,
 ) -> wgpu::BindGroup {
@@ -233,6 +241,7 @@ fn camera_group(
             ("occupancy_coverage", crate::pipelines::view(coverage)),
             ("occupancy_heights", crate::pipelines::view(heights)),
             levels,
+            ("cloud_shadows", cloud_shadows.as_entire_binding()),
         ],
     )
 }

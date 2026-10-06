@@ -15,6 +15,25 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     return output;
 }
 
+// The clouds' dome (decision 084) and its sampler: a clear one without
+// clouds.
+@group(1) @binding(38) var sky_clouds: texture_2d<f32>;
+@group(1) @binding(39) var sky_cloud_sampler: sampler;
+
+// The clouds along `ray`: their light and the share of the sky passing.
+fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
+    return textureSampleLevel(sky_clouds, sky_cloud_sampler, cloud_dome_uv(ray), 0.0);
+}
+
+// The sky along `ray` behind its clouds; under the sea, the water's light.
+fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
+    let light = sky(ray);
+    if lighting.underwater.w > 0.0 {
+        return light;
+    }
+    return behind_clouds(light, sky_cloud(ray), ray);
+}
+
 // The view ray through unjittered `ndc`.
 fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
     let far = camera.inverse_view_projection * vec4<f32>(ndc, 0.0, 1.0);
@@ -23,7 +42,7 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(grade(sky(sky_ray(input.ndc)))), 1.0);
+    return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc)))), 1.0);
 }
 
 // Reflection probe captures (decision 043): the sky's haze without the sun's
@@ -31,7 +50,8 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
 // highlights themselves).
 @fragment
 fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(haze(sky_ray(input.ndc)), 1.0);
+    let ray = sky_ray(input.ndc);
+    return vec4<f32>(behind_clouds(haze(ray), sky_cloud(ray), ray), 1.0);
 }
 
 // The sky's surface texel: facing up, fully rough (it reflects nothing).
@@ -40,7 +60,7 @@ const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
 // Screen-effect frames: the sky has no ambient occlusion; its sun glows.
 @fragment
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
-    let light = sky(sky_ray(input.ndc));
+    let light = clouded_sky(sky_ray(input.ndc));
     var targets: SceneTargets;
     targets.color = vec4<f32>(grade(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
@@ -52,7 +72,7 @@ fn fs_sky_post(input: SkyOutput) -> SceneTargets {
 @fragment
 fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     let ray = sky_ray(input.ndc);
-    let light = sky(ray);
+    let light = clouded_sky(ray);
     var targets: TemporalTargets;
     targets.color = vec4<f32>(grade(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);

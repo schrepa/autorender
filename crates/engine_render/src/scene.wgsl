@@ -65,6 +65,11 @@ struct Lighting {
     // The sea: its still level, the meters through which half the light
     // passes, and 1 while it stands.
     sea: vec4<f32>,
+    // Clouds' shadows (decision 084): the grid's first cell's corner (x and
+    // z), cells per meter and the shadows' strength (0 without clouds);
+    // then the clouds' base height.
+    cloud_shadow: vec4<f32>,
+    cloud_layer: vec4<f32>,
 }
 // Sun shadows (decisions 020 and 028): world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -258,6 +263,28 @@ fn underwater_light(direction: vec3<f32>) -> vec3<f32> {
 fn open_sky(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
     return haze(direction) + lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));
+}
+
+// Rays below the horizon by this much (the sine of their elevation) see no
+// clouds (decision 084; `clouds.wgsl`'s `HORIZON`).
+const CLOUD_HORIZON: f32 = 0.05;
+
+// The clouds' dome texel looking along `direction`: around by its azimuth,
+// up by its elevation above `-asin(CLOUD_HORIZON)`, every row as many
+// degrees.
+fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
+    let around = atan2(direction.z, direction.x) * (1.0 / 6.2831853);
+    let low = -asin(CLOUD_HORIZON);
+    let elevation = asin(clamp(direction.y, -1.0, 1.0));
+    return vec2<f32>(fract(around), saturate((elevation - low) / (1.5707963 - low)));
+}
+
+// `light` from the sky along `direction` behind the dome's `cloud`: the
+// light it scatters toward the eye, over the share of the sky passing it;
+// none below the horizon.
+fn behind_clouds(light: vec3<f32>, cloud: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
+    let shown = smoothstep(-CLOUD_HORIZON, -0.4 * CLOUD_HORIZON, direction.y);
+    return mix(light, light * cloud.a + cloud.rgb, shown);
 }
 
 // How much of what lies `distance` meters away the sea's water hides from
@@ -648,14 +675,54 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
 // that what the shadow maps leave. `on_terrain`: the point is terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32, on_terrain: bool) -> f32 {
+    // Clouds shade whatever else does (decision 084).
+    let clouds = cloud_passing(world);
     if shadow.state.x == 0.0 {
-        return 1.0;
+        return clouds;
     }
     let terrain = terrain_visibility(world, on_terrain);
     if terrain <= 0.0 {
         return 0.0;
     }
-    return min(terrain, map_visibility(world, normal, dx, dy, distance));
+    return min(terrain, map_visibility(world, normal, dx, dy, distance)) * clouds;
+}
+
+// Clouds' shadows (decision 084): CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS
+// cells of the sunlight passing the cloud layer up from its base, two cells
+// along x a word in half floats.
+const CLOUD_SHADOW_CELLS: u32 = 128u;
+@group(0) @binding(19) var<uniform> cloud_shadows: array<vec4<u32>, 2048>;
+
+fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
+    let index = z * CLOUD_SHADOW_CELLS + x;
+    let word = index / 2u;
+    return unpack2x16float(cloud_shadows[word / 4u][word % 4u])[index % 2u];
+}
+
+// The share of the sun's light the clouds let through to `world`: from the
+// grid where the sun's ray from it meets the clouds' base, fading to all of
+// it toward the grid's edges.
+fn cloud_passing(world: vec3<f32>) -> f32 {
+    let strength = lighting.cloud_shadow.w;
+    if strength <= 0.0 || lighting.sun.y <= 0.01 {
+        return 1.0;
+    }
+    let rise = max(lighting.cloud_layer.x - world.y, 0.0);
+    let base = world.xz + lighting.sun.xz * (rise / lighting.sun.y);
+    let size = f32(CLOUD_SHADOW_CELLS);
+    let local = (base - lighting.cloud_shadow.xy) * lighting.cloud_shadow.z - 0.5;
+    if any(local < vec2<f32>(0.0)) || any(local > vec2<f32>(size - 1.0)) {
+        return 1.0;
+    }
+    let first = vec2<u32>(floor(local));
+    let last = min(first + vec2<u32>(1u), vec2<u32>(CLOUD_SHADOW_CELLS - 1u));
+    let f = local - floor(local);
+    let passing = mix(
+        mix(cloud_shadow_cell(first.x, first.y), cloud_shadow_cell(last.x, first.y), f.x),
+        mix(cloud_shadow_cell(first.x, last.y), cloud_shadow_cell(last.x, last.y), f.x), f.y);
+    let edge = min(local, vec2<f32>(size - 1.0) - local) / (0.1 * size);
+    let fade = smoothstep(0.0, 1.0, saturate(min(edge.x, edge.y)));
+    return mix(1.0, passing, strength * fade);
 }
 
 // Visibility of the sun at `world` in the shadow maps. Near cascades cover

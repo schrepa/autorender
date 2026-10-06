@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
-    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Deformation, GroundCover,
+    AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
     LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
     Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
@@ -63,6 +63,7 @@ pub struct Environment {
     pub water: Water,
     pub ocean: Ocean,
     pub deformation: Deformation,
+    pub clouds: Clouds,
 }
 
 impl Environment {
@@ -209,6 +210,13 @@ impl Environment {
                     ..Deformation::default()
                 },
             ),
+            clouds: read(
+                world,
+                Clouds {
+                    enabled: false,
+                    ..Clouds::default()
+                },
+            ),
         }
     }
 
@@ -236,6 +244,7 @@ impl Environment {
             water: self.water.sanitized(),
             ocean: self.ocean.sanitized(),
             deformation: self.deformation.sanitized(),
+            clouds: self.clouds.sanitized(),
         }
     }
 }

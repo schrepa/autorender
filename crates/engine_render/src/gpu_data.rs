@@ -136,6 +136,11 @@ pub(crate) struct LightingUniform {
     /// half the light passes, and 1 while it stands (0 without one); w
     /// unused.
     pub sea: [f32; 4],
+    /// Clouds' shadows (decision 084): the grid's first cell's corner (x
+    /// and z), cells per meter and the shadows' strength (0 without
+    /// clouds); then the clouds' base height.
+    pub cloud_shadow: [f32; 4],
+    pub cloud_layer: [f32; 4],
 }
 
 /// Weight of the grade's S-curve for `contrast`: the shader mixes a
@@ -209,6 +214,8 @@ impl LightingUniform {
             occupancy_heights: [0.0; 4],
             underwater: [0.0; 4],
             sea: [0.0; 4],
+            cloud_shadow: [0.0; 4],
+            cloud_layer: [0.0; 4],
         }
     }
 }
@@ -413,6 +420,8 @@ pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
 pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
 
 pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
+
+pub(crate) const CLOUDS_SHADER: &str = include_str!("clouds.wgsl");
 /// Placed objects' culling (decision 057).
 pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 

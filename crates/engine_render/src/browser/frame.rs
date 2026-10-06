@@ -623,6 +623,9 @@ impl Renderer {
         if ocean.enabled {
             lighting.sea = [ocean.level, ocean.clarity, 1.0, 0.0];
         }
+        // Clouds' shadows (decision 084) on everything the sun lights.
+        (lighting.cloud_shadow, lighting.cloud_layer) =
+            crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
         // What placed objects cover around the camera (decision 059): the
         // map shading reads, drawn this frame when it no longer holds the
         // camera's surroundings or the objects changed.
@@ -759,6 +762,22 @@ impl Renderer {
             gpu_prepared,
         } = self.prepare_presentation(frame, gpu, kind, temporal_frame);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
+        // Clouds (decision 084): this frame's march of their dome, which the
+        // sky and its environment map show; exact frames march all of it.
+        self.clouds.prepare(
+            &self.device,
+            &self.queue,
+            (
+                &snapshot.environment.clouds,
+                snapshot.camera_position,
+                snapshot.presented_seconds,
+            ),
+            lighting,
+            !kind.gpu_mode,
+        );
+        self.clouds.prepare_sky_group(&self.device);
+        self.environment
+            .set_clouds(&self.device, self.clouds.dome());
         let (environment_encoder, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
@@ -1022,9 +1041,10 @@ impl Renderer {
             self.environment.cubes()
         };
         // Frames whose maps and sky stand record nothing here.
+        let clouds = self.clouds.environment_key();
         let mut environment_encoder = self
             .environment
-            .needs_encoding(probe_settings.resolution, cubes, lighting)
+            .needs_encoding(probe_settings.resolution, cubes, lighting, clouds)
             .then(|| {
                 self.device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1035,7 +1055,7 @@ impl Renderer {
             Some(encoder) => (
                 self.environment
                     .ensure(&self.device, encoder, probe_settings.resolution, cubes),
-                self.environment.encode_sky(encoder, lighting),
+                self.environment.encode_sky(encoder, lighting, clouds),
             ),
             None => (false, false),
         };
@@ -1496,6 +1516,12 @@ impl Renderer {
                 // ground cover grows on the terrain, before the first phase
                 // draws them (decision 056).
                 if phase == 0 {
+                    self.clouds.encode(
+                        &self.device,
+                        encoder,
+                        &self.camera.cloud_shadows,
+                        &self.profiler,
+                    );
                     self.terrain.deformation.encode(
                         &self.device,
                         &self.queue,
@@ -1809,6 +1835,7 @@ impl Renderer {
         if phase + 1 == phases && !resolve_phase {
             pass.set_pipeline(self.sky_pipeline(state));
             pass.set_bind_group(0, &self.camera.group, &[]);
+            pass.set_bind_group(1, self.clouds.sky_group(), &[]);
             pass.draw(0..3, 0..1);
         }
         draws
@@ -2101,6 +2128,7 @@ impl Renderer {
         if phase + 1 == phases {
             pass.set_pipeline(self.sky_pipeline(state));
             pass.set_bind_group(0, &self.camera.group, &[]);
+            pass.set_bind_group(1, self.clouds.sky_group(), &[]);
             pass.draw(0..3, 0..1);
         }
     }

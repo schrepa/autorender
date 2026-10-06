@@ -8,6 +8,7 @@ mod animation;
 mod atmosphere;
 mod bridges;
 mod clock;
+mod clouds;
 mod contact_shadows;
 mod culling;
 mod decals;
@@ -45,6 +46,7 @@ pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
+pub use clouds::Clouds;
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
 pub use deformation::{
@@ -896,9 +898,9 @@ pub mod prelude {
         SurfaceProjection, Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource,
         TerrainSurface, Terrains, TileKey, Viewport,
     };
+    pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
-    pub use crate::{Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
         Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,
