@@ -150,6 +150,9 @@ pub struct WaterGrid {
 const RIVER_FILL: f32 = 0.7;
 /// Samples past the shore water's surface reaches under the banks.
 const SHORE_SAMPLES: usize = 2;
+/// Meters below the water a dry sample's ground may stand and still take
+/// its level.
+const SHORE_DROP: f32 = 0.5;
 /// Meters below the ground dry samples' surfaces lie.
 const DRY_DEPTH: f32 = 20.0;
 
@@ -694,7 +697,11 @@ fn water(
         }
     }
     // Depths over the carved ground, then surfaces reaching past the
-    // shore: dry samples beside water take its level, a sample at a time.
+    // shore: dry samples beside water take its level, a sample at a time,
+    // where their ground stands about as high, so it hides them. Ground
+    // falling away below the water (where lakes spill and rivers leave
+    // terrain's water for the sea) takes none: a surface reaching over it
+    // would stand in the air.
     let depth: Vec<f32> = (0..count)
         .map(|sample| {
             if surface[sample].is_nan() {
@@ -717,7 +724,11 @@ fn water(
                     continue;
                 }
                 let neighbor = previous[nz as usize * width + nx as usize];
-                if !neighbor.is_nan() && (level.is_nan() || neighbor > *level) {
+                let ground = heights[sample] - carve[sample];
+                if !neighbor.is_nan()
+                    && ground >= neighbor - SHORE_DROP
+                    && (level.is_nan() || neighbor > *level)
+                {
                     *level = neighbor;
                 }
             }
