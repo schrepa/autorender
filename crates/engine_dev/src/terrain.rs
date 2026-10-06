@@ -35,6 +35,7 @@ pub(crate) fn terrain_request(request: &DevRequest) -> bool {
             | DevRequest::TerrainSweep { .. }
             | DevRequest::TerrainRoute { .. }
             | DevRequest::WaterQuery { .. }
+            | DevRequest::NavPath { .. }
     )
 }
 
@@ -321,6 +322,40 @@ pub(crate) fn execute(
                 })
                 .collect::<Result<Vec<_>, DevError>>()?;
             Ok(json!({"samples": samples, "stats": terrains.stats()}))
+        }
+        DevRequest::NavPath {
+            from, to, options, ..
+        } => {
+            let from = Vec2::new(
+                coordinate(from[0], "$.from[0]")?,
+                coordinate(from[1], "$.from[1]")?,
+            );
+            let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
+            let options = options.unwrap_or_default();
+            options.validate().map_err(|(field, rule)| {
+                DevError::new("invalid_request", format!("$.options.{field}"), rule)
+            })?;
+            let world = engine.app.world_mut();
+            let entity = world
+                .query::<(Entity, &Terrain)>()
+                .iter(world)
+                .find(|(_, terrain)| matches!(terrain.source, TerrainSource::Generated(_)))
+                .map(|(entity, _)| entity)
+                .ok_or_else(|| DevError::new("not_found", "$", "no generated terrain"))?;
+            let walk = world
+                .resource::<Terrains>()
+                .walk(entity, from, to, &options);
+            let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
+            Ok(json!({
+                "terrain": terrain_id(world, entity),
+                "options": options,
+                "walk": walk.map(|walk| json!({
+                    "points": walk.points.iter().map(|point| point.map(round)).collect::<Vec<_>>(),
+                    "length": walk.length,
+                    "level": walk.level,
+                    "searched": walk.searched,
+                })),
+            }))
         }
         DevRequest::WaterQuery {
             points, seconds, ..

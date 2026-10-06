@@ -779,7 +779,8 @@ impl DevTools {
             | DevRequest::TerrainHeight { .. }
             | DevRequest::TerrainSweep { .. }
             | DevRequest::TerrainRoute { .. }
-            | DevRequest::WaterQuery { .. } => unreachable!("spatial requests return above"),
+            | DevRequest::WaterQuery { .. }
+            | DevRequest::NavPath { .. } => unreachable!("spatial requests return above"),
         }
     }
 

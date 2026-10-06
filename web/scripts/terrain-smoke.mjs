@@ -589,6 +589,22 @@ try {
     await until(authored, "the fixture is left as authored");
     checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
   }
+  // Walks (decision 081) cross ground an agent stands on: around a hole
+  // cut across the straight line, never into it, and longer than the
+  // straight line; options out of range are refused.
+  {
+    const [start, end] = [[-300, -250], [-100, -250]];
+    await command("terrain_edit", { id: "smoke-pit", center: [-200, -250], radius: 18, change: "hole" });
+    const walked = (await command("nav_path", { from: start, to: end })).result.walk;
+    assert.ok(walked && walked.points.length > 2, `a walk reaches: ${JSON.stringify(walked)?.slice(0, 300)}`);
+    const straight = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    const clear = walked.points.every(([x, , z]) => Math.hypot(x + 200, z + 250) > 18);
+    assert.ok(clear && walked.length > straight, `the walk goes around the hole: ${walked.length} m against ${straight} m`);
+    const steep = await command("nav_path", { from: start, to: end, options: { max_slope: 0 } }, false);
+    assert.equal(steep.error.path, "$.options.max_slope");
+    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
+    checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
+  }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's

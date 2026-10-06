@@ -91,6 +91,24 @@ pub enum DevRequest {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
         points: Vec<[f64; 2]>,
     },
+    /// The shortest walk over a generated terrain from world `from` to `to`
+    /// `[x, z]` (decision 081): across ground an agent stands on (no holes,
+    /// no water deeper than `max_water`, no closer than `radius` to placed
+    /// objects that collide on resident tiles), each step no steeper than
+    /// `max_slope` (rise per meter), pulled taut and following the ground.
+    /// It walks pyramid `level` (0 by default) unless the area within
+    /// `margin` meters of the ends holds more than `max_samples` samples,
+    /// then the finest level within. Returns its points (world, rounded to
+    /// centimeters), length, the level walked and samples searched, or a
+    /// null walk where none reaches. Defaults: max_slope 0.8, radius 0.5,
+    /// max_water 0.6, margin 96, max_samples 1048576.
+    NavPath {
+        version: u32,
+        from: [f64; 2],
+        to: [f64; 2],
+        #[serde(default)]
+        options: Option<engine_core::terrain_data::NavOptions>,
+    },
     /// The sea's surface (decision 076) over world points `[x, z]`, 1 to
     /// 256, at simulation time `seconds` (by default the time the last frame
     /// presented, decision 077), as frames draw it: its height, normal, how much the waves
@@ -271,6 +289,7 @@ impl DevRequest {
             | Self::TerrainSweep { version, .. }
             | Self::TerrainRoute { version, .. }
             | Self::WaterQuery { version, .. }
+            | Self::NavPath { version, .. }
             | Self::CollisionEvents { version, .. } => *version,
         }
     }

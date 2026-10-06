@@ -35,9 +35,10 @@ use serde::{Deserialize, Serialize};
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, Fall,
-    FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask,
-    Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS,
-    TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, decode_tile,
+    FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions,
+    NavPath, NoiseMask, Obstacle, Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection,
+    Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile,
+    decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -1047,6 +1048,61 @@ impl Terrains {
         }
         let stamps: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
         Some(base.with_stamps(&stamps).map_or(base, Arc::new))
+    }
+
+    /// The shortest walk over `entity`'s generated terrain from world
+    /// `from` to `to` (x and z) as `options` walk (decision 081): around the
+    /// placed objects that collide on its resident tiles, their footprints
+    /// widened by the agent's radius, its points world and following the
+    /// ground. `None` for terrains read from files and where no walk
+    /// reaches. Its work grows with the area around the ends: for planning,
+    /// not every frame.
+    pub fn walk(
+        &self,
+        entity: Entity,
+        from: Vec2,
+        to: Vec2,
+        options: &NavOptions,
+    ) -> Option<NavPath> {
+        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        let layers = self.layers(entity)?;
+        let origin = state.terrain.origin;
+        let corner = Vec2::new(origin.x, origin.z);
+        let assets = &state.terrain.surface.assets;
+        let obstacles: Vec<Obstacle> = state
+            .tiles
+            .values()
+            .flat_map(|tile| tile.placed().iter())
+            .filter_map(|placed| {
+                let collider = assets.get(usize::from(placed.asset))?.collider?;
+                let reach = match collider.shape {
+                    PlacedShape::Sphere { radius } => radius,
+                    PlacedShape::Cuboid { half_extents } => {
+                        crate::math::max(half_extents[0], half_extents[2])
+                    }
+                };
+                Some(Obstacle {
+                    center: Vec2::new(placed.position[0], placed.position[2]),
+                    radius: reach * placed.scale,
+                })
+            })
+            .collect();
+        let mut path = engine_terrain::walk(
+            &layers,
+            &state.terrain.pyramid,
+            from - corner,
+            to - corner,
+            &obstacles,
+            options,
+        )?;
+        for point in &mut path.points {
+            *point = [
+                point[0] + origin.x,
+                point[1] + origin.y,
+                point[2] + origin.z,
+            ];
+        }
+        Some(path)
     }
 
     /// The cheapest route over `entity`'s generated terrain from world
