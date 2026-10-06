@@ -158,6 +158,8 @@ pub struct Biomes {
     pub biomes: Vec<Biome>,
     pub assets: Vec<String>,
     pub placements: Vec<crate::PlacementLayer>,
+    /// Objects authors stand on it (decision 085).
+    pub placed: Vec<crate::AuthoredPlacement>,
 }
 
 /// What a surface refused: the path of the offending value and why.
@@ -445,6 +447,7 @@ pub struct BiomeRules {
     biomes: Vec<CompiledBiome>,
     cost: u64,
     placements: Vec<crate::placement::CompiledPlacement>,
+    placed: Vec<crate::placement::CompiledAuthored>,
 }
 
 /// A sample's control value: the material weighing most (`a`), the one
@@ -538,11 +541,14 @@ impl Biomes {
             .sum::<u64>();
         let placements = crate::placement::compile(&self.placements, &self.materials, &self.assets)
             .map_err(|(path, rule)| BiomeError { path, rule })?;
+        let placed = crate::placement::compile_authored(&self.placed, &self.assets)
+            .map_err(|(path, rule)| BiomeError { path, rule })?;
         Ok(BiomeRules {
             authored: self.clone(),
             biomes,
             cost,
             placements,
+            placed,
         })
     }
 }
@@ -553,11 +559,19 @@ impl BiomeRules {
         &self.authored
     }
 
-    /// Whether any placement layer stands objects on tiles of `level`.
+    /// Whether any placement layer or authored object (decision 085)
+    /// stands on tiles of `level`.
     pub fn places_on(&self, level: u8) -> bool {
         self.placements
             .iter()
             .any(|layer| layer.level == level || layer.far.is_some_and(|(far, _)| far == level))
+            || self.placed.iter().any(|object| object.level == level)
+    }
+
+    /// The authored objects (decision 085) standing on `tile`, appended to
+    /// `out`; returns the work it took.
+    pub fn place_authored(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) -> u64 {
+        crate::placement::place_authored(&self.placed, tile, out)
     }
 
     /// The objects row `row` of placement layer `layer`'s candidate squares

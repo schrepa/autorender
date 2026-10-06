@@ -650,7 +650,14 @@ pub(crate) fn populate(
         cave_mouth[0] - half,
         cave_mouth[1] - half,
     )));
-    let surface = surface(world, files)?;
+    // A ring of megaliths authors stood round the hamlet just inside
+    // its plateau's edge (decision 085), open where the roads come through.
+    let roads = [
+        ROAD.to_vec(),
+        WEST_ROAD.to_vec(),
+        EAST_ROAD.map(local).to_vec(),
+    ];
+    let surface = surface(world, files, plateau_ring(plateau, hamlet - 8.0, &roads))?;
     world.spawn(
         Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
     );
@@ -663,11 +670,50 @@ pub(crate) fn populate(
     ))
 }
 
+/// Stones authors stand round `center` (terrain-local) `radius` meters out
+/// (decision 085): a block of the cliffs' rock every seven meters, turned
+/// along the ring and varied in size, none within twelve meters of a road
+/// in `roads`.
+fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<AuthoredPlacement> {
+    let distance = |point: Vec2, from: Vec2, to: Vec2| {
+        let along = to - from;
+        let t = math::clamp(
+            (point - from).dot(along) / math::max(along.length_squared(), 1.0e-6),
+            0.0,
+            1.0,
+        );
+        point.distance(from + along * t)
+    };
+    let count = (std::f32::consts::TAU * radius / 7.0).round() as usize;
+    (0..count)
+        .filter_map(|index| {
+            let angle = index as f32 / count as f32 * std::f32::consts::TAU;
+            let (sin, cos) = math::sin_cos(angle);
+            let point = Vec2::new(center[0] + cos * radius, center[1] + sin * radius);
+            let near_road = roads.iter().any(|road| {
+                road.windows(2)
+                    .any(|pair| distance(point, Vec2::from(pair[0]), Vec2::from(pair[1])) < 12.0)
+            });
+            (!near_road).then(|| AuthoredPlacement {
+                asset: format!("cliff{}", index % CLIFFS),
+                position: point.to_array(),
+                yaw: 90.0 - angle.to_degrees(),
+                scale: 2.0 + 1.2 * ((index * 7919) % 13) as f32 / 12.0,
+                sink: 0.0,
+                align: 0.3,
+                level: 0,
+            })
+        })
+        .collect()
+}
+
 /// The highlands' surface: its rules over [`LOOKS`], each material textured
-/// by its maps when `files` holds them.
+/// by its maps when `files` holds them, and the objects authors stand on it
+/// (decision 085).
 fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
+    authored: Vec<AuthoredPlacement>,
 ) -> Result<TerrainSurface, String> {
     let mut assets = world.resource_mut::<AssetLibrary>();
     let mut materials = Vec::with_capacity(LOOKS.len());
@@ -865,13 +911,19 @@ fn surface(
         wall: cave_wall,
     });
     // Bridges (decision 072) are built of the boulders' weathered stone.
-    TerrainSurface::new(&rules(), materials)
-        .and_then(|surface| surface.with_assets(placed))
-        .map(|surface| TerrainSurface {
-            bridge: Some(rock),
-            ..surface
-        })
-        .map_err(|error| error.to_string())
+    TerrainSurface::new(
+        &Biomes {
+            placed: authored,
+            ..rules()
+        },
+        materials,
+    )
+    .and_then(|surface| surface.with_assets(placed))
+    .map(|surface| TerrainSurface {
+        bridge: Some(rock),
+        ..surface
+    })
+    .map_err(|error| error.to_string())
 }
 
 /// The cave's mouth (decision 079): the world point at its center, and the
@@ -1454,6 +1506,7 @@ fn rules() -> Biomes {
         // outcrops on rock, and spruce forests in broad stands below the
         // tree line on gentle ground, thinning at their edges: placed on
         // two-kilometer tiles, which stay resident farther away.
+        placed: Vec::new(),
         placements: vec![
             PlacementLayer {
                 id: "spruces".into(),

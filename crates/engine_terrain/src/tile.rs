@@ -590,6 +590,9 @@ impl Generator {
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },
                         None => {
+                            // Then what authors stand on it (decision 085).
+                            *budget = budget
+                                .saturating_sub(surface.place_authored(tile, &mut self.placed));
                             let tile = self.tile.take()?;
                             return Some(tile.with_placed(std::mem::take(&mut self.placed)));
                         }

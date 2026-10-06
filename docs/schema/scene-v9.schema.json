@@ -117,6 +117,55 @@
         "night"
       ]
     },
+    "AuthoredPlacement": {
+      "description": "An object an author stands on the surface (decision 085): its asset, by\nID of the surface's assets; its base's terrain-local point `[x, z]`,\nwhere it stands on the ground; its turn about the vertical (degrees);\nits scale (0.001 to 1000); how deep its base sinks, in meters at scale\n1; how far it leans with the ground (0 upright, 1 along its normal);\nand the pyramid level whose tiles hold it (0, the finest, by default;\ncoarser for objects seen from farther away).",
+      "type": "object",
+      "properties": {
+        "align": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "asset": {
+          "type": "string"
+        },
+        "level": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0
+        },
+        "position": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "scale": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.001
+        },
+        "sink": {
+          "type": "number",
+          "format": "float"
+        },
+        "yaw": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "asset",
+        "position"
+      ]
+    },
     "Biome": {
       "description": "A biome: where it applies (`fitness`, everywhere when omitted) and the\nlayers of its ground. Later biomes paint over earlier ones where they\nfit; the first covers wherever none of the others do.",
       "type": "object",
@@ -4055,6 +4104,13 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/SceneTerrainMaterial"
+          }
+        },
+        "placed": {
+          "description": "Objects authors stand on it (decision 085), each at its own point.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AuthoredPlacement"
           }
         },
         "placements": {

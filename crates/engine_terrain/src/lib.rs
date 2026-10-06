@@ -51,7 +51,9 @@ pub use path::{
     Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PORTAL_HEIGHT, PROFILE_STEP,
     PathLayer, PathProfile, PathSample, PathStats, Route, RouteOptions, route,
 };
-pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
+pub use placement::{
+    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Placed, PlacementChoice, PlacementLayer,
+};
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use select::{LodRanges, Patch, Selection, WantedTile, select_patches, wanted_tiles};
 pub use surface::{
