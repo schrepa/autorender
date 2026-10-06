@@ -36,9 +36,9 @@ use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, Fall,
     FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions,
-    NavPath, NoiseMask, Obstacle, Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection,
-    Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile,
-    decode_tile,
+    NavPath, NoiseMask, Obstacle, PATCH_QUADS, Patch, PathStage, Pyramid, Remap, Route,
+    RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake, Tile, TileKey,
+    TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -411,6 +411,92 @@ pub struct Terrain {
     /// order: replacing them regenerates only the tiles under the edits
     /// added or taken away.
     pub edits: Arc<[TerrainEdit]>,
+    /// Ground generated around it to the horizon (decision 094).
+    pub surroundings: Option<Surroundings>,
+}
+
+/// Ground generated past a terrain's edges to the horizon (decision 094):
+/// a coarser terrain around it from the same layers, its samples four
+/// times as far apart as the terrain's finest, reaching about `reach`
+/// meters past every edge (the terrain's inspection reports how far: its
+/// tiles align with the terrain's sample grids). Its stamps, heightmaps,
+/// bakes and roads fade into its noise over `blend` meters past the edges,
+/// so the two meet where the terrain ends; it never collides, places
+/// objects, grows blades or holds water. Terrains read from files have
+/// none.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Surroundings {
+    pub reach: f32,
+    pub blend: f32,
+}
+
+impl Surroundings {
+    /// The most meters surroundings reach past a terrain's edges or blend
+    /// over.
+    pub const MAX_REACH: f32 = 1.0e6;
+
+    /// Whether streaming can use them.
+    pub fn is_usable(&self) -> bool {
+        self.reach.is_finite()
+            && self.reach > 0.0
+            && self.reach <= Self::MAX_REACH
+            && self.blend.is_finite()
+            && (0.0..=Self::MAX_REACH).contains(&self.blend)
+    }
+
+    /// Where `terrain`'s surroundings lie: their origin, their pyramid and
+    /// the rectangle of their ground (local) the terrain covers. Their
+    /// tiles along a side are a power of two, as few as reach `reach` past
+    /// the terrain's widest side while the terrain's edges stay on the
+    /// edges of every level's patches, so the ground the terrain covers is
+    /// left whole patches and both draw the same samples where they meet;
+    /// `None` where no count fits.
+    pub fn layout(&self, terrain: &Terrain) -> Option<(Vec3, Pyramid, (Vec2, Vec2))> {
+        let base = terrain.pyramid;
+        let extent = base.extent();
+        let spacing = base.spacing(base.levels().saturating_sub(1).min(2));
+        let tile = TILE_QUADS as f32 * spacing;
+        let wanted = crate::math::max(extent.x, extent.y) + 2.0 * self.reach;
+        let mut tiles = ((wanted / tile).ceil() as u32)
+            .clamp(1, Pyramid::MAX_TILES)
+            .next_power_of_two()
+            .min(Pyramid::MAX_TILES);
+        let whole = |length: f32, unit: f32| {
+            let ratio = length / unit;
+            ratio >= 1.0 && ratio == ratio.floor()
+        };
+        while tiles >= 1 {
+            // The coarsest level's samples lie `tiles` times as far apart
+            // as the finest's, its patches sixteen of them across.
+            let patch = PATCH_QUADS as f32 * spacing * tiles as f32;
+            let offset = (Vec2::splat(tiles as f32 * tile) - extent) * 0.5;
+            if offset.x > 0.0
+                && offset.y > 0.0
+                && whole(offset.x, patch)
+                && whole(offset.y, patch)
+                && whole(extent.x, patch)
+                && whole(extent.y, patch)
+            {
+                let pyramid = Pyramid::new([tiles, tiles], spacing).ok()?;
+                let origin = terrain.origin - Vec3::new(offset.x, 0.0, offset.y);
+                return Some((origin, pyramid, (offset, offset + extent)));
+            }
+            tiles /= 2;
+        }
+        None
+    }
+}
+
+/// A terrain's surroundings as they stream (decision 094): how far they
+/// reach past its edges along x and z, their level-0 tiles along a side and
+/// sample spacing, and their resident tiles and the patches drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct SurroundingsStatus {
+    pub reach: [f32; 2],
+    pub tiles: u32,
+    pub spacing: f32,
+    pub resident_tiles: u32,
+    pub patches: u32,
 }
 
 /// One edit of a generated terrain (decision 080): a stamp over its layers
@@ -457,6 +543,7 @@ impl Terrain {
             surface: TerrainSurface::default(),
             collision: true,
             edits: Arc::from(Vec::new()),
+            surroundings: None,
         }
     }
 
@@ -474,6 +561,7 @@ impl Terrain {
             surface: TerrainSurface::default(),
             collision: true,
             edits: Arc::from(Vec::new()),
+            surroundings: None,
         }
     }
 
@@ -491,6 +579,7 @@ impl Terrain {
             surface: TerrainSurface::default(),
             collision: true,
             edits: Arc::from(Vec::new()),
+            surroundings: None,
         })
     }
 
@@ -501,6 +590,13 @@ impl Terrain {
 
     pub fn with_collision(mut self, collision: bool) -> Self {
         self.collision = collision;
+        self
+    }
+
+    /// The terrain with ground generated around it to the horizon
+    /// (decision 094).
+    pub fn with_surroundings(mut self, surroundings: Surroundings) -> Self {
+        self.surroundings = Some(surroundings);
         self
     }
 
@@ -622,6 +718,9 @@ pub struct TerrainSettings {
     pub relief_distance: f32,
     #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 64)))]
     pub relief_steps: u32,
+    /// Ground generated around terrains with surroundings (decision 094)
+    /// streams and draws; off, every terrain ends at its edges.
+    pub surroundings: bool,
 }
 
 impl Default for TerrainSettings {
@@ -640,6 +739,7 @@ impl Default for TerrainSettings {
             sky_resolution: 1024,
             relief_distance: 24.0,
             relief_steps: 8,
+            surroundings: true,
         }
     }
 }
@@ -712,6 +812,7 @@ impl TerrainSettings {
                 200.0,
             ),
             relief_steps: self.relief_steps.clamp(2, 64),
+            surroundings: self.surroundings,
         }
     }
 }
@@ -761,6 +862,10 @@ pub struct TerrainStats {
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
+    /// Of the resident tiles and patches, those of terrains' surroundings
+    /// (decision 094).
+    pub surroundings_tiles: u32,
+    pub surroundings_patches: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -809,6 +914,18 @@ struct TerrainState {
     /// resident tiles under edits since, which draw until regenerated.
     edited: Option<(Arc<Layers>, Arc<Layers>)>,
     stale: HashSet<TileKey>,
+    /// For a terrain's surroundings (decision 094), what they were drawn
+    /// from.
+    around: Option<Around>,
+}
+
+/// What a terrain's surroundings (decision 094) were drawn from: the layers
+/// its tiles generate from and its settings for them; and the rectangle of
+/// their own ground (local) the terrain covers.
+struct Around {
+    base: Arc<Layers>,
+    surroundings: Surroundings,
+    cutout: (Vec2, Vec2),
 }
 
 /// A terrain's bakes (decisions 066 and 068): whether one is in progress,
@@ -844,7 +961,23 @@ impl TerrainState {
             falls: Arc::from(Vec::new()),
             edited: None,
             stale: HashSet::new(),
+            around: None,
         }
+    }
+
+    /// The id renderers key its tiles by: its entity's bits, the top bit
+    /// flipped for surroundings (decision 094).
+    fn render_id(&self) -> u64 {
+        self.entity.to_bits() ^ (u64::from(self.around.is_some()) << 63)
+    }
+
+    /// Whether terrain-local `local` lies in the ground surroundings
+    /// (decision 094) leave to the terrain they surround.
+    fn cut_out(&self, local: Vec2) -> bool {
+        self.around.as_ref().is_some_and(|around| {
+            let (low, high) = around.cutout;
+            local.x > low.x && local.y > low.y && local.x < high.x && local.y < high.y
+        })
     }
 
     /// Takes `edits` in place of its own (decision 080): the resident tiles
@@ -973,6 +1106,9 @@ impl TerrainState {
     /// The finest resident tile holding terrain-local `local`, and its
     /// sample there.
     fn sample(&self, local: Vec2) -> Option<(u32, TileSample)> {
+        if self.cut_out(local) {
+            return None;
+        }
         let pyramid = &self.terrain.pyramid;
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
@@ -986,6 +1122,9 @@ impl TerrainState {
     /// (decision 083): its nearest sample's materials' blend, from the
     /// finest resident tile.
     fn deform(&self, local: Vec2) -> Option<f32> {
+        if self.cut_out(local) {
+            return None;
+        }
         let pyramid = &self.terrain.pyramid;
         (0..pyramid.levels()).find_map(|level| {
             let key = pyramid.tile_at(level, local)?;
@@ -1084,11 +1223,107 @@ impl Terrains {
         self.stats
     }
 
+    /// `entity`'s surroundings (decision 094) while they stream: they start
+    /// once its bakes are done.
+    pub fn surroundings(&self, entity: Entity) -> Option<SurroundingsStatus> {
+        let state = self
+            .entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_some())?;
+        let around = state.around.as_ref()?;
+        Some(SurroundingsStatus {
+            reach: around.cutout.0.to_array(),
+            tiles: state.terrain.pyramid.base_tiles()[0],
+            spacing: state.terrain.pyramid.spacing(0),
+            resident_tiles: state.tiles.len() as u32,
+            patches: state.selection.patches.len() as u32,
+        })
+    }
+
+    /// Follows each terrain's surroundings (decision 094): drawn, once its
+    /// bakes are done, from the layers its tiles generate from, and dropped
+    /// with it or when those or its settings for them change. They stream
+    /// after every terrain, which take the frame's work first.
+    fn sync_surroundings(&mut self) {
+        let mut wanted = Vec::new();
+        for state in &mut self.entries {
+            if state.around.is_some() {
+                continue;
+            }
+            let Some(surroundings) = state.terrain.surroundings.filter(Surroundings::is_usable)
+            else {
+                continue;
+            };
+            let TerrainSource::Generated(authored) = &state.terrain.source else {
+                continue;
+            };
+            let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+            if layers.unbaked().is_some() {
+                continue;
+            }
+            let base = state.generation(layers);
+            if let Some(layout) = surroundings.layout(&state.terrain) {
+                let surface = state.terrain.surface.clone();
+                wanted.push((state.entity, base, surroundings, layout, surface));
+            }
+        }
+        self.entries.retain(|state| {
+            let Some(around) = &state.around else {
+                return true;
+            };
+            wanted
+                .iter()
+                .any(|(entity, base, surroundings, (_, _, cutout), _)| {
+                    *entity == state.entity
+                        && Arc::ptr_eq(base, &around.base)
+                        && *surroundings == around.surroundings
+                        && *cutout == around.cutout
+                })
+        });
+        for (entity, base, surroundings, (origin, pyramid, cutout), surface) in wanted {
+            if self
+                .entries
+                .iter()
+                .any(|state| state.entity == entity && state.around.is_some())
+            {
+                continue;
+            }
+            // Their ground reads the terrain's layers where it lies in the
+            // terrain's, whose own ground spans the cutout.
+            let layers = base.surroundings(
+                -cutout.0,
+                (Vec2::ZERO, cutout.1 - cutout.0),
+                surroundings.blend,
+            );
+            let terrain = Terrain {
+                origin,
+                pyramid,
+                source: TerrainSource::Generated(Arc::new(layers)),
+                surface: TerrainSurface {
+                    rules: Arc::new(surface.rules.without_placements()),
+                    materials: surface.materials,
+                    assets: Vec::new(),
+                    bridge: None,
+                },
+                collision: false,
+                edits: Arc::from(Vec::new()),
+                surroundings: None,
+            };
+            let mut state = TerrainState::new(entity, terrain);
+            state.around = Some(Around {
+                base,
+                surroundings,
+                cutout,
+            });
+            self.entries.push(state);
+        }
+    }
+
     /// The terrain of `entity`, while it streams.
     pub fn terrain(&self, entity: Entity) -> Option<&Terrain> {
         self.entries
             .iter()
-            .find(|state| state.entity == entity)
+            .find(|state| state.entity == entity && state.around.is_none())
             .map(|state| &state.terrain)
     }
 
@@ -1096,7 +1331,10 @@ impl Terrains {
     /// hydrology baked once it is (decision 066) and its edits over them
     /// (decision 080); `None` for terrains read from files.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
-        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        let state = self
+            .entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())?;
         let base = match &state.terrain.source {
             TerrainSource::Generated(layers) => {
                 state.baked.clone().unwrap_or_else(|| layers.clone())
@@ -1129,7 +1367,10 @@ impl Terrains {
         to: Vec2,
         options: &NavOptions,
     ) -> Option<NavPath> {
-        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        let state = self
+            .entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())?;
         let layers = self.layers(entity)?;
         let origin = state.terrain.origin;
         let corner = Vec2::new(origin.x, origin.z);
@@ -1225,7 +1466,10 @@ impl Terrains {
         to: Vec2,
         options: &RouteOptions,
     ) -> Option<Route> {
-        let state = self.entries.iter().find(|state| state.entity == entity)?;
+        let state = self
+            .entries
+            .iter()
+            .find(|state| state.entity == entity && state.around.is_none())?;
         let TerrainSource::Generated(authored) = &state.terrain.source else {
             return None;
         };
@@ -1248,7 +1492,7 @@ impl Terrains {
     pub fn bakes(&self, entity: Entity) -> TerrainBakes {
         self.entries
             .iter()
-            .find(|state| state.entity == entity)
+            .find(|state| state.entity == entity && state.around.is_none())
             .map_or_else(TerrainBakes::default, |state| TerrainBakes {
                 baking: state.bake.is_some(),
                 hydrology: state.hydrology,
@@ -1263,7 +1507,7 @@ impl Terrains {
     pub fn level_detail(&self, entity: Entity) -> Option<(&[f32], &[f32])> {
         self.entries
             .iter()
-            .find(|state| state.entity == entity)
+            .find(|state| state.entity == entity && state.around.is_none())
             .map(|state| (state.errors.as_slice(), state.ranges.as_slice()))
     }
 
@@ -1271,7 +1515,7 @@ impl Terrains {
     pub fn tiles(&self, entity: Entity) -> impl Iterator<Item = &Arc<Tile>> {
         self.entries
             .iter()
-            .filter(move |state| state.entity == entity)
+            .filter(move |state| state.entity == entity && state.around.is_none())
             .flat_map(|state| state.tiles.values())
     }
 
@@ -1295,7 +1539,7 @@ impl Terrains {
     pub fn bridges(&self, entity: Entity) -> &[Bridge] {
         self.entries
             .iter()
-            .find(|state| state.entity == entity)
+            .find(|state| state.entity == entity && state.around.is_none())
             .map_or(&[], |state| &state.bridges)
     }
 
@@ -1316,7 +1560,7 @@ impl Terrains {
     pub fn falls(&self, entity: Entity) -> &[Fall] {
         self.entries
             .iter()
-            .find(|state| state.entity == entity)
+            .find(|state| state.entity == entity && state.around.is_none())
             .map_or(&[], |state| &state.falls)
     }
 
@@ -1359,7 +1603,7 @@ impl Terrains {
         if let Some(state) = self
             .entries
             .iter_mut()
-            .find(|state| state.entity == terrain)
+            .find(|state| state.entity == terrain && state.around.is_none())
             && state.in_flight.remove(&key)
         {
             state.arrivals.push((key, bytes));
@@ -1378,8 +1622,13 @@ impl Terrains {
         focus: &[Vec3],
     ) {
         self.frame += 1;
+        self.sync_surroundings();
         let mut stats = TerrainStats {
-            terrains: self.entries.len() as u32,
+            terrains: self
+                .entries
+                .iter()
+                .filter(|state| state.around.is_none())
+                .count() as u32,
             bridges: self
                 .entries
                 .iter()
@@ -1419,6 +1668,14 @@ impl Terrains {
             if !state.terrain.is_usable() {
                 continue;
             }
+            // Surroundings (decision 094) leave the ground they surround to
+            // their terrain, and stream while settings show them.
+            let cutout = state.around.as_ref().map(|around| around.cutout);
+            if cutout.is_some() && !settings.surroundings {
+                state.selection.patches.clear();
+                state.selection.fallbacks = 0;
+                continue;
+            }
             let pyramid = state.terrain.pyramid;
             let origin = state.terrain.origin;
             let ranges =
@@ -1438,6 +1695,7 @@ impl Terrains {
                 forward,
                 LOAD_REACH,
                 settings.pinned_levels,
+                cutout,
                 &mut self.wanted,
             );
             // Collision's tiles load within its radius of the camera and
@@ -1491,6 +1749,7 @@ impl Terrains {
                 forward,
                 KEEP_REACH,
                 settings.pinned_levels,
+                cutout,
                 &mut self.wanted,
             );
             let keep: HashSet<TileKey> = self
@@ -1698,6 +1957,7 @@ impl Terrains {
                     &ranges,
                     local_eye,
                     |key| tiles.get(&key).map(Arc::as_ref),
+                    cutout,
                     &mut state.selection,
                 );
             } else {
@@ -1706,6 +1966,10 @@ impl Terrains {
             }
             stats.patches += state.selection.patches.len() as u32;
             stats.fallback_patches += state.selection.fallbacks;
+            if cutout.is_some() {
+                stats.surroundings_tiles += state.tiles.len() as u32;
+                stats.surroundings_patches += state.selection.patches.len() as u32;
+            }
         }
         self.stats = stats;
     }
@@ -1864,6 +2128,9 @@ pub struct RenderTerrain {
     /// its rivers (decision 092).
     pub water: Option<Arc<engine_terrain::WaterGrid>>,
     pub rivers: Option<Arc<engine_terrain::Rivers>>,
+    /// Whether it is a terrain's surroundings (decision 094), which grow
+    /// no blades: their grassy ground shows as canopy at every distance.
+    pub surroundings: bool,
 }
 
 /// The frame's terrains (decision 051).
@@ -1936,13 +2203,17 @@ impl TerrainExtraction {
             match terrains
                 .entries
                 .iter_mut()
-                .find(|state| state.entity == entity)
+                .find(|state| state.entity == entity && state.around.is_none())
             {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
                         *state = TerrainState::new(entity, terrain);
-                    } else if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
-                        state.edit(terrain.edits.clone());
+                    } else {
+                        if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
+                            state.edit(terrain.edits.clone());
+                        }
+                        // Surroundings (decision 094) follow on their own.
+                        state.terrain.surroundings = terrain.surroundings;
                     }
                 }
                 None => terrains.entries.push(TerrainState::new(entity, terrain)),
@@ -1953,7 +2224,11 @@ impl TerrainExtraction {
                 state.selection.patches.clear();
             }
             terrains.stats = TerrainStats {
-                terrains: terrains.entries.len() as u32,
+                terrains: terrains
+                    .entries
+                    .iter()
+                    .filter(|state| state.around.is_none())
+                    .count() as u32,
                 ..TerrainStats::default()
             };
             return;
@@ -1996,10 +2271,12 @@ impl TerrainExtraction {
                     reach: Vec::new(),
                     water: None,
                     rivers: None,
+                    surroundings: false,
                 });
             }
             let render = &mut listing.terrains[index];
-            render.id = state.entity.to_bits();
+            render.id = state.render_id();
+            render.surroundings = state.around.is_some();
             render.origin = state.terrain.origin;
             render.pyramid = state.terrain.pyramid;
             render.surface.clone_from(&state.terrain.surface.materials);
@@ -2023,7 +2300,7 @@ impl TerrainExtraction {
                         RenderSurfaceMaps::of(material, assets, missing)
                     }));
             }
-            if render.tiles_revision != state.revision || render.id != state.entity.to_bits() {
+            if render.tiles_revision != state.revision || render.id != state.render_id() {
                 let mut tiles: Vec<Arc<Tile>> = state.tiles.values().cloned().collect();
                 tiles.sort_unstable_by_key(|tile| tile.key());
                 render.tiles = Arc::from(tiles);

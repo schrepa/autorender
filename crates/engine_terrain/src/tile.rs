@@ -11,7 +11,8 @@ use engine_math::{max, min};
 use crate::layers::{Layers, state_len};
 use crate::surface::{BiomeRules, Control, SampleInputs};
 use crate::{
-    PATCH_QUADS, PATCHES_PER_TILE, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
+    HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Pyramid, TILE_QUADS, TILE_SAMPLES,
+    TILE_STRIDE, TileKey,
 };
 
 /// Cells with a hole bit: those starting at samples 0..=256, so tiles agree
@@ -345,7 +346,11 @@ impl Generator {
     pub fn new(layers: Arc<Layers>, pyramid: &Pyramid, key: TileKey) -> Self {
         let level = u32::from(key.level);
         let spacing = pyramid.spacing(level);
-        let first = pyramid.first_sample(key);
+        // Surroundings (decision 094) read their stack where their samples
+        // lie in the ground it was drawn for.
+        let [x, z] = pyramid.first_sample(key);
+        let [dx, dz] = layers.offset_samples(spacing);
+        let first = [x + dx, z + dz];
         let stride = TILE_STRIDE as usize;
         let bands: Vec<_> = (0..layers.layers().len())
             .map(|index| layers.noise(index).map(|tables| tables.bands(spacing)))
@@ -457,6 +462,13 @@ impl Generator {
             let gx = (east - west) / (2.0 * spacing);
             let gz = (south - north) / (2.0 * spacing);
             let x = self.xs[column];
+            // Surroundings (decision 094) lose the masks of the bakes and
+            // roads they fade out.
+            let shown = self.layers.shown(x, z);
+            let water = match self.layers.hydrology() {
+                Some(water) if shown > 0.0 => water.at(x, z, spacing),
+                _ => HydrologySample::default(),
+            };
             let inputs = SampleInputs {
                 x,
                 z,
@@ -464,11 +476,18 @@ impl Generator {
                 gradient: (gx * gx + gz * gz).sqrt(),
                 curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
                 spacing,
-                water: self
-                    .layers
-                    .hydrology()
-                    .map_or_else(Default::default, |water| water.at(x, z, spacing)),
-                path: self.layers.path_at(x, z),
+                water: HydrologySample {
+                    flow: water.flow * shown,
+                    wetness: water.wetness * shown,
+                    lake: water.lake * shown,
+                    carve: water.carve * shown,
+                    river: water.river,
+                },
+                path: if shown > 0.0 {
+                    self.layers.path_at(x, z)
+                } else {
+                    PathSample::FAR
+                },
             };
             control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
         }
@@ -676,6 +695,8 @@ impl Layers {
     /// it: the same coarse grid points, interpolation and layer order.
     pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
         let spacing = pyramid.spacing(level);
+        let [dx, dz] = self.offset_samples(spacing);
+        let sample = [sample[0] + dx, sample[1] + dz];
         let x = sample[0] as f32 * spacing;
         let z = sample[1] as f32 * spacing;
         let [cx, cz] = sample.map(|index| index.div_euclid(GRID_STEP));

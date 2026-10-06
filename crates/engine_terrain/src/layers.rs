@@ -831,6 +831,21 @@ fn blend_gradient(rolling: f32, ridged: f32, ridges: f32) -> f32 {
 pub struct Layers {
     layers: Vec<Layer>,
     tables: Vec<Option<NoiseTables>>,
+    // As a terrain's surroundings draw them (decision 094): a point reads
+    // what the stack holds `offset` meters further along x and z, and
+    // every layer but noise fades out beyond `fade`'s region.
+    offset: Vec2,
+    fade: Option<Fade>,
+}
+
+/// Where a stack's layers other than noise show (decision 094): all of
+/// them from `low` to `high` (the stack's own ground), fading out over
+/// `blend` meters beyond.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Fade {
+    low: Vec2,
+    high: Vec2,
+    blend: f32,
 }
 
 /// Checks stamp layer `index`'s center, reach and operation.
@@ -940,11 +955,66 @@ impl Layers {
                 _ => None,
             })
             .collect();
-        Ok(Self { layers, tables })
+        Ok(Self {
+            layers,
+            tables,
+            offset: Vec2::ZERO,
+            fade: None,
+        })
     }
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    /// These layers as a terrain's surroundings draw them (decision 094):
+    /// a point reads what this stack holds `offset` meters further along x
+    /// and z, and every layer but noise (stamps, heightmaps, bakes and
+    /// roads, and the masks they feed) shows from `low` to `high` of this
+    /// stack's ground, fading out over `blend` meters beyond, so the ground
+    /// meets this stack's at that region's edges and turns into its noise
+    /// away from them. Offsets keep the noise only as whole multiples of
+    /// four samples of every level drawn.
+    pub fn surroundings(&self, offset: Vec2, (low, high): (Vec2, Vec2), blend: f32) -> Self {
+        Self {
+            offset,
+            fade: Some(Fade {
+                low,
+                high,
+                blend: max(blend, 0.0),
+            }),
+            ..self.clone()
+        }
+    }
+
+    /// How much of the layers other than noise shows at `(x, z)` of this
+    /// stack's ground (decision 094): all of them without a fade.
+    pub(crate) fn shown(&self, x: f32, z: f32) -> f32 {
+        let Some(fade) = self.fade else {
+            return 1.0;
+        };
+        let point = Vec2::new(x, z);
+        let outside = (fade.low - point)
+            .max(point - fade.high)
+            .max(Vec2::ZERO)
+            .length();
+        if outside <= 0.0 {
+            return 1.0;
+        }
+        if fade.blend <= 0.0 {
+            return 0.0;
+        }
+        let t = min(outside / fade.blend, 1.0);
+        1.0 - t * t * (3.0 - 2.0 * t)
+    }
+
+    /// The samples `spacing` meters apart the stack's offset spans along x
+    /// and z (decision 094).
+    pub(crate) fn offset_samples(&self, spacing: f32) -> [i64; 2] {
+        [
+            (self.offset.x / spacing).round() as i64,
+            (self.offset.y / spacing).round() as i64,
+        ]
     }
 
     /// These layers with `stamps` over them (decision 080): the same layers,
@@ -958,7 +1028,12 @@ impl Layers {
             layers.push(Layer::Stamp(*stamp));
             tables.push(None);
         }
-        Ok(Self { layers, tables })
+        Ok(Self {
+            layers,
+            tables,
+            offset: self.offset,
+            fade: self.fade,
+        })
     }
 
     /// Layer `index`, to set what its bake found.
@@ -971,6 +1046,8 @@ impl Layers {
         Self {
             layers: self.layers[..index].to_vec(),
             tables: self.tables[..index].to_vec(),
+            offset: self.offset,
+            fade: self.fade,
         }
     }
 
@@ -1075,7 +1152,7 @@ impl Layers {
                 for (height, &x) in row.iter_mut().zip(xs) {
                     // Bridges (decision 072) leave the ground under them.
                     if let Some((distance, road, false)) = profile.nearest(Vec2::new(x, z)) {
-                        *height += (road - *height) * profile.weight(distance);
+                        *height += (road - *height) * profile.weight(distance) * self.shown(x, z);
                     }
                 }
             }
@@ -1084,7 +1161,7 @@ impl Layers {
                     return;
                 };
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    *height += baked.change_at(x, z, spacing);
+                    *height += baked.change_at(x, z, spacing) * self.shown(x, z);
                 }
             }
             Layer::Hydrology(stage) => {
@@ -1093,7 +1170,7 @@ impl Layers {
                 };
                 let level = baked.level_for(spacing);
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    *height -= baked.carve_at(x, z, level);
+                    *height -= baked.carve_at(x, z, level) * self.shown(x, z);
                 }
                 // Rivers (decision 092) cut their beds below their water and
                 // ease their banks to the ground at every level.
@@ -1107,7 +1184,13 @@ impl Layers {
                     return;
                 }
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    *height = baked.rivers.cap(x, z, *height, spacing);
+                    let capped = baked.rivers.cap(x, z, *height, spacing);
+                    let shown = self.shown(x, z);
+                    *height = if shown >= 1.0 {
+                        capped
+                    } else {
+                        *height + (capped - *height) * shown
+                    };
                 }
             }
             Layer::Stamp(stamp) => {
@@ -1115,7 +1198,7 @@ impl Layers {
                     return;
                 }
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    let weight = stamp.weight(x, z);
+                    let weight = stamp.weight(x, z) * self.shown(x, z);
                     *height = match stamp.op {
                         StampOp::Raise(amount) => *height + amount * weight,
                         StampOp::Lower(amount) => *height - amount * weight,
@@ -1133,7 +1216,7 @@ impl Layers {
                 let level = map.level_for(spacing);
                 for (height, &x) in row.iter_mut().zip(xs) {
                     let (value, weight) = map.at(x, z, level);
-                    *height = map.blend.apply(*height, value, weight);
+                    *height = map.blend.apply(*height, value, weight * self.shown(x, z));
                 }
             }
         }
