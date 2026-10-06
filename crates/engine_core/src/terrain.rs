@@ -34,10 +34,10 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
-    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, FileHeader,
-    FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask, Patch,
-    PathStage, Pyramid, Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake, Tile,
-    TileKey, TileSample, WantedTile, decode_tile,
+    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, Fall,
+    FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask,
+    Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake,
+    Tile, TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -704,10 +704,11 @@ pub struct TerrainStats {
     /// Terrains whose bakes (decisions 066 and 068) are in progress: they
     /// load no tiles until done.
     pub baking: u32,
-    /// Bridges terrains' roads span (decision 072), and tunnels they bore
-    /// (decision 073).
+    /// Bridges terrains' roads span (decision 072), tunnels they bore
+    /// (decision 073), and waterfalls their rivers drop over (decision 075).
     pub bridges: u32,
     pub tunnels: u32,
+    pub falls: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -748,8 +749,9 @@ struct TerrainState {
     hydrology: Option<HydrologyStats>,
     erosion: Option<ErosionStats>,
     /// Its roads' bridges (decision 072), terrain-local, once every bake
-    /// is done.
+    /// is done, and its rivers' waterfalls (decision 075).
     bridges: Arc<[Bridge]>,
+    falls: Arc<[Fall]>,
 }
 
 /// A terrain's bakes (decisions 066 and 068): whether one is in progress,
@@ -782,6 +784,7 @@ impl TerrainState {
             hydrology: None,
             erosion: None,
             bridges: Arc::from(Vec::new()),
+            falls: Arc::from(Vec::new()),
         }
     }
 
@@ -1044,6 +1047,22 @@ impl Terrains {
         })
     }
 
+    /// The waterfalls of `entity`'s rivers (decision 075), terrain-local,
+    /// once its bakes are done.
+    pub fn falls(&self, entity: Entity) -> &[Fall] {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity)
+            .map_or(&[], |state| &state.falls)
+    }
+
+    /// Every terrain's waterfalls and its origin.
+    pub(crate) fn fall_sets(&self) -> impl Iterator<Item = (Entity, Arc<[Fall]>, Vec3)> + '_ {
+        self.entries
+            .iter()
+            .map(|state| (state.entity, state.falls.clone(), state.terrain.origin))
+    }
+
     /// Colliding terrains' bridges, with their origins (decision 072).
     pub fn colliding_bridges(&self) -> impl Iterator<Item = (Entity, Vec3, &[Bridge])> {
         self.entries
@@ -1109,6 +1128,11 @@ impl Terrains {
                 .flat_map(|state| state.bridges.iter())
                 .filter(|bridge| bridge.tunnel)
                 .count() as u32,
+            falls: self
+                .entries
+                .iter()
+                .map(|state| state.falls.len() as u32)
+                .sum(),
             ..TerrainStats::default()
         };
         let forward = camera.target - eye;
@@ -1269,6 +1293,11 @@ impl Terrains {
                                     .flatten()
                                     .collect::<Vec<_>>()
                                     .into();
+                                // Its rivers' waterfalls (decision 075).
+                                state.falls = baked.hydrology().map_or_else(
+                                    || Arc::from(Vec::new()),
+                                    |water| water.falls.clone(),
+                                );
                                 state.revision += 1;
                             }
                             state.baked = Some(baked);

@@ -303,6 +303,7 @@ impl DevTools {
                             channel_samples: stats.map(|stats| stats.channel_samples),
                             lake_samples: stats.map(|stats| stats.lake_samples),
                             max_area: stats.map(|stats| stats.max_area),
+                            falls: stats.map(|stats| stats.falls),
                         });
                     }
                     // Each path layer's profile (decision 069), once baked.
@@ -368,6 +369,7 @@ impl DevTools {
                     baking: stats.baking,
                     bridges: stats.bridges,
                     tunnels: stats.tunnels,
+                    falls: stats.falls,
                 })
             },
         ).expect("built-in descriptor is bounded");

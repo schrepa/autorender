@@ -38,8 +38,8 @@ pub use format::{
     encode_file,
 };
 pub use hydrology::{
-    FLOW_RANGE, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
-    WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
+    FALL_HEIGHT, FALL_SLOPE, FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample,
+    HydrologyStats, LAKE_RANGE, WETNESS_RANGE, WaterGrid, bake as bake_hydrology,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
