@@ -2950,6 +2950,17 @@
           "format": "float",
           "minimum": 0.0
         },
+        "top": {
+          "description": "Version 9: a layer settling on faces turned up, such as moss,\nlichen, dust or snow (decision 093).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTopLayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "transmission": {
           "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (decision 038,\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
           "type": [
@@ -2958,6 +2969,16 @@
           ],
           "format": "float",
           "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "world_tiling": {
+          "description": "Version 9: lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates (decision 093):\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 10000.0,
           "minimum": 0.0
         }
       },
@@ -4669,6 +4690,41 @@
         }
       },
       "additionalProperties": false
+    },
+    "SceneTopLayer": {
+      "description": "A layer settling on a material's faces turned up (decision 093): its\nlinear color, how far from straight up it reaches (0 covers nothing, 1\nevery face turned up at all) and its roughness (default 0.85).",
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "coverage": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "roughness": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "color",
+        "coverage"
+      ]
     },
     "SceneTransform": {
       "description": "Local transform with Euler XYZ rotation expressed in degrees.\n\nTranslation is bounded to ±1,000,000 world units and each scale component\nto `[0.0001, 10000]`, avoiding singular or overflowing normal transforms.\nParent composition preserves full matrices, including shear. Negative scale\nreflection is not authored by this format.",

@@ -166,6 +166,8 @@ pub(crate) fn import(
             transmission,
             ior,
             thickness,
+            world_tiling: None,
+            top: None,
         });
     }
     Ok(())

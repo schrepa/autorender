@@ -674,6 +674,19 @@ pub(crate) fn populate(
     ))
 }
 
+/// Moss settling on boulders' tops and lichen on cliffs' ledges (decision
+/// 093).
+const MOSS: TopLayer = TopLayer {
+    color: [0.055, 0.07, 0.03],
+    coverage: 0.36,
+    roughness: 0.9,
+};
+const LICHEN: TopLayer = TopLayer {
+    color: [0.11, 0.12, 0.05],
+    coverage: 0.34,
+    roughness: 0.85,
+};
+
 /// A hiker walking between two points (decision 089): the ends (world x
 /// and z) and the one it walks toward.
 #[derive(Component)]
@@ -942,7 +955,7 @@ fn surface(
                 material = material.with_base_color_texture(map).map_err(error)?;
             }
             if let Some(map) = rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.5).map_err(error)?;
+                material = material.with_normal_texture(map, 0.8).map_err(error)?;
             }
             if let Some(map) = rock.metallic_roughness_texture() {
                 material = material
@@ -950,10 +963,16 @@ fn surface(
                     .and_then(|material| material.with_occlusion_texture(map, 1.0))
                     .map_err(error)?;
             }
+            // Laid from the world's axes, a repeat every three meters, and
+            // mossed on top (decision 093).
             material
+                .with_world_mapping(3.0)
+                .and_then(|material| material.with_top_layer(MOSS))
+                .map_err(error)?
         }
         None => Material::new([0.3, 0.28, 0.26, 1.0])
             .and_then(|material| material.with_surface(base.surface()))
+            .and_then(|material| material.with_top_layer(MOSS))
             .map_err(error)?,
     };
     let rock = assets
@@ -961,15 +980,26 @@ fn surface(
         .map_err(|error| error.to_string())?;
     let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for seed in 0..BOULDERS as u32 {
-        let mesh = assets
-            .insert_mesh(crate::rocks::boulder(seed)?)
-            .map_err(|error| error.to_string())?;
+        let mut mesh = |detail| {
+            crate::rocks::boulder(seed, detail).and_then(|(mesh, error)| {
+                Ok(PlacementLod {
+                    mesh: assets
+                        .insert_mesh(mesh)
+                        .map_err(|error| error.to_string())?,
+                    error,
+                })
+            })
+        };
+        let full = mesh(0)?.mesh;
+        let lods = (1..=crate::rocks::COARSER)
+            .map(&mut mesh)
+            .collect::<Result<Vec<_>, _>>()?;
         // Boulders collide as spheres a little inside their faces
         // (decision 064).
         placed.push(PlacementAsset {
-            mesh,
+            mesh: full,
             material: rock,
-            lods: Vec::new(),
+            lods,
             sway: 0.0,
             collider: Some(PlacedCollider::new(
                 PlacedShape::Sphere { radius: 0.42 },
@@ -1049,7 +1079,7 @@ fn surface(
                 material = material.with_base_color_texture(map).map_err(error)?;
             }
             if let Some(map) = terrain_rock.normal_texture() {
-                material = material.with_normal_texture(map, 0.6).map_err(error)?;
+                material = material.with_normal_texture(map, 0.8).map_err(error)?;
             }
             if let Some(map) = terrain_rock.metallic_roughness_texture() {
                 material = material
@@ -1057,24 +1087,32 @@ fn surface(
                     .and_then(|material| material.with_occlusion_texture(map, 1.0))
                     .map_err(error)?;
             }
+            // As the terrain's rock lies (decision 093): a repeat every four
+            // meters whatever a block's size, lichen on its ledges.
+            let material = material
+                .with_world_mapping(4.0)
+                .and_then(|material| material.with_top_layer(LICHEN))
+                .map_err(error)?;
             assets.insert_material(material).map_err(error)?
         }
         None => rock,
     };
     for seed in 0..CLIFFS as u32 {
         let mut mesh = |detail| {
-            crate::rocks::cliff(seed, detail)
-                .and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
+            crate::rocks::cliff(seed, detail).and_then(|(mesh, error)| {
+                Ok(PlacementLod {
+                    mesh: assets
+                        .insert_mesh(mesh)
+                        .map_err(|error| error.to_string())?,
+                    error,
+                })
+            })
         };
-        let full = mesh(0)?;
+        let full = mesh(0)?.mesh;
         cave_rocks.push(full);
-        let mut lods = Vec::with_capacity(crate::rocks::CLIFF_ERRORS.len());
-        for (detail, error) in crate::rocks::CLIFF_ERRORS.into_iter().enumerate() {
-            lods.push(PlacementLod {
-                mesh: mesh(detail as u32 + 1)?,
-                error,
-            });
-        }
+        let lods = (1..=crate::rocks::COARSER)
+            .map(&mut mesh)
+            .collect::<Result<Vec<_>, _>>()?;
         placed.push(PlacementAsset {
             mesh: full,
             material: cliff_rock,

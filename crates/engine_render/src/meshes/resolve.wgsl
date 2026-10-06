@@ -150,12 +150,25 @@ fn stepped_normal(resolved: Resolved, texels: MaterialTexels, normal_step: vec3<
 fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let input = resolved.fragment;
     let gradients = UvGradients(resolved.uv_dx, resolved.uv_dy, resolved.uv_dx, resolved.uv_dy);
-    let texels = material_texels_grad(input.uv, input.uv1, gradients);
+    var texels: MaterialTexels;
+    if material_flag(4096u, WORLD_MAPPING) {
+        texels = world_texels(input.world, stable_normalize(input.normal), resolved.world_dx,
+            resolved.world_dy);
+    } else {
+        texels = material_texels_grad(input.uv, input.uv1, gradients);
+    }
     let point = textured_point(input.color, input.normal, input.world, resolved.world_dx,
         resolved.world_dy, texels, input.surface, resolved.front);
     let ripples = unpack4x8unorm(input.surface).w;
     let x = resolved.partner.x;
     let y = resolved.partner.y;
+    if material_flag(4096u, WORLD_MAPPING) {
+        // World-mapped maps (decision 093) turn toward the partners with
+        // the interpolated normal alone.
+        let across = stable_normalize(point.normal + resolved.normal_dx * x);
+        let down = stable_normalize(point.normal + resolved.normal_dy * y);
+        return widened(point, across - point.normal, down - point.normal);
+    }
     let across = stepped_normal(resolved, texels, resolved.normal_dx * x, resolved.world_dx * x,
         resolved.uv_dx * x, ripples);
     let down = stepped_normal(resolved, texels, resolved.normal_dy * y, resolved.world_dy * y,

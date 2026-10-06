@@ -533,8 +533,11 @@ try {
     const below = await capture("sea-below");
     const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
     // Rivers (decision 092) carve their mouths deep under the sea, which
-    // darkens it from above: a third of the view changing shows the crossing.
-    assert.ok(crossing.changed > 0.3 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
+    // darkens it from above, and the sky's state (how far its clouds have
+    // marched) sets how far the two views differ: between a quarter and half
+    // of the view changes across the surface, where a surface drawn off the
+    // queried one leaves both cameras on one side and the views alike.
+    assert.ok(crossing.changed > 0.15 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
     // Floating entities (decision 077) ride the sea each fixed tick at the
     // tick's time, which frames present: the buoy stands on the surface
     // queries find there.

@@ -58,6 +58,43 @@ impl Default for Surface {
     }
 }
 
+/// A layer settling on a material's faces turned up (decision 093): moss,
+/// lichen, dust or snow. It covers faces whose normals point up by more
+/// than one less its `coverage`, broken by noise and gathering in the
+/// darker hollows of the material's color, in its own linear `color` and
+/// `roughness`. [`Material::with_top_layer`] validates the ranges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TopLayer {
+    /// Linear color, each channel in `[0, 1]`.
+    pub color: [f32; 3],
+    /// How far from straight up it reaches, in `[0, 1]`: 0 covers nothing,
+    /// 1 every face turned up at all.
+    pub coverage: f32,
+    /// Its roughness, in `[0, 1]`.
+    pub roughness: f32,
+}
+
+impl TopLayer {
+    fn validate(&self) -> Result<(), AssetError> {
+        for (field, value) in [
+            ("top.color", self.color[0]),
+            ("top.color", self.color[1]),
+            ("top.color", self.color[2]),
+            ("top.coverage", self.coverage),
+            ("top.roughness", self.roughness),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(AssetError::InvalidSurface { field });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The meters one repeat of a world-mapped material's maps may cover at
+/// most (decision 093).
+pub const MAX_WORLD_TILING: f32 = 10_000.0;
+
 /// Light passing through a surface instead of diffusing off it (decision
 /// 038): glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
 /// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
@@ -287,6 +324,8 @@ pub struct Material {
     alpha_mode: AlphaMode,
     double_sided: bool,
     transmission: Transmission,
+    world_tiling: Option<f32>,
+    top: Option<TopLayer>,
 }
 
 impl Material {
@@ -313,6 +352,8 @@ impl Material {
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
             transmission: Transmission::NONE,
+            world_tiling: None,
+            top: None,
         })
     }
 
@@ -374,6 +415,41 @@ impl Material {
 
     pub fn transmission(&self) -> Transmission {
         self.transmission
+    }
+
+    /// This material with its maps laid from the world's axes, one repeat
+    /// every `tiling` meters, rather than by texture coordinates (decision
+    /// 093): each map blends its projections along the axes the surface
+    /// faces most, so meshes need no coordinates, show no seams and keep
+    /// one texel density at any size. Map transforms still apply. For
+    /// surfaces that stay where they are, such as rocks and cliffs: maps
+    /// slide over moving ones. `tiling` is finite, positive and at most
+    /// [`MAX_WORLD_TILING`].
+    pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, AssetError> {
+        if !tiling.is_finite() || tiling <= 0.0 || tiling > MAX_WORLD_TILING {
+            return Err(AssetError::InvalidSurface {
+                field: "world_tiling",
+            });
+        }
+        self.world_tiling = Some(tiling);
+        Ok(self)
+    }
+
+    /// The meters one repeat of world-mapped maps covers, if laid so.
+    pub fn world_tiling(&self) -> Option<f32> {
+        self.world_tiling
+    }
+
+    /// This material with `top` settling on its faces turned up (decision
+    /// 093).
+    pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
+        top.validate()?;
+        self.top = Some(top);
+        Ok(self)
+    }
+
+    pub fn top_layer(&self) -> Option<TopLayer> {
+        self.top
     }
 
     /// This material with `surface`, whose values must lie in their ranges.

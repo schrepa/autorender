@@ -30,6 +30,11 @@ struct MaterialMaps {
     // Transmission (decision 038): its share, index of refraction and
     // thickness; w holds the material's variant bits (decision 049).
     volume: vec4<f32>,
+    // The top layer (decision 093): its linear color and coverage, then
+    // its roughness. The meters one repeat of world-mapped maps covers are
+    // in `emissive.w`.
+    top: vec4<f32>,
+    layer: vec4<f32>,
 }
 @group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
 
@@ -50,6 +55,10 @@ override PACKED_OCCLUSION: bool = false;
 // Transmissive materials shade as glass in the transparent pass (decision
 // 038).
 override TRANSMISSION: bool = false;
+// Maps laid from the world's axes rather than texture coordinates, and a
+// layer settling on faces turned up (decision 093).
+override WORLD_MAPPING: bool = false;
+override TOP_LAYER: bool = false;
 // Passes drawn rarely (decision 049), reflection probe captures and impostor
 // bakes, share one pipeline per pipeline state: they read the material's
 // variant bits from its uniform instead of the map constants above.

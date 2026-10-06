@@ -64,8 +64,8 @@ pub use effects::{
 pub use engine_assets::{
     Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LodLevel,
     MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
-    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, Transmission,
-    UvTransform, Wrap, mesh_lods,
+    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, TopLayer,
+    Transmission, UvTransform, Wrap, mesh_lods,
 };
 pub use engine_assets::{
     AnimatedProperty, AnimationChannel, AnimationClip, AnimationSample, ClipHandle,
@@ -918,9 +918,9 @@ pub mod prelude {
         Plugin, Presentation, PresentationMode, PresentationState, PresentedTransform,
         PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial, RenderMesh,
         RenderSnapshot, RenderTexture, Sampler, Shadows, Skin, Surface, Texture, TextureHandle,
-        TextureRef, Tint, Transform, TransformIndex, TransformNodeLimit, TransformPropagation,
-        UvTransform, Wrap, propagate_transforms, reset_all_interpolation, reset_interpolation,
-        set_parent, set_parents, valid_global_matrix,
+        TextureRef, Tint, TopLayer, Transform, TransformIndex, TransformNodeLimit,
+        TransformPropagation, UvTransform, Wrap, propagate_transforms, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents, valid_global_matrix,
     };
     pub use crate::{ActionId, ActionInput};
     pub use crate::{

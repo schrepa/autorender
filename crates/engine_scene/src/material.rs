@@ -92,6 +92,32 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub thickness: Option<f32>,
+    /// Version 9: lays the maps from the world's axes, one repeat every
+    /// this many meters, instead of by texture coordinates (decision 093):
+    /// no seams and one texel density at any size, for surfaces that stay
+    /// where they are, such as rocks. In `(0, 10000]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
+    pub world_tiling: Option<f32>,
+    /// Version 9: a layer settling on faces turned up, such as moss,
+    /// lichen, dust or snow (decision 093).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<SceneTopLayer>,
+}
+
+/// A layer settling on a material's faces turned up (decision 093): its
+/// linear color, how far from straight up it reaches (0 covers nothing, 1
+/// every face turned up at all) and its roughness (default 0.85).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneTopLayer {
+    pub color: [f32; 3],
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub coverage: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub roughness: Option<f32>,
 }
 
 /// A material's use of a texture: its ID, or (version 8) a map with glTF
@@ -293,6 +319,16 @@ impl SceneMaterial {
         .find_map(|(field, set)| set.then_some(field))
     }
 
+    /// The first field needing version 9, if any.
+    pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
+        [
+            ("world_tiling", self.world_tiling.is_some()),
+            ("top", self.top.is_some()),
+        ]
+        .into_iter()
+        .find_map(|(field, set)| set.then_some(field))
+    }
+
     /// The material at authored path `path` (`$.materials[i]`) of a
     /// document of `version`.
     pub(crate) fn prepare(&self, path: &str, version: u32) -> Result<PreparedMaterial, SceneError> {
@@ -347,6 +383,20 @@ impl SceneMaterial {
         }
         if let Some(double_sided) = self.double_sided {
             material = material.with_double_sided(double_sided);
+        }
+        if let Some(tiling) = self.world_tiling {
+            material = material
+                .with_world_mapping(tiling)
+                .map_err(|error| invalid("world_tiling", error.to_string()))?;
+        }
+        if let Some(top) = self.top {
+            material = material
+                .with_top_layer(engine_core::TopLayer {
+                    color: top.color,
+                    coverage: top.coverage,
+                    roughness: top.roughness.unwrap_or(0.85),
+                })
+                .map_err(|error| invalid("top", error.to_string()))?;
         }
         match (self.transmission, self.ior, self.thickness) {
             (Some(factor), ior, thickness) => {

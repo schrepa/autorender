@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 26] {
+fn rules() -> [Rule; 27] {
     [
         Rule {
             since: 9,
@@ -60,6 +60,21 @@ fn rules() -> [Rule; 26] {
                     .find_map(|(index, material)| {
                         material
                             .version_eight_field()
+                            .map(|field| format!("$.materials[{index}].{field}"))
+                    })
+            },
+        },
+        Rule {
+            since: 9,
+            what: "world-mapped materials and top layers",
+            first_use: |document| {
+                document
+                    .materials
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, material)| {
+                        material
+                            .version_nine_field()
                             .map(|field| format!("$.materials[{index}].{field}"))
                     })
             },
