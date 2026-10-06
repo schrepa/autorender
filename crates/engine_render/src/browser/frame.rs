@@ -230,9 +230,33 @@ impl Renderer {
             ..EncodeReport::default()
         };
         for node in graph.kept_passes() {
+            // Profiling captures time every pass whole, with whatever it
+            // records.
+            let stage = node.pass().stage();
+            if let Some(span) = self.profiler.span(stage) {
+                span.mark(&mut encoder, false);
+            }
             self.encode_pass(node, &state, &mut encoder, &view, &mut report);
+            if let Some(span) = self.profiler.span(stage) {
+                span.mark(&mut encoder, true);
+            }
         }
         self.graph = graph;
+        // ...and the command buffers submitted before the frame's, whose
+        // spans must exist before the frame resolves its queries.
+        for (span, present) in [
+            ("pre_mips", state.assets.encoder.is_some()),
+            ("pre_poses", state.writes.staged_poses.is_some()),
+            ("pre_inputs", state.features.input_copies.is_some()),
+            (
+                "pre_environment",
+                state.features.environment_encoder.is_some(),
+            ),
+        ] {
+            if present {
+                let _ = self.profiler.span(span);
+            }
+        }
         self.profiler.end_frame(&mut encoder);
         drop(profile_encoding);
         self.submit_frame(&mut state, surface, encoder);
@@ -2403,16 +2427,39 @@ impl Renderer {
         let temporal_frame = &state.packing.temporal_frame;
 
         let profile_submit = engine_profile::span("render", "submit_and_present");
+        // Profiling captures time each of the command buffers before the
+        // frame's between marks of their own.
+        let mark = |span: &'static str, end: bool| {
+            let span = self.profiler.span(span)?;
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/profile-mark"),
+                });
+            span.mark(&mut encoder, end);
+            Some(encoder.finish())
+        };
+        let timed = |span: &'static str, buffer: Option<wgpu::CommandBuffer>| {
+            let marked = buffer.is_some() && self.profiler.capturing();
+            let begin = marked.then(|| mark(span, false)).flatten();
+            let end = marked.then(|| mark(span, true)).flatten();
+            begin.into_iter().chain(buffer).chain(end)
+        };
         // Staged pose/input copies precede the passes that read them.
-        self.queue.submit(
-            mip_encoder
-                .map(wgpu::CommandEncoder::finish)
-                .into_iter()
-                .chain(staged_poses)
-                .chain(input_copies.map(wgpu::CommandEncoder::finish))
-                .chain(environment_encoder.map(wgpu::CommandEncoder::finish))
-                .chain([encoder.finish()]),
-        );
+        let before: Vec<wgpu::CommandBuffer> =
+            timed("pre_mips", mip_encoder.map(wgpu::CommandEncoder::finish))
+                .chain(timed("pre_poses", staged_poses))
+                .chain(timed(
+                    "pre_inputs",
+                    input_copies.map(wgpu::CommandEncoder::finish),
+                ))
+                .chain(timed(
+                    "pre_environment",
+                    environment_encoder.map(wgpu::CommandEncoder::finish),
+                ))
+                .collect();
+        self.queue
+            .submit(before.into_iter().chain([encoder.finish()]));
         self.instances.pose_uploads.after_submit();
         if gpu_mode {
             self.gpu_presentation.after_submit();
