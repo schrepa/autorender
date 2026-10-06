@@ -526,6 +526,10 @@ pub enum TerrainView {
     /// The share of the sky the ground sees (decision 055), unlit, from
     /// black (none) to white (all of it).
     Sky,
+    /// How much detail the ground shows (decision 090): green where all
+    /// its maps show, yellow where their color alone does, red where their
+    /// means stand in, blue where it shows as its cover's canopy.
+    Detail,
 }
 
 /// Temporary terrain state for development (decision 051): an eye that

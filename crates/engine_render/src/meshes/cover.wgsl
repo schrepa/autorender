@@ -139,18 +139,21 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
     return temporal;
 }
 
-// The surface a blade fragment shows, lit from the side facing the eye;
-// darker toward the root, where blades shade each other. Blades are thin
-// and pass light through, so they light much as the ground they stand on:
-// their normal leans most of the way up.
+// The surface a blade fragment shows; darker toward the root, where blades
+// shade each other. Blades are thin and pass light through: either side
+// lights as the side facing the sun does (decision 090), the far side seen
+// through the blade a little dimmer, and their normal leans most of the way
+// up, so they light much as the ground they stand on.
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     var face = normalize(input.normal);
     if !front {
         face = -face;
     }
-    let normal = normalize(mix(face, vec3<f32>(0.0, 1.0, 0.0), 0.6));
+    let through = dot(face, lighting.sun.xyz) < 0.0;
+    let lit = select(face, -face, through);
+    let normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
     let relative = input.world - camera.position.xyz;
-    let albedo = input.color;
+    let albedo = input.color * select(1.0, 0.8, through);
     var point: SurfacePoint;
     point.albedo = albedo;
     point.opacity = 1.0;

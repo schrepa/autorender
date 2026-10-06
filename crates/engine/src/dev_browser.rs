@@ -345,6 +345,7 @@ impl DevBrowser {
                             engine_core::TerrainView::Materials
                         }
                         engine_dev::TerrainViewRequest::Sky => engine_core::TerrainView::Sky,
+                        engine_dev::TerrainViewRequest::Detail => engine_core::TerrainView::Detail,
                     };
                 }
                 world.insert_resource(debug);

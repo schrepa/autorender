@@ -325,6 +325,8 @@ impl Renderer {
             terrain_sky_rows: self.terrain.sky.rows,
             ground_cover_blades: self.ground_cover.totals()[0],
             dropped_ground_cover: self.ground_cover.totals()[1],
+            ground_cover_reach: self.ground_cover.reach().0.round() as u32,
+            ground_cover_tiers: self.ground_cover.reach().1,
             placed_objects: self.scatter.resident,
             water_chunks: if state.shape.water {
                 self.water.chunks_drawn()

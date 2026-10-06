@@ -38,9 +38,13 @@ struct TerrainPaletteEntry {
     // The meters its heights span where the ground's relief shows (decision
     // 082), and the meters tracks sink it at most (decision 083).
     relief: vec4<f32>,
+    // Its cover's canopy (decision 090): the linear color its blades show
+    // seen from afar, and their leaves' area per square meter of ground (0
+    // without cover).
+    canopy: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const TERRAIN_PALETTE_ENTRIES: u32 = 204u;
+const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
@@ -318,7 +322,9 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
 }
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
-// occlusion and metalness, its normal, and the share of it that has maps.
+// occlusion and metalness, its normal, and the share of it that has maps;
+// for its variety and detail (decision 090), the shares of it growing
+// cover, showing as canopy, showing all its maps and showing their color.
 struct TerrainGround {
     albedo: vec3<f32>,
     roughness: f32,
@@ -326,6 +332,10 @@ struct TerrainGround {
     occlusion: f32,
     metalness: f32,
     mapped: f32,
+    vegetated: f32,
+    canopy: f32,
+    full: f32,
+    colored: f32,
 }
 
 // Where a material's maps lie at a fragment: their meters per repeat,
@@ -510,7 +520,8 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // its world position and that's screen derivatives, a pixel's footprint
 // there (meters, its long side), the footprint the maps' anisotropic
 // filtering resolves (its short side, or a sixteenth of its long side where
-// filtering runs out), and the terrain's normal.
+// filtering runs out), the terrain's normal, and the way toward the eye
+// and the meters to it.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -518,6 +529,35 @@ struct TerrainSite {
     footprint: f32,
     texel: f32,
     geometric: vec3<f32>,
+    toward: vec3<f32>,
+    distance: f32,
+}
+
+// The normal blades standing on ground of normal `ground` light with, on
+// average (decision 090; `meshes/cover.wgsl`): leaning most of the way up
+// from their sides toward the sun, which face it by two over pi on
+// average.
+fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
+    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
+    let side = across * (0.6366 / max(length(across), 1.0e-4));
+    return stable_normalize(mix(side, ground, 0.6));
+}
+
+// How much of the ground at `site` a cover whose leaves' area is `leaves`
+// per square meter shows as its canopy (decision 090): past where blades
+// thin out (`terrain.cover`), as much as the leaves hide of the ground
+// along the view, 1 - exp(-G leaves / sin), all of it at grazing views.
+fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
+    let fade = terrain.cover;
+    if fade.y <= 0.0 || leaves <= 0.0 {
+        return 0.0;
+    }
+    let thinned = smoothstep(fade.x, fade.y, site.distance);
+    if thinned <= 0.0 {
+        return 0.0;
+    }
+    let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
+    return thinned * (1.0 - exp(-0.5 * leaves * fade.z / sine));
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
@@ -642,6 +682,20 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     if entry.params.w > 0.0 {
         (*ground).mapped += weight;
     }
+    (*ground).full += weight * slot.detail;
+    (*ground).colored += weight * slot.colored;
+    if entry.canopy.w > 0.0 {
+        // Ground under cover shows as its canopy where blades thin out
+        // (decision 090): their color, rougher and shaded among the
+        // blades, and lit as blades are, their sides toward the sun.
+        let canopy = terrain_canopy(entry.canopy.w, site);
+        color = mix(color, entry.canopy.rgb, canopy);
+        roughness = mix(roughness, 0.7, canopy);
+        occlusion = mix(occlusion, 0.75, canopy);
+        turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
+        (*ground).vegetated += weight;
+        (*ground).canopy += weight * canopy;
+    }
     if u32(terrain.origin.w) == 4u {
         color = terrain_material_color(material);
     }
@@ -687,17 +741,19 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
     return ground;
 }
 
-// The share of the sky the ground at terrain-local `local` sees, from the
-// terrain's sky visibility map once built (decision 055); all of it before.
-fn terrain_sky_visibility(local: vec2<f32>) -> f32 {
+// The terrain's sky map at terrain-local `local` once built: the share of
+// the sky the ground sees (red, decision 055), and its large-scale variety
+// (decision 090), hollows (green) and ridges (blue); before, all the sky
+// and level ground.
+fn terrain_sky_map(local: vec2<f32>) -> vec4<f32> {
     if terrain.directory.w == 0u {
-        return 1.0;
+        return vec4<f32>(1.0, 0.5, 0.5, 1.0);
     }
     let header = terrain.directory.x;
     let extent = vec2<f32>(f32(terrain_directory[header + 1u]),
         f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
     return textureSampleLevel(terrain_sky, terrain_normal_sampler, local / extent,
-        terrain.directory.w - 1u, 0.0).r;
+        terrain.directory.w - 1u, 0.0);
 }
 
 // The light the terrain around a hollow gives back per unit albedo for the
@@ -973,6 +1029,8 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     site.footprint = footprint;
     site.texel = max(min(along.x, along.y), footprint / 16.0);
     site.geometric = geometric;
+    site.distance = length(relative);
+    site.toward = -relative / max(site.distance, 1.0e-6);
     // Sunk where the ground's relief and tracks show (decisions 082 and
     // 083).
     let relief = terrain_parallax(site, shading);
@@ -1012,8 +1070,24 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
         let mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
         albedo *= mix(plain, mapped, ground.mapped);
     }
-    let sky = terrain_sky_visibility(local);
+    let sky_map = terrain_sky_map(local);
+    let sky = sky_map.r;
+    if view < 4u {
+        // Its large-scale variety (decision 090), as on the blades growing
+        // on it.
+        albedo *= ground_variety(sky_map.gb, world.xz, ground.vegetated);
+    }
     albedo = terrain_view_albedo(albedo, normal, relative_spacing.w, cell);
+    if view == 6u {
+        // The detail view (decision 090): green where all maps show, yellow
+        // where their color alone does, red where their means stand in,
+        // blue where the ground shows as its cover's canopy.
+        let mean = 1.0 - ground.colored;
+        albedo = vec3<f32>(0.1, 0.65, 0.15) * ground.full
+            + vec3<f32>(0.85, 0.75, 0.1) * (ground.colored - ground.full)
+            + vec3<f32>(0.75, 0.12, 0.1) * mean;
+        albedo = mix(albedo, vec3<f32>(0.15, 0.3, 0.9), saturate(ground.canopy));
+    }
     let roughness = max(ground.roughness, 0.03);
     var point: SurfacePoint;
     point.albedo = albedo;

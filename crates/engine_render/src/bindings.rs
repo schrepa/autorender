@@ -741,6 +741,9 @@ pub(crate) const COVER_GROW: Table = Table {
         // Runtime deformation's map (decision 083): blades lie down in
         // tracks.
         read(9, "deformation", C),
+        // The terrains' sky maps: their variety tints blades as it does the
+        // ground (decision 090).
+        texture(10, "sky", Float, D2Array, C),
     ],
 };
 

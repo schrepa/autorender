@@ -2501,8 +2501,16 @@
           "format": "uint32",
           "minimum": 1
         },
+        "pixels": {
+          "description": "How tall on screen (pixels) the average blade stands where tiers\nend, 0 to 16: each tier reaches twice as far as the last, with\nblades sparser and wider, until its blades would stand shorter than\nthis. 0 grows cover within the radius alone.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 16.0,
+          "minimum": 0.0
+        },
         "radius": {
-          "description": "Meters from the camera within which cover grows, thinning out over\nthe outer half, 2 to 200.",
+          "description": "Meters from the camera within which cover grows densest, 2 to 200.\nPast it the ground shows as its cover's canopy, and sparser tiers\nof wider blades reach on (decision 090).",
           "type": "number",
           "format": "float",
           "default": 40.0,

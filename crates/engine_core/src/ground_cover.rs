@@ -1,8 +1,10 @@
 //! Ground cover (decision 056): blades of grass and the like standing on a
-//! terrain's surface materials, which renderers generate every frame within
-//! a radius of the camera and never store. A surface material names the
-//! cover growing where it lies ([`Cover`]); the [`GroundCover`] settings
-//! place, budget and sway it.
+//! terrain's surface materials, which renderers generate every frame around
+//! the camera and never store. A surface material names the cover growing
+//! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
+//! sway it. Past its radius cover grows on in tiers as long as blades stay
+//! big enough on screen, and the ground beyond shows as its canopy
+//! (decision 090).
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
@@ -74,10 +76,17 @@ impl Cover {
 #[serde(default, deny_unknown_fields)]
 pub struct GroundCover {
     pub enabled: bool,
-    /// Meters from the camera within which cover grows, thinning out over
-    /// the outer half, 2 to 200.
+    /// Meters from the camera within which cover grows densest, 2 to 200.
+    /// Past it the ground shows as its cover's canopy, and sparser tiers
+    /// of wider blades reach on (decision 090).
     #[cfg_attr(feature = "schema", schemars(range(min = 2.0, max = 200.0)))]
     pub radius: f32,
+    /// How tall on screen (pixels) the average blade stands where tiers
+    /// end, 0 to 16: each tier reaches twice as far as the last, with
+    /// blades sparser and wider, until its blades would stand shorter than
+    /// this. 0 grows cover within the radius alone.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 16.0)))]
+    pub pixels: f32,
     /// Scales every cover's density, 0 to 4. Blades sway in the world's
     /// `Wind` (decision 058).
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
@@ -93,6 +102,7 @@ impl Default for GroundCover {
         Self {
             enabled: true,
             radius: 40.0,
+            pixels: 2.0,
             density: 1.0,
             max_blades: None,
         }
@@ -103,6 +113,7 @@ impl GroundCover {
     /// The first field out of range.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         check_range("radius", self.radius, 2.0..=200.0)?;
+        check_range("pixels", self.pixels, 0.0..=16.0)?;
         check_range("density", self.density, 0.0..=4.0)?;
         check_budget("max_blades", self.max_blades)
     }
@@ -114,6 +125,7 @@ impl GroundCover {
         Self {
             enabled: self.enabled,
             radius: crate::math::clamp(finite(self.radius, defaults.radius), 2.0, 200.0),
+            pixels: crate::math::clamp(finite(self.pixels, defaults.pixels), 0.0, 16.0),
             density: crate::math::clamp(finite(self.density, defaults.density), 0.0, 4.0),
             max_blades: self.max_blades.map(|budget| budget.max(1)),
         }

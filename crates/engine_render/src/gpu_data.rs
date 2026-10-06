@@ -435,6 +435,7 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("impostor_frames.wgsl"),
     include_str!("meshes/impostors.wgsl"),
     include_str!("meshes/terrain_vertex.wgsl"),
+    include_str!("terrain_variety.wgsl"),
     include_str!("meshes/terrain.wgsl"),
     include_str!("meshes/cover.wgsl"),
     include_str!("meshes/water.wgsl"),
@@ -447,7 +448,10 @@ pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wg
 /// Terrain sky visibility map builds (decision 055).
 pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
 /// Ground cover's growth (decision 056).
-pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
+pub(crate) const COVER_GROW_SHADER: &str = concat!(
+    include_str!("terrain_variety.wgsl"),
+    include_str!("cover_grow.wgsl")
+);
 
 pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
 

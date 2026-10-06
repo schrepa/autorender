@@ -176,6 +176,11 @@ pub struct RenderStats {
     /// and those past the capacity or budget, which dropped.
     pub ground_cover_blades: u32,
     pub dropped_ground_cover: u32,
+    /// Meters from the eye ground cover reached this frame (rounded), and
+    /// the most tiers it grew in (decision 090): the radius's and doublings
+    /// past it.
+    pub ground_cover_reach: u32,
+    pub ground_cover_tiers: u32,
     /// Objects terrains' placement layers stand on resident level-0 tiles
     /// (decision 057), each culled on the GPU every frame.
     pub placed_objects: u32,

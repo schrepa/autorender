@@ -101,6 +101,7 @@ struct TerrainUniform {
     relief: [f32; 4],
     deform_grid: [i32; 4],
     deform: [f32; 4],
+    cover: [f32; 4],
 }
 
 /// Bytes of a terrain's uniform.
@@ -110,9 +111,11 @@ pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
 /// base color factor with maps) and roughness; its tiling, height
 /// contrast, projection and maps' layer plus one (0 without maps); its
 /// normal scale, occlusion strength, metalness and mean occlusion; its
-/// maps' mean color and roughness, its factors applied; and the meters its
-/// relief spans (decision 082) and tracks sink it at most (decision 083).
-type PaletteEntry = [f32; 20];
+/// maps' mean color and roughness, its factors applied; the meters its
+/// relief spans (decision 082) and tracks sink it at most (decision 083);
+/// and its cover's canopy (decision 090): the linear color its blades show
+/// seen from afar and their leaves' area per square meter of ground.
+type PaletteEntry = [f32; 24];
 
 /// What ground cover's growth reads of the terrain pass (decision 056).
 pub(crate) struct CoverSources<'a> {
@@ -124,7 +127,10 @@ pub(crate) struct CoverSources<'a> {
     /// Runtime deformation's map (decision 083) and its shading inputs.
     pub deformation: &'a wgpu::Buffer,
     pub shading: crate::deformation::DeformationShading,
-    pub generation: (u64, u64, u64),
+    /// The terrains' sky maps, whose large-scale variety tints blades as
+    /// it does the ground (decision 090).
+    pub sky: &'a wgpu::TextureView,
+    pub generation: (u64, u64, u64, u64),
     /// Advances whenever the directory's resident tiles change.
     pub revision: u64,
 }
@@ -180,6 +186,10 @@ pub(crate) struct TerrainViews<'a> {
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
     pub sun: Vec3,
+    /// Where ground under cover turns to its canopy (decision 090): from
+    /// and to meters from the eye, and the cover's density scale; all 0
+    /// without cover.
+    pub canopy: [f32; 3],
 }
 
 struct Atlas {
@@ -256,7 +266,8 @@ pub(crate) struct TerrainPass {
     // what the buffer holds, and each terrain's densest cover.
     covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
-    cover_densities: Vec<f32>,
+    // Each terrain's densest cover and its mean blade height.
+    cover_densities: Vec<[f32; 2]>,
     /// Sky visibility (decision 055).
     pub(crate) sky: SkyMaps,
     /// Runtime deformation's map (decision 083).
@@ -438,6 +449,7 @@ impl TerrainPass {
                 engine_core::TerrainView::Tiles => 3.0,
                 engine_core::TerrainView::Materials => 4.0,
                 engine_core::TerrainView::Sky => 5.0,
+                engine_core::TerrainView::Detail => 6.0,
             };
             let directory = [
                 self.directory_bases.get(index).copied().unwrap_or(0),
@@ -452,12 +464,13 @@ impl TerrainPass {
                 0.0,
                 0.0,
             ];
-            let (uniform, anchors) = terrain_uniform(
+            let (mut uniform, anchors) = terrain_uniform(
                 terrain,
                 eye,
                 (view, directory, relief),
                 self.deformation.shading(),
             );
+            uniform.cover = [views.canopy[0], views.canopy[1], views.canopy[2], 0.0];
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -937,6 +950,21 @@ impl TerrainPass {
                             });
                         let far_occlusion =
                             means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
+                        // Its cover's canopy (decision 090): the blades' color
+                        // from root (the ground's mean) most of the way to tip,
+                        // as their upper parts show from afar, and their
+                        // leaves' area: blades a square meter, each about as
+                        // wide as its root and tapering up its mean height.
+                        let canopy = look.cover.map_or([0.0; 4], |cover| {
+                            let tip = 0.75;
+                            let height = 0.5 * (cover.height[0] + cover.height[1]);
+                            [
+                                far[0] + (cover.color[0] - far[0]) * tip,
+                                far[1] + (cover.color[1] - far[1]) * tip,
+                                far[2] + (cover.color[2] - far[2]) * tip,
+                                cover.density * height * cover.width * 0.6,
+                            ]
+                        });
                         [
                             color[0],
                             color[1],
@@ -958,6 +986,10 @@ impl TerrainPass {
                             look.deform,
                             0.0,
                             0.0,
+                            canopy[0],
+                            canopy[1],
+                            canopy[2],
+                            canopy[3],
                         ]
                     }),
             );
@@ -981,10 +1013,16 @@ impl TerrainPass {
                 .push(if kept.len() == terrain.surface.len() {
                     kept.iter()
                         .filter_map(|look| look.cover)
-                        .map(|cover| cover.density)
-                        .fold(0.0, engine_core::math::max)
+                        .map(|cover| [cover.density, 0.5 * (cover.height[0] + cover.height[1])])
+                        .fold([0.0; 2], |densest, cover| {
+                            if cover[0] > densest[0] {
+                                cover
+                            } else {
+                                densest
+                            }
+                        })
                 } else {
-                    0.0
+                    [0.0; 2]
                 });
             entries.extend(kept.iter().map(|look| {
                 look.cover.map_or([0.0; 8], |cover| {
@@ -1022,23 +1060,27 @@ impl TerrainPass {
             covers: &self.covers,
             deformation: self.deformation.map().0,
             shading: self.deformation.shading(),
+            sky: self.sky.view(),
             generation: (
                 self.atlas_generation,
                 self.directory_generation,
                 self.deformation.map().1,
+                self.sky.generation(),
             ),
             revision: self.directory_revision,
         })
     }
 
-    /// Terrain `index`'s place in the directory and palette and its
-    /// densest cover (blades per square meter), as the last preparation
-    /// wrote them.
-    pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, f32) {
+    /// Terrain `index`'s place in the directory and palette, its densest
+    /// cover (blades per square meter) and that cover's mean blade height
+    /// (meters), as the last preparation wrote them, and its sky map's
+    /// layer plus one (0 until built).
+    pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, [f32; 2], u32) {
         (
             self.directory_bases.get(index).copied().unwrap_or(0),
             self.palette_bases.get(index).copied().unwrap_or(0),
-            self.cover_densities.get(index).copied().unwrap_or(0.0),
+            self.cover_densities.get(index).copied().unwrap_or([0.0; 2]),
+            self.sky.layer(index),
         )
     }
 
@@ -1614,6 +1656,7 @@ fn terrain_uniform(
         relief,
         deform_grid: deformation.grid,
         deform: deformation.scale,
+        cover: [0.0; 4],
     };
     (uniform, anchors)
 }
