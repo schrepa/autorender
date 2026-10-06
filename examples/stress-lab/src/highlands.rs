@@ -7,9 +7,11 @@
 //! built offline (`cargo run -p engine_assetc --release --bin
 //! terrain_materials`) and fetched by the page, or in plain colors without
 //! them. Boulders lie on its meadows, stones on its scree and outcrops on
-//! its rock, and spruce forests cover the lower slopes (decision 057).
+//! its rock, and spruce forests cover the lower slopes (decision 057). A
+//! gravel road (decision 069) winds from the plateau down into the valley.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use engine::prelude::*;
 
@@ -58,7 +60,7 @@ struct Look {
     cover: Option<Cover>,
 }
 
-const LOOKS: [Look; 9] = [
+const LOOKS: [Look; 10] = [
     Look {
         name: "grass",
         maps: "grass",
@@ -181,6 +183,19 @@ const LOOKS: [Look; 9] = [
         projection: SurfaceProjection::Top,
         cover: None,
     },
+    // Roads (decision 069): packed gravel, the scree's stones finer and
+    // warmer, where no grass grows.
+    Look {
+        name: "road",
+        maps: "scree",
+        color: [0.27, 0.24, 0.2],
+        roughness: 0.9,
+        tint: [0.92, 0.85, 0.74],
+        tiling: 1.6,
+        height_contrast: 0.6,
+        projection: SurfaceProjection::Top,
+        cover: None,
+    },
 ];
 
 /// Level-0 tiles along each axis, and their sample spacing: 8,192 meters.
@@ -189,6 +204,89 @@ const SPACING: f32 = 1.0;
 const SIZE: f32 = TILES as f32 * 256.0 * SPACING;
 /// The plateau's center, where the hamlet stands.
 const PLATEAU: [f32; 2] = [0.0, 0.0];
+
+/// The road from the plateau's rim down to the lake in the valley (decision
+/// 069), terrain-local: the route `terrain_route` found over the default
+/// seed's ground from world (113, -98) toward the valley's center (1500,
+/// -1300) with a grade cost of 100, up to where it reaches the lake's
+/// shore and a few meters into the water: 1.8 kilometers with a hairpin,
+/// every grade within 12% but its hairpin's.
+const ROAD: [[f32; 2]; 74] = [
+    [4208.0, 4000.0],
+    [4216.21, 3975.38],
+    [4217.93, 3968.03],
+    [4218.86, 3960.92],
+    [4218.99, 3954.05],
+    [4218.31, 3947.42],
+    [4216.96, 3940.63],
+    [4214.95, 3933.68],
+    [4212.27, 3926.58],
+    [4187.73, 3873.42],
+    [4185.09, 3866.11],
+    [4183.15, 3858.75],
+    [4181.92, 3851.33],
+    [4181.39, 3843.87],
+    [4181.57, 3836.36],
+    [4182.45, 3828.79],
+    [4184.05, 3821.18],
+    [4193.1, 3790.99],
+    [4198.87, 3776.23],
+    [4205.8, 3762.05],
+    [4213.89, 3748.43],
+    [4362.11, 3539.57],
+    [4372.45, 3527.67],
+    [4383.86, 3516.9],
+    [4396.35, 3507.28],
+    [4544.26, 3414.84],
+    [4550.94, 3411.5],
+    [4557.53, 3409.07],
+    [4564.02, 3407.55],
+    [4570.41, 3406.93],
+    [4576.71, 3407.22],
+    [4582.9, 3408.41],
+    [4589.0, 3410.5],
+    [4598.0, 3415.0],
+    [4609.66, 3422.49],
+    [4620.97, 3431.47],
+    [4631.94, 3441.94],
+    [4669.37, 3484.04],
+    [4692.0, 3504.0],
+    [4716.0, 3520.0],
+    [4729.5, 3527.5],
+    [4737.0, 3531.0],
+    [4743.0, 3533.0],
+    [4750.87, 3536.65],
+    [4765.5, 3544.59],
+    [4907.75, 3635.11],
+    [4918.88, 3641.06],
+    [4925.44, 3643.53],
+    [4929.22, 3644.51],
+    [4932.41, 3644.84],
+    [4935.0, 3644.5],
+    [4937.0, 3643.5],
+    [4938.5, 3642.13],
+    [4939.5, 3640.38],
+    [4940.0, 3638.25],
+    [4940.0, 3635.75],
+    [4939.5, 3632.88],
+    [4938.5, 3629.63],
+    [4937.0, 3626.0],
+    [4934.0, 3620.0],
+    [4929.0, 3612.5],
+    [4923.0, 3605.5],
+    [4916.0, 3599.0],
+    [4908.0, 3593.0],
+    [4899.5, 3585.5],
+    [4886.0, 3572.0],
+    [4866.0, 3548.0],
+    [4848.84, 3521.69],
+    [4800.0, 3424.0],
+    [4760.88, 3365.31],
+    [4745.85, 3337.23],
+    [4712.0, 3256.0],
+    [4664.85, 3114.56],
+    [4663.09, 3107.03],
+];
 
 /// The height the hamlet's plateau is leveled to.
 #[derive(Resource, Clone, Copy)]
@@ -270,6 +368,17 @@ pub(crate) fn populate(
             baked: None,
         }),
         plateau_stamp,
+        // The road down into the valley (decision 069), leveled to its own
+        // profile across six meters, its shoulders easing into the ground.
+        Layer::Path(PathStage {
+            layer: Arc::new(PathLayer {
+                points: ROAD.to_vec(),
+                width: 6.0,
+                shoulder: 6.0,
+                smoothing: 80.0,
+            }),
+            baked: None,
+        }),
         // A cave mouth in the plateau's slope.
         Layer::Stamp(Stamp {
             center: [plateau[0] + hamlet + 120.0, plateau[1]],
@@ -526,8 +635,10 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
-            // Nor where lakes stand (decision 067).
+            // Nor where lakes stand (decision 067), nor on roads and their
+            // verges (decision 069).
             Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
+            Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
         ])
     };
     let boulders = |weight: f32| {
@@ -582,7 +693,10 @@ fn rules() -> Biomes {
                 density: 18.0,
                 footprint: 7.0,
                 materials: vec!["grass".into(), "dry_grass".into(), "dirt".into()],
-                mask: remap(noise(90.0, 21, 2), 0.45, 0.75),
+                mask: Mask::Multiply(vec![
+                    remap(noise(90.0, 21, 2), 0.45, 0.75),
+                    Mask::Invert(Box::new(Mask::Path([6.0, 2.0]))),
+                ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
                 sink: 0.2,
@@ -681,6 +795,9 @@ fn rules() -> Biomes {
                         0.75,
                     ),
                 ),
+                // Roads (decision 069), their edges soft over a meter and a
+                // half and ragged where the gravel's stones win.
+                layer("road", Mask::Path([1.0, -0.5])),
                 layer(
                     "rock",
                     remap(

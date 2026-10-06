@@ -21,6 +21,24 @@ pub struct TerrainView {
     pub hydrology: Option<HydrologyView>,
     /// Its erosion bake (decision 068), when its layers hold one.
     pub erosion: Option<ErosionView>,
+    /// Its path layers (decision 069), in stack order.
+    pub paths: Vec<PathView>,
+}
+
+/// A path layer (decision 069): its index in the stack, whether its
+/// profile is baked, and once baked its length (meters), the points its
+/// profile read the ground at, its steepest grade (rise per meter) and the
+/// most it cuts into and fills over the ground along its line (meters).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct PathView {
+    pub layer: usize,
+    pub baked: bool,
+    pub length: Option<f32>,
+    pub samples: Option<usize>,
+    pub steepest: Option<f32>,
+    pub deepest_cut: Option<f32>,
+    pub highest_fill: Option<f32>,
 }
 
 /// A terrain's erosion bake (decision 068): whether a bake is in progress

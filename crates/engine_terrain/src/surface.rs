@@ -10,6 +10,7 @@
 use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
 
+use crate::PathSample;
 use crate::noise::{gradient_value, smooth};
 
 /// Materials a surface can name: control values hold 8-bit indices.
@@ -49,6 +50,13 @@ pub enum Mask {
     Wetness([f32; 2]),
     /// A ramp over how deep water would stand in a filled pit, in meters.
     Lake([f32; 2]),
+    /// A ramp over meters from the nearest road's edge (decision 069),
+    /// negative on roads: `[1, 0]` covers roads with a meter of soft edge.
+    /// It averages the ramp across each sample's footprint, so roads
+    /// narrower than coarse levels' samples fade there instead of breaking
+    /// into dashes. Further than 32 meters beyond every road's shoulders,
+    /// and without roads, it reads 1e9.
+    Path([f32; 2]),
     /// Gradient noise from 0 to 1.
     Noise(NoiseMask),
     /// The product of masks.
@@ -177,6 +185,7 @@ pub(crate) enum Compiled {
     Flow([f32; 2]),
     Wetness([f32; 2]),
     Lake([f32; 2]),
+    Path([f32; 2]),
     Noise {
         frequency: f32,
         seed: u32,
@@ -206,6 +215,9 @@ pub struct SampleInputs {
     /// What the terrain's hydrology bake found there (decision 066); zeros
     /// without one.
     pub water: crate::HydrologySample,
+    /// The nearest road (decision 069), as [`crate::Layers::path_at`]
+    /// reads it.
+    pub path: PathSample,
 }
 
 /// 0 at `ends[0]`, 1 at `ends[1]`, smooth between; a step where they meet.
@@ -290,6 +302,12 @@ impl Compiled {
                 }
                 Self::Lake(*ends)
             }
+            Mask::Path(ends) => {
+                if !finite(ends) {
+                    return Err(fail("path distances must be finite"));
+                }
+                Self::Path(*ends)
+            }
             Mask::Noise(noise) => {
                 if !(noise.wavelength.is_finite() && (0.01..=1.0e6).contains(&noise.wavelength)) {
                     return Err(fail("noise wavelength must be in [0.01, 1e6] meters"));
@@ -337,7 +355,8 @@ impl Compiled {
             | Self::Curvature(_)
             | Self::Flow(_)
             | Self::Wetness(_)
-            | Self::Lake(_) => 1,
+            | Self::Lake(_)
+            | Self::Path(_) => 1,
             Self::Noise { octaves, .. } => 2 * u64::from(*octaves),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
                 masks.iter().map(Self::cost).sum::<u64>() + 1
@@ -355,6 +374,16 @@ impl Compiled {
             Self::Flow(ends) => ramp(inputs.water.flow, *ends),
             Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
             Self::Lake(ends) => ramp(inputs.water.lake, *ends),
+            Self::Path(ends) => {
+                // The ramp at four points across the sample's footprint,
+                // across the road.
+                let PathSample { distance, half } = inputs.path;
+                [-0.375, -0.125, 0.125, 0.375]
+                    .iter()
+                    .map(|offset| ramp((distance + offset * inputs.spacing).abs() - half, *ends))
+                    .sum::<f32>()
+                    * 0.25
+            }
             Self::Noise {
                 frequency,
                 seed,
@@ -540,7 +569,7 @@ impl BiomeRules {
         tile: &crate::Tile,
         (layer, row): (usize, usize),
         out: &mut Vec<crate::Placed>,
-        water: Option<&crate::Hydrology>,
+        layers: &crate::Layers,
     ) -> (u64, Option<(usize, usize)>) {
         crate::placement::place_row(
             &self.placements,
@@ -548,7 +577,7 @@ impl BiomeRules {
             0x5eed_0057,
             (layer, row),
             out,
-            water,
+            layers,
         )
     }
 

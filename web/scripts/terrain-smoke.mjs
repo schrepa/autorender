@@ -33,6 +33,9 @@ const terrain = {
     // Decision 066: water drains off the hills, carving channels, baked
     // over the same tiles.
     { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
+    // Decision 069: a road through the south-western hills, leveled to its
+    // own smoothed profile, which gravel covers.
+    { path: { points: [[100, 300], [250, 260], [400, 150]], width: 6, shoulder: 6, smoothing: 60 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
@@ -44,9 +47,10 @@ const terrain = {
       { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 } },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
       { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5 },
+      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9 },
     ],
     biomes: [
-      { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }] },
+      { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
     // Decision 057: crates stand on the meadow, a coarser box far away,
@@ -186,17 +190,18 @@ try {
   assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
-  assert.equal(view.terrain.layers.length, 6);
+  assert.equal(view.terrain.layers.length, 7);
   assert.deepEqual(view.terrain.layers[1], terrain.layers[1]);
   assert.deepEqual(view.terrain.layers[2], terrain.layers[2]);
-  assert.equal(view.terrain.layers[5].heightmap.uri, "terrain-smoke/dome.r16");
+  assert.deepEqual(view.terrain.layers[3], terrain.layers[3]);
+  assert.equal(view.terrain.layers[6].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
   // which its patches morph by, and ranges growing level by level.
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
-  assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow"]);
+  assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
   assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 1, filter: 4294967295 } });
@@ -219,6 +224,48 @@ try {
   assert.equal(worn.samples, 513 * 513, `erosion reads its level: ${JSON.stringify(worn)}`);
   assert.ok(worn.rounds === 6 && worn.deepest > 0, `erosion wears ground away: ${JSON.stringify(worn)}`);
   checks.push({ check: "erosion", rounds: worn.rounds, deepest: worn.deepest, highest: worn.highest });
+  // The path's bake (decision 069) profiled the ground along its line; the
+  // road lies level across, and queries report how far its edge is.
+  const [road] = view.paths;
+  const line = terrain.layers[3].path.points;
+  const length = Math.hypot(150, 40) + Math.hypot(150, 110);
+  assert.ok(road && road.layer === 3 && road.baked, `the path bakes: ${JSON.stringify(view.paths)}`);
+  assert.ok(Math.abs(road.length - length) < 1e-2 && road.samples === Math.ceil(length / 4) + 1, `the profile reads its line: ${JSON.stringify(road)}`);
+  assert.ok(road.steepest > 0 && road.steepest < 0.6, `the road climbs gently: ${JSON.stringify(road)}`);
+  const across = [];
+  for (const t of [0.25, 0.5, 0.75]) {
+    for (const [a, b] of [[line[0], line[1]], [line[1], line[2]]]) {
+      const [dx, dz] = [b[0] - a[0], b[1] - a[1]];
+      const run = Math.hypot(dx, dz);
+      const [nx, nz] = [-dz / run, dx / run];
+      const center = [a[0] + dx * t - 512, a[1] + dz * t - 512];
+      across.push([center, [center[0] + 2 * nx, center[1] + 2 * nz], [center[0] - 2 * nx, center[1] - 2 * nz]]);
+    }
+  }
+  const sections = await heights(across.flat());
+  let tilt = 0;
+  for (let i = 0; i < sections.length; i += 3) {
+    const [center, left, right] = sections.slice(i, i + 3);
+    assert.ok(Math.abs(center.path + 3) < 0.05, `the centerline lies 3 m inside the road's edges: ${JSON.stringify(center)}`);
+    tilt = Math.max(tilt, Math.abs(left.height - right.height));
+  }
+  assert.ok(tilt < 0.15, `the road lies level across: ${tilt} m over 4 m`);
+  const [away] = await heights([[400, -400]]);
+  assert.equal(away.path, null, "far from roads, queries report none");
+  checks.push({ check: "path", length: road.length, samples: road.samples, steepest: road.steepest, cut: road.deepest_cut, fill: road.highest_fill, tilt });
+  // Routes (decision 069) keep within their grade between their ends.
+  const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
+  assert.equal(routed.terrain, "ground");
+  const route = routed.route;
+  assert.ok(route && route.steepest <= 0.2 + 1e-6 && route.points.length >= 2, `a route keeps within its grade: ${JSON.stringify(routed)}`);
+  assert.deepEqual(routed.origin, [-512, -512]);
+  const world = route.points.map(([x, z]) => [x + routed.origin[0], z + routed.origin[1]]);
+  const [first, last] = [world[0], world[world.length - 1]];
+  assert.ok(Math.hypot(first[0] + 400, first[1] - 100) < 3 && Math.hypot(last[0] - 300, last[1] + 250) < 3, `the route joins its ends: ${JSON.stringify([first, last])}`);
+  assert.ok(route.length >= Math.hypot(700, 350) - 8, `a route is no shorter than its ends' distance: ${route.length}`);
+  const unrouted = await command("terrain_route", { from: [-400, 100], to: [300, -250], level: 99 }, false);
+  assert.equal(unrouted.error.code, "invalid_request");
+  checks.push({ check: "route", points: route.points.length, length: route.length, steepest: route.steepest });
 
   // Heights: the plateau is flat at 30 m, the hole is a hole, outside is null.
   const [plateau, hole, outside] = await heights([[0, 0], [48, 0], [5000, 5000]]);

@@ -473,6 +473,25 @@
           ]
         },
         {
+          "description": "A ramp over meters from the nearest road's edge (decision 069),\nnegative on roads: `[1, 0]` covers roads with a meter of soft edge.\nIt averages the ramp across each sample's footprint, so roads\nnarrower than coarse levels' samples fade there instead of breaking\ninto dashes. Further than 32 meters beyond every road's shoulders,\nand without roads, it reads 1e9.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "path"
+          ]
+        },
+        {
           "description": "Gradient noise from 0 to 1.",
           "type": "object",
           "properties": {
@@ -820,6 +839,53 @@
       "additionalProperties": false,
       "required": [
         "wavelength"
+      ]
+    },
+    "PathLayer": {
+      "description": "A road or track along the ground (decision 069).",
+      "type": "object",
+      "properties": {
+        "points": {
+          "description": "Terrain-local meters along x and z the road runs through, 2 to\n4096 of them.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "shoulder": {
+          "description": "Meters on each side over which the road eases back into the\nground, 0 to 500.",
+          "type": "number",
+          "format": "float",
+          "default": 6.0,
+          "maximum": 500.0,
+          "minimum": 0.0
+        },
+        "smoothing": {
+          "description": "Meters along the road over which its height averages the ground's,\n0 to 5000: longer is gentler, cutting deeper and filling higher.",
+          "type": "number",
+          "format": "float",
+          "default": 80.0,
+          "maximum": 5000.0,
+          "minimum": 0.0
+        },
+        "width": {
+          "description": "Meters of level road across, 0.5 to 200.",
+          "type": "number",
+          "format": "float",
+          "default": 6.0,
+          "maximum": 200.0,
+          "minimum": 0.5
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points"
       ]
     },
     "PlacementChoice": {
@@ -3230,7 +3296,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake (decision 068) of the layers before it, where rivers wear valleys\nand slopes creep, or a hydrology bake (decision 066) of them, which\ncarves channels where water gathers, fills lakes and rivers with water\n(decision 067) and feeds the `flow`, `wetness` and `lake` masks.\nTerrains load no tiles until their bakes are done.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake (decision 068) of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake (decision 066) of them, which\ncarves channels where water gathers, fills lakes and rivers with water\n(decision 067) and feeds the `flow`, `wetness` and `lake` masks, or a\npath (decision 069): a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
       "oneOf": [
         {
           "type": "object",
@@ -3290,6 +3356,18 @@
           "additionalProperties": false,
           "required": [
             "erosion"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "#/$defs/PathLayer"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "path"
           ]
         }
       ]

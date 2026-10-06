@@ -24,6 +24,7 @@ mod format;
 mod hydrology;
 mod layers;
 mod noise;
+mod path;
 mod placement;
 mod pyramid;
 mod select;
@@ -42,7 +43,11 @@ pub use hydrology::{
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
-    NoiseLayer, Stamp, StampOp,
+    NoiseLayer, PathStage, Stamp, StampOp,
+};
+pub use path::{
+    HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PROFILE_STEP, PathLayer, PathProfile,
+    PathSample, PathStats, Route, RouteOptions, route,
 };
 pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
 pub use pyramid::{Pyramid, PyramidError, TileKey};

@@ -8,8 +8,9 @@ use std::sync::Arc;
 use engine_core::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
     HydrologyLayer, HydrologyStage, Layer, Layers, MaterialHandle, MeshHandle, NoiseLayer,
-    PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer, PlacementLod, Pyramid, Stamp,
-    SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource, TerrainSurface,
+    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    PlacementLod, Pyramid, Stamp, SurfaceMaterial, SurfaceProjection, Terrain, TerrainSource,
+    TerrainSurface,
     glam::{Vec2, Vec3},
 };
 use serde::{Deserialize, Serialize};
@@ -269,10 +270,12 @@ impl PreparedTerrain {
 /// One layer of a terrain's stack: procedural noise with erosion, a stamp
 /// (raise, lower, flatten or cut holes), an imported heightmap, an erosion
 /// bake (decision 068) of the layers before it, where rivers wear valleys
-/// and slopes creep, or a hydrology bake (decision 066) of them, which
+/// and slopes creep, a hydrology bake (decision 066) of them, which
 /// carves channels where water gathers, fills lakes and rivers with water
-/// (decision 067) and feeds the `flow`, `wetness` and `lake` masks.
-/// Terrains load no tiles until their bakes are done.
+/// (decision 067) and feeds the `flow`, `wetness` and `lake` masks, or a
+/// path (decision 069): a road leveling the layers before it along its
+/// line, which feeds the `path` mask (the `terrain_route` request finds
+/// routes for them). Terrains load no tiles until their bakes are done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -282,6 +285,7 @@ pub enum SceneTerrainLayer {
     Heightmap(SceneHeightmap),
     Hydrology(HydrologyLayer),
     Erosion(ErosionLayer),
+    Path(PathLayer),
 }
 
 /// An imported heightmap: a file of little-endian 16-bit samples, row by row
@@ -591,6 +595,10 @@ impl SceneTerrain {
                         layer: *layer,
                         baked: None,
                     }),
+                    SceneTerrainLayer::Path(layer) => Layer::Path(PathStage {
+                        layer: Arc::new(layer.clone()),
+                        baked: None,
+                    }),
                 })
             })
             .collect::<Result<Vec<_>, SceneError>>()?;
@@ -664,6 +672,7 @@ impl SceneTerrain {
                     Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
                     Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
                     Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
+                    Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),
                     Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
                         uri: map.uri.clone().unwrap_or_default(),
                         width: map.image.width(),

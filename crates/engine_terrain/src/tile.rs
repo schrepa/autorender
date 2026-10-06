@@ -468,6 +468,7 @@ impl Generator {
                     .layers
                     .hydrology()
                     .map_or_else(Default::default, |water| water.at(x, z, spacing)),
+                path: self.layers.path_at(x, z),
             };
             control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
         }
@@ -583,12 +584,8 @@ impl Generator {
                     let (Some(surface), Some(tile)) = (&self.surface, &self.tile) else {
                         return None;
                     };
-                    let (cost, next) = surface.place_row(
-                        tile,
-                        (layer, row),
-                        &mut self.placed,
-                        self.layers.hydrology(),
-                    );
+                    let (cost, next) =
+                        surface.place_row(tile, (layer, row), &mut self.placed, &self.layers);
                     *budget = budget.saturating_sub(cost);
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },
@@ -657,6 +654,20 @@ impl Generator {
 }
 
 impl Layers {
+    /// Work units of one [`Self::sample_height`], against one per sample of
+    /// a layer: sixteen coarse grid points and a sample per noise layer.
+    pub(crate) fn height_cost(&self) -> u64 {
+        (0..self.layers().len())
+            .map(|layer| {
+                if self.noise(layer).is_some() {
+                    16 * COARSE_COST + NOISE_SAMPLE_COST
+                } else {
+                    1
+                }
+            })
+            .sum()
+    }
+
     /// The height of global sample `sample` (x and z, counted from the
     /// terrain's first corner) at `level`, exactly as a generated tile holds
     /// it: the same coarse grid points, interpolation and layer order.
