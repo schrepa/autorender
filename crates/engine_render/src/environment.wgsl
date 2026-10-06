@@ -61,6 +61,12 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
 // clouds.
 @group(0) @binding(38) var environment_clouds: texture_2d<f32>;
 @group(0) @binding(39) var environment_cloud_sampler: sampler;
+// The physically based sky (decision 088): its uniform, sky-view and
+// transmittance tables and their sampler.
+@group(0) @binding(40) var<uniform> environment_air: SkyUniform;
+@group(0) @binding(41) var environment_view_table: texture_2d<f32>;
+@group(0) @binding(42) var environment_transmittance_table: texture_2d<f32>;
+@group(0) @binding(43) var environment_table_sampler: sampler;
 
 // The sky's light (without the sun's disc, whose highlights surfaces
 // shade themselves) behind its clouds in each direction of the radiance
@@ -69,7 +75,12 @@ fn face_sky(face: u32, ndc: vec2<f32>) -> vec4<f32> {
     let direction = face_direction(face, ndc);
     let cloud = textureSampleLevel(environment_clouds, environment_cloud_sampler,
         cloud_dome_uv(direction), 0.0);
-    return vec4<f32>(behind_clouds(haze(direction), cloud, direction), 1.0);
+    var light = haze(direction);
+    if lighting.grade.z > 0.5 {
+        light = air_sky(environment_view_table, environment_transmittance_table,
+            environment_table_sampler, environment_air, direction, false);
+    }
+    return vec4<f32>(behind_clouds(light, cloud, direction), 1.0);
 }
 
 @fragment

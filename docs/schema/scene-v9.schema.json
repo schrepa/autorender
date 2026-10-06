@@ -2283,6 +2283,17 @@
             }
           ]
         },
+        "sky": {
+          "description": "A physically based sky, and the time of day moving the sun\n(decision 088).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSky"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "sun_shafts": {
           "anyOf": [
             {
@@ -2298,6 +2309,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "time_of_day": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTimeOfDay"
             },
             {
               "type": "null"
@@ -3545,6 +3566,136 @@
         "joints"
       ]
     },
+    "SceneSky": {
+      "description": "A physically based sky (decision 088): whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); and the height of the world's\norigin above the ground of the planet (meters). Defaults are Earth's.\nOpt-in. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "aerial": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 100.0,
+          "minimum": 0.0
+        },
+        "altitude": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 100000.0,
+          "minimum": 0.0
+        },
+        "atmosphere_height": {
+          "type": "number",
+          "format": "float",
+          "default": 100.0,
+          "maximum": 1000.0,
+          "minimum": 1.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "ground_albedo": {
+          "type": "array",
+          "default": [
+            0.30000001192092896,
+            0.30000001192092896,
+            0.30000001192092896
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "mie": {
+          "type": "number",
+          "format": "float",
+          "default": 0.003996000159531832,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "mie_absorption": {
+          "type": "number",
+          "format": "float",
+          "default": 0.004399999976158142,
+          "maximum": 1.0,
+          "minimum": 0.0
+        },
+        "mie_g": {
+          "type": "number",
+          "format": "float",
+          "default": 0.800000011920929,
+          "maximum": 0.99,
+          "minimum": 0.0
+        },
+        "mie_height": {
+          "type": "number",
+          "format": "float",
+          "default": 1.2000000476837158,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "ozone": {
+          "type": "array",
+          "default": [
+            0.0006500000017695129,
+            0.0018810000037774444,
+            0.00008499999967170879
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "planet_radius": {
+          "type": "number",
+          "format": "float",
+          "default": 6360.0,
+          "maximum": 100000.0,
+          "minimum": 100.0
+        },
+        "rayleigh": {
+          "type": "array",
+          "default": [
+            0.005801999941468239,
+            0.013558000326156616,
+            0.03310000151395798
+          ],
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "rayleigh_height": {
+          "type": "number",
+          "format": "float",
+          "default": 8.0,
+          "maximum": 100.0,
+          "minimum": 0.1
+        },
+        "sun_intensity": {
+          "type": "number",
+          "format": "float",
+          "default": 3.0,
+          "maximum": 1000.0,
+          "minimum": 0.0
+        },
+        "sun_size": {
+          "type": "number",
+          "format": "float",
+          "default": 0.27000001072883606,
+          "maximum": 10.0,
+          "minimum": 0.01
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneSpline": {
       "description": "A mesh bent along a curve on this entity (decision 071). Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
       "type": "object",
@@ -4326,6 +4477,59 @@
       "required": [
         "id"
       ]
+    },
+    "SceneTimeOfDay": {
+      "description": "The time of day (decision 088): whether it moves the sun; the hour (0 to\n24); how many hours pass each second (0 holds it, up to 24); the\nminutes of each step the sun moves by (0.1 to 60); the latitude and day\nof the year (0 to 365) that set the sun's path; and the yaw of north in\nthe world (degrees from -z toward +x). Opt-in. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "day": {
+          "type": "number",
+          "format": "float",
+          "default": 172.0,
+          "maximum": 365.0,
+          "minimum": 0.0
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "hours": {
+          "type": "number",
+          "format": "float",
+          "default": 15.0,
+          "maximum": 24.0,
+          "minimum": 0.0
+        },
+        "latitude": {
+          "type": "number",
+          "format": "float",
+          "default": 45.0,
+          "maximum": 90.0,
+          "minimum": -90.0
+        },
+        "north": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 360.0,
+          "minimum": -360.0
+        },
+        "speed": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 24.0,
+          "minimum": 0.0
+        },
+        "step": {
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 60.0,
+          "minimum": 0.1
+        }
+      },
+      "additionalProperties": false
     },
     "SceneTransform": {
       "description": "Local transform with Euler XYZ rotation expressed in degrees.\n\nTranslation is bounded to ±1,000,000 world units and each scale component\nto `[0.0001, 10000]`, avoiding singular or overflowing normal transforms.\nParent composition preserves full matrices, including shear. Negative scale\nreflection is not authored by this format.",

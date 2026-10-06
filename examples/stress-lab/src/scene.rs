@@ -62,6 +62,7 @@ pub fn create_workload_with(
     engine.app.insert_resource(config.clone());
     let (atmosphere, lamps) = look(config.scene, "scene")?;
     engine.app.insert_resource(atmosphere);
+    apply_sky(engine.app.world_mut(), config.scene, "scene");
     engine.app.init_resource::<FrameMetrics>();
     let world = engine.app.world_mut();
     let (moving_nodes, bounds) = match config.scene {
@@ -499,30 +500,72 @@ pub fn stress_shafts() -> SunShafts {
 /// A lighting preset: its name, atmosphere and street lamp brightness.
 type Look = (&'static str, fn() -> Atmosphere, f32);
 
-/// The lighting presets; lamps are off by day.
-const LOOKS: [Look; 4] = [
+/// The lighting presets; lamps are off by day. `sky` is the physically
+/// based sky (decision 088) at a time of day, under a neutral grade.
+const LOOKS: [Look; 5] = [
     ("golden", Atmosphere::golden_hour, 0.35),
     ("dusk", Atmosphere::dusk, 0.8),
     ("night", Atmosphere::night, 1.0),
     ("day", Atmosphere::day, 0.0),
+    ("sky", physical_look, 0.5),
 ];
+
+/// The grade under the physically based sky (decision 088): its light at
+/// full strength, close to authored colors, a little contrast; the sky
+/// gives the sun's and the sky's colors and the haze.
+fn physical_look() -> Atmosphere {
+    Atmosphere {
+        ambient: 1.0,
+        rim: 0.2,
+        emission: 0.5,
+        exposure: 1.0,
+        saturation: 1.05,
+        contrast: 1.1,
+        vibrance: 0.15,
+        shadow_tint: Vec3::new(0.95, 0.98, 1.06),
+        highlight_tint: Vec3::new(1.04, 1.0, 0.96),
+        ..Atmosphere::day()
+    }
+}
+
+/// Puts the physically based sky (decision 088) and the time of day into
+/// `world` for `scene`'s look `name`, or takes them out for the others.
+pub fn apply_sky(world: &mut World, scene: StressScene, name: &str) {
+    if resolve(scene, name) == "sky" {
+        world.insert_resource(Sky::default());
+        world.insert_resource(TimeOfDay {
+            hours: 16.5,
+            latitude: 42.0,
+            north: 30.0,
+            ..TimeOfDay::default()
+        });
+    } else {
+        world.remove_resource::<Sky>();
+        world.remove_resource::<TimeOfDay>();
+    }
+}
 
 /// The lighting preset `name` and its street lamp brightness: `golden`,
 /// `dusk`, `night` or `day`, or `scene` for the scene's own (night over the
 /// tower field, golden hour over the city, day over dense geometry).
 pub fn look(scene: StressScene, name: &str) -> Result<(Atmosphere, f32), String> {
-    let name = match (name, scene) {
+    let name = resolve(scene, name);
+    LOOKS
+        .iter()
+        .find(|(look, ..)| *look == name)
+        .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
+        .ok_or_else(|| "look must be scene, golden, dusk, night, day or sky".into())
+}
+
+/// Look `name` of `scene`, `scene` resolved to the scene's own.
+fn resolve(scene: StressScene, name: &str) -> &str {
+    match (name, scene) {
         ("scene", StressScene::Field) => "night",
         ("scene", StressScene::City | StressScene::Metro) => "golden",
         ("scene", StressScene::Dense) => "day",
         ("scene", StressScene::Highlands) => "golden",
         _ => name,
-    };
-    LOOKS
-        .iter()
-        .find(|(look, ..)| *look == name)
-        .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
-        .ok_or_else(|| "look must be scene, golden, dusk, night or day".into())
+    }
 }
 
 pub fn set_view(engine: &mut Engine, view: &str) -> Result<(), String> {

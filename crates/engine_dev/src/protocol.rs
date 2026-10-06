@@ -1,7 +1,8 @@
 use engine_core::{
     AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
     LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
-    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind, WorldStreaming,
+    Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry, Water, Wind,
+    WorldStreaming,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -390,6 +391,10 @@ pub enum BrowserControl {
         clouds: Option<Clouds>,
         #[serde(default)]
         world_streaming: Option<WorldStreaming>,
+        #[serde(default)]
+        sky: Option<Sky>,
+        #[serde(default)]
+        time_of_day: Option<TimeOfDay>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to

@@ -11,7 +11,8 @@ use bevy_ecs::prelude::{Resource, World};
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
     LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
-    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind, WorldStreaming,
+    Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry, Water, Wind,
+    WorldStreaming,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -65,18 +66,32 @@ pub struct Environment {
     pub deformation: Deformation,
     pub clouds: Clouds,
     pub world_streaming: WorldStreaming,
+    pub sky: Sky,
+    pub time_of_day: TimeOfDay,
 }
 
 impl Environment {
     /// `world`'s settings as its resources hold them. A missing atmosphere
     /// reads as the default one, and a missing effect resource as that
-    /// effect turned off.
+    /// effect turned off. An enabled time of day (decision 088) sets the
+    /// atmosphere's sun direction.
     pub fn current(world: &World) -> Self {
         fn read<T: Resource + Copy>(world: &World, off: T) -> T {
             world.get_resource::<T>().copied().unwrap_or(off)
         }
+        let time_of_day = read(
+            world,
+            TimeOfDay {
+                enabled: false,
+                ..TimeOfDay::default()
+            },
+        );
+        let mut atmosphere = read(world, Atmosphere::default());
+        if time_of_day.enabled {
+            atmosphere.sun_direction = time_of_day.sanitized().sun_direction();
+        }
         Self {
-            atmosphere: read(world, Atmosphere::default()),
+            atmosphere,
             shadows: read(
                 world,
                 Shadows {
@@ -225,6 +240,14 @@ impl Environment {
                     ..WorldStreaming::default()
                 },
             ),
+            sky: read(
+                world,
+                Sky {
+                    enabled: false,
+                    ..Sky::default()
+                },
+            ),
+            time_of_day,
         }
     }
 
@@ -254,6 +277,8 @@ impl Environment {
             deformation: self.deformation.sanitized(),
             clouds: self.clouds.sanitized(),
             world_streaming: self.world_streaming.sanitized(),
+            sky: self.sky.sanitized(),
+            time_of_day: self.time_of_day.sanitized(),
         }
     }
 }

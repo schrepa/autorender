@@ -237,9 +237,40 @@ impl CloudPass {
         self.sky_group.get().expect("built each frame")
     }
 
+    /// Where the physically based sky's light (decision 088) goes in the
+    /// march's uniform: the sun's, the zenith's and the horizon's colors.
+    pub(crate) fn sky_copies(&self) -> [crate::sky::SkyCopy<'_>; 3] {
+        let at = |offset: usize| offset as u64;
+        [
+            (
+                crate::sky::DERIVED_SUN,
+                &self.uniform,
+                at(std::mem::offset_of!(CloudUniform, sun_color)),
+                12,
+            ),
+            (
+                crate::sky::DERIVED_ZENITH,
+                &self.uniform,
+                at(std::mem::offset_of!(CloudUniform, zenith)),
+                12,
+            ),
+            (
+                crate::sky::DERIVED_HORIZON,
+                &self.uniform,
+                at(std::mem::offset_of!(CloudUniform, horizon)),
+                12,
+            ),
+        ]
+    }
+
     /// Builds the sky pipelines' second group unless built: the dome (or a
-    /// clear one) and its sampler.
-    pub(crate) fn prepare_sky_group(&mut self, device: &wgpu::Device) {
+    /// clear one) and its sampler, and the physically based sky's `air`
+    /// (its uniform, sky-view and transmittance tables and sampler).
+    pub(crate) fn prepare_sky_group(
+        &mut self,
+        device: &wgpu::Device,
+        air: crate::sky::AirBindings<'_>,
+    ) {
         let (view, sampler, key) = match (&self.dome, self.active && self.ready) {
             (Some((_, view)), true) => (view, &self.sampler, (self.generation, true)),
             _ => (&self.clear_view, &self.sampler, (self.generation, false)),
@@ -254,6 +285,10 @@ impl CloudPass {
                 &[
                     ("sky_clouds", crate::pipelines::view(view)),
                     ("sky_cloud_sampler", crate::pipelines::sampler(sampler)),
+                    crate::buffers::entry("sky_air", air.0),
+                    ("sky_view_table", crate::pipelines::view(air.1)),
+                    ("sky_transmittance_table", crate::pipelines::view(air.2)),
+                    ("sky_table_sampler", crate::pipelines::sampler(air.3)),
                 ],
             )
         });

@@ -108,7 +108,8 @@ pub(crate) struct LightingUniform {
     /// sky, and 1 when screen-space reflections run (decision 025).
     pub effects: [f32; 4],
     /// The contrast curve's weight (see [`contrast_weight`]) and vibrance
-    /// (decision 027); zw unused.
+    /// (decision 027); 1 with the physically based sky (decision 088); w
+    /// unused.
     pub grade: [f32; 4],
     /// Luminance-normalized split-toning gains of shadows and highlights; w
     /// unused.
@@ -168,10 +169,48 @@ impl LightingUniform {
         bloom: &Bloom,
         reflections: &Reflections,
         refraction: &engine_core::Refraction,
+        sky: &engine_core::Sky,
     ) -> Self {
         let atmosphere = atmosphere.sanitized();
         let reflections = reflections.sanitized();
         let refraction = refraction.sanitized();
+        let sky = sky.sanitized();
+        // With the physically based sky (decision 088) the air hazes what
+        // lies far away by its own extinction, thinning with height as its
+        // scattering does; no fog. Its colors come from the sky's tables.
+        let (fog, aerial, physical) = if sky.enabled {
+            let altitude = sky.altitude * 0.001;
+            let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
+                * (-altitude / sky.rayleigh_height).exp();
+            let mie = (sky.mie + sky.mie_absorption) * (-altitude / sky.mie_height).exp();
+            let extinction = rayleigh + mie;
+            let height = if extinction > 0.0 {
+                (rayleigh * sky.rayleigh_height + mie * sky.mie_height) / extinction
+            } else {
+                sky.rayleigh_height
+            };
+            (
+                [0.0; 4],
+                [0.0, extinction * 0.001 * sky.aerial, 0.001 / height, 0.0],
+                1.0,
+            )
+        } else {
+            (
+                [
+                    atmosphere.fog_start,
+                    atmosphere.fog_density,
+                    atmosphere.fog_falloff,
+                    atmosphere.fog_max,
+                ],
+                [
+                    atmosphere.aerial_start,
+                    atmosphere.aerial_density,
+                    atmosphere.aerial_falloff,
+                    atmosphere.aerial_glow,
+                ],
+                0.0,
+            )
+        };
         Self {
             sun: atmosphere
                 .sun_direction
@@ -182,12 +221,7 @@ impl LightingUniform {
             zenith: atmosphere.zenith.extend(atmosphere.ambient).to_array(),
             horizon: atmosphere.horizon.extend(atmosphere.exposure).to_array(),
             ground: atmosphere.ground.extend(atmosphere.saturation).to_array(),
-            fog: [
-                atmosphere.fog_start,
-                atmosphere.fog_density,
-                atmosphere.fog_falloff,
-                atmosphere.fog_max,
-            ],
+            fog,
             effects: [
                 atmosphere.emission,
                 bloom.sanitized().threshold,
@@ -197,18 +231,13 @@ impl LightingUniform {
             grade: [
                 contrast_weight(atmosphere.contrast),
                 atmosphere.vibrance,
-                0.0,
+                physical,
                 0.0,
             ],
             shadow_tint: unit_luminance(atmosphere.shadow_tint),
             highlight_tint: unit_luminance(atmosphere.highlight_tint),
             refraction: [refraction.strength, refraction.blur, 0.0, 0.0],
-            aerial: [
-                atmosphere.aerial_start,
-                atmosphere.aerial_density,
-                atmosphere.aerial_falloff,
-                atmosphere.aerial_glow,
-            ],
+            aerial,
             aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
             occupancy: [0.0; 4],
             occupancy_heights: [0.0; 4],
@@ -400,6 +429,7 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/shading.wgsl"),
     include_str!("meshes/forward.wgsl"),
     include_str!("meshes/resolve.wgsl"),
+    include_str!("sky_common.wgsl"),
     include_str!("meshes/sky.wgsl"),
     include_str!("meshes/decals.wgsl"),
     include_str!("impostor_frames.wgsl"),
@@ -422,6 +452,9 @@ pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
 pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
 
 pub(crate) const CLOUDS_SHADER: &str = include_str!("clouds.wgsl");
+/// The physically based sky's tables and light (decision 088).
+pub(crate) const SKY_SHADER: &str =
+    concat!(include_str!("sky_common.wgsl"), include_str!("sky.wgsl"));
 /// Placed objects' culling (decision 057).
 pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 
@@ -468,8 +501,11 @@ pub(crate) const SHADOW_SHADER: &str = concat!(
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
 /// Environment maps (decision 043) after the scene declarations.
-pub(crate) const ENVIRONMENT_SHADER: &str =
-    concat!(include_str!("scene.wgsl"), include_str!("environment.wgsl"));
+pub(crate) const ENVIRONMENT_SHADER: &str = concat!(
+    include_str!("scene.wgsl"),
+    include_str!("sky_common.wgsl"),
+    include_str!("environment.wgsl")
+);
 
 /// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl` (decision 031), 192 bytes:
 /// each map's texture coordinate transform, the emissive color and the map

@@ -537,11 +537,11 @@ impl DevTools {
             tools: self,
             schemas,
         });
-        // The whole environment's schema without field descriptions, which
-        // each section's own inspector carries, so it stays within bounds
-        // as sections grow.
+        // The whole environment's schema naming each section's inspector,
+        // which carries its fields, so it stays within bounds as sections
+        // grow.
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", undescribed(schemas["Environment"].clone())),
+            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", sections_schema()),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
@@ -549,20 +549,37 @@ impl DevTools {
     }
 }
 
-/// `schema` without its descriptions, at any depth.
-fn undescribed(schema: Value) -> Value {
-    match schema {
-        Value::Object(fields) => Value::Object(
-            fields
-                .into_iter()
-                // Annotations are strings; a field named so is a schema.
-                .filter(|(key, value)| !(key == "description" && value.is_string()))
-                .map(|(key, value)| (key, undescribed(value)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.into_iter().map(undescribed).collect()),
-        other => other,
+/// The scene environment's schema: each section an object (or null) whose
+/// fields the inspector it names describes.
+fn sections_schema() -> Value {
+    struct Names(Vec<(&'static str, &'static str)>);
+    impl SectionVisitor for Names {
+        fn section<T: EnvironmentSection>(&mut self, name: &'static str, _: Option<T>) {
+            self.0.push((name, T::NAME));
+        }
     }
+    let mut names = Names(vec![("atmosphere", "Atmosphere")]);
+    SceneEnvironment::default().visit(&mut names);
+    let properties: serde_json::Map<String, Value> = names
+        .0
+        .into_iter()
+        .map(|(field, inspector)| {
+            (
+                field.to_owned(),
+                json!({
+                    "type": ["object", "null"],
+                    "description": format!("The {inspector} inspector describes its fields."),
+                }),
+            )
+        })
+        .collect();
+    json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "SceneEnvironment",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": properties,
+    })
 }
 
 /// What the inspector of environment section `name` reports.
@@ -624,6 +641,12 @@ fn section_description(name: &str) -> &'static str {
         }
         "deformation" => {
             "Runtime deformation (decision 083): deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
+        }
+        "sky" => {
+            "Physically based sky (decision 088): air over a planet, Rayleigh and Mie scattering and ozone absorption integrated into lookup tables the sky, reflections and aerial perspective read; the sun's color after its path through the air and the sky's ambient color light the scene. Radii in km, coefficients per km, ground albedo, sun intensity and angular radius, aerial distance scale, the origin's altitude. Opt-in: missing keeps the atmosphere's colors and haze."
+        }
+        "time_of_day" => {
+            "Time of day (decision 088): the sun's direction from the hour for a latitude and day of the year, north's yaw in the world, advancing `speed` hours a second in steps of `step` minutes (kept shadows redraw once a step). Opt-in: missing keeps the atmosphere's sun direction."
         }
         "world_streaming" => {
             "World streaming (decision 086): streamed items spawn in cells near the camera, terrain focus entities and where the camera's motion leads in `prefetch` seconds, and despawn past `unload` times the range. Grids by reach: 256 m cells within 512 m, 1 km within 2 km, 4 km within 8 km, scaled by `distance`. Off unloads all; `spawns_per_frame` paces loads (cells spawn whole); `frozen` holds cells as they are. See WorldCells and the rendering observation's cell counts."
