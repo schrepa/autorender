@@ -55,12 +55,18 @@ pub(crate) struct Environment {
     layouts: Layouts,
     sky_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
-    // The lighting uniform the sky reads, and the clouds' dome its group
-    // binds (decision 084).
+    // The lighting uniform the sky reads, the clouds' dome its group binds
+    // (decision 084), and the physically based sky's (decision 088).
     lighting: wgpu::Buffer,
     clouds: (u64, bool),
-    // The atmosphere and clouds values the sky map was drawn with.
-    drawn: Option<[[f32; 4]; 6]>,
+    air: (
+        wgpu::Buffer,
+        wgpu::TextureView,
+        wgpu::TextureView,
+        wgpu::Sampler,
+    ),
+    // The atmosphere, clouds and sky values the sky map was drawn with.
+    drawn: Option<[[f32; 4]; 7]>,
     // Advances whenever the maps are replaced: groups binding them rebuild.
     generation: u64,
 }
@@ -74,6 +80,7 @@ impl Environment {
         lighting: &wgpu::Buffer,
         size: u32,
         clouds: (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
+        air: crate::sky::AirBindings<'_>,
     ) -> Self {
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/environment.wgsl"),
@@ -121,7 +128,7 @@ impl Environment {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
-        let sky_group = sky_group(device, &layouts.sky, lighting, clouds);
+        let sky_group = sky_group(device, &layouts.sky, lighting, clouds, air);
         let maps = create_maps(device, (&layouts, &sampler), size, 1);
         Self {
             maps,
@@ -133,6 +140,7 @@ impl Environment {
             sampler,
             lighting: lighting.clone(),
             clouds: clouds.2,
+            air: (air.0.clone(), air.1.clone(), air.2.clone(), air.3.clone()),
             drawn: None,
             generation: 0,
         }
@@ -146,7 +154,8 @@ impl Environment {
         clouds: (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
     ) {
         if self.clouds != clouds.2 {
-            self.sky_group = sky_group(device, &self.layouts.sky, &self.lighting, clouds);
+            let air = (&self.air.0, &self.air.1, &self.air.2, &self.air.3);
+            self.sky_group = sky_group(device, &self.layouts.sky, &self.lighting, clouds, air);
             self.clouds = clouds.2;
         }
     }
@@ -227,11 +236,11 @@ impl Environment {
         size: u32,
         cubes: u32,
         lighting: &LightingUniform,
-        clouds: [f32; 4],
+        (clouds, air): ([f32; 4], [f32; 4]),
     ) -> bool {
         self.maps.size != size
             || self.maps.cubes != cubes
-            || self.drawn != Some(sky(lighting, clouds))
+            || self.drawn != Some(sky(lighting, clouds, air))
     }
 
     /// Records the sky map's redraw when `lighting`'s sky or the clouds'
@@ -241,9 +250,9 @@ impl Environment {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         lighting: &LightingUniform,
-        clouds: [f32; 4],
+        (clouds, air): ([f32; 4], [f32; 4]),
     ) -> bool {
-        let sky = sky(lighting, clouds);
+        let sky = sky(lighting, clouds, air);
         if self.drawn == Some(sky) {
             return false;
         }
@@ -456,8 +465,9 @@ fn faces_pass(
     pass.draw(0..3, item..item + 1);
 }
 
-/// The parts of `lighting` the sky map draws from, and the clouds' key.
-fn sky(lighting: &LightingUniform, clouds: [f32; 4]) -> [[f32; 4]; 6] {
+/// The parts of `lighting` the sky map draws from, and the clouds' and the
+/// physically based sky's keys.
+fn sky(lighting: &LightingUniform, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
     [
         lighting.sun,
         lighting.sun_color,
@@ -465,15 +475,18 @@ fn sky(lighting: &LightingUniform, clouds: [f32; 4]) -> [[f32; 4]; 6] {
         lighting.horizon,
         lighting.ground,
         clouds,
+        air,
     ]
 }
 
-/// The sky's group: the lighting uniform and the clouds' dome.
+/// The sky's group: the lighting uniform, the clouds' dome and the
+/// physically based sky's `air`.
 fn sky_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     lighting: &wgpu::Buffer,
     (view, sampler, _): (&wgpu::TextureView, &wgpu::Sampler, (u64, bool)),
+    air: crate::sky::AirBindings<'_>,
 ) -> wgpu::BindGroup {
     crate::pipelines::group(
         device,
@@ -486,6 +499,16 @@ fn sky_group(
             (
                 "environment_cloud_sampler",
                 crate::pipelines::sampler(sampler),
+            ),
+            crate::buffers::entry("environment_air", air.0),
+            ("environment_view_table", crate::pipelines::view(air.1)),
+            (
+                "environment_transmittance_table",
+                crate::pipelines::view(air.2),
+            ),
+            (
+                "environment_table_sampler",
+                crate::pipelines::sampler(air.3),
             ),
         ],
     )

@@ -233,6 +233,7 @@ impl StressGame {
         let scene = self.app.engine.app.world().resource::<StressConfig>().scene;
         let (atmosphere, lamps) = look(scene, name).map_err(js_error)?;
         self.app.engine.app.insert_resource(atmosphere);
+        crate::scene::apply_sky(self.app.engine.app.world_mut(), scene, name);
         if let Some(mut local) = self
             .app
             .engine

@@ -309,7 +309,8 @@ const visibility = params.get("visibility") === "on" ? "on" : "off";
 const lod = params.get("lod") === "off" ? "off" : "on";
 // ?impostors=off draws no impostors (decision 048), only mesh levels.
 const impostors = params.get("impostors") === "off" ? "off" : "on";
-// ?look=golden|dusk|night|day picks a lighting preset over the scene's own.
+// ?look=golden|dusk|night|day|sky picks a lighting preset over the scene's own;
+// sky is the physically based sky at a time of day (decision 088).
 const initialLook = options("look").includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
 // no-lights, no-shafts, no-reflections, no-particles, no-refraction and

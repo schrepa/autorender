@@ -64,6 +64,9 @@ pub(super) struct Features<'s> {
     pub(super) occlusion: Option<(u32, u32, u32)>,
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
+    /// The physically based sky's work (decision 088), submitted first:
+    /// what reads the light it gives follows it.
+    pub(super) sky_encoder: Option<wgpu::CommandEncoder>,
     /// Environment maps' and reflection probes' work (decision 043),
     /// submitted before the frame.
     pub(super) environment_encoder: Option<wgpu::CommandEncoder>,
@@ -636,6 +639,7 @@ impl Renderer {
             &snapshot.environment.bloom,
             &snapshot.environment.reflections,
             &snapshot.environment.refraction,
+            &snapshot.environment.sky,
         );
         // Under the sea, its water veils everything (decision 077).
         lighting.underwater = crate::water::underwater(
@@ -799,9 +803,11 @@ impl Renderer {
             lighting,
             !kind.gpu_mode,
         );
-        self.clouds.prepare_sky_group(&self.device);
+        self.clouds
+            .prepare_sky_group(&self.device, self.sky.bindings());
         self.environment
             .set_clouds(&self.device, self.clouds.dome());
+        let sky_encoder = self.prepare_sky(snapshot);
         let (environment_encoder, probe_list, dropped_probes) =
             self.prepare_environment(snapshot, lighting);
         let light_frame = self.prepare_lights(frame, kind, temporal_frame);
@@ -818,6 +824,7 @@ impl Renderer {
             occlusion,
             gpu_prepared,
             shadow_frame,
+            sky_encoder,
             environment_encoder,
             probe_list,
             dropped_probes,
@@ -1036,6 +1043,72 @@ impl Renderer {
     /// Environment maps and reflection probes (decision 043), and the camera
     /// group binding them; returns the environment's encoder, the probes the
     /// frame keeps and those beyond the GPU's arrays.
+    /// The physically based sky's work this frame (decision 088): its
+    /// tables as they need building, then the light it gives, copied over
+    /// the authored atmosphere's colors in the lighting uniform and the
+    /// clouds' march's uniform.
+    fn prepare_sky(&mut self, snapshot: &RenderSnapshot) -> Option<wgpu::CommandEncoder> {
+        use crate::sky::{
+            DERIVED_AIR, DERIVED_GLOW, DERIVED_GROUND, DERIVED_HORIZON, DERIVED_SUN, DERIVED_ZENITH,
+        };
+        use std::mem::offset_of;
+        let lighting = self.camera.lighting_buffer();
+        let at = |offset: usize| offset as u64;
+        let mut copies = vec![
+            (
+                DERIVED_SUN,
+                lighting,
+                at(offset_of!(LightingUniform, sun_color)),
+                12,
+            ),
+            (
+                DERIVED_ZENITH,
+                lighting,
+                at(offset_of!(LightingUniform, zenith)),
+                12,
+            ),
+            // With the exposure adapted to the sky's light.
+            (
+                DERIVED_HORIZON,
+                lighting,
+                at(offset_of!(LightingUniform, horizon)),
+                16,
+            ),
+            (
+                DERIVED_GROUND,
+                lighting,
+                at(offset_of!(LightingUniform, ground)),
+                12,
+            ),
+            (
+                DERIVED_AIR,
+                lighting,
+                at(offset_of!(LightingUniform, aerial_color)),
+                12,
+            ),
+            // The glow rides in the aerial vector's w.
+            (
+                DERIVED_GLOW,
+                lighting,
+                at(offset_of!(LightingUniform, aerial)) + 12,
+                4,
+            ),
+        ];
+        copies.extend(self.clouds.sky_copies());
+        self.sky.encode(
+            &self.device,
+            &self.queue,
+            (
+                &snapshot.environment.sky,
+                snapshot.environment.atmosphere.sun_direction,
+                snapshot.camera_position,
+                snapshot.environment.atmosphere.exposure,
+            ),
+            &copies,
+            &self.profiler,
+        )
+    }
+
     fn prepare_environment<'s>(
         &mut self,
         snapshot: &'s RenderSnapshot,
@@ -1065,10 +1138,10 @@ impl Renderer {
             self.environment.cubes()
         };
         // Frames whose maps and sky stand record nothing here.
-        let clouds = self.clouds.environment_key();
+        let keys = (self.clouds.environment_key(), self.sky.environment_key());
         let mut environment_encoder = self
             .environment
-            .needs_encoding(probe_settings.resolution, cubes, lighting, clouds)
+            .needs_encoding(probe_settings.resolution, cubes, lighting, keys)
             .then(|| {
                 self.device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1079,7 +1152,7 @@ impl Renderer {
             Some(encoder) => (
                 self.environment
                     .ensure(&self.device, encoder, probe_settings.resolution, cubes),
-                self.environment.encode_sky(encoder, lighting, clouds),
+                self.environment.encode_sky(encoder, lighting, keys),
             ),
             None => (false, false),
         };
@@ -2420,6 +2493,7 @@ impl Renderer {
     ) {
         let FrameKind { gpu_mode, .. } = state.kind;
         let virtual_frame = state.virtual_frame;
+        let sky_encoder = state.features.sky_encoder.take();
         let mip_encoder = state.assets.encoder.take();
         let staged_poses = state.writes.staged_poses.take();
         let input_copies = state.features.input_copies.take();
@@ -2445,19 +2519,25 @@ impl Renderer {
             let end = marked.then(|| mark(span, true)).flatten();
             begin.into_iter().chain(buffer).chain(end)
         };
-        // Staged pose/input copies precede the passes that read them.
-        let before: Vec<wgpu::CommandBuffer> =
-            timed("pre_mips", mip_encoder.map(wgpu::CommandEncoder::finish))
-                .chain(timed("pre_poses", staged_poses))
-                .chain(timed(
-                    "pre_inputs",
-                    input_copies.map(wgpu::CommandEncoder::finish),
-                ))
-                .chain(timed(
-                    "pre_environment",
-                    environment_encoder.map(wgpu::CommandEncoder::finish),
-                ))
-                .collect();
+        // The sky's light precedes everything that reads it; staged
+        // pose/input copies precede the passes that read them.
+        let before: Vec<wgpu::CommandBuffer> = sky_encoder
+            .map(wgpu::CommandEncoder::finish)
+            .into_iter()
+            .chain(timed(
+                "pre_mips",
+                mip_encoder.map(wgpu::CommandEncoder::finish),
+            ))
+            .chain(timed("pre_poses", staged_poses))
+            .chain(timed(
+                "pre_inputs",
+                input_copies.map(wgpu::CommandEncoder::finish),
+            ))
+            .chain(timed(
+                "pre_environment",
+                environment_encoder.map(wgpu::CommandEncoder::finish),
+            ))
+            .collect();
         self.queue
             .submit(before.into_iter().chain([encoder.finish()]));
         self.instances.pose_uploads.after_submit();

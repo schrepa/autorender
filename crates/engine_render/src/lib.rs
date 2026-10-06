@@ -196,6 +196,10 @@ pub struct RenderStats {
     /// Rows of the clouds' dome (decision 084) this frame marched: all of
     /// them on exact frames, a slice on ordinary ones, none without clouds.
     pub cloud_rows: u32,
+    /// The physically based sky's tables this frame built (decision 088):
+    /// two when its air changed, one more when the sun, the camera's height
+    /// or the air changed; none without the sky.
+    pub sky_tables: u32,
     /// World streaming (decision 086): cells holding streamed items, those
     /// loaded, and those within range still waiting; entities streamed
     /// items hold spawned; and the entities this frame spawned and
@@ -263,6 +267,8 @@ mod render_graph;
 mod retained_uploads;
 #[cfg(target_arch = "wasm32")]
 mod shadow_fit;
+#[cfg(target_arch = "wasm32")]
+mod sky;
 #[cfg(target_arch = "wasm32")]
 mod uploads;
 #[cfg(target_arch = "wasm32")]

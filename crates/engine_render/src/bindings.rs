@@ -643,12 +643,33 @@ pub(crate) const CLOUD_MARCH: Table = Table {
 };
 
 /// Group 1 of the sky's pipelines (decision 084; `meshes/sky.wgsl`): the
-/// clouds' dome and its sampler.
+/// clouds' dome and its sampler; the physically based sky's uniform, its
+/// sky-view and transmittance tables and their sampler (decision 088).
 pub(crate) const CLOUD_SKY: Table = Table {
     label: "engine/cloud-sky-layout",
     bindings: &[
         texture(38, "sky_clouds", Float, D2, F),
         sampler(39, "sky_cloud_sampler", Filtering, F),
+        uniform_of(40, "sky_air", crate::sky::SKY_UNIFORM_BYTES, F),
+        texture(41, "sky_view_table", Float, D2, F),
+        texture(42, "sky_transmittance_table", Float, D2, F),
+        sampler(43, "sky_table_sampler", Filtering, F),
+    ],
+};
+
+/// The physically based sky's tables and light (decision 088;
+/// `sky.wgsl`): the sky's uniform, the tables a pass reads, the one it
+/// writes and the light it derives.
+pub(crate) const SKY_TABLES: Table = Table {
+    label: "engine/sky-tables-layout",
+    bindings: &[
+        uniform_of(0, "air", crate::sky::SKY_UNIFORM_BYTES, C),
+        texture(1, "transmittance_table", Float, D2, C),
+        texture(2, "multiple_table", Float, D2, C),
+        texture(3, "view_table", Float, D2, C),
+        sampler(4, "table_sampler", Filtering, C),
+        bind(5, "table_out", Kind::Storage(Rgba16Float), C),
+        write(6, "derived", C),
     ],
 };
 
@@ -914,6 +935,11 @@ pub(crate) const ENVIRONMENT_SKY: Table = Table {
         // The clouds' dome (decision 084).
         texture(38, "environment_clouds", Float, D2, F),
         sampler(39, "environment_cloud_sampler", Filtering, F),
+        // The physically based sky (decision 088).
+        uniform_of(40, "environment_air", crate::sky::SKY_UNIFORM_BYTES, F),
+        texture(41, "environment_view_table", Float, D2, F),
+        texture(42, "environment_transmittance_table", Float, D2, F),
+        sampler(43, "environment_table_sampler", Filtering, F),
     ],
 };
 

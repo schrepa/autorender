@@ -13,7 +13,7 @@
 use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
     GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles,
-    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
+    ReflectionProbes, Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay,
     VirtualGeometry, Water, Wind, WorldStreaming,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
@@ -285,6 +285,8 @@ section!(Ocean, since 9, opt_in false);
 section!(Deformation, since 9, opt_in false);
 section!(Clouds, since 9, opt_in true);
 section!(WorldStreaming, since 9, opt_in false);
+section!(Sky, since 9, opt_in true);
+section!(TimeOfDay, since 9, opt_in true);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -359,6 +361,12 @@ pub struct SceneEnvironment {
     /// How streamed content loads around the camera (decision 086).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world_streaming: Option<WorldStreaming>,
+    /// A physically based sky, and the time of day moving the sun
+    /// (decision 088).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sky: Option<Sky>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_of_day: Option<TimeOfDay>,
 }
 
 impl SceneEnvironment {
@@ -391,6 +399,8 @@ impl SceneEnvironment {
             deformation: Some(environment.deformation),
             clouds: Some(environment.clouds),
             world_streaming: Some(environment.world_streaming),
+            sky: Some(environment.sky),
+            time_of_day: Some(environment.time_of_day),
         }
     }
 
@@ -419,6 +429,8 @@ impl SceneEnvironment {
         visitor.section("deformation", self.deformation);
         visitor.section("clouds", self.clouds);
         visitor.section("world_streaming", self.world_streaming);
+        visitor.section("sky", self.sky);
+        visitor.section("time_of_day", self.time_of_day);
     }
 
     /// The names of the sections present, the atmosphere first.

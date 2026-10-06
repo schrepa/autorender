@@ -342,6 +342,7 @@ impl Renderer {
                 0
             },
             cloud_rows: self.clouds.rows,
+            sky_tables: self.sky.built,
             cells: snapshot.cells.cells,
             cells_loaded: snapshot.cells.loaded,
             cells_pending: snapshot.cells.pending,
@@ -463,7 +464,8 @@ impl Renderer {
             "memory.gpu_environment_bytes",
             (self.environment.capacity_bytes()
                 + self.probes.capacity_bytes()
-                + self.clouds.capacity_bytes()) as f64,
+                + self.clouds.capacity_bytes()
+                + self.sky.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_virtual_bytes",

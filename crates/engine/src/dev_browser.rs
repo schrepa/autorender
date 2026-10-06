@@ -186,6 +186,8 @@ impl DevBrowser {
                 deformation,
                 clouds,
                 world_streaming,
+                sky,
+                time_of_day,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -214,6 +216,8 @@ impl DevBrowser {
                     deformation,
                     clouds,
                     world_streaming,
+                    sky,
+                    time_of_day,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());

@@ -106,6 +106,12 @@ impl CameraBindings {
         }
     }
 
+    /// The lighting uniform's buffer, which the physically based sky's light
+    /// (decision 088) is copied into.
+    pub(super) fn lighting_buffer(&self) -> &wgpu::Buffer {
+        &self.lighting_buffer
+    }
+
     /// Writes `lighting` unless already written; returns the bytes written.
     pub(super) fn write_lighting(&mut self, queue: &wgpu::Queue, lighting: LightingUniform) -> u64 {
         if self.lighting == Some(lighting) {

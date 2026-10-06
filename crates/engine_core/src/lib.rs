@@ -33,6 +33,7 @@ mod probes;
 mod retained_render;
 mod scene;
 mod skin;
+mod sky;
 mod spline_mesh;
 mod streaming;
 mod terrain;
@@ -116,6 +117,7 @@ pub use scene::{
     RenderTexture, Tint, Transform,
 };
 pub use skin::{RenderJoint, Skin};
+pub use sky::{Sky, TimeOfDay};
 pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
 pub use streaming::{
     CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedId, StreamedItem,
@@ -296,6 +298,8 @@ impl Engine {
                 animation::animate.in_set(AnimationSystems::Animate),
             )
             .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
+            // The time of day moves the sun (decision 088).
+            .add_systems(Presentation, sky::advance_time_of_day)
             .edit_schedule(FixedSimulation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
             })
@@ -938,6 +942,7 @@ pub mod prelude {
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
+    pub use crate::{Sky, TimeOfDay};
     pub use crate::{SplineChunks, SplineMesh};
     pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine

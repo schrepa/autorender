@@ -166,6 +166,25 @@ async function capture(name) {
   return bytes.toString("base64");
 }
 
+/** The mean color of the top third of a capture (base64 PNG): the sky. */
+async function skyColor(png) {
+  return page.evaluate(async png => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${png}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const { data } = context.getImageData(0, 0, image.width, Math.floor(image.height / 3));
+    const sum = [0, 0, 0];
+    for (let offset = 0; offset < data.length; offset += 4) {
+      sum[0] += data[offset]; sum[1] += data[offset + 1]; sum[2] += data[offset + 2];
+    }
+    return sum.map(value => value / (data.length / 4));
+  }, png);
+}
+
 async function heights(points) {
   return (await command("terrain_height", { points })).result.samples;
 }
@@ -718,6 +737,34 @@ try {
     await command("environment", { clouds: { ...layer, enabled: false } });
     await command("camera", overview);
     checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed });
+  }
+  // The physically based sky (decision 088) is opt-in: its tables of the
+  // air build once, the sky-view again for each step of the sun, which the
+  // time of day moves; it replaces the authored sky, a dusk sky is redder
+  // than noon's, and settings out of range are refused.
+  {
+    await command("camera", { position: [0, 60, 0], target: [300, 200, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
+    const authored = await capture("sky-authored");
+    const first = (await command("environment", { sky: {}, time_of_day: { hours: 12 } })).result.rendering;
+    assert.equal(first.sky_tables, 3, `the air's tables and the sky-view build: ${first.sky_tables}`);
+    assert.equal((await command("render")).result.rendering.sky_tables, 0, "unchanged, nothing builds");
+    const noon = await capture("sky-noon");
+    const replaced = await differentPixels(page, [authored, noon]);
+    assert.ok(replaced.changed > 20000, `the physical sky replaces the authored one: ${replaced.changed} pixels`);
+    const step = (await command("environment", { time_of_day: { hours: 19.3 } })).result.rendering;
+    assert.equal(step.sky_tables, 1, `the sun's step builds the sky-view alone: ${step.sky_tables}`);
+    const dusk = await capture("sky-dusk");
+    const [noonColor, duskColor] = [await skyColor(noon), await skyColor(dusk)];
+    assert.ok(duskColor[0] / Math.max(duskColor[2], 1) > noonColor[0] / Math.max(noonColor[2], 1),
+      `dusk is redder than noon: ${noonColor} ${duskColor}`);
+    const view = (await command("inspect", { component: "Sky" })).result.value;
+    assert.equal(view.enabled, true);
+    assert.equal((await command("environment", { sky: { mie_g: 2 } }, false)).error.path, "$.sky.mie_g");
+    assert.equal((await command("environment", { time_of_day: { hours: 25 } }, false)).error.path, "$.time_of_day.hours");
+    const off = (await command("environment", { sky: { enabled: false }, time_of_day: { enabled: false } })).result.rendering;
+    assert.equal(off.sky_tables, 0, "without the sky nothing builds");
+    await command("camera", overview);
+    checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed });
   }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
