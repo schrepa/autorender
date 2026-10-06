@@ -110,9 +110,9 @@ pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh}
 pub use terrain::{
     MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
-    SurfaceProjection, Terrain, TerrainBakes, TerrainDebug, TerrainFocus, TerrainSample,
-    TerrainSettings, TerrainSource, TerrainStats, TerrainSurface, TerrainView, Terrains,
-    TileRequest, Viewport,
+    SurfaceProjection, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainFocus,
+    TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface, TerrainView,
+    Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;

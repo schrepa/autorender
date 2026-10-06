@@ -15,6 +15,11 @@ const MAX_COMMAND_BYTES: usize = 16 * 1024;
 pub struct DevBrowser {
     pub tools: DevTools,
     input: InputBatch,
+    // Terrain edits undo took away (decision 080), latest last.
+    terrain_redo: Vec<(
+        engine_core::bevy_ecs::prelude::Entity,
+        engine_core::TerrainEdit,
+    )>,
 }
 
 #[derive(Default)]
@@ -64,7 +69,7 @@ impl DevBrowser {
             let assets = op == Some("assets");
             return self.tools_request(app, scene, source, assets);
         }
-        match self.control(app, request, (width, height)) {
+        match self.control(app, scene, request, (width, height)) {
             Ok(result) => self.result(app, scene, result),
             Err(error) => self.error(app, scene, error.code, &error.path, &error.message),
         }
@@ -111,6 +116,7 @@ impl DevBrowser {
     fn control(
         &mut self,
         app: &mut BrowserApp,
+        scene: Option<&SceneInstance>,
         request: Value,
         (width, height): (u32, u32),
     ) -> Result<Value, DevError> {
@@ -208,6 +214,41 @@ impl DevBrowser {
                 rendered(app.dev_render(width, height), "environment changed")?;
                 Ok(json!({"temporary":true,"environment_changed":environment.sections()}))
             }
+            BrowserControl::TerrainEdit {
+                terrain,
+                id,
+                center,
+                radius,
+                falloff,
+                change,
+                ..
+            } => self.terrain_editing(
+                app,
+                scene,
+                terrain.as_deref(),
+                engine_dev::TerrainEditing::Edit {
+                    id,
+                    center,
+                    radius,
+                    falloff,
+                    change,
+                },
+                (width, height),
+            ),
+            BrowserControl::TerrainUndo { terrain, .. } => self.terrain_editing(
+                app,
+                scene,
+                terrain.as_deref(),
+                engine_dev::TerrainEditing::Undo,
+                (width, height),
+            ),
+            BrowserControl::TerrainRedo { terrain, .. } => self.terrain_editing(
+                app,
+                scene,
+                terrain.as_deref(),
+                engine_dev::TerrainEditing::Redo,
+                (width, height),
+            ),
             BrowserControl::Terrain {
                 pixel_error,
                 freeze,
@@ -386,6 +427,29 @@ impl DevBrowser {
 }
 
 /// What rendering after `what` came to: a development error when it failed.
+impl DevBrowser {
+    /// Edits, undoes or redoes the terrain `name` names (decision 080), then
+    /// renders.
+    fn terrain_editing(
+        &mut self,
+        app: &mut BrowserApp,
+        scene: Option<&SceneInstance>,
+        name: Option<&str>,
+        editing: engine_dev::TerrainEditing,
+        (width, height): (u32, u32),
+    ) -> Result<Value, DevError> {
+        let result = engine_dev::edit_terrain(
+            &mut app.engine,
+            scene,
+            name,
+            &mut self.terrain_redo,
+            editing,
+        )?;
+        rendered(app.dev_render(width, height), "terrain edited")?;
+        Ok(result)
+    }
+}
+
 fn rendered(outcome: Result<(), JsValue>, what: &str) -> Result<(), DevError> {
     outcome.map_err(|error| {
         DevError::new(

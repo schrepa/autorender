@@ -366,6 +366,50 @@ pub enum BrowserControl {
         #[serde(default)]
         view: Option<TerrainViewRequest>,
     },
+    /// Temporarily edit a generated terrain over its layers and bakes
+    /// (decision 080) and render while paused: `change` raises or lowers the
+    /// ground by meters, levels it to a world height or cuts holes in it, at
+    /// full strength within `radius` meters of world `center` `[x, z]` and
+    /// fading over `falloff` more, under `id` (1 to 64 letters, digits, `_`,
+    /// `-` and `.`), which repeating leaves the terrain alone. Only the tiles
+    /// under it regenerate. Returns whether it applied, the edits standing,
+    /// where tiles regenerate (world `min` and `max` `[x, z]`) and the most
+    /// the ground moved (meters). `terrain` names a scene's terrain entity
+    /// (the first terrain when omitted). The `Terrain` inspector lists the
+    /// edits as stamp layers to save into the scene.
+    TerrainEdit {
+        version: u32,
+        #[serde(default)]
+        terrain: Option<String>,
+        id: String,
+        center: [f64; 2],
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(range(min = 0.0, max = 100000.0))
+        )]
+        radius: f64,
+        #[serde(default)]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(range(min = 0.0, max = 100000.0))
+        )]
+        falloff: f64,
+        change: engine_core::terrain_data::StampOp,
+    },
+    /// Take the terrain's last edit away (decision 080) and render while
+    /// paused; `terrain` as for `terrain_edit`.
+    TerrainUndo {
+        version: u32,
+        #[serde(default)]
+        terrain: Option<String>,
+    },
+    /// Put back the last edit undo took away, unless an edit came since
+    /// (decision 080), and render while paused.
+    TerrainRedo {
+        version: u32,
+        #[serde(default)]
+        terrain: Option<String>,
+    },
     /// Set a complete temporary world-space camera and render while paused.
     Camera {
         version: u32,
@@ -468,11 +512,14 @@ pub enum BrowserControl {
 
 impl BrowserControl {
     /// The operation of every control, as requests name it.
-    pub const OPS: [&'static str; 13] = [
+    pub const OPS: [&'static str; 16] = [
         "present",
         "culling",
         "environment",
         "terrain",
+        "terrain_edit",
+        "terrain_undo",
+        "terrain_redo",
         "camera",
         "benchmark",
         "step",
@@ -490,6 +537,9 @@ impl BrowserControl {
             | Self::Culling { version, .. }
             | Self::Environment { version, .. }
             | Self::Terrain { version, .. }
+            | Self::TerrainEdit { version, .. }
+            | Self::TerrainUndo { version, .. }
+            | Self::TerrainRedo { version, .. }
             | Self::Camera { version, .. }
             | Self::Benchmark { version, .. }
             | Self::Step { version, .. }

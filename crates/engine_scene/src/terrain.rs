@@ -565,6 +565,7 @@ impl SceneTerrain {
                         )),
                         surface,
                         collision: self.collision,
+                        edits: std::sync::Arc::from(Vec::new()),
                     });
                 };
                 let (header, url, data) = files.terrain(uri, &format!("{path}.file"))?;
@@ -591,6 +592,7 @@ impl SceneTerrain {
                     },
                     surface,
                     collision: self.collision,
+                    edits: std::sync::Arc::from(Vec::new()),
                 });
             }
             (None, false) => self.layers(path, files)?,
@@ -609,6 +611,7 @@ impl SceneTerrain {
             source: TerrainSource::Generated(Arc::new(source)),
             surface,
             collision: self.collision,
+            edits: std::sync::Arc::from(Vec::new()),
         })
     }
 

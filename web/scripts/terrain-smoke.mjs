@@ -557,6 +557,38 @@ try {
     await command("camera", overview);
     checks.push({ check: "interior", inside: dark, outside: light });
   }
+  // Edits (decision 080) stand over a terrain's layers and bakes: the
+  // ground moves where one reaches once its tiles regenerate, its id
+  // repeated leaves it alone, undo takes it away and redo puts it back.
+  {
+    const spot = [-200, 150];
+    const ground = async () => (await heights([spot]))[0].height;
+    const until = async (wanted, what) => {
+      for (let frame = 0; frame < 60; frame++) {
+        const height = await ground();
+        if (Math.abs(height - wanted) < 0.05) return height;
+        await command("render");
+      }
+      assert.fail(`${what}: the ground at ${spot} stays at ${await ground()}, not ${wanted}`);
+    };
+    const authored = await ground();
+    const mound = { id: "smoke-mound", center: spot, radius: 20, falloff: 10, change: { raise: 8 } };
+    const raised = (await command("terrain_edit", mound)).result;
+    assert.ok(raised.applied && raised.edits === 1 && Math.abs(raised.largest_change - 8) < 1e-3, `the edit applies: ${JSON.stringify(raised)}`);
+    const risen = await until(authored + 8, "the edit raises");
+    assert.equal((await command("terrain_edit", mound)).result.applied, false, "repeating an edit leaves it alone");
+    const view = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
+    assert.deepEqual(view.edits.map(edit => edit.id), ["smoke-mound"], `the inspector lists the edits: ${JSON.stringify(view.edits)}`);
+    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-mound");
+    await until(authored, "undo restores");
+    assert.equal((await command("terrain_redo", {})).result.redone, "smoke-mound");
+    await until(authored + 8, "redo raises again");
+    const refused = await command("terrain_edit", { ...mound, id: "no spaces" }, false);
+    assert.equal(refused.error.path, "$.id");
+    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-mound");
+    await until(authored, "the fixture is left as authored");
+    checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
+  }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's

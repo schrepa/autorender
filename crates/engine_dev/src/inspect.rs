@@ -357,6 +357,14 @@ impl DevTools {
                     hydrology,
                     erosion,
                     paths,
+                    edits: terrain
+                        .edits
+                        .iter()
+                        .map(|edit| crate::views::TerrainEditView {
+                            id: edit.id.to_string(),
+                            stamp: edit.stamp,
+                        })
+                        .collect(),
                 }))
             }),
         }).expect("built-in descriptor is bounded");

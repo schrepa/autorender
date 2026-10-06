@@ -833,6 +833,20 @@ pub struct Layers {
     tables: Vec<Option<NoiseTables>>,
 }
 
+/// Checks stamp layer `index`'s center, reach and operation.
+fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), LayerError> {
+    let limit = Layers::MAX_COORDINATE;
+    check(index, "center", stamp.center[0], -limit, limit)?;
+    check(index, "center", stamp.center[1], -limit, limit)?;
+    check(index, "radius", stamp.radius, 0.0, limit)?;
+    check(index, "falloff", stamp.falloff, 0.0, limit)?;
+    match stamp.op {
+        StampOp::Raise(h) | StampOp::Lower(h) => check(index, "op", h, 0.0, 20_000.0),
+        StampOp::Flatten(h) => check(index, "op", h, -20_000.0, 20_000.0),
+        StampOp::Hole => Ok(()),
+    }
+}
+
 fn check(
     layer: usize,
     field: &'static str,
@@ -881,19 +895,7 @@ impl Layers {
                     check(index, "high", map.high, -20_000.0, 20_000.0)?;
                     check(index, "falloff", map.falloff, 0.0, limit)?;
                 }
-                Layer::Stamp(stamp) => {
-                    check(index, "center", stamp.center[0], -limit, limit)?;
-                    check(index, "center", stamp.center[1], -limit, limit)?;
-                    check(index, "radius", stamp.radius, 0.0, limit)?;
-                    check(index, "falloff", stamp.falloff, 0.0, limit)?;
-                    match stamp.op {
-                        StampOp::Raise(h) | StampOp::Lower(h) => {
-                            check(index, "op", h, 0.0, 20_000.0)?
-                        }
-                        StampOp::Flatten(h) => check(index, "op", h, -20_000.0, 20_000.0)?,
-                        StampOp::Hole => {}
-                    }
-                }
+                Layer::Stamp(stamp) => check_stamp(index, stamp)?,
                 Layer::Erosion(stage) => {
                     let erosion = &stage.layer;
                     check(index, "level", erosion.level as f32, 0.0, 15.0)?;
@@ -943,6 +945,20 @@ impl Layers {
 
     pub fn layers(&self) -> &[Layer] {
         &self.layers
+    }
+
+    /// These layers with `stamps` over them (decision 080): the same layers,
+    /// bakes and noise tables, and the stamps validated as [`Self::new`]
+    /// validates them.
+    pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, LayerError> {
+        let mut layers = self.layers.clone();
+        let mut tables = self.tables.clone();
+        for (offset, stamp) in stamps.iter().enumerate() {
+            check_stamp(self.layers.len() + offset, stamp)?;
+            layers.push(Layer::Stamp(*stamp));
+            tables.push(None);
+        }
+        Ok(Self { layers, tables })
     }
 
     /// Layer `index`, to set what its bake found.
