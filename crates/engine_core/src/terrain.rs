@@ -633,8 +633,8 @@ impl Default for TerrainSettings {
             shadow_softness: 0.01,
             sky_visibility: true,
             sky_resolution: 1024,
-            relief_distance: 40.0,
-            relief_steps: 12,
+            relief_distance: 24.0,
+            relief_steps: 8,
         }
     }
 }
@@ -1394,16 +1394,21 @@ impl Terrains {
                 settings.pinned_levels,
                 &mut self.wanted,
             );
+            // Collision's tiles load within its radius of the camera and
+            // focus entities and stay, colliding, a quarter farther, as the
+            // camera's tiles do: focus moving to and fro across a tile's
+            // edge must not regenerate it each time.
             state.collision.clear();
+            let mut loading = Vec::new();
             if state.terrain.collision && settings.collision_radius > 0.0 {
+                let held = settings.collision_radius * KEEP_REACH / LOAD_REACH;
                 for point in focus {
-                    collision_keys(
-                        &pyramid,
-                        *point - origin,
-                        settings.collision_radius,
-                        &mut state.collision,
-                    );
+                    let local = *point - origin;
+                    collision_keys(&pyramid, local, settings.collision_radius, &mut loading);
+                    collision_keys(&pyramid, local, held, &mut state.collision);
                 }
+                loading.sort_unstable();
+                loading.dedup();
                 state.collision.sort_unstable();
                 state.collision.dedup();
             }
@@ -1414,13 +1419,12 @@ impl Terrains {
                     u32::from(tile.key.level) + settings.pinned_levels < pyramid.levels()
                 })
                 .unwrap_or(self.wanted.len());
-            let mut order: Vec<TileKey> =
-                Vec::with_capacity(self.wanted.len() + state.collision.len());
+            let mut order: Vec<TileKey> = Vec::with_capacity(self.wanted.len() + loading.len());
             let mut seen: HashSet<TileKey> = HashSet::with_capacity(order.capacity());
             for key in self.wanted[..pinned_end]
                 .iter()
                 .map(|tile| tile.key)
-                .chain(state.collision.iter().copied())
+                .chain(loading.iter().copied())
                 .chain(self.wanted[pinned_end..].iter().map(|tile| tile.key))
             {
                 if seen.insert(key) {

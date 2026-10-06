@@ -954,8 +954,10 @@ struct Walker {
 
 /// Meters between a walker's footprints.
 const STRIDE: f32 = 0.75;
-/// Frames the search for snow waits for its tiles before giving up.
+/// Frames the search for snow waits for its tiles before giving up, and
+/// frames between its tries.
 const SNOW_SEARCH_FRAMES: u32 = 600;
+const SNOW_SEARCH_EVERY: u32 = 60;
 
 /// Sets a sled and a walker making tracks (decision 083) on the snow
 /// nearest the plateau, once the terrain's bakes are done: the first level
@@ -975,6 +977,12 @@ fn place_track_makers(world: &mut World) {
         return;
     };
     if layers.hydrology().is_none() {
+        return;
+    }
+    // A try reads tens of thousands of points: once in a while.
+    let tries = world.get_resource_or_insert_with(SnowSearch::default).0;
+    if !tries.is_multiple_of(SNOW_SEARCH_EVERY) {
+        world.resource_mut::<SnowSearch>().0 += 1;
         return;
     }
     let height = |point: Vec2| {
@@ -1077,16 +1085,13 @@ fn place_track_makers(world: &mut World) {
     // The sled: a red box on two runners, which press ruts as wide as
     // themselves, deeper than footprints.
     let (sled, hull) = spawn(world, 10.0, (Vec3::Y * 0.3, Vec3::new(0.9, 0.35, 1.9), red));
-    // Its finest tiles stay resident wherever the camera is, so the sled,
-    // the walker and their tracks follow the ground they draw on.
-    world.entity_mut(sled).insert((
-        Sled {
-            center,
-            radius: 10.0,
-            speed: 3.0,
-        },
-        TerrainFocus,
-    ));
+    // No terrain focus: far from the camera they ride the coarse tiles
+    // resident there, and settle onto the finest once the camera nears.
+    world.entity_mut(sled).insert(Sled {
+        center,
+        radius: 10.0,
+        speed: 3.0,
+    });
     let runners: Vec<Entity> = [-0.36, 0.36]
         .into_iter()
         .map(|across| {

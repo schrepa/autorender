@@ -895,6 +895,10 @@ fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainR
     let travel = ray / max(into, 0.08);
     let across = length(travel.xz);
     let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
+    // Relief whose deepest point would move under a pixel takes no march.
+    if (depth - top) * min(across, 3.0) < 0.75 * site.footprint {
+        return relief;
+    }
     let base = mix(3.0, terrain.relief.y, fade);
     // A step every two centimeters of tracks, up to twice the relief's.
     let steps = max(u32(round(clamp((depth - top) / 0.02, base, 2.0 * terrain.relief.y))), 2u);
