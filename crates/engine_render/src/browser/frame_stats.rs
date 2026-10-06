@@ -331,6 +331,16 @@ impl Renderer {
             } else {
                 0
             },
+            ocean_sectors: if state.shape.water {
+                self.water.ocean_drawn().0
+            } else {
+                0
+            },
+            ocean_triangles: if state.shape.water {
+                self.water.ocean_drawn().1
+            } else {
+                0
+            },
             placed_far_objects: self.scatter_draws.far_objects(),
             placed_impostors: self.impostors.placed.live(),
             occupancy_redraws: self.occupancy.redraws,

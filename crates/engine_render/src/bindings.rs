@@ -669,13 +669,14 @@ pub(crate) const COVER_GROW: Table = Table {
 /// Group 1 of ground cover's pipelines (decision 056; `meshes/cover.wgsl`):
 /// the frame's blades and the wind and times they sway with.
 /// Group 1 of water's pipelines (decision 067; `meshes/water.wgsl`): one
-/// terrain's water surface heights, its depth and flow, and its uniform.
+/// terrain's water surface heights, its depth and flow, and its uniform;
+/// the sea's (decision 076) has placeholder textures.
 pub(crate) const WATER: Table = Table {
     label: "engine/water-layout",
     bindings: &[
         texture(33, "water_surface", Unfilterable, D2, V),
         texture(34, "water_info", Unfilterable, D2, V),
-        uniform_of(35, "water", 144, VF),
+        uniform_of(35, "water", crate::water::WATER_UNIFORM_BYTES, VF),
     ],
 };
 

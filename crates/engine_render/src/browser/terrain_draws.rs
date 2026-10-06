@@ -132,8 +132,12 @@ impl Renderer {
             &self.device,
             &self.queue,
             &snapshot.terrain,
-            environment.water,
-            (snapshot.camera_position, environment.wind.velocity),
+            (environment.water, environment.ocean),
+            (
+                snapshot.camera_position,
+                environment.wind.velocity,
+                snapshot.elapsed_seconds,
+            ),
             &self.depth.texture,
         ) {
             return false;

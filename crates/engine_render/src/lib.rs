@@ -184,6 +184,9 @@ pub struct RenderStats {
     pub placed_far_objects: u32,
     /// Chunks of terrains' water drawn (decision 067).
     pub water_chunks: u32,
+    /// The sea's sectors drawn (decision 076), and their triangles.
+    pub ocean_sectors: u32,
+    pub ocean_triangles: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.

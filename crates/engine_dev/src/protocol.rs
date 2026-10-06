@@ -1,6 +1,6 @@
 use engine_core::{
     AmbientOcclusion, Bloom, ContactShadows, Decals, GroundCover, LevelOfDetail, LocalLights,
-    Occupancy, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
+    Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows, SunShafts,
     TerrainSettings, VirtualGeometry, Water, Wind,
 };
 use engine_scene::SceneAtmosphere;
@@ -90,6 +90,20 @@ pub enum DevRequest {
         version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
         points: Vec<[f64; 2]>,
+    },
+    /// The sea's surface (decision 076) over world points `[x, z]`, 1 to
+    /// 256, `seconds` into presentation (the current frame's time by
+    /// default), as frames draw it: its height, normal, how much the waves
+    /// compress it there (1 still, toward 0 on sharpening crests, where foam
+    /// gathers) and the still sea's point the waves moved there, or null
+    /// without a sea; the ground below where a terrain tile is resident,
+    /// and the water's depth over it.
+    WaterQuery {
+        version: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        points: Vec<[f64; 2]>,
+        #[serde(default)]
+        seconds: Option<f64>,
     },
     /// Compares, over `samples` by `samples` points across `half_extent`
     /// meters of world `center` `[x, z]`, what terrain queries (the tiles
@@ -256,6 +270,7 @@ impl DevRequest {
             | Self::TerrainHeight { version, .. }
             | Self::TerrainSweep { version, .. }
             | Self::TerrainRoute { version, .. }
+            | Self::WaterQuery { version, .. }
             | Self::CollisionEvents { version, .. } => *version,
         }
     }
@@ -332,6 +347,8 @@ pub enum BrowserControl {
         contact_shadows: Option<ContactShadows>,
         #[serde(default)]
         water: Option<Water>,
+        #[serde(default)]
+        ocean: Option<Ocean>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to

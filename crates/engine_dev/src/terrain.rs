@@ -1,11 +1,11 @@
 //! Read-only terrain observations (decision 051): heights at points, a
 //! sweep comparing what terrain queries, collision rays and generated
-//! terrains' layers say the ground is, and routes for paths (decision
-//! 069).
+//! terrains' layers say the ground is, routes for paths (decision 069), and
+//! the sea's surface (decision 076).
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, RouteOptions, Terrain, Terrains,
+    Engine, FrameTime, Ocean, RouteOptions, Terrain, Terrains,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -30,6 +30,7 @@ pub(crate) fn terrain_request(request: &DevRequest) -> bool {
         DevRequest::TerrainHeight { .. }
             | DevRequest::TerrainSweep { .. }
             | DevRequest::TerrainRoute { .. }
+            | DevRequest::WaterQuery { .. }
     )
 }
 
@@ -121,6 +122,72 @@ pub(crate) fn execute(
                 })
                 .collect::<Result<Vec<_>, DevError>>()?;
             Ok(json!({"samples": samples, "stats": terrains.stats()}))
+        }
+        DevRequest::WaterQuery {
+            points, seconds, ..
+        } => {
+            if points.is_empty() || points.len() > MAX_POINTS {
+                return Err(DevError::new(
+                    "invalid_request",
+                    "$.points",
+                    format!("name 1 to {MAX_POINTS} points"),
+                ));
+            }
+            let world = engine.app.world();
+            // Frames draw the sea at the presentation time they carry.
+            let seconds = match seconds {
+                Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
+                Some(_) => {
+                    return Err(DevError::new(
+                        "invalid_request",
+                        "$.seconds",
+                        "seconds must be finite and within +/-1e9",
+                    ));
+                }
+                None => f64::from(
+                    world
+                        .get_resource::<FrameTime>()
+                        .map_or(0.0, |time| time.elapsed_seconds as f32),
+                ),
+            };
+            let waves = world
+                .get_resource::<Ocean>()
+                .filter(|ocean| ocean.enabled)
+                .map(|ocean| ocean.spectrum());
+            let terrains = world.resource::<Terrains>();
+            let samples = points
+                .iter()
+                .enumerate()
+                .map(|(index, point)| {
+                    let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
+                    let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
+                    let surface = waves
+                        .as_ref()
+                        .map(|waves| waves.surface(point[0], point[1], seconds));
+                    let ground = terrains.sample(x, z).map(|sample| sample.height);
+                    // Millimeters and ten-thousandths keep responses small.
+                    let round = |value: f64, step: f64| (value / step).round() * step;
+                    Ok(json!({
+                        "ocean": surface.map(|surface| json!({
+                            "height": round(f64::from(surface.height), 1.0e-3),
+                            "normal": surface.normal.map(|value| round(f64::from(value), 1.0e-4)),
+                            "compression": round(f64::from(surface.compression), 1.0e-4),
+                            "still": surface.still.map(|value| round(value, 1.0e-3)),
+                        })),
+                        "ground": ground.map(|ground| round(f64::from(ground), 1.0e-3)),
+                        "depth": surface
+                            .zip(ground)
+                            .map(|(surface, ground)| round(f64::from(surface.height - ground), 1.0e-3)),
+                    }))
+                })
+                .collect::<Result<Vec<_>, DevError>>()?;
+            Ok(json!({
+                "seconds": seconds,
+                "samples": samples,
+                "level": waves.as_ref().map(|waves| waves.level),
+                "amplitude": waves.as_ref().map(|waves| waves.amplitude()),
+                "waves": waves.as_ref().map(|waves| waves.waves().to_vec()),
+            }))
         }
         DevRequest::TerrainSweep {
             center,

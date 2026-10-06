@@ -23,6 +23,7 @@ mod level_of_detail;
 mod lights;
 pub mod math;
 mod occupancy;
+mod ocean;
 mod packed;
 mod particles;
 mod probes;
@@ -92,6 +93,7 @@ pub use interpolation::{
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use occupancy::Occupancy;
+pub use ocean::{MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanWave, OceanWaves};
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
@@ -308,6 +310,7 @@ impl Engine {
             .init_resource::<Occupancy>()
             .init_resource::<ContactShadows>()
             .init_resource::<Water>()
+            .init_resource::<Ocean>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -849,7 +852,7 @@ pub mod prelude {
         SurfaceProjection, Terrain, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource,
         TerrainSurface, Terrains, TileKey, Viewport,
     };
-    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Water, Wind};
+    pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
