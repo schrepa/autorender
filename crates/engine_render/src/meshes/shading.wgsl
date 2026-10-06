@@ -457,8 +457,19 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let sun = lighting.sun.xyz;
     let n_l = dot(normal, sun);
     let specular = lighting.sun_color.w;
-    // Wrapped diffuse softens the terminator of flat low-poly faces.
-    let wrapped = max((n_l + 0.25) / 1.25, 0.0);
+    // Wrapped diffuse softens the terminator of flat low-poly faces. Where
+    // a face itself turns from the sun, its mesh's own shadow darkens it
+    // whatever its normal says, so the wrap fades out over the faces about
+    // the sun's edge instead of stepping down at every one of them.
+    // Impostors' cards are not their surfaces' faces.
+    var facing = 1.0;
+    let face = cross(point.world_dx, point.world_dy);
+    if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0)) {
+        let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
+        facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
+    }
+    let lambert = max(n_l, 0.0);
+    let wrapped = lambert + (max((n_l + 0.25) / 1.25, 0.0) - lambert) * facing;
     var highlight = vec3<f32>(0.0);
     if n_l > 0.0 {
         let half_vector = normalize(view + sun);

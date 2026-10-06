@@ -143,13 +143,19 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
         throughput *= sample_transmittance;
     }
     // The ground's reflection of the sun: for multiple scattering, and
-    // where views meet the planet beyond the world.
+    // where views meet the planet beyond the world. The point lies on the
+    // ground exactly: its radius in 32-bit floats rounds decimeters above
+    // or below it, which turned the planet's own shadow on and off from
+    // texel to texel. The sun reaches the ground wherever it stands above
+    // its horizon, through the air the table's bottom row holds.
     if ground_hit >= 0.0 {
-        let point = origin + direction * span;
-        let up = normalize(point);
+        let up = normalize(origin + direction * span);
         let sun_cos = dot(sun, up);
-        result.light += throughput * sun_transmittance(length(point), sun_cos)
-            * max(sun_cos, 0.0) * air.ground.rgb / SKY_PI;
+        if sun_cos > 0.0 {
+            let through = textureSampleLevel(transmittance_table, table_sampler,
+                transmittance_uv(air, bottom, sun_cos), 0.0).rgb;
+            result.light += throughput * through * sun_cos * air.ground.rgb / SKY_PI;
+        }
     }
     return result;
 }

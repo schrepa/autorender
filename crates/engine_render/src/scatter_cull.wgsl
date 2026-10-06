@@ -27,9 +27,10 @@ struct Frame {
 
 // A view: its frustum planes (world, inside positive; a shadow map's depth
 // planes pass everything, but a kept level's far one), the radius objects
-// need to draw in it (x), the geometric error its texels hide (y, world
-// units; 0 for the camera) and whether it is a kept map's or kept level's
-// (z, 1).
+// need to draw in it (x, half its texel, which also bounds the error a
+// caster coarser than the camera's may add), the geometric error its texels
+// hide (y, world units; 0 for the camera) and whether it is a kept map's or
+// kept level's (z, 1).
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
@@ -158,29 +159,27 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             let index = atomicAdd(&card_args[0].instance_count, 1u);
             cards[index] = vec2<u32>(id.x, group.record | FADING | (fade << 16u));
         }
+        // Shadow maps cast from the level the camera draws, or a coarser one
+        // only where half the map's texel hides its error: a coarser caster
+        // stands out of the surface the camera draws in every hollow, by
+        // more than lookups allow, and shadows it in blotches.
         var level = 0u;
         if kept {
-            // The coarsest level the kept map's texels hide.
+            // The coarsest level half the kept map's texel hides.
             for (var l = 1u; l < group.levels; l++) {
-                if group.errors[l - 1u] * record.scale <= limits.y {
+                if group.errors[l - 1u] * record.scale <= limits.x {
                     level = l;
                 }
             }
         } else if frame.eye.w > 0.0 {
-            // The camera's level among those it draws, or a coarser one
-            // whose error the view's texels hide.
+            // The camera's level among those it draws; for maps, or a
+            // coarser one whose error half their texel hides.
             for (var l = 1u; l < group.levels; l++) {
                 let error = group.errors[l - 1u] * record.scale;
                 let seen = l < group.camera && error * frame.eye.w + record.radius <= away;
-                if seen || error <= limits.y {
+                if seen || (view != 0u && error <= limits.x) {
                     level = l;
                 }
-            }
-            // Shadow maps draw authored levels (all of which the camera
-            // draws) one coarser than the camera: a shadow shows less than
-            // its caster.
-            if view != 0u && group.camera == group.levels {
-                level = min(level + 1u, group.levels - 1u);
             }
         }
         let draw = view * frame.strides.y + record.group * frame.counts.z + level;
