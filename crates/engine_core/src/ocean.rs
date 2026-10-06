@@ -9,13 +9,19 @@
 //! color over the distance to the ground behind it, foam gathers on
 //! crests the waves compress and along shores, and sunlight glows through
 //! crests seen against it.
+//!
+//! Frames draw the waves at the simulation time they present (decision
+//! 077, [`crate::PresentedTime`]), so entities [`Floating`] on the sea,
+//! which ride it each fixed tick, rise and fall with the waves drawn
+//! around them.
 
-use bevy_ecs::prelude::Resource;
-use glam::Vec3;
+use bevy_ecs::prelude::*;
+use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max, min, sin_cos};
+use crate::{FixedTime, Parent, Transform};
 
 /// Most waves a sea holds ([`Ocean::waves`]).
 pub const MAX_OCEAN_WAVES: usize = 16;
@@ -283,6 +289,78 @@ impl Ocean {
             count,
             waves,
         }
+    }
+}
+
+/// Rides the sea (decision 077): each fixed tick the entity rises and falls
+/// with the sea's surface under it, `draft` meters of it below the surface
+/// (-100 to 100), and leans by `tilt` (0, upright, to 1, with the
+/// surface's normal) about its own heading. Unparented entities only;
+/// nothing moves without an enabled sea. Requires version 9.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneFloating")
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct Floating {
+    #[cfg_attr(feature = "schema", schemars(range(min = -100.0, max = 100.0)))]
+    pub draft: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub tilt: f32,
+}
+
+impl Default for Floating {
+    fn default() -> Self {
+        Self {
+            draft: 0.0,
+            tilt: 1.0,
+        }
+    }
+}
+
+impl Floating {
+    /// The first field out of range.
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("draft", self.draft, -100.0..=100.0)?;
+        check_range("tilt", self.tilt, 0.0..=1.0)
+    }
+}
+
+/// The sea's systems.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OceanSystems {
+    /// [`Floating`] entities ride the sea at the tick's time, in
+    /// [`crate::FixedSimulation`]; gameplay moving them across it runs
+    /// before.
+    Float,
+}
+
+/// Floating entities ride the sea at the fixed tick's time.
+pub(crate) fn float(
+    ocean: Option<Res<Ocean>>,
+    time: Res<FixedTime>,
+    mut floating: Query<(&mut Transform, &Floating), Without<Parent>>,
+) {
+    let Some(ocean) = ocean.filter(|ocean| ocean.enabled) else {
+        return;
+    };
+    if floating.is_empty() {
+        return;
+    }
+    let waves = ocean.spectrum();
+    for (mut transform, floating) in &mut floating {
+        let at = transform.translation;
+        let surface = waves.surface(f64::from(at.x), f64::from(at.z), time.elapsed_seconds);
+        let normal = Vec3::from_array(surface.normal);
+        let up = Vec3::Y
+            .lerp(normal, clamp(floating.tilt, 0.0, 1.0))
+            .normalize_or(Vec3::Y);
+        let forward = transform.rotation * Vec3::Z;
+        let heading = Quat::from_rotation_y(forward.x.atan2(forward.z));
+        transform.translation.y = surface.height - floating.draft;
+        transform.rotation = Quat::from_rotation_arc(Vec3::Y, up) * heading;
     }
 }
 

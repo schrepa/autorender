@@ -321,6 +321,10 @@ pub struct RenderSnapshot {
     /// Presentation time ([`crate::FrameTime::elapsed_seconds`]) for animated
     /// surfaces such as ripples.
     pub elapsed_seconds: f32,
+    /// The simulation time the frame presents ([`crate::PresentedTime`]),
+    /// for what must line up with simulated objects, such as the sea's
+    /// waves (decision 077).
+    pub presented_seconds: f64,
     /// The scene's atmosphere and every effect's settings (decision 022),
     /// sanitized ([`crate::Environment::current`]): a missing atmosphere
     /// reads as the default one and a missing effect resource as off.

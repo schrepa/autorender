@@ -43,7 +43,7 @@ pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
 pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
-pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
+pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
 pub use effects::{
@@ -93,7 +93,9 @@ pub use interpolation::{
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use occupancy::Occupancy;
-pub use ocean::{MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanWave, OceanWaves};
+pub use ocean::{
+    Floating, MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves,
+};
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
@@ -272,6 +274,7 @@ impl Engine {
                 FixedSimulation,
                 animation::animate.in_set(AnimationSystems::Animate),
             )
+            .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
             .edit_schedule(FixedSimulation, |schedule| {
                 schedule.set_executor(SingleThreadedExecutor::new());
             })
@@ -293,6 +296,7 @@ impl Engine {
                 tick: 0,
             })
             .init_resource::<FrameTime>()
+            .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
             .init_resource::<Atmosphere>()
             .init_resource::<Shadows>()
@@ -704,6 +708,10 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         mode.validate()?;
         self.complete_pending_tick();
+        self.mark_presented_time(match mode {
+            PresentationMode::Current => None,
+            PresentationMode::Interpolated { alpha } => Some(alpha),
+        });
         // Bridges (decision 072), waterfalls (decision 075) and spline meshes
         // (decision 071) spawn and build before transforms refresh, so paused
         // frames draw them too.
@@ -732,6 +740,7 @@ impl Engine {
     ) -> Result<RenderFrame<'_>, InterpolationError> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
+        self.mark_presented_time(Some(alpha));
         if let Some(gathered) = self.tick_ahead.presents_previous() {
             // Mid-tick state, and a tick completed before it is due, are not
             // gathered: present the previous interval's inputs at this fraction.
@@ -746,6 +755,23 @@ impl Engine {
             interpolation::prepare_gpu(self.app.world_mut(), alpha);
         }
         Ok(self.extract_retained(aspect, true))
+    }
+
+    /// Records the simulation time this frame presents ([`PresentedTime`],
+    /// decision 077): the fixed clock less the part of a step interpolated
+    /// poses at `alpha` stop short of it, and a step more while GPU frames
+    /// present the interval before a tick in flight (decision 015).
+    fn mark_presented_time(&mut self, alpha: Option<f32>) {
+        let step = self.clock.step_seconds();
+        let behind = alpha.map_or(0.0, |alpha| (1.0 - f64::from(alpha)) * step);
+        let ahead = if self.tick_ahead.presents_previous().is_some() {
+            step
+        } else {
+            0.0
+        };
+        let world = self.app.world_mut();
+        let fixed = world.resource::<FixedTime>().elapsed_seconds;
+        world.resource_mut::<PresentedTime>().seconds = fixed - behind - ahead;
     }
 
     /// The retained frame of the poses just prepared: its instances, lights,

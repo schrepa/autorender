@@ -109,7 +109,66 @@ fn vs_ocean_temporal(@builtin(vertex_index) vertex: u32,
     return temporal;
 }
 
+// The sea's surface seen from under it (decision 077): within Snell's
+// window the sky shows through it, bent; beyond, the surface mirrors the
+// water below. The water between veils it like everything else.
+fn shade_ocean_below(input: OceanOutput) -> WaterShade {
+    let world = input.relative + camera.position.xyz;
+    let footprint = max(max(length(dpdx(input.still.xy)), length(dpdy(input.still.xy))),
+        1.0e-4);
+    let up = ocean_normal(input.still.xy, footprint).xyz;
+    let ray = stable_normalize(input.relative);
+    let bent = refract(ray, -up, 1.333);
+    // Beyond the window the surface mirrors the water below it.
+    var light = underwater_light(reflect(ray, -up));
+    if (dot(bent, bent) > 0.0) {
+        let through = 1.0 - fresnel(vec3<f32>(0.02), max(dot(-ray, -up), 0.0)).r;
+        light = mix(light, open_sky(normalize(bent)), through);
+    }
+    let lit = mix(light, underwater_light(ray), underwater_cover(length(input.relative)));
+    var shaded: Shaded;
+    shaded.linear = lit;
+    shaded.color = grade(lit);
+    shaded.ambient = 0.0;
+    shaded.glow = glow_weight(lit);
+    shaded.reflect = 0.0;
+    shaded.normal = -up;
+    shaded.roughness = 0.1;
+    shaded.opacity = 1.0;
+    var result: WaterShade;
+    result.shaded = shaded;
+    result.coverage = 1.0;
+    return result;
+}
+
+// The surface's normal at the still sea's point `still` (less the eye)
+// from every wave longer than a few of `footprint`-meter pixels (xyz), and
+// how much the waves compress it there (w).
+fn ocean_normal(still: vec2<f32>, footprint: f32) -> vec4<f32> {
+    var rise = vec2<f32>(0.0);
+    var stretch = vec3<f32>(1.0, 0.0, 1.0);
+    let count = u32(water.ocean_grid.w);
+    for (var index = 0u; index < count; index++) {
+        let wave = water.ocean_waves[index];
+        let number = max(length(wave.xy), 1.0e-6);
+        let keep = saturate(OCEAN_TAU / (number * 2.0 * footprint) - 1.0);
+        let phase = dot(wave.xy, still) + wave.w;
+        let direction = wave.xy / number;
+        let reach = water.ocean_reach[index / 4u][index % 4u] * keep;
+        rise += wave.xy * (wave.z * keep * cos(phase));
+        stretch -= vec3<f32>(direction.x * wave.x, direction.x * wave.y, direction.y * wave.y)
+            * (reach * sin(phase));
+    }
+    let along_x = vec3<f32>(stretch.x, rise.x, stretch.y);
+    let along_z = vec3<f32>(stretch.y, rise.y, stretch.z);
+    return vec4<f32>(normalize(cross(along_z, along_x)),
+        stretch.x * stretch.z - stretch.y * stretch.y);
+}
+
 fn shade_ocean(input: OceanOutput) -> WaterShade {
+    if lighting.underwater.w > 0.0 {
+        return shade_ocean_below(input);
+    }
     let world = input.relative + camera.position.xyz;
     let still = input.still.xy;
     let time = camera.position.w;
@@ -123,10 +182,9 @@ fn shade_ocean(input: OceanOutput) -> WaterShade {
     let wind = water.ripples.zw;
     let drift = wind * 0.12;
     let slopes = water_slopes(world.xz, water.ripples.y, drift, time, footprint);
-    // Every wave longer than a few pixels: how it tilts the surface and
-    // stretches it across. Shorter waves' slopes roughen it instead.
-    var rise = vec2<f32>(0.0);
-    var stretch = vec3<f32>(1.0, 0.0, 1.0);
+    // Every wave longer than a few pixels tilts and stretches the surface;
+    // shorter waves' slopes roughen it instead.
+    let waved = ocean_normal(still, footprint);
     var hidden = 0.0;
     let count = u32(water.ocean_grid.w);
     for (var index = 0u; index < count; index++) {
@@ -135,21 +193,12 @@ fn shade_ocean(input: OceanOutput) -> WaterShade {
         let keep = saturate(OCEAN_TAU / (number * 2.0 * footprint) - 1.0);
         let slope = number * wave.z;
         hidden += (1.0 - keep * keep) * slope * slope * 0.5;
-        let phase = dot(wave.xy, still) + wave.w;
-        let direction = wave.xy / number;
-        let reach = water.ocean_reach[index / 4u][index % 4u] * keep;
-        rise += wave.xy * (wave.z * keep * cos(phase));
-        stretch -= vec3<f32>(direction.x * wave.x, direction.x * wave.y, direction.y * wave.y)
-            * (reach * sin(phase));
     }
-    let along_x = vec3<f32>(stretch.x, rise.x, stretch.y);
-    let along_z = vec3<f32>(stretch.y, rise.y, stretch.z);
-    var normal = normalize(normalize(cross(along_z, along_x))
-        + vec3<f32>(-slopes.x, 0.0, -slopes.y) * water.ripples.x);
+    var normal = normalize(waved.xyz + vec3<f32>(-slopes.x, 0.0, -slopes.y) * water.ripples.x);
     // Slopes turned away from the eye would mirror what lies below the
     // horizon: they lean back toward it.
     normal = normalize(normal + view * max(0.05 - dot(normal, view), 0.0));
-    let compression = stretch.x * stretch.z - stretch.y * stretch.y;
+    let compression = waved.w;
     // The ground behind the sea, unless only the sky is: the meters the
     // view travels through the water and how deep it stands there.
     var through = 1.0e6;

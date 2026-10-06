@@ -58,6 +58,13 @@ struct Lighting {
     // the reference height its heights are above and its texels a side.
     occupancy: vec4<f32>,
     occupancy_heights: vec4<f32>,
+    // Under the sea (decision 077): the light its water scatters toward the
+    // eye (rgb) and the meters through which half the light passes (w);
+    // zero above it.
+    underwater: vec4<f32>,
+    // The sea: its still level, the meters through which half the light
+    // passes, and 1 while it stands.
+    sea: vec4<f32>,
 }
 // Sun shadows (decisions 020 and 028): world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
@@ -232,8 +239,31 @@ fn haze(direction: vec3<f32>) -> vec3<f32> {
 
 // The sky itself: its haze and the sun's small disc.
 fn sky(direction: vec3<f32>) -> vec3<f32> {
+    // Under the sea, nothing shows past the water (decision 077).
+    if lighting.underwater.w > 0.0 {
+        return underwater_light(direction);
+    }
+    return open_sky(direction);
+}
+
+// The light the sea's water scatters toward an eye under it looking along
+// `direction` (decision 077): brightest looking up toward the light coming
+// down through it, dim looking down into the deep.
+fn underwater_light(direction: vec3<f32>) -> vec3<f32> {
+    let up = saturate(direction.y * 0.5 + 0.5);
+    return lighting.underwater.rgb * (0.35 + 1.3 * up * up);
+}
+
+// The sky over the open air: its haze and the sun's disc.
+fn open_sky(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
     return haze(direction) + lighting.sun_color.rgb * (6.0 * pow(toward, 900.0));
+}
+
+// How much of what lies `distance` meters away the sea's water hides from
+// an eye under it (decision 077).
+fn underwater_cover(distance: f32) -> f32 {
+    return 1.0 - exp2(-distance / lighting.underwater.w);
 }
 
 // The sky's average light over the hemisphere around `normal`: the zenith
@@ -290,8 +320,19 @@ fn air_light(direction: vec3<f32>) -> vec3<f32> {
 // together (w).
 fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
+    // Light reaching what lies under the sea dims through the water above
+    // it (decision 077).
+    var light = lit;
+    if lighting.sea.z > 0.0 && point.y < lighting.sea.x {
+        light *= exp2((point.y - lighting.sea.x) / lighting.sea.y);
+    }
+    // Under the sea, its water stands in for fog and air.
+    if lighting.underwater.w > 0.0 {
+        let covered = underwater_cover(length(point - eye));
+        return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
+    }
     let fogged = fog(eye, point);
-    var color = mix(lit, haze(direction), fogged);
+    var color = mix(light, haze(direction), fogged);
     var covered = fogged;
     if lighting.aerial.y > 0.0 {
         let depth = height_depth(eye, point, lighting.aerial.x, lighting.aerial.y,
@@ -306,6 +347,9 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
 // How much of what lies at `point` seen from `eye` fog and air cover
 // together.
 fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
+    if lighting.underwater.w > 0.0 {
+        return underwater_cover(length(point - eye));
+    }
     let fogged = fog(eye, point);
     if lighting.aerial.y <= 0.0 {
         return fogged;

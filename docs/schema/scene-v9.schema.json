@@ -2055,6 +2055,27 @@
         "linear"
       ]
     },
+    "SceneFloating": {
+      "description": "Rides the sea (decision 077): each fixed tick the entity rises and falls\nwith the sea's surface under it, `draft` meters of it below the surface\n(-100 to 100), and leans by `tilt` (0, upright, to 1, with the\nsurface's normal) about its own heading. Unparented entities only;\nnothing moves without an enabled sea. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "draft": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0,
+          "maximum": 100.0,
+          "minimum": -100.0
+        },
+        "tilt": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneGroundCover": {
       "description": "Ground cover settings (decision 056). Requires version 9.",
       "type": "object",
@@ -2578,6 +2599,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "floating": {
+          "description": "Rides the sea (decision 077). Requires version 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFloating"
             },
             {
               "type": "null"

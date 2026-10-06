@@ -277,6 +277,7 @@ impl<'a> RenderFrame<'a> {
             view_projection,
             camera_position,
             elapsed_seconds,
+            presented_seconds,
             environment,
             lights,
             dropped_lights,
@@ -304,6 +305,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.view_projection = *view_projection;
         snapshot.camera_position = *camera_position;
         snapshot.elapsed_seconds = *elapsed_seconds;
+        snapshot.presented_seconds = *presented_seconds;
         snapshot.environment = *environment;
         snapshot.lights.clear();
         snapshot.dropped_lights = *dropped_lights;
