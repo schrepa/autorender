@@ -28,6 +28,7 @@ mod probes;
 mod retained_render;
 mod scene;
 mod skin;
+mod spline_mesh;
 mod terrain;
 mod transform_edits;
 mod virtual_geometry;
@@ -98,6 +99,7 @@ pub use scene::{
     RenderTexture, Tint, Transform,
 };
 pub use skin::{RenderJoint, Skin};
+pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
 pub use terrain::{
     MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
@@ -696,6 +698,9 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         mode.validate()?;
         self.complete_pending_tick();
+        // Spline meshes (decision 071) build their chunks before transforms
+        // refresh, so paused frames draw them too.
+        spline_mesh::build(self.app.world_mut());
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), mode);
         Ok(self.extract_retained(aspect, false))
@@ -725,6 +730,7 @@ impl Engine {
             // consumers keep presenting the inputs they applied before.
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
+            spline_mesh::build(self.app.world_mut());
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);
         }
@@ -845,6 +851,7 @@ pub mod prelude {
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,
         Reflections, Refraction, RenderEmitter, RenderLight, Spot, SunShafts, Transmission,
     };
+    pub use crate::{SplineChunks, SplineMesh};
     pub use crate::{TransformEditError, edit_transform};
     // Bevy derives resolve this name in client scope when only the engine
     // facade is a direct dependency, so expose the crate alongside its prelude.

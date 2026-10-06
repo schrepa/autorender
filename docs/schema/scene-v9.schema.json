@@ -2650,6 +2650,17 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
+        "spline": {
+          "description": "One of this document's meshes bent along a curve (decision 071).\nRequires version 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSpline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "tags": {
           "description": "At most 16 distinct authored IDs, each at most 64 ASCII bytes.",
           "type": "array",
@@ -3052,6 +3063,46 @@
       "required": [
         "id",
         "joints"
+      ]
+    },
+    "SceneSpline": {
+      "description": "A mesh bent along a curve on this entity (decision 071). Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 64 meters of curve draw\nwith the material.",
+      "type": "object",
+      "properties": {
+        "material": {
+          "description": "ID of the material its chunks draw with in this document.",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "mesh": {
+          "description": "ID of the bent mesh in this document.",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "maxItems": 3,
+            "minItems": 3
+          },
+          "maxItems": 4096,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "points",
+        "mesh",
+        "material"
       ]
     },
     "SceneSpot": {

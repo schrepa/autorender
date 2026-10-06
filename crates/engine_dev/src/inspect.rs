@@ -21,7 +21,8 @@ use crate::{
     views::{
         AnimationPlayerView, CameraView, DecalView, GlobalTransformView, HierarchyView,
         InterpolateTransformView, Mesh3dView, MeshBoundsView, PresentationModeView,
-        PresentationStateView, PresentedTransformView, SkinView, SurfaceView, TransformView,
+        PresentationStateView, PresentedTransformView, SkinView, SplineMeshView, SurfaceView,
+        TransformView,
     },
 };
 
@@ -242,6 +243,28 @@ impl DevTools {
                     blend: field.blend,
                     opacity: field.opacity,
                     fade_degrees: field.fade_degrees,
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity (decision 071) as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 64 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())),
+            read: Box::new(|world, entity, scene| {
+                let entity = entity?;
+                let spline = world.get::<engine_core::SplineMesh>(entity)?;
+                let chunks = world.get::<engine_core::SplineChunks>(entity);
+                let mesh = scene.and_then(|scene| scene.meshes().find(|(_, handle)| *handle == spline.mesh).map(|(id, _)| id.to_owned()));
+                let material = scene.and_then(|scene| scene.materials().find(|(_, handle)| *handle == spline.material).map(|(id, _)| id.to_owned()));
+                Some(json!(SplineMeshView {
+                    points: spline.points.iter().map(|point| point.to_array()).collect(),
+                    mesh,
+                    material,
+                    length: chunks.map(|chunks| chunks.length),
+                    copies: chunks.map(|chunks| chunks.copies),
+                    chunks: chunks.map(|chunks| chunks.entities.len()),
+                    vertices: chunks.map(|chunks| chunks.vertices),
+                    error: chunks.and_then(|chunks| chunks.error.clone()),
                 }))
             }),
         }).expect("built-in descriptor is bounded");

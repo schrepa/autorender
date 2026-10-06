@@ -188,6 +188,15 @@ fn validate_object(
             &format!("{path}.decal.material"),
         )?;
     }
+    if let Some(spline) = &entity.spline {
+        spline.validate(&format!("{path}.spline"))?;
+        reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;
+        reference(
+            &spline.material,
+            material_ids,
+            &format!("{path}.spline.material"),
+        )?;
+    }
     if let Some(parent) = &entity.parent {
         identifier(parent, &format!("{path}.parent"))?;
     }
