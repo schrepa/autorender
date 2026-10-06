@@ -3,7 +3,9 @@
 //! flat faces weathered stone breaks into, and flattened where they sit in
 //! the ground, with texture coordinates projected along the axis each
 //! vertex's normal turns most toward, so the terrain's rock maps lie on
-//! them.
+//! them. Cliffs are outcrops of the same making, many meters across once
+//! placed: their rock fluted by ridges running down it and broken into
+//! ledges along their strata.
 
 use std::collections::HashMap;
 
@@ -85,6 +87,106 @@ pub(crate) fn boulder(seed: u32) -> Result<Mesh, String> {
         .collect();
     Mesh::new(vertices, triangles.into_iter().flatten().collect())
         .map_err(|error| format!("boulder {seed}: {error}"))
+}
+
+/// Planes each cliff is split along, and the most each one's details may
+/// stray from its finest at scale 1 (meters), coarsest last.
+const CLIFF_CUTS: u32 = 5;
+pub(crate) const CLIFF_ERRORS: [f32; 2] = [0.012, 0.035];
+
+/// Units of a cliff at scale 1 one repeat of the rock maps covers: a cliff
+/// about twenty meters across repeats them every four.
+const CLIFF_TILING: f32 = 0.2;
+
+/// Cliff `seed`'s mesh at `detail` (0 the finest, up to 2): a block of
+/// stratified rock about a meter across before its stretch, its sides
+/// steep and nearly flat, as a superellipsoid's are, with rounded edges;
+/// its beds stepping back in ledges where each tilted stratum ends, its
+/// faces fluted by ridges running down them and split along a few upright
+/// planes, and its bottom flattened below its origin, where it sinks into
+/// the ground.
+pub(crate) fn cliff(seed: u32, detail: u32) -> Result<Mesh, String> {
+    let (mut positions, triangles) = icosphere(4 - detail.min(2));
+    let random = |index: u32| unit(hash(seed.wrapping_mul(0x632b_e5ab) ^ index));
+    // Wide across the slope it faces down (x), shallower into it (z).
+    let stretch = Vec3::new(
+        1.7 + 0.7 * random(1),
+        0.8 + 0.5 * random(2),
+        0.9 + 0.4 * random(3),
+    );
+    let offset = Vec3::new(random(4), random(5), random(6)) * 53.0;
+    // How boxy: the superellipsoid's exponent.
+    let boxy = 4.0 + 2.0 * random(7);
+    // Strata, a few to a unit of height, tilted a little.
+    let layers = 5.0 + 3.0 * random(8);
+    let dip = Vec3::new(random(9) - 0.5, 3.0, random(10) - 0.5).normalize();
+    let cuts: Vec<(Vec3, f32)> = (0..CLIFF_CUTS)
+        .map(|cut| {
+            let at = 20 + cut * 4;
+            let direction = Vec3::new(
+                random(at) * 2.0 - 1.0,
+                random(at + 1) * 0.5 - 0.1,
+                random(at + 2) * 2.0 - 1.0,
+            )
+            .normalize_or(Vec3::X);
+            let reach = (direction * stretch * 0.5).length();
+            (direction, reach * (0.78 + 0.15 * random(at + 3)))
+        })
+        .collect();
+    for position in &mut positions {
+        let direction = *position;
+        let a = direction.abs();
+        let block = (a.x.powf(boxy) + a.y.powf(boxy) + a.z.powf(boxy)).powf(-1.0 / boxy);
+        let broad = noise(direction * 1.4 + offset);
+        // Ridges running down the faces: noise drawn out along the height.
+        let flutes =
+            noise(Vec3::new(direction.x * 7.0, direction.y * 1.2, direction.z * 7.0) + offset);
+        let fluted = 1.0 - (flutes * 2.0 - 1.0).abs();
+        let radius = block * (1.0 + 0.16 * (broad - 0.5) + 0.07 * fluted);
+        let mut point = direction * radius * stretch * 0.5;
+        // Each stratum's top steps back into the rock as a ledge.
+        let height = point.dot(dip) * layers + 0.35 * noise(direction * 2.5 - offset);
+        let within = height - height.floor();
+        let ledge = math::clamp((within - 0.6) / 0.25, 0.0, 1.0);
+        let ledge = ledge * ledge * (3.0 - 2.0 * ledge);
+        point -= Vec3::new(point.x, 0.0, point.z) * (0.09 * ledge);
+        for &(normal, distance) in &cuts {
+            point -= normal * math::max(point.dot(normal) - distance, 0.0);
+        }
+        // Sunk in the ground: the bottom flattened.
+        point.y = math::max(point.y, -0.3 * stretch.y);
+        *position = point;
+    }
+    let mut normals = vec![Vec3::ZERO; positions.len()];
+    for triangle in &triangles {
+        let [a, b, c] = triangle.map(|index| positions[index as usize]);
+        let face = (b - a).cross(c - a);
+        for &index in triangle {
+            normals[index as usize] += face;
+        }
+    }
+    let vertices = positions
+        .iter()
+        .zip(&normals)
+        .map(|(&position, &normal)| {
+            let normal = normal.normalize_or(Vec3::Y);
+            let axis = normal.abs();
+            let uv = if axis.y >= axis.x && axis.y >= axis.z {
+                [position.x, position.z]
+            } else if axis.x >= axis.z {
+                [position.z, -position.y]
+            } else {
+                [position.x, -position.y]
+            };
+            MeshVertex {
+                position: position.to_array(),
+                normal: normal.to_array(),
+                uv: uv.map(|value| value / CLIFF_TILING),
+            }
+        })
+        .collect();
+    Mesh::new(vertices, triangles.into_iter().flatten().collect())
+        .map_err(|error| format!("cliff {seed}: {error}"))
 }
 
 /// A unit icosphere subdivided `levels` times: its vertices and
