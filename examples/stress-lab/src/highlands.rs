@@ -717,6 +717,18 @@ const LICHEN: TopLayer = TopLayer {
     roughness: 0.85,
 };
 
+/// Soil staining boulders' bases, and the damper rock at cliffs' feet,
+/// where the terrain places them (decision 096): a few centimeters up a
+/// meter-wide boulder, a meter or so up a cliff.
+const SOIL: Grounding = Grounding {
+    color: [0.6, 0.53, 0.43],
+    height: 0.12,
+};
+const FOOT: Grounding = Grounding {
+    color: [0.68, 0.64, 0.58],
+    height: 0.05,
+};
+
 /// A hiker walking between two points (decision 089): the ends (world x
 /// and z) and the one it walks toward.
 #[derive(Component)]
@@ -1008,8 +1020,9 @@ fn surface(
             .and_then(|material| material.with_top_layer(MOSS))
             .map_err(error)?,
     };
-    let rock = assets
-        .insert_material(material)
+    let rock = material
+        .with_grounding(SOIL)
+        .and_then(|material| assets.insert_material(material))
         .map_err(|error| error.to_string())?;
     let mut placed = Vec::with_capacity(BOULDERS + SPRUCES);
     for seed in 0..BOULDERS as u32 {
@@ -1098,7 +1111,10 @@ fn surface(
     // when converted.
     let cliff_scan = scanned(&mut assets, files, "cliff", CLIFF_SCAN_TILING, LICHEN)?;
     let cliff_rock = match (cliff_scan, terrain_rock) {
-        (Some(scan), _) => assets.insert_material(scan).map_err(error)?,
+        (Some(scan), _) => scan
+            .with_grounding(FOOT)
+            .and_then(|material| assets.insert_material(material))
+            .map_err(error)?,
         (None, Some(terrain_rock)) => {
             let [red, green, blue] = LOOKS[4].tint;
             let mut material = Material::new([red, green, blue, 1.0])
@@ -1126,6 +1142,7 @@ fn surface(
             let material = material
                 .with_world_mapping(4.0)
                 .and_then(|material| material.with_top_layer(LICHEN))
+                .and_then(|material| material.with_grounding(FOOT))
                 .map_err(error)?;
             assets.insert_material(material).map_err(error)?
         }
@@ -1815,10 +1832,11 @@ fn rules() -> Biomes {
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
             .chain((0..CLIFFS).map(|index| format!("cliff{index}")))
             .collect(),
-        // Boulders in clumps over the meadows, stones strewn on scree,
-        // outcrops on rock, and spruce forests in broad stands below the
-        // tree line on gentle ground, thinning at their edges: placed on
-        // two-kilometer tiles, which stay resident farther away.
+        // Boulders in clumps over the meadows, resting on the lowest ground
+        // under them (decision 096), stones strewn on scree, outcrops on
+        // rock, and spruce forests in broad stands below the tree line on
+        // gentle ground, thinning at their edges: placed on two-kilometer
+        // tiles, which stay resident farther away.
         placed: Vec::new(),
         placements: vec![
             PlacementLayer {
@@ -1842,6 +1860,7 @@ fn rules() -> Biomes {
                 align: 0.04,
                 face: 0.0,
                 sink: 0.3,
+                bed: 0.0,
                 level: 3,
                 // A third of them stand on the pinned four-kilometer tiles too,
                 // so forests reach the horizon (decision 061).
@@ -1863,7 +1882,8 @@ fn rules() -> Biomes {
                 scale: [0.6, 2.4],
                 align: 0.3,
                 face: 0.0,
-                sink: 0.2,
+                sink: 0.1,
+                bed: 0.45,
                 level: 0,
                 far: None,
             },
@@ -1878,13 +1898,16 @@ fn rules() -> Biomes {
                 align: 0.8,
                 face: 0.0,
                 sink: 0.08,
+                bed: 0.0,
                 level: 0,
                 far: None,
             },
             // Cliffs rise in bands from the steepest rock, overlapping where
-            // the ground stays steep, sunk a little below their flattened
-            // bottoms, standing on two-kilometer tiles and half of them on
-            // the pinned four-kilometer ones, so cliff bands show from afar.
+            // the ground stays steep, sunk a little below the lowest ground
+            // under them (decision 096), so their faces stand in the slope
+            // instead of over it; standing on two-kilometer tiles and half
+            // of them on the pinned four-kilometer ones, so cliff bands show
+            // from afar.
             PlacementLayer {
                 id: "cliffs".into(),
                 assets: (0..CLIFFS)
@@ -1903,7 +1926,8 @@ fn rules() -> Biomes {
                 scale: [12.0, 30.0],
                 align: 0.15,
                 face: 0.85,
-                sink: 0.32,
+                sink: 0.2,
+                bed: 0.55,
                 level: 3,
                 far: Some(FarPlacement {
                     level: 4,
@@ -1921,6 +1945,7 @@ fn rules() -> Biomes {
                 align: 0.6,
                 face: 0.0,
                 sink: 0.5,
+                bed: 0.0,
                 level: 0,
                 far: None,
             },

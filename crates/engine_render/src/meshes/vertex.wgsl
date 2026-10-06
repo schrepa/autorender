@@ -36,7 +36,33 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
         output.world_v = vec4<f32>(world, output.world_v.w);
         output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
     }
+    if GROUNDING {
+        output.material = vec3<u32>(grounded(slot.color, index, model[3].xyz,
+            output.world_v.xyz), output.material.z);
+    }
     return output;
+}
+
+// Packed color `color` of slot `index`, whose origin is `origin`, at
+// `world`: where its material has grounding (decision 096), multiplied by
+// its ground's stain at the plane of the ground under its base, the stain
+// fading out as far up as it reaches.
+fn grounded(color: vec2<u32>, index: u32, origin: vec3<f32>, world: vec3<f32>) -> vec2<u32> {
+    let ground = grounds[index];
+    let reach = bitcast<f32>(ground.z);
+    if !(reach > 0.0) {
+        return color;
+    }
+    let tilt = unpack2x16snorm(ground.x);
+    let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
+    // Height above the plane through the ground over the sunk base.
+    let above = world.y - origin.y - bitcast<f32>(ground.y)
+        + dot(tilt, world.xz - origin.xz) / up;
+    let stain = unpack4x8unorm(ground.w).rgb;
+    let amount = 1.0 - smoothstep(0.0, reach, above);
+    let linear = vec4<f32>(unpack2x16unorm(color.x), unpack2x16unorm(color.y));
+    let stained = linear.rgb * mix(vec3<f32>(1.0), stain, amount);
+    return vec2<u32>(pack2x16unorm(stained.rg), pack2x16unorm(vec2<f32>(stained.b, linear.a)));
 }
 
 // The offset the wind gives the vertex at `world` of a slot posed by
@@ -326,6 +352,10 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
         vertex.world_v = vec4<f32>(current, vertex.world_v.w);
         vertex.clip_position = camera.view_projection * vec4<f32>(current, 1.0);
         world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
+    }
+    if GROUNDING {
+        vertex.material = vec3<u32>(grounded(material.color, slot, model[3].xyz,
+            vertex.world_v.xyz), vertex.material.z);
     }
     let previous = camera.previous_view_projection * world;
     var output: TemporalOutput;

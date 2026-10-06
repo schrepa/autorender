@@ -92,6 +92,7 @@ impl ShadowDrawing {
                 label: "engine/virtual-shadow",
                 layout: &pipeline_layout,
                 module,
+                vertex_constants: &[],
                 vertex: "vs_shadow",
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: VISIBLE_BYTES,

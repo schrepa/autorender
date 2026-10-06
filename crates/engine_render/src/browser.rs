@@ -16,8 +16,8 @@ use crate::depth_pyramid::{DepthPyramid, Reduction};
 use crate::entries::{MeshPass, PassKind, Streams};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment};
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, LOD_LEVELS, LightingUniform, PoseData,
-    SHADER, SkinVertex, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LightingUniform,
+    PoseData, SHADER, SkinVertex, Variant, Vertex, clamped_extent,
 };
 use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
 use crate::gpu_uploads;

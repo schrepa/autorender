@@ -333,6 +333,7 @@ mod gpu {
                 label: "engine/decals",
                 layout,
                 module: shader,
+                vertex_constants: &[],
                 vertex: crate::entries::DECAL_VERTEX,
                 buffers: &[],
                 // The box's far faces cover its pixels once, from inside too.

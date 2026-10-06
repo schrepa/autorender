@@ -601,6 +601,7 @@ impl WaterPass {
                 },
                 layout,
                 module: shader,
+                vertex_constants: &[],
                 vertex,
                 // The sea's vertices come from their indices alone.
                 buffers: match surface {

@@ -114,6 +114,9 @@ struct MaterialTexels {
     coverage: f32,
     // World-mapped normal maps' normal (decision 093), world space.
     world_normal: vec3<f32>,
+    // The metallic-roughness map's alpha, heights where its maps keep them
+    // (decision 093); 1 without one.
+    height: f32,
 }
 
 fn untextured() -> MaterialTexels {
@@ -122,6 +125,7 @@ fn untextured() -> MaterialTexels {
     texels.occlusion = 1.0;
     texels.normal = vec3<f32>(0.0, 0.0, 1.0);
     texels.coverage = 1.0;
+    texels.height = 1.0;
     return texels;
 }
 
@@ -162,6 +166,7 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
                 metallic_roughness_sampler, map_uv(1u, uv, uv1));
         }
         texels.factors = metallic_roughness.gb;
+        texels.height = metallic_roughness.a;
         if material_flag(1024u, PACKED_OCCLUSION) {
             texels.occlusion = metallic_roughness.r;
         } else if material_flag(256u, OCCLUSION_MAP) {
@@ -274,6 +279,7 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     texels.base = base;
     if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
         texels.factors = metallic_roughness.gb;
+        texels.height = metallic_roughness.a;
     }
     if material_flag(1024u, PACKED_OCCLUSION) {
         texels.occlusion = metallic_roughness.r;
@@ -335,6 +341,7 @@ fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
                 map_gradient(1u, gradients.dy, gradients.dy1));
         }
         texels.factors = metallic_roughness.gb;
+        texels.height = metallic_roughness.a;
         if material_flag(1024u, PACKED_OCCLUSION) {
             texels.occlusion = metallic_roughness.r;
         } else if material_flag(256u, OCCLUSION_MAP) {
@@ -427,11 +434,16 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     }
     if material_flag(8192u, TOP_LAYER) {
         // The top layer (decision 093) settles on faces turned up, broken
-        // by noise and gathering in the darker hollows of the base color.
+        // by noise and gathering in the low parts of the material's height
+        // map (its metallic-roughness map's alpha) and the darker hollows
+        // of its base color.
         let breakup = variety_noise(world.xz * 2.3 + vec2<f32>(world.y * 0.7, 3.1)) * 0.6
             + variety_noise(world.xz * 0.55 - vec2<f32>(world.y * 0.4, 7.7)) * 0.4;
-        let hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
-        let lift = point.normal.y + 0.5 * (breakup - 0.5) + 0.3 * (hollow - 0.5);
+        var hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
+        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+            hollow = mix(hollow, 1.0 - texels.height, 0.6);
+        }
+        let lift = point.normal.y + 0.5 * (breakup - 0.5) + 0.4 * (hollow - 0.5);
         let reach = material_maps.top.w;
         let amount = smoothstep(1.0 - reach, 1.2 - reach, lift) * step(1.0e-4, reach);
         point.albedo = mix(point.albedo, material_maps.top.rgb, amount);

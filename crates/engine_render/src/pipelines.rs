@@ -422,6 +422,7 @@ pub(crate) struct Geometry<'a> {
     pub layout: &'a wgpu::PipelineLayout,
     pub module: &'a wgpu::ShaderModule,
     pub vertex: &'a str,
+    pub vertex_constants: &'a [(&'a str, f64)],
     pub buffers: &'a [Option<wgpu::VertexBufferLayout<'a>>],
     pub primitive: wgpu::PrimitiveState,
     pub depth: Option<wgpu::DepthStencilState>,
@@ -445,7 +446,10 @@ pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::
             vertex: wgpu::VertexState {
                 module: geometry.module,
                 entry_point: Some(geometry.vertex),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: geometry.vertex_constants,
+                    ..Default::default()
+                },
                 buffers: geometry.buffers,
             },
             primitive: geometry.primitive,
@@ -491,6 +495,7 @@ pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::
             label: pass.label,
             layout: pass.layout,
             module: pass.module,
+            vertex_constants: &[],
             vertex: pass.vertex,
             buffers: &[],
             primitive: wgpu::PrimitiveState::default(),

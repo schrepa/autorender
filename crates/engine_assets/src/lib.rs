@@ -23,8 +23,8 @@ pub use library::{
 };
 pub use lod::{LodLevel, MeshLods, mesh_lods};
 pub use material::{
-    AlphaMode, Filter, MAX_WORLD_TILING, Material, MaterialBinding, Sampler, Surface, TextureRef,
-    TopLayer, Transmission, UvTransform, Wrap,
+    AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
+    MaterialBinding, Sampler, Surface, TextureRef, TopLayer, Transmission, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh, MeshVertex};
 pub use texture::{MAX_TEXTURE_DIMENSION, Texture, TextureFormat};

@@ -58,6 +58,7 @@ fn caster_pipeline(
             label,
             layout: &layout,
             module,
+            vertex_constants: &[],
             vertex: entry_point,
             buffers,
             // Both faces cast: open and single-sided meshes shadow too.

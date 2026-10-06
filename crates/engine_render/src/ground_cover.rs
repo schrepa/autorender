@@ -431,6 +431,7 @@ impl GroundCoverPass {
                 label: "engine/cover",
                 layout: &layout,
                 module: shader,
+                vertex_constants: &[],
                 vertex,
                 buffers: &[],
                 primitive: wgpu::PrimitiveState {

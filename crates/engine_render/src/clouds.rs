@@ -966,6 +966,7 @@ fn composite_pipeline(
             label: "engine/cloud-composite",
             layout,
             module: shader,
+            vertex_constants: &[],
             vertex: crate::entries::SKY_VERTEX,
             buffers: &[],
             primitive: wgpu::PrimitiveState::default(),

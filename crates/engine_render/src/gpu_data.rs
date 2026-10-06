@@ -306,6 +306,38 @@ pub(crate) struct ColorData {
     pub flags: u32,
 }
 
+/// WGSL `grounds` of `meshes/declarations.wgsl` (decision 096): what lies
+/// under a placed object, x and z of the ground's normal as two signed
+/// 16-bit fractions, the meters its base sinks below the ground, the meters
+/// up its stain reaches (0: none) and the stain's linear color as four
+/// bytes, 16 bytes.
+pub(crate) type GroundData = [u32; 4];
+
+/// The ground of an object at `scale` whose base sinks `sink` meters below
+/// ground of normal `normal` (x and z), stained as its material's
+/// `grounding` says.
+pub(crate) fn ground_data(
+    grounding: Option<engine_core::Grounding>,
+    normal: [f32; 2],
+    sink: f32,
+    scale: f32,
+) -> GroundData {
+    let Some(grounding) = grounding else {
+        return [0; 4];
+    };
+    let snorm = |value: f32| {
+        u32::from((engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
+    };
+    let byte = |value: f32| (engine_core::math::clamp(value, 0.0, 1.0) * 255.0).round() as u32;
+    let [red, green, blue] = grounding.color;
+    [
+        snorm(normal[0]) | snorm(normal[1]) << 16,
+        sink.to_bits(),
+        (grounding.height * scale).to_bits(),
+        byte(red) | byte(green) << 8 | byte(blue) << 16 | 255 << 24,
+    ]
+}
+
 impl From<&RenderInstance> for ColorData {
     fn from(instance: &RenderInstance) -> Self {
         Self {
@@ -651,6 +683,9 @@ impl Variant {
     // (decision 093).
     const WORLD_MAPPING: u16 = 4096;
     const TOP_LAYER: u16 = 8192;
+    // Bases the ground stains (decision 096): slot vertex stages read
+    // placed objects' grounds.
+    const GROUNDING: u16 = 16384;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -699,6 +734,9 @@ impl Variant {
         if material.top_layer().is_some() {
             bits |= Self::TOP_LAYER;
         }
+        if material.grounding().is_some() {
+            bits |= Self::GROUNDING;
+        }
         Self(bits)
     }
 
@@ -719,12 +757,14 @@ impl Variant {
         u32::from(self.0)
     }
 
-    /// Fragment override constants.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 12] {
+    /// Override constants: fragment stages read them all, slot vertex
+    /// stages GROUNDING.
+    pub(crate) fn constants(self) -> [(&'static str, f64); 13] {
         let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
             ("TOP_LAYER", set(Self::TOP_LAYER)),
+            ("GROUNDING", set(Self::GROUNDING)),
             ("MATERIAL_MAPS", set(Self::MAPS)),
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),

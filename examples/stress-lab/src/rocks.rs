@@ -10,7 +10,10 @@
 //! the coarser with the most they stray from the finest. Cliffs are
 //! outcrops of the same making, many meters across once placed: their rock
 //! fluted by ridges running down it and broken into ledges along their
-//! strata, whose edges keep their crease.
+//! strata, whose edges keep their crease. Every vertex's color bakes in
+//! how much the shape around it hides it, darker in hollows and under
+//! ledges; the ground stains their bases where terrains place them
+//! (decision 096).
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -78,8 +81,9 @@ pub(crate) fn boulder(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
         point.y += beyond(floor - point.y, ROUNDING);
         point
     };
-    let (vertices, indices, error) = shaped(&shape, detail, PI, TILING);
+    let (vertices, indices, colors, error) = shaped(&shape, detail, PI, TILING);
     Mesh::new(vertices, indices)
+        .and_then(|mesh| mesh.with_colors(colors))
         .map(|mesh| (mesh, error))
         .map_err(|error| format!("boulder {seed}: {error}"))
 }
@@ -156,8 +160,9 @@ pub(crate) fn cliff(seed: u32, detail: u32) -> Result<(Mesh, f32), String> {
         point.y += beyond(floor - point.y, 0.5 * ROUNDING);
         point
     };
-    let (vertices, indices, error) = shaped(&shape, detail, LEDGE_CREASE, CLIFF_TILING);
+    let (vertices, indices, colors, error) = shaped(&shape, detail, LEDGE_CREASE, CLIFF_TILING);
     Mesh::new(vertices, indices)
+        .and_then(|mesh| mesh.with_colors(colors))
         .map(|mesh| (mesh, error))
         .map_err(|error| format!("cliff {seed}: {error}"))
 }
@@ -170,18 +175,18 @@ fn beyond(excess: f32, width: f32) -> f32 {
     math::max(excess, 0.0) + 0.25 * width * h * h
 }
 
-/// The vertices and indices of `shape` (each unit direction's point) over
-/// an icosphere subdivided [`LEVELS`] less `detail` times, normals creased
-/// past `crease` and texture coordinates repeating every `tiling` units,
-/// and the most it strays from the finest detail: the distance from each
-/// edge's middle to the finer shape's point there, the largest of each
-/// detail between summed.
+/// The vertices, indices and colors ([`baked`]) of `shape` (each unit
+/// direction's point) over an icosphere subdivided [`LEVELS`] less
+/// `detail` times, normals creased past `crease` and texture coordinates
+/// repeating every `tiling` units; and the most it strays from the finest
+/// detail: the distance from each edge's middle to the finer shape's point
+/// there, the largest of each detail between summed.
 fn shaped(
     shape: &impl Fn(Vec3) -> Vec3,
     detail: u32,
     crease: f32,
     tiling: f32,
-) -> (Vec<MeshVertex>, Vec<u32>, f32) {
+) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32; 4]>, f32) {
     let level = LEVELS - detail.min(COARSER);
     let error = (level..LEVELS)
         .map(|coarser| {
@@ -203,7 +208,12 @@ fn shaped(
         .sum();
     let (directions, triangles) = icosphere(level);
     let points: Vec<Vec3> = directions.into_iter().map(shape).collect();
-    let (positions, normals, indices) = creased(&points, &triangles, crease);
+    let baked = baked(&points, &triangles);
+    let (positions, normals, indices, sources) = creased(&points, &triangles, crease);
+    let colors = sources
+        .iter()
+        .map(|&source| baked[source as usize])
+        .collect();
     let vertices = positions
         .iter()
         .zip(&normals)
@@ -223,18 +233,54 @@ fn shaped(
             }
         })
         .collect();
-    (vertices, indices, error)
+    (vertices, indices, colors, error)
+}
+
+/// Each of `points`' colors over `triangles`: how little the shape around
+/// it hides it, from how far its neighbors stand out along its normal
+/// against the edges' length, so hollows and the undersides of ledges
+/// darken.
+fn baked(points: &[Vec3], triangles: &[[u32; 3]]) -> Vec<[f32; 4]> {
+    let mut normals = vec![Vec3::ZERO; points.len()];
+    let mut sums = vec![(Vec3::ZERO, 0.0_f32, 0_u32); points.len()];
+    for &[a, b, c] in triangles {
+        let [pa, pb, pc] = [a, b, c].map(|index| points[index as usize]);
+        let face = (pb - pa).cross(pc - pa);
+        for (index, others) in [(a, [pb, pc]), (b, [pc, pa]), (c, [pa, pb])] {
+            let index = index as usize;
+            normals[index] += face;
+            let entry = &mut sums[index];
+            for other in others {
+                entry.0 += other;
+                entry.1 += other.distance(points[index]);
+                entry.2 += 1;
+            }
+        }
+    }
+    points
+        .iter()
+        .zip(normals.iter().zip(&sums))
+        .map(|(&point, (&normal, &(sum, length, count)))| {
+            let count = count.max(1) as f32;
+            let normal = normal.normalize_or(Vec3::Y);
+            let around = sum / count - point;
+            let edge = math::max(length / count, 1.0e-4);
+            let lit = 1.0 - math::clamp(around.dot(normal) / edge * 2.5, 0.0, 0.45);
+            [lit, lit, lit, 1.0]
+        })
+        .collect()
 }
 
 /// The vertices of `triangles` over `positions`, each corner's normal the
 /// area-weighted mean of the faces around it turning less than `crease`
 /// (radians) from its own, so sharper edges stay crisp; corners alike share
-/// a vertex. Returns positions, normals and indices.
+/// a vertex. Returns positions, normals, indices and each vertex's index in
+/// `positions`.
 fn creased(
     positions: &[Vec3],
     triangles: &[[u32; 3]],
     crease: f32,
-) -> (Vec<Vec3>, Vec<Vec3>, Vec<u32>) {
+) -> (Vec<Vec3>, Vec<Vec3>, Vec<u32>, Vec<u32>) {
     let faces: Vec<Vec3> = triangles
         .iter()
         .map(|triangle| {
@@ -250,7 +296,7 @@ fn creased(
     }
     let limit = math::cos(crease);
     let mut shared: HashMap<(u32, [i32; 3]), u32> = HashMap::new();
-    let (mut out_positions, mut out_normals) = (Vec::new(), Vec::new());
+    let (mut out_positions, mut out_normals, mut sources) = (Vec::new(), Vec::new(), Vec::new());
     let mut indices = Vec::with_capacity(triangles.len() * 3);
     for (face, triangle) in triangles.iter().enumerate() {
         let own = faces[face].normalize_or(Vec3::Y);
@@ -270,12 +316,13 @@ fn creased(
             let vertex = *shared.entry(key).or_insert_with(|| {
                 out_positions.push(positions[index as usize]);
                 out_normals.push(normal);
+                sources.push(index);
                 (out_positions.len() - 1) as u32
             });
             indices.push(vertex);
         }
     }
-    (out_positions, out_normals, indices)
+    (out_positions, out_normals, indices, sources)
 }
 
 /// A unit icosphere subdivided `levels` times: its vertices and

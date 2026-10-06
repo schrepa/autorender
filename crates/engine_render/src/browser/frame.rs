@@ -1580,6 +1580,7 @@ impl Renderer {
                 [&self.instances.buffer, self.instances.poses(1)],
                 self.instances.colors(),
                 [&self.instances.palettes[0], &self.instances.palettes[1]],
+                self.instances.grounds(),
             );
         }
         if refraction && let Some(post) = self.post.as_ref() {
