@@ -45,9 +45,11 @@ pub struct PlacementChoice {
 /// square); the meters between candidates (0.25 to 256); the surface
 /// materials it stands on (IDs; any when empty), weighted by their share;
 /// where its mask allows; its objects' scale range; how far they lean with
-/// the ground (0 upright, 1 along its normal); how deep they sink, in
-/// meters at scale 1; the pyramid level whose tiles hold its candidates
-/// (0, the finest, by default); and where it also stands far away.
+/// the ground (0 upright, 1 along its normal); how far they turn to face
+/// down its slope, their x across it and z down it (0 any way, 1 straight
+/// down it); how deep they sink, in meters at scale 1; the pyramid level
+/// whose tiles hold its candidates (0, the finest, by default); and where
+/// it also stands far away.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -67,6 +69,9 @@ pub struct PlacementLayer {
     #[serde(default)]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub align: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub face: f32,
     #[serde(default)]
     pub sink: f32,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -92,6 +97,10 @@ pub struct FarPlacement {
 
 fn is_zero(level: &u8) -> bool {
     *level == 0
+}
+
+fn is_zero_f32(value: &f32) -> bool {
+    *value == 0.0
 }
 
 fn one() -> f32 {
@@ -162,6 +171,7 @@ pub(crate) struct CompiledPlacement {
     mask: Compiled,
     scale: [f32; 2],
     align: f32,
+    face: f32,
     sink: f32,
 }
 
@@ -260,6 +270,9 @@ pub(crate) fn compile(
         if !(layer.align.is_finite() && (0.0..=1.0).contains(&layer.align)) {
             return Err(fail(format!("{at}.align"), "must be in [0, 1]"));
         }
+        if !(layer.face.is_finite() && (0.0..=1.0).contains(&layer.face)) {
+            return Err(fail(format!("{at}.face"), "must be in [0, 1]"));
+        }
         if !layer.sink.is_finite() {
             return Err(fail(format!("{at}.sink"), "must be finite"));
         }
@@ -288,6 +301,7 @@ pub(crate) fn compile(
                 .map_err(|error| (error.path, error.rule))?,
             scale: layer.scale,
             align: layer.align,
+            face: layer.face,
             sink: layer.sink,
         });
     }
@@ -440,7 +454,15 @@ pub(crate) fn place_row(
             });
         let scale =
             layer.scale[0] + (layer.scale[1] - layer.scale[0]) * unit(hash(square ^ 0xc2b2_ae35));
-        let yaw = unit(hash(square ^ 0x85eb_ca6b)) * std::f32::consts::TAU;
+        // Turned at random, or as far as the layer faces them, across the
+        // slope with z down it, the rest of their turn at random.
+        let turn = unit(hash(square ^ 0x85eb_ca6b));
+        let downhill = (normal.x * normal.x + normal.z * normal.z).sqrt();
+        let yaw = if layer.face > 0.0 && downhill > 0.05 {
+            (-normal.x).atan2(normal.z) + (turn - 0.5) * std::f32::consts::TAU * (1.0 - layer.face)
+        } else {
+            turn * std::f32::consts::TAU
+        };
         // Its up leans toward the ground's normal as far as the
         // layer aligns; a wobble keeps upright objects from
         // standing too straight.

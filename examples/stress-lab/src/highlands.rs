@@ -752,6 +752,64 @@ fn surface(
             )),
         });
     }
+    // Cliffs: blocks of rock many meters across in the terrain rock's maps
+    // and tint, darker than the boulders, so where they rise from rock
+    // ground the two read as one face. They collide as spheres well inside
+    // their faces.
+    let cliff_rock = match materials[4]
+        .material
+        .and_then(|rock| assets.material(rock).copied())
+    {
+        Some(terrain_rock) => {
+            let [red, green, blue] = LOOKS[4].tint;
+            let mut material = Material::new([red, green, blue, 1.0])
+                .and_then(|material| {
+                    material.with_surface(Surface {
+                        roughness: 0.9,
+                        ..Surface::MATTE
+                    })
+                })
+                .map_err(error)?;
+            if let Some(map) = terrain_rock.base_color_texture() {
+                material = material.with_base_color_texture(map).map_err(error)?;
+            }
+            if let Some(map) = terrain_rock.normal_texture() {
+                material = material.with_normal_texture(map, 0.6).map_err(error)?;
+            }
+            if let Some(map) = terrain_rock.metallic_roughness_texture() {
+                material = material
+                    .with_metallic_roughness_texture(map)
+                    .and_then(|material| material.with_occlusion_texture(map, 1.0))
+                    .map_err(error)?;
+            }
+            assets.insert_material(material).map_err(error)?
+        }
+        None => rock,
+    };
+    for seed in 0..CLIFFS as u32 {
+        let mut mesh = |detail| {
+            crate::rocks::cliff(seed, detail)
+                .and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
+        };
+        let full = mesh(0)?;
+        let mut lods = Vec::with_capacity(crate::rocks::CLIFF_ERRORS.len());
+        for (detail, error) in crate::rocks::CLIFF_ERRORS.into_iter().enumerate() {
+            lods.push(PlacementLod {
+                mesh: mesh(detail as u32 + 1)?,
+                error,
+            });
+        }
+        placed.push(PlacementAsset {
+            mesh: full,
+            material: cliff_rock,
+            lods,
+            sway: 0.0,
+            collider: Some(PlacedCollider::new(
+                PlacedShape::Sphere { radius: 0.4 },
+                [0.0, 0.1, 0.0],
+            )),
+        });
+    }
     // Bridges (decision 072) are built of the boulders' weathered stone.
     TerrainSurface::new(&rules(), materials)
         .and_then(|surface| surface.with_assets(placed))
@@ -762,9 +820,10 @@ fn surface(
         .map_err(|error| error.to_string())
 }
 
-/// Boulder and spruce shapes the placement layers choose from.
+/// Boulder, spruce and cliff shapes the placement layers choose from.
 const BOULDERS: usize = 5;
 const SPRUCES: usize = 3;
+const CLIFFS: usize = 4;
 
 /// `look`'s maps from `files` as an engine material tinted by its tint,
 /// when the page supplied all three: base color, normal, and occlusion
@@ -883,6 +942,7 @@ fn rules() -> Biomes {
         assets: (0..BOULDERS)
             .map(|index| format!("boulder{index}"))
             .chain((0..SPRUCES).map(|index| format!("spruce{index}")))
+            .chain((0..CLIFFS).map(|index| format!("cliff{index}")))
             .collect(),
         // Boulders in clumps over the meadows, stones strewn on scree,
         // outcrops on rock, and spruce forests in broad stands below the
@@ -908,6 +968,7 @@ fn rules() -> Biomes {
                 mask: forest(),
                 scale: [0.65, 1.15],
                 align: 0.04,
+                face: 0.0,
                 sink: 0.3,
                 level: 3,
                 // A third of them stand on the pinned four-kilometer tiles too,
@@ -929,6 +990,7 @@ fn rules() -> Biomes {
                 ]),
                 scale: [0.6, 2.4],
                 align: 0.3,
+                face: 0.0,
                 sink: 0.2,
                 level: 0,
                 far: None,
@@ -942,9 +1004,39 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [0.12, 0.45],
                 align: 0.8,
+                face: 0.0,
                 sink: 0.08,
                 level: 0,
                 far: None,
+            },
+            // Cliffs rise in bands from the steepest rock, overlapping where
+            // the ground stays steep, sunk a little below their flattened
+            // bottoms, standing on two-kilometer tiles and half of them on
+            // the pinned four-kilometer ones, so cliff bands show from afar.
+            PlacementLayer {
+                id: "cliffs".into(),
+                assets: (0..CLIFFS)
+                    .map(|index| PlacementChoice {
+                        asset: format!("cliff{index}"),
+                        weight: 1.0,
+                    })
+                    .collect(),
+                density: 24.0,
+                footprint: 11.0,
+                materials: vec!["rock".into()],
+                mask: Mask::Multiply(vec![
+                    Mask::Slope([36.0, 46.0]),
+                    remap(noise(260.0, 31, 2), 0.45, 0.65),
+                ]),
+                scale: [12.0, 30.0],
+                align: 0.15,
+                face: 0.85,
+                sink: 0.32,
+                level: 3,
+                far: Some(FarPlacement {
+                    level: 4,
+                    share: 0.5,
+                }),
             },
             PlacementLayer {
                 id: "outcrops".into(),
@@ -955,6 +1047,7 @@ fn rules() -> Biomes {
                 mask: Mask::one(),
                 scale: [2.0, 5.0],
                 align: 0.6,
+                face: 0.0,
                 sink: 0.5,
                 level: 0,
                 far: None,
