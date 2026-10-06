@@ -40,6 +40,8 @@ fn main() {
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Tint": schemars::schema_for!([f32; 4]),
         "Floating": schemars::schema_for!(engine_core::Floating),
+        "Deformer": schemars::schema_for!(engine_core::Deformer),
+        "Tracks": schemars::schema_for!(views::TracksView),
         "AnimationPlayer": schemars::schema_for!(views::AnimationPlayerView),
         "Skin": schemars::schema_for!(views::SkinView),
         "protocol": schemars::schema_for!(protocol::DevRequest),

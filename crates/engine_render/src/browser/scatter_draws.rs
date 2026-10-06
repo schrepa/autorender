@@ -191,7 +191,7 @@ impl Renderer {
         let sources = self.terrain.cover_sources().map(|sources| SnapSources {
             heights: sources.heights,
             directory: sources.directory,
-            generation: sources.generation,
+            generation: (sources.generation.0, sources.generation.1),
             revision: sources.revision,
             terrains: &infos,
         });

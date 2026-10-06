@@ -411,6 +411,8 @@ pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wg
 pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
 /// Ground cover's growth (decision 056).
 pub(crate) const COVER_GROW_SHADER: &str = include_str!("cover_grow.wgsl");
+
+pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
 /// Placed objects' culling (decision 057).
 pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 

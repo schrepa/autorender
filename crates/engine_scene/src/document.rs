@@ -623,6 +623,10 @@ pub struct SceneObject {
     /// Rides the sea (decision 077). Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floating: Option<engine_core::Floating>,
+    /// Presses tracks into deformable ground (decision 083). Requires
+    /// version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deformer: Option<engine_core::Deformer>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

@@ -51,13 +51,14 @@ const terrain = {
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
   ],
   // Decision 054: meadow below, rock on steep ground; a summit biome of
-  // snow above 120 m. The meadow grows grass (decision 056).
+  // snow above 120 m. The meadow grows grass (decision 056). Tracks sink
+  // snow deepest and rock never (decision 083).
   surface: {
     materials: [
-      { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 } },
+      { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 }, deform: 0.05 },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
-      { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5 },
-      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1 },
+      { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5, deform: 0.3 },
+      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1, deform: 0.04 },
     ],
     biomes: [
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
@@ -126,6 +127,8 @@ const fixture = {
     { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
     // An interior's box lets in a tenth of the sky and sun (decision 079).
     { id: "hall", reflection_probe: { extent: [20, 200, 20], blend: 0.5, interior: { sky: 0.1, sun: 0.1 } }, transform: { translation: [-300, 40, 300] } },
+    // Presses a dimple into the plateau's meadow each tick (decision 083).
+    { id: "roller", deformer: { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 }, transform: { translation: [10, 30.2, 10] } },
   ],
 };
 const overview = { position: [0, 80, 140], target: [0, 30, 0], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 };
@@ -609,6 +612,65 @@ try {
     assert.equal(steep.error.path, "$.options.max_slope");
     assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
+  }
+  // Tracks (decision 083) press into the ground as deep as its materials
+  // let them, from the deform control and from deformers each tick: the
+  // log answers queries and presses them again where the map returns, they
+  // refill over the refill time, the budget drops the oldest, and the map
+  // shows them.
+  {
+    const spot = [-12, -6];
+    const settings = (await command("inspect", { component: "Deformation" })).result.value;
+    assert.equal(settings.enabled, true, "deformation is on by default");
+    const [ground] = await heights([spot]);
+    const close = { position: [spot[0] + 3, ground.height + 2.5, spot[1] + 3], target: [spot[0] - 1, ground.height, spot[1] - 1], vertical_fov_radians: 0.9, near: 0.05, far: 2000 };
+    await command("camera", close);
+    await settle();
+    const flat = await capture("tracks-before");
+    const rut = { from: [spot[0] - 3, spot[1] + 1], to: [spot[0] + 2, spot[1] - 1.5], radius: 0.3, depth: 0.2, flatness: 0.3 };
+    const pressed = (await command("deform", { ...rut, clear: true })).result;
+    assert.ok(pressed.enabled && pressed.stamps === 1, `a track presses: ${JSON.stringify(pressed)}`);
+    const query = async (points, seconds) => (await command("deformation_query", seconds === undefined ? { points } : { points, seconds })).result.samples;
+    const middle = [(rut.from[0] + rut.to[0]) / 2, (rut.from[1] + rut.to[1]) / 2];
+    const [inside, outside] = await query([middle, [spot[0] + 20, spot[1]]]);
+    assert.ok(inside.track > 0.15 && inside.deform > 0 && Math.abs(inside.depth - Math.min(inside.track, inside.deform)) < 1e-3,
+      `the log holds the track as deep as the meadow lets it: ${JSON.stringify(inside)}`);
+    assert.equal(outside.track, 0);
+    const tracked = await capture("tracks");
+    const trackPixels = await differentPixels(page, [flat, tracked]);
+    assert.ok(trackPixels.changed > 500, `the track shows: ${trackPixels.changed} pixels`);
+    // Far beyond the map and back: the log presses the track again.
+    await command("camera", { ...close, position: [600, 200, 600], target: [500, 100, 500] });
+    await command("camera", close);
+    await settle();
+    const returned = await capture("tracks-returned");
+    const replay = await differentPixels(page, [tracked, returned]);
+    assert.ok(replay.changed * 2 < trackPixels.changed, `the track persists: ${replay.changed} pixels differ`);
+    // The roller presses where it stands each tick.
+    const counted = (await command("inspect", { component: "Tracks" })).result.value;
+    await command("step", { ticks: 3 });
+    const rolled = (await command("inspect", { component: "Tracks" })).result.value;
+    assert.ok(rolled.pressed >= counted.pressed + 3, `the roller presses each tick: ${JSON.stringify([counted, rolled])}`);
+    const [dimple] = await query([[10, 10]]);
+    assert.ok(dimple.track > 0.1, `the roller's dimple: ${JSON.stringify(dimple)}`);
+    // Two refill times after it was pressed, an e-squared of it is left.
+    await command("environment", { deformation: { ...settings, refill: 0.5 } });
+    const [later] = await query([middle], pressed.track.seconds + 1);
+    const left = inside.track * Math.exp(-2);
+    assert.ok(Math.abs(later.track - left) < 0.005, `the track refills: ${later.track} against ${left}`);
+    // The budget drops the oldest stamps.
+    await command("environment", { deformation: { ...settings, max_stamps: 1 } });
+    await command("deform", { from: [spot[0] + 5, spot[1]], radius: 0.2, depth: 0.1 });
+    const budgeted = (await command("inspect", { component: "Tracks" })).result.value;
+    assert.ok(budgeted.stamps === 1 && budgeted.dropped > 0, `the budget drops the oldest: ${JSON.stringify(budgeted)}`);
+    const coarse = await command("environment", { deformation: { ...settings, resolution: 100 } }, false);
+    assert.equal(coarse.error.path, "$.deformation.resolution");
+    const deep = await command("deform", { from: spot, radius: 0.2, depth: 20 }, false);
+    assert.equal(deep.error.path, "$.depth");
+    await command("environment", { deformation: settings });
+    await command("deform", { from: spot, radius: 0.01, depth: 0, clear: true });
+    await command("camera", overview);
+    checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
   }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;

@@ -11,6 +11,7 @@ mod clock;
 mod contact_shadows;
 mod culling;
 mod decals;
+mod deformation;
 mod effects;
 mod entity_indices;
 mod environment;
@@ -46,6 +47,10 @@ pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime, PresentedTime};
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
+pub use deformation::{
+    DEFORMATION_GRAIN, Deformation, DeformationMap, Deformer, MAX_TRACK_DEPTH, RIM_REACH,
+    RIM_START, RenderDeformation, Track, TrackDepth, Tracks, carve_profile, rim_profile,
+};
 pub use effects::{
     AmbientOcclusion, Bloom, MAX_KEPT_LEVELS, MAX_SHADOW_CASCADES, Reflections, Refraction,
     Shadows, SunShafts,
@@ -218,6 +223,10 @@ pub struct Engine {
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
     terrain: terrain::TerrainExtraction,
+    // Runtime deformation (decision 083): the deformers pressing each tick,
+    // and each frame's map.
+    deformers: QueryState<(Entity, &'static Deformer)>,
+    deformation: deformation::DeformationExtraction,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -315,6 +324,8 @@ impl Engine {
             .init_resource::<ContactShadows>()
             .init_resource::<Water>()
             .init_resource::<Ocean>()
+            .init_resource::<Deformation>()
+            .init_resource::<Tracks>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -337,6 +348,7 @@ impl Engine {
         let decals = decals::DecalExtraction::new(app.world_mut());
         let probes = probes::ProbeExtraction::new(app.world_mut());
         let terrain = terrain::TerrainExtraction::new(app.world_mut());
+        let deformers = app.world_mut().query::<(Entity, &Deformer)>();
         Self {
             app,
             clock,
@@ -352,6 +364,8 @@ impl Engine {
             decals,
             probes,
             terrain,
+            deformers,
+            deformation: deformation::DeformationExtraction::default(),
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -615,6 +629,8 @@ impl Engine {
             }
             self.refresh_transforms();
         }
+        // Deformers press tracks where the tick left them (decision 083).
+        deformation::press(self.app.world_mut(), &mut self.deformers);
         interpolation::end_tick(self.app.world_mut());
         self.app
             .world_mut()
@@ -783,6 +799,8 @@ impl Engine {
             self.retained.ensure_source_scan(self.app.world_mut());
         }
         self.terrain.update(self.app.world_mut());
+        self.retained
+            .extract_deformation(self.app.world_mut(), &mut self.deformation);
         let world = self.app.world();
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
@@ -880,6 +898,7 @@ pub mod prelude {
     };
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
+    pub use crate::{Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
         Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,

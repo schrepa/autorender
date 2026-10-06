@@ -228,6 +228,20 @@ impl DevTools {
                 .with_default(json!(engine_core::Floating::default())),
             |floating| json!(floating),
         ).expect("built-in descriptor is bounded");
+        self.register_component::<engine_core::Deformer>(
+            InspectorDescriptor::new("Deformer", "Presses tracks into deformable ground (decision 083) as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.", schemas["Deformer"].clone())
+                .with_default(json!(engine_core::Deformer::default())),
+            |deformer| json!(deformer),
+        ).expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::Tracks>(
+            InspectorDescriptor::new("Tracks", "The log of runtime deformation's stamps (decision 083): stamps held, pressed and dropped by the deformation budget, and the newest. Read tracks with deformation_query; press one with the deform control.", schemas["Tracks"].clone()),
+            |tracks| json!(crate::views::TracksView {
+                stamps: tracks.len(),
+                pressed: tracks.pressed(),
+                dropped: tracks.dropped(),
+                latest: tracks.latest().copied(),
+            }),
+        ).expect("built-in descriptor is bounded");
         self.register_component::<Tint>(
             InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
                 .with_default(json!(Tint::WHITE.0)),
@@ -548,6 +562,9 @@ fn section_description(name: &str) -> &'static str {
         "ocean" => {
             "The sea (decision 076): an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
         }
+        "deformation" => {
+            "Runtime deformation (decision 083): deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
+        }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }
@@ -780,6 +797,7 @@ impl DevTools {
             | DevRequest::TerrainSweep { .. }
             | DevRequest::TerrainRoute { .. }
             | DevRequest::WaterQuery { .. }
+            | DevRequest::DeformationQuery { .. }
             | DevRequest::NavPath { .. } => unreachable!("spatial requests return above"),
         }
     }

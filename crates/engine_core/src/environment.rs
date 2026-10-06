@@ -9,9 +9,9 @@ use std::borrow::Cow;
 use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
-    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, GroundCover, LevelOfDetail,
-    LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
-    SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
+    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Deformation, GroundCover,
+    LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
+    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -62,6 +62,7 @@ pub struct Environment {
     pub contact_shadows: ContactShadows,
     pub water: Water,
     pub ocean: Ocean,
+    pub deformation: Deformation,
 }
 
 impl Environment {
@@ -201,6 +202,13 @@ impl Environment {
                     ..Ocean::default()
                 },
             ),
+            deformation: read(
+                world,
+                Deformation {
+                    enabled: false,
+                    ..Deformation::default()
+                },
+            ),
         }
     }
 
@@ -227,6 +235,7 @@ impl Environment {
             contact_shadows: self.contact_shadows.sanitized(),
             water: self.water.sanitized(),
             ocean: self.ocean.sanitized(),
+            deformation: self.deformation.sanitized(),
         }
     }
 }

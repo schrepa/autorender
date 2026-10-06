@@ -11,9 +11,10 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Environment, GroundCover,
-    InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes,
-    Reflections, Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
+    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Deformation, Environment,
+    GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles,
+    ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
+    VirtualGeometry, Water, Wind,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -281,6 +282,7 @@ section!(Occupancy, since 9, opt_in false);
 section!(ContactShadows, since 9, opt_in false);
 section!(Water, since 9, opt_in false);
 section!(Ocean, since 9, opt_in false);
+section!(Deformation, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -346,6 +348,9 @@ pub struct SceneEnvironment {
     /// The sea (decision 076).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
+    /// Tracks deformers press into deformable ground (decision 083).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deformation: Option<Deformation>,
 }
 
 impl SceneEnvironment {
@@ -375,6 +380,7 @@ impl SceneEnvironment {
             contact_shadows: Some(environment.contact_shadows),
             water: Some(environment.water),
             ocean: Some(environment.ocean),
+            deformation: Some(environment.deformation),
         }
     }
 
@@ -400,6 +406,7 @@ impl SceneEnvironment {
         visitor.section("contact_shadows", self.contact_shadows);
         visitor.section("water", self.water);
         visitor.section("ocean", self.ocean);
+        visitor.section("deformation", self.deformation);
     }
 
     /// The names of the sections present, the atmosphere first.

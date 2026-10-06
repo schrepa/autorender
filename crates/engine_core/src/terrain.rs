@@ -188,6 +188,8 @@ pub struct SurfaceMaterial {
     /// the ground between its stones and tufts: 0, flat, to 1. Top
     /// projections only.
     pub relief: f32,
+    /// The meters tracks (decision 083) sink it at most: 0, rigid, to 2.
+    pub deform: f32,
 }
 
 /// How a surface material's textures lie on the ground: from above, or
@@ -214,12 +216,13 @@ impl SurfaceMaterial {
             projection: SurfaceProjection::Top,
             cover: None,
             relief: 0.0,
+            deform: 0.0,
         }
     }
 
     /// Whether every value is in range: color 0 to 1, roughness 0.03 to
-    /// 1, tiling 0.01 to 1000 meters, height contrast 0 to 1, and its
-    /// cover's.
+    /// 1, tiling 0.01 to 1000 meters, height contrast and relief 0 to 1,
+    /// deform 0 to 2, and its cover's.
     pub fn is_usable(&self) -> bool {
         self.cover.is_none_or(|cover| cover.validate().is_ok()) && self.values_usable()
     }
@@ -235,6 +238,7 @@ impl SurfaceMaterial {
             && self.height_contrast.is_finite()
             && (0.0..=1.0).contains(&self.height_contrast)
             && (0.0..=1.0).contains(&self.relief)
+            && (0.0..=2.0).contains(&self.deform)
     }
 }
 
@@ -972,6 +976,27 @@ impl TerrainState {
             Some((level, sample))
         })
     }
+
+    /// The meters tracks sink the ground at terrain-local `local` at most
+    /// (decision 083): its nearest sample's materials' blend, from the
+    /// finest resident tile.
+    fn deform(&self, local: Vec2) -> Option<f32> {
+        let pyramid = &self.terrain.pyramid;
+        (0..pyramid.levels()).find_map(|level| {
+            let key = pyramid.tile_at(level, local)?;
+            let tile = self.tiles.get(&key)?;
+            let at = (local - pyramid.tile_origin(key)) / tile.spacing();
+            let control = tile.control_at(at.x.round() as i32, at.y.round() as i32)?;
+            let materials = &self.terrain.surface.materials;
+            let deform = |index: u8| {
+                materials
+                    .get(usize::from(index))
+                    .map_or(0.0, |material| material.deform)
+            };
+            let share = f32::from(control.blend) / 255.0;
+            Some(deform(control.a) + (deform(control.b) - deform(control.a)) * share)
+        })
+    }
 }
 
 /// Every terrain's resident tiles, streaming state and queries (decision
@@ -1010,6 +1035,16 @@ impl Terrains {
         self.sample(x, z)
             .filter(|sample| !sample.hole)
             .map(|sample| sample.height)
+    }
+
+    /// The meters tracks (decision 083) sink the ground under `(x, z)` at
+    /// most, from its surface materials' [`SurfaceMaterial::deform`]; `None`
+    /// where no tile with a surface is resident.
+    pub fn deform_at(&self, x: f32, z: f32) -> Option<f32> {
+        self.entries.iter().find_map(|state| {
+            let origin = state.terrain.origin;
+            state.deform(Vec2::new(x - origin.x, z - origin.z))
+        })
     }
 
     /// The surface normal under `(x, z)`, as [`Self::height_at`].

@@ -187,6 +187,12 @@ pub struct RenderStats {
     /// The sea's sectors drawn (decision 076), and their triangles.
     pub ocean_sectors: u32,
     pub ocean_triangles: u32,
+    /// Runtime deformation (decision 083): stamps this frame pressed into
+    /// the map around the camera, and its texels along a side (0 while
+    /// off; fewer than the settings' where the device's buffers cannot
+    /// hold them).
+    pub deformation_stamps: u32,
+    pub deformation_texels: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.
@@ -219,6 +225,8 @@ mod gpu_data;
 mod batches;
 #[cfg(target_arch = "wasm32")]
 mod decals;
+#[cfg(target_arch = "wasm32")]
+mod deformation;
 #[cfg(target_arch = "wasm32")]
 mod depth_pyramid;
 #[cfg(target_arch = "wasm32")]

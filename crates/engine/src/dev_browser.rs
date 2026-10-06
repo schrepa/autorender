@@ -183,6 +183,7 @@ impl DevBrowser {
                 contact_shadows,
                 water,
                 ocean,
+                deformation,
                 ..
             } => {
                 // The sections of a scene environment, validated alike; the
@@ -208,6 +209,7 @@ impl DevBrowser {
                     contact_shadows,
                     water,
                     ocean,
+                    deformation,
                 };
                 environment.validate("$")?;
                 environment.apply_sections(app.engine.app.world_mut());
@@ -235,6 +237,29 @@ impl DevBrowser {
                 },
                 (width, height),
             ),
+            BrowserControl::Deform {
+                from,
+                to,
+                radius,
+                depth,
+                flatness,
+                clear,
+                ..
+            } => {
+                let result = engine_dev::press_track(
+                    &mut app.engine,
+                    engine_dev::Press {
+                        from,
+                        to,
+                        radius,
+                        depth,
+                        flatness,
+                        clear,
+                    },
+                )?;
+                rendered(app.dev_render(width, height), "track pressed")?;
+                Ok(result)
+            }
             BrowserControl::TerrainUndo { terrain, .. } => self.terrain_editing(
                 app,
                 scene,

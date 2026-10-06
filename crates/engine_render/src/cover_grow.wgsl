@@ -29,6 +29,10 @@ struct Grow {
     scale: vec4<f32>,
     // The view's frustum planes (world).
     planes: array<vec4<f32>, 6>,
+    // Runtime deformation's map (decision 083, `terrain_vertex.wgsl`'s
+    // `deform_grid` and `deform`).
+    deform_grid: vec4<i32>,
+    deform: vec4<f32>,
 }
 
 // A surface material's cover: blades per square meter, the shortest and
@@ -70,6 +74,7 @@ struct Counts {
 @group(0) @binding(5) var<uniform> grow: Grow;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
+@group(0) @binding(9) var<storage, read> deformation: array<u32>;
 
 const NOT_RESIDENT: u32 = 0xffffffffu;
 const TAU: f32 = 6.2831853;
@@ -126,6 +131,24 @@ fn ground_at(local: vec2<f32>) -> Ground {
         return ground;
     }
     return ground;
+}
+
+// How deep tracks (decision 083) sink the ground at world `point`
+// (meters, its texel's, as refilled): 0 beyond the deformation map.
+fn pressed_at(point: vec2<f32>) -> f32 {
+    let size = grow.deform_grid.z;
+    if size <= 0 {
+        return 0.0;
+    }
+    let local = point * grow.deform.x - vec2<f32>(grow.deform_grid.xy);
+    if any(local < vec2<f32>(0.0)) || any(local >= vec2<f32>(f32(size))) {
+        return 0.0;
+    }
+    let texel = vec2<i32>(floor(local)) + grow.deform_grid.xy;
+    let slot = ((texel % size) + size) % size;
+    let blocks = grow.deform_grid.w;
+    let word = u32(blocks * blocks + slot.y * size + slot.x);
+    return unpack2x16float(deformation[word]).x * grow.deform.y;
 }
 
 // Whether a sphere at `center` of `radius` lies at least partly inside the
@@ -221,7 +244,15 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let rise = saturate((keep - rank) / max(0.25 * keep, 1.0e-4));
-        let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u))) * rise;
+        // Blades lie down in tracks (decision 083), as deep as the ground's
+        // material lets them sink it.
+        let pressed = min(pressed_at(world_xz), palette[entry].relief.y);
+        let standing = 1.0 - 0.85 * smoothstep(0.01, 0.06, pressed);
+        let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u))) * rise
+            * standing;
+        if height < 0.02 {
+            continue;
+        }
         if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
             continue;
         }

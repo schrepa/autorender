@@ -188,6 +188,15 @@ fn validate_object(
             &format!("{path}.decal.material"),
         )?;
     }
+    if let Some(deformer) = entity.deformer {
+        deformer.validate().map_err(|invalid| {
+            SceneError::new(
+                "invalid_deformer",
+                format!("{path}.deformer.{}", invalid.field),
+                invalid.rule,
+            )
+        })?;
+    }
     if let Some(spline) = &entity.spline {
         spline.validate(&format!("{path}.spline"))?;
         reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;
