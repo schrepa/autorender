@@ -33,6 +33,9 @@ struct TerrainUniform {
     eye: vec4<f32>,
     origin: vec4<f32>,
     directory: vec4<u32>,
+    // The ground's relief (decision 082): meters from the camera it shows
+    // within and the most steps its rays take.
+    relief: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

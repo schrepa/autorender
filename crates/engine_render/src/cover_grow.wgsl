@@ -45,6 +45,7 @@ struct PaletteEntry {
     params: vec4<f32>,
     maps: vec4<f32>,
     far: vec4<f32>,
+    relief: vec4<f32>,
 }
 
 struct CoverBlade {
@@ -64,7 +65,7 @@ struct Counts {
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var control: texture_2d_array<u32>;
 @group(0) @binding(2) var<storage, read> directory: array<u32>;
-@group(0) @binding(3) var<uniform> palette: array<PaletteEntry, 256>;
+@group(0) @binding(3) var<uniform> palette: array<PaletteEntry, 204>;
 @group(0) @binding(4) var<storage, read> covers: array<CoverSpec>;
 @group(0) @binding(5) var<uniform> grow: Grow;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;

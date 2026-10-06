@@ -95,14 +95,19 @@ struct TerrainUniform {
     eye: [f32; 4],
     origin: [f32; 4],
     directory: [u32; 4],
+    relief: [f32; 4],
 }
+
+/// Bytes of a terrain's uniform.
+pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
 
 /// WGSL `TerrainPaletteEntry`: a surface material's linear color (its
 /// base color factor with maps) and roughness; its tiling, height
 /// contrast, projection and maps' layer plus one (0 without maps); its
-/// normal scale, occlusion strength, metalness and mean occlusion; and its
-/// maps' mean color and roughness, its factors applied.
-type PaletteEntry = [f32; 16];
+/// normal scale, occlusion strength, metalness and mean occlusion; its
+/// maps' mean color and roughness, its factors applied; and the meters its
+/// relief spans (decision 082).
+type PaletteEntry = [f32; 20];
 
 /// What ground cover's growth reads of the terrain pass (decision 056).
 pub(crate) struct CoverSources<'a> {
@@ -428,7 +433,14 @@ impl TerrainPass {
                 self.palette_bases.get(index).copied().unwrap_or(0),
                 self.sky.layer(index),
             ];
-            let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory);
+            // The ground's relief (decision 082).
+            let relief = [
+                views.settings.relief_distance,
+                views.settings.relief_steps as f32,
+                0.0,
+                0.0,
+            ];
+            let (uniform, anchors) = terrain_uniform(terrain, eye, view, directory, relief);
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -925,6 +937,10 @@ impl TerrainPass {
                             far[1],
                             far[2],
                             far[3],
+                            look.relief,
+                            0.0,
+                            0.0,
+                            0.0,
                         ]
                     }),
             );
@@ -1551,6 +1567,7 @@ fn terrain_uniform(
     eye: DVec3,
     view: f32,
     directory: [u32; 4],
+    relief: [f32; 4],
 ) -> (TerrainUniform, Vec<i64>) {
     let pyramid = &terrain.pyramid;
     let levels = pyramid.levels();
@@ -1570,6 +1587,7 @@ fn terrain_uniform(
         eye: eye.as_vec3().extend(0.0).to_array(),
         origin: terrain.origin.extend(view).to_array(),
         directory,
+        relief,
     };
     (uniform, anchors)
 }

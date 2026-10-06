@@ -35,9 +35,12 @@ struct TerrainPaletteEntry {
     params: vec4<f32>,
     maps: vec4<f32>,
     far: vec4<f32>,
+    // The meters its heights span where the ground's relief shows (decision
+    // 082).
+    relief: vec4<f32>,
 }
 // As many as fit 16 KiB (`terrain::PALETTE_ENTRIES`).
-const TERRAIN_PALETTE_ENTRIES: u32 = 256u;
+const TERRAIN_PALETTE_ENTRIES: u32 = 204u;
 // Every terrain's surface materials, each terrain's from
 // `terrain.directory.z`.
 @group(1) @binding(25) var<uniform> terrain_palette: array<TerrainPaletteEntry, TERRAIN_PALETTE_ENTRIES>;
@@ -672,6 +675,115 @@ fn terrain_bounce() -> vec3<f32> {
         + sky_average(vec3<f32>(0.0, 1.0, 0.0)) * (0.5 * lighting.zenith.w);
 }
 
+// One material's part in the ground's relief (decision 082): the meters it
+// sinks the ground at most, already weighted and faded, and where its
+// maps' heights lie: their scale, layer and the derivatives they are read
+// with.
+struct TerrainReliefLayer {
+    depth: f32,
+    scale: f32,
+    layer: u32,
+    dx: vec2<f32>,
+    dy: vec2<f32>,
+}
+
+fn terrain_relief_layer(material: u32, weight: f32, fade: f32, site: TerrainSite)
+        -> TerrainReliefLayer {
+    var layer: TerrainReliefLayer;
+    layer.depth = 0.0;
+    if weight <= 0.0 || material == 0xffffffffu {
+        return layer;
+    }
+    let entry = terrain_material(material);
+    // Materials with maps, lying from above, close enough to show them.
+    if entry.params.w <= 0.0 || entry.params.z > 0.5 {
+        return layer;
+    }
+    layer.scale = 1.0 / entry.params.x;
+    layer.layer = u32(entry.params.w) - 1u;
+    layer.dx = site.world_dx.xz * layer.scale;
+    layer.dy = site.world_dy.xz * layer.scale;
+    layer.depth = entry.relief.x * weight * fade
+        * terrain_map_detail(site.footprint, entry.params.x);
+    return layer;
+}
+
+// How far below the ground's top `layer` sinks it at `point` (x and z).
+fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec2<f32>) -> f32 {
+    if layer.depth <= 0.0 {
+        return 0.0;
+    }
+    let height = textureSampleGrad(terrain_orm, terrain_material_sampler, point * layer.scale,
+        layer.layer, layer.dx, layer.dy).a;
+    return layer.depth * (1.0 - height);
+}
+
+// Where a fragment's view ray meets the ground's relief (decision 082):
+// within the relief distance, the ray marches down through the heights of
+// its two heaviest top-projected materials, each as deep as its relief
+// reaches and flattening toward the distance's end, and the ground shades
+// from where the ray meets them, sunk that deep.
+fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> vec3<f32> {
+    let reach = terrain.relief.x;
+    let to_point = site.world - camera.position.xyz;
+    let distance = length(to_point);
+    if reach <= 0.0 || distance >= reach {
+        return site.world;
+    }
+    var blend: TerrainBlend;
+    blend.ids = vec4<u32>(0xffffffffu);
+    blend.weights = vec4<f32>(0.0);
+    terrain_level_blend(&blend, site.world.xz - terrain.origin.xz, shading.level, 1.0);
+    // The two heaviest materials.
+    let weights = blend.weights;
+    var heaviest = 0u;
+    for (var index = 1u; index < 4u; index++) {
+        if weights[index] > weights[heaviest] {
+            heaviest = index;
+        }
+    }
+    var next = select(0u, 1u, heaviest == 0u);
+    for (var index = 0u; index < 4u; index++) {
+        if index != heaviest && weights[index] > weights[next] {
+            next = index;
+        }
+    }
+    // Depth runs into the ground along its normal; grazing rays, which
+    // would stretch the relief across the ground, see it flatten.
+    let ray = to_point / distance;
+    let into = -dot(ray, site.geometric);
+    let fade = (1.0 - smoothstep(0.6 * reach, reach, distance)) * smoothstep(0.08, 0.35, into);
+    let a = terrain_relief_layer(blend.ids[heaviest], weights[heaviest], fade, site);
+    let b = terrain_relief_layer(blend.ids[next], weights[next], fade, site);
+    let depth = a.depth + b.depth;
+    if depth < 0.002 {
+        return site.world;
+    }
+    // Down the ray a step of the relief's depth at a time, the ray's
+    // travel across per meter of depth bounded.
+    let travel = ray / max(into, 0.08);
+    let across = length(travel.xz);
+    let along = travel.xz * min(1.0, 3.0 / max(across, 1.0e-6));
+    let steps = max(u32(round(mix(3.0, terrain.relief.y, fade))), 2u);
+    var previous = 0.0;
+    var gap = -(terrain_relief_sink(a, site.world.xz) + terrain_relief_sink(b, site.world.xz));
+    var hit = depth;
+    for (var step = 1u; step <= steps; step++) {
+        let at = depth * f32(step) / f32(steps);
+        let point = site.world.xz + along * at;
+        let next_gap = at - (terrain_relief_sink(a, point) + terrain_relief_sink(b, point));
+        if next_gap >= 0.0 {
+            // Between the last step and this one, where the ray reaches the
+            // ground.
+            hit = mix(previous, at, gap / min(gap - next_gap, -1.0e-6));
+            break;
+        }
+        previous = at;
+        gap = next_gap;
+    }
+    return site.world + vec3<f32>(along.x, travel.y, along.y) * hit;
+}
+
 // The surface a terrain fragment shows: its surface materials, varied
 // across the ground so their maps do not repeat evenly, lit by the sky it
 // sees and by the ground around where that hides the sky.
@@ -690,6 +802,8 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     site.world_dy = world_dy;
     site.footprint = footprint;
     site.geometric = geometric;
+    // Sunk where the ground's relief shows (decision 082).
+    site.world = terrain_parallax(site, shading);
     let ground = terrain_ground(site, shading);
     let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, footprint);
     let patchy = terrain_detail(world.xz + vec2<f32>(17.3, 41.9), 9.0, footprint);
