@@ -66,7 +66,7 @@ fn rules() -> [Rule; 27] {
         },
         Rule {
             since: 9,
-            what: "world-mapped materials and top layers",
+            what: "world-mapped materials, top layers and grounding",
             first_use: |document| {
                 document
                     .materials

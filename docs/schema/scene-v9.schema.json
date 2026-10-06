@@ -1135,7 +1135,7 @@
       ]
     },
     "PlacementLayer": {
-      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how far they turn to face\ndown its slope, their x across it and z down it (0 any way, 1 straight\ndown it); how deep they sink, in meters at scale 1; the pyramid level\nwhose tiles hold its candidates (0, the finest, by default); and where\nit also stands far away.",
+      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how far they turn to face\ndown its slope, their x across it and z down it (0 any way, 1 straight\ndown it); how deep they sink, in meters at scale 1, below the lowest\nground within their bed, how far around them they rest on (meters at\nscale 1, 0 by default: the ground at their point; decision 096), so\nblocks on steep slopes stand in them instead of hanging over them; the\npyramid level whose tiles hold its candidates (0, the finest, by\ndefault); and where it also stands far away.",
       "type": "object",
       "properties": {
         "align": {
@@ -1150,6 +1150,12 @@
           "items": {
             "$ref": "#/$defs/PlacementChoice"
           }
+        },
+        "bed": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0
         },
         "density": {
           "type": "number",
@@ -2550,6 +2556,32 @@
       },
       "additionalProperties": false
     },
+    "SceneGrounding": {
+      "description": "The ground staining the base of an object standing on terrain (decision\n096): the linear color its color is multiplied by where it meets the\nground, and how many units of its mesh up the stain fades out, from the\nground's slope under it.",
+      "type": "object",
+      "properties": {
+        "color": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "height": {
+          "type": "number",
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "color",
+        "height"
+      ]
+    },
     "SceneHeightmap": {
       "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`. `source` and `attribution` (up to 1024\ncharacters each) record where its heights came from and the credit\ntheir data requires, as the `terrain_import` tool writes them (decision\n070).",
       "type": "object",
@@ -2847,6 +2879,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneMap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounding": {
+          "description": "Version 9: the ground staining the base of objects terrains place\n(decision 096).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGrounding"
             },
             {
               "type": "null"

@@ -168,6 +168,7 @@ pub(crate) fn import(
             thickness,
             world_tiling: None,
             top: None,
+            grounding: None,
         });
     }
     Ok(())

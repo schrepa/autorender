@@ -21,7 +21,7 @@
 //! for large ones, which then show as far as those tiles stay resident),
 //! drawn, shadowed and collided with as the layers' objects are.
 
-use engine_math::{clamp, max, sin_cos};
+use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
 
 use crate::surface::{Compiled, Control, Mask, SampleInputs};
@@ -32,10 +32,12 @@ use crate::{TILE_QUADS, Tile};
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
 /// Validity guards: how many layers a surface places, how many assets a
-/// layer chooses from, and the coarsest level a layer's tiles may be.
+/// layer chooses from, the coarsest level a layer's tiles may be, and the
+/// widest bed an object rests on (meters at scale 1).
 const MAX_LAYERS: usize = 64;
 const MAX_CHOICES: usize = 64;
 const MAX_LEVEL: u8 = 15;
+const MAX_BED: f32 = 1000.0;
 
 /// An asset a placement layer chooses, by ID of the surface's assets, and
 /// how often against the layer's others.
@@ -56,9 +58,12 @@ pub struct PlacementChoice {
 /// where its mask allows; its objects' scale range; how far they lean with
 /// the ground (0 upright, 1 along its normal); how far they turn to face
 /// down its slope, their x across it and z down it (0 any way, 1 straight
-/// down it); how deep they sink, in meters at scale 1; the pyramid level
-/// whose tiles hold its candidates (0, the finest, by default); and where
-/// it also stands far away.
+/// down it); how deep they sink, in meters at scale 1, below the lowest
+/// ground within their bed, how far around them they rest on (meters at
+/// scale 1, 0 by default: the ground at their point; decision 096), so
+/// blocks on steep slopes stand in them instead of hanging over them; the
+/// pyramid level whose tiles hold its candidates (0, the finest, by
+/// default); and where it also stands far away.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -83,6 +88,9 @@ pub struct PlacementLayer {
     pub face: f32,
     #[serde(default)]
     pub sink: f32,
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
+    pub bed: f32,
     #[serde(default, skip_serializing_if = "is_zero")]
     #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
     pub level: u8,
@@ -251,6 +259,7 @@ pub(crate) fn place_authored(
             lean: [normal.x * object.align, normal.z * object.align],
             scale: object.scale,
             sink: object.sink * object.scale,
+            ground: [normal.x, normal.z],
             asset: object.asset,
             layer: AUTHORED_LAYER,
             near_level: None,
@@ -262,8 +271,9 @@ pub(crate) fn place_authored(
 /// One object a layer placed: its base's terrain-local position, its turn
 /// about the vertical (radians), how its up leans (x and z of its up
 /// vector), its scale, how far its base sinks below the ground (meters),
-/// its asset and layer indices, and for objects standing far away
-/// (decision 061) the level whose resident tiles hold it instead.
+/// the ground's normal under it (x and z; decision 096), its asset and
+/// layer indices, and for objects standing far away (decision 061) the
+/// level whose resident tiles hold it instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -271,6 +281,7 @@ pub struct Placed {
     pub lean: [f32; 2],
     pub scale: f32,
     pub sink: f32,
+    pub ground: [f32; 2],
     pub asset: u16,
     pub layer: u16,
     pub near_level: Option<u8>,
@@ -321,6 +332,7 @@ pub(crate) struct CompiledPlacement {
     align: f32,
     face: f32,
     sink: f32,
+    bed: f32,
 }
 
 /// Validates `layers` against the surface's `materials` and `assets` IDs;
@@ -424,6 +436,9 @@ pub(crate) fn compile(
         if !layer.sink.is_finite() {
             return Err(fail(format!("{at}.sink"), "must be finite"));
         }
+        if !(layer.bed.is_finite() && (0.0..=MAX_BED).contains(&layer.bed)) {
+            return Err(fail(format!("{at}.bed"), "must be in [0, 1000]"));
+        }
         if layer.level > MAX_LEVEL {
             return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
         }
@@ -451,6 +466,7 @@ pub(crate) fn compile(
             align: layer.align,
             face: layer.face,
             sink: layer.sink,
+            bed: layer.bed,
         });
     }
     Ok(compiled)
@@ -488,6 +504,37 @@ fn material_share(control: Control, set: &Option<[u64; 4]>) -> f32 {
 /// layer: hashing it, and for those its rank keeps, sampling the tile.
 const SQUARE_COST: u64 = 1;
 const SAMPLE_COST: u64 = 8;
+
+/// Samples of the ground around an object resting on a bed: eight around
+/// its edge and four halfway.
+const BED_SAMPLES: u32 = 12;
+
+/// The lowest of `height` and `tile`'s ground at the [`BED_SAMPLES`] points
+/// within `reach` meters of tile-local point `local`, held within the
+/// tile.
+fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
+    let size = TILE_QUADS as f32 * tile.spacing();
+    let mut lowest = height;
+    for index in 0..BED_SAMPLES {
+        let (distance, angle) = if index < 8 {
+            (reach, index as f32 * std::f32::consts::FRAC_PI_4)
+        } else {
+            (
+                reach * 0.5,
+                (index - 8) as f32 * std::f32::consts::FRAC_PI_2 + std::f32::consts::FRAC_PI_4,
+            )
+        };
+        let (sin, cos) = sin_cos(angle);
+        let point = glam::Vec2::new(
+            clamp(local[0] + cos * distance, 0.0, size),
+            clamp(local[1] + sin * distance, 0.0, size),
+        );
+        if let Some(sample) = tile.sample(point) {
+            lowest = min(lowest, sample.height);
+        }
+    }
+    lowest
+}
 
 /// Places row `row` (from the first) of layer `layer`'s candidate squares
 /// over `tile`, appending to `out`; `seed` varies them per terrain.
@@ -620,12 +667,20 @@ pub(crate) fn place_row(
             normal.x * layer.align + 0.03 * wobble_cos,
             normal.z * layer.align + 0.03 * wobble_sin,
         ];
+        // Resting on its bed, it sinks below the lowest ground there.
+        let below = if layer.bed > 0.0 {
+            sample.height - lowest_ground(tile, local, layer.bed * scale, sample.height)
+        } else {
+            0.0
+        };
+        let sink = layer.sink * scale + below;
         out.push(Placed {
-            position: [point[0], sample.height - layer.sink * scale, point[1]],
+            position: [point[0], sample.height - sink, point[1]],
             yaw,
             lean,
             scale,
-            sink: layer.sink * scale,
+            sink,
+            ground: [normal.x, normal.z],
             asset,
             layer: layer_index as u16,
             near_level,
@@ -633,7 +688,12 @@ pub(crate) fn place_row(
     }
     let squares = (last[0] - first[0] + 1) as u64;
     let kept = (squares as f32 * fill).ceil() as u64;
-    let cost = squares * SQUARE_COST + kept * (SAMPLE_COST + layer.mask.cost());
+    let bed = if layer.bed > 0.0 {
+        u64::from(BED_SAMPLES) * SAMPLE_COST
+    } else {
+        0
+    };
+    let cost = squares * SQUARE_COST + kept * (SAMPLE_COST + layer.mask.cost() + bed);
     let next = if square_z < last[1] {
         (layer_index, row + 1)
     } else {

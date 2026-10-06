@@ -15,9 +15,11 @@ pub(super) struct Instances {
     pub(super) buffer: wgpu::Buffer,
     colors: wgpu::Buffer,
     pub(super) color_staging: Vec<ColorData>,
-    // Group 2 of retained mesh pipelines: poses, colors and palettes.
+    // Group 2 of retained mesh pipelines: poses, colors, palettes, and
+    // grounds (decision 096) none of the slots stand on.
     pub(super) pose_layout: wgpu::BindGroupLayout,
     pose_group: wgpu::BindGroup,
+    grounds: wgpu::Buffer,
     // Temporal frames cull into this buffer and `buffer` in turn; odd
     // frames' pose group, for pose storage generation `.0`.
     alternate: Option<wgpu::Buffer>,
@@ -54,7 +56,12 @@ impl Instances {
         let buffer = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<PoseData>());
         let colors = create_storage_buffer(device, INITIAL_CAPACITY, size_of::<ColorData>());
         let palettes = [0, 1].map(|_| create_storage_buffer(device, 1, size_of::<PoseData>()));
-        let pose_group = pose_group(device, &pose_layout, &buffer, &colors, &palettes[0]);
+        let grounds = create_storage_buffer(device, 1, size_of::<GroundData>());
+        let pose_group = pose_group(
+            device,
+            &pose_layout,
+            [&buffer, &colors, &palettes[0], &grounds],
+        );
         Self {
             limit,
             capacity: INITIAL_CAPACITY,
@@ -63,6 +70,7 @@ impl Instances {
             color_staging: Vec::new(),
             pose_layout,
             pose_group,
+            grounds,
             alternate: None,
             alternate_group: Cached::default(),
             generation: 0,
@@ -108,9 +116,7 @@ impl Instances {
             self.pose_group = pose_group(
                 device,
                 &self.pose_layout,
-                &self.buffer,
-                &self.colors,
-                &self.palettes[0],
+                [&self.buffer, &self.colors, &self.palettes[0], &self.grounds],
             );
             self.generation += 1;
         }
@@ -228,6 +234,11 @@ impl Instances {
         &self.colors
     }
 
+    /// Grounds of retained slots (decision 096): none stand on terrain.
+    pub(super) fn grounds(&self) -> &wgpu::Buffer {
+        &self.grounds
+    }
+
     /// Slot IDs of CPU-prepared retained frames.
     pub(super) fn slots(&self) -> &wgpu::Buffer {
         self.slots.as_ref().expect("retained slot buffer")
@@ -250,9 +261,12 @@ impl Instances {
             let group = pose_group(
                 device,
                 &self.pose_layout,
-                self.poses(1),
-                self.colors(),
-                &self.palettes[1],
+                [
+                    self.poses(1),
+                    self.colors(),
+                    &self.palettes[1],
+                    &self.grounds,
+                ],
             );
             self.alternate_group.set(self.generation, group);
         }
@@ -291,14 +305,12 @@ impl<'a> FramePoses<'a> {
     }
 }
 
-/// Group 2 of retained mesh pipelines: slot poses, colors and the joint
-/// palettes of skinned slots (decision 036).
+/// Group 2 of retained mesh pipelines: slot poses, colors, the joint
+/// palettes of skinned slots (decision 036) and grounds (decision 096).
 fn pose_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    poses: &wgpu::Buffer,
-    colors: &wgpu::Buffer,
-    palette: &wgpu::Buffer,
+    [poses, colors, palette, grounds]: [&wgpu::Buffer; 4],
 ) -> wgpu::BindGroup {
     crate::pipelines::group(
         device,
@@ -309,6 +321,7 @@ fn pose_group(
             ("poses", poses.as_entire_binding()),
             ("colors", colors.as_entire_binding()),
             ("palette", palette.as_entire_binding()),
+            ("grounds", grounds.as_entire_binding()),
         ],
     )
 }

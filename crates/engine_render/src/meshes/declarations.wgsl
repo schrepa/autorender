@@ -59,6 +59,8 @@ override TRANSMISSION: bool = false;
 // layer settling on faces turned up (decision 093).
 override WORLD_MAPPING: bool = false;
 override TOP_LAYER: bool = false;
+// Bases the ground stains (decision 096): slot vertex stages read `grounds`.
+override GROUNDING: bool = false;
 // Passes drawn rarely (decision 049), reflection probe captures and impostor
 // bakes, share one pipeline per pipeline state: they read the material's
 // variant bits from its uniform instead of the map constants above.
@@ -116,6 +118,11 @@ struct SlotColor {
 // previous frame's.
 @group(2) @binding(3) var<storage, read> palette: array<AffinePose>;
 @group(2) @binding(4) var<storage, read> previous_palette: array<AffinePose>;
+// What lies under placed objects (decision 096; `gpu_data::GroundData`): x
+// and z of the ground's normal as two signed fractions, the meters each
+// one's base sinks, the meters up its stain reaches (0 for none, as for
+// every retained slot) and the stain's color as four bytes.
+@group(2) @binding(12) var<storage, read> grounds: array<vec4<u32>>;
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
 

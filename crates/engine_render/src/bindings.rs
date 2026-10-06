@@ -7,7 +7,7 @@
 //! each table against the entry points of the pipelines using it.
 
 use crate::gpu_data::{
-    CameraUniform, ColorData, LightingUniform, MaterialUniform, PoseData, PostUniform,
+    CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
     ResolveUniform, ShadowCullUniform, ShadowUniform,
 };
 use crate::impostors::{ImpostorBakeUniform, ImpostorRecord};
@@ -204,10 +204,11 @@ const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
 const V: Stages = Stages::VERTEX;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
-// Bytes of a pose, a slot color, and of virtual geometry's mesh, cluster
-// and page records (decision 044).
+// Bytes of a pose, a slot color, a placed object's ground (decision 096),
+// and of virtual geometry's mesh, cluster and page records (decision 044).
 const POSE: usize = size_of::<PoseData>();
 const COLOR: usize = size_of::<ColorData>();
+const GROUND: usize = size_of::<GroundData>();
 const VIRTUAL_MESH: usize = 80;
 const VIRTUAL_CLUSTER: usize = 48;
 const VIRTUAL_PAGE: usize = 16;
@@ -278,14 +279,16 @@ pub(crate) const MATERIAL: Table = Table {
     ],
 };
 
-/// Group 2 of retained mesh pipelines: slot poses, colors and the joint
-/// palettes of skinned slots (decision 036).
+/// Group 2 of retained mesh pipelines: slot poses, colors, the joint
+/// palettes of skinned slots (decision 036) and placed objects' grounds
+/// (decision 096).
 pub(crate) const RETAINED_POSES: Table = Table {
     label: "engine/retained-pose-layout",
     bindings: &[
         read_of(0, "poses", POSE, V),
         read_of(1, "colors", COLOR, V),
         read_of(3, "palette", POSE, V),
+        read_of(12, "grounds", GROUND, V),
     ],
 };
 
@@ -299,6 +302,7 @@ pub(crate) const TEMPORAL_POSES: Table = Table {
         read_of(2, "previous_poses", POSE, V),
         read_of(3, "palette", POSE, V),
         read_of(4, "previous_palette", POSE, V),
+        read_of(12, "grounds", GROUND, V),
     ],
 };
 

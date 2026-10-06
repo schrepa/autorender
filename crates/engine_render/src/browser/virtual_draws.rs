@@ -366,6 +366,7 @@ impl Renderer {
                 label: "engine/virtual-meshes",
                 layout,
                 module: &self.mesh_shader,
+                vertex_constants: &[],
                 vertex,
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: crate::virtual_geometry::VISIBLE_BYTES,

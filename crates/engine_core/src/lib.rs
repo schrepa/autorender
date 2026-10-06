@@ -62,7 +62,7 @@ pub use effects::{
     Shadows, SunShafts,
 };
 pub use engine_assets::{
-    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, LodLevel,
+    Aabb, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding, LodLevel,
     MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh, MeshHandle, MeshLods,
     MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle, TextureRef, TopLayer,
     Transmission, UvTransform, Wrap, mesh_lods,
@@ -912,13 +912,13 @@ pub mod prelude {
     pub use crate::{
         Aabb, AlphaMode, AmbientOcclusion, App, AssetBudget, AssetError, AssetLibrary, Atmosphere,
         Bloom, Camera, Cube, Engine, EngineConfig, Filter, FixedSimulation, FixedTime, FrameReport,
-        FrameTime, GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, InputState,
-        InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES,
-        Material, MaterialBinding, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent,
-        Plugin, Presentation, PresentationMode, PresentationState, PresentedTransform,
-        PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial, RenderMesh,
-        RenderSnapshot, RenderTexture, Sampler, Shadows, Skin, Surface, Texture, TextureHandle,
-        TextureRef, Tint, TopLayer, Transform, TransformIndex, TransformNodeLimit,
+        FrameTime, GlobalTransform, GlobalTransforms, Grounding, HierarchyError, HierarchyReport,
+        InputState, InterpolateTransform, InterpolationError, MAX_HIERARCHY_DEPTH,
+        MAX_TRANSFORM_NODES, Material, MaterialBinding, MaterialHandle, Mesh, Mesh3d, MeshHandle,
+        MeshVertex, Parent, Plugin, Presentation, PresentationMode, PresentationState,
+        PresentedTransform, PresentedTransforms, RenderFrame, RenderInstance, RenderMaterial,
+        RenderMesh, RenderSnapshot, RenderTexture, Sampler, Shadows, Skin, Surface, Texture,
+        TextureHandle, TextureRef, Tint, TopLayer, Transform, TransformIndex, TransformNodeLimit,
         TransformPropagation, UvTransform, Wrap, propagate_transforms, reset_all_interpolation,
         reset_interpolation, set_parent, set_parents, valid_global_matrix,
     };

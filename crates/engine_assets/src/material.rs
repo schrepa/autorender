@@ -95,6 +95,43 @@ impl TopLayer {
 /// most (decision 093).
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
+/// The ground staining the base of an object standing on terrain (decision
+/// 096): soil, damp or dust where rock or wood meets the ground. Where the
+/// object meets the ground its color is multiplied by `color`, the stain
+/// fading out `height` units of its mesh higher (so it scales with the
+/// object), measured from the ground's own slope under it. Objects terrains
+/// place stand on terrain; others are never stained.
+/// [`Material::with_grounding`] validates the ranges.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Grounding {
+    /// Linear color the stain multiplies by, each channel in `[0, 1]`.
+    pub color: [f32; 3],
+    /// How far up the stain reaches, in mesh units: positive and at most
+    /// [`MAX_GROUNDING_HEIGHT`].
+    pub height: f32,
+}
+
+/// The mesh units a ground stain may reach up at most (decision 096).
+pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
+
+impl Grounding {
+    fn validate(&self) -> Result<(), AssetError> {
+        for value in self.color {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(AssetError::InvalidSurface {
+                    field: "grounding.color",
+                });
+            }
+        }
+        if !self.height.is_finite() || self.height <= 0.0 || self.height > MAX_GROUNDING_HEIGHT {
+            return Err(AssetError::InvalidSurface {
+                field: "grounding.height",
+            });
+        }
+        Ok(())
+    }
+}
+
 /// Light passing through a surface instead of diffusing off it (decision
 /// 038): glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
 /// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
@@ -326,6 +363,7 @@ pub struct Material {
     transmission: Transmission,
     world_tiling: Option<f32>,
     top: Option<TopLayer>,
+    grounding: Option<Grounding>,
 }
 
 impl Material {
@@ -354,6 +392,7 @@ impl Material {
             transmission: Transmission::NONE,
             world_tiling: None,
             top: None,
+            grounding: None,
         })
     }
 
@@ -450,6 +489,18 @@ impl Material {
 
     pub fn top_layer(&self) -> Option<TopLayer> {
         self.top
+    }
+
+    /// This material with the ground staining its base where it stands on
+    /// terrain (decision 096).
+    pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
+        grounding.validate()?;
+        self.grounding = Some(grounding);
+        Ok(self)
+    }
+
+    pub fn grounding(&self) -> Option<Grounding> {
+        self.grounding
     }
 
     /// This material with `surface`, whose values must lie in their ranges.

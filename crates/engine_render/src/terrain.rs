@@ -1468,6 +1468,7 @@ impl TerrainPass {
                 label: "engine/terrain-shadow",
                 layout: &layout,
                 module: &module,
+                vertex_constants: &[],
                 vertex: crate::entries::TERRAIN_SHADOW_VERTEX,
                 buffers: &[Some(patch_layout())],
                 // Both faces cast, as meshes' casters do.
@@ -1537,6 +1538,7 @@ fn geometry(
             label: "engine/terrain",
             layout,
             module: shader,
+            vertex_constants: &[],
             vertex,
             buffers: &[Some(patch_layout())],
             primitive: wgpu::PrimitiveState {

@@ -171,7 +171,12 @@ impl Renderer {
         self.scatter.write_slots(
             &self.device,
             &self.queue,
-            (&draws.pool.poses, &draws.pool.colors, &draws.pool.records),
+            (
+                &draws.pool.poses,
+                &draws.pool.colors,
+                &draws.pool.records,
+                &draws.pool.grounds,
+            ),
             dirty,
         );
         if counts_changed || std::mem::take(&mut draws.changed) {
@@ -656,6 +661,7 @@ fn tile_objects(
         Vec::with_capacity(placed.len()),
         Vec::with_capacity(placed.len()),
         Vec::with_capacity(placed.len()),
+        Vec::with_capacity(placed.len()),
     );
     // The terrain's index, and for objects standing far away the level
     // whose tiles hold them instead (decision 061).
@@ -683,6 +689,12 @@ fn tile_objects(
             terrain: index | near << NEAR_LEVEL_SHIFT,
             sink: placed.sink,
         });
+        objects.3.push(crate::gpu_data::ground_data(
+            draw.source.grounding(),
+            placed.ground,
+            placed.sink,
+            placed.scale,
+        ));
     }
     objects
 }

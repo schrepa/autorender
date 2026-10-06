@@ -117,6 +117,7 @@ impl Renderer {
                         label: "engine/visibility",
                         layout: &layout,
                         module: &self.mesh_shader,
+                        vertex_constants: &[],
                         vertex: entries::VISIBILITY_VERTEX,
                         buffers: &[Some(wgpu::VertexBufferLayout {
                             array_stride: crate::virtual_geometry::VISIBLE_BYTES,
@@ -211,6 +212,7 @@ impl Renderer {
                 label: "engine/visibility-resolve",
                 layout,
                 module: &self.mesh_shader,
+                vertex_constants: &[],
                 vertex,
                 buffers: &[],
                 primitive: wgpu::PrimitiveState::default(),

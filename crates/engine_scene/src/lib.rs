@@ -44,8 +44,8 @@ pub use files::{
 pub use instance::{SceneEntity, SceneInstance};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
-    SceneAlphaMode, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter, SceneTextureMap,
-    SceneWrap,
+    SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,
+    SceneTextureMap, SceneTopLayer, SceneWrap,
 };
 pub use probe::SceneReflectionProbe;
 pub use spline::SceneSpline;

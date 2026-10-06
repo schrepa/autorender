@@ -464,6 +464,7 @@ mod gpu {
                 label: "engine/particles",
                 layout,
                 module,
+                vertex_constants: &[],
                 vertex: "vs_particle",
                 buffers: &[],
                 // One four-vertex strip per instance.

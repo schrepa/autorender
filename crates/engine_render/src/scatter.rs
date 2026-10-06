@@ -18,7 +18,7 @@ use engine_core::glam::{Mat4, Vec3};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
 use crate::cached::Cached;
-use crate::gpu_data::{ColorData, PoseData};
+use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::shadows::KeptRefresh;
 
 /// Levels each draw group lists: its mesh and four coarser levels.
@@ -177,6 +177,8 @@ pub(crate) struct ScatterPass {
     poses: wgpu::Buffer,
     colors: wgpu::Buffer,
     palette: wgpu::Buffer,
+    // What lies under each object (decision 096).
+    grounds: wgpu::Buffer,
     // Each view's impostor cards (each one's slot and impostor record, as
     // many as objects a view) and their draws.
     cards: wgpu::Buffer,
@@ -250,6 +252,7 @@ impl ScatterPass {
             poses: storage("engine/scatter-poses", size_of::<PoseData>() as u64),
             colors: storage("engine/scatter-colors", size_of::<ColorData>() as u64),
             palette: storage("engine/scatter-palette", size_of::<PoseData>() as u64),
+            grounds: storage("engine/scatter-grounds", size_of::<GroundData>() as u64),
             cards: crate::buffers::storage(
                 device,
                 "engine/scatter-cards",
@@ -286,6 +289,7 @@ impl ScatterPass {
             &self.draws,
             &self.poses,
             &self.colors,
+            &self.grounds,
         ]
         .iter()
         .map(|buffer| buffer.size())
@@ -346,13 +350,13 @@ impl ScatterPass {
         self.resident = counts.iter().sum();
     }
 
-    /// Writes slots `dirty` of `poses`, `colors` and `records`, every
-    /// slot when the buffers grow to hold them all.
+    /// Writes slots `dirty` of `poses`, `colors`, `records` and `grounds`,
+    /// every slot when the buffers grow to hold them all.
     pub(crate) fn write_slots(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        (poses, colors, records): (&[PoseData], &[ColorData], &[Record]),
+        (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) {
         let mut grown = false;
@@ -367,6 +371,11 @@ impl ScatterPass {
                 &mut self.records,
                 "engine/scatter-records",
                 size_of_val(records),
+            ),
+            (
+                &mut self.grounds,
+                "engine/scatter-grounds",
+                size_of_val(grounds),
             ),
         ] {
             grown |= grow(
@@ -405,6 +414,11 @@ impl ScatterPass {
                 &self.records,
                 size_of::<Record>(),
                 bytemuck::cast_slice(&records[range.clone()]),
+            );
+            write(
+                &self.grounds,
+                size_of::<GroundData>(),
+                bytemuck::cast_slice(&grounds[range.clone()]),
             );
         }
         self.objects = records.len() as u32;
@@ -568,6 +582,7 @@ impl ScatterPass {
                         crate::buffers::entry("poses", &self.poses),
                         crate::buffers::entry("colors", &self.colors),
                         crate::buffers::entry("palette", &self.palette),
+                        crate::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
                 crate::pipelines::group(
@@ -581,6 +596,7 @@ impl ScatterPass {
                         crate::buffers::entry("previous_poses", &self.poses),
                         crate::buffers::entry("palette", &self.palette),
                         crate::buffers::entry("previous_palette", &self.palette),
+                        crate::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
             ]

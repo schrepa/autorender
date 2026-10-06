@@ -246,6 +246,7 @@ impl TemporalPass {
         poses: [&wgpu::Buffer; 2],
         colors: &wgpu::Buffer,
         palettes: [&wgpu::Buffer; 2],
+        grounds: &wgpu::Buffer,
     ) {
         if self.pose_groups.stale(&generation) {
             let group = |current: usize, previous: usize| {
@@ -260,6 +261,7 @@ impl TemporalPass {
                         ("previous_poses", poses[previous].as_entire_binding()),
                         ("palette", palettes[current].as_entire_binding()),
                         ("previous_palette", palettes[previous].as_entire_binding()),
+                        ("grounds", grounds.as_entire_binding()),
                     ],
                 )
             };

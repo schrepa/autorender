@@ -103,6 +103,23 @@ pub struct SceneMaterial {
     /// lichen, dust or snow (decision 093).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
+    /// Version 9: the ground staining the base of objects terrains place
+    /// (decision 096).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grounding: Option<SceneGrounding>,
+}
+
+/// The ground staining the base of an object standing on terrain (decision
+/// 096): the linear color its color is multiplied by where it meets the
+/// ground, and how many units of its mesh up the stain fades out, from the
+/// ground's slope under it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneGrounding {
+    pub color: [f32; 3],
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
+    pub height: f32,
 }
 
 /// A layer settling on a material's faces turned up (decision 093): its
@@ -324,6 +341,7 @@ impl SceneMaterial {
         [
             ("world_tiling", self.world_tiling.is_some()),
             ("top", self.top.is_some()),
+            ("grounding", self.grounding.is_some()),
         ]
         .into_iter()
         .find_map(|(field, set)| set.then_some(field))
@@ -397,6 +415,14 @@ impl SceneMaterial {
                     roughness: top.roughness.unwrap_or(0.85),
                 })
                 .map_err(|error| invalid("top", error.to_string()))?;
+        }
+        if let Some(grounding) = self.grounding {
+            material = material
+                .with_grounding(engine_core::Grounding {
+                    color: grounding.color,
+                    height: grounding.height,
+                })
+                .map_err(|error| invalid("grounding", error.to_string()))?;
         }
         match (self.transmission, self.ior, self.thickness) {
             (Some(factor), ior, thickness) => {

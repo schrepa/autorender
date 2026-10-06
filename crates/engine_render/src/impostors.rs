@@ -911,6 +911,7 @@ mod gpu {
                 label: "engine/impostors",
                 layout,
                 module: shader,
+                vertex_constants: &[],
                 vertex,
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: 8,

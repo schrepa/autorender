@@ -10,18 +10,21 @@ use std::ops::Range;
 use engine_core::TileKey;
 use engine_core::glam::Vec3;
 
-use crate::gpu_data::{ColorData, PoseData};
+use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::scatter::{DEAD, NEAR_LEVEL_SHIFT, Record};
 
-/// A tile's objects as the pool takes them: poses, colors and records.
-pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>);
+/// A tile's objects as the pool takes them: poses, colors, records and
+/// grounds (decision 096).
+pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>, Vec<GroundData>);
 
 #[derive(Default)]
 pub(super) struct ScatterPool {
-    /// Every slot's pose, color and record, dead ones' records marked.
+    /// Every slot's pose, color, record and ground, dead ones' records
+    /// marked.
     pub(super) poses: Vec<PoseData>,
     pub(super) colors: Vec<ColorData>,
     pub(super) records: Vec<Record>,
+    pub(super) grounds: Vec<GroundData>,
     /// Live objects of each draw group, and of those standing far away
     /// (decision 061).
     pub(super) counts: Vec<u32>,
@@ -87,7 +90,7 @@ impl ScatterPool {
         identity: usize,
         objects: TileObjects,
     ) {
-        let (poses, colors, records) = objects;
+        let (poses, colors, records, grounds) = objects;
         let count = records.len() as u32;
         if count == 0 {
             return;
@@ -96,6 +99,7 @@ impl ScatterPool {
         let range = slots.start as usize..slots.end as usize;
         self.poses[range.clone()].copy_from_slice(&poses);
         self.colors[range.clone()].copy_from_slice(&colors);
+        self.grounds[range.clone()].copy_from_slice(&grounds);
         self.records[range].copy_from_slice(&records);
         for record in &records {
             self.counts[record.group as usize] += 1;
@@ -150,6 +154,7 @@ impl ScatterPool {
             },
         );
         self.records.resize(end, dead());
+        self.grounds.resize(end, [0; 4]);
         start..start + count
     }
 

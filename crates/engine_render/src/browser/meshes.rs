@@ -438,6 +438,7 @@ fn mesh_pipeline(
             label: &label,
             layout,
             module: shader,
+            vertex_constants: &constants,
             vertex: vertex_entry,
             buffers: &layouts[..buffers],
             primitive: wgpu::PrimitiveState {
