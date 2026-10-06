@@ -247,7 +247,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity (decision 071) as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 64 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
+            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity (decision 071) as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 256 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
