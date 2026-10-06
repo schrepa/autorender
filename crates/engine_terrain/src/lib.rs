@@ -23,6 +23,7 @@ mod erosion;
 mod format;
 mod hydrology;
 mod layers;
+mod nav;
 mod noise;
 mod path;
 mod placement;
@@ -45,6 +46,7 @@ pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
     NoiseLayer, PathStage, Stamp, StampOp,
 };
+pub use nav::{NavOptions, NavPath, Obstacle, walk};
 pub use path::{
     Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PORTAL_HEIGHT, PROFILE_STEP,
     PathLayer, PathProfile, PathSample, PathStats, Route, RouteOptions, route,
