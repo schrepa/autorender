@@ -1650,10 +1650,15 @@ fn rules() -> Biomes {
     };
     // Streams and rivers (decision 066): where enough water gathers, but
     // not across the pits it would fill as lakes.
+    // Rivers' beds and the two meters of their banks (decision 092), and
+    // where streams too narrow for rivers gather off the lakes.
     let channels = || {
-        Mask::Multiply(vec![
-            Mask::Flow([5.12, 5.3]),
-            Mask::Invert(Box::new(Mask::Lake([0.5, 2.0]))),
+        Mask::Max(vec![
+            Mask::Multiply(vec![
+                Mask::Flow([5.12, 5.3]),
+                Mask::Invert(Box::new(Mask::Lake([0.5, 2.0]))),
+            ]),
+            Mask::River([2.0, 0.0]),
         ])
     };
     // Where spruces stand in broad stands below the tree line on gentle

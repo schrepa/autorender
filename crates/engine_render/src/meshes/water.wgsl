@@ -28,7 +28,9 @@
 // growth, the meters it reaches, cells around a sector and its waves;
 // each wave's vector (xy, radians per meter), height and phase at the eye;
 // and how far each wave's points move along it, four to a vector. For the
-// sea, `origin` holds its wind's heading (xy, a unit vector).
+// sea, `origin` holds its wind's heading (xy, a unit vector). For terrains'
+// water, `ocean` holds the sea's level less the eye and whether it is on,
+// below which their water gives way to it.
 struct WaterUniform {
     relative_view_projection: mat4x4<f32>,
     origin: vec4<f32>,
@@ -129,6 +131,39 @@ fn vs_water(input: WaterChunk) -> WaterOutput {
     return water_output(input);
 }
 
+// A point of a river's ribbon (decision 092): terrain-local, and the
+// water's depth over the bed there and its flow along x and z.
+struct RiverVertex {
+    @location(0) position: vec3<f32>,
+    @location(1) water: vec3<f32>,
+}
+
+fn river_output(input: RiverVertex) -> WaterOutput {
+    let relative = water.origin.xyz + input.position;
+    var output: WaterOutput;
+    output.clip_position = water.relative_view_projection * vec4<f32>(relative, 1.0);
+    output.relative = relative;
+    output.water = input.water;
+    return output;
+}
+
+@vertex
+fn vs_river(input: RiverVertex) -> WaterOutput {
+    return river_output(input);
+}
+
+@vertex
+fn vs_river_temporal(input: RiverVertex) -> WaterTemporalOutput {
+    let output = river_output(input);
+    var temporal: WaterTemporalOutput;
+    temporal.clip_position = output.clip_position;
+    temporal.relative = output.relative;
+    temporal.water = output.water;
+    temporal.previous = (camera.previous_view_projection
+        * vec4<f32>(output.relative + camera.position.xyz, 1.0)).xyw;
+    return temporal;
+}
+
 @vertex
 fn vs_water_temporal(input: WaterChunk) -> WaterTemporalOutput {
     let output = water_output(input);
@@ -210,6 +245,10 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     // The ground behind the water: the meters the view travels through it,
     // and how deep the water stands over the ground there. Behind the sky,
     // both run far.
+    // Under the sea, the sea's water stands instead.
+    if water.ocean.y > 0.5 && input.relative.y < water.ocean.x {
+        discard;
+    }
     let ground = water_ground(input.clip_position.xy);
     let through = max(length(ground - input.relative), 0.0);
     let below = max(input.relative.y - ground.y, 0.0);

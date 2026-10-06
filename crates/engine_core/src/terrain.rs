@@ -1860,8 +1860,10 @@ pub struct RenderTerrain {
     /// Meters from the eye within which each level's tiles load, finest
     /// first: where renderers can shade with them.
     pub reach: Vec<f32>,
-    /// Where its hydrology bake found water standing (decision 067).
+    /// Where its hydrology bake found lakes standing (decision 067), and
+    /// its rivers (decision 092).
     pub water: Option<Arc<engine_terrain::WaterGrid>>,
+    pub rivers: Option<Arc<engine_terrain::Rivers>>,
 }
 
 /// The frame's terrains (decision 051).
@@ -1993,6 +1995,7 @@ impl TerrainExtraction {
                     patches: Vec::new(),
                     reach: Vec::new(),
                     water: None,
+                    rivers: None,
                 });
             }
             let render = &mut listing.terrains[index];
@@ -2030,11 +2033,9 @@ impl TerrainExtraction {
             if enabled {
                 render.patches.extend_from_slice(&state.selection.patches);
             }
-            render.water = state
-                .baked
-                .as_ref()
-                .and_then(|layers| layers.hydrology())
-                .map(|hydrology| Arc::clone(&hydrology.water));
+            let hydrology = state.baked.as_ref().and_then(|layers| layers.hydrology());
+            render.water = hydrology.map(|hydrology| Arc::clone(&hydrology.water));
+            render.rivers = hydrology.map(|hydrology| Arc::clone(&hydrology.rivers));
             render.reach.clear();
             render
                 .reach

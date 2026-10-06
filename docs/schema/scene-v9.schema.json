@@ -599,6 +599,25 @@
           ]
         },
         {
+          "description": "A ramp over meters from the nearest river's edge (decision 092),\nnegative in its water: `[2, 0]` covers river beds with two meters of\nbanks. Beyond every river's reach (sixteen meters past its edge),\nand without rivers, it reads 1e9.",
+          "type": "object",
+          "properties": {
+            "river": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "river"
+          ]
+        },
+        {
           "description": "A ramp over meters from the nearest road's edge (decision 069),\nnegative on roads: `[1, 0]` covers roads with a meter of soft edge.\nIt averages the ramp across each sample's footprint, so roads\nnarrower than coarse levels' samples fade there instead of breaking\ninto dashes. Further than 32 meters beyond every road's shoulders,\nand without roads, it reads 1e9.",
           "type": "object",
           "properties": {

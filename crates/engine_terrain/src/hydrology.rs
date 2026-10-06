@@ -12,7 +12,9 @@
 //! and wider downstream, and a wetness index and the depths of filled pits
 //! follow from the same grids. Each result is a 16-bit image with coarser
 //! levels, so every terrain level samples it without aliasing, and every
-//! sample is the same on every target: the bake is deterministic.
+//! sample is the same on every target: the bake is deterministic. Rivers
+//! (decision 092, `rivers.rs`) follow the channels as lines with water of
+//! their own; the grid of standing water holds lakes alone.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -23,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::layers::HeightImage;
+use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace};
 
 /// A layer that bakes where water runs over the layers below it and carves
 /// channels into them (decision 066).
@@ -119,8 +122,11 @@ pub struct Hydrology {
     /// How deep water would stand in filled pits, as [`LAKE_RANGE`]
     /// encodes it.
     pub lakes: HeightImage,
-    /// Where water stands: lakes in filled pits and rivers in channels.
+    /// Where lakes stand in filled pits.
     pub water: Arc<WaterGrid>,
+    /// Rivers in the channels (decision 092), their water set from the
+    /// finest ground once the bake reads it.
+    pub rivers: Arc<Rivers>,
     /// Where rivers fall (decision 075).
     pub falls: Arc<[Fall]>,
     pub stats: HydrologyStats,
@@ -390,8 +396,14 @@ pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage 
 
 /// Bakes `layer` over the grid of `heights`, `width` samples wide (row by
 /// row along z, at least two each way), whose samples lie `spacing` meters
-/// apart.
-pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer) -> Hydrology {
+/// apart; with its rivers' lines, whose water the finest ground sets
+/// (`rivers::profile`), and no rivers yet.
+pub(crate) fn bake(
+    heights: &[f32],
+    width: usize,
+    spacing: f32,
+    layer: &HydrologyLayer,
+) -> (Hydrology, Vec<RiverLine>) {
     let count = heights.len();
     let height = count / width;
     // Water runs over the ground smoothed a sample wide: hollows narrower
@@ -401,10 +413,10 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
     let heights = smoothed.as_slice();
     let Drainage {
         filled,
+        order,
         receivers,
         slopes,
         area,
-        ..
     } = drainage(heights, width, spacing);
     let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
     let lake = lakes(heights, &filled, width, spacing);
@@ -450,8 +462,31 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
         receivers: &receivers,
         lakes: &lake,
     };
-    let water = Arc::new(water(heights, &found, (width, spacing), layer));
-    let falls: Arc<[Fall]> = falls(heights, &found, (width, spacing), layer, &water).into();
+    // Rivers' surfaces on the grid place waterfalls; the grid keeps lakes
+    // alone, rivers standing on lines of their own.
+    let with_rivers = water(heights, &found, (width, spacing), layer, true);
+    let falls: Arc<[Fall]> = falls(heights, &found, (width, spacing), layer, &with_rivers).into();
+    let water = Arc::new(water(heights, &found, (width, spacing), layer, false));
+    let mut rank = vec![0_u32; count];
+    for (position, &sample) in order.iter().enumerate() {
+        rank[sample as usize] = position as u32;
+    }
+    let lines = trace(
+        &Channels {
+            area: &area,
+            receivers: &receivers,
+            lakes: &lake,
+            rank: &rank,
+        },
+        (width, spacing),
+        layer.channel_area,
+        |drained| {
+            let ratio = drained / layer.channel_area;
+            let half = 0.5 * min(layer.width * ratio.sqrt(), layer.max_width);
+            let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);
+            (half, max(depth * RIVER_FILL, MIN_DEPTH))
+        },
+    );
     let mut lake_samples = 0;
     let mut max_area = 0.0_f32;
     let mut flow = Vec::with_capacity(count);
@@ -477,7 +512,7 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
         HeightImage::new(width as u32, height as u32, samples)
             .expect("grids hold two samples each way")
     };
-    Hydrology {
+    let hydrology = Hydrology {
         spacing,
         carve: image(carved),
         max_depth: max(layer.max_depth, 1.0e-3),
@@ -485,6 +520,7 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
         wetness: image(wetness),
         lakes: image(lakes),
         water,
+        rivers: Arc::new(Rivers::default()),
         stats: HydrologyStats {
             samples: count,
             channel_samples,
@@ -493,7 +529,8 @@ pub fn bake(heights: &[f32], width: usize, spacing: f32, layer: &HydrologyLayer)
             falls: falls.len(),
         },
         falls,
-    }
+    };
+    (hydrology, lines)
 }
 
 /// Where rivers fall (decision 075): from each channel sample dropping
@@ -567,13 +604,31 @@ fn falls(
 
 /// What a bake found about one place: the base-10 logarithm of its
 /// upstream area (square meters), its wetness index, how deep water would
-/// stand there in a filled pit and how deep channels carve it (meters).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+/// stand there in a filled pit and how deep channels carve it (meters), and
+/// meters from the nearest river's edge (decision 092), negative in its
+/// water; [`RIVER_FAR`] beyond every river's reach.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct HydrologySample {
     pub flow: f32,
     pub wetness: f32,
     pub lake: f32,
     pub carve: f32,
+    pub river: f32,
+}
+
+/// What [`HydrologySample::river`] reads beyond every river's reach.
+pub const RIVER_FAR: f32 = 1.0e9;
+
+impl Default for HydrologySample {
+    fn default() -> Self {
+        Self {
+            flow: 0.0,
+            wetness: 0.0,
+            lake: 0.0,
+            carve: 0.0,
+            river: RIVER_FAR,
+        }
+    }
 }
 
 impl Hydrology {
@@ -604,7 +659,17 @@ impl Hydrology {
             wetness: decode(self.wetness.sample(u, v, level), WETNESS_RANGE),
             lake: decode(self.lakes.sample(u, v, level), LAKE_RANGE),
             carve: self.carve_at(x, z, level),
+            river: self
+                .rivers
+                .nearest(x, z)
+                .map_or(RIVER_FAR, |river| river.distance - river.half),
         }
+    }
+
+    /// The water standing at terrain-local `(x, z)`, in a lake or a river
+    /// (decision 092): its surface and depth; `None` where dry.
+    pub fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
+        self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
     }
 }
 
@@ -619,12 +684,14 @@ struct Found<'a> {
 }
 
 /// Where water stands over the grid of `heights` (`width` samples wide,
-/// `spacing` meters apart), from what the bake `found`.
+/// `spacing` meters apart), from what the bake `found`: lakes, and rivers
+/// in their channels when `rivers`.
 fn water(
     heights: &[f32],
     found: &Found<'_>,
     (width, spacing): (usize, f32),
     layer: &HydrologyLayer,
+    rivers: bool,
 ) -> WaterGrid {
     let Found {
         filled,
@@ -651,7 +718,7 @@ fn water(
     let (last_x, last_z) = (width as i32 - 1, height as i32 - 1);
     for (sample, &drained) in area.iter().enumerate() {
         let ratio = drained / layer.channel_area;
-        if ratio < 1.0 || layer.depth <= 0.0 || lake(sample) {
+        if !rivers || ratio < 1.0 || layer.depth <= 0.0 || lake(sample) {
             continue;
         }
         let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);

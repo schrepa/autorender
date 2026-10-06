@@ -11,6 +11,9 @@
 //! distance light travels through the water, and where it runs shallow
 //! enough to foam.
 //!
+//! Rivers (decision 092) draw as ribbons along their lines, flat across,
+//! their edges reaching under the banks, in chunks the camera culls.
+//!
 //! The sea (decision 076) draws first in the same pass, from a grid around
 //! the eye: rings of [`OCEAN_SEGMENTS`] cells, a cell apart near the eye
 //! and then each wider by a cell's share of its circumference, so cells
@@ -25,6 +28,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::math::max;
+use engine_core::terrain_data::Rivers;
 use engine_core::{Environment, MAX_OCEAN_WAVES, Ocean, RenderTerrains, Water, WaterGrid};
 
 use crate::bindings::{WATER, WATER_DEPTH};
@@ -102,10 +106,40 @@ struct TerrainWater {
     uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
     chunks: Vec<Chunk>,
-    // This frame: its instance range for each stride, and whether it draws.
+    // Its rivers' ribbons (decision 092), keyed by its rivers.
+    rivers: Option<RiverMesh>,
+    // This frame: its instance range for each stride, the rivers' index
+    // ranges the camera sees, and whether it draws.
     draws: Vec<(u32, Range<u32>)>,
+    river_draws: Vec<Range<u32>>,
     drawn: bool,
 }
+
+/// A point of a river's ribbon: terrain-local, and the water's depth over
+/// the bed there and its flow along x and z (`meshes/water.wgsl`'s
+/// `RiverVertex`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+struct RiverVertex {
+    position: [f32; 3],
+    water: [f32; 3],
+}
+
+/// A terrain's rivers' ribbons: their vertices and indices, and their
+/// chunks' index ranges and terrain-local bounds.
+struct RiverMesh {
+    rivers: Arc<Rivers>,
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    chunks: Vec<(Range<u32>, Vec3, Vec3)>,
+}
+
+/// Where a ribbon's points lie across a river: shares of half its width,
+/// and beyond its edges `RIBBON_EDGE` meters further, under its banks.
+const RIBBON_ACROSS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
+const RIBBON_EDGE: f32 = 1.5;
+/// River points a ribbon's chunk holds at most.
+const RIBBON_CHUNK: usize = 48;
 
 /// The opaque depth's copy water reads (decision 074), its group and its
 /// size.
@@ -123,6 +157,7 @@ pub(crate) struct WaterPass {
     instances: wgpu::Buffer,
     pipeline_layout: Option<wgpu::PipelineLayout>,
     pipelines: HashMap<Targets, wgpu::RenderPipeline>,
+    river_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     ocean_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     records: Vec<ChunkRecord>,
     chunks_drawn: u32,
@@ -139,6 +174,7 @@ impl WaterPass {
             instances: chunk_buffer(device, 256),
             pipeline_layout: None,
             pipelines: HashMap::new(),
+            river_pipelines: HashMap::new(),
             ocean_pipelines: HashMap::new(),
             records: Vec::new(),
             chunks_drawn: 0,
@@ -146,7 +182,7 @@ impl WaterPass {
         }
     }
 
-    /// Chunks drawn this frame.
+    /// Chunks drawn this frame: lakes' and rivers' (decision 092).
     pub(crate) fn chunks_drawn(&self) -> u32 {
         self.chunks_drawn
     }
@@ -167,7 +203,13 @@ impl WaterPass {
         });
         self.terrains
             .values()
-            .map(|water| (water.grid.width * water.grid.height * 8) as u64)
+            .map(|water| {
+                (water.grid.width * water.grid.height * 8) as u64
+                    + water
+                        .rivers
+                        .as_ref()
+                        .map_or(0, |mesh| mesh.vertices.size() + mesh.indices.size())
+            })
             .sum::<u64>()
             + depth
     }
@@ -207,7 +249,7 @@ impl WaterPass {
             water.drawn = false;
         }
         if settings.enabled {
-            self.prepare_terrains(device, queue, terrains, settings, (eye, wind));
+            self.prepare_terrains(device, queue, terrains, (settings, ocean), (eye, wind));
         }
         let sea = self.prepare_ocean(
             device,
@@ -216,7 +258,11 @@ impl WaterPass {
             (settings, ocean),
             (eye, wind, seconds),
         );
-        if self.records.is_empty() && !sea {
+        let rivers = self
+            .terrains
+            .values()
+            .any(|water| !water.river_draws.is_empty());
+        if self.records.is_empty() && !sea && !rivers {
             return false;
         }
         // The depth copy, at the frame's size.
@@ -367,9 +413,15 @@ impl WaterPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrains: &RenderTerrains,
-        settings: Water,
+        (settings, ocean): (Water, Ocean),
         (eye, wind): (Vec3, [f32; 2]),
     ) {
+        // Terrains' water gives way to the sea where it lies under it.
+        let sea = if ocean.enabled {
+            [ocean.level - eye.y, 1.0, 0.0, 0.0]
+        } else {
+            [0.0; 4]
+        };
         // Chunks cull eye-relative, as terrain's patches do.
         let planes = crate::terrain::planes(terrains.relative_view_projection, false);
         for terrain in &terrains.terrains {
@@ -387,7 +439,35 @@ impl WaterPass {
             }
             let water = self.terrains.get_mut(&terrain.id).expect("inserted above");
             water.draws.clear();
+            water.river_draws.clear();
             let relative_origin = terrain.origin - eye;
+            // Rivers' ribbons (decision 092): built when the rivers change,
+            // their chunks culled.
+            match &terrain.rivers {
+                Some(rivers) if !rivers.is_empty() => {
+                    if water
+                        .rivers
+                        .as_ref()
+                        .is_none_or(|mesh| !Arc::ptr_eq(&mesh.rivers, rivers))
+                    {
+                        water.rivers = ribbons(device, queue, rivers);
+                    }
+                }
+                _ => water.rivers = None,
+            }
+            if let Some(mesh) = &water.rivers {
+                for (range, low, high) in &mesh.chunks {
+                    let (min, max) = (relative_origin + *low, relative_origin + *high);
+                    if !crate::terrain::visible(&planes, min, max) {
+                        continue;
+                    }
+                    self.chunks_drawn += 1;
+                    match water.river_draws.last_mut() {
+                        Some(last) if last.end == range.start => last.end = range.end,
+                        _ => water.river_draws.push(range.clone()),
+                    }
+                }
+            }
             // The chunks the camera sees, coarser with distance, grouped by
             // stride.
             let mut seen: Vec<(u32, [u32; 2])> = Vec::new();
@@ -412,7 +492,7 @@ impl WaterPass {
                     _ => water.draws.push((stride, start..start + 1)),
                 }
             }
-            water.drawn = !water.draws.is_empty();
+            water.drawn = !water.draws.is_empty() || !water.river_draws.is_empty();
             self.chunks_drawn += water
                 .draws
                 .iter()
@@ -431,6 +511,7 @@ impl WaterPass {
                 color: [red, green, blue, settings.clarity],
                 ripples: [settings.ripples, settings.ripple_size, wind[0], wind[1]],
                 foam: [settings.foam, settings.foam_width, 0.0, 0.0],
+                ocean: sea,
                 ..WaterUniform::zeroed()
             };
             queue.write_buffer(&water.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -449,17 +530,24 @@ impl WaterPass {
         formats: (wgpu::TextureFormat, wgpu::TextureFormat),
     ) {
         if !self.records.is_empty() && !self.pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, false);
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Grid);
             self.pipelines.insert(targets, pipeline);
         }
+        let rivers = self
+            .terrains
+            .values()
+            .any(|water| !water.river_draws.is_empty());
+        if rivers && !self.river_pipelines.contains_key(&targets) {
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::River);
+            self.river_pipelines.insert(targets, pipeline);
+        }
         if self.ocean.is_some() && !self.ocean_pipelines.contains_key(&targets) {
-            let pipeline = self.pipeline(device, shader, camera, targets, formats, true);
+            let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Sea);
             self.ocean_pipelines.insert(targets, pipeline);
         }
     }
 
-    /// The pipeline of terrains' water, or of the sea when `ocean`, into
-    /// `targets`.
+    /// The pipeline of `surface` into `targets`.
     fn pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -467,7 +555,7 @@ impl WaterPass {
         camera: &wgpu::BindGroupLayout,
         targets: Targets,
         (canvas, depth): (wgpu::TextureFormat, wgpu::TextureFormat),
-        ocean: bool,
+        surface: Surface,
     ) -> wgpu::RenderPipeline {
         // Water and the sea share one layout.
         let layout = self.pipeline_layout.get_or_insert_with(|| {
@@ -477,10 +565,10 @@ impl WaterPass {
                 immediate_size: 0,
             })
         });
-        let (vertex, fragment) = if ocean {
-            crate::entries::ocean(targets)
-        } else {
-            crate::entries::water(targets)
+        let (vertex, fragment) = match surface {
+            Surface::Grid => crate::entries::water(targets),
+            Surface::River => crate::entries::river(targets),
+            Surface::Sea => crate::entries::ocean(targets),
         };
         // The scene color blends premultiplied over the ground, keeping the
         // ground's ambient share in its alpha; the other targets take the
@@ -502,19 +590,24 @@ impl WaterPass {
             scene.blend = Some(blended);
         }
         let chunks = [Some(chunk_layout())];
+        let ribbons = [Some(river_layout())];
         crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
-                label: if ocean {
-                    "engine/ocean"
-                } else {
-                    "engine/water"
+                label: match surface {
+                    Surface::Grid => "engine/water",
+                    Surface::River => "engine/river",
+                    Surface::Sea => "engine/ocean",
                 },
                 layout,
                 module: shader,
                 vertex,
                 // The sea's vertices come from their indices alone.
-                buffers: if ocean { &[] } else { &chunks },
+                buffers: match surface {
+                    Surface::Grid => &chunks,
+                    Surface::River => &ribbons,
+                    Surface::Sea => &[],
+                },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
                     // Water is seen from above and below alike.
@@ -561,6 +654,28 @@ impl WaterPass {
                 draws += 1;
             }
         }
+        // Rivers (decision 092) before lakes: where a river runs into a
+        // lake below the lake's surface, the lake's water covers it.
+        if let Some(pipeline) = self.river_pipelines.get(&targets) {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera, &[]);
+            pass.set_bind_group(2, &depth.group, &[]);
+            for water in self.terrains.values().filter(|water| water.drawn) {
+                let Some(mesh) = &water.rivers else {
+                    continue;
+                };
+                if water.river_draws.is_empty() {
+                    continue;
+                }
+                pass.set_bind_group(1, &water.group, &[]);
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                for range in &water.river_draws {
+                    pass.draw_indexed(range.clone(), 0, 0..1);
+                    draws += 1;
+                }
+            }
+        }
         let Some(pipeline) = self.pipelines.get(&targets) else {
             return draws;
         };
@@ -581,6 +696,15 @@ impl WaterPass {
         }
         draws
     }
+}
+
+/// What a water pipeline draws: terrains' lakes from their grids, their
+/// rivers' ribbons (decision 092), or the sea (decision 076).
+#[derive(Clone, Copy)]
+enum Surface {
+    Grid,
+    River,
+    Sea,
 }
 
 /// `WaterChunk`'s instance locations: its first sample and stride.
@@ -692,8 +816,128 @@ fn upload(
         uniform,
         group,
         chunks,
+        rivers: None,
         draws: Vec::new(),
+        river_draws: Vec::new(),
         drawn: false,
+    }
+}
+
+/// `rivers`' ribbons on the GPU (decision 092): at each point of each river
+/// a row of vertices across it at its water's surface, from beyond one
+/// edge to beyond the other, with the water's depth over its bed and its
+/// flow; stretches without water (falls) left out; chunks of
+/// `RIBBON_CHUNK` points. `None` without any water to draw.
+fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
+    let mut vertices: Vec<RiverVertex> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    let mut chunks = Vec::new();
+    let columns = RIBBON_ACROSS.len() + 2;
+    for river in rivers.rivers() {
+        let count = river.points.len();
+        if count < 2 {
+            continue;
+        }
+        let first = vertices.len() as u32;
+        for index in 0..count {
+            let point = Vec3::new(
+                river.points[index][0],
+                river.surface[index],
+                river.points[index][1],
+            );
+            let previous = river.points[index.saturating_sub(1)];
+            let next = river.points[(index + 1).min(count - 1)];
+            let run = engine_core::glam::Vec2::new(next[0] - previous[0], next[1] - previous[1])
+                .normalize_or(engine_core::glam::Vec2::X);
+            let side = Vec3::new(-run.y, 0.0, run.x);
+            let (half, depth) = (river.half[index], river.depth[index]);
+            let flow = [run.x * river.speed[index], run.y * river.speed[index]];
+            let offsets = std::iter::once(-(half + RIBBON_EDGE))
+                .chain(RIBBON_ACROSS.iter().map(|share| share * half))
+                .chain(std::iter::once(half + RIBBON_EDGE));
+            for offset in offsets {
+                let across = offset / engine_core::math::max(half, 1.0e-3);
+                let below = if across.abs() < 1.0 {
+                    depth * (1.0 - across * across)
+                } else {
+                    0.0
+                };
+                vertices.push(RiverVertex {
+                    position: (point + side * offset).to_array(),
+                    water: [below, flow[0], flow[1]],
+                });
+            }
+        }
+        // Quads between each pair of points that carries water, in chunks.
+        for start in (0..count - 1).step_by(RIBBON_CHUNK) {
+            let end = (start + RIBBON_CHUNK).min(count - 1);
+            let begin = indices.len() as u32;
+            let mut low = Vec3::splat(f32::INFINITY);
+            let mut high = Vec3::splat(f32::NEG_INFINITY);
+            for index in start..end {
+                if river.falls_at(index)
+                    || !river.surface[index].is_finite()
+                    || !river.surface[index + 1].is_finite()
+                {
+                    continue;
+                }
+                let row = first + (index * columns) as u32;
+                let next = row + columns as u32;
+                for column in 0..columns as u32 - 1 {
+                    let (a, b) = (row + column, row + column + 1);
+                    let (c, d) = (next + column, next + column + 1);
+                    indices.extend_from_slice(&[a, c, b, b, c, d]);
+                }
+                for vertex in [
+                    row,
+                    row + columns as u32 - 1,
+                    next,
+                    next + columns as u32 - 1,
+                ] {
+                    let position = Vec3::from(vertices[vertex as usize].position);
+                    low = low.min(position);
+                    high = high.max(position);
+                }
+            }
+            let finish = indices.len() as u32;
+            if finish > begin {
+                chunks.push((begin..finish, low, high));
+            }
+        }
+    }
+    if indices.is_empty() {
+        return None;
+    }
+    let vertices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("engine/river-vertices"),
+        size: std::mem::size_of_val(vertices.as_slice()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&vertices_buffer, 0, bytemuck::cast_slice(&vertices));
+    let indices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("engine/river-indices"),
+        size: std::mem::size_of_val(indices.as_slice()) as u64,
+        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&indices_buffer, 0, bytemuck::cast_slice(&indices));
+    Some(RiverMesh {
+        rivers: Arc::clone(rivers),
+        vertices: vertices_buffer,
+        indices: indices_buffer,
+        chunks,
+    })
+}
+
+/// `RiverVertex`'s locations.
+fn river_layout() -> wgpu::VertexBufferLayout<'static> {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+    wgpu::VertexBufferLayout {
+        array_stride: size_of::<RiverVertex>() as u64,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &ATTRIBUTES,
     }
 }
 

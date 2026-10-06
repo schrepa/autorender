@@ -916,14 +916,15 @@ pub fn route(
     };
     let index = |sample: (i64, i64)| (sample.1 * width + sample.0) as usize;
     let sample_of = |index: usize| (index as i64 % width, index as i64 / width);
-    // Where water stands, as the terrain's hydrology bake found it.
-    let water = layers.hydrology().map(|hydrology| hydrology.water.clone());
+    // Where water stands, as the terrain's hydrology bake found it: lakes
+    // and rivers (decision 092).
+    let water = layers.hydrology();
     let wet: Vec<bool> = (0..grid.heights.len())
         .map(|at| {
             let point = local(sample_of(at));
-            water.as_ref().is_some_and(|water| {
+            water.is_some_and(|water| {
                 water
-                    .at(point.x, point.y)
+                    .water_at(point.x, point.y)
                     .is_some_and(|(surface, _)| surface > grid.heights[at])
             })
         })

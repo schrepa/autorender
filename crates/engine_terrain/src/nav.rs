@@ -377,13 +377,13 @@ impl WalkSearch {
     /// Marks `rows`' samples an agent stands on: not holes, not under water
     /// deeper than it wades.
     fn mask_rows(&self, walkable: &mut [bool], rows: std::ops::Range<usize>) {
-        let water = self.layers.hydrology().map(|hydrology| &hydrology.water);
+        let water = self.layers.hydrology();
         let samples = rows.start * self.width..rows.end * self.width;
         for (stands, sample) in walkable[samples.clone()].iter_mut().zip(samples) {
             let point = self.position(sample);
             *stands = !self.layers.hole_at(point.x, point.y)
                 && !water
-                    .and_then(|water| water.at(point.x, point.y))
+                    .and_then(|water| water.water_at(point.x, point.y))
                     .is_some_and(|(_, depth)| depth > self.options.max_water);
         }
     }
