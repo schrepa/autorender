@@ -36,8 +36,8 @@ use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, Fall,
     FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask,
-    Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake,
-    Tile, TileKey, TileSample, WantedTile, decode_tile,
+    Patch, PathStage, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS,
+    TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -395,11 +395,25 @@ pub struct Terrain {
     pub surface: TerrainSurface,
     /// Whether it collides where collision is installed.
     pub collision: bool,
+    /// Edits over its generated layers and their bakes (decision 080), in
+    /// order: replacing them regenerates only the tiles under the edits
+    /// added or taken away.
+    pub edits: Arc<[TerrainEdit]>,
+}
+
+/// One edit of a generated terrain (decision 080): a stamp over its layers
+/// and bakes (terrain-local), under an `id` that repeating it with leaves
+/// alone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerrainEdit {
+    pub id: Arc<str>,
+    pub stamp: Stamp,
 }
 
 impl Terrain {
     /// Whether `other` describes the same terrain: equal fields and the
-    /// same shared source, so streaming keeps its tiles.
+    /// same shared source, so streaming keeps its tiles; edits apply over
+    /// it tile by tile.
     fn same(&self, other: &Self) -> bool {
         let source = match (&self.source, &other.source) {
             (TerrainSource::Generated(a), TerrainSource::Generated(b)) => Arc::ptr_eq(a, b),
@@ -430,6 +444,7 @@ impl Terrain {
             source: TerrainSource::Generated(Arc::new(layers)),
             surface: TerrainSurface::default(),
             collision: true,
+            edits: Arc::from(Vec::new()),
         }
     }
 
@@ -446,6 +461,7 @@ impl Terrain {
             },
             surface: TerrainSurface::default(),
             collision: true,
+            edits: Arc::from(Vec::new()),
         }
     }
 
@@ -462,6 +478,7 @@ impl Terrain {
             },
             surface: TerrainSurface::default(),
             collision: true,
+            edits: Arc::from(Vec::new()),
         })
     }
 
@@ -752,6 +769,11 @@ struct TerrainState {
     /// is done, and its rivers' waterfalls (decision 075).
     bridges: Arc<[Bridge]>,
     falls: Arc<[Fall]>,
+    /// The layers its tiles generate from with its edits over them
+    /// (decision 080), and the baked layers they were made over; and the
+    /// resident tiles under edits since, which draw until regenerated.
+    edited: Option<(Arc<Layers>, Arc<Layers>)>,
+    stale: HashSet<TileKey>,
 }
 
 /// A terrain's bakes (decisions 066 and 068): whether one is in progress,
@@ -785,6 +807,76 @@ impl TerrainState {
             erosion: None,
             bridges: Arc::from(Vec::new()),
             falls: Arc::from(Vec::new()),
+            edited: None,
+            stale: HashSet::new(),
+        }
+    }
+
+    /// Takes `edits` in place of its own (decision 080): the resident tiles
+    /// under any edit added or taken away, and two of their samples beyond,
+    /// regenerate over the new stack, drawn as they were until then.
+    fn edit(&mut self, edits: Arc<[TerrainEdit]>) {
+        let mut reach: Option<(Vec2, Vec2)> = None;
+        let changed = edits
+            .iter()
+            .filter(|edit| !self.terrain.edits.contains(edit))
+            .chain(
+                self.terrain
+                    .edits
+                    .iter()
+                    .filter(|edit| !edits.contains(edit)),
+            );
+        for edit in changed {
+            let center = Vec2::from(edit.stamp.center);
+            let radius = Vec2::splat(edit.stamp.radius + edit.stamp.falloff);
+            let (low, high) = (center - radius, center + radius);
+            reach = Some(reach.map_or((low, high), |(min, max)| (min.min(low), max.max(high))));
+        }
+        self.terrain.edits = edits;
+        self.edited = None;
+        let Some((low, high)) = reach else {
+            return;
+        };
+        let pyramid = self.terrain.pyramid;
+        let under = |key: &TileKey| {
+            let spacing = pyramid.spacing(u32::from(key.level));
+            let size = TILE_QUADS as f32 * spacing;
+            let first =
+                Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
+            let last = first + Vec2::splat(size + 4.0 * spacing);
+            first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
+        };
+        let stale: Vec<TileKey> = self
+            .tiles
+            .keys()
+            .filter(|key| under(key))
+            .copied()
+            .collect();
+        self.stale.extend(stale);
+        self.jobs.retain(|key, _| !under(key));
+        self.revision += 1;
+    }
+
+    /// The layers its tiles generate from (decision 080): `base`, its layers
+    /// with their bakes, with its edits over them.
+    fn generation(&mut self, base: Arc<Layers>) -> Arc<Layers> {
+        if self.terrain.edits.is_empty() {
+            return base;
+        }
+        if let Some((over, edited)) = &self.edited
+            && Arc::ptr_eq(over, &base)
+        {
+            return edited.clone();
+        }
+        let stamps: Vec<Stamp> = self.terrain.edits.iter().map(|edit| edit.stamp).collect();
+        match base.with_stamps(&stamps) {
+            Ok(edited) => {
+                let edited = Arc::new(edited);
+                self.edited = Some((base, edited.clone()));
+                edited
+            }
+            // Edits are validated as they are made.
+            Err(_) => base,
         }
     }
 
@@ -935,16 +1027,26 @@ impl Terrains {
     }
 
     /// The layers `entity`'s tiles generate from: its own, with their
-    /// hydrology baked once it is (decision 066); `None` for terrains read
-    /// from files.
+    /// hydrology baked once it is (decision 066) and its edits over them
+    /// (decision 080); `None` for terrains read from files.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
         let state = self.entries.iter().find(|state| state.entity == entity)?;
-        match &state.terrain.source {
+        let base = match &state.terrain.source {
             TerrainSource::Generated(layers) => {
-                Some(state.baked.clone().unwrap_or_else(|| layers.clone()))
+                state.baked.clone().unwrap_or_else(|| layers.clone())
             }
-            TerrainSource::File { .. } => None,
+            TerrainSource::File { .. } => return None,
+        };
+        if state.terrain.edits.is_empty() {
+            return Some(base);
         }
+        if let Some((over, edited)) = &state.edited
+            && Arc::ptr_eq(over, &base)
+        {
+            return Some(edited.clone());
+        }
+        let stamps: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
+        Some(base.with_stamps(&stamps).map_or(base, Arc::new))
     }
 
     /// The cheapest route over `entity`'s generated terrain from world
@@ -1253,10 +1355,16 @@ impl Terrains {
             state.jobs.retain(|key, _| target.contains(key));
             // Load what is missing, most important first; disabled terrains
             // load nothing.
+            // Tiles under edits since they loaded (decision 080) regenerate
+            // in their turn and draw until they do.
+            state.stale.retain(|key| state.tiles.contains_key(key));
             let missing: Vec<TileKey> = order[..kept]
                 .iter()
                 .copied()
-                .filter(|key| settings.enabled && !state.tiles.contains_key(key))
+                .filter(|key| {
+                    settings.enabled
+                        && (!state.tiles.contains_key(key) || state.stale.contains(key))
+                })
                 .collect();
             match state.terrain.source.clone() {
                 TerrainSource::Generated(authored) => {
@@ -1305,6 +1413,8 @@ impl Terrains {
                         }
                         continue;
                     }
+                    // Edits (decision 080) stand over every bake.
+                    let layers = state.generation(layers);
                     // The coarsest level always draws: generate it whole at once.
                     let first = state.tiles.is_empty();
                     for key in missing {
@@ -1324,6 +1434,7 @@ impl Terrains {
                         });
                         if let Some(tile) = job.advance(work) {
                             state.jobs.remove(&key);
+                            state.stale.remove(&key);
                             state.insert(tile);
                         }
                     }
@@ -1662,6 +1773,8 @@ impl TerrainExtraction {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
                         *state = TerrainState::new(entity, terrain);
+                    } else if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
+                        state.edit(terrain.edits.clone());
                     }
                 }
                 None => terrains.entries.push(TerrainState::new(entity, terrain)),

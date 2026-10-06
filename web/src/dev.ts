@@ -90,6 +90,9 @@ export function connectDevelopment(host: Host): () => void {
           case "culling":
           case "environment":
           case "terrain":
+          case "terrain_edit":
+          case "terrain_undo":
+          case "terrain_redo":
           case "present":
           case "benchmark":
           case "step":

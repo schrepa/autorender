@@ -22,6 +22,7 @@ pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
     CollisionShapeRequest, DevRequest, TerrainViewRequest,
 };
+pub use terrain::{TerrainEditing, edit_terrain};
 
 /// Initial development protocol version, independent of scene format versions.
 pub const PROTOCOL_VERSION: u32 = 1;

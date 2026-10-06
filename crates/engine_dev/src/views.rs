@@ -23,6 +23,18 @@ pub struct TerrainView {
     pub erosion: Option<ErosionView>,
     /// Its path layers (decision 069), in stack order.
     pub paths: Vec<PathView>,
+    /// Its edits (decision 080), in order: each one's `id` and its `stamp`,
+    /// terrain-local, which a scene saves as a `{"stamp": ...}` layer after
+    /// its others.
+    pub edits: Vec<TerrainEditView>,
+}
+
+/// One terrain edit (decision 080): its id and its stamp (terrain-local).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct TerrainEditView {
+    pub id: String,
+    pub stamp: engine_core::terrain_data::Stamp,
 }
 
 /// A path layer (decision 069): its index in the stack, whether its

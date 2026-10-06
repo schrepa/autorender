@@ -184,6 +184,9 @@ pub(crate) struct TerrainPass {
     atlas: Option<Atlas>,
     atlas_generation: u64,
     slots: HashMap<(u64, TileKey), u32>,
+    // The tile each slot holds: edits (decision 080) replace tiles under the
+    // same key, which upload again into their layers.
+    held: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>>,
     free: Vec<u32>,
     next_layer: u32,
     /// Tiles revision each terrain's layers were last synced to.
@@ -258,6 +261,7 @@ impl TerrainPass {
             atlas: None,
             atlas_generation: 0,
             slots: HashMap::new(),
+            held: HashMap::new(),
             free: Vec::new(),
             next_layer: 0,
             synced: HashMap::new(),
@@ -609,6 +613,23 @@ impl TerrainPass {
             }
             keep
         });
+        self.held.retain(|key, _| listed.contains_key(key));
+        // Tiles replaced under their keys upload again into their layers.
+        let replaced: Vec<((u64, TileKey), u32)> = self
+            .slots
+            .iter()
+            .filter(|(key, _)| {
+                self.held
+                    .get(*key)
+                    .is_none_or(|held| !std::sync::Arc::ptr_eq(held, listed[*key]))
+            })
+            .map(|(key, layer)| (*key, *layer))
+            .collect();
+        for (key, _) in &replaced {
+            self.slots.remove(key);
+            self.held.remove(key);
+        }
+        let mut reused: HashMap<(u64, TileKey), u32> = replaced.into_iter().collect();
         // Upload the rest, coarse levels first.
         let mut missing: Vec<(u64, TileKey)> = listed
             .keys()
@@ -619,8 +640,9 @@ impl TerrainPass {
         let needed = self.slots.len() as u32 + missing.len() as u32;
         self.ensure_atlas(device, queue, needed.min(max_layers), max_layers);
         let capacity = self.atlas.as_ref().map_or(0, |atlas| atlas.layers);
+        let edited = !reused.is_empty();
         for key in missing {
-            let layer = match self.free.pop() {
+            let layer = match reused.remove(&key).or_else(|| self.free.pop()) {
                 Some(layer) => layer,
                 None if self.next_layer < capacity => {
                     self.next_layer += 1;
@@ -689,9 +711,12 @@ impl TerrainPass {
                 },
             );
             self.slots.insert(key, layer);
+            self.held.insert(key, listed[&key].clone());
             self.normal_jobs.push((layer, listed[&key].spacing()));
             self.uploads += 1;
         }
+        // Layers of replaced tiles that found no upload are free again.
+        self.free.extend(reused.into_values());
         self.compute_normals(device, queue);
         self.synced = terrains
             .terrains
@@ -705,7 +730,8 @@ impl TerrainPass {
             .map(|(key, _)| *key)
             .collect();
         holed.sort_unstable();
-        let unchanged = holed.len() == self.hole_offsets.len()
+        let unchanged = !edited
+            && holed.len() == self.hole_offsets.len()
             && holed.iter().all(|key| self.hole_offsets.contains_key(key));
         if !unchanged {
             self.hole_offsets.clear();

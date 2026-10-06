@@ -9,7 +9,9 @@ use std::cell::Cell;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::terrain_data::{TILE_QUADS, TILE_SAMPLES};
-use engine_core::{Terrains, TileKey};
+use std::sync::Arc;
+
+use engine_core::{Terrains, Tile, TileKey};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -29,11 +31,13 @@ use crate::{
     ShapeCastOptions, ShapeHit,
 };
 
-/// One tile's heightfield: its terrain, key, world center (parry centers
-/// heightfields) and world bounds.
+/// One tile's heightfield: its terrain, key, the tile it was built from
+/// (edits, decision 080, replace tiles under the same key), world center
+/// (parry centers heightfields) and world bounds.
 struct Field {
     entity: Entity,
     key: TileKey,
+    tile: Arc<Tile>,
     center: Vec3,
     shape: HeightField,
     bounds: Bounds,
@@ -74,9 +78,11 @@ impl TerrainFields {
         let same = self.revision == Some(revision)
             && wanted.len() == self.fields.len()
             && wanted.iter().all(|(entity, _, tile)| {
-                self.fields
-                    .iter()
-                    .any(|field| field.entity == *entity && field.key == tile.key())
+                self.fields.iter().any(|field| {
+                    field.entity == *entity
+                        && field.key == tile.key()
+                        && Arc::ptr_eq(&field.tile, tile)
+                })
             });
         if same {
             return false;
@@ -85,10 +91,9 @@ impl TerrainFields {
         let mut kept = std::mem::take(&mut self.fields);
         for (entity, origin, tile) in wanted {
             let key = tile.key();
-            if let Some(position) = kept
-                .iter()
-                .position(|field| field.entity == entity && field.key == key)
-            {
+            if let Some(position) = kept.iter().position(|field| {
+                field.entity == entity && field.key == key && Arc::ptr_eq(&field.tile, tile)
+            }) {
                 self.fields.push(kept.swap_remove(position));
                 continue;
             }
@@ -128,6 +133,7 @@ impl TerrainFields {
             self.fields.push(Field {
                 entity,
                 key,
+                tile: tile.clone(),
                 center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
                 shape,
                 bounds: Bounds {

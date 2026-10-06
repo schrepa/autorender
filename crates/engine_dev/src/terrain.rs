@@ -1,13 +1,17 @@
 //! Read-only terrain observations (decision 051): heights at points, a
 //! sweep comparing what terrain queries, collision rays and generated
 //! terrains' layers say the ground is, routes for paths (decision 069), and
-//! the sea's surface (decision 076).
+//! the sea's surface (decision 076); and temporary edits of generated
+//! terrains, with undo and redo (decision 080).
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
+use std::sync::Arc;
+
 use engine_core::{
-    Engine, Ocean, PresentedTime, RouteOptions, Terrain, Terrains,
-    bevy_ecs::prelude::World,
+    Engine, Ocean, PresentedTime, RouteOptions, Terrain, TerrainEdit, TerrainSource, Terrains,
+    bevy_ecs::prelude::{Entity, World},
     glam::{Vec2, Vec3},
+    terrain_data::{Stamp, StampOp},
 };
 use engine_scene::{SceneEntity, SceneInstance};
 use serde_json::{Value, json};
@@ -32,6 +36,201 @@ pub(crate) fn terrain_request(request: &DevRequest) -> bool {
             | DevRequest::TerrainRoute { .. }
             | DevRequest::WaterQuery { .. }
     )
+}
+
+/// A terrain edit control (decision 080).
+pub enum TerrainEditing {
+    Edit {
+        id: String,
+        center: [f64; 2],
+        radius: f64,
+        falloff: f64,
+        change: StampOp,
+    },
+    Undo,
+    Redo,
+}
+
+/// The longest edit ID.
+const MAX_EDIT_ID: usize = 64;
+/// Samples across an edit's reach along each side for the most the ground
+/// moved.
+const CHANGE_SAMPLES: usize = 9;
+
+/// Runs `editing` on the terrain `name` names in `scene` (the first terrain
+/// when `None`), taking edits undo removed from and putting them back on
+/// `redo`; its result.
+pub fn edit_terrain(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    name: Option<&str>,
+    redo: &mut Vec<(Entity, TerrainEdit)>,
+    editing: TerrainEditing,
+) -> Result<Value, DevError> {
+    let world = engine.app.world_mut();
+    let entity = match name {
+        Some(name) => scene
+            .and_then(|scene| scene.entity(name))
+            .filter(|&entity| world.get::<Terrain>(entity).is_some())
+            .ok_or_else(|| {
+                DevError::new(
+                    "not_found",
+                    "$.terrain",
+                    format!("no terrain entity {name} in the scene"),
+                )
+            })?,
+        None => world
+            .query::<(Entity, &Terrain)>()
+            .iter(world)
+            .map(|(entity, _)| entity)
+            .next()
+            .ok_or_else(|| DevError::new("not_found", "$.terrain", "no terrain"))?,
+    };
+    let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
+    if !matches!(terrain.source, TerrainSource::Generated(_)) {
+        return Err(DevError::new(
+            "not_generated",
+            "$.terrain",
+            "only terrains generated from layers take edits",
+        ));
+    }
+    let origin = terrain.origin;
+    let mut edits = terrain.edits.to_vec();
+    // Where an edit reaches, world.
+    let reach = |stamp: &Stamp| {
+        let center = Vec2::from(stamp.center) + Vec2::new(origin.x, origin.z);
+        let radius = stamp.radius + stamp.falloff;
+        json!({
+            "min": [center.x - radius, center.y - radius],
+            "max": [center.x + radius, center.y + radius],
+        })
+    };
+    let result = match editing {
+        TerrainEditing::Edit {
+            id,
+            center,
+            radius,
+            falloff,
+            change,
+        } => {
+            if id.is_empty()
+                || id.len() > MAX_EDIT_ID
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_-.".contains(&byte))
+            {
+                return Err(DevError::new(
+                    "invalid_request",
+                    "$.id",
+                    format!("id must be 1 to {MAX_EDIT_ID} letters, digits, '_', '-' and '.'"),
+                ));
+            }
+            let x = coordinate(center[0], "$.center[0]")?;
+            let z = coordinate(center[1], "$.center[1]")?;
+            let meters = |value: f64, path: &str| {
+                if value.is_finite() && (0.0..=1.0e5).contains(&value) {
+                    Ok(value as f32)
+                } else {
+                    Err(DevError::new(
+                        "invalid_request",
+                        path,
+                        "must be finite and in [0, 100000] meters",
+                    ))
+                }
+            };
+            let (radius, falloff) = (meters(radius, "$.radius")?, meters(falloff, "$.falloff")?);
+            if edits.iter().any(|edit| *edit.id == *id) {
+                let standing = edits.iter().find(|edit| *edit.id == *id).expect("found");
+                return Ok(json!({
+                    "temporary": true,
+                    "applied": false,
+                    "id": id,
+                    "edits": edits.len(),
+                    "dirty": reach(&standing.stamp),
+                    "largest_change": 0.0,
+                }));
+            }
+            // Levels to a world height, as the terrain's stamps hold it.
+            let op = match change {
+                StampOp::Flatten(height) => StampOp::Flatten(height - origin.y),
+                other => other,
+            };
+            let stamp = Stamp {
+                center: [x - origin.x, z - origin.z],
+                radius,
+                falloff,
+                op,
+            };
+            let terrains = world.resource::<Terrains>();
+            let before = terrains.layers(entity).ok_or_else(|| {
+                DevError::new("not_generated", "$.terrain", "the terrain holds no layers")
+            })?;
+            let after = before
+                .with_stamps(&[stamp])
+                .map_err(|error| DevError::new("invalid_request", "$.change", error.to_string()))?;
+            // The most the ground moved across the edit's reach.
+            let span = radius + falloff;
+            let mut largest = 0.0_f32;
+            for row in 0..CHANGE_SAMPLES {
+                for column in 0..CHANGE_SAMPLES {
+                    let at = |index: usize| index as f32 / (CHANGE_SAMPLES - 1) as f32 * 2.0 - 1.0;
+                    let point = Vec2::from(stamp.center) + Vec2::new(at(column), at(row)) * span;
+                    let change = after.height_at(&terrain.pyramid, point)
+                        - before.height_at(&terrain.pyramid, point);
+                    largest = engine_core::math::max(largest, change.abs());
+                }
+            }
+            edits.push(TerrainEdit {
+                id: Arc::from(id.as_str()),
+                stamp,
+            });
+            redo.retain(|(terrain, _)| *terrain != entity);
+            json!({
+                "temporary": true,
+                "applied": true,
+                "id": id,
+                "edits": edits.len(),
+                "dirty": reach(&stamp),
+                "largest_change": largest,
+            })
+        }
+        TerrainEditing::Undo => match edits.pop() {
+            Some(edit) => {
+                let result = json!({
+                    "temporary": true,
+                    "undone": &*edit.id,
+                    "edits": edits.len(),
+                    "dirty": reach(&edit.stamp),
+                });
+                redo.push((entity, edit));
+                result
+            }
+            None => json!({"temporary": true, "undone": null, "edits": 0}),
+        },
+        TerrainEditing::Redo => {
+            match redo
+                .iter()
+                .rposition(|(terrain, _)| *terrain == entity)
+                .map(|index| redo.remove(index).1)
+            {
+                Some(edit) => {
+                    let result = json!({
+                        "temporary": true,
+                        "redone": &*edit.id,
+                        "edits": edits.len() + 1,
+                        "dirty": reach(&edit.stamp),
+                    });
+                    edits.push(edit);
+                    result
+                }
+                None => json!({"temporary": true, "redone": null, "edits": edits.len()}),
+            }
+        }
+    };
+    if let Some(mut terrain) = world.get_mut::<Terrain>(entity) {
+        terrain.edits = Arc::from(edits);
+    }
+    Ok(result)
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
