@@ -1614,7 +1614,7 @@
         "slices": {
           "type": "integer",
           "format": "uint32",
-          "default": 32,
+          "default": 64,
           "maximum": 64,
           "minimum": 1
         },

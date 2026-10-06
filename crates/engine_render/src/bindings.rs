@@ -252,9 +252,10 @@ pub(crate) const CAMERA: Table = Table {
         texture(17, "occupancy_heights", Unfilterable, D2, F),
         // The kept shadow levels (decision 065), one layer each.
         texture(18, "kept_levels", Depth, D2Array, F),
-        // Clouds' shadows (decision 084): a uniform, as the terrain's
-        // fragments read all the storage buffers they may.
-        uniform_of(19, "cloud_shadows", crate::clouds::CLOUD_SHADOW_BYTES, F),
+        // Clouds' shadows (decision 084): the eighth storage buffer the
+        // terrain's lit fragments read (a uniform array read at each
+        // fragment's own index is many times slower).
+        read_of(19, "cloud_shadows", crate::clouds::CLOUD_SHADOW_BYTES, F),
     ],
 };
 

@@ -23,6 +23,8 @@ const ENVIRONMENT_EVERY: u64 = 8;
 /// `CLOUD_SHADOW_CELLS`), and the meters it spans around the camera.
 const SHADOW_CELLS: u32 = 128;
 const SHADOW_EXTENT: f32 = 8192.0;
+/// Frames over which ordinary frames march the whole shadows' grid.
+const SHADOW_SLICES: u32 = 4;
 /// Bytes of the shadows' grid: a half float a cell.
 pub(crate) const CLOUD_SHADOW_BYTES: usize = (SHADOW_CELLS * SHADOW_CELLS * 2) as usize;
 
@@ -39,6 +41,7 @@ struct CloudUniform {
     zenith: [f32; 4],
     horizon: [f32; 4],
     shadow: [f32; 4],
+    shadow_rows: [u32; 4],
 }
 
 /// Bytes of the march's uniform.
@@ -78,6 +81,8 @@ pub(crate) struct CloudPass {
     ready: bool,
     // This frame's march: the first row and the rows between those marched.
     job: Option<(u32, u32)>,
+    // This frame's rows of the shadows' grid between those marched.
+    shadow_stride: u32,
     frame: u64,
     active: bool,
     /// Rows of the dome this frame marched.
@@ -182,10 +187,19 @@ impl CloudPass {
             recorded: 0,
             ready: false,
             job: None,
+            shadow_stride: 1,
             frame: 0,
             active: false,
             rows: 0,
         }
+    }
+
+    /// This frame's slice of the shadows' grid: all of it on exact frames,
+    /// a quarter of its rows otherwise.
+    fn shadow_rows(&mut self, whole: bool) -> [u32; 4] {
+        let stride = if whole { 1 } else { SHADOW_SLICES };
+        self.shadow_stride = stride;
+        [(self.frame % u64::from(stride)) as u32, stride, 0, 0]
     }
 
     /// The sky pipelines' second group layout.
@@ -337,6 +351,7 @@ impl CloudPass {
             shadow: shadow_grid(eye).map_or([0.0; 4], |(corner, cell)| {
                 [corner[0], corner[1], cell, SHADOW_CELLS as f32]
             }),
+            shadow_rows: self.shadow_rows(whole),
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
     }
@@ -410,9 +425,17 @@ impl CloudPass {
             pass.set_pipeline(march);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(width.div_ceil(8), rows.div_ceil(8), 1);
-            // The shadows' grid every frame: the clouds drift.
+        }
+        {
+            // A slice of the shadows' grid every frame: the clouds drift.
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/cloud-shadows"),
+                timestamp_writes: profiler.span("cloud_shadows").map(|span| span.compute()),
+            });
             pass.set_pipeline(shade);
-            pass.dispatch_workgroups((SHADOW_CELLS / 2).div_ceil(8), SHADOW_CELLS.div_ceil(8), 1);
+            pass.set_bind_group(0, group, &[]);
+            let shadow_rows = SHADOW_CELLS.div_ceil(self.shadow_stride);
+            pass.dispatch_workgroups((SHADOW_CELLS / 2).div_ceil(8), shadow_rows.div_ceil(8), 1);
         }
         encoder.copy_buffer_to_buffer(cells, 0, shadows, 0, CLOUD_SHADOW_BYTES as u64);
         // A whole march makes the dome whole.
@@ -457,10 +480,15 @@ pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f
     }
 }
 
-/// The camera group's uniform of clouds' shadows: every cell passing all
+/// The camera group's buffer of clouds' shadows: every cell passing all
 /// the light until the clouds' pass copies its grid in.
 pub(crate) fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
-    let buffer = crate::buffers::uniform(device, "engine/cloud-shadows", CLOUD_SHADOW_BYTES as u64);
+    let buffer = crate::buffers::storage(
+        device,
+        "engine/cloud-shadows",
+        CLOUD_SHADOW_BYTES as u64,
+        wgpu::BufferUsages::empty(),
+    );
     // Half-float ones, two a word.
     let ones = vec![0x3c00_3c00_u32; CLOUD_SHADOW_BYTES / 4];
     queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&ones));

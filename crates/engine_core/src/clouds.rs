@@ -64,7 +64,7 @@ impl Default for Clouds {
             seed: 1,
             shadows: 0.75,
             resolution: 2048,
-            slices: 32,
+            slices: 64,
         }
     }
 }
