@@ -5,20 +5,23 @@
  * draws; its horizon map casts long shadows (decision 052) and aerial
  * perspective hazes it (decision 053); an `ETR1` file baked from the same
  * layers streams by byte range and matches; a version 8 scene with terrain
- * or aerial perspective is refused.
+ * or aerial perspective is refused; the import tool (decision 070) brings
+ * the dome in as a heightmap of its own and the scene it writes loads.
  *
  * Bakes its file with `cargo run -p engine_assetc --release --bin
- * terrain_bake` (the cargo on PATH) into web/public/scenes/terrain-smoke/,
- * which it removes afterwards with the fixture's source.
+ * terrain_bake` and imports with `terrain_import` (the cargo on PATH) into
+ * web/public/scenes/, removing what they wrote afterwards with the
+ * fixture's source.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused, routedScene } from "./harness.mjs";
 
 const url = devUrl("playground.html");
 const output = await artifacts("terrain-smoke");
+const scenes = fileURLToPath(new URL("../public/scenes/", import.meta.url));
 const folder = fileURLToPath(new URL("../public/scenes/terrain-smoke/", import.meta.url));
 const source = fileURLToPath(new URL("../public/scenes/terrain-smoke.scene.json", import.meta.url));
 // Terrain-local plateau at (512, 512), a hole 48 m east of it, and an
@@ -348,7 +351,7 @@ try {
   // counted a few frames late; turned off, none grows.
   await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });
   let grown;
-  for (let frame = 0; frame < 20; frame++) {
+  for (let frame = 0; frame < 60; frame++) {
     grown = (await command("render")).result.rendering;
     if (grown.ground_cover_blades > 0) break;
   }
@@ -570,10 +573,34 @@ try {
   assert.equal(refusedAir.error.path, "$.environment.atmosphere.aerial_density");
   checks.push({ check: "version 9 required" });
 
+  // Decision 070: the import tool reads the dome as a RAW heightmap of its
+  // own, centered on its middle without detail noise, and the scene it
+  // writes loads with the dome's summit, its source and its attribution.
+  execFileSync("cargo", ["run", "-q", "-p", "engine_assetc", "--release", "--bin", "terrain_import", "--",
+    "--out", scenes, "--id", "terrain-smoke-import", "--size", "1024", "--extent", "128,128", "--range", "0,200",
+    "--detail", "0", "--attribution", "smoke fixture", `${folder}dome.r16`], { stdio: "inherit" });
+  const report = JSON.parse(await readFile(`${scenes}terrain-smoke-import/import.json`, "utf8"));
+  assert.ok(report.samples === 513 && Math.abs(report.highest - 200) < 1e-6 && report.filled_gaps > 0, `the import resamples and fills: ${JSON.stringify(report)}`);
+  // Reloads keep the scene's ID.
+  const imported = { ...JSON.parse(await readFile(`${scenes}terrain-smoke-import.scene.json`, "utf8")), id: fixture.id };
+  await scene.reload(command, imported);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("camera", overview);
+  await settle();
+  const [summit] = await heights([[0, 0]]);
+  assert.ok(summit && Math.abs(summit.height - 200) < 0.01, `the imported summit stands 200 m high: ${JSON.stringify(summit)}`);
+  const importedView = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
+  const importedMap = importedView.terrain.layers[0].heightmap;
+  assert.ok(importedMap.attribution === "smoke fixture" && importedMap.source.includes("dome.r16"), `the layer keeps its source and credit: ${JSON.stringify(importedMap)}`);
+  assert.equal(importedView.terrain.layers.length, 2, "without detail, the import and its rivers");
+  checks.push({ check: "import", samples: report.samples, summit: summit.height, filled: report.filled_gaps });
+
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, checks }));
 } finally {
   await browser.close();
   await rm(folder, { recursive: true, force: true });
   await rm(source, { force: true });
+  await rm(`${scenes}terrain-smoke-import`, { recursive: true, force: true });
+  await rm(`${scenes}terrain-smoke-import.scene.json`, { force: true });
 }

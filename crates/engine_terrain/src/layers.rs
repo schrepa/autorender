@@ -371,6 +371,10 @@ pub struct HeightmapLayer {
     pub blend: Blend,
     /// The file the image was read from, for authoring tools.
     pub uri: Option<String>,
+    /// Where its heights came from and the credit their data requires, as
+    /// the import tool records them (decision 070).
+    pub source: Option<String>,
+    pub attribution: Option<String>,
 }
 
 impl HeightmapLayer {

@@ -292,7 +292,10 @@ pub enum SceneTerrainLayer {
 /// along z (`.r16`), `width` by `height` of them, spanning `size` meters
 /// from terrain-local `min` (x and z). Samples 0 to 65535 map to heights
 /// `low` to `high`; the layer fades in over `falloff` meters inside its
-/// edges and combines by `blend`.
+/// edges and combines by `blend`. `source` and `attribution` (up to 1024
+/// characters each) record where its heights came from and the credit
+/// their data requires, as the `terrain_import` tool writes them (decision
+/// 070).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -310,10 +313,18 @@ pub struct SceneHeightmap {
     pub falloff: f32,
     #[serde(default)]
     pub blend: Blend,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
+    pub attribution: Option<String>,
 }
 
 /// The largest heightmap side, in samples.
 const MAX_HEIGHTMAP: u32 = 16_384;
+/// The most characters a heightmap's source or attribution holds.
+const MAX_CREDIT: usize = 1024;
 
 impl SceneTerrain {
     /// The files it references: its heightmaps (buffers) and its terrain
@@ -683,6 +694,8 @@ impl SceneTerrain {
                         high: map.high,
                         falloff: map.falloff,
                         blend: map.blend,
+                        source: map.source.clone(),
+                        attribution: map.attribution.clone(),
                     }),
                 })
                 .collect(),
@@ -714,6 +727,18 @@ impl SceneHeightmap {
         files: Option<&SceneFiles>,
     ) -> Result<HeightmapLayer, SceneError> {
         valid_uri(&self.uri, &format!("{path}.uri"))?;
+        for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
+            if text
+                .as_ref()
+                .is_some_and(|text| text.chars().count() > MAX_CREDIT)
+            {
+                return Err(SceneError::new(
+                    "invalid_terrain",
+                    format!("{path}.{field}"),
+                    format!("must hold at most {MAX_CREDIT} characters"),
+                ));
+            }
+        }
         if !(2..=MAX_HEIGHTMAP).contains(&self.width) || !(2..=MAX_HEIGHTMAP).contains(&self.height)
         {
             return Err(SceneError::new(
@@ -755,6 +780,8 @@ impl SceneHeightmap {
             falloff: self.falloff,
             blend: self.blend,
             uri: Some(self.uri.clone()),
+            source: self.source.clone(),
+            attribution: self.attribution.clone(),
         })
     }
 }
