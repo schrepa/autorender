@@ -95,6 +95,7 @@ export function connectDevelopment(host: Host): () => void {
           case "terrain_redo":
           case "deform":
           case "world_changes":
+          case "nav_go":
           case "present":
           case "benchmark":
           case "step":

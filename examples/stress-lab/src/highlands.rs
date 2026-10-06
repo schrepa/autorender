@@ -11,7 +11,8 @@
 //! Gravel roads (decision 069) wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge (decision 072) and east
 //! through a ridge in a tunnel (decision 073). Lanterns line the road to
-//! the lake, streamed (decision 086): they exist only near the camera.
+//! the lake, streamed (decision 086): they exist only near the camera. A
+//! hiker walks the road's first stretch and back (decision 089).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -663,6 +664,7 @@ pub(crate) fn populate(
         Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
     );
     lanterns(world, &ROAD, half)?;
+    hiker(world, &ROAD, half)?;
     Ok((
         (
             Vec3::new(-half, -50.0, -half),
@@ -670,6 +672,67 @@ pub(crate) fn populate(
         ),
         level,
     ))
+}
+
+/// A hiker walking between two points (decision 089): the ends (world x
+/// and z) and the one it walks toward.
+#[derive(Component)]
+struct Hiker {
+    ends: [[f32; 2]; 2],
+    toward: usize,
+}
+
+/// A hiker in a red jacket walking from `road`'s start (terrain-local, the
+/// terrain's corner at `-half`) to the first of its points 350 meters away
+/// and back (decision 089).
+fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
+    let world_point = |[x, z]: [f32; 2]| [x - half, z - half];
+    let start = world_point(road[0]);
+    let far = road
+        .iter()
+        .map(|&point| world_point(point))
+        .find(|point| Vec2::from(*point).distance(Vec2::from(start)) > 350.0)
+        .unwrap_or(world_point(road[road.len() - 1]));
+    let error = |error: AssetError| error.to_string();
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let mesh = assets.insert_mesh(Mesh::cube()).map_err(error)?;
+    let material = assets
+        .insert_material(Material::new([0.62, 0.1, 0.07, 1.0]).map_err(error)?)
+        .map_err(error)?;
+    // A body 1.75 meters tall, its origin at its middle.
+    let offset = 0.875;
+    world.spawn((
+        Transform {
+            translation: Vec3::new(start[0], 0.0, start[1]),
+            scale: Vec3::new(0.45, 1.75, 0.3),
+            ..Transform::default()
+        },
+        Mesh3d { mesh, material },
+        Grounded { offset },
+        NavAgent {
+            destination: Some(far),
+            speed: 1.6,
+            offset,
+            ..NavAgent::default()
+        },
+        InterpolateTransform,
+        Hiker {
+            ends: [start, far],
+            toward: 1,
+        },
+    ));
+    Ok(())
+}
+
+/// Turns each hiker back when it arrives or finds no way (decision 089).
+fn hike(mut hikers: Query<(&mut NavAgent, &NavWalk, &mut Hiker)>) {
+    for (mut agent, walk, mut hiker) in &mut hikers {
+        let done = matches!(walk.status, NavStatus::Arrived | NavStatus::Unreachable);
+        if done && walk.destination == agent.destination {
+            hiker.toward = 1 - hiker.toward;
+            agent.destination = Some(hiker.ends[hiker.toward]);
+        }
+    }
 }
 
 /// Meters between lanterns along a road, and from its middle line to them.
@@ -1101,7 +1164,8 @@ fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f3
 /// a sled and a walker making tracks in the snow (decision 083).
 pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(Presentation, (open_cave, place_track_makers))
-        .add_systems(FixedSimulation, make_tracks);
+        .add_systems(FixedSimulation, make_tracks)
+        .add_systems(FixedSimulation, hike.after(NavSystems::Walk));
 }
 
 /// Marks the snow searched for the sled and the walker (decision 083), and

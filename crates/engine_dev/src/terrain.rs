@@ -54,6 +54,43 @@ pub struct Press {
 
 /// Presses `press` into the log as a deformer would at the fixed clock's
 /// time; its result.
+/// Sends navigation agent `id` in `scene` to `destination` (world x and
+/// z), or stops it (decision 089).
+pub fn nav_go(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    id: &str,
+    destination: Option<[f32; 2]>,
+) -> Result<Value, DevError> {
+    if let Some(destination) = destination
+        && !destination
+            .iter()
+            .all(|value| value.is_finite() && value.abs() <= 1.0e6)
+    {
+        return Err(DevError::new(
+            "invalid_request",
+            "$.destination",
+            "must be finite and within 1000000 meters",
+        ));
+    }
+    let world = engine.app.world_mut();
+    let entity = scene
+        .and_then(|scene| crate::inspect::authored_entity(world, scene, id))
+        .filter(|&entity| world.get::<engine_core::NavAgent>(entity).is_some())
+        .ok_or_else(|| {
+            DevError::new(
+                "not_found",
+                "$.entity",
+                format!("no navigation agent {id} in the scene"),
+            )
+        })?;
+    let mut agent = world
+        .get_mut::<engine_core::NavAgent>(entity)
+        .expect("checked above");
+    agent.destination = destination;
+    Ok(json!({ "temporary": true, "destination": destination }))
+}
+
 /// Removes and restores streamed items (decision 087): `remove` and
 /// `restore` name item IDs (at most 256 each, each 1 to 192 bytes);
 /// `clear` restores every item first.

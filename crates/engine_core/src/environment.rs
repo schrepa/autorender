@@ -10,9 +10,9 @@ use bevy_ecs::prelude::{Resource, World};
 
 use crate::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
-    LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
-    Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry, Water, Wind,
-    WorldStreaming,
+    LevelOfDetail, LocalLights, Navigation, Occupancy, Ocean, Particles, ReflectionProbes,
+    Reflections, Refraction, Shadows, Sky, SunShafts, TerrainSettings, TimeOfDay, VirtualGeometry,
+    Water, Wind, WorldStreaming,
 };
 
 /// A settings field outside its valid values: its name and the rule it
@@ -68,6 +68,7 @@ pub struct Environment {
     pub world_streaming: WorldStreaming,
     pub sky: Sky,
     pub time_of_day: TimeOfDay,
+    pub navigation: Navigation,
 }
 
 impl Environment {
@@ -248,6 +249,13 @@ impl Environment {
                 },
             ),
             time_of_day,
+            navigation: read(
+                world,
+                Navigation {
+                    enabled: false,
+                    ..Navigation::default()
+                },
+            ),
         }
     }
 
@@ -279,6 +287,7 @@ impl Environment {
             world_streaming: self.world_streaming.sanitized(),
             sky: self.sky.sanitized(),
             time_of_day: self.time_of_day.sanitized(),
+            navigation: self.navigation.sanitized(),
         }
     }
 }
