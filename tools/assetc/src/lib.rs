@@ -162,6 +162,7 @@ pub fn import_glb_with(
         animations: Vec::new(),
         skins: Vec::new(),
         entities: Vec::new(),
+        streamed: Vec::new(),
     };
     let mut files = Vec::new();
     materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;

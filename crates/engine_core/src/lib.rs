@@ -18,6 +18,7 @@ mod entity_indices;
 mod environment;
 mod extraction;
 mod ground_cover;
+mod grounded;
 mod hierarchy;
 mod input;
 mod interpolation;
@@ -33,6 +34,7 @@ mod retained_render;
 mod scene;
 mod skin;
 mod spline_mesh;
+mod streaming;
 mod terrain;
 mod transform_edits;
 mod virtual_geometry;
@@ -85,6 +87,7 @@ pub use engine_terrain::{
 pub use environment::{Environment, InvalidSetting};
 pub use glam;
 pub use ground_cover::{Cover, GroundCover};
+pub use grounded::{Grounded, GroundedAt};
 pub use hierarchy::{
     GlobalTransform, GlobalTransforms, HierarchyError, HierarchyReport, MAX_HIERARCHY_DEPTH,
     MAX_NORMAL_INVERSE_NORM, MAX_TRANSFORM_NODES, Parent, TransformIndex, TransformNodeLimit,
@@ -114,6 +117,10 @@ pub use scene::{
 };
 pub use skin::{RenderJoint, Skin};
 pub use spline_mesh::{CHUNK_LENGTH, MAX_SPLINE_POINTS, SplineChunks, SplineMesh};
+pub use streaming::{
+    CellStats, CellView, STREAMING_GRIDS, StreamSet, Streamed, StreamedItem, StreamingGrid,
+    WorldCells, WorldStreaming, remove_streamed,
+};
 pub use terrain::{
     MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
@@ -229,6 +236,9 @@ pub struct Engine {
     // and each frame's map.
     deformers: QueryState<(Entity, &'static Deformer)>,
     deformation: deformation::DeformationExtraction,
+    // World streaming (decision 086) and grounded objects.
+    streaming: streaming::StreamingExtraction,
+    grounding: grounded::Grounding,
     plugins_finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -328,6 +338,8 @@ impl Engine {
             .init_resource::<Ocean>()
             .init_resource::<Deformation>()
             .init_resource::<Tracks>()
+            .init_resource::<WorldStreaming>()
+            .init_resource::<WorldCells>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
@@ -351,6 +363,8 @@ impl Engine {
         let probes = probes::ProbeExtraction::new(app.world_mut());
         let terrain = terrain::TerrainExtraction::new(app.world_mut());
         let deformers = app.world_mut().query::<(Entity, &Deformer)>();
+        let streaming = streaming::StreamingExtraction::new(app.world_mut());
+        let grounding = grounded::Grounding::new(app.world_mut());
         Self {
             app,
             clock,
@@ -368,6 +382,8 @@ impl Engine {
             terrain,
             deformers,
             deformation: deformation::DeformationExtraction::default(),
+            streaming,
+            grounding,
             plugins_finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -730,9 +746,12 @@ impl Engine {
             PresentationMode::Current => None,
             PresentationMode::Interpolated { alpha } => Some(alpha),
         });
-        // Bridges (decision 072), waterfalls (decision 075) and spline meshes
-        // (decision 071) spawn and build before transforms refresh, so paused
-        // frames draw them too.
+        // Streamed cells (decision 086) load and unload, grounded objects
+        // stand on the ground, and bridges (decision 072), waterfalls
+        // (decision 075) and spline meshes (decision 071) spawn and build
+        // before transforms refresh, so paused frames draw them too.
+        self.streaming.stream(self.app.world_mut());
+        self.grounding.settle(self.app.world_mut());
         bridges::sync(self.app.world_mut());
         waterfalls::sync(self.app.world_mut());
         spline_mesh::build(self.app.world_mut());
@@ -766,6 +785,8 @@ impl Engine {
             // consumers keep presenting the inputs they applied before.
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
+            self.streaming.stream(self.app.world_mut());
+            self.grounding.settle(self.app.world_mut());
             bridges::sync(self.app.world_mut());
             waterfalls::sync(self.app.world_mut());
             spline_mesh::build(self.app.world_mut());
@@ -817,6 +838,8 @@ impl Engine {
         self.retained.extract_probes(world, &mut self.probes);
         self.retained
             .extract_terrain(world, &mut self.terrain, aspect);
+        self.retained
+            .set_cells(world.resource::<WorldCells>().stats());
         if gpu {
             // Later source edits must be newer than the stamp window just
             // consumed.
@@ -902,6 +925,9 @@ pub mod prelude {
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
+    pub use crate::{
+        Grounded, StreamSet, Streamed, StreamedItem, WorldCells, WorldStreaming, remove_streamed,
+    };
     pub use crate::{
         Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,
         VirtualGeometry,

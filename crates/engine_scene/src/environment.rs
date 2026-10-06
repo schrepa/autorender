@@ -14,7 +14,7 @@ use engine_core::{
     AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
     GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles,
     ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
-    VirtualGeometry, Water, Wind,
+    VirtualGeometry, Water, Wind, WorldStreaming,
     bevy_ecs::prelude::{Resource, World},
     glam::Vec3,
 };
@@ -284,6 +284,7 @@ section!(Water, since 9, opt_in false);
 section!(Ocean, since 9, opt_in false);
 section!(Deformation, since 9, opt_in false);
 section!(Clouds, since 9, opt_in true);
+section!(WorldStreaming, since 9, opt_in false);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -355,6 +356,9 @@ pub struct SceneEnvironment {
     /// A layer of clouds over the world (decision 084).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clouds: Option<Clouds>,
+    /// How streamed content loads around the camera (decision 086).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world_streaming: Option<WorldStreaming>,
 }
 
 impl SceneEnvironment {
@@ -386,6 +390,7 @@ impl SceneEnvironment {
             ocean: Some(environment.ocean),
             deformation: Some(environment.deformation),
             clouds: Some(environment.clouds),
+            world_streaming: Some(environment.world_streaming),
         }
     }
 
@@ -413,6 +418,7 @@ impl SceneEnvironment {
         visitor.section("ocean", self.ocean);
         visitor.section("deformation", self.deformation);
         visitor.section("clouds", self.clouds);
+        visitor.section("world_streaming", self.world_streaming);
     }
 
     /// The names of the sections present, the atmosphere first.

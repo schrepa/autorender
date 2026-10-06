@@ -17,8 +17,20 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 23] {
+fn rules() -> [Rule; 25] {
     [
+        Rule {
+            since: 9,
+            what: "streamed entities",
+            first_use: |document| (!document.streamed.is_empty()).then(|| "$.streamed".to_owned()),
+        },
+        Rule {
+            since: 9,
+            what: "grounded objects",
+            first_use: |document| {
+                document.entity_use(|entity| entity.grounded.is_some().then_some("grounded"))
+            },
+        },
         Rule {
             since: 9,
             what: "terrains",
@@ -344,13 +356,21 @@ impl SceneDocument {
     }
 
     /// The authored path of the field `uses` names on the first entity,
-    /// then prefab entity, where it names one.
+    /// then streamed entity, then prefab entity, where it names one.
     fn entity_use(&self, uses: impl Fn(&SceneObject) -> Option<&'static str>) -> Option<String> {
         self.entities
             .iter()
             .enumerate()
             .find_map(|(index, entity)| {
                 uses(entity).map(|field| format!("$.entities[{index}].{field}"))
+            })
+            .or_else(|| {
+                self.streamed
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, entity)| {
+                        uses(entity).map(|field| format!("$.streamed[{index}].{field}"))
+                    })
             })
             .or_else(|| {
                 self.prefabs

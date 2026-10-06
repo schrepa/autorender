@@ -83,6 +83,13 @@
         "$ref": "#/$defs/SceneSkin"
       }
     },
+    "streamed": {
+      "description": "Entities that exist only near the camera (decision 086): each root\nwith its descendants is one item, which world streaming spawns when\nits cell comes within range and despawns when it leaves. Parents,\nanimation targets and skin joints stay within an item; IDs differ\nfrom `entities`'. No terrains. Requires version 9.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SceneObject"
+      }
+    },
     "textures": {
       "description": "Opaque sRGB pixels: inline base64, or image files (version 7).",
       "type": "array",
@@ -372,6 +379,18 @@
         "level",
         "share"
       ]
+    },
+    "Grounded": {
+      "description": "Stands its entity on the terrain (decision 086): its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation. Requires version 9.",
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false
     },
     "HydrologyLayer": {
       "description": "A layer that bakes where water runs over the layers below it and carves\nchannels into them (decision 066).",
@@ -2316,6 +2335,17 @@
               "type": "null"
             }
           ]
+        },
+        "world_streaming": {
+          "description": "How streamed content loads around the camera (decision 086).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWorldStreaming"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -2893,6 +2923,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFloating"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounded": {
+          "description": "Stands on the terrain (decision 086): its translation's y becomes\n`offset` meters above the ground under it. Roots only. Requires\nversion 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grounded"
             },
             {
               "type": "null"
@@ -4543,6 +4584,48 @@
           },
           "maxItems": 2,
           "minItems": 2
+        }
+      },
+      "additionalProperties": false
+    },
+    "SceneWorldStreaming": {
+      "description": "World streaming (decision 086): whether streamed items load at all\n(off unloads every cell); how far cells load, as a multiple of each\ngrid's range (0.05 to 20); how much farther than that every source must\nbe before a loaded cell unloads, as a multiple (1 to 4); the seconds\nahead along the camera's motion cells load early for (0 to 10); the\nentities a frame spawns at most (cells spawn whole, and at least one a\nframe), pacing loads; and whether cells stay as they are, loading and\nunloading nothing (for captures and inspection). Requires version 9.",
+      "type": "object",
+      "properties": {
+        "distance": {
+          "type": "number",
+          "format": "float",
+          "default": 1.0,
+          "maximum": 20.0,
+          "minimum": 0.05
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "frozen": {
+          "type": "boolean",
+          "default": false
+        },
+        "prefetch": {
+          "type": "number",
+          "format": "float",
+          "default": 1.5,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "spawns_per_frame": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 2048,
+          "minimum": 1
+        },
+        "unload": {
+          "type": "number",
+          "format": "float",
+          "default": 1.25,
+          "maximum": 4.0,
+          "minimum": 1.0
         }
       },
       "additionalProperties": false

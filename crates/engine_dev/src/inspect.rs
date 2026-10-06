@@ -242,6 +242,52 @@ impl DevTools {
                 latest: tracks.latest().copied(),
             }),
         ).expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::WorldCells>(
+            InspectorDescriptor::new("WorldCells", "World streaming (decision 086) at the last extraction: cells holding streamed items, loaded and pending (within range, waiting), items, entities streamed items hold, the frame's spawns and despawns, the camera velocity prefetch followed, each grid's cells and the 32 cells nearest a streaming source. Settings: the world_streaming environment section.", schemas["WorldCells"].clone()),
+            |cells| {
+                let stats = cells.stats();
+                let grids = cells.grids();
+                json!(crate::views::WorldCellsView {
+                    cells: stats.cells,
+                    loaded: stats.loaded,
+                    pending: stats.pending,
+                    items: stats.items,
+                    entities: stats.entities,
+                    spawned: stats.spawned,
+                    despawned: stats.despawned,
+                    velocity: cells.velocity().to_array(),
+                    grids: engine_core::STREAMING_GRIDS.iter().zip(grids).map(|(grid, [count, loaded])| crate::views::StreamingGridView {
+                        cell: grid.cell,
+                        range: grid.range,
+                        reach: grid.reach.is_finite().then_some(grid.reach),
+                        cells: count,
+                        loaded,
+                    }).collect(),
+                    nearest: cells.nearest(32).into_iter().map(|cell| crate::views::StreamedCellView {
+                        grid: cell.grid,
+                        key: cell.key,
+                        items: cell.items,
+                        entities: cell.entities,
+                        loaded: cell.loaded,
+                        distance: cell.distance,
+                    }).collect(),
+                })
+            },
+        ).expect("built-in descriptor is bounded");
+        self.insert(Inspector {
+            descriptor: InspectorDescriptor::new("Grounded", "Stands on the terrain (decision 086) as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only.", schemas["Grounded"].clone()),
+            kind: InspectorKind::Component,
+            has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Grounded>(entity).is_some())),
+            read: Box::new(|world, entity, _scene| {
+                let entity = entity?;
+                let grounded = world.get::<engine_core::Grounded>(entity)?;
+                let at = world.get::<engine_core::GroundedAt>(entity);
+                Some(json!(crate::views::GroundedView {
+                    offset: grounded.offset,
+                    level: at.and_then(|at| at.level),
+                }))
+            }),
+        }).expect("built-in descriptor is bounded");
         self.register_component::<Tint>(
             InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
                 .with_default(json!(Tint::WHITE.0)),
@@ -567,6 +613,9 @@ fn section_description(name: &str) -> &'static str {
         }
         "deformation" => {
             "Runtime deformation (decision 083): deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
+        }
+        "world_streaming" => {
+            "World streaming (decision 086): streamed items spawn in cells near the camera, terrain focus entities and where the camera's motion leads in `prefetch` seconds, and despawn past `unload` times the range. Grids by reach: 256 m cells within 512 m, 1 km within 2 km, 4 km within 8 km, scaled by `distance`. Off unloads all; `spawns_per_frame` paces loads (cells spawn whole); `frozen` holds cells as they are. See WorldCells and the rendering observation's cell counts."
         }
         "wind" => {
             "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
@@ -909,11 +958,11 @@ impl DevTools {
                     "a selected entity has no pagination offset",
                 ));
             }
-            let entity = scene.entity(id).ok_or_else(|| {
+            let entity = authored_entity(world, scene, id).ok_or_else(|| {
                 DevError::new(
                     "unknown_entity",
                     "$.entity",
-                    "authored ID does not exist in the active scene",
+                    "authored ID does not exist in the active scene (streamed entities only while their cell is loaded)",
                 )
             })?;
             if world.get_entity(entity).is_err() {
@@ -928,7 +977,7 @@ impl DevTools {
         let parent = parent
             .map(|id| {
                 validate_name(id, "$.parent")?;
-                let entity = scene.entity(id).ok_or_else(|| {
+                let entity = authored_entity(world, scene, id).ok_or_else(|| {
                     DevError::new(
                         "unknown_entity",
                         "$.parent",
@@ -1096,4 +1145,17 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Er
     };
     serde_json::to_writer(&mut output, value)?;
     Ok(String::from_utf8(output.bytes).expect("JSON is UTF-8"))
+}
+
+/// The entity of authored ID `id` in `scene`: one it spawned, or else a
+/// loaded streamed entity (decision 086) it owns.
+pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
+    scene.entity(id).or_else(|| {
+        scene.streamed()?;
+        world
+            .try_query::<(Entity, &SceneEntity)>()?
+            .iter(world)
+            .find(|(_, metadata)| metadata.authored_id == id && metadata.scene_id == scene.id())
+            .map(|(entity, _)| entity)
+    })
 }

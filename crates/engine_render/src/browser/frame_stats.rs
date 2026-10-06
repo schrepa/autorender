@@ -342,6 +342,12 @@ impl Renderer {
                 0
             },
             cloud_rows: self.clouds.rows,
+            cells: snapshot.cells.cells,
+            cells_loaded: snapshot.cells.loaded,
+            cells_pending: snapshot.cells.pending,
+            streamed_entities: snapshot.cells.entities,
+            cell_spawns: snapshot.cells.spawned,
+            cell_despawns: snapshot.cells.despawned,
             deformation_stamps: self.terrain.deformation.pressed,
             deformation_texels: self.terrain.deformation.texels,
             placed_far_objects: self.scatter_draws.far_objects(),

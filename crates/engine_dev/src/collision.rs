@@ -404,7 +404,7 @@ fn resolve_entity(
             "entity selectors require an active scene",
         )
     })?;
-    let entity = scene.entity(id).ok_or_else(|| {
+    let entity = crate::inspect::authored_entity(world, scene, id).ok_or_else(|| {
         DevError::new("unknown_entity", path, "entity is not in the active scene")
     })?;
     if require_alive && world.get_entity(entity).is_err() {
@@ -444,9 +444,14 @@ impl<'a> Identities<'a> {
     fn entity(&self, world: &World, entity: Entity) -> Value {
         let id = self.ids.get(&entity).copied();
         let metadata = world.get::<SceneEntity>(entity);
+        // A loaded streamed entity (decision 086) of the active scene.
+        let streamed = id.is_none()
+            && metadata.zip(self.scene).is_some_and(|(metadata, scene)| {
+                scene.streamed().is_some() && metadata.scene_id == scene.id()
+            });
         json!({"id":id.or_else(|| metadata.map(|metadata| metadata.authored_id.as_str())),
             "scene":if id.is_some() { self.scene.map(SceneInstance::id) } else { metadata.map(|metadata| metadata.scene_id.as_str()) },
             "name":metadata.map(|metadata| metadata.name.as_str()),
-            "in_active_scene":id.is_some(),"alive":world.get_entity(entity).is_ok()})
+            "in_active_scene":id.is_some() || streamed,"alive":world.get_entity(entity).is_ok()})
     }
 }

@@ -98,6 +98,63 @@ pub struct TracksView {
     pub latest: Option<engine_core::Track>,
 }
 
+/// World streaming at the last extraction (decision 086): cells holding
+/// items and those loaded, cells within range still waiting, items,
+/// entities streamed items hold spawned, the frame's spawns and despawns,
+/// the camera velocity prefetch followed, each grid's cells, and the
+/// cells nearest a streaming source.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WorldCellsView {
+    pub cells: u32,
+    pub loaded: u32,
+    pub pending: u32,
+    pub items: u32,
+    pub entities: u32,
+    pub spawned: u32,
+    pub despawned: u32,
+    pub velocity: [f32; 3],
+    pub grids: Vec<StreamingGridView>,
+    pub nearest: Vec<StreamedCellView>,
+}
+
+/// One streaming grid (decision 086): its cells' side, the meters within
+/// which they load (before the settings' distance), the most an item in
+/// it reaches, and its cells and those loaded.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct StreamingGridView {
+    pub cell: f32,
+    pub range: f32,
+    pub reach: Option<f32>,
+    pub cells: u32,
+    pub loaded: u32,
+}
+
+/// One streamed cell (decision 086): its grid (0 small, 1 medium, 2
+/// large), its key along x and z, its items and their entities, whether it
+/// is loaded, and its meters from the nearest streaming source.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct StreamedCellView {
+    pub grid: u8,
+    pub key: [i32; 2],
+    pub items: u32,
+    pub entities: u32,
+    pub loaded: bool,
+    pub distance: f32,
+}
+
+/// A grounded entity (decision 086) in the shape of a scene version 9
+/// `grounded` field, with the level of the terrain tile it last stood on
+/// (`None` before it sampled, or while no tile answered).
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct GroundedView {
+    pub offset: f32,
+    pub level: Option<u32>,
+}
+
 /// Terrain streaming at the last extraction (decision 051).
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

@@ -196,6 +196,16 @@ pub struct RenderStats {
     /// Rows of the clouds' dome (decision 084) this frame marched: all of
     /// them on exact frames, a slice on ordinary ones, none without clouds.
     pub cloud_rows: u32,
+    /// World streaming (decision 086): cells holding streamed items, those
+    /// loaded, and those within range still waiting; entities streamed
+    /// items hold spawned; and the entities this frame spawned and
+    /// despawned.
+    pub cells: u32,
+    pub cells_loaded: u32,
+    pub cells_pending: u32,
+    pub streamed_entities: u32,
+    pub cell_spawns: u32,
+    pub cell_despawns: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.

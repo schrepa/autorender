@@ -10,7 +10,8 @@
 //! its rock, and spruce forests cover the lower slopes (decision 057).
 //! Gravel roads (decision 069) wind from the plateau down to the crater
 //! lake, west over a river on a stone bridge (decision 072) and east
-//! through a ridge in a tunnel (decision 073).
+//! through a ridge in a tunnel (decision 073). Lanterns line the road to
+//! the lake, streamed (decision 086): they exist only near the camera.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -661,6 +662,7 @@ pub(crate) fn populate(
     world.spawn(
         Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
     );
+    lanterns(world, &ROAD, half)?;
     Ok((
         (
             Vec3::new(-half, -50.0, -half),
@@ -668,6 +670,129 @@ pub(crate) fn populate(
         ),
         level,
     ))
+}
+
+/// Meters between lanterns along a road, and from its middle line to them.
+const LANTERN_SPACING: f32 = 40.0;
+const LANTERN_SIDE: f32 = 5.0;
+/// A lantern's warm light: its color, intensity and range (meters).
+const LANTERN_LIGHT: ([f32; 3], f32, f32) = ([1.0, 0.66, 0.34], 14.0, 12.0);
+
+/// A lantern by a road (decision 086): a post with a glowing lamp and its
+/// light on top, standing on the ground wherever its cell loads it.
+struct Lantern {
+    position: Vec3,
+    yaw: f32,
+    cube: MeshHandle,
+    wood: MaterialHandle,
+    glow: MaterialHandle,
+}
+
+impl Streamed for Lantern {
+    fn entities(&self) -> u32 {
+        3
+    }
+
+    fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>) {
+        let root = world
+            .spawn((
+                Transform {
+                    translation: self.position,
+                    rotation: Quat::from_rotation_y(self.yaw),
+                    ..Transform::default()
+                },
+                Grounded::default(),
+            ))
+            .id();
+        let post = world
+            .spawn((
+                Transform {
+                    translation: Vec3::new(0.0, 1.6, 0.0),
+                    scale: Vec3::new(0.14, 3.2, 0.14),
+                    ..Transform::default()
+                },
+                Mesh3d {
+                    mesh: self.cube,
+                    material: self.wood,
+                },
+            ))
+            .id();
+        let ([red, green, blue], intensity, range) = LANTERN_LIGHT;
+        let lamp = world
+            .spawn((
+                Transform {
+                    translation: Vec3::new(0.0, 3.35, 0.0),
+                    scale: Vec3::splat(0.3),
+                    ..Transform::default()
+                },
+                Mesh3d {
+                    mesh: self.cube,
+                    material: self.glow,
+                },
+                LocalLight::point(Vec3::new(red, green, blue), intensity, range),
+            ))
+            .id();
+        if set_parents(world, &[(post, Some(root)), (lamp, Some(root))]).is_err() {
+            for entity in [root, post, lamp] {
+                let _ = world.try_despawn(entity);
+            }
+            return;
+        }
+        spawned.extend([root, post, lamp]);
+    }
+}
+
+/// Registers lanterns along `road` (terrain-local, the terrain's corner at
+/// `-half`) as streamed items (decision 086), every
+/// [`LANTERN_SPACING`] meters on its left.
+fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
+    let error = |error: AssetError| error.to_string();
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let cube = assets.insert_mesh(Mesh::cube()).map_err(error)?;
+    let wood = assets
+        .insert_material(Material::new([0.09, 0.06, 0.04, 1.0]).map_err(error)?)
+        .map_err(error)?;
+    let glow = assets
+        .insert_material(
+            Material::new([1.0, 0.72, 0.42, 1.0])
+                .and_then(|material| {
+                    material.with_surface(Surface {
+                        emission: 3.0,
+                        ..Surface::MATTE
+                    })
+                })
+                .map_err(error)?,
+        )
+        .map_err(error)?;
+    let mut items = Vec::new();
+    let mut next = LANTERN_SPACING * 0.5;
+    let mut walked = 0.0;
+    for pair in road.windows(2) {
+        let (from, to) = (Vec2::from(pair[0]), Vec2::from(pair[1]));
+        let length = from.distance(to);
+        if length <= 0.0 {
+            continue;
+        }
+        let along = (to - from) / length;
+        while next <= walked + length {
+            let point = from + along * (next - walked) + along.perp() * LANTERN_SIDE;
+            items.push(StreamedItem {
+                position: Vec3::new(point.x - half, 0.0, point.y - half),
+                reach: LANTERN_LIGHT.2,
+                content: Arc::new(Lantern {
+                    position: Vec3::new(point.x - half, 0.0, point.y - half),
+                    yaw: -along.y.atan2(along.x),
+                    cube,
+                    wood,
+                    glow,
+                }),
+            });
+            next += LANTERN_SPACING;
+        }
+        walked += length;
+    }
+    world.resource_mut::<WorldCells>().add(items);
+    Ok(())
 }
 
 /// Stones authors stand round `center` (terrain-local) `radius` meters out

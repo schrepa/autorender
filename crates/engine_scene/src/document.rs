@@ -60,6 +60,13 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skins: Vec<SceneSkin>,
     pub entities: Vec<SceneObject>,
+    /// Entities that exist only near the camera (decision 086): each root
+    /// with its descendants is one item, which world streaming spawns when
+    /// its cell comes within range and despawns when it leaves. Parents,
+    /// animation targets and skin joints stay within an item; IDs differ
+    /// from `entities`'. No terrains. Requires version 9.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub streamed: Vec<SceneObject>,
 }
 
 impl SceneDocument {
@@ -627,6 +634,11 @@ pub struct SceneObject {
     /// version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deformer: Option<engine_core::Deformer>,
+    /// Stands on the terrain (decision 086): its translation's y becomes
+    /// `offset` meters above the ground under it. Roots only. Requires
+    /// version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grounded: Option<engine_core::Grounded>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
