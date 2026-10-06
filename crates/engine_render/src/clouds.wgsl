@@ -26,8 +26,10 @@ struct CloudUniform {
     zenith: vec4<f32>,
     horizon: vec4<f32>,
     // The shadows' grid: its first cell's corner (world x and z), meters a
-    // cell and cells along a side.
+    // cell and cells along a side; then the first row this dispatch marches
+    // and the rows between those it marches.
     shadow: vec4<f32>,
+    shadow_rows: vec4<u32>,
 }
 
 @group(0) @binding(0) var<uniform> clouds: CloudUniform;
@@ -46,8 +48,8 @@ const TAU: f32 = 6.2831853;
 // between the fewest and the most), toward the sun from each step, and the
 // farthest clouds marched (meters).
 const FEWEST_STEPS: f32 = 24.0;
-const MOST_STEPS: f32 = 96.0;
-const STEP_LENGTH: f32 = 120.0;
+const MOST_STEPS: f32 = 64.0;
+const STEP_LENGTH: f32 = 150.0;
 const LIGHT_STEPS: u32 = 5u;
 const REACH: f32 = 60000.0;
 // Beyond this many meters the clouds' fine detail, finer than the dome's
@@ -166,14 +168,18 @@ fn cloud_density(p: vec3<f32>, detail: f32) -> f32 {
     let profile = saturate(height * 7.0) * saturate((1.0 - height) * 2.0);
     let moved = p + vec3<f32>(clouds.drift.x + clouds.drift.w, 0.0, clouds.drift.y - clouds.drift.w);
     let repeat = clouds.drift.z;
-    // Perlin-Worley shapes, about two thirds on average.
-    let rounded = textureSampleLevel(noise_volume, noise_sampler, moved / repeat, 0.0).r;
     // Where clouds gather and where the sky stays clear, broadly; coverage
-    // sets the shapes' threshold around their average.
+    // sets the shapes' threshold around their average. Where no shape could
+    // reach it at this height, the shapes are not read.
     let gather = textureSampleLevel(noise_volume, noise_sampler,
         vec3<f32>(moved.x / (repeat * 4.3), 0.37, moved.z / (repeat * 4.3)), 0.0).r;
     let local = saturate(clouds.layer.z * (0.4 + 1.2 * smoothstep(0.3, 0.7, gather)));
     let threshold = mix(0.95, 0.4, local);
+    if profile <= threshold {
+        return 0.0;
+    }
+    // Perlin-Worley shapes, about two thirds on average.
+    let rounded = textureSampleLevel(noise_volume, noise_sampler, moved / repeat, 0.0).r;
     var cloud = saturate(remap(rounded * profile, threshold, 1.0, 0.0, 1.0));
     if detail > 0.0 && cloud > 0.0 {
         let fine = textureSampleLevel(noise_volume, noise_sampler, moved / (repeat * 0.13), 0.0);
@@ -288,21 +294,23 @@ fn sun_passing(start: vec3<f32>) -> f32 {
     return exp(-depth * EXTINCTION * clouds.layer.w);
 }
 
-// Two cells of the shadows' grid, side by side along x.
+// Two cells of the shadows' grid, side by side along x, on a slice of its
+// rows: from `clouds.shadow_rows.x`, every `clouds.shadow_rows.y`th.
 @compute @workgroup_size(8, 8)
 fn shadow_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
     let cells = u32(clouds.shadow.w);
-    if id.x * 2u >= cells || id.y >= cells {
+    let row = clouds.shadow_rows.x + id.y * clouds.shadow_rows.y;
+    if id.x * 2u >= cells || row >= cells {
         return;
     }
     var pair = vec2<f32>(1.0);
     for (var half = 0u; half < 2u; half++) {
-        let cell = vec2<f32>(f32(id.x * 2u + half), f32(id.y)) + 0.5;
+        let cell = vec2<f32>(f32(id.x * 2u + half), f32(row)) + 0.5;
         let start = vec3<f32>(clouds.shadow.x + cell.x * clouds.shadow.z, clouds.layer.x,
             clouds.shadow.y + cell.y * clouds.shadow.z);
         pair[half] = sun_passing(start);
     }
-    shadow_cells[id.y * (cells / 2u) + id.x] = pack2x16float(pair);
+    shadow_cells[row * (cells / 2u) + id.x] = pack2x16float(pair);
 }
 
 // A slice of the dome's rows: from `clouds.dome.z`, every `clouds.dome.w`th.

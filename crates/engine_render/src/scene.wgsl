@@ -691,12 +691,11 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
 // cells of the sunlight passing the cloud layer up from its base, two cells
 // along x a word in half floats.
 const CLOUD_SHADOW_CELLS: u32 = 128u;
-@group(0) @binding(19) var<uniform> cloud_shadows: array<vec4<u32>, 2048>;
+@group(0) @binding(19) var<storage, read> cloud_shadows: array<u32>;
 
 fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
     let index = z * CLOUD_SHADOW_CELLS + x;
-    let word = index / 2u;
-    return unpack2x16float(cloud_shadows[word / 4u][word % 4u])[index % 2u];
+    return unpack2x16float(cloud_shadows[index / 2u])[index % 2u];
 }
 
 // The share of the sun's light the clouds let through to `world`: from the
