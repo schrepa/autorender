@@ -36,9 +36,12 @@ const terrain = {
     // Decision 066: water drains off the hills, carving channels, baked
     // over the same tiles.
     { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
+    // A trench across the road's last stretch, twelve meters deep.
+    { stamp: { center: [430, 96], radius: 10, falloff: 10, op: { lower: 12 } } },
     // Decision 069: a road through the south-western hills, leveled to its
-    // own smoothed profile, which gravel covers.
-    { path: { points: [[100, 300], [250, 260], [400, 150]], width: 6, shoulder: 6, smoothing: 60 } },
+    // own smoothed profile, which gravel covers; it bridges the trench
+    // (decision 072).
+    { path: { points: [[100, 300], [250, 260], [400, 150], [450, 60]], width: 6, shoulder: 6, smoothing: 60, bridge_fill: 4 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
@@ -193,11 +196,11 @@ try {
   assert.equal(look.result.value.terrain.samples_per_frame, 50_000_000);
   const inspected = await command("inspect", { entity: "ground", component: "Terrain" });
   const view = inspected.result.entity.components.Terrain;
-  assert.equal(view.terrain.layers.length, 7);
+  assert.equal(view.terrain.layers.length, 8);
   assert.deepEqual(view.terrain.layers[1], terrain.layers[1]);
   assert.deepEqual(view.terrain.layers[2], terrain.layers[2]);
-  assert.deepEqual(view.terrain.layers[3], terrain.layers[3]);
-  assert.equal(view.terrain.layers[6].heightmap.uri, "terrain-smoke/dome.r16");
+  assert.deepEqual(view.terrain.layers[4], terrain.layers[4]);
+  assert.equal(view.terrain.layers[7].heightmap.uri, "terrain-smoke/dome.r16");
   assert.deepEqual(view.extent, [1024, 1024]);
   assert.ok(view.resident_tiles_by_level.reduce((a, b) => a + b, 0) > 0);
   // Each level's largest measured difference from the next coarser one,
@@ -230,9 +233,9 @@ try {
   // The path's bake (decision 069) profiled the ground along its line; the
   // road lies level across, and queries report how far its edge is.
   const [road] = view.paths;
-  const line = terrain.layers[3].path.points;
-  const length = Math.hypot(150, 40) + Math.hypot(150, 110);
-  assert.ok(road && road.layer === 3 && road.baked, `the path bakes: ${JSON.stringify(view.paths)}`);
+  const line = terrain.layers[4].path.points;
+  const length = Math.hypot(150, 40) + Math.hypot(150, 110) + Math.hypot(50, 90);
+  assert.ok(road && road.layer === 4 && road.baked, `the path bakes: ${JSON.stringify(view.paths)}`);
   assert.ok(Math.abs(road.length - length) < 1e-2 && road.samples === Math.ceil(length / 4) + 1, `the profile reads its line: ${JSON.stringify(road)}`);
   assert.ok(road.steepest > 0 && road.steepest < 0.6, `the road climbs gently: ${JSON.stringify(road)}`);
   const across = [];
@@ -246,16 +249,30 @@ try {
     }
   }
   const sections = await heights(across.flat());
-  let tilt = 0;
+  let tilt = 0, level = 0;
   for (let i = 0; i < sections.length; i += 3) {
     const [center, left, right] = sections.slice(i, i + 3);
+    // Bridges (decision 072) carry the road over the hills' streams.
+    if (center.path === null) continue;
     assert.ok(Math.abs(center.path + 3) < 0.05, `the centerline lies 3 m inside the road's edges: ${JSON.stringify(center)}`);
     tilt = Math.max(tilt, Math.abs(left.height - right.height));
+    level += 1;
   }
-  assert.ok(tilt < 0.15, `the road lies level across: ${tilt} m over 4 m`);
+  assert.ok(level >= 3 && tilt < 0.15, `the road lies level across: ${tilt} m over 4 m at ${level} sections`);
   const [away] = await heights([[400, -400]]);
   assert.equal(away.path, null, "far from roads, queries report none");
   checks.push({ check: "path", length: road.length, samples: road.samples, steepest: road.steepest, cut: road.deepest_cut, fill: road.highest_fill, tilt });
+  // Decision 072: where the road would fill over the trench it bridges:
+  // the ground under the deck stays a trench, which is no road, and rays
+  // land on the deck above it.
+  assert.ok(road.bridges >= 1 && road.bridged > 15, `the road bridges the trench: ${JSON.stringify(road)}`);
+  assert.equal((await command("inspect", { component: "Terrains" })).result.value.bridges, road.bridges);
+  const trench = [430 - 512, 96 - 512];
+  const [floor] = await heights([trench]);
+  assert.equal(floor.path, null, `under its bridge the ground is no road: ${JSON.stringify(floor)}`);
+  const landing = (await command("raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
+  assert.ok(landing?.placed?.layer === 65535 && landing.point[1] > floor.height + 5, `rays land on the deck: ${JSON.stringify(landing)} over ${floor.height}`);
+  checks.push({ check: "bridge", bridged: road.bridged, deck: landing.point[1], floor: floor.height });
   // Routes (decision 069) keep within their grade between their ends.
   const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
   assert.equal(routed.terrain, "ground");

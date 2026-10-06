@@ -34,10 +34,10 @@ use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 use engine_terrain::{
-    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, ErosionStats, FileHeader,
-    FormatError, Generator, HydrologyStats, Layers, LodRanges, Mask, NoiseMask, Patch, Pyramid,
-    Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample,
-    WantedTile, decode_tile,
+    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, FileHeader,
+    FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask, Patch,
+    PathStage, Pyramid, Remap, Route, RouteOptions, Selection, TILE_STRIDE, TerrainBake, Tile,
+    TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -68,6 +68,9 @@ pub struct TerrainSurface {
     /// What the rules' placement layers stand on the terrain (decision
     /// 057), in the rules' order of asset IDs.
     pub assets: Vec<PlacementAsset>,
+    /// The material its roads' bridges (decision 072) draw with; without
+    /// one, a weathered stone.
+    pub bridge: Option<MaterialHandle>,
 }
 
 /// An object placement layers stand on a terrain (decision 057): the mesh
@@ -243,6 +246,7 @@ impl TerrainSurface {
             rules: Arc::new(rules),
             materials,
             assets: Vec::new(),
+            bridge: None,
         })
     }
 
@@ -700,6 +704,8 @@ pub struct TerrainStats {
     /// Terrains whose bakes (decisions 066 and 068) are in progress: they
     /// load no tiles until done.
     pub baking: u32,
+    /// Bridges terrains' roads span (decision 072).
+    pub bridges: u32,
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -739,6 +745,9 @@ struct TerrainState {
     bake: Option<TerrainBake>,
     hydrology: Option<HydrologyStats>,
     erosion: Option<ErosionStats>,
+    /// Its roads' bridges (decision 072), terrain-local, once every bake
+    /// is done.
+    bridges: Arc<[Bridge]>,
 }
 
 /// A terrain's bakes (decisions 066 and 068): whether one is in progress,
@@ -770,6 +779,7 @@ impl TerrainState {
             bake: None,
             hydrology: None,
             erosion: None,
+            bridges: Arc::from(Vec::new()),
         }
     }
 
@@ -1011,6 +1021,35 @@ impl Terrains {
     }
 
     /// Advances whenever any terrain's resident tiles change.
+    /// The bridges of `entity`'s roads (decision 072), terrain-local, once
+    /// its bakes are done.
+    pub fn bridges(&self, entity: Entity) -> &[Bridge] {
+        self.entries
+            .iter()
+            .find(|state| state.entity == entity)
+            .map_or(&[], |state| &state.bridges)
+    }
+
+    /// Every terrain's bridges, its origin and its bridge material.
+    pub(crate) fn bridge_sets(&self) -> impl Iterator<Item = crate::bridges::BridgeSet> + '_ {
+        self.entries.iter().map(|state| {
+            (
+                state.entity,
+                state.bridges.clone(),
+                state.terrain.origin,
+                state.terrain.surface.bridge,
+            )
+        })
+    }
+
+    /// Colliding terrains' bridges, with their origins (decision 072).
+    pub fn colliding_bridges(&self) -> impl Iterator<Item = (Entity, Vec3, &[Bridge])> {
+        self.entries
+            .iter()
+            .filter(|state| state.terrain.collision && !state.bridges.is_empty())
+            .map(|state| (state.entity, state.terrain.origin, &*state.bridges))
+    }
+
     pub fn revision(&self) -> u64 {
         self.entries
             .iter()
@@ -1056,6 +1095,11 @@ impl Terrains {
         self.frame += 1;
         let mut stats = TerrainStats {
             terrains: self.entries.len() as u32,
+            bridges: self
+                .entries
+                .iter()
+                .map(|state| state.bridges.len() as u32)
+                .sum(),
             ..TerrainStats::default()
         };
         let forward = camera.target - eye;
@@ -1199,7 +1243,26 @@ impl Terrains {
                                 Baked::Path(_) => {}
                             }
                             let index = unbaked.0;
-                            state.baked = Some(Arc::new(layers.with_baked(index, baked)));
+                            let baked = Arc::new(layers.with_baked(index, baked));
+                            if baked.unbaked().is_none() {
+                                // Its roads' bridges (decision 072), once every
+                                // bake is done; collision follows the revision.
+                                state.bridges = baked
+                                    .layers()
+                                    .iter()
+                                    .filter_map(|layer| match layer {
+                                        Layer::Path(PathStage {
+                                            baked: Some(profile),
+                                            ..
+                                        }) => Some(profile.bridges()),
+                                        _ => None,
+                                    })
+                                    .flatten()
+                                    .collect::<Vec<_>>()
+                                    .into();
+                                state.revision += 1;
+                            }
+                            state.baked = Some(baked);
                             state.bake = None;
                         }
                         continue;

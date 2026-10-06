@@ -5,16 +5,20 @@
 //! the smoothing distance into the road's own gentle grade; the layer then
 //! levels the ground across the road to that profile, easing back into the
 //! ground over the shoulders, and the `path` mask reads how far a sample
-//! lies from the nearest road's edge. A route finder lays paths for agents
-//! and games: the cheapest way between two points over the ground, steep
-//! grades and water costing more, the steepest grades refused.
+//! lies from the nearest road's edge. Where a road would fill too high
+//! over the ground or cross standing water it bridges instead (decision
+//! 072): its deck runs straight between the points where it meets the
+//! ground, arched to clear water, and the ground and water under it stay
+//! as they are. A route finder lays paths for agents and games: the
+//! cheapest way between two points over the ground, steep grades and water
+//! costing more, the steepest grades refused.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use engine_math::{max, min};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::layers::Layers;
@@ -73,6 +77,12 @@ pub struct PathLayer {
     #[serde(default = "default_smoothing")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 5000.0)))]
     pub smoothing: f32,
+    /// Meters the road would fill above the ground beyond which it bridges
+    /// instead, as it does over rivers and lakes (decision 072), 0 to 1000;
+    /// 0 never bridges.
+    #[serde(default = "default_bridge_fill")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
+    pub bridge_fill: f32,
 }
 
 fn default_width() -> f32 {
@@ -85,6 +95,38 @@ fn default_shoulder() -> f32 {
 
 fn default_smoothing() -> f32 {
     80.0
+}
+
+fn default_bridge_fill() -> f32 {
+    4.0
+}
+
+/// Meters a bridge's span reaches past where its road fills less than this
+/// over the ground: where it meets the ground.
+const ABUTMENT: f32 = 0.5;
+/// Meters between bridged stretches below which they join into one span.
+const SPAN_GAP: f32 = 12.0;
+/// Meters of water the hydrology bake's grid holds under a road beyond
+/// which it bridges.
+pub(crate) const RIVER_DEPTH: f32 = 0.25;
+/// Meters a deck clears the water under it by, and the steepest it climbs
+/// from its ends toward that (rise per meter).
+const CLEARANCE: f32 = 2.0;
+const DECK_GRADE: f32 = 0.08;
+/// Meters between a bridge's piers, at most, and the depth below its deck
+/// the ground must fall to for one to stand there.
+const PIER_SPACING: f32 = 24.0;
+const PIER_DEPTH: f32 = 3.0;
+
+/// A bridge (decision 072): its deck's centerline from one end to the
+/// other (terrain-local x and z, the road's height as y) every few meters,
+/// its road's width, and its piers: where each stands on its centerline
+/// (terrain-local, at the deck's height) and the ground or water bed there.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bridge {
+    pub deck: Vec<Vec3>,
+    pub width: f32,
+    pub piers: Vec<(Vec3, f32)>,
 }
 
 impl PathLayer {
@@ -120,8 +162,9 @@ impl PathLayer {
 }
 
 /// What a path's bake found: meters along it, the points its profile read
-/// the ground at, its steepest grade (rise per meter), and the most it
-/// cuts into and fills over the ground along its line, in meters.
+/// the ground at, its steepest grade (rise per meter), the most it cuts
+/// into and fills over the ground along its line off its bridges (meters),
+/// and its bridges and the meters they span.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct PathStats {
     pub length: f32,
@@ -129,17 +172,22 @@ pub struct PathStats {
     pub steepest: f32,
     pub deepest_cut: f32,
     pub highest_fill: f32,
+    pub bridges: usize,
+    pub bridged: f32,
 }
 
 /// A path's profile: its line, the meters along it at each point, the
-/// road's height every `step` meters along it, and a grid of the segments
-/// near each cell.
+/// road's height and the ground's every `step` meters along it, the
+/// stretches it bridges (meters along it), and a grid of the segments near
+/// each cell.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathProfile {
     line: Vec<Vec2>,
     along: Vec<f32>,
     step: f32,
     heights: Vec<f32>,
+    ground: Vec<f32>,
+    spans: Vec<[f32; 2]>,
     half: f32,
     shoulder: f32,
     // Square cells `cell` meters wide from `min`, `columns` across, each
@@ -156,8 +204,9 @@ pub struct PathProfile {
 
 impl PathProfile {
     /// The profile of `layer` from the ground `raw` read at its profile
-    /// points, `step` meters apart.
-    pub(crate) fn new(layer: &PathLayer, step: f32, raw: &[f32]) -> Self {
+    /// points, `step` meters apart, and the surface of any water standing
+    /// there.
+    pub(crate) fn new(layer: &PathLayer, step: f32, raw: &[f32], water: &[Option<f32>]) -> Self {
         // Averaged over the smoothing distance, twice: a tent along the road.
         let radius = if step > 0.0 {
             (layer.smoothing / (2.0 * step)).round() as usize
@@ -173,18 +222,27 @@ impl PathProfile {
                 })
                 .collect()
         };
-        let heights = if radius == 0 {
+        let mut heights = if radius == 0 {
             raw.to_vec()
         } else {
             average(&average(raw))
         };
+        let spans = bridge(layer, step, raw, water, &mut heights);
         let mut stats = PathStats {
             samples: raw.len(),
+            bridges: spans.len(),
+            bridged: spans.iter().map(|[start, end]| end - start).sum(),
             ..PathStats::default()
         };
         for (index, (&road, &ground)) in heights.iter().zip(raw).enumerate() {
-            stats.deepest_cut = max(stats.deepest_cut, ground - road);
-            stats.highest_fill = max(stats.highest_fill, road - ground);
+            let along = index as f32 * step;
+            if !spans
+                .iter()
+                .any(|&[start, end]| (start..=end).contains(&along))
+            {
+                stats.deepest_cut = max(stats.deepest_cut, ground - road);
+                stats.highest_fill = max(stats.highest_fill, road - ground);
+            }
             if index > 0 && step > 0.0 {
                 stats.steepest = max(stats.steepest, (road - heights[index - 1]).abs() / step);
             }
@@ -241,6 +299,8 @@ impl PathProfile {
             along,
             step,
             heights,
+            ground: raw.to_vec(),
+            spans,
             half,
             shoulder: layer.shoulder,
             radius: reach,
@@ -275,9 +335,83 @@ impl PathProfile {
         self.heights[index] + (self.heights[next] - self.heights[index]) * t
     }
 
-    /// The distance from the line to `point` and the road's height at the
-    /// line's nearest point, within masks' reach.
-    pub(crate) fn nearest(&self, point: Vec2) -> Option<(f32, f32)> {
+    /// Whether `along` meters along the road lies on a bridge.
+    #[inline]
+    fn bridged(&self, along: f32) -> bool {
+        self.spans
+            .iter()
+            .any(|&[start, end]| along > start && along < end)
+    }
+
+    /// The road's line `along` meters along it.
+    fn point_along(&self, along: f32) -> Vec2 {
+        let segment = self
+            .along
+            .partition_point(|&value| value <= along)
+            .saturating_sub(1)
+            .min(self.line.len() - 2);
+        let run = self.along[segment + 1] - self.along[segment];
+        let t = if run > 0.0 {
+            min(max((along - self.along[segment]) / run, 0.0), 1.0)
+        } else {
+            0.0
+        };
+        self.line[segment] + (self.line[segment + 1] - self.line[segment]) * t
+    }
+
+    /// The ground's height `along` meters along the road, as the bake read
+    /// it.
+    fn ground_along(&self, along: f32) -> f32 {
+        if self.step <= 0.0 {
+            return self.ground[0];
+        }
+        let at = max(along / self.step, 0.0);
+        let index = (at as usize).min(self.ground.len() - 1);
+        let next = (index + 1).min(self.ground.len() - 1);
+        let t = min(at - index as f32, 1.0);
+        self.ground[index] + (self.ground[next] - self.ground[index]) * t
+    }
+
+    /// Its bridges (decision 072): each deck's centerline every few meters,
+    /// and piers no more than [`PIER_SPACING`] apart wherever the ground
+    /// falls [`PIER_DEPTH`] below the deck.
+    pub fn bridges(&self) -> Vec<Bridge> {
+        self.spans
+            .iter()
+            .map(|&[start, end]| {
+                let length = end - start;
+                let count = max((length / PROFILE_STEP).ceil(), 1.0) as usize;
+                let deck = (0..=count)
+                    .map(|index| {
+                        let along = start + length * index as f32 / count as f32;
+                        let point = self.point_along(along);
+                        Vec3::new(point.x, self.height_along(along), point.y)
+                    })
+                    .collect();
+                let bays = max((length / PIER_SPACING).ceil(), 1.0) as usize;
+                let piers = (1..bays)
+                    .filter_map(|index| {
+                        let along = start + length * index as f32 / bays as f32;
+                        let (top, ground) = (self.height_along(along), self.ground_along(along));
+                        (top - ground >= PIER_DEPTH).then(|| {
+                            let point = self.point_along(along);
+                            (Vec3::new(point.x, top, point.y), ground)
+                        })
+                    })
+                    .collect();
+                Bridge {
+                    deck,
+                    width: 2.0 * self.half,
+                    piers,
+                }
+            })
+            .collect()
+    }
+
+    /// The distance from the line to `point`, the road's height at the
+    /// line's nearest point and whether a bridge carries it there, within
+    /// masks' reach.
+    pub(crate) fn nearest(&self, point: Vec2) -> Option<(f32, f32, bool)> {
         let cell = ((point - self.min) / self.cell).floor();
         if !(cell.x >= 0.0 && cell.y >= 0.0) {
             return None;
@@ -298,7 +432,7 @@ impl PathProfile {
         }
         let (distance, segment, t) = best.filter(|(distance, _, _)| *distance < self.radius)?;
         let along = self.along[segment] + (self.along[segment + 1] - self.along[segment]) * t;
-        Some((distance, self.height_along(along)))
+        Some((distance, self.height_along(along), self.bridged(along)))
     }
 
     /// How much the road levels the ground `distance` meters from its line:
@@ -309,15 +443,89 @@ impl PathProfile {
     }
 
     /// The road as `point` sees it: meters from its line and half its
-    /// width, far beyond masks' reach.
+    /// width; far beyond masks' reach and under bridges, whose ground the
+    /// road leaves alone.
     #[inline]
     pub fn sample(&self, point: Vec2) -> PathSample {
-        self.nearest(point)
-            .map_or(PathSample::FAR, |(distance, _)| PathSample {
+        match self.nearest(point) {
+            Some((distance, _, false)) => PathSample {
                 distance,
                 half: self.half,
-            })
+            },
+            _ => PathSample::FAR,
+        }
     }
+}
+
+/// Finds where `layer`'s road, of heights `heights` over the ground `raw`
+/// (`step` meters apart, water standing at `water`), bridges, and lays its
+/// decks into `heights`; returns the bridged stretches, meters along it.
+fn bridge(
+    layer: &PathLayer,
+    step: f32,
+    raw: &[f32],
+    water: &[Option<f32>],
+    heights: &mut [f32],
+) -> Vec<[f32; 2]> {
+    if layer.bridge_fill <= 0.0 || step <= 0.0 || heights.len() < 3 {
+        return Vec::new();
+    }
+    let count = heights.len();
+    let wet = |index: usize| water.get(index).copied().flatten();
+    let fill = |index: usize| heights[index] - raw[index];
+    // Stretches filling too high or crossing water, reaching out to where
+    // the road meets the ground.
+    let mut runs: Vec<[usize; 2]> = Vec::new();
+    let mut index = 0;
+    while index < count {
+        if !(fill(index) > layer.bridge_fill || wet(index).is_some()) {
+            index += 1;
+            continue;
+        }
+        let mut end = index;
+        while end + 1 < count && (fill(end + 1) > layer.bridge_fill || wet(end + 1).is_some()) {
+            end += 1;
+        }
+        let mut first = index;
+        while first > 0 && (fill(first - 1) > ABUTMENT || wet(first - 1).is_some()) {
+            first -= 1;
+        }
+        let mut last = end;
+        while last + 1 < count && (fill(last + 1) > ABUTMENT || wet(last + 1).is_some()) {
+            last += 1;
+        }
+        // Reaching the ends of the road, it starts or ends on the bridge.
+        match runs.last_mut() {
+            Some(previous) if (first as f32 - previous[1] as f32) * step < SPAN_GAP => {
+                previous[1] = last;
+            }
+            _ => runs.push([first, last]),
+        }
+        index = last + 1;
+    }
+    let mut spans = Vec::with_capacity(runs.len());
+    for [first, last] in runs {
+        if last <= first {
+            continue;
+        }
+        // A straight deck between its ends, climbing from each at no more
+        // than its grade toward a level that clears the water under it.
+        let (from, to) = (heights[first], heights[last]);
+        let line =
+            |index: usize| from + (to - from) * (index - first) as f32 / (last - first) as f32;
+        let top = (first..=last)
+            .filter_map(|index| wet(index).map(|surface| surface + CLEARANCE))
+            .fold(f32::NEG_INFINITY, max);
+        for (index, height) in heights.iter_mut().enumerate().take(last + 1).skip(first) {
+            let ramp = min(
+                from + DECK_GRADE * (index - first) as f32 * step,
+                to + DECK_GRADE * (last - index) as f32 * step,
+            );
+            *height = max(line(index), min(top, ramp));
+        }
+        spans.push([first as f32 * step, last as f32 * step]);
+    }
+    spans
 }
 
 /// The distance from `point` to the segment from `a` to `b`, and how far

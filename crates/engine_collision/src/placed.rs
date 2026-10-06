@@ -4,14 +4,16 @@
 //! as renderers set it. Rays, overlaps and shape casts test them after the
 //! colliders; hits report the terrain's entity and the object's placement
 //! layer and asset. Objects standing far away (decision 061) never collide.
+//! Bridges' decks (decision 072) collide as a box a deck segment, reporting
+//! layer [`BRIDGE_LAYER`] and their bridge's index as the asset.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::terrain_data::TILE_QUADS;
-use engine_core::{PlacedShape, Terrains, Tile};
-use glam::{Mat4, Vec2, Vec3};
+use engine_core::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, Terrains, Tile};
+use glam::{Mat4, Quat, Vec2, Vec3};
 
 use crate::bvh::Bvh;
 use crate::geometry::{AffineShape, Bounds, NarrowScratch, intersects};
@@ -19,6 +21,9 @@ use crate::{
     ColliderShape, CollisionError, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit,
     SensorFilter, ShapeCastOptions, ShapeHit,
 };
+
+/// The placement layer bridges' decks (decision 072) report hits in.
+pub const BRIDGE_LAYER: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
 struct Object {
@@ -80,6 +85,43 @@ impl PlacedShapes {
     }
 
     fn collect(&mut self, terrains: &Terrains) {
+        // Bridges' decks: a box a segment, as the deck's slab and road stand.
+        for (entity, origin, bridges) in terrains.colliding_bridges() {
+            for (index, bridge) in bridges.iter().enumerate() {
+                for pair in bridge.deck.windows(2) {
+                    let (a, b) = (origin + pair[0], origin + pair[1]);
+                    let along = b - a;
+                    let length = along.length();
+                    if length < 1.0e-3 {
+                        continue;
+                    }
+                    let center = 0.5 * (a + b) + Vec3::Y * (0.5 * (DECK_RISE - DECK_DEPTH));
+                    let model = Mat4::from_rotation_translation(
+                        Quat::from_rotation_arc(Vec3::X, along / length),
+                        center,
+                    );
+                    let shape = ColliderShape::Cuboid {
+                        half_extents: Vec3::new(
+                            0.5 * length,
+                            0.5 * (DECK_RISE + DECK_DEPTH),
+                            0.5 * bridge.width + DECK_MARGIN,
+                        ),
+                    };
+                    let Ok(affine) = AffineShape::new(shape, model) else {
+                        continue;
+                    };
+                    self.objects.push(Object {
+                        entity,
+                        part: PlacedPart {
+                            layer: BRIDGE_LAYER,
+                            asset: index.min(usize::from(u16::MAX)) as u16,
+                        },
+                        layers: CollisionLayers::default(),
+                        affine,
+                    });
+                }
+            }
+        }
         let mut grounds: HashMap<Entity, Ground<'_>> = HashMap::new();
         for (entity, origin, tile) in terrains.collision_tiles() {
             let key = tile.key();

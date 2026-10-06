@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::erosion::{Erosion, ErosionLayer, erode_round, finish};
 use crate::hydrology::{Hydrology, HydrologyLayer, bake};
 use crate::layers::{Layer, Layers};
-use crate::path::{PathLayer, PathProfile};
+use crate::path::{PathLayer, PathProfile, RIVER_DEPTH};
 use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
 /// What a layer bakes.
@@ -56,11 +56,12 @@ pub struct TerrainBake {
     // Erosion: the heights it started from, and rounds done.
     original: Option<Vec<f32>>,
     rounds: u32,
-    // Paths: the points the ground is read at, the meters between them and
-    // the ground read so far.
+    // Paths: the points the ground is read at, the meters between them, and
+    // the ground and any water standing on it read so far.
     profile: Vec<glam::Vec2>,
     step: f32,
     ground: Vec<f32>,
+    water: Vec<Option<f32>>,
 }
 
 impl TerrainBake {
@@ -96,6 +97,7 @@ impl TerrainBake {
             original: None,
             rounds: 0,
             ground: Vec::with_capacity(profile.len()),
+            water: Vec::with_capacity(profile.len()),
             profile,
             step,
         }
@@ -122,14 +124,26 @@ impl TerrainBake {
                     (point.x / spacing).round() as i64,
                     (point.y / spacing).round() as i64,
                 ];
-                self.ground
-                    .push(self.below.sample_height(pyramid, 0, sample));
+                let ground = self.below.sample_height(pyramid, 0, sample);
+                // Rivers and lakes the hydrology bake (decision 067) found
+                // there, on its own grid: streams narrower than its samples
+                // can run below the finest ground's detail.
+                let water = self.below.hydrology().and_then(|hydrology| {
+                    hydrology
+                        .water
+                        .at(point.x, point.y)
+                        .filter(|&(_, depth)| depth > RIVER_DEPTH)
+                        .map(|(surface, _)| surface)
+                });
+                self.ground.push(ground);
+                self.water.push(water);
                 *budget = budget.saturating_sub(cost);
             }
             return Some(Baked::Path(PathProfile::new(
                 layer,
                 self.step,
                 &self.ground,
+                &self.water,
             )));
         }
         while *budget > 0 {

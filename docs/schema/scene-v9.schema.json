@@ -845,6 +845,14 @@
       "description": "A road or track along the ground (decision 069).",
       "type": "object",
       "properties": {
+        "bridge_fill": {
+          "description": "Meters the road would fill above the ground beyond which it bridges\ninstead, as it does over rivers and lakes (decision 072), 0 to 1000;\n0 never bridges.",
+          "type": "number",
+          "format": "float",
+          "default": 4.0,
+          "maximum": 1000.0,
+          "minimum": 0.0
+        },
         "points": {
           "description": "Terrain-local meters along x and z the road runs through, 2 to\n4096 of them.",
           "type": "array",
@@ -3624,6 +3632,13 @@
           "items": {
             "$ref": "#/$defs/Biome"
           }
+        },
+        "bridge": {
+          "description": "ID of the document material its roads' bridges (decision 072) draw\nwith; omitted, a weathered stone.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "materials": {
           "type": "array",

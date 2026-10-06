@@ -6,6 +6,7 @@
 
 mod animation;
 mod atmosphere;
+mod bridges;
 mod clock;
 mod contact_shadows;
 mod culling;
@@ -39,6 +40,7 @@ pub use animation::{AnimationPlayer, AnimationSystems};
 pub use atmosphere::Atmosphere;
 pub use bevy_app::{self, App, Plugin};
 pub use bevy_ecs;
+pub use bridges::{DECK_DEPTH, DECK_MARGIN, DECK_RISE};
 pub use clock::{EngineConfig, FixedTime, FrameReport, FrameTime};
 pub use contact_shadows::ContactShadows;
 pub use decals::{Decal, DecalBlend, Decals, RenderDecal};
@@ -698,8 +700,9 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         mode.validate()?;
         self.complete_pending_tick();
-        // Spline meshes (decision 071) build their chunks before transforms
-        // refresh, so paused frames draw them too.
+        // Bridges (decision 072) and spline meshes (decision 071) spawn and
+        // build before transforms refresh, so paused frames draw them too.
+        bridges::sync(self.app.world_mut());
         spline_mesh::build(self.app.world_mut());
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut(), mode);
@@ -730,6 +733,7 @@ impl Engine {
             // consumers keep presenting the inputs they applied before.
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
         } else {
+            bridges::sync(self.app.world_mut());
             spline_mesh::build(self.app.world_mut());
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);

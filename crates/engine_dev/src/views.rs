@@ -27,8 +27,9 @@ pub struct TerrainView {
 
 /// A path layer (decision 069): its index in the stack, whether its
 /// profile is baked, and once baked its length (meters), the points its
-/// profile read the ground at, its steepest grade (rise per meter) and the
-/// most it cuts into and fills over the ground along its line (meters).
+/// profile read the ground at, its steepest grade (rise per meter), the
+/// most it cuts into and fills over the ground along its line off bridges
+/// (meters), and its bridges (decision 072) and the meters they span.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct PathView {
@@ -39,6 +40,8 @@ pub struct PathView {
     pub steepest: Option<f32>,
     pub deepest_cut: Option<f32>,
     pub highest_fill: Option<f32>,
+    pub bridges: Option<usize>,
+    pub bridged: Option<f32>,
 }
 
 /// A terrain's erosion bake (decision 068): whether a bake is in progress
@@ -80,6 +83,8 @@ pub struct TerrainsView {
     pub fallback_patches: u32,
     /// Terrains whose bakes (decisions 066 and 068) are in progress.
     pub baking: u32,
+    /// Bridges terrains' roads span (decision 072).
+    pub bridges: u32,
 }
 
 /// An animation player (decision 035) in the shape of a scene version 8

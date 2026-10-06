@@ -46,8 +46,8 @@ pub use layers::{
     NoiseLayer, PathStage, Stamp, StampOp,
 };
 pub use path::{
-    HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PROFILE_STEP, PathLayer, PathProfile,
-    PathSample, PathStats, Route, RouteOptions, route,
+    Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PROFILE_STEP, PathLayer,
+    PathProfile, PathSample, PathStats, Route, RouteOptions, route,
 };
 pub use placement::{FarPlacement, Placed, PlacementChoice, PlacementLayer};
 pub use pyramid::{Pyramid, PyramidError, TileKey};

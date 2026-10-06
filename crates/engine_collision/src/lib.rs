@@ -7,6 +7,7 @@ mod terrain;
 mod types;
 mod world;
 
+pub use placed::BRIDGE_LAYER;
 pub use types::*;
 pub use world::{CollisionWorld, SensorEvents, refresh_collision_world};
 
