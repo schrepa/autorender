@@ -3875,14 +3875,14 @@
           "description": "Meters from the camera within which the ground's relief (decision\n082) shows, its view rays marching through its materials' heights,\n0 (none) to 200; and the most steps a ray takes, 2 to 64.",
           "type": "number",
           "format": "float",
-          "default": 40.0,
+          "default": 24.0,
           "maximum": 200.0,
           "minimum": 0.0
         },
         "relief_steps": {
           "type": "integer",
           "format": "uint32",
-          "default": 12,
+          "default": 8,
           "maximum": 64,
           "minimum": 2
         },
