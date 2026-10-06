@@ -138,6 +138,7 @@ impl Renderer {
                 // Terrain (decision 051) stands still: probes capture it.
                 self.draw_terrain_face(&mut pass, face, probe.center, lights.is_some());
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
+                pass.set_bind_group(1, self.clouds.sky_group(), &[]);
                 pass.draw(0..3, 0..1);
             }
             drawn += 1;

@@ -102,11 +102,20 @@ pub fn create_workload_with(
         }
         StressScene::Dense => dense::populate(world, &config, files)?,
     };
-    // A brisk wind sways the highlands' grass and spruces (decision 058).
+    // A brisk wind sways the highlands' grass and spruces (decision 058),
+    // and drives clouds (decision 084) over them twice as fast aloft.
     if config.scene == StressScene::Highlands {
         world.insert_resource(Wind {
             velocity: [5.5, 2.0],
             gusts: 0.55,
+        });
+        world.insert_resource(Clouds {
+            coverage: 0.38,
+            base: 1500.0,
+            thickness: 1500.0,
+            wind: [11.0, 4.0],
+            shadows: 0.6,
+            ..Clouds::default()
         });
     }
     // Shadows (decision 020) keep the whole scene in one map, seen from

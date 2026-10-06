@@ -193,6 +193,9 @@ pub struct RenderStats {
     /// hold them).
     pub deformation_stamps: u32,
     pub deformation_texels: u32,
+    /// Rows of the clouds' dome (decision 084) this frame marched: all of
+    /// them on exact frames, a slice on ordinary ones, none without clouds.
+    pub cloud_rows: u32,
     /// Placed objects' impostors baked (decision 060), which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.
@@ -223,6 +226,8 @@ mod gpu_data;
 
 #[cfg(target_arch = "wasm32")]
 mod batches;
+#[cfg(target_arch = "wasm32")]
+mod clouds;
 #[cfg(target_arch = "wasm32")]
 mod decals;
 #[cfg(target_arch = "wasm32")]

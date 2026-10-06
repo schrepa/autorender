@@ -11,7 +11,7 @@
 //! atmosphere is authored differently, as a preset with overrides.
 
 use engine_core::{
-    AmbientOcclusion, Atmosphere, Bloom, ContactShadows, Decals, Deformation, Environment,
+    AmbientOcclusion, Atmosphere, Bloom, Clouds, ContactShadows, Decals, Deformation, Environment,
     GroundCover, InvalidSetting, LevelOfDetail, LocalLights, Occupancy, Ocean, Particles,
     ReflectionProbes, Reflections, Refraction, Shadows, SunShafts, TerrainSettings,
     VirtualGeometry, Water, Wind,
@@ -283,6 +283,7 @@ section!(ContactShadows, since 9, opt_in false);
 section!(Water, since 9, opt_in false);
 section!(Ocean, since 9, opt_in false);
 section!(Deformation, since 9, opt_in false);
+section!(Clouds, since 9, opt_in true);
 
 /// Receives an environment's effect sections ([`SceneEnvironment::visit`]),
 /// each with its authored name.
@@ -351,6 +352,9 @@ pub struct SceneEnvironment {
     /// Tracks deformers press into deformable ground (decision 083).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deformation: Option<Deformation>,
+    /// A layer of clouds over the world (decision 084).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clouds: Option<Clouds>,
 }
 
 impl SceneEnvironment {
@@ -381,6 +385,7 @@ impl SceneEnvironment {
             water: Some(environment.water),
             ocean: Some(environment.ocean),
             deformation: Some(environment.deformation),
+            clouds: Some(environment.clouds),
         }
     }
 
@@ -407,6 +412,7 @@ impl SceneEnvironment {
         visitor.section("water", self.water);
         visitor.section("ocean", self.ocean);
         visitor.section("deformation", self.deformation);
+        visitor.section("clouds", self.clouds);
     }
 
     /// The names of the sections present, the atmosphere first.

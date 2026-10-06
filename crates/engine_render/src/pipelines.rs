@@ -114,6 +114,7 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
             view_dimension: match view {
                 View::D2 => wgpu::TextureViewDimension::D2,
                 View::D2Array => wgpu::TextureViewDimension::D2Array,
+                View::D3 => wgpu::TextureViewDimension::D3,
                 View::Cube => wgpu::TextureViewDimension::Cube,
                 View::CubeArray => wgpu::TextureViewDimension::CubeArray,
             },
@@ -123,6 +124,11 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
             access: wgpu::StorageTextureAccess::WriteOnly,
             format,
             view_dimension: wgpu::TextureViewDimension::D2,
+        },
+        Kind::Storage3d(format) => wgpu::BindingType::StorageTexture {
+            access: wgpu::StorageTextureAccess::WriteOnly,
+            format,
+            view_dimension: wgpu::TextureViewDimension::D3,
         },
         Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
             Sampling::Filtering => wgpu::SamplerBindingType::Filtering,

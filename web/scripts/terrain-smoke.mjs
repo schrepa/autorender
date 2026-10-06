@@ -672,6 +672,37 @@ try {
     await command("camera", overview);
     checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
   }
+  // Clouds (decision 084) are opt-in: the fixture has none until the
+  // environment control adds a layer; exact frames march the whole dome,
+  // which the sky shows; no coverage marches nothing, and settings out of
+  // range are refused.
+  {
+    const up = { position: [0, 60, 0], target: [300, 400, 200], vertical_fov_radians: 1.0, near: 0.5, far: 4000 };
+    await command("camera", up);
+    const clear = await capture("sky-clear");
+    const layer = { enabled: true, coverage: 0.6, base: 600, thickness: 900, density: 1, wind: [8, 3], scale: 2000, seed: 3, shadows: 0.75, resolution: 1024, slices: 16 };
+    const clouded = (await command("environment", { clouds: layer })).result.rendering;
+    assert.equal(clouded.cloud_rows, 256, `exact frames march the whole dome: ${clouded.cloud_rows}`);
+    const view = (await command("inspect", { component: "Clouds" })).result.value;
+    assert.ok(Math.abs(view.coverage - 0.6) < 1e-6, `coverage reads back: ${view.coverage}`);
+    const cloudy = await capture("sky-clouds");
+    const cloudPixels = await differentPixels(page, [clear, cloudy]);
+    assert.ok(cloudPixels.changed > 20000, `clouds show in the sky: ${cloudPixels.changed} pixels`);
+    // Their shadows (decision 084) fall on the ground the sun lights.
+    await command("camera", { position: [0, 400, 1], target: [0, 30, 0], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
+    const shaded = await capture("cloud-shadows");
+    await command("environment", { clouds: { ...layer, shadows: 0 } });
+    const unshaded = await capture("no-cloud-shadows");
+    const shadowPixels = await differentPixels(page, [shaded, unshaded]);
+    assert.ok(shadowPixels.changed > 20000, `clouds shade the ground: ${shadowPixels.changed} pixels`);
+    const none = (await command("environment", { clouds: { ...layer, coverage: 0 } })).result.rendering;
+    assert.equal(none.cloud_rows, 0, "no coverage marches nothing");
+    const odd = await command("environment", { clouds: { ...layer, resolution: 1000 } }, false);
+    assert.equal(odd.error.path, "$.clouds.resolution");
+    await command("environment", { clouds: { ...layer, enabled: false } });
+    await command("camera", overview);
+    checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed });
+  }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's

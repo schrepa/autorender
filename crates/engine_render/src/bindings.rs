@@ -51,6 +51,7 @@ pub(crate) enum Sample {
 pub(crate) enum View {
     D2,
     D2Array,
+    D3,
     Cube,
     CubeArray,
 }
@@ -84,6 +85,8 @@ pub(crate) enum Kind {
     },
     /// A 2D texture of this format shaders write.
     Storage(wgpu::TextureFormat),
+    /// A 3D texture of this format shaders write.
+    Storage3d(wgpu::TextureFormat),
     Sampler(Sampling),
 }
 
@@ -194,7 +197,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
 
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
-use View::{Cube, CubeArray, D2, D2Array};
+use View::{Cube, CubeArray, D2, D2Array, D3};
 use wgpu::TextureFormat::{R32Float, Rgba8Snorm, Rgba8Unorm, Rgba16Float};
 
 const C: Stages = Stages::COMPUTE;
@@ -249,6 +252,9 @@ pub(crate) const CAMERA: Table = Table {
         texture(17, "occupancy_heights", Unfilterable, D2, F),
         // The kept shadow levels (decision 065), one layer each.
         texture(18, "kept_levels", Depth, D2Array, F),
+        // Clouds' shadows (decision 084): a uniform, as the terrain's
+        // fragments read all the storage buffers they may.
+        uniform_of(19, "cloud_shadows", crate::clouds::CLOUD_SHADOW_BYTES, F),
     ],
 };
 
@@ -616,6 +622,35 @@ pub(crate) const TERRAIN: Table = Table {
     ],
 };
 
+/// The clouds' noise volume (decision 084; `clouds.wgsl`), made once.
+pub(crate) const CLOUD_NOISE: Table = Table {
+    label: "engine/cloud-noise-layout",
+    bindings: &[bind(4, "noise_out", Kind::Storage3d(Rgba8Unorm), C)],
+};
+
+/// The clouds' march into their dome (decision 084; `clouds.wgsl`): the
+/// layer, sun and sky, the noise volume and its sampler, and the dome.
+pub(crate) const CLOUD_MARCH: Table = Table {
+    label: "engine/cloud-march-layout",
+    bindings: &[
+        uniform_of(0, "clouds", crate::clouds::CLOUD_UNIFORM_BYTES, C),
+        texture(1, "noise_volume", Float, D3, C),
+        sampler(2, "noise_sampler", Filtering, C),
+        bind(3, "dome", Kind::Storage(Rgba16Float), C),
+        write(5, "shadow_cells", C),
+    ],
+};
+
+/// Group 1 of the sky's pipelines (decision 084; `meshes/sky.wgsl`): the
+/// clouds' dome and its sampler.
+pub(crate) const CLOUD_SKY: Table = Table {
+    label: "engine/cloud-sky-layout",
+    bindings: &[
+        texture(38, "sky_clouds", Float, D2, F),
+        sampler(39, "sky_cloud_sampler", Filtering, F),
+    ],
+};
+
 /// Runtime deformation's map (decision 083; `deformation.wgsl`): each job's
 /// uniform at a dynamic offset, the stamps it presses and the map.
 pub(crate) const DEFORMATION: Table = Table {
@@ -873,7 +908,12 @@ pub(crate) const PARTICLES: Table = Table {
 /// The environment maps' sky (decision 043; `environment.wgsl`).
 pub(crate) const ENVIRONMENT_SKY: Table = Table {
     label: "engine/environment-sky-layout",
-    bindings: &[uniform(1, "lighting", F)],
+    bindings: &[
+        uniform(1, "lighting", F),
+        // The clouds' dome (decision 084).
+        texture(38, "environment_clouds", Float, D2, F),
+        sampler(39, "environment_cloud_sampler", Filtering, F),
+    ],
 };
 
 /// Each environment level down from the level above it.

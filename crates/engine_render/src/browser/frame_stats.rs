@@ -341,6 +341,7 @@ impl Renderer {
             } else {
                 0
             },
+            cloud_rows: self.clouds.rows,
             deformation_stamps: self.terrain.deformation.pressed,
             deformation_texels: self.terrain.deformation.texels,
             placed_far_objects: self.scatter_draws.far_objects(),
@@ -454,7 +455,9 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_environment_bytes",
-            (self.environment.capacity_bytes() + self.probes.capacity_bytes()) as f64,
+            (self.environment.capacity_bytes()
+                + self.probes.capacity_bytes()
+                + self.clouds.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_virtual_bytes",

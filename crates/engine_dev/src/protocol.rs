@@ -1,7 +1,7 @@
 use engine_core::{
-    AmbientOcclusion, Bloom, ContactShadows, Decals, Deformation, GroundCover, LevelOfDetail,
-    LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections, Refraction, Shadows,
-    SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
+    AmbientOcclusion, Bloom, Clouds, ContactShadows, Decals, Deformation, GroundCover,
+    LevelOfDetail, LocalLights, Occupancy, Ocean, Particles, ReflectionProbes, Reflections,
+    Refraction, Shadows, SunShafts, TerrainSettings, VirtualGeometry, Water, Wind,
 };
 use engine_scene::SceneAtmosphere;
 use serde::{Deserialize, Serialize};
@@ -386,6 +386,8 @@ pub enum BrowserControl {
         ocean: Option<Ocean>,
         #[serde(default)]
         deformation: Option<Deformation>,
+        #[serde(default)]
+        clouds: Option<Clouds>,
     },
     /// Temporarily set terrain's level of detail and view (decision 051) and
     /// render while paused: `pixel_error` replaces the settings' (1 to

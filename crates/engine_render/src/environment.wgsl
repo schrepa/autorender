@@ -57,10 +57,19 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
     return normalize(direction);
 }
 
+// The clouds' dome (decision 084) and its sampler: a clear one without
+// clouds.
+@group(0) @binding(38) var environment_clouds: texture_2d<f32>;
+@group(0) @binding(39) var environment_cloud_sampler: sampler;
+
 // The sky's light (without the sun's disc, whose highlights surfaces
-// shade themselves) in each direction of the radiance cube's first level.
+// shade themselves) behind its clouds in each direction of the radiance
+// cube's first level.
 fn face_sky(face: u32, ndc: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(haze(face_direction(face, ndc)), 1.0);
+    let direction = face_direction(face, ndc);
+    let cloud = textureSampleLevel(environment_clouds, environment_cloud_sampler,
+        cloud_dome_uv(direction), 0.0);
+    return vec4<f32>(behind_clouds(haze(direction), cloud, direction), 1.0);
 }
 
 @fragment

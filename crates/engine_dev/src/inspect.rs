@@ -562,6 +562,9 @@ fn section_description(name: &str) -> &'static str {
         "ocean" => {
             "The sea (decision 076): an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
         }
+        "clouds" => {
+            "Clouds (decision 084): a layer of cumulus over the world, drifting with the wind. Whether it draws, how much of the sky it covers, its base height and thickness, density, wind, the meters across its largest shapes, seed, how much sun its shadows take, the dome's texels around the horizon and the frames over which ordinary frames march the dome (exact frames march all of it). Opt-in: missing means a clear sky. The rendering observation reports the dome's rows marched."
+        }
         "deformation" => {
             "Runtime deformation (decision 083): deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
         }
