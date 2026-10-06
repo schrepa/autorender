@@ -32,6 +32,7 @@ fn main() {
         "Atmosphere": schemars::schema_for!(engine_scene::SceneAtmosphere),
         "Environment": schemars::schema_for!(engine_scene::SceneEnvironment),
         "Decal": schemars::schema_for!(views::DecalView),
+        "SplineMesh": schemars::schema_for!(views::SplineMeshView),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "Terrain": schemars::schema_for!(views::TerrainView),
         "Terrains": schemars::schema_for!(views::TerrainsView),

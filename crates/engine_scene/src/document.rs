@@ -616,6 +616,10 @@ pub struct SceneObject {
     /// 051). Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<crate::SceneTerrain>,
+    /// One of this document's meshes bent along a curve (decision 071).
+    /// Requires version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spline: Option<crate::SceneSpline>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

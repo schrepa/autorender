@@ -117,6 +117,25 @@ pub struct DecalView {
     pub fade_degrees: f32,
 }
 
+/// A spline mesh (decision 071) in the shape of a scene version 9 `spline`
+/// field (`engine_scene::SceneSpline::from_runtime`), and what it built:
+/// the curve's length in meters, the copies of its mesh along it, its
+/// chunks and their vertices, or why it built nothing.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct SplineMeshView {
+    pub points: Vec<[f32; 3]>,
+    /// The mesh's and material's authored IDs; None when no scene instance
+    /// owns them.
+    pub mesh: Option<String>,
+    pub material: Option<String>,
+    pub length: Option<f32>,
+    pub copies: Option<u32>,
+    pub chunks: Option<usize>,
+    pub vertices: Option<u32>,
+    pub error: Option<String>,
+}
+
 /// A skin (decision 036): its joints' authored entity IDs.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

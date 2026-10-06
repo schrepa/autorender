@@ -17,6 +17,7 @@ mod instance;
 mod lighting;
 mod material;
 mod probe;
+mod spline;
 mod terrain;
 mod texture;
 mod validation;
@@ -47,6 +48,7 @@ pub use material::{
     SceneWrap,
 };
 pub use probe::SceneReflectionProbe;
+pub use spline::SceneSpline;
 pub use terrain::{
     SceneHeightmap, SceneTerrain, SceneTerrainAsset, SceneTerrainLayer, SceneTerrainLod,
     SceneTerrainMaterial, SceneTerrainSurface,
