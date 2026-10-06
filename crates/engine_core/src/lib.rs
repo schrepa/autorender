@@ -99,7 +99,7 @@ pub use ocean::{
 pub use particles::{
     MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
 };
-pub use probes::{ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
+pub use probes::{Interior, ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
 pub use retained_render::{PoseRows, RenderFrame};
 pub use scene::{
     Camera, Cube, InputState, Mesh3d, RenderInstance, RenderMaterial, RenderMesh, RenderSnapshot,
@@ -882,7 +882,8 @@ pub mod prelude {
     pub use crate::{Decal, DecalBlend, Decals};
     pub use crate::{FixedPostSimulation, FixedPreSimulation};
     pub use crate::{
-        LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe, VirtualGeometry,
+        Interior, LevelOfDetail, ReflectionProbe, ReflectionProbes, RenderReflectionProbe,
+        VirtualGeometry,
     };
     pub use crate::{
         LocalLight, LocalLights, MAX_SHADOW_CASCADES, ParticleBlend, ParticleEmitter, Particles,

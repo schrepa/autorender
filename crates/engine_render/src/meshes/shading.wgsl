@@ -380,7 +380,11 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
         if all(cell >= vec2<i32>(0)) && all(vec2<u32>(cell) < grid.xy) {
             let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
             for (var n = 0u; n < list.y && covered < 0.999; n++) {
-                let entry = grid.w + (list.x + n) * 2u;
+                let entry = grid.w + (list.x + n) * 3u;
+                // Interiors not captured yet (decision 079) reflect nothing.
+                if probe_words[entry + 2u].w == 0u {
+                    continue;
+                }
                 let first = probe_words[entry];
                 let second = probe_words[entry + 1u];
                 let center = bitcast<vec3<f32>>(first.xyz);
@@ -402,6 +406,46 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
     if covered < 0.999 {
         light += (1.0 - covered)
             * textureSampleLevel(environment_maps, environment_sampler, direction, 0, level).rgb;
+    }
+    return light;
+}
+
+// The shares of the sky's light (x) and the sun's (y) reaching `world`
+// (decision 079): inside interiors' boxes, theirs, blending in over each
+// box's blend distance inside its faces; all of both elsewhere.
+fn interior_light(world: vec3<f32>) -> vec2<f32> {
+    var light = vec2<f32>(1.0);
+    let header = probe_words[0];
+    if header.w == 0u {
+        return light;
+    }
+    let grid = probe_words[1];
+    let cell = vec2<i32>(floor((world.xz - bitcast<vec2<f32>>(header.xy))
+        / bitcast<f32>(header.z)));
+    if any(cell < vec2<i32>(0)) || any(vec2<u32>(cell) >= grid.xy) {
+        return light;
+    }
+    let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
+    if list.z == 0u {
+        return light;
+    }
+    for (var n = 0u; n < list.y; n++) {
+        let entry = grid.w + (list.x + n) * 3u;
+        let shares = probe_words[entry + 2u];
+        if shares.z == 0u {
+            continue;
+        }
+        let first = probe_words[entry];
+        let center = bitcast<vec3<f32>>(first.xyz);
+        let blend = bitcast<f32>(first.w);
+        let extent = bitcast<vec3<f32>>(probe_words[entry + 1u].xyz);
+        let inside = extent - abs(world - center);
+        let depth = min(inside.x, min(inside.y, inside.z));
+        if depth <= 0.0 {
+            continue;
+        }
+        let weight = select(1.0, saturate(depth / blend), blend > 0.0);
+        light = min(light, mix(vec2<f32>(1.0), bitcast<vec2<f32>>(shares.xy), weight));
     }
     return light;
 }
@@ -436,12 +480,16 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     // Occlusion maps darken indirect light only (glTF), as do the covers of
     // placed objects over the point (decision 059).
     let covered_sky = occupancy_visibility(point.world);
+    // Inside interiors (decision 079) only their shares of the sky and sun
+    // reach; what they reflect is their probe's own capture.
+    let interior = interior_light(point.world);
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
-        + lighting.horizon.rgb * rim) + reflection) * point.occlusion * covered_sky
-        + point.diffuse_color * point.bounce * covered_sky;
+        + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion * covered_sky
+        + point.diffuse_color * point.bounce * covered_sky * interior.x;
     let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
         * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
-            point.world_dy, point.distance, point.on_terrain) * (1.0 - point.sun_shade);
+            point.world_dy, point.distance, point.on_terrain) * (1.0 - point.sun_shade)
+        * interior.y;
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);

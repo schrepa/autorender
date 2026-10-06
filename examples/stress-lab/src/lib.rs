@@ -1,6 +1,7 @@
 //! Deterministic stress workloads built exclusively through the public engine SDK.
 #[cfg(target_arch = "wasm32")]
 mod browser;
+mod caves;
 mod city;
 mod config;
 mod dense;

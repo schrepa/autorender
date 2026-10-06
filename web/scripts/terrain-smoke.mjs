@@ -124,6 +124,8 @@ const fixture = {
     { id: "probe", reflection_probe: { extent: [60, 40, 60] }, transform: { translation: [0, 45, 0] } },
     // Rides the sea once one stands (decision 077).
     { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
+    // An interior's box lets in a tenth of the sky and sun (decision 079).
+    { id: "hall", reflection_probe: { extent: [20, 200, 20], blend: 0.5, interior: { sky: 0.1, sun: 0.1 } }, transform: { translation: [-300, 40, 300] } },
   ],
 };
 const overview = { position: [0, 80, 140], target: [0, 30, 0], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 };
@@ -521,6 +523,39 @@ try {
     await command("environment", { ocean: still });
     await command("camera", overview);
     checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
+  }
+  // Inside an interior's box (decision 079) the ground takes a tenth of the
+  // sky and sun: looking straight down at the box's edge, the half inside
+  // is far darker than the half outside.
+  {
+    const [edge] = (await command("terrain_height", { points: [[-280, 300]] })).result.samples;
+    await command("camera", { position: [-280, edge.height + 60, 300], target: [-280, edge.height, 300.01], vertical_fov_radians: 0.6, near: 0.5, far: 2000 });
+    const view = await capture("interior-edge");
+    const [first, second] = await page.evaluate(async png => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${png}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width; canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      const { data, width, height } = context.getImageData(0, 0, image.width, image.height);
+      const sums = [0, 0], counts = [0, 0];
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          // Leave a band either side of the edge.
+          if (Math.abs(x - width / 2) < width * 0.1) continue;
+          const offset = (y * width + x) * 4, half = x < width / 2 ? 0 : 1;
+          sums[half] += 0.2126 * data[offset] + 0.7152 * data[offset + 1] + 0.0722 * data[offset + 2];
+          counts[half]++;
+        }
+      }
+      return [sums[0] / counts[0], sums[1] / counts[1]];
+    }, view);
+    const [dark, light] = first < second ? [first, second] : [second, first];
+    assert.ok(dark * 2 < light, `the interior darkens its ground: ${dark.toFixed(1)} against ${light.toFixed(1)}`);
+    await command("camera", overview);
+    checks.push({ check: "interior", inside: dark, outside: light });
   }
   // Kept levels (decision 065) hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;

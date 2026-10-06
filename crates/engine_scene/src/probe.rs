@@ -3,7 +3,7 @@
 //! surfaces inside its world box reflect. It mirrors the runtime component
 //! field for field, so inspected values paste back into scenes.
 
-use engine_core::{ReflectionProbe, glam::Vec3};
+use engine_core::{Interior, ReflectionProbe, glam::Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
@@ -27,6 +27,11 @@ pub struct SceneReflectionProbe {
     #[serde(default = "default_blend")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub blend: f32,
+    /// Makes the box an interior (decision 079): a cave or a hall letting in
+    /// only these shares of the sky's light and the sun's. Requires
+    /// version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interior: Option<Interior>,
 }
 
 fn default_blend() -> f32 {
@@ -40,6 +45,7 @@ impl SceneReflectionProbe {
         Self {
             extent,
             blend: default_blend(),
+            interior: None,
         }
     }
 
@@ -65,7 +71,14 @@ impl SceneReflectionProbe {
         if !(self.blend.is_finite() && self.blend >= 0.0) {
             return Err(invalid("blend", "must be finite and nonnegative"));
         }
-        Ok(ReflectionProbe::new(Vec3::from_array(self.extent)).with_blend(self.blend))
+        let mut probe = ReflectionProbe::new(Vec3::from_array(self.extent)).with_blend(self.blend);
+        if let Some(interior) = self.interior {
+            if !interior.is_usable() {
+                return Err(invalid("interior", "sky and sun must be in [0, 1]"));
+            }
+            probe = probe.with_interior(interior);
+        }
+        Ok(probe)
     }
 }
 
@@ -74,6 +87,7 @@ impl From<&ReflectionProbe> for SceneReflectionProbe {
         Self {
             extent: probe.extent.to_array(),
             blend: probe.blend,
+            interior: probe.interior,
         }
     }
 }

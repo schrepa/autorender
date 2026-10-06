@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 21] {
+fn rules() -> [Rule; 22] {
     [
         Rule {
             since: 9,
@@ -71,6 +71,18 @@ fn rules() -> [Rule; 21] {
             what: "spline meshes",
             first_use: |document| {
                 document.entity_use(|entity| entity.spline.is_some().then_some("spline"))
+            },
+        },
+        Rule {
+            since: 9,
+            what: "interiors",
+            first_use: |document| {
+                document.entity_use(|entity| {
+                    entity
+                        .reflection_probe
+                        .is_some_and(|probe| probe.interior.is_some())
+                        .then_some("reflection_probe.interior")
+                })
             },
         },
         Rule {

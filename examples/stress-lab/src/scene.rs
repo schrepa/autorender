@@ -155,6 +155,10 @@ pub fn create_workload_with(
     }
     set_view(&mut engine, "overview")?;
     engine.app.add_plugins(FlyCameraPlugin);
+    // The highlands' cave opens once its terrain's bakes are done.
+    if config.scene == StressScene::Highlands {
+        highlands::add_systems(&mut engine.app);
+    }
     // The metro's billboards change pictures whether or not anything moves.
     if config.scene == StressScene::Metro {
         metro::add_systems(&mut engine.app);
