@@ -43,6 +43,8 @@ pub(crate) struct ProbeSlots {
     capturing: Option<(usize, usize)>,
     // The ready probes changed since the grid was last built.
     changed: bool,
+    // The sky changed while the capture in progress drew.
+    changed_during: bool,
 }
 
 impl ProbeSlots {
@@ -126,9 +128,11 @@ impl ProbeSlots {
                 self.changed |= probe.interior.is_some();
             }
         }
-        // A capture the sky changed under starts over.
-        if sky_changed && let Some((slot, _)) = self.capturing {
-            self.capturing = Some((slot, 0));
+        // A capture the sky changed under carries on, and stays stale once
+        // done (decision 091): starting over on every change starved
+        // probes of captures.
+        if sky_changed && self.capturing.is_some() {
+            self.changed_during = true;
         }
     }
 
@@ -177,9 +181,10 @@ impl ProbeSlots {
             return false;
         }
         self.capturing = None;
+        let stale = std::mem::take(&mut self.changed_during);
         if let Some(slot) = self.slots[slot].as_mut() {
             slot.ready = true;
-            slot.stale = false;
+            slot.stale = stale;
             self.changed = true;
         }
         true

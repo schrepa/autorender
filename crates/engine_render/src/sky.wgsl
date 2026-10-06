@@ -12,7 +12,7 @@
 // The scene's light the sky gives (`sky.rs` `DERIVED`): the sun's color,
 // the zenith's, the horizon's, the ground's, the air's away from the sun,
 // and the sun's glow in it (x).
-@group(0) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 6>;
+@group(0) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 7>;
 
 const TRANSMITTANCE_STEPS: u32 = 40u;
 const MULTIPLE_STEPS: u32 = 20u;
@@ -287,9 +287,18 @@ fn derive_light() {
         + SKY_PI * luminance(0.5 * (zenith + horizon));
     let noon = air.ozone.w * 1.1;
     let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * 0.75), 1.0, 16.0);
+    // Exposure eases toward its target over about a second (decision 091),
+    // from where it stood last frame, as eyes adapt.
+    let wanted = air.sun.w * adapted;
+    let previous = derived[6].x;
+    var exposure = wanted;
+    if air.frame.x > 0.0 && previous > 0.0 {
+        exposure = mix(previous, wanted, 1.0 - exp(-air.frame.x / 0.8));
+    }
     derived[0] = vec4<f32>(sun_color, 0.0);
     derived[1] = vec4<f32>(max(zenith, night), 0.0);
-    derived[2] = vec4<f32>(max(horizon, night), air.sun.w * adapted);
+    derived[2] = vec4<f32>(max(horizon, night), exposure);
+    derived[6] = vec4<f32>(exposure, 0.0, 0.0, 0.0);
     derived[3] = vec4<f32>(ground, 0.0);
     derived[4] = vec4<f32>(max(away, night), 0.0);
     derived[5] = vec4<f32>(min(glow, 4.0), 0.0, 0.0, 0.0);

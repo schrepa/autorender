@@ -279,6 +279,37 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(fract(around), saturate((elevation - low) / (1.5707963 - low)));
 }
 
+// The clouds' shown domes (decision 091): the older's origin (world) and
+// whether domes show (1); the newer's origin and its share of the blend;
+// the eye lookups correct for, and the cloud layer's middle (world y).
+struct CloudDomes {
+    older: vec4<f32>,
+    newer: vec4<f32>,
+    eye: vec4<f32>,
+}
+
+// Meters along a view the domes' parallax correction reaches at most.
+const CLOUD_PARALLAX_REACH: f32 = 60000.0;
+
+// The direction in which the dome marched from `origin` holds what the view
+// along `direction` from the domes' eye sees of the clouds (decision 091):
+// toward where the view meets the cloud layer's middle. Views never
+// reaching it look along themselves.
+fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, direction: vec3<f32>)
+        -> vec3<f32> {
+    let rise = domes.eye.w - domes.eye.y;
+    if direction.y * rise <= 0.0 || abs(direction.y) < 1.0e-5 {
+        return direction;
+    }
+    let along = min(rise / direction.y, CLOUD_PARALLAX_REACH);
+    let toward = domes.eye.xyz + direction * along - origin;
+    let reach = length(toward);
+    if reach < 1.0e-3 {
+        return direction;
+    }
+    return toward / reach;
+}
+
 // `light` from the sky along `direction` behind the dome's `cloud`: the
 // light it scatters toward the eye, over the share of the sky passing it;
 // none below the horizon.
@@ -700,7 +731,9 @@ fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
 
 // The share of the sun's light the clouds let through to `world`: from the
 // grid where the sun's ray from it meets the clouds' base, fading to all of
-// it toward the grid's edges.
+// it toward the grid's edges. The grid's first cell is
+// `lighting.cloud_shadow.xy` (world cell indices); each cell keeps the slot
+// of its index modulo the cells (decision 091).
 fn cloud_passing(world: vec3<f32>) -> f32 {
     let strength = lighting.cloud_shadow.w;
     if strength <= 0.0 || lighting.sun.y <= 0.01 {
@@ -709,16 +742,19 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     let rise = max(lighting.cloud_layer.x - world.y, 0.0);
     let base = world.xz + lighting.sun.xz * (rise / lighting.sun.y);
     let size = f32(CLOUD_SHADOW_CELLS);
-    let local = (base - lighting.cloud_shadow.xy) * lighting.cloud_shadow.z - 0.5;
+    let cells = base * lighting.cloud_shadow.z - 0.5;
+    let local = cells - lighting.cloud_shadow.xy;
     if any(local < vec2<f32>(0.0)) || any(local > vec2<f32>(size - 1.0)) {
         return 1.0;
     }
-    let first = vec2<u32>(floor(local));
-    let last = min(first + vec2<u32>(1u), vec2<u32>(CLOUD_SHADOW_CELLS - 1u));
-    let f = local - floor(local);
+    let count = i32(CLOUD_SHADOW_CELLS);
+    let first = vec2<i32>(floor(cells));
+    let a = vec2<u32>(((first % count) + count) % count);
+    let b = vec2<u32>((((first + vec2<i32>(1)) % count) + count) % count);
+    let f = cells - floor(cells);
     let passing = mix(
-        mix(cloud_shadow_cell(first.x, first.y), cloud_shadow_cell(last.x, first.y), f.x),
-        mix(cloud_shadow_cell(first.x, last.y), cloud_shadow_cell(last.x, last.y), f.x), f.y);
+        mix(cloud_shadow_cell(a.x, a.y), cloud_shadow_cell(b.x, a.y), f.x),
+        mix(cloud_shadow_cell(a.x, b.y), cloud_shadow_cell(b.x, b.y), f.x), f.y);
     let edge = min(local, vec2<f32>(size - 1.0) - local) / (0.1 * size);
     let fade = smoothstep(0.0, 1.0, saturate(min(edge.x, edge.y)));
     return mix(1.0, passing, strength * fade);

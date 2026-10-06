@@ -1103,6 +1103,7 @@ impl Renderer {
                 snapshot.environment.atmosphere.sun_direction,
                 snapshot.camera_position,
                 snapshot.environment.atmosphere.exposure,
+                snapshot.presented_seconds,
             ),
             &copies,
             &self.profiler,
@@ -1152,7 +1153,7 @@ impl Renderer {
             Some(encoder) => (
                 self.environment
                     .ensure(&self.device, encoder, probe_settings.resolution, cubes),
-                self.environment.encode_sky(encoder, lighting, keys),
+                self.environment.encode_sky(encoder, lighting, keys).1,
             ),
             None => (false, false),
         };

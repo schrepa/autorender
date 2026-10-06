@@ -57,10 +57,12 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
     return normalize(direction);
 }
 
-// The clouds' dome (decision 084) and its sampler: a clear one without
-// clouds.
+// The clouds' newer and older shown domes (decisions 084 and 091), their
+// sampler and their uniform: clear ones without clouds.
 @group(0) @binding(38) var environment_clouds: texture_2d<f32>;
 @group(0) @binding(39) var environment_cloud_sampler: sampler;
+@group(0) @binding(44) var environment_clouds_old: texture_2d<f32>;
+@group(0) @binding(45) var<uniform> environment_domes: CloudDomes;
 // The physically based sky (decision 088): its uniform, sky-view and
 // transmittance tables and their sampler.
 @group(0) @binding(40) var<uniform> environment_air: SkyUniform;
@@ -73,8 +75,16 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
 // cube's first level.
 fn face_sky(face: u32, ndc: vec2<f32>) -> vec4<f32> {
     let direction = face_direction(face, ndc);
-    let cloud = textureSampleLevel(environment_clouds, environment_cloud_sampler,
+    var cloud = textureSampleLevel(environment_clouds, environment_cloud_sampler,
         cloud_dome_uv(direction), 0.0);
+    if environment_domes.older.w > 0.5 {
+        let domes = environment_domes;
+        let newer = textureSampleLevel(environment_clouds, environment_cloud_sampler,
+            cloud_dome_uv(cloud_dome_direction(domes, domes.newer.xyz, direction)), 0.0);
+        let older = textureSampleLevel(environment_clouds_old, environment_cloud_sampler,
+            cloud_dome_uv(cloud_dome_direction(domes, domes.older.xyz, direction)), 0.0);
+        cloud = mix(older, newer, domes.newer.w);
+    }
     var light = haze(direction);
     if lighting.grade.z > 0.5 {
         light = air_sky(environment_view_table, environment_transmittance_table,
