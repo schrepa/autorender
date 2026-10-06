@@ -528,6 +528,14 @@ pub(crate) fn populate(
         falloff: 220.0,
         op: StampOp::Flatten(level),
     });
+    // The cave's mouth (decision 079): the hillside nearest a thirty degree
+    // slope within reach of the plateau, as the mountains and the plateau
+    // shape it before the bakes wear it a little.
+    let cave_mouth = {
+        let shaped = Layers::new(vec![mountains.clone(), plateau_stamp.clone()])
+            .map_err(|error| error.to_string())?;
+        steepest_hillside(&shaped, &pyramid, Vec2::from(plateau), hamlet)
+    };
     let layers = Layers::new(vec![
         mountains,
         plateau_stamp.clone(),
@@ -604,15 +612,20 @@ pub(crate) fn populate(
             }),
             baked: None,
         }),
-        // A cave mouth in the plateau's slope.
+        // A cave's mouth in the slope beyond the plateau (decision 079),
+        // the cave behind it opened once the bakes are done.
         Layer::Stamp(Stamp {
-            center: [plateau[0] + hamlet + 120.0, plateau[1]],
-            radius: 7.0,
+            center: cave_mouth,
+            radius: CAVE_MOUTH,
             falloff: 0.0,
             op: StampOp::Hole,
         }),
     ])
     .map_err(|error| error.to_string())?;
+    world.insert_resource(CaveMouth(Vec2::new(
+        cave_mouth[0] - half,
+        cave_mouth[1] - half,
+    )));
     let surface = surface(world, files)?;
     world.spawn(
         Terrain::generated(Vec3::new(-half, 0.0, -half), pyramid, layers).with_surface(surface),
@@ -756,6 +769,7 @@ fn surface(
     // and tint, darker than the boulders, so where they rise from rock
     // ground the two read as one face. They collide as spheres well inside
     // their faces.
+    let mut cave_rocks = Vec::with_capacity(CLIFFS);
     let cliff_rock = match materials[4]
         .material
         .and_then(|rock| assets.material(rock).copied())
@@ -792,6 +806,7 @@ fn surface(
                 .and_then(|mesh| assets.insert_mesh(mesh).map_err(error))
         };
         let full = mesh(0)?;
+        cave_rocks.push(full);
         let mut lods = Vec::with_capacity(crate::rocks::CLIFF_ERRORS.len());
         for (detail, error) in crate::rocks::CLIFF_ERRORS.into_iter().enumerate() {
             lods.push(PlacementLod {
@@ -810,6 +825,19 @@ fn surface(
             )),
         });
     }
+    // The cave (decision 079) is hewn in the cliffs' rock, its walls seen
+    // from both sides, and framed by their blocks.
+    let cave_wall = assets
+        .material(cliff_rock)
+        .copied()
+        .map(|material| material.with_double_sided(true))
+        .ok_or("the cliffs' rock is resident")?;
+    let cave_wall = assets.insert_material(cave_wall).map_err(error)?;
+    world.insert_resource(CaveRock {
+        meshes: cave_rocks,
+        material: cliff_rock,
+        wall: cave_wall,
+    });
     // Bridges (decision 072) are built of the boulders' weathered stone.
     TerrainSurface::new(&rules(), materials)
         .and_then(|surface| surface.with_assets(placed))
@@ -818,6 +846,196 @@ fn surface(
             ..surface
         })
         .map_err(|error| error.to_string())
+}
+
+/// The cave's mouth (decision 079): the world point at its center, and the
+/// meters around it its hole reaches.
+#[derive(Resource)]
+struct CaveMouth(Vec2);
+const CAVE_MOUTH: f32 = 3.5;
+
+/// The rock the cave is hewn in: the cliffs' blocks framing its mouth,
+/// their material, and its walls'.
+#[derive(Resource, Clone)]
+struct CaveRock {
+    meshes: Vec<MeshHandle>,
+    material: MaterialHandle,
+    wall: MaterialHandle,
+}
+
+/// Marks the cave opened.
+#[derive(Resource)]
+struct CaveOpened;
+
+/// The cave's half width and half height (meters).
+const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
+
+/// Terrain-local point of the hillside around `center`, from `inner + 150`
+/// to `inner + 600` meters out, whose slope across forty meters comes
+/// nearest thirty degrees.
+fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f32) -> [f32; 2] {
+    let height = |point: Vec2| layers.height_at(pyramid, point);
+    let mut best = (f32::INFINITY, center + Vec2::X * (inner + 210.0));
+    for step in 0..36 {
+        let (sin, cos) = math::sin_cos(step as f32 * std::f32::consts::TAU / 36.0);
+        for ring in 0..16 {
+            let point = center + Vec2::new(cos, sin) * (inner + 150.0 + 30.0 * ring as f32);
+            let gradient = Vec2::new(
+                height(point + Vec2::X * 20.0) - height(point - Vec2::X * 20.0),
+                height(point + Vec2::Y * 20.0) - height(point - Vec2::Y * 20.0),
+            ) / 40.0;
+            let miss = (gradient.length() - 0.58).abs();
+            if miss < best.0 {
+                best = (miss, point);
+            }
+        }
+    }
+    best.1.to_array()
+}
+
+/// The highlands' systems: the cave opening once the terrain is baked.
+pub(crate) fn add_systems(app: &mut App) {
+    app.add_systems(Presentation, open_cave);
+}
+
+/// Opens the cave (decision 079) once its terrain's bakes are done, from
+/// the ground they leave:
+/// - its tube from just below the mouth cut in the slope up into the hill,
+///   descending as steeply as it must to stay under two meters of rock
+///   or more, winding and ending in a chamber;
+/// - a warm light in the chamber;
+/// - an interior over it letting in a twentieth of the sky and a sixth of
+///   the sun;
+/// - cliff blocks framing its mouth.
+fn open_cave(world: &mut World) {
+    if world.contains_resource::<CaveOpened>() {
+        return;
+    }
+    let (Some(mouth), Some(rock)) = (
+        world.get_resource::<CaveMouth>().map(|mouth| mouth.0),
+        world.get_resource::<CaveRock>().cloned(),
+    ) else {
+        return;
+    };
+    let Some((terrain, layers)) = ({
+        let mut query = world.query::<(Entity, &Terrain)>();
+        let terrains = world.resource::<Terrains>();
+        query
+            .iter(world)
+            .find_map(|(entity, terrain)| Some((terrain.clone(), terrains.layers(entity)?)))
+    }) else {
+        return;
+    };
+    if layers.hydrology().is_none() {
+        return;
+    }
+    let height = |point: Vec2| {
+        terrain.origin.y
+            + layers.height_at(
+                &terrain.pyramid,
+                Vec2::new(point.x - terrain.origin.x, point.y - terrain.origin.z),
+            )
+    };
+    // Uphill from the mouth, and how steeply, across the hillside rather
+    // than the finest ground's bumps.
+    let gradient = Vec2::new(
+        height(mouth + Vec2::X * 20.0) - height(mouth - Vec2::X * 20.0),
+        height(mouth + Vec2::Y * 20.0) - height(mouth - Vec2::Y * 20.0),
+    ) / 40.0;
+    let slope = gradient.length();
+    let uphill = if slope > 0.02 {
+        gradient / slope
+    } else {
+        Vec2::X
+    };
+    let side = Vec2::new(-uphill.y, uphill.x);
+    // The floor starts just below the ground outside the mouth; the tube
+    // falls as steeply as staying two meters under the rising ground
+    // twelve meters in takes, then half as steeply.
+    // The tube starts a meter past the hole's downhill edge, so its floor
+    // covers the whole cut.
+    let start = mouth - uphill * (CAVE_MOUTH + 1.0);
+    let center = height(start) - 0.5 + 0.55 * CAVE_RADIUS[1] * 1.15;
+    let fall = math::max(0.75 - slope, 0.25);
+    let at = |along: f32, across: f32, drop: f32| {
+        let point = mouth + uphill * along + side * across;
+        Vec3::new(point.x, center - drop, point.y)
+    };
+    let points = [
+        at(-(CAVE_MOUTH + 1.0), 0.0, 0.0),
+        at(12.0, 0.0, fall * 18.0),
+        at(28.0, 6.0, fall * 18.0 + fall * 8.0),
+        at(44.0, -5.0, fall * 18.0 + fall * 16.0),
+        at(58.0, 0.0, fall * 18.0 + fall * 22.0),
+    ];
+    let Ok(mesh) = crate::caves::cave(&points, CAVE_RADIUS, 79) else {
+        return;
+    };
+    let Ok(mesh) = world.resource_mut::<AssetLibrary>().insert_mesh(mesh) else {
+        return;
+    };
+    world.spawn((
+        Transform {
+            translation: points[0],
+            ..Transform::default()
+        },
+        Mesh3d {
+            mesh,
+            material: rock.wall,
+        },
+    ));
+    // The chamber's light, warm and short.
+    let chamber = points[4] - Vec3::new(uphill.x, 0.0, uphill.y) * 6.0 + Vec3::Y * 2.0;
+    world.spawn((
+        Transform {
+            translation: chamber,
+            ..Transform::default()
+        },
+        LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0),
+    ));
+    // An interior over the whole tube.
+    let (low, high) = points.iter().fold(
+        (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+        |(low, high), &point| (low.min(point), high.max(point)),
+    );
+    let reach = Vec3::new(CAVE_RADIUS[0], CAVE_RADIUS[1], CAVE_RADIUS[0]) * 1.9;
+    let (low, high) = (low - reach, high + reach);
+    world.spawn((
+        Transform {
+            translation: (low + high) * 0.5,
+            ..Transform::default()
+        },
+        ReflectionProbe::new((high - low) * 0.5)
+            .with_blend(6.0)
+            .with_interior(Interior {
+                sky: 0.05,
+                sun: 0.16,
+            }),
+    ));
+    // Blocks over and beside the mouth, facing down the slope.
+    let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
+    let mut block = |along: f32, across: f32, rise: f32, scale: f32, index: usize| {
+        let point = mouth + uphill * along + side * across;
+        if let Some(&mesh) = rock.meshes.get(index % rock.meshes.len().max(1)) {
+            world.spawn((
+                Transform {
+                    translation: Vec3::new(point.x, height(point) + rise, point.y),
+                    rotation: facing,
+                    scale: Vec3::splat(scale),
+                },
+                Mesh3d {
+                    mesh,
+                    material: rock.material,
+                },
+            ));
+        }
+    };
+    // One over the tube's shell where it leaves the slope, its face the
+    // mouth's overhang, and one either side.
+    block(4.0, 0.0, 1.5, 8.0, 0);
+    block(-1.0, 10.0, -1.5, 6.0, 1);
+    block(-1.0, -10.0, -1.5, 6.0, 2);
+    world.insert_resource(CaveOpened);
 }
 
 /// Boulder, spruce and cliff shapes the placement layers choose from.

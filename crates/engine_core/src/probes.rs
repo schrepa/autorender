@@ -10,6 +10,11 @@
 //! or when disabled, frames capture and reflect no probes. Beyond
 //! `max_probes` the probes nearest the camera win and the rest count as
 //! dropped; without a budget, as many stay as the GPU's texture arrays hold.
+//!
+//! A probe may hold an interior (decision 079): a cave or a hall whose box
+//! lets in only shares of the sky's light and the sun's, so surfaces inside
+//! it darken as the rock or walls around them would make them, and reflect
+//! what the probe captured inside.
 
 use bevy_ecs::{
     prelude::{Component, Entity, Resource, World},
@@ -38,17 +43,50 @@ pub struct ReflectionProbe {
     pub extent: Vec3,
     /// World distance inside the box's faces over which the probe fades out.
     pub blend: f32,
+    /// What the box lets in, when it is an interior (decision 079).
+    pub interior: Option<Interior>,
+}
+
+/// An interior's light (decision 079): the shares of the sky's light and of
+/// the sun's that reach surfaces inside its probe's box, each 0 to 1,
+/// blending in over the probe's blend distance inside its faces. Requires
+/// version 9.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct Interior {
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub sky: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
+    pub sun: f32,
+}
+
+impl Interior {
+    /// Whether both shares lie in [0, 1].
+    pub fn is_usable(&self) -> bool {
+        (0.0..=1.0).contains(&self.sky) && (0.0..=1.0).contains(&self.sun)
+    }
 }
 
 impl ReflectionProbe {
     /// A probe covering the box `extent` from its entity along each axis,
     /// fading over its outer world unit.
     pub fn new(extent: Vec3) -> Self {
-        Self { extent, blend: 1.0 }
+        Self {
+            extent,
+            blend: 1.0,
+            interior: None,
+        }
     }
 
     pub fn with_blend(mut self, blend: f32) -> Self {
         self.blend = blend;
+        self
+    }
+
+    /// The probe as an interior letting in `interior`'s light.
+    pub fn with_interior(mut self, interior: Interior) -> Self {
+        self.interior = Some(interior);
         self
     }
 
@@ -58,6 +96,7 @@ impl ReflectionProbe {
             && self.extent.cmpgt(Vec3::ZERO).all()
             && self.blend.is_finite()
             && self.blend >= 0.0
+            && self.interior.is_none_or(|interior| interior.is_usable())
     }
 }
 
@@ -136,6 +175,8 @@ pub struct RenderReflectionProbe {
     pub center: Vec3,
     pub extent: Vec3,
     pub blend: f32,
+    /// What its box lets in, when it is an interior (decision 079).
+    pub interior: Option<Interior>,
 }
 
 /// Reflection probe records of each frame.
@@ -194,6 +235,7 @@ impl ProbeExtraction {
                     center,
                     extent: probe.extent,
                     blend: probe.blend,
+                    interior: probe.interior,
                 },
             ));
         }

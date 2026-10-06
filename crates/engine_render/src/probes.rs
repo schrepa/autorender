@@ -95,11 +95,13 @@ impl ProbeSlots {
                 if sky_changed {
                     slot.stale = true;
                 }
-                // A new blend distance needs no capture, only the grid.
+                // A new blend distance or interior (decision 079) needs no
+                // capture, only the grid.
                 if let Some(probe) = wanted.iter().find(|probe| probe.key == slot.probe.key)
-                    && probe.blend != slot.probe.blend
+                    && (probe.blend != slot.probe.blend || probe.interior != slot.probe.interior)
                 {
                     slot.probe.blend = probe.blend;
+                    slot.probe.interior = probe.interior;
                     self.changed = true;
                 }
             }
@@ -120,6 +122,8 @@ impl ProbeSlots {
                     stale: false,
                     age: 0,
                 });
+                // Interiors light surfaces before their first capture.
+                self.changed |= probe.interior.is_some();
             }
         }
         // A capture the sky changed under starts over.
@@ -201,7 +205,8 @@ impl ProbeSlots {
             .count() as u32
     }
 
-    // The ready probes and their cubes, once per change.
+    // The ready probes and their cubes, and interiors (decision 079) not
+    // captured yet with none (0), once per change.
     fn changed_ready(&mut self) -> Option<Vec<(RenderReflectionProbe, u32)>> {
         if !std::mem::take(&mut self.changed) {
             return None;
@@ -212,8 +217,8 @@ impl ProbeSlots {
                 .enumerate()
                 .filter_map(|(index, slot)| {
                     slot.as_ref()
-                        .filter(|slot| slot.ready)
-                        .map(|slot| (slot.probe, index as u32 + 1))
+                        .filter(|slot| slot.ready || slot.probe.interior.is_some())
+                        .map(|slot| (slot.probe, if slot.ready { index as u32 + 1 } else { 0 }))
                 })
                 .collect(),
         )
@@ -335,8 +340,9 @@ pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, CAPTURE_FAR, CAPTURE_NEAR) * view
 }
 
-/// Fills `words` with the grid of `probes` (each with its environment cube)
-/// that `meshes/shading.wgsl`'s `environment_light` reads.
+/// Fills `words` with the grid of `probes` (each with its environment cube,
+/// or 0 for an interior not captured yet) that `meshes/shading.wgsl`'s
+/// `environment_light` and `interior_light` read.
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {
     words.clear();
     if probes.is_empty() {
@@ -378,9 +384,15 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     let entries_at = cells_at + columns * rows;
     words.push([low.x.to_bits(), low.z.to_bits(), cell.to_bits(), count]);
     words.push([columns, rows, cells_at, entries_at]);
+    // Each cell's list, and how many of its probes are interiors (decision
+    // 079), which surfaces elsewhere skip.
     let mut start = 0;
     for list in &lists {
-        words.push([start, list.len() as u32, 0, 0]);
+        let interiors = list
+            .iter()
+            .filter(|&&index| probes[index as usize].0.interior.is_some())
+            .count() as u32;
+        words.push([start, list.len() as u32, interiors, 0]);
         start += list.len() as u32;
     }
     // Each entry holds its probe's record: surfaces read no index first.
@@ -397,6 +409,13 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
             probe.extent.y.to_bits(),
             probe.extent.z.to_bits(),
             cube,
+        ]);
+        let interior = probe.interior;
+        words.push([
+            interior.map_or(1.0, |interior| interior.sky).to_bits(),
+            interior.map_or(1.0, |interior| interior.sun).to_bits(),
+            u32::from(interior.is_some()),
+            u32::from(cube != 0),
         ]);
     }
 }
