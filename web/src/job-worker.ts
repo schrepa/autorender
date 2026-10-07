@@ -15,7 +15,7 @@ import { decodeImagePixels } from "./decode";
 import { type TranscodedImage, transcodeWith, workerTranscoder } from "./ktx2";
 
 type Request =
-  | { type: "init"; bindings?: string }
+  | { type: "init"; bindings?: string; module?: WebAssembly.Module }
   | { type: "clear" }
   | { type: "share"; key: string; blob: Blob }
   | { type: "unshare"; key: string }
@@ -123,18 +123,22 @@ async function work() {
   }
 }
 
-async function start(bindings?: string) {
+/** Starts the module, from the page's compilation of it where given
+ * (decision 113), and runs a small fixed tile so its hot code reaches
+ * its optimized tier before real jobs. */
+async function start(bindings?: string, compiled?: WebAssembly.Module) {
   const module = (bindings
     ? await import(/* @vite-ignore */ bindings)
     : await import("../pkg/engine_worker")) as typeof import("../pkg/engine_worker");
-  await module.default();
+  await module.default(compiled ? { module_or_path: compiled } : undefined);
   worker = new module.JobWorker();
+  worker.warm();
 }
 
 async function handle(request: Request) {
   switch (request.type) {
     case "init":
-      await start(request.bindings);
+      await start(request.bindings, request.module);
       return;
     case "clear":
       // An earlier engine's jobs are no one's.

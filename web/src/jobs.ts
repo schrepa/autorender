@@ -61,6 +61,8 @@ interface Slot {
   jobs: Map<number, number>;
   tasks: Set<number>;
   broken: boolean;
+  /** Messages held until the worker has its module (decision 113). */
+  held?: [unknown, Transferable[]][];
 }
 
 interface Task {
@@ -80,7 +82,13 @@ export class JobPool {
    * outputs it keeps when done; jobs looking it up and those cancelled
    * meanwhile; outputs kept that fresh runs verify; and the counters last
    * reported. */
-  private readonly cache: Promise<JobCache | undefined> = openCache();
+  private readonly cache: Promise<JobCache | undefined> = workerWasm().then(openCache);
+  /** The job worker module, compiled once for every worker (decision
+   * 113); `undefined` where it did not compile, and each compiles its
+   * own. */
+  private readonly module: Promise<WebAssembly.Module | undefined> = workerWasm()
+    .then(bytes => bytes && WebAssembly.compile(bytes))
+    .catch(() => undefined);
   private readonly keys = new Map<number, string>();
   private readonly looking = new Set<number>();
   private readonly dropped = new Set<number>();
@@ -129,7 +137,7 @@ export class JobPool {
         const slot = this.slots.find(slot => slot.jobs.has(message.cancel));
         if (!slot) continue;
         slot.jobs.delete(message.cancel);
-        slot.worker.postMessage({ type: "cancel", id: message.cancel });
+        this.post(slot, { type: "cancel", id: message.cancel });
       } else if ("clear" in message) {
         this.shares.clear();
         this.broadcast({ type: "clear" });
@@ -157,7 +165,7 @@ export class JobPool {
       return;
     }
     slot.jobs.set(message.id, message.priority);
-    slot.worker.postMessage({ type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
+    this.post(slot, { type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
   }
 
   /** Answers a keepable job (decision 116) from the cache, or hands it to
@@ -228,22 +236,35 @@ export class JobPool {
     slot.tasks.add(task);
     return new Promise((resolve, reject) => {
       this.tasks.set(task, { resolve, reject });
-      slot.worker.postMessage({ ...message, task }, transfer);
+      this.post(slot, { ...message, task }, transfer);
     });
   }
 
   private spawn(): Slot {
     const worker = new Worker(new URL("./job-worker.ts", import.meta.url), { type: "module", name: "engine-jobs" });
-    const slot: Slot = { worker, jobs: new Map(), tasks: new Set(), broken: false };
+    const slot: Slot = { worker, jobs: new Map(), tasks: new Set(), broken: false, held: [] };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
-    worker.postMessage({ type: "init", bindings: engineWorkerModule() });
-    for (const [key, blob] of this.shares) worker.postMessage({ type: "share", key, blob });
+    // Workers start from the module compiled once (decision 113); what is
+    // posted meanwhile follows in order.
+    void this.module.then(module => {
+      worker.postMessage({ type: "init", bindings: engineWorkerModule(), module });
+      for (const [message, transfer] of slot.held ?? []) worker.postMessage(message, transfer);
+      slot.held = undefined;
+    });
+    for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;
   }
 
+  /** Posts `message` to `slot`'s worker, or holds it until the worker has
+   * its module. */
+  private post(slot: Slot, message: unknown, transfer: Transferable[] = []) {
+    if (slot.held) slot.held.push([message, transfer]);
+    else slot.worker.postMessage(message, transfer);
+  }
+
   private broadcast(message: Record<string, unknown>) {
-    for (const slot of this.slots) if (!slot.broken) slot.worker.postMessage(message);
+    for (const slot of this.slots) if (!slot.broken) this.post(slot, message);
   }
 
   /** The working slot with the fewest jobs and tasks in flight; among
@@ -338,21 +359,35 @@ export class JobPool {
   }
 }
 
-/** Opens the page's job output cache (decision 116) for the job worker
- * module the pool's workers run, unless the page turned it off. */
-async function openCache(): Promise<JobCache | undefined> {
-  const settings = jobCacheSettings();
-  if (!settings) return undefined;
+let wasm: Promise<ArrayBuffer | undefined> | undefined;
+
+/** The job worker module's bytes, fetched once by a page with workers:
+ * compiled once for every worker (decision 113) and hashed for the job
+ * cache's version (decision 116); `undefined` where the fetch failed. */
+function workerWasm(): Promise<ArrayBuffer | undefined> {
+  wasm ??= fetchWorkerWasm();
+  return wasm;
+}
+
+async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   try {
     const pinned = engineWorkerModule();
     const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : new URL("../pkg/engine_worker_bg.wasm", import.meta.url).href;
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
-    return await JobCache.open(await response.arrayBuffer(), settings.budget, settings.verify);
+    return await response.arrayBuffer();
   } catch (error) {
-    console.warn(`The job cache is off: ${String(error)}`);
+    console.warn(`The job worker module was not fetched: ${String(error)}`);
     return undefined;
   }
+}
+
+/** Opens the page's job output cache (decision 116) for the job worker
+ * module `module` (its bytes), unless the page turned it off. */
+async function openCache(module: ArrayBuffer | undefined): Promise<JobCache | undefined> {
+  const settings = jobCacheSettings();
+  if (!settings || !module) return undefined;
+  return JobCache.open(module, settings.budget, settings.verify);
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
