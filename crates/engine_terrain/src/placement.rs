@@ -30,7 +30,7 @@
 use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
 
-use crate::surface::{Compiled, Control, Mask, SampleInputs};
+use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch};
 use crate::{TILE_QUADS, Tile};
 
 /// The placement layer authored objects (decision 085) report collision
@@ -375,6 +375,7 @@ pub(crate) struct CompiledPlacement {
     footprint: f32,
     materials: Option<[u64; 4]>,
     mask: Compiled,
+    reads: Reads,
     scale: [f32; 2],
     align: f32,
     face: f32,
@@ -500,6 +501,8 @@ pub(crate) fn compile(
                 return Err(fail(format!("{at}.far.share"), "must be in (0, 1]"));
             }
         }
+        let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0)
+            .map_err(|error| (error.path, error.rule))?;
         compiled.push(CompiledPlacement {
             level: layer.level,
             far: layer.far.map(|far| (far.level, far.share)),
@@ -507,8 +510,8 @@ pub(crate) fn compile(
             fill,
             footprint: layer.footprint,
             materials: set,
-            mask: Compiled::from(&layer.mask, &format!("{at}.mask"), 0)
-                .map_err(|error| (error.path, error.rule))?,
+            reads: mask.reads(),
+            mask,
             scale: layer.scale,
             align: layer.align,
             face: layer.face,
@@ -589,13 +592,40 @@ fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
 /// far away at, where only their far share stands; others hold none.
 /// Returns the work it took (samples' worth) and the next row, none after
 /// the last layer's last.
+/// A row of candidates whose masks a row evaluates at once (decision 113),
+/// reused row after row: each candidate's square, rank, point, offset in
+/// its tile, ground, material share and its mask's inputs.
+#[derive(Default)]
+pub(crate) struct PlaceScratch {
+    candidates: Vec<Candidate>,
+    xs: Vec<f32>,
+    zs: Vec<f32>,
+    height: Vec<f32>,
+    gradient: Vec<f32>,
+    curvature: Vec<f32>,
+    water: Vec<crate::HydrologySample>,
+    path: Vec<crate::PathSample>,
+    values: Vec<f32>,
+    rows: RowScratch,
+}
+
+#[derive(Clone, Copy)]
+struct Candidate {
+    square: u32,
+    rank: f32,
+    point: [f32; 2],
+    local: [f32; 2],
+    sample: crate::TileSample,
+    share_of_materials: f32,
+}
+
 pub(crate) fn place_row(
     layers: &[CompiledPlacement],
     tile: &Tile,
     seed: u32,
     (layer_index, row): (usize, usize),
     out: &mut Vec<Placed>,
-    (stack, placing): (&crate::Layers, Placing),
+    (stack, placing, scratch): (&crate::Layers, Placing, &mut PlaceScratch),
 ) -> (u64, Option<(usize, usize)>) {
     let water = stack.hydrology();
     let spacing = tile.spacing();
@@ -631,6 +661,33 @@ pub(crate) fn place_row(
         ((origin[1] + size) / footprint).floor() as i64,
     ];
     let square_z = first[1] + row as i64;
+    // The row's candidates that may stand, with their masks' inputs; then
+    // their masks over the row at once, each as one evaluation reads it
+    // (decision 113); then, in order, those that stand.
+    let PlaceScratch {
+        candidates,
+        xs,
+        zs,
+        height: heights,
+        gradient: gradients,
+        curvature: curvatures,
+        water: waters,
+        path: paths,
+        values,
+        rows,
+    } = scratch;
+    candidates.clear();
+    for list in [
+        &mut *xs,
+        &mut *zs,
+        &mut *heights,
+        &mut *gradients,
+        &mut *curvatures,
+    ] {
+        list.clear();
+    }
+    waters.clear();
+    paths.clear();
     for square_x in first[0]..=last[0] {
         let square = hash(
             layer_seed
@@ -668,6 +725,11 @@ pub(crate) fn place_row(
         if share_of_materials <= 0.0 {
             continue;
         }
+        // The density at most, with the mask at 1: where the rank passes
+        // even that, nothing here can stand (decision 113).
+        if rank >= layer.fill * share_of_materials * share {
+            continue;
+        }
         let normal = sample.normal;
         let gradient = (normal.x * normal.x + normal.z * normal.z).sqrt() / max(normal.y, 1.0e-3);
         let height = |x: i32, z: i32| tile.height(x.clamp(-1, 257), z.clamp(-1, 257));
@@ -675,20 +737,66 @@ pub(crate) fn place_row(
         let curvature = (height(x - 1, z) + height(x + 1, z) + height(x, z - 1) + height(x, z + 1)
             - 4.0 * height(x, z))
             / (spacing * spacing);
-        let inputs = SampleInputs {
-            x: point[0],
-            z: point[1],
-            height: sample.height,
-            gradient,
-            curvature,
+        candidates.push(Candidate {
+            square,
+            rank,
+            point,
+            local,
+            sample,
+            share_of_materials,
+        });
+        xs.push(point[0]);
+        zs.push(point[1]);
+        heights.push(sample.height);
+        gradients.push(gradient);
+        curvatures.push(curvature);
+        // What the mask reads alone (decision 113).
+        waters.push(match water {
+            Some(water) if layer.reads.water => {
+                let river = water
+                    .rivers
+                    .nearest(point[0], point[1])
+                    .map_or(crate::hydrology::RIVER_FAR, |river| {
+                        river.distance - river.half
+                    });
+                water.masks_at(point[0], point[1], spacing, river)
+            }
+            _ => crate::HydrologySample::default(),
+        });
+        paths.push(if layer.reads.path {
+            stack.path_at(point[0], point[1])
+        } else {
+            crate::PathSample::FAR
+        });
+    }
+    values.clear();
+    values.resize(candidates.len(), 0.0);
+    layer.mask.evaluate_row(
+        &RowInputs {
+            xs,
+            zs,
             spacing,
-            water: water.map_or_else(Default::default, |water| {
-                water.at(point[0], point[1], spacing)
-            }),
-            path: stack.path_at(point[0], point[1]),
-        };
+            height: heights,
+            gradient: gradients,
+            curvature: curvatures,
+            water: waters,
+            path: paths,
+        },
+        values,
+        rows,
+    );
+    for (candidate, &mask) in candidates.iter().zip(values.iter()) {
+        let Candidate {
+            square,
+            rank,
+            point,
+            local,
+            sample,
+            share_of_materials,
+        } = *candidate;
+        let normal = sample.normal;
         // The density here, and of it the share standing on this tile.
-        let full = layer.fill * share_of_materials * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
+        let full = layer.fill * share_of_materials * clamp(mask, 0.0, 1.0);
         if rank >= full * share {
             continue;
         }

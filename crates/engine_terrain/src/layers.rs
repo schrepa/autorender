@@ -1072,12 +1072,30 @@ impl Layers {
 
     /// The first baked hydrology, which masks read.
     pub fn hydrology(&self) -> Option<&Hydrology> {
-        self.layers.iter().find_map(|layer| match layer {
-            Layer::Hydrology(HydrologyStage {
+        self.hydrology_layer().map(|(_, hydrology)| hydrology)
+    }
+
+    /// [`Self::hydrology`] with its layer's index.
+    pub(crate) fn hydrology_layer(&self) -> Option<(usize, &Hydrology)> {
+        self.layers
+            .iter()
+            .enumerate()
+            .find_map(|(index, layer)| match layer {
+                Layer::Hydrology(HydrologyStage {
+                    baked: Some(baked), ..
+                }) => Some((index, baked.as_ref())),
+                _ => None,
+            })
+    }
+
+    /// The rivers of hydrology layer `index`, once baked (decision 113).
+    pub(crate) fn rivers_of(&self, index: usize) -> Option<&crate::Rivers> {
+        match self.layers.get(index) {
+            Some(Layer::Hydrology(HydrologyStage {
                 baked: Some(baked), ..
-            }) => Some(baked.as_ref()),
+            })) if !baked.rivers.is_empty() => Some(&baked.rivers),
             _ => None,
-        })
+        }
     }
 
     /// The baked road whose edge lies nearest terrain-local `(x, z)`: meters
@@ -1148,7 +1166,10 @@ impl Layers {
 
     /// Applies layer `index` other than noise to `row`, heights at
     /// terrain-local x positions `xs` and z position `z`; layers that reach
-    /// no point between `min` and `max` are skipped.
+    /// no point between `min` and `max` are skipped. Hydrology layers' rivers
+    /// read the row through `span`'s row, where a tile has one (decision
+    /// 113), as they read sample by sample.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_local(
         &self,
         index: usize,
@@ -1157,6 +1178,7 @@ impl Layers {
         z: f32,
         (min, max): (Vec2, Vec2),
         spacing: f32,
+        span: Option<(&crate::rivers::RiverSpan, usize)>,
     ) {
         match &self.layers[index] {
             Layer::Noise(_) => {}
@@ -1202,8 +1224,20 @@ impl Layers {
                 {
                     return;
                 }
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    let capped = baked.rivers.cap(x, z, *height, spacing);
+                let mut capped = row.to_vec();
+                match span {
+                    Some((span, at)) => {
+                        baked
+                            .rivers
+                            .cap_row(span, at, (xs, z), &mut capped, spacing);
+                    }
+                    None => {
+                        for (height, &x) in capped.iter_mut().zip(xs) {
+                            *height = baked.rivers.cap(x, z, *height, spacing);
+                        }
+                    }
+                }
+                for ((height, &capped), &x) in row.iter_mut().zip(&capped).zip(xs) {
                     let shown = self.shown(x, z);
                     *height = if shown >= 1.0 {
                         capped

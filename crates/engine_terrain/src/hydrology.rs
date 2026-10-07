@@ -676,17 +676,34 @@ impl Hydrology {
     /// What the bake found at terrain-local `(x, z)`, as terrain samples
     /// `spacing` meters apart see it.
     pub fn at(&self, x: f32, z: f32, spacing: f32) -> HydrologySample {
+        let river = self
+            .rivers
+            .nearest(x, z)
+            .map_or(RIVER_FAR, |river| river.distance - river.half);
+        self.at_river(x, z, spacing, river)
+    }
+
+    /// [`Self::at`] with the meters to the nearest river's edge, `river`,
+    /// already read (decision 113).
+    pub(crate) fn at_river(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
+        let level = self.level_for(spacing);
+        HydrologySample {
+            carve: self.carve_at(x, z, level),
+            ..self.masks_at(x, z, spacing, river)
+        }
+    }
+
+    /// What masks read of [`Self::at`] (decision 113), with `river` read
+    /// already: everything but the carving, which no mask reads (zero).
+    pub(crate) fn masks_at(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
         let level = self.level_for(spacing);
         let (u, v) = (x / self.spacing, z / self.spacing);
         HydrologySample {
             flow: decode(self.flow.sample(u, v, level), FLOW_RANGE),
             wetness: decode(self.wetness.sample(u, v, level), WETNESS_RANGE),
             lake: decode(self.lakes.sample(u, v, level), LAKE_RANGE),
-            carve: self.carve_at(x, z, level),
-            river: self
-                .rivers
-                .nearest(x, z)
-                .map_or(RIVER_FAR, |river| river.distance - river.half),
+            carve: 0.0,
+            river,
         }
     }
 
