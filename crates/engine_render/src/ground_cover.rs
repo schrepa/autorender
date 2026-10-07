@@ -44,6 +44,7 @@ struct GrowUniform {
     planes: [[f32; 4]; 6],
     deform_grid: [i32; 4],
     deform: [f32; 4],
+    ranges: [[f32; 4]; 2],
 }
 
 /// WGSL `CoverFrame` of `meshes/cover.wgsl`.
@@ -190,8 +191,7 @@ impl GroundCoverPass {
         }
         let planes = planes(culling);
         let radius = settings.radius;
-        // Pixels a meter spans a meter from the eye along the view's height.
-        let pixels_per_meter = culling.row(1).truncate().length() * height * 0.5;
+        let pixels_per_meter = pixels_per_meter(culling, height);
         let shading = terrain
             .cover_sources()
             .map(|sources| sources.shading)
@@ -208,14 +208,15 @@ impl GroundCoverPass {
             let spacing = render.pyramid.spacing(0);
             let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
             let local = eye - render.origin;
-            // Tiers reach on while the average blade stands at least the
-            // settings' pixels tall (decision 090).
-            let reach = if settings.pixels > 0.0 {
-                blade * pixels_per_meter / settings.pixels
-            } else {
-                0.0
-            };
-            let reach = if reach > radius { reach } else { 0.0 };
+            let reach = tier_reach(&settings, blade, pixels_per_meter);
+            // Blades stand on the ground as each level draws it (decision
+            // 098); the coarsest never morphs.
+            let mut ranges = [[0.0_f32; 4]; 2];
+            for (level, range) in render.ranges.iter().enumerate().take(8) {
+                if level + 1 < render.ranges.len() {
+                    ranges[level / 4][level % 4] = *range;
+                }
+            }
             let mut tiers = vec![(0.0, radius, 1.0)];
             while reach > 0.0 && tiers.len() < MAX_TIERS {
                 let (_, outer, scale) = tiers[tiers.len() - 1];
@@ -232,6 +233,17 @@ impl GroundCoverPass {
             self.reach = engine_core::math::max(self.reach, reached);
             self.tiers = self.tiers.max(tiers.len() as u32);
             for (inner, outer, scale) in tiers {
+                // Each tier past the radius tries the finest cells'
+                // candidates its nearest blades' share reaches (decision
+                // 098).
+                let tried = if scale > 1.0 {
+                    engine_core::math::min(
+                        (candidates * cover_share(inner, radius, reach)).ceil(),
+                        candidates,
+                    )
+                } else {
+                    candidates
+                };
                 let cell = spacing * scale;
                 let first = [
                     ((local.x - outer) / cell).floor() as i32,
@@ -243,16 +255,12 @@ impl GroundCoverPass {
                     eye: eye.extend(outer).to_array(),
                     grid: [first[0], first[1], cells as i32, candidates as i32],
                     counts: [directory, render.pyramid.levels(), palette, 0],
-                    scale: [
-                        settings.density,
-                        spacing * spacing / candidates,
-                        sky as f32,
-                        0.0,
-                    ],
+                    scale: [settings.density, tried, sky as f32, 0.0],
                     tier: [inner, radius, reach, scale],
                     planes,
                     deform_grid: shading.grid,
                     deform: shading.scale,
+                    ranges,
                 };
                 self.growths.push(Growth {
                     offset: (uniforms.len() as u64 * SLOT) as u32,
@@ -474,6 +482,25 @@ impl GroundCoverPass {
     }
 }
 
+/// Pixels a meter spans a meter from the eye along a view `height` pixels
+/// tall seen through `culling`.
+pub(crate) fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
+    culling.row(1).truncate().length() * height * 0.5
+}
+
+/// Meters from the eye cover's tiers reach on a terrain whose average
+/// blade stands `blade` meters tall, seen at `pixels_per_meter`
+/// (decision 090): while it stands at least `settings.pixels` pixels tall;
+/// 0, no tiers, where that falls within the radius or `pixels` is 0.
+pub(crate) fn tier_reach(settings: &GroundCover, blade: f32, pixels_per_meter: f32) -> f32 {
+    let reach = if settings.pixels > 0.0 {
+        blade * pixels_per_meter / settings.pixels
+    } else {
+        0.0
+    };
+    if reach > settings.radius { reach } else { 0.0 }
+}
+
 /// The square meters of densest cover the radius and tiers out to `reach`
 /// (0 without tiers) grow: their area weighted by `cover_grow.wgsl`'s
 /// `cover_share`, summed ring by ring.
@@ -489,8 +516,9 @@ fn cover_area(radius: f32, reach: f32) -> f32 {
         .sum()
 }
 
-/// `cover_grow.wgsl`'s `cover_share`: the share of the densest cover
-/// growing `away` meters from the eye.
+/// `terrain_variety.wgsl`'s `cover_share` with its tiers ending at their
+/// reach: the most of the densest cover growing `away` meters from the
+/// eye.
 fn cover_share(away: f32, radius: f32, reach: f32) -> f32 {
     let mut share = engine_core::math::min(1.0, 0.2 * radius / away);
     if away > radius {

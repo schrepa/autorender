@@ -34,18 +34,14 @@ impl Renderer {
             snapshot.presented_seconds,
         );
         // Ground under cover turns to its canopy as blades thin out
-        // (decision 090): over the cover's radius, or past it where tiers
-        // reach on.
+        // (decisions 090 and 098).
         let cover = snapshot.environment.ground_cover.sanitized();
-        let canopy = if cover.enabled && cover.density > 0.0 {
-            if cover.pixels > 0.0 {
-                [0.6 * cover.radius, 1.4 * cover.radius, cover.density]
-            } else {
-                [0.5 * cover.radius, cover.radius, cover.density]
-            }
-        } else {
-            [0.0; 3]
-        };
+        let canopy = (cover.enabled && cover.density > 0.0).then(|| {
+            (
+                cover,
+                crate::ground_cover::pixels_per_meter(culling, self.display.size().1 as f32),
+            )
+        });
         let drawn = self.terrain.prepare(
             &self.device,
             &self.queue,
@@ -64,7 +60,7 @@ impl Renderer {
                     .sanitized()
                     .sun_direction
                     .normalize(),
-                canopy,
+                cover: canopy,
             },
             (self.display.max_layers, self.materials.mips()),
         );

@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_range};
 
-/// Occupancy settings: whether the map is drawn, the meters it reaches
-/// from the camera on each side (64 to 4096), its texels a side (128 to
-/// 4096), and how much of the sky light full cover takes away (0 to 1).
-/// Requires version 9.
+/// Occupancy settings: whether the map is drawn, the meters around the
+/// camera within which covers darken, less over the outer two fifths
+/// (decision 098; 64 to 4096), the map's texels a side (128 to 4096), and
+/// how much of the sky light full cover takes away (0 to 1). Requires
+/// version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",

@@ -2124,6 +2124,10 @@ pub struct RenderTerrain {
     /// Meters from the eye within which each level's tiles load, finest
     /// first: where renderers can shade with them.
     pub reach: Vec<f32>,
+    /// Meters from the eye up to which each level draws, finest first; each
+    /// but the coarsest morphs into the next over its last quarter
+    /// ([`LodRanges`]): where renderers find the ground as drawn.
+    pub ranges: Vec<f32>,
     /// Where its hydrology bake found lakes standing (decision 067), and
     /// its rivers (decision 092).
     pub water: Option<Arc<engine_terrain::WaterGrid>>,
@@ -2269,6 +2273,7 @@ impl TerrainExtraction {
                     tiles_revision: 0,
                     patches: Vec::new(),
                     reach: Vec::new(),
+                    ranges: Vec::new(),
                     water: None,
                     rivers: None,
                     surroundings: false,
@@ -2317,6 +2322,7 @@ impl TerrainExtraction {
             render
                 .reach
                 .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
+            render.ranges.clone_from(&state.ranges);
         }
     }
 }

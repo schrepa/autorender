@@ -52,7 +52,12 @@ impl Renderer {
                 timed = true;
             }
             let view_projection = face_view_projection(probe.center, face);
-            let camera = CameraUniform::probe(view_projection, probe.center, seconds);
+            let camera = CameraUniform::probe(
+                view_projection,
+                probe.center,
+                seconds,
+                self.environment.size(),
+            );
             self.queue
                 .write_buffer(self.probes.camera(face), 0, bytemuck::bytes_of(&camera));
             let poses = self.instances.frame_poses(usize::from(odd));

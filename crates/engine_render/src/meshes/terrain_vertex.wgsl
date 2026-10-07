@@ -42,9 +42,10 @@ struct TerrainUniform {
     // map's reference time, and the rim's height for a track's depth.
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
-    // Where ground under cover turns to its canopy (decision 090): from and
-    // to meters from the eye, and the cover's density scale; all 0 without
-    // cover.
+    // Ground cover's radius and the reach of its tiers on this terrain
+    // (decision 090), whose law the canopy follows as blades thin (decision
+    // 098; a radius of 0 shows it from the eye on), and its density scale;
+    // all 0 without cover.
     cover: vec4<f32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;

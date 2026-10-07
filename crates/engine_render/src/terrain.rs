@@ -186,10 +186,10 @@ pub(crate) struct TerrainViews<'a> {
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
     pub sun: Vec3,
-    /// Where ground under cover turns to its canopy (decision 090): from
-    /// and to meters from the eye, and the cover's density scale; all 0
-    /// without cover.
-    pub canopy: [f32; 3],
+    /// Ground cover's settings, sanitized, and the pixels a meter spans a
+    /// meter from the eye, while cover grows: where blades thin out, the
+    /// ground shows as its canopy (decisions 090 and 098).
+    pub cover: Option<(engine_core::GroundCover, f32)>,
 }
 
 struct Atlas {
@@ -470,12 +470,17 @@ impl TerrainPass {
                 (view, directory, relief),
                 self.deformation.shading(),
             );
-            uniform.cover = if terrain.surroundings && views.canopy[1] > 0.0 {
+            uniform.cover = match views.cover {
+                None => [0.0; 4],
                 // Surroundings (decision 094) grow no blades: their grassy
                 // ground shows as canopy from the eye on.
-                [0.0, 1.0e-3, views.canopy[2], 0.0]
-            } else {
-                [views.canopy[0], views.canopy[1], views.canopy[2], 0.0]
+                Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
+                // Elsewhere as blades thin out, by their law (decision 098).
+                Some((cover, pixels)) => {
+                    let blade = self.cover_terrain(index).2[1];
+                    let reach = crate::ground_cover::tier_reach(&cover, blade, pixels);
+                    [cover.radius, reach, cover.density, 0.0]
+                }
             };
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
@@ -956,6 +961,9 @@ impl TerrainPass {
                             });
                         let far_occlusion =
                             means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
+                        // The slopes its normal maps lose to distance roughen
+                        // it (decision 098).
+                        let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
                         // Its cover's canopy (decision 090): the blades' color
                         // from root (the ground's mean) most of the way to tip,
                         // as their upper parts show from afar, and their
@@ -990,7 +998,7 @@ impl TerrainPass {
                             far[3],
                             look.relief,
                             look.deform,
-                            0.0,
+                            slopes,
                             0.0,
                             canopy[0],
                             canopy[1],

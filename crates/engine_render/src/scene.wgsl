@@ -9,7 +9,9 @@
 // and `jitter.zw`, two over the viewport size in pixels. The unjittered
 // inverse turns pixels into sky rays; `position.xyz` is the eye and
 // `position.w` presentation time in seconds (decision 019). `options.x` is 1
-// while a reflection probe captures a cube face (decision 043). `wind` is
+// while a reflection probe captures a cube face (decision 043); `options.y`
+// is the angle a pixel spans at the view's center (radians), which
+// `pixel_footprint` measures pixels by (decision 098). `wind` is
 // the wind's velocity (x and z), gust strength and the previous frame's
 // presentation time, which temporal frames' motion sways by (decision
 // 058).
@@ -55,7 +57,8 @@ struct Lighting {
     aerial_color: vec4<f32>,
     // Occupancy (decision 059): the map's center (x and z), the inverse of
     // its side and the strength covers darken by (0 without a map); then
-    // the reference height its heights are above and its texels a side.
+    // the reference height its heights are above, its texels a side and
+    // the meters from the eye it fades out by (decision 098).
     occupancy: vec4<f32>,
     occupancy_heights: vec4<f32>,
     // Under the sea (decision 077): the light its water scatters toward the
@@ -141,9 +144,13 @@ struct Shadow {
 
 // The share of the sky light placed objects' covers leave at `world`
 // (decision 059): under a cover, its density's worth less; within it, less
-// the deeper below its top; above it or outside the map, all of it.
+// the deeper below its top; above it or outside the map, all of it. Covers
+// darken less over the outer two fifths of the map's reach around the eye
+// (decision 098), so their edge is never seen.
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
-    let strength = lighting.occupancy.w;
+    let reach = lighting.occupancy_heights.z;
+    let away = length(world.xz - camera.position.xz);
+    let strength = lighting.occupancy.w * (1.0 - smoothstep(0.6 * reach, reach, away));
     if strength <= 0.0 {
         return 1.0;
     }
@@ -169,6 +176,21 @@ fn occupancy_visibility(world: vec3<f32>) -> f32 {
 }
 
 const PI: f32 = 3.14159265;
+
+// The meters a pixel spans on a surface at `world` facing `normal`, the
+// mean of its two sides (decision 098): from the angle a pixel spans
+// (`camera.options.y`), the point's depth along the view and how obliquely
+// the view meets the surface, so it changes smoothly over curved surfaces
+// where screen derivatives step from one triangle to the next. Views more
+// grazing than a sixteenth count as that.
+fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let relative = world - camera.position.xyz;
+    let distance = max(length(relative), 1.0e-6);
+    let view = camera.view_projection;
+    let depth = max(dot(vec3<f32>(view[0].w, view[1].w, view[2].w), relative), 1.0e-6);
+    let facing = max(abs(dot(normal, relative)) / distance, 0.0625);
+    return depth * camera.options.y * sqrt(depth / (distance * facing));
+}
 
 // How far the wind (decision 058) pushes a point `height` meters up an
 // object standing at `root` that sways `sway` meters at ten meters up in
@@ -561,6 +583,9 @@ fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec
 // Kept levels (decision 065) hand over to the next coarser map across this
 // share of their width inside their windows' edges.
 const LEVEL_HANDOVER: f32 = 0.08;
+// The last near cascade hands over to the far maps across this share of its
+// reach (decision 098).
+const CASCADE_HANDOVER: f32 = 0.3;
 
 // The four depths around `point` in kept level `level`, `size` texels a
 // side, in gather order. The map wraps: texels past one edge are those at
@@ -582,9 +607,10 @@ fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
 // Visibility of still casters' sun at the surface point `world` in the kept
 // levels (decision 065), each looked up its offset along `normal`: from the
 // finest level whose window and band hold it on a tile holding its casters,
-// handing over to the next across the window's edge. x: the visibility
-// found, weighted; y: the weight left to coarser maps (1 where no level
-// holds the point).
+// handing over to the next across the window's edge and as its texels
+// shrink below a pixel's footprint (decision 098). x: the visibility found,
+// weighted; y: the weight left to coarser maps (1 where no level holds the
+// point).
 fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> vec2<f32> {
     let count = u32(shadow.level_state.x);
@@ -600,14 +626,17 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     let size = shadow.level_state.y;
     let pending = u32(shadow.level_state.z);
     // A level whose texels are under half a pixel's footprint shows no more
-    // than the coarser maps after it, which read cheaper: lookups take the
-    // first map no finer than that, as textures read mipmaps.
-    let footprint = sqrt(length(dx) * length(dy));
+    // than the coarser maps after it, which read cheaper: lookups hand over
+    // to the next map as its texels shrink from 0.7 to 0.35 of the
+    // footprint, as textures blend mipmaps. Windows' offsets are half their
+    // texels.
+    let footprint = max(pixel_footprint(world, normal), 1.0e-6);
     var visible = 0.0;
     var left = 1.0;
     for (var level = 0u; level < count; level++) {
         let window = shadow.level_windows[level];
-        if 4.0 * window.z < footprint {
+        let fine = saturate((2.0 * window.z / footprint - 0.35) / 0.35);
+        if fine <= 0.0 {
             continue;
         }
         let scales = shadow.level_scales[level];
@@ -636,9 +665,9 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
             vec4<f32>(light_dy * level_scale, 0.0), vec2<f32>(1.0, -1.0) * size, window.w);
         let here = plane_visibility(level_depths(level, point, size), point);
         let edge = min(min(local.x, local.y), min(1.0 - local.x, 1.0 - local.y));
-        let handover = saturate(1.0 - edge / LEVEL_HANDOVER);
-        visible += left * (1.0 - handover) * here;
-        left *= handover;
+        let weight = (1.0 - saturate(1.0 - edge / LEVEL_HANDOVER)) * fine;
+        visible += left * weight * here;
+        left *= 1.0 - weight;
         if left <= 0.0 {
             break;
         }
@@ -763,12 +792,22 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     return mix(1.0, passing, strength * fade);
 }
 
+// Visibility of the sun at `world` in the far maps, fading out at the
+// shadow distance.
+fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
+        distance: f32) -> f32 {
+    let visible = far_surface_visibility(world, normal, dx, dy);
+    let fade = saturate((distance - shadow.state.w) / (shadow.offsets.x - shadow.state.w));
+    return mix(visible, 1.0, fade);
+}
+
 // Visibility of the sun at `world` in the shadow maps. Near cascades cover
 // the first stretch of the view, each three times sharper than the next
 // (decision 028), and hand over to the next one across the last tenth of
-// their reach; the far maps, the kept one for still casters and the one
-// redrawn every frame, cover the rest and fade out at the shadow distance.
-// Lookups compare four texels with the surface's plane.
+// their reach, the last one to the far maps across `CASCADE_HANDOVER` of
+// its reach (decision 098); the far maps, the kept one for still casters
+// and the one redrawn every frame, cover the rest and fade out at the
+// shadow distance. Lookups compare four texels with the surface's plane.
 fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32) -> f32 {
     // The first cascade reaching the fragment. Reflection probe captures
@@ -781,19 +820,24 @@ fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
         let visible = cascade_visibility(cascade, world, normal, dx, dy);
         if visible >= 0.0 {
             let reach = shadow.reach[cascade];
-            let handover = saturate((distance - reach * 0.9) / (reach * 0.1));
-            if handover > 0.0 && cascade + 1u < cascades {
-                let next = cascade_visibility(cascade + 1u, world, normal, dx, dy);
-                if next >= 0.0 {
-                    return mix(visible, next, handover);
-                }
+            let last = cascade + 1u == cascades;
+            let band = select(0.1, CASCADE_HANDOVER, last);
+            let handover = saturate((distance - reach * (1.0 - band)) / (reach * band));
+            if handover <= 0.0 {
+                return visible;
+            }
+            if last {
+                return mix(visible, far_maps_visibility(world, normal, dx, dy, distance),
+                    handover);
+            }
+            let next = cascade_visibility(cascade + 1u, world, normal, dx, dy);
+            if next >= 0.0 {
+                return mix(visible, next, handover);
             }
             return visible;
         }
     }
-    let visible = far_surface_visibility(world, normal, dx, dy);
-    let fade = saturate((distance - shadow.state.w) / (shadow.offsets.x - shadow.state.w));
-    return mix(visible, 1.0, fade);
+    return far_maps_visibility(world, normal, dx, dy, distance);
 }
 
 // Trowbridge-Reitz (GGX) distribution of microfacet normals.
