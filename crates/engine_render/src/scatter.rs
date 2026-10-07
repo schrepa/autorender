@@ -57,13 +57,24 @@ pub(crate) type ShadowViews<'a> = (
 pub(crate) const DEAD: u32 = u32::MAX;
 
 /// A record's terrain word: the index this frame of the terrain the object
-/// stands on (`TERRAIN_INDEX` itself: none); for objects standing far away
-/// (decision 061), one more than the level whose resident tiles hold them
-/// instead, from `NEAR_LEVEL_SHIFT`; and the top bit (the shaders'
-/// `HIDDEN`) while such tiles are resident where they stand, which setting
-/// them on the terrain marks and culling skips.
-pub(crate) const TERRAIN_INDEX: u32 = 0xffff;
+/// stands on, nine bits (`TERRAIN_INDEX` itself: none); its placement
+/// layer, seven bits from `LAYER_SHIFT` (`NO_LAYER`: authored, or none);
+/// for objects standing far away (decision 061), one more than the level
+/// whose resident tiles hold them instead, five bits from
+/// `NEAR_LEVEL_SHIFT`; its rank under the density where it stands
+/// (decision 100), ten bits from `RANK_SHIFT`; and the top bit (the
+/// shaders' `HIDDEN`) while tiles holding it instead are resident where it
+/// stands, which setting it on the terrain marks and culling skips.
+pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
+pub(crate) const LAYER_SHIFT: u32 = 9;
+pub(crate) const NO_LAYER: u32 = 0x7f;
 pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16;
+pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
+pub(crate) const RANK_SHIFT: u32 = 21;
+pub(crate) const RANK_MAX: f32 = 1023.0;
+/// Entries of the thinning table (decision 100) each terrain takes: one
+/// per placement layer a surface may have (a validity bound).
+pub(crate) const THIN_LAYERS: usize = 64;
 
 /// WGSL `Record`: an object's bounding sphere, draw group and scale, the
 /// terrain word (see [`TERRAIN_INDEX`]) and how far its base sinks below
@@ -186,6 +197,10 @@ pub(crate) struct ScatterPass {
     card_args: wgpu::Buffer,
     // Advances when buffers are replaced.
     generation: u64,
+    // How each terrain's placement layers thin with distance (decision
+    // 100), as last written.
+    thins: wgpu::Buffer,
+    thins_written: Vec<[f32; 4]>,
     cull_group: Cached<u64, wgpu::BindGroup>,
     // The pose groups of plain and temporal mesh pipelines, and of depth
     // passes.
@@ -267,6 +282,13 @@ impl ScatterPass {
                 wgpu::BufferUsages::INDIRECT,
             ),
             generation: 0,
+            thins: crate::buffers::storage(
+                device,
+                "engine/scatter-thins",
+                16,
+                wgpu::BufferUsages::empty(),
+            ),
+            thins_written: Vec::new(),
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
             shadow_group: Cached::default(),
@@ -434,6 +456,31 @@ impl ScatterPass {
             .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
     }
 
+    /// Writes how each terrain's placement layers thin with distance
+    /// (decision 100) when it changed: `THIN_LAYERS` entries a terrain.
+    pub(crate) fn set_thinning(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        thins: &[[f32; 4]],
+    ) {
+        if thins == self.thins_written.as_slice() {
+            return;
+        }
+        let bytes: &[u8] = bytemuck::cast_slice(thins);
+        if grow(
+            device,
+            &mut self.thins,
+            "engine/scatter-thins",
+            (bytes.len() as u64).max(16),
+            wgpu::BufferUsages::empty(),
+        ) {
+            self.generation += 1;
+        }
+        queue.write_buffer(&self.thins, 0, bytes);
+        self.thins_written = thins.to_vec();
+    }
+
     /// Plans this frame's culling: the camera's view, from its
     /// `view_projection` (world) and eye, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, `resolution` texels
@@ -574,6 +621,7 @@ impl ScatterPass {
                     crate::buffers::entry("views", &self.views),
                     crate::buffers::entry("cards", &self.cards),
                     crate::buffers::entry("card_args", &self.card_args),
+                    crate::buffers::entry("thins", &self.thins),
                 ],
             );
             self.cull_group.set(self.generation, group);

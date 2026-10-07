@@ -13,7 +13,8 @@ use crate::gpu_data::{ColorData, pack_color, pack_surface};
 use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
 use crate::occupancy::Cover;
 use crate::scatter::{
-    GroupLayout, LEVELS, NEAR_LEVEL_SHIFT, Record, SnapSources, TERRAIN_INDEX, TerrainInfo,
+    GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
+    SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
@@ -161,6 +162,35 @@ impl Renderer {
                 ],
             })
             .collect();
+        // How each terrain's layers thin with distance this frame (decision
+        // 100): their tiles' reaches follow the view's levels of detail,
+        // and pinned levels stay resident everywhere.
+        let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
+        let mut thins = vec![[0.0_f32; 4]; terrains.len() * crate::scatter::THIN_LAYERS];
+        for (index, terrain) in terrains.iter().enumerate() {
+            let levels = terrain.pyramid.levels();
+            let reach = |level: u8| {
+                if u32::from(level) + pinned >= levels {
+                    0.0
+                } else {
+                    terrain
+                        .reach
+                        .get(usize::from(level))
+                        .copied()
+                        .unwrap_or(0.0)
+                }
+            };
+            for (layer, &(near, far, share)) in terrain
+                .thinning
+                .iter()
+                .enumerate()
+                .take(crate::scatter::THIN_LAYERS)
+            {
+                thins[index * crate::scatter::THIN_LAYERS + layer] =
+                    [share, reach(near), reach(far), 1.0];
+            }
+        }
+        self.scatter.set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
         // The kept shadow map redraws where objects came or went
@@ -676,6 +706,10 @@ fn tile_objects(
             continue;
         };
         let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
+        // Its layer and its rank under the density (decision 100), in ten
+        // bits.
+        let layer = u32::from(placed.layer).min(NO_LAYER);
+        let rank = (engine_core::math::clamp(placed.rank, 0.0, 1.0) * RANK_MAX).round() as u32;
         let draw = &draws.groups[group as usize];
         let (center, radius) = draw.sphere;
         let model = placed.model(terrain.origin, placed.position[1]);
@@ -686,7 +720,7 @@ fn tile_objects(
             radius: radius * placed.scale,
             group,
             scale: placed.scale,
-            terrain: index | near << NEAR_LEVEL_SHIFT,
+            terrain: index | layer << LAYER_SHIFT | near << NEAR_LEVEL_SHIFT | rank << RANK_SHIFT,
             sink: placed.sink,
         });
         objects.3.push(crate::gpu_data::ground_data(

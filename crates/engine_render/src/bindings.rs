@@ -829,6 +829,7 @@ pub(crate) const SCATTER_CULL: Table = Table {
         read(5, "views", C),
         write(6, "cards", C),
         write(7, "card_args", C),
+        read(8, "thins", C),
     ],
 };
 

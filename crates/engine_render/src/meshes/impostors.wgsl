@@ -343,11 +343,17 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
         frames |= frame << (6u * k);
     }
     let color = colors[slot];
+    // Cards sway in the wind as their meshes do (decision 100).
+    var swayed = world.xyz;
+    let sway = slot_sway(color.flags);
+    if sway > 0.0 {
+        swayed += slot_wind(model, world.xyz, sway, camera.position.w);
+    }
     var output: ImpostorOutput;
-    output.clip_position = camera.view_projection * world;
+    output.clip_position = camera.view_projection * vec4<f32>(swayed, 1.0);
     output.frames_ab = vec4<f32>(uvs[0], uvs[1]);
     output.frame_c = uvs[2];
-    output.world = world.xyz;
+    output.world = swayed;
     output.normal_x = vec4<f32>(yz * orientation, weights.x);
     output.normal_y = vec4<f32>(zx * orientation, weights.y);
     output.normal_z = xy * orientation;
@@ -373,8 +379,14 @@ fn vs_impostor_temporal(input: ImpostorInput) -> ImpostorTemporalOutput {
     if (input.slot & MOVED_SLOT) != 0u {
         pose = previous_poses[slot];
     }
-    let world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
+    var world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
         dot(pose.row_2, point), 1.0);
+    // Last frame's sway, at its time.
+    let sway = slot_sway(colors[slot].flags);
+    if sway > 0.0 {
+        let model = pose_matrix(pose);
+        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
+    }
     let vertex = card.output;
     var output: ImpostorTemporalOutput;
     output.clip_position = vertex.clip_position;

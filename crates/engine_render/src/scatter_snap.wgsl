@@ -38,7 +38,7 @@ struct Pose {
 
 const DEAD: u32 = 0xffffffffu;
 const NOT_RESIDENT: u32 = 0xffffffffu;
-const TERRAIN_INDEX: u32 = 0xffffu;
+const TERRAIN_INDEX: u32 = 0x1ffu;
 const NEAR_LEVEL_SHIFT: u32 = 16u;
 const HIDDEN: u32 = 0x80000000u;
 
@@ -97,7 +97,7 @@ fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let ground = ground_at(info, vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz);
     // Far away, an object hides where the level holding it instead is
     // resident, or a finer one.
-    let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0xffu;
+    let near = (record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu;
     let hidden = near != 0u && ground.y != 0.0 && u32(ground.z) < near;
     records[id.x].terrain = select(record.terrain & ~HIDDEN, record.terrain | HIDDEN, hidden);
     if ground.y == 0.0 {

@@ -1855,11 +1855,13 @@ fn rules() -> Biomes {
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
-                // A third of them stand on the pinned four-kilometer tiles too,
-                // so forests reach the horizon (decision 061).
+                // Half of them stand on the pinned four-kilometer tiles too,
+                // so forests reach the horizon (decision 061), the rest
+                // thinning out before the two-kilometer tiles end (decision
+                // 100).
                 far: Some(FarPlacement {
                     level: 4,
-                    share: 0.3,
+                    share: 0.5,
                 }),
             },
             PlacementLayer {
@@ -1878,7 +1880,13 @@ fn rules() -> Biomes {
                 sink: 0.1,
                 bed: 0.45,
                 level: 0,
-                far: None,
+                // Two in five stand on the kilometer tiles too, so boulders
+                // thin out toward the horizon instead of ending where the
+                // finest tiles do (decision 100).
+                far: Some(FarPlacement {
+                    level: 2,
+                    share: 0.4,
+                }),
             },
             PlacementLayer {
                 id: "stones".into(),
@@ -1940,7 +1948,10 @@ fn rules() -> Biomes {
                 sink: 0.5,
                 bed: 0.0,
                 level: 0,
-                far: None,
+                far: Some(FarPlacement {
+                    level: 2,
+                    share: 0.5,
+                }),
             },
         ],
         materials: LOOKS.iter().map(|look| look.name.to_owned()).collect(),

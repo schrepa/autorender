@@ -73,6 +73,38 @@ struct DrawArgs {
     first_instance: u32,
 }
 
+// How each terrain's placement layers thin with distance (decision 100),
+// `THIN_LAYERS` entries a terrain: the share standing far away, the meters
+// the layer's own tiles and its far tiles reach (0 where they stay resident
+// everywhere), and 1 where the layer thins at all.
+const THIN_LAYERS: u32 = 64u;
+// Where an object's layer and its rank under the density lie in its
+// terrain word (`scatter.rs`).
+const TERRAIN_INDEX: u32 = 0x1ffu;
+const LAYER_SHIFT: u32 = 9u;
+const NO_LAYER: u32 = 0x7fu;
+const RANK_SHIFT: u32 = 21u;
+
+// The share of a layer's density `away` meters from the eye (decision
+// 100): all of it within seven tenths of its tiles' reach, falling to its
+// far share across most of the rest, then to none across the same part of
+// its far tiles' reach unless those stay resident everywhere: objects
+// ranked past it hide before their tiles leave, so density never steps
+// where tiles end.
+fn thinned(thin: vec4<f32>, away: f32) -> f32 {
+    if thin.w == 0.0 {
+        return 1.0;
+    }
+    var keep = 1.0;
+    if thin.y > 0.0 {
+        keep = mix(1.0, thin.x, smoothstep(0.7 * thin.y, 0.95 * thin.y, away));
+    }
+    if thin.z > 0.0 {
+        keep *= 1.0 - smoothstep(0.7 * thin.z, 0.95 * thin.z, away);
+    }
+    return keep;
+}
+
 // A non-indexed indirect draw, counting its instances.
 struct CardArgs {
     vertex_count: u32,
@@ -103,6 +135,7 @@ const HIDDEN: u32 = 0x80000000u;
 // their draws.
 @group(0) @binding(6) var<storage, read_write> cards: array<vec2<u32>>;
 @group(0) @binding(7) var<storage, read_write> card_args: array<CardArgs>;
+@group(0) @binding(8) var<storage, read> thins: array<vec4<f32>>;
 
 // Whether a sphere at `center` with `radius` reaches inside every plane of
 // view `view`.
@@ -129,6 +162,23 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
+    // Objects ranked past the density their distance allows stand in no
+    // view (decision 100); cards of those it would leave out a tenth of
+    // their distance farther dissolve, so they fade in as the eye nears.
+    let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
+    let thin = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
+    var present = 1.0;
+    if layer != NO_LAYER && thin < arrayLength(&thins) {
+        let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
+        let keep = thinned(thins[thin], away);
+        if rank >= keep {
+            return;
+        }
+        let farther = thinned(thins[thin], away * 1.1);
+        if rank >= farther {
+            present = saturate((keep - rank) / max(keep - farther, 1.0e-6));
+        }
+    }
     // The camera draws an impostor its texels show within the error, as a
     // card, which near cascades cast too (decision 098) and the moving map
     // leaves out; kept maps cast one wherever their texels are no finer than
@@ -153,7 +203,11 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         if card {
             let index = atomicAdd(&card_args[view].instance_count, 1u);
-            cards[view * frame.strides.w + index] = vec2<u32>(id.x, group.record);
+            var word = group.record;
+            if present < 1.0 && view == 0u && group.record < 0x10000u {
+                word = group.record | FADING | (u32(present * 32767.0) << 16u);
+            }
+            cards[view * frame.strides.w + index] = vec2<u32>(id.x, word);
             continue;
         }
         if fading && view == 0u {
