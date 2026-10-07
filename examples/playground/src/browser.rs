@@ -84,6 +84,12 @@ impl PlaygroundGame {
         self.app.work(width, height);
     }
 
+    /// Terrain loading between frames (decision 108); see
+    /// `BrowserApp::work_between_frames`.
+    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
+        self.app.work_between_frames(milliseconds)
+    }
+
     /// The last frame's statistics as a JSON object.
     pub fn stats(&self) -> String {
         self.app.stats_json()

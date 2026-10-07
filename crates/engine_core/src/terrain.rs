@@ -867,8 +867,11 @@ pub struct TerrainStats {
     pub terrains: u32,
     /// Tiles resident now.
     pub resident_tiles: u32,
-    /// Tiles being generated, fetched or decoded.
+    /// Tiles being generated, fetched or decoded, and every tile the
+    /// camera's view and collision want that is not resident yet (decision
+    /// 108).
     pub loading_tiles: u32,
+    pub missing_tiles: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -915,6 +918,225 @@ impl Work {
             }
             _ => false,
         }
+    }
+}
+
+/// Loads `missing` tiles of `state`, most important first, within `work`'s
+/// time from slices of `budget`: generated after the terrain's bakes,
+/// decoded, or requested and decoded once delivered; `target` is every tile
+/// it keeps. Frames load what they find missing, and hosts what is left
+/// between frames (decision 108). Returns whether a bake is still in
+/// progress, which nothing loads behind.
+fn load_tiles(
+    state: &mut TerrainState,
+    missing: &[TileKey],
+    target: &HashSet<TileKey>,
+    work: &Work,
+    budget: &mut u64,
+    frame: u64,
+    requests: &mut Vec<TileRequest>,
+) -> bool {
+    let pyramid = state.terrain.pyramid;
+    match state.terrain.source.clone() {
+        TerrainSource::Generated(authored) => {
+            // Bakes (decisions 066 and 068) run before any tile loads,
+            // each reading the layers below it, in stack order.
+            let layers = state.baked.clone().unwrap_or(authored);
+            if let Some(unbaked) = layers.unbaked() {
+                let bake = state
+                    .bake
+                    .get_or_insert_with(|| TerrainBake::new(&layers, unbaked.clone(), &pyramid));
+                let _profile = engine_profile::span("cpu", "terrain_bake");
+                let baked = loop {
+                    if let Some(baked) = bake.advance(&pyramid, budget) {
+                        break Some(baked);
+                    }
+                    if !work.refill(budget) {
+                        break None;
+                    }
+                };
+                if let Some(baked) = baked {
+                    match &baked {
+                        Baked::Hydrology(found) => state.hydrology = Some(found.stats),
+                        Baked::Erosion(found) => state.erosion = Some(found.stats),
+                        Baked::Path(_) => {}
+                    }
+                    let index = unbaked.0;
+                    let baked = Arc::new(layers.with_baked(index, baked));
+                    if baked.unbaked().is_none() {
+                        // Its roads' bridges (decision 072), once every
+                        // bake is done; collision follows the revision.
+                        state.bridges = baked
+                            .layers()
+                            .iter()
+                            .filter_map(|layer| match layer {
+                                Layer::Path(PathStage {
+                                    baked: Some(profile),
+                                    ..
+                                }) => Some(profile.bridges()),
+                                _ => None,
+                            })
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .into();
+                        // Its rivers' waterfalls (decision 075).
+                        state.falls = baked
+                            .hydrology()
+                            .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
+                        state.revision += 1;
+                    }
+                    state.baked = Some(baked);
+                    state.bake = None;
+                }
+                return true;
+            }
+            // Edits (decision 080) stand over every bake.
+            let layers = state.generation(layers);
+            // The coarsest level always draws: generate it whole at once.
+            let first = state.tiles.is_empty();
+            for &key in missing {
+                let whole = first && u32::from(key.level) + 1 == pyramid.levels();
+                if !whole && *budget == 0 && !work.refill(budget) {
+                    break;
+                }
+                let rules = &state.terrain.surface.rules;
+                let job = state.jobs.entry(key).or_insert_with(|| {
+                    Generator::new(layers.clone(), &pyramid, key).with_surface(rules.clone())
+                });
+                let tile = if whole {
+                    let mut unlimited = u64::MAX;
+                    job.advance(&mut unlimited)
+                } else {
+                    loop {
+                        if let Some(tile) = job.advance(budget) {
+                            break Some(tile);
+                        }
+                        if !work.refill(budget) {
+                            break None;
+                        }
+                    }
+                };
+                if let Some(tile) = tile {
+                    state.jobs.remove(&key);
+                    state.stale.remove(&key);
+                    state.insert(tile);
+                }
+            }
+        }
+        TerrainSource::File {
+            header,
+            url: _,
+            data: Some(data),
+        } => {
+            // The whole file is here: decode within the frame's work,
+            // then give each tile its surface.
+            for &key in missing {
+                if *budget == 0 && !work.refill(budget) {
+                    break;
+                }
+                if state.surface_job(key, budget) {
+                    continue;
+                }
+                let Some(entry) = header.tile(key) else {
+                    continue;
+                };
+                let range = usize::try_from(entry.offset)
+                    .ok()
+                    .and_then(|start| data.get(start..start.checked_add(entry.length as usize)?));
+                *budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
+                match range.map(|bytes| decode_tile(&header, key, bytes)) {
+                    Some(Ok(tile)) => state.resurface(tile, budget),
+                    _ => {
+                        state.failed.insert(key, frame);
+                    }
+                }
+            }
+        }
+        TerrainSource::File {
+            header,
+            url,
+            data: None,
+        } => {
+            for &key in missing {
+                if *budget > 0 || work.refill(budget) {
+                    state.surface_job(key, budget);
+                }
+                if state.in_flight.contains(&key)
+                    || state.jobs.contains_key(&key)
+                    || state.tiles.contains_key(&key)
+                    || state
+                        .failed
+                        .get(&key)
+                        .is_some_and(|&at| frame < at + RETRY_AFTER)
+                {
+                    continue;
+                }
+                let Some(entry) = header.tile(key) else {
+                    continue;
+                };
+                state.in_flight.insert(key);
+                requests.push(TileRequest {
+                    terrain: state.entity,
+                    key,
+                    url: url.clone(),
+                    offset: entry.offset,
+                    length: entry.length,
+                });
+            }
+            let arrivals = std::mem::take(&mut state.arrivals);
+            let mut later = Vec::new();
+            for (key, bytes) in arrivals {
+                if *budget == 0 {
+                    work.refill(budget);
+                }
+                if *budget == 0 || !target.contains(&key) {
+                    if target.contains(&key) {
+                        later.push((key, bytes));
+                    }
+                    continue;
+                }
+                *budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
+                match bytes.map(|bytes| decode_tile(&header, key, &bytes)) {
+                    Some(Ok(tile)) => {
+                        state.failed.remove(&key);
+                        state.resurface(tile, budget);
+                    }
+                    _ => {
+                        state.failed.insert(key, frame);
+                    }
+                }
+            }
+            state.arrivals = later;
+        }
+    }
+    false
+}
+
+/// Pushes `key` onto `order` after those of its ancestors not yet there,
+/// coarsest first (decision 108): a tile draws only within its parent, so a
+/// finer one loaded first would wait unused, while what stands on the
+/// ground (blades, placed objects) already followed its finer heights.
+fn push_with_ancestors(
+    pyramid: &engine_terrain::Pyramid,
+    key: TileKey,
+    order: &mut Vec<TileKey>,
+    seen: &mut HashSet<TileKey>,
+) {
+    if seen.contains(&key) {
+        return;
+    }
+    let mut chain = vec![key];
+    let mut child = key;
+    while let Some(parent) = pyramid.parent(child) {
+        if seen.contains(&parent) {
+            break;
+        }
+        chain.push(parent);
+        child = parent;
+    }
+    for key in chain.into_iter().rev() {
+        seen.insert(key);
+        order.push(key);
     }
 }
 
@@ -973,6 +1195,10 @@ struct TerrainState {
     /// For a terrain's surroundings (decision 094), what they were drawn
     /// from.
     around: Option<Around>,
+    /// The tiles the last frame found missing, most important first, and
+    /// every tile it keeps: what loads between frames (decision 108).
+    missing: Vec<TileKey>,
+    target: HashSet<TileKey>,
 }
 
 /// What a terrain's surroundings (decision 094) were drawn from: the layers
@@ -1018,6 +1244,8 @@ impl TerrainState {
             edited: None,
             stale: HashSet::new(),
             around: None,
+            missing: Vec::new(),
+            target: HashSet::new(),
         }
     }
 
@@ -1675,6 +1903,69 @@ impl Terrains {
         self.loaded = false;
     }
 
+    /// Whether the last frame found tiles to load: hosts then load them in
+    /// time frames leave free (decision 108).
+    pub fn streaming(&self) -> bool {
+        self.entries.iter().any(|state| !state.missing.is_empty())
+    }
+
+    /// Loads, for `milliseconds`, the tiles the last frame found missing,
+    /// most important first, between frames (decision 108): frames leave
+    /// time free while the GPU draws them, which terrain otherwise only
+    /// takes a few milliseconds of. Patches are selected anew with the next
+    /// frame. Returns whether tiles are still to load; nothing without a
+    /// clock (`set_clock`).
+    pub fn work_between_frames(&mut self, settings: &TerrainSettings, milliseconds: f64) -> bool {
+        let Some(clock) = self.clock else {
+            return false;
+        };
+        // Smaller slices than frames take, so work ends close to its time.
+        let work = Work {
+            slice: u64::from(settings.samples_per_frame / 4).max(1),
+            clock: Some(clock),
+            end: clock() + milliseconds,
+        };
+        let mut budget = work.slice;
+        let frame = self.frame;
+        let requests = &mut self.requests;
+        let mut remaining = false;
+        for state in &mut self.entries {
+            if !state.terrain.is_usable() || !settings.enabled {
+                continue;
+            }
+            let missing: Vec<TileKey> = std::mem::take(&mut state.missing)
+                .into_iter()
+                .filter(|key| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            let target = std::mem::take(&mut state.target);
+            let baking = load_tiles(
+                state,
+                &missing,
+                &target,
+                &work,
+                &mut budget,
+                frame,
+                requests,
+            );
+            state.missing = missing
+                .into_iter()
+                .filter(|key| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .collect();
+            state.target = target;
+            // Tiles waiting on their fetch load once delivered.
+            let waiting = matches!(state.terrain.source, TerrainSource::File { data: None, .. })
+                && state.arrivals.is_empty();
+            remaining |= baking || (!state.missing.is_empty() && !waiting);
+            if budget == 0 && !work.refill(&mut budget) {
+                break;
+            }
+        }
+        remaining
+    }
+
     /// Where `eye`, moved since the last frame `seconds` ago, is headed
     /// (decision 100): its velocity, smoothed over frames, carried
     /// `AHEAD_SECONDS` on, at most `AHEAD_MAX` meters; the eye itself after
@@ -1683,7 +1974,10 @@ impl Terrains {
         let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
         self.last_eye = Some(eye);
         if moved.length() > JUMP {
+            // A jump loads the view again at the loading budget (decision
+            // 108), as the first view loads.
             self.velocity = Vec3::ZERO;
+            self.loaded = false;
         } else if seconds > 0.0 {
             self.velocity = self.velocity.lerp(moved / seconds, 0.25);
         }
@@ -1845,9 +2139,7 @@ impl Terrains {
                 .chain(loading.iter().copied())
                 .chain(self.wanted[pinned_end..].iter().map(|tile| tile.key))
             {
-                if seen.insert(key) {
-                    order.push(key);
-                }
+                push_with_ancestors(&pyramid, key, &mut order, &mut seen);
             }
             // Then where the eye is headed (decision 100), so its tiles are
             // ready before the view needs them.
@@ -1864,9 +2156,7 @@ impl Terrains {
                     &mut self.wanted,
                 );
                 for key in self.wanted.iter().map(|tile| tile.key) {
-                    if seen.insert(key) {
-                        order.push(key);
-                    }
+                    push_with_ancestors(&pyramid, key, &mut order, &mut seen);
                 }
             }
             let kept = order.len().min(remaining);
@@ -1926,182 +2216,27 @@ impl Terrains {
                         && (!state.tiles.contains_key(key) || state.stale.contains(key))
                 })
                 .collect();
-            match state.terrain.source.clone() {
-                TerrainSource::Generated(authored) => {
-                    // Bakes (decisions 066 and 068) run before any tile loads,
-                    // each reading the layers below it, in stack order.
-                    let layers = state.baked.clone().unwrap_or(authored);
-                    if let Some(unbaked) = layers.unbaked() {
-                        stats.baking += 1;
-                        let bake = state.bake.get_or_insert_with(|| {
-                            TerrainBake::new(&layers, unbaked.clone(), &pyramid)
-                        });
-                        let _profile = engine_profile::span("cpu", "terrain_bake");
-                        let baked = loop {
-                            if let Some(baked) = bake.advance(&pyramid, &mut budget) {
-                                break Some(baked);
-                            }
-                            if !work.refill(&mut budget) {
-                                break None;
-                            }
-                        };
-                        if let Some(baked) = baked {
-                            match &baked {
-                                Baked::Hydrology(found) => state.hydrology = Some(found.stats),
-                                Baked::Erosion(found) => state.erosion = Some(found.stats),
-                                Baked::Path(_) => {}
-                            }
-                            let index = unbaked.0;
-                            let baked = Arc::new(layers.with_baked(index, baked));
-                            if baked.unbaked().is_none() {
-                                // Its roads' bridges (decision 072), once every
-                                // bake is done; collision follows the revision.
-                                state.bridges = baked
-                                    .layers()
-                                    .iter()
-                                    .filter_map(|layer| match layer {
-                                        Layer::Path(PathStage {
-                                            baked: Some(profile),
-                                            ..
-                                        }) => Some(profile.bridges()),
-                                        _ => None,
-                                    })
-                                    .flatten()
-                                    .collect::<Vec<_>>()
-                                    .into();
-                                // Its rivers' waterfalls (decision 075).
-                                state.falls = baked.hydrology().map_or_else(
-                                    || Arc::from(Vec::new()),
-                                    |water| water.falls.clone(),
-                                );
-                                state.revision += 1;
-                            }
-                            state.baked = Some(baked);
-                            state.bake = None;
-                        }
-                        continue;
-                    }
-                    // Edits (decision 080) stand over every bake.
-                    let layers = state.generation(layers);
-                    // The coarsest level always draws: generate it whole at once.
-                    let first = state.tiles.is_empty();
-                    for key in missing {
-                        let whole = first && u32::from(key.level) + 1 == pyramid.levels();
-                        if !whole && budget == 0 && !work.refill(&mut budget) {
-                            break;
-                        }
-                        let rules = &state.terrain.surface.rules;
-                        let job = state.jobs.entry(key).or_insert_with(|| {
-                            Generator::new(layers.clone(), &pyramid, key)
-                                .with_surface(rules.clone())
-                        });
-                        let tile = if whole {
-                            let mut unlimited = u64::MAX;
-                            job.advance(&mut unlimited)
-                        } else {
-                            loop {
-                                if let Some(tile) = job.advance(&mut budget) {
-                                    break Some(tile);
-                                }
-                                if !work.refill(&mut budget) {
-                                    break None;
-                                }
-                            }
-                        };
-                        if let Some(tile) = tile {
-                            state.jobs.remove(&key);
-                            state.stale.remove(&key);
-                            state.insert(tile);
-                        }
-                    }
-                }
-                TerrainSource::File {
-                    header,
-                    url: _,
-                    data: Some(data),
-                } => {
-                    // The whole file is here: decode within the frame's work,
-                    // then give each tile its surface.
-                    for key in missing {
-                        if budget == 0 && !work.refill(&mut budget) {
-                            break;
-                        }
-                        if state.surface_job(key, &mut budget) {
-                            continue;
-                        }
-                        let Some(entry) = header.tile(key) else {
-                            continue;
-                        };
-                        let range = usize::try_from(entry.offset).ok().and_then(|start| {
-                            data.get(start..start.checked_add(entry.length as usize)?)
-                        });
-                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
-                        match range.map(|bytes| decode_tile(&header, key, bytes)) {
-                            Some(Ok(tile)) => state.resurface(tile, &mut budget),
-                            _ => {
-                                state.failed.insert(key, frame);
-                            }
-                        }
-                    }
-                }
-                TerrainSource::File {
-                    header,
-                    url,
-                    data: None,
-                } => {
-                    for &key in &missing {
-                        if budget > 0 || work.refill(&mut budget) {
-                            state.surface_job(key, &mut budget);
-                        }
-                        if state.in_flight.contains(&key)
-                            || state.jobs.contains_key(&key)
-                            || state.tiles.contains_key(&key)
-                            || state
-                                .failed
-                                .get(&key)
-                                .is_some_and(|&at| frame < at + RETRY_AFTER)
-                        {
-                            continue;
-                        }
-                        let Some(entry) = header.tile(key) else {
-                            continue;
-                        };
-                        state.in_flight.insert(key);
-                        self.requests.push(TileRequest {
-                            terrain: state.entity,
-                            key,
-                            url: url.clone(),
-                            offset: entry.offset,
-                            length: entry.length,
-                        });
-                    }
-                    let arrivals = std::mem::take(&mut state.arrivals);
-                    let mut later = Vec::new();
-                    for (key, bytes) in arrivals {
-                        if budget == 0 {
-                            work.refill(&mut budget);
-                        }
-                        if budget == 0 || !target.contains(&key) {
-                            if target.contains(&key) {
-                                later.push((key, bytes));
-                            }
-                            continue;
-                        }
-                        budget = budget.saturating_sub(u64::from(TILE_STRIDE * TILE_STRIDE));
-                        match bytes.map(|bytes| decode_tile(&header, key, &bytes)) {
-                            Some(Ok(tile)) => {
-                                state.failed.remove(&key);
-                                state.resurface(tile, &mut budget);
-                            }
-                            _ => {
-                                state.failed.insert(key, frame);
-                            }
-                        }
-                    }
-                    state.arrivals = later;
-                }
+            // What the frame found missing loads between frames too
+            // (decision 108).
+            state.missing.clone_from(&missing);
+            state.target.clone_from(&target);
+            if load_tiles(
+                state,
+                &missing,
+                &target,
+                &work,
+                &mut budget,
+                frame,
+                &mut self.requests,
+            ) {
+                stats.baking += 1;
+                continue;
             }
+            state
+                .missing
+                .retain(|key| !state.tiles.contains_key(key) || state.stale.contains(key));
             stats.resident_tiles += state.tiles.len() as u32;
+            stats.missing_tiles += state.missing.len() as u32;
             stats.loading_tiles +=
                 (state.jobs.len() + state.in_flight.len() + state.arrivals.len()) as u32;
             if settings.enabled {
@@ -2338,6 +2473,21 @@ impl TerrainExtraction {
             focus: world.query_filtered::<Entity, With<TerrainFocus>>(),
             points: Vec::new(),
         }
+    }
+
+    /// Loads tiles the last frame found missing for `milliseconds` between
+    /// frames (decision 108); whether tiles are still to load.
+    pub(crate) fn work(&mut self, world: &mut World, milliseconds: f64) -> bool {
+        let Some(settings) = world
+            .get_resource::<TerrainSettings>()
+            .copied()
+            .map(TerrainSettings::sanitized)
+        else {
+            return false;
+        };
+        world
+            .get_resource_mut::<Terrains>()
+            .is_some_and(|mut terrains| terrains.work_between_frames(&settings, milliseconds))
     }
 
     /// Follows added, changed and removed terrains, then streams them
