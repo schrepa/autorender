@@ -364,7 +364,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     let inner = grow.tier.x;
     let half_diagonal = 0.7072 * spacing;
     let across = distance(center, grow.eye.xz);
-    if across > radius + half_diagonal || across + half_diagonal < inner {
+    if across > radius + half_diagonal {
         return;
     }
     if lane == 0u {
@@ -379,8 +379,13 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     // reads its ground.
     let cell_center = vec3<f32>(center.x, grow.origin.y + workgroupUniformLoad(&cell_height),
         center.y);
-    let nearest = max(distance(cell_center, grow.eye.xyz) - half_diagonal, 0.0);
-    if nearest > radius {
+    let center_away = distance(cell_center, grow.eye.xyz);
+    let nearest = max(center_away - half_diagonal, 0.0);
+    // Blades join tiers by their distance through the air (decision 102), so
+    // seen from above a tier's blades stand well within its inner distance
+    // across the ground: only cells whose farthest ground (sloping up to
+    // twice as steep as level across them) stays nearer than the tier skip.
+    if nearest > radius || center_away + 3.0 * half_diagonal < inner {
         return;
     }
     // The finest cells' candidates whose indices the cell's nearest point's
