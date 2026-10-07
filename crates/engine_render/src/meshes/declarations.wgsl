@@ -61,6 +61,10 @@ override WORLD_MAPPING: bool = false;
 override TOP_LAYER: bool = false;
 // Bases the ground stains (decision 096): slot vertex stages read `grounds`.
 override GROUNDING: bool = false;
+// Placed objects fading between how the camera shows them (decision 104)
+// draw from lists of their own, each entry carrying its fade: see
+// `slot_index` and `slot_fade`.
+override FADE_LIST: bool = false;
 // Passes drawn rarely (decision 049), reflection probe captures and impostor
 // bakes, share one pipeline per pipeline state: they read the material's
 // variant bits from its uniform instead of the map constants above.
@@ -125,6 +129,53 @@ struct SlotColor {
 @group(2) @binding(12) var<storage, read> grounds: array<vec4<u32>>;
 // Temporal visible IDs mark moving slots; others kept their previous pose.
 const MOVED_SLOT: u32 = 0x80000000u;
+
+// An entry of a fading list (decision 104): the object's slot in the low
+// 24 bits, how far its fade has come (of 127) in the seven above and, at
+// the top, whether it fades out; placed objects never move.
+const FADE_SLOT: u32 = 0x00ffffffu;
+// A vertex output's fade word: whether it fades at all, whether out, and
+// how far (of 127).
+const FADE_ON: u32 = 0x100u;
+const FADE_OUT: u32 = 0x80u;
+
+// The slot of a visible-ID or fading-list entry.
+fn slot_index(entry: u32) -> u32 {
+    if FADE_LIST {
+        return entry & FADE_SLOT;
+    }
+    return entry & ~MOVED_SLOT;
+}
+
+// Whether an entry's slot moved since the previous frame.
+fn slot_moved(entry: u32) -> bool {
+    return !FADE_LIST && (entry & MOVED_SLOT) != 0u;
+}
+
+// The fade word of an entry: 0 for entries of steady lists.
+fn slot_fade(entry: u32) -> u32 {
+    return select(0u, (entry >> 24u) | FADE_ON, FADE_LIST);
+}
+
+// A threshold in [0, 1) at pixel `position` that fades compare their
+// progress with: interleaved gradient noise, turned a different way each
+// temporally antialiased frame (`camera.options.z`) so the resolve blends
+// what fades as it would a coverage.
+fn fade_noise(position: vec2<f32>) -> f32 {
+    return fract(fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))))
+        + camera.options.z);
+}
+
+// Whether a fading object hides the pixel at `position`: one fading in
+// shows where the threshold falls under its progress and one fading out
+// where it does not, so the two cover each pixel once between them.
+fn fade_hidden(fade: u32, position: vec2<f32>) -> bool {
+    if (fade & FADE_ON) == 0u {
+        return false;
+    }
+    let shows = fade_noise(position) < f32(fade & 0x7fu) / 127.0;
+    return shows == ((fade & FADE_OUT) != 0u);
+}
 
 // Virtual geometry (decision 044): the arena `virtual_geometry.wgsl` selects
 // clusters from. Each mesh's bases (the last where the pool's page slots
@@ -209,9 +260,9 @@ struct VertexOutput {
     @location(0) normal_u: vec4<f32>,
     // World position and texture v.
     @location(1) world_v: vec4<f32>,
-    // Linear color and opacity as four 16-bit fractions, and the packed
-    // surface (decision 019).
-    @location(2) @interpolate(flat) material: vec3<u32>,
+    // Linear color and opacity as four 16-bit fractions, the packed
+    // surface (decision 019) and the fade word (decision 104).
+    @location(2) @interpolate(flat) material: vec4<u32>,
 }
 
 // `VertexOutput` and the unjittered previous clip position: x, y and w.
@@ -219,7 +270,7 @@ struct TemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec3<u32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
 }
 

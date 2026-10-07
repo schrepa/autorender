@@ -27,6 +27,11 @@ struct Record {
     scale: f32,
     terrain: u32,
     sink: f32,
+    // How the camera shows it (decision 104; `scatter_cull.wgsl`).
+    state: u32,
+    pad_0: u32,
+    pad_1: u32,
+    pad_2: u32,
 }
 
 // An object's pose: the rows of its affine world matrix.

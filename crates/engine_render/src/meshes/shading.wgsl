@@ -748,6 +748,11 @@ struct Fragment {
 
 // Meshes without a second stream read their first coordinates as second.
 fn fragment(input: VertexOutput) -> Fragment {
+    // Placed objects fading (decision 104) leave the pixels their fade
+    // hides.
+    if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
+        discard;
+    }
     var values: Fragment;
     values.color = output_color(input.material);
     values.normal = input.normal_u.xyz;
@@ -761,6 +766,9 @@ fn fragment(input: VertexOutput) -> Fragment {
 
 // Vertex colors multiply the color and opacity (glTF `COLOR_0`).
 fn extended_fragment(input: ExtendedOutput) -> Fragment {
+    if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
+        discard;
+    }
     var values: Fragment;
     values.color = output_color(input.material) * input.color;
     values.normal = input.normal_u.xyz;

@@ -39,6 +39,10 @@ pub struct LevelOfDetail {
     /// The most impostors kept baked; omitted for no budget.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_impostors: Option<u32>,
+    /// Seconds placed objects take to fade between how the camera shows
+    /// them, from 0 (at once) to 4 (decision 104).
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
+    pub fade_seconds: f32,
 }
 
 impl Default for LevelOfDetail {
@@ -48,25 +52,34 @@ impl Default for LevelOfDetail {
             pixel_error: 1.0,
             impostors: true,
             max_impostors: None,
+            fade_seconds: 0.5,
         }
     }
 }
 
 impl LevelOfDetail {
-    /// Ok for a pixel error in `[0.25, 64]`.
+    /// Ok for a pixel error in `[0.25, 64]` and a fade in `[0, 4]` seconds.
     pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("pixel_error", self.pixel_error, 0.25..=64.0)
+        check_range("pixel_error", self.pixel_error, 0.25..=64.0)?;
+        check_range("fade_seconds", self.fade_seconds, 0.0..=4.0)
     }
 
-    /// The pixel error within `[0.25, 64]` (1 when not finite).
+    /// The pixel error within `[0.25, 64]` (1 when not finite) and the fade
+    /// within `[0, 4]` seconds (0.5 when not finite).
     pub fn sanitized(self) -> Self {
         let pixel_error = if self.pixel_error.is_finite() {
             crate::math::clamp(self.pixel_error, 0.25, 64.0)
         } else {
             1.0
         };
+        let fade_seconds = if self.fade_seconds.is_finite() {
+            crate::math::clamp(self.fade_seconds, 0.0, 4.0)
+        } else {
+            0.5
+        };
         Self {
             pixel_error,
+            fade_seconds,
             ..self
         }
     }

@@ -11,7 +11,7 @@ use engine_core::TileKey;
 use engine_core::glam::Vec3;
 
 use crate::gpu_data::{ColorData, GroundData, PoseData};
-use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record};
+use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
 
 /// A tile's objects as the pool takes them: poses, colors, records and
 /// grounds (decision 096).
@@ -41,6 +41,9 @@ pub(super) struct ScatterPool {
     dirty: Option<Range<u32>>,
     counts_changed: bool,
     moved: Vec<(Vec3, Vec3)>,
+    // Whether the pool was emptied since its last upload: the objects it
+    // takes again show at once instead of fading in (decision 104).
+    refilling: bool,
 }
 
 impl ScatterPool {
@@ -49,6 +52,7 @@ impl ScatterPool {
         *self = Self {
             counts: vec![0; groups],
             counts_changed: true,
+            refilling: true,
             ..Self::default()
         };
     }
@@ -100,7 +104,17 @@ impl ScatterPool {
         self.poses[range.clone()].copy_from_slice(&poses);
         self.colors[range.clone()].copy_from_slice(&colors);
         self.grounds[range.clone()].copy_from_slice(&grounds);
-        self.records[range].copy_from_slice(&records);
+        self.records[range.clone()].copy_from_slice(&records);
+        // A tile arriving fades its objects in; one taken again after the
+        // pool emptied shows them as they were.
+        let state = if self.refilling {
+            STATE_ADOPT
+        } else {
+            STATE_FRESH
+        };
+        for record in &mut self.records[range] {
+            record.state = state;
+        }
         for record in &records {
             self.counts[record.group as usize] += 1;
             self.far += u32::from(stands_far(record));
@@ -114,6 +128,17 @@ impl ScatterPool {
     /// Slots written since the last call, and whether group counts changed.
     pub(super) fn take_changes(&mut self) -> (Option<Range<u32>>, bool) {
         (self.dirty.take(), std::mem::take(&mut self.counts_changed))
+    }
+
+    /// Marks `slots`, just uploaded, as shown however the camera shows them
+    /// should they upload again (decision 104): written again beside slots
+    /// that changed, objects keep what the GPU made of them but for a fade
+    /// under way.
+    pub(super) fn uploaded(&mut self, slots: Range<u32>) {
+        for record in &mut self.records[slots.start as usize..slots.end as usize] {
+            record.state = STATE_ADOPT;
+        }
+        self.refilling = false;
     }
 
     /// The world bounds of each tile's objects that came or went since the
@@ -216,5 +241,7 @@ fn dead() -> Record {
         scale: 0.0,
         terrain: u32::MAX,
         sink: 0.0,
+        state: STATE_ADOPT,
+        pad: [0; 3],
     }
 }

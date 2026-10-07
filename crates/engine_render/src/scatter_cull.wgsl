@@ -13,7 +13,10 @@
 // map leaves it out. The kept shadow map, redrawn only where objects come
 // and go, holds every object as seen from afar: its impostor, cast as a
 // card facing the sun, or the coarsest level its texels hide (decision
-// 060).
+// 060). The camera switches how it shows an object (a level, its card or
+// nothing, past the density its layer keeps) a margin past each switch's
+// distance, and fades every switch over frames: while one fades, the
+// object shows both ways, each on its share of the pixels (decision 104).
 
 struct Frame {
     // The camera's eye (world) and pixels per world unit at unit distance
@@ -24,6 +27,12 @@ struct Frame {
     // The IDs and draws each view's lists take, whether the camera's view
     // draws impostors, and the cards each view's list takes.
     strides: vec4<u32>,
+    // Fades (decision 104): the share of a switch this frame fades (1
+    // switches at once; negative on exact frames, which show objects as
+    // they stand and advance nothing) and the share of its distance past a
+    // switch the eye goes before the camera switches back. The camera's
+    // fading objects draw from the lists of the view after the last.
+    fade: vec4<f32>,
 }
 
 // A view: its frustum planes (world, inside positive; a shadow map's depth
@@ -38,8 +47,8 @@ struct View {
 }
 
 // One object: its bounding sphere's center (world) and radius, its draw
-// group and scale, and the terrain it stands on and how far its base sinks
-// (`scatter_snap.wgsl`).
+// group and scale, the terrain it stands on and how far its base sinks
+// (`scatter_snap.wgsl`), and how the camera shows it (decision 104).
 struct Record {
     center: vec3<f32>,
     radius: f32,
@@ -47,7 +56,27 @@ struct Record {
     scale: f32,
     terrain: u32,
     sink: f32,
+    state: u32,
+    pad_0: u32,
+    pad_1: u32,
+    pad_2: u32,
 }
+
+// How the camera shows an object (decision 104): one of its levels (0 to
+// 4), its card, or nothing; coarser ways number higher.
+const SHOWN_CARD: u32 = 5u;
+const SHOWN_NONE: u32 = 6u;
+// An object's state: how the camera shows it (bits 0 to 2), how it showed
+// it before (3 to 5) and how far that switch has faded, of `FADED` (from
+// bit 6). The renderer writes objects new to the view showing nothing, so
+// they fade in, and those it rewrites `STATE_ADOPT`: shown at once as the
+// camera would show them (`scatter.rs`).
+const STATE_ADOPT: u32 = 0xffffffffu;
+const FADED: u32 = 65535u;
+// A fading-list entry's slot bits and its flag of fading out
+// (`meshes/declarations.wgsl`).
+const FADE_SLOT: u32 = 0x00ffffffu;
+const FADE_OUT: u32 = 0x80000000u;
 
 // A draw group: where its objects' lists start, how many objects it has,
 // its levels of detail, how many of them the camera draws (coarser ones
@@ -113,11 +142,10 @@ struct CardArgs {
     first_instance: u32,
 }
 
-// The share of the distance at which an impostor takes over from its mesh
-// before it over which its card fades in, drawn over the mesh (decision
-// 063), and the card word's flag of a fading card.
-const FADE_BAND: f32 = 0.15;
+// The card word's flags of a fading card and of one fading out
+// (`impostor_frames.wgsl`).
 const FADING: u32 = 0x80000000u;
+const FADING_OUT: u32 = 0x40000000u;
 
 // The draw group of slots no object holds, and the terrain word's flag of
 // objects standing far away hidden where tiles holding them instead are
@@ -126,7 +154,7 @@ const DEAD: u32 = 0xffffffffu;
 const HIDDEN: u32 = 0x80000000u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var<storage, read> records: array<Record>;
+@group(0) @binding(1) var<storage, read_write> records: array<Record>;
 @group(0) @binding(2) var<storage, read> groups: array<Group>;
 @group(0) @binding(3) var<storage, read_write> ids: array<u32>;
 @group(0) @binding(4) var<storage, read_write> draws: array<DrawArgs>;
@@ -149,71 +177,196 @@ fn inside(view: u32, center: vec3<f32>, radius: f32) -> bool {
     return true;
 }
 
+// How the camera shows `record` (of draw group `group`) from `away` meters:
+// nothing past the density its layer keeps there (`thin` and `rank`, where
+// `thinning`), its card where its impostor's texels show within the pixel
+// error on frames drawing impostors, else the coarsest level it draws
+// whose error shows within it; exact frames show the finest level.
+fn shown_at(record: Record, group: Group, thinning: bool, thin: vec4<f32>, rank: f32,
+        away: f32) -> u32 {
+    if thinning && rank >= thinned(thin, away) {
+        return SHOWN_NONE;
+    }
+    if frame.eye.w <= 0.0 {
+        return 0u;
+    }
+    let impostor = group.impostor * record.scale;
+    if frame.strides.z != 0u && impostor > 0.0 && impostor * frame.eye.w + record.radius <= away {
+        return SHOWN_CARD;
+    }
+    var level = 0u;
+    for (var l = 1u; l < group.camera; l++) {
+        if group.errors[l - 1u] * record.scale * frame.eye.w + record.radius <= away {
+            level = l;
+        }
+    }
+    return level;
+}
+
+// Appends `entry` to view `view`'s list of level `level` of `record`'s draw
+// group `group`, counting it in the list's draw.
+fn list(view: u32, record: Record, group: Group, level: u32, entry: u32) {
+    let draw = view * frame.strides.y + record.group * frame.counts.z + level;
+    let slot = atomicAdd(&draws[draw].instance_count, 1u);
+    ids[view * frame.strides.x + group.ids + level * group.count + slot] = entry;
+}
+
+// Appends object `id`'s card with batch word `word` to view `view`'s cards.
+fn card(view: u32, id: u32, word: u32) {
+    let index = atomicAdd(&card_args[view].instance_count, 1u);
+    cards[view * frame.strides.w + index] = vec2<u32>(id, word);
+}
+
+// Shows object `id` to the camera as `way`, steadily.
+fn show(id: u32, record: Record, group: Group, way: u32) {
+    if way == SHOWN_NONE {
+        return;
+    }
+    if way == SHOWN_CARD {
+        card(0u, id, group.record);
+        return;
+    }
+    list(0u, record, group, way, id);
+}
+
+// Shows object `id` to the camera as `way` fading in, or out with `out`,
+// `fade` of its switch done: its card's word carries the fade, its levels
+// go to the camera's fading lists with it. Objects whose words cannot
+// carry the fade show steadily fading in and not at all fading out.
+fn show_fading(id: u32, record: Record, group: Group, way: u32, fade: f32, out: bool) {
+    if way == SHOWN_NONE {
+        return;
+    }
+    if way == SHOWN_CARD {
+        if group.record >= 0x10000u {
+            if !out {
+                card(0u, id, group.record);
+            }
+            return;
+        }
+        card(0u, id, group.record | FADING | select(0u, FADING_OUT, out)
+            | (u32(fade * 16383.0) << 16u));
+        return;
+    }
+    if id > FADE_SLOT {
+        if !out {
+            list(0u, record, group, way, id);
+        }
+        return;
+    }
+    list(frame.counts.w, record, group, way,
+        id | (u32(fade * 127.0) << 24u) | select(0u, FADE_OUT, out));
+}
+
 // One object (x) in every view: its record and draw group read once, dead
-// and hidden objects leave before any view.
+// objects leave before any view, and how the camera shows it advances.
 @compute @workgroup_size(64)
 fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= frame.counts.x {
         return;
     }
     let record = records[id.x];
-    if record.group == DEAD || (record.terrain & HIDDEN) != 0u {
+    if record.group == DEAD {
         return;
     }
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
-    // Objects ranked past the density their distance allows stand in no
-    // view (decision 100); cards of those it would leave out a tenth of
-    // their distance farther dissolve, so they fade in as the eye nears.
+    // Objects ranked past the density their distance allows show nothing
+    // (decision 100), nor do those standing far away where tiles holding
+    // them instead are resident (decision 061).
     let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
-    let thin = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
-    var present = 1.0;
-    if layer != NO_LAYER && thin < arrayLength(&thins) {
-        let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
-        let keep = thinned(thins[thin], away);
-        if rank >= keep {
-            return;
-        }
-        let farther = thinned(thins[thin], away * 1.1);
-        if rank >= farther {
-            present = saturate((keep - rank) / max(keep - farther, 1.0e-6));
-        }
+    let thin_index = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
+    let thinning = layer != NO_LAYER && thin_index < arrayLength(&thins);
+    var thin = vec4<f32>(0.0);
+    if thinning {
+        thin = thins[thin_index];
     }
-    // The camera draws an impostor its texels show within the error, as a
-    // card, which near cascades cast too (decision 098) and the moving map
-    // leaves out; kept maps cast one wherever their texels are no finer than
-    // the impostor's (decisions 060 and 065).
-    let impostor = group.impostor * record.scale;
-    let impostors = frame.strides.z != 0u && impostor > 0.0;
-    let takes_over = impostor * frame.eye.w + record.radius;
-    let seen_as_card = impostors && frame.eye.w > 0.0 && takes_over <= away;
-    // Over the band before that, the camera draws both: the card fading in
-    // over the mesh, its record's index small enough to share its word.
-    let fade_from = takes_over * (1.0 - FADE_BAND);
-    let fading = impostors && frame.eye.w > 0.0 && !seen_as_card && away > fade_from
-        && group.record < 0x10000u;
+    let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
+    let hidden = (record.terrain & HIDDEN) != 0u;
+    // How the camera shows it (decision 104). Exact frames show it as it
+    // stands, leaving its state; other frames switch a margin past each
+    // switch's distance, toward the finer way coming near and the coarser
+    // going away, and fade each switch.
+    var shown = SHOWN_NONE;
+    var previous = SHOWN_NONE;
+    var progress = FADED;
+    if frame.eye.w <= 0.0 || frame.fade.x < 0.0 {
+        if !hidden {
+            shown = shown_at(record, group, thinning, thin, rank, away);
+        }
+        previous = shown;
+    } else {
+        var nearer = SHOWN_NONE;
+        var farther = SHOWN_NONE;
+        if !hidden {
+            let margin = frame.fade.y;
+            nearer = shown_at(record, group, thinning, thin, rank, away * (1.0 - margin));
+            farther = shown_at(record, group, thinning, thin, rank, away * (1.0 + margin));
+        }
+        if record.state == STATE_ADOPT {
+            if !hidden {
+                shown = shown_at(record, group, thinning, thin, rank, away);
+            }
+            previous = shown;
+        } else {
+            shown = record.state & 7u;
+            previous = (record.state >> 3u) & 7u;
+            progress = record.state >> 6u;
+            let wanted = max(nearer, min(shown, farther));
+            if progress >= FADED {
+                if wanted != shown {
+                    previous = shown;
+                    shown = wanted;
+                    progress = 0u;
+                }
+            } else if wanted == previous {
+                // Switching back before the fade ends turns it around.
+                previous = shown;
+                shown = wanted;
+                progress = FADED - progress;
+            }
+            progress = min(progress + u32(frame.fade.x * f32(FADED)), FADED);
+        }
+        records[id.x].state = shown | (previous << 3u) | (progress << 6u);
+    }
+    let fade = f32(progress) / f32(FADED);
     for (var view = 0u; view < frame.counts.w; view++) {
+        if view == 0u {
+            // The camera: how it shows the object, and while that fades
+            // how it showed it, each on its share of the pixels.
+            if !inside(0u, record.center, record.radius) {
+                continue;
+            }
+            if progress < FADED {
+                show_fading(id.x, record, group, shown, fade, false);
+                show_fading(id.x, record, group, previous, fade, true);
+            } else {
+                show(id.x, record, group, shown);
+            }
+            continue;
+        }
+        // Shadow maps cast what the camera shows, objects fading out of it
+        // until they are gone and those fading in from the start.
+        let casts = select(shown, previous, shown == SHOWN_NONE && progress < FADED);
+        if casts == SHOWN_NONE {
+            continue;
+        }
+        // Cards near cascades cast too (decision 098) and the moving map
+        // leaves out; kept maps cast one wherever their texels are no finer
+        // than the impostor's (decisions 060 and 065).
         let limits = views[view].limits;
         let kept = limits.z > 0.0;
-        let card = impostors && select(seen_as_card, impostor <= limits.y, kept);
-        let leaves_cards = view != 0u && !kept && limits.w == 0.0;
-        if record.radius < limits.x || (card && leaves_cards)
+        let impostor = group.impostor * record.scale;
+        let card_shown = frame.strides.z != 0u && impostor > 0.0
+            && select(casts == SHOWN_CARD, impostor <= limits.y, kept);
+        let leaves_cards = !kept && limits.w == 0.0;
+        if record.radius < limits.x || (card_shown && leaves_cards)
             || !inside(view, record.center, record.radius) {
             continue;
         }
-        if card {
-            let index = atomicAdd(&card_args[view].instance_count, 1u);
-            var word = group.record;
-            if present < 1.0 && view == 0u && group.record < 0x10000u {
-                word = group.record | FADING | (u32(present * 32767.0) << 16u);
-            }
-            cards[view * frame.strides.w + index] = vec2<u32>(id.x, word);
+        if card_shown {
+            card(view, id.x, group.record);
             continue;
-        }
-        if fading && view == 0u {
-            let fade = u32(saturate((away - fade_from) / (takes_over - fade_from)) * 32767.0);
-            let index = atomicAdd(&card_args[0].instance_count, 1u);
-            cards[index] = vec2<u32>(id.x, group.record | FADING | (fade << 16u));
         }
         // Shadow maps cast from the level the camera draws, or a coarser one
         // only where half the map's texel hides its error: a coarser caster
@@ -227,19 +380,14 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
                     level = l;
                 }
             }
-        } else if frame.eye.w > 0.0 {
-            // The camera's level among those it draws; for maps, or a
-            // coarser one whose error half their texel hides.
-            for (var l = 1u; l < group.levels; l++) {
-                let error = group.errors[l - 1u] * record.scale;
-                let seen = l < group.camera && error * frame.eye.w + record.radius <= away;
-                if seen || (view != 0u && error <= limits.x) {
+        } else {
+            level = select(casts, group.camera - 1u, casts == SHOWN_CARD);
+            for (var l = level + 1u; l < group.levels; l++) {
+                if group.errors[l - 1u] * record.scale <= limits.x {
                     level = l;
                 }
             }
         }
-        let draw = view * frame.strides.y + record.group * frame.counts.z + level;
-        let slot = atomicAdd(&draws[draw].instance_count, 1u);
-        ids[view * frame.strides.x + group.ids + level * group.count + slot] = id.x;
+        list(view, record, group, level, id.x);
     }
 }

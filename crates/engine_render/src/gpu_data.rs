@@ -19,7 +19,9 @@ use engine_core::{
 /// 019). `options.x` is 1 while a reflection probe captures a cube face
 /// (decision 043): its surfaces read shadows from the far maps alone, which
 /// hold every caster whatever the main camera sees; `options.y` is the angle
-/// a pixel spans at the view's center ([`pixel_angle`], decision 098). The
+/// a pixel spans at the view's center ([`pixel_angle`], decision 098);
+/// `options.z` turns fades' dither each temporally antialiased frame
+/// (decision 104). The
 /// GPU buffer starts at offset zero; only these 240 initialized bytes are
 /// copied into it.
 #[repr(C)]
@@ -76,9 +78,12 @@ impl CameraUniform {
         seconds: f32,
         previous: Mat4,
         jitter: [f32; 2],
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
+        frame: u64,
     ) -> Self {
+        // The golden ratio's fraction turns each frame's dither far from the
+        // last few.
+        let turn = (frame % 1024) as f32 * 0.618_034;
         Self {
             view_projection: jittered(view_projection, jitter).to_cols_array_2d(),
             previous_view_projection: previous.to_cols_array_2d(),
@@ -88,6 +93,7 @@ impl CameraUniform {
                 2.0 / width.max(1) as f32,
                 2.0 / height.max(1) as f32,
             ],
+            options: [0.0, 0.0, turn - turn.floor(), 0.0],
             ..Self::exact(view_projection, position, seconds)
         }
     }
@@ -704,6 +710,10 @@ impl Variant {
     // Bases the ground stains (decision 096): slot vertex stages read
     // placed objects' grounds.
     const GROUNDING: u16 = 16384;
+    // Placed objects fading between how the camera shows them (decision
+    // 104): their lists' entries carry their fades, which their pixels
+    // dither by. A draw's, not a material's.
+    const FADING: u16 = 32768;
 
     pub(crate) fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
@@ -776,13 +786,14 @@ impl Variant {
     }
 
     /// Override constants: fragment stages read them all, slot vertex
-    /// stages GROUNDING.
-    pub(crate) fn constants(self) -> [(&'static str, f64); 13] {
+    /// stages GROUNDING and FADE_LIST.
+    pub(crate) fn constants(self) -> [(&'static str, f64); 14] {
         let set = |bit: u16| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
             ("TOP_LAYER", set(Self::TOP_LAYER)),
             ("GROUNDING", set(Self::GROUNDING)),
+            ("FADE_LIST", set(Self::FADING)),
             ("MATERIAL_MAPS", set(Self::MAPS)),
             ("NORMAL_MAP", set(Self::NORMAL_MAP)),
             ("ALPHA_MASK", set(Self::ALPHA_MASK)),
@@ -833,6 +844,16 @@ impl Variant {
 
     pub(crate) fn skinned(self) -> bool {
         self.0 & Self::SKINNED != 0
+    }
+
+    /// This variant drawing placed objects' fading lists (decision 104), or
+    /// not.
+    pub(crate) fn with_fading(self, fading: bool) -> Self {
+        Self(if fading {
+            self.0 | Self::FADING
+        } else {
+            self.0 & !Self::FADING
+        })
     }
 }
 

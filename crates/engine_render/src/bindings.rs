@@ -822,8 +822,8 @@ pub(crate) const COVER_DRAW: Table = Table {
 pub(crate) const SCATTER_CULL: Table = Table {
     label: "engine/scatter-cull-layout",
     bindings: &[
-        uniform_of(0, "frame", 48, C),
-        read(1, "records", C),
+        uniform_of(0, "frame", 64, C),
+        write(1, "records", C),
         read(2, "groups", C),
         write(3, "ids", C),
         write(4, "draws", C),

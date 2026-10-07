@@ -458,11 +458,13 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     if coverage * (1.0 + MASK_MIP_SCALE * level) < 0.5 {
         discard;
     }
-    // Fading in (decision 063), a card covers that share of its pixels; the
-    // mesh behind it shows through the rest.
-    let fade = impostor_fade(input.batch);
-    if fade < 1.0 && fade <= pixel_noise(input.clip_position.xy) {
-        discard;
+    // Fading (decision 104), a card covers the pixels its fade shows, what
+    // it switches with the rest.
+    if (input.batch & IMPOSTOR_FADING) != 0u {
+        let shows = fade_noise(input.clip_position.xy) < impostor_fade(input.batch);
+        if shows == ((input.batch & IMPOSTOR_FADING_OUT) != 0u) {
+            discard;
+        }
     }
     var emissive = vec4<f32>(0.0);
     var geometry = vec4<f32>(0.0);

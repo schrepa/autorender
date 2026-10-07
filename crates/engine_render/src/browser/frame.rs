@@ -17,6 +17,8 @@ pub(super) struct FrameKind {
     pub(super) gpu_mode: bool,
     /// Temporally antialiased (decision 017).
     pub(super) temporal: bool,
+    /// Shown as the page's next frame, not a preview or capture.
+    pub(super) display: bool,
     pub(super) instance_count: usize,
 }
 
@@ -190,8 +192,11 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
-        let scatter =
-            self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
+        let scatter = self.prepare_scatter(
+            snapshot,
+            passes.opaque_kind,
+            (kind.gpu_mode, kind.display, passes.impostor_pass.is_some()),
+        );
         // Water on terrains (decision 067).
         let water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps (decision 052) may have been replaced.
@@ -367,6 +372,7 @@ impl Renderer {
             FrameKind {
                 gpu_mode,
                 temporal,
+                display,
                 instance_count: self.plan.ordered_instances.len(),
             },
             gpu,

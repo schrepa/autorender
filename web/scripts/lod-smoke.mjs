@@ -60,7 +60,7 @@ try {
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "LevelOfDetail"));
   const look = await command("inspect", { component: "Environment" });
-  assert.deepEqual(look.result.value.level_of_detail, { enabled: true, pixel_error: 1, impostors: true });
+  assert.deepEqual(look.result.value.level_of_detail, { enabled: true, pixel_error: 1, impostors: true, fade_seconds: 0.5 });
 
   // From the overview, GPU-presented frames draw distant props at coarser
   // levels and the smallest as impostors, baked the first frame their draw
