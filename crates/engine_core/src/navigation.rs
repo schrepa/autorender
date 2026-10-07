@@ -465,10 +465,19 @@ fn step(
             travel = 0.0;
         }
     }
-    // On the finest resident ground, else the walk's own.
+    // On the finest resident ground, else the walk's own; and on the walk's
+    // own where it runs above the ground, over a bridge's deck (decision
+    // 111).
+    let walked = walk_height(walk, position);
     let ground = terrains
         .height_at(position.x, position.z)
-        .unwrap_or_else(|| walk_height(walk, position));
+        .map_or(walked, |ground| {
+            if walked > ground + DECK_ABOVE {
+                walked
+            } else {
+                ground
+            }
+        });
     position.y = ground + agent.offset;
     transform.translation = position;
     if walk.next >= walk.points.len() {
@@ -486,6 +495,11 @@ fn step(
             .normalize();
     }
 }
+
+/// Meters a walk runs above the ground beneath before agents stand on the
+/// walk's own height, as on a bridge's deck (decision 111): decks clear the
+/// water below them by more.
+const DECK_ABOVE: f32 = 1.0;
 
 /// The walk's height at `position` between the points around its next.
 fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
