@@ -103,12 +103,25 @@ pub(crate) fn gradient_noise(x: f32, z: f32, seed: u32) -> [f32; 3] {
 #[inline]
 pub(crate) fn gradient_value(x: f32, z: f32, seed: u32) -> f32 {
     let (i, j, fx, fz) = cell(x, z);
+    value_in(corners(i, j, seed), fx, fz)
+}
+
+/// The gradients at lattice cell `(i, j)`'s four corners under `seed`.
+#[inline(always)]
+fn corners(i: i32, j: i32, seed: u32) -> [[f32; 2]; 4] {
+    [
+        gradient_at(i, j, seed),
+        gradient_at(i.wrapping_add(1), j, seed),
+        gradient_at(i, j.wrapping_add(1), seed),
+        gradient_at(i.wrapping_add(1), j.wrapping_add(1), seed),
+    ]
+}
+
+/// [`gradient_value`] at offset `(fx, fz)` in a cell with gradients `corners`.
+#[inline(always)]
+fn value_in([ga, gb, gc, gd]: [[f32; 2]; 4], fx: f32, fz: f32) -> f32 {
     let (ux, _) = fade(fx);
     let (uz, _) = fade(fz);
-    let ga = gradient_at(i, j, seed);
-    let gb = gradient_at(i.wrapping_add(1), j, seed);
-    let gc = gradient_at(i, j.wrapping_add(1), seed);
-    let gd = gradient_at(i.wrapping_add(1), j.wrapping_add(1), seed);
     let va = ga[0] * fx + ga[1] * fz;
     let vb = gb[0] * (fx - 1.0) + gb[1] * fz;
     let vc = gc[0] * fx + gc[1] * (fz - 1.0);
@@ -116,6 +129,25 @@ pub(crate) fn gradient_value(x: f32, z: f32, seed: u32) -> f32 {
     let top = va + ux * (vb - va);
     let bottom = vc + ux * (vd - vc);
     (top + uz * (bottom - top)) * NOISE_SCALE
+}
+
+/// [`gradient_value`] at each point of `xs` and `zs` (decision 113), into
+/// `out`: points in the cell of the one before reuse its corners'
+/// gradients, the same values hashed again.
+pub(crate) fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]) {
+    let mut held: Option<(i32, i32, [[f32; 2]; 4])> = None;
+    for ((value, &x), &z) in out.iter_mut().zip(xs).zip(zs) {
+        let (i, j, fx, fz) = cell(x, z);
+        let gradients = match held {
+            Some((hi, hj, gradients)) if hi == i && hj == j => gradients,
+            _ => {
+                let gradients = corners(i, j, seed);
+                held = Some((i, j, gradients));
+                gradients
+            }
+        };
+        *value = value_in(gradients, fx, fz);
+    }
 }
 
 /// Hermite smoothstep of `t` clamped to [0, 1].

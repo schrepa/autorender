@@ -11,7 +11,7 @@ use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
 
 use crate::PathSample;
-use crate::noise::{gradient_value, smooth};
+use crate::noise::{gradient_value, gradient_values, smooth};
 
 /// Materials a surface can name: control values hold 8-bit indices.
 pub const MAX_SURFACE_MATERIALS: usize = 255;
@@ -181,6 +181,56 @@ impl std::fmt::Display for BiomeError {
 }
 
 impl std::error::Error for BiomeError {}
+
+/// Which of a sample's inputs masks read (decision 113): its water (flow,
+/// wetness, lakes and rivers) and its roads. Inputs no mask reads are not
+/// sampled, which leaves every mask's value as it was.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Reads {
+    pub(crate) water: bool,
+    pub(crate) path: bool,
+}
+
+impl Reads {
+    fn and(self, other: Self) -> Self {
+        Self {
+            water: self.water || other.water,
+            path: self.path || other.path,
+        }
+    }
+}
+
+/// A row of samples as masks read it (decision 113): each sample's x and
+/// z, height, gradient, curvature, water and road, at a level whose samples
+/// lie `spacing` meters apart.
+pub(crate) struct RowInputs<'a> {
+    pub(crate) xs: &'a [f32],
+    pub(crate) zs: &'a [f32],
+    pub(crate) spacing: f32,
+    pub(crate) height: &'a [f32],
+    pub(crate) gradient: &'a [f32],
+    pub(crate) curvature: &'a [f32],
+    pub(crate) water: &'a [crate::HydrologySample],
+    pub(crate) path: &'a [PathSample],
+}
+
+/// Rows a row's masks evaluate their parts into, reused (decision 113).
+#[derive(Default)]
+pub(crate) struct RowScratch {
+    rows: Vec<Vec<f32>>,
+}
+
+impl RowScratch {
+    fn take(&mut self, len: usize) -> Vec<f32> {
+        let mut row = self.rows.pop().unwrap_or_default();
+        row.resize(len, 0.0);
+        row
+    }
+
+    fn give(&mut self, row: Vec<f32>) {
+        self.rows.push(row);
+    }
+}
 
 /// A mask ready to evaluate: slopes as gradients, noise as frequencies.
 #[derive(Clone, Debug, PartialEq)]
@@ -360,6 +410,29 @@ impl Compiled {
         })
     }
 
+    /// Which of a sample's inputs the mask reads (decision 113).
+    pub(crate) fn reads(&self) -> Reads {
+        match self {
+            Self::Flow(_) | Self::Wetness(_) | Self::Lake(_) | Self::River(_) => Reads {
+                water: true,
+                path: false,
+            },
+            Self::Path(_) => Reads {
+                water: false,
+                path: true,
+            },
+            Self::Constant(_)
+            | Self::Height(_)
+            | Self::Gradient(_)
+            | Self::Curvature(_)
+            | Self::Noise { .. } => Reads::default(),
+            Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => masks
+                .iter()
+                .fold(Reads::default(), |reads, mask| reads.and(mask.reads())),
+            Self::Invert(mask) | Self::Remap(mask, _) => mask.reads(),
+        }
+    }
+
     /// Work units of one evaluation, against one per sample of a layer.
     pub(crate) fn cost(&self) -> u64 {
         match self {
@@ -377,6 +450,130 @@ impl Compiled {
                 masks.iter().map(Self::cost).sum::<u64>() + 1
             }
             Self::Invert(mask) | Self::Remap(mask, _) => mask.cost() + 1,
+        }
+    }
+
+    /// [`Self::evaluate`] for each sample of `row` (decision 113), into
+    /// `out`: every node over the whole row at once, each sample's value
+    /// computed as one evaluation computes it, so the same bits.
+    pub(crate) fn evaluate_row(
+        &self,
+        row: &RowInputs<'_>,
+        out: &mut [f32],
+        scratch: &mut RowScratch,
+    ) {
+        let each = |out: &mut [f32], values: &[f32], ends: [f32; 2]| {
+            for (value, &input) in out.iter_mut().zip(values) {
+                *value = ramp(input, ends);
+            }
+        };
+        match self {
+            Self::Constant(value) => out.fill(*value),
+            Self::Height(ends) => each(out, row.height, *ends),
+            Self::Gradient(ends) => each(out, row.gradient, *ends),
+            Self::Curvature(ends) => each(out, row.curvature, *ends),
+            Self::Flow(ends) | Self::Wetness(ends) | Self::Lake(ends) | Self::River(ends) => {
+                for (value, water) in out.iter_mut().zip(row.water) {
+                    let input = match self {
+                        Self::Flow(_) => water.flow,
+                        Self::Wetness(_) => water.wetness,
+                        Self::Lake(_) => water.lake,
+                        _ => water.river,
+                    };
+                    *value = ramp(input, *ends);
+                }
+            }
+            Self::Path(ends) => {
+                for (value, &PathSample { distance, half }) in out.iter_mut().zip(row.path) {
+                    *value = [-0.375, -0.125, 0.125, 0.375]
+                        .iter()
+                        .map(|offset| ramp((distance + offset * row.spacing).abs() - half, *ends))
+                        .sum::<f32>()
+                        * 0.25;
+                }
+            }
+            Self::Noise {
+                frequency,
+                seed,
+                octaves,
+            } => {
+                // Each sample's sum over the octaves, in their order; the
+                // octaves' shifts, fades and amplitudes are the row's.
+                out.fill(0.0);
+                let mut values = scratch.take(out.len());
+                let mut at_x = scratch.take(out.len());
+                let mut at_z = scratch.take(out.len());
+                let (mut weight, mut amplitude, mut scale) = (0.0_f32, 1.0_f32, *frequency);
+                for octave in 0..*octaves {
+                    let shift = octave as f32 * 17.13;
+                    let fade = clamp(0.5 / (scale * row.spacing) - 1.0, 0.0, 1.0);
+                    if fade > 0.0 {
+                        for ((at_x, at_z), (&x, &z)) in at_x
+                            .iter_mut()
+                            .zip(at_z.iter_mut())
+                            .zip(row.xs.iter().zip(row.zs))
+                        {
+                            *at_x = x * scale + shift;
+                            *at_z = z * scale - shift;
+                        }
+                        gradient_values(
+                            &at_x,
+                            &at_z,
+                            seed.wrapping_add(octave.wrapping_mul(0x9e37_79b9)),
+                            &mut values,
+                        );
+                        let share = amplitude * fade;
+                        for (sum, &value) in out.iter_mut().zip(&values) {
+                            *sum += share * value;
+                        }
+                    }
+                    weight += amplitude;
+                    amplitude *= 0.5;
+                    scale *= 2.0;
+                }
+                for sum in out.iter_mut() {
+                    *sum = clamp(0.5 + 0.5 * *sum / weight, 0.0, 1.0);
+                }
+                scratch.give(values);
+                scratch.give(at_x);
+                scratch.give(at_z);
+            }
+            Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
+                // The folds `product`, `sum` and the evaluation's own take:
+                // from 1, -0 (the standard library's), +infinity and
+                // -infinity, in the masks' order.
+                out.fill(match self {
+                    Self::Multiply(_) => 1.0,
+                    Self::Add(_) => -0.0,
+                    Self::Min(_) => f32::INFINITY,
+                    _ => f32::NEG_INFINITY,
+                });
+                let mut part = scratch.take(out.len());
+                for mask in masks {
+                    mask.evaluate_row(row, &mut part, scratch);
+                    for (value, &next) in out.iter_mut().zip(&part) {
+                        *value = match self {
+                            Self::Multiply(_) => *value * next,
+                            Self::Add(_) => *value + next,
+                            Self::Min(_) => min(*value, next),
+                            _ => max(*value, next),
+                        };
+                    }
+                }
+                scratch.give(part);
+            }
+            Self::Invert(mask) => {
+                mask.evaluate_row(row, out, scratch);
+                for value in out.iter_mut() {
+                    *value = 1.0 - *value;
+                }
+            }
+            Self::Remap(mask, ends) => {
+                mask.evaluate_row(row, out, scratch);
+                for value in out.iter_mut() {
+                    *value = ramp(*value, *ends);
+                }
+            }
         }
     }
 
@@ -412,13 +609,17 @@ impl Compiled {
                     // two, as a filtered image's would.
                     let shift = octave as f32 * 17.13;
                     let fade = clamp(0.5 / (scale * inputs.spacing) - 1.0, 0.0, 1.0);
-                    sum += amplitude
-                        * fade
-                        * gradient_value(
-                            inputs.x * scale + shift,
-                            inputs.z * scale - shift,
-                            seed.wrapping_add(octave.wrapping_mul(0x9e37_79b9)),
-                        );
+                    // Octaves faded out add nothing (decision 113): zero
+                    // times the noise's finite value.
+                    if fade > 0.0 {
+                        sum += amplitude
+                            * fade
+                            * gradient_value(
+                                inputs.x * scale + shift,
+                                inputs.z * scale - shift,
+                                seed.wrapping_add(octave.wrapping_mul(0x9e37_79b9)),
+                            );
+                    }
                     weight += amplitude;
                     amplitude *= 0.5;
                     scale *= 2.0;
@@ -460,6 +661,7 @@ pub struct BiomeRules {
     authored: Biomes,
     biomes: Vec<CompiledBiome>,
     cost: u64,
+    reads: Reads,
     placements: Vec<crate::placement::CompiledPlacement>,
     placed: Vec<crate::placement::CompiledAuthored>,
 }
@@ -557,10 +759,19 @@ impl Biomes {
             .map_err(|(path, rule)| BiomeError { path, rule })?;
         let placed = crate::placement::compile_authored(&self.placed, &self.assets)
             .map_err(|(path, rule)| BiomeError { path, rule })?;
+        let reads = biomes.iter().fold(Reads::default(), |reads, biome| {
+            biome
+                .layers
+                .iter()
+                .fold(reads.and(biome.fitness.reads()), |reads, layer| {
+                    reads.and(layer.mask.reads())
+                })
+        });
         Ok(BiomeRules {
             authored: self.clone(),
             biomes,
             cost,
+            reads,
             placements,
             placed,
         })
@@ -571,6 +782,11 @@ impl BiomeRules {
     /// The biomes as authored.
     pub fn authored(&self) -> &Biomes {
         &self.authored
+    }
+
+    /// Which of a sample's inputs the biomes' masks read (decision 113).
+    pub(crate) fn reads(&self) -> Reads {
+        self.reads
     }
 
     /// These rules choosing materials alone, placing no objects: what a
@@ -617,12 +833,16 @@ impl BiomeRules {
     /// levels than `tile`'s hold none, nor layers `placing` leaves out
     /// (decision 112). Returns the work it took (samples' worth) and the
     /// next row, none after the last layer's last.
-    pub fn place_row(
+    pub(crate) fn place_row(
         &self,
         tile: &crate::Tile,
         (layer, row): (usize, usize),
         out: &mut Vec<crate::Placed>,
-        (layers, placing): (&crate::Layers, crate::Placing),
+        (layers, placing, scratch): (
+            &crate::Layers,
+            crate::Placing,
+            &mut crate::placement::PlaceScratch,
+        ),
     ) -> (u64, Option<(usize, usize)>) {
         crate::placement::place_row(
             &self.placements,
@@ -630,7 +850,7 @@ impl BiomeRules {
             0x5eed_0057,
             (layer, row),
             out,
-            (layers, placing),
+            (layers, placing, scratch),
         )
     }
 
@@ -643,6 +863,67 @@ impl BiomeRules {
     /// The control value at a sample with `inputs`. `weights` is scratch
     /// space, reused across samples.
     pub fn control(&self, inputs: &SampleInputs, weights: &mut Vec<(u8, f32)>) -> Control {
+        self.control_with(
+            |biome| self.biomes[biome].fitness.evaluate(inputs),
+            |biome, layer| self.biomes[biome].layers[layer].mask.evaluate(inputs),
+            weights,
+        )
+    }
+
+    /// [`Self::control`] packed for each sample of `row` (decision 113),
+    /// into `out`: every biome's fitness and layer's mask evaluated over the
+    /// row at once, each sample's control value then taken as one sample's
+    /// is, from the same values.
+    pub(crate) fn control_row(
+        &self,
+        row: &RowInputs<'_>,
+        out: &mut [u32],
+        (scratch, weights): (&mut RowScratch, &mut Vec<(u8, f32)>),
+    ) {
+        let len = out.len();
+        let mut values: Vec<Vec<Vec<f32>>> = Vec::with_capacity(self.biomes.len());
+        for (index, biome) in self.biomes.iter().enumerate() {
+            let mut rows = Vec::with_capacity(biome.layers.len() + 1);
+            // The first biome and layers take no mask.
+            let mut fitness = scratch.take(if index == 0 { 0 } else { len });
+            if index > 0 {
+                biome.fitness.evaluate_row(row, &mut fitness, scratch);
+            }
+            rows.push(fitness);
+            for (layer_index, layer) in biome.layers.iter().enumerate() {
+                let mut mask = scratch.take(if layer_index == 0 { 0 } else { len });
+                if layer_index > 0 {
+                    layer.mask.evaluate_row(row, &mut mask, scratch);
+                }
+                rows.push(mask);
+            }
+            values.push(rows);
+        }
+        for (sample, control) in out.iter_mut().enumerate() {
+            *control = self
+                .control_with(
+                    |biome| values[biome][0][sample],
+                    |biome, layer| values[biome][layer + 1][sample],
+                    weights,
+                )
+                .packed();
+        }
+        for rows in values {
+            for row in rows {
+                scratch.give(row);
+            }
+        }
+    }
+
+    /// The control value of a sample whose biomes' fitnesses and layers'
+    /// masks (by biome, and by biome and layer) `fitness` and `mask` give,
+    /// asked for only where the walk reaches them.
+    fn control_with(
+        &self,
+        fitness: impl Fn(usize) -> f32,
+        mask: impl Fn(usize, usize) -> f32,
+        weights: &mut Vec<(u8, f32)>,
+    ) -> Control {
         weights.clear();
         // Later biomes and layers paint over earlier ones: walk them from the
         // last, each taking what the later ones left, until nothing is left.
@@ -652,7 +933,7 @@ impl BiomeRules {
             let fit = if index == 0 {
                 1.0
             } else {
-                clamp(compiled.fitness.evaluate(inputs), 0.0, 1.0)
+                clamp(fitness(index), 0.0, 1.0)
             };
             let share = fit * remaining;
             remaining *= 1.0 - fit;
@@ -665,7 +946,7 @@ impl BiomeRules {
                     let cover = if layer_index == 0 {
                         1.0
                     } else {
-                        clamp(layer.mask.evaluate(inputs) * layer.opacity, 0.0, 1.0)
+                        clamp(mask(index, layer_index) * layer.opacity, 0.0, 1.0)
                     };
                     let weight = cover * left;
                     left *= 1.0 - cover;

@@ -9,7 +9,7 @@ use glam::{Vec2, Vec3};
 use engine_math::{max, min};
 
 use crate::layers::{Layers, state_len};
-use crate::surface::{BiomeRules, Control, SampleInputs};
+use crate::surface::{BiomeRules, Control, RowInputs, RowScratch};
 use crate::{
     HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
     TILE_SAMPLES, TILE_STRIDE, TileKey,
@@ -343,6 +343,37 @@ pub struct Generator {
     tile: Option<Tile>,
     placed: Vec<crate::Placed>,
     placing: Placing,
+    // Each hydrology layer's rivers near the tile, read a row at a time
+    // (decision 113), once a stage needs them, and its stored rows' z; a
+    // row's inputs to the surface's masks.
+    spans: Vec<Option<Arc<crate::rivers::RiverSpan>>>,
+    zs: Box<[f32]>,
+    inputs: SurfaceInputs,
+    places: crate::placement::PlaceScratch,
+}
+
+/// A row's inputs to a surface's masks, reused row after row (decision
+/// 113).
+#[derive(Default)]
+struct SurfaceInputs {
+    zs: Vec<f32>,
+    height: Vec<f32>,
+    gradient: Vec<f32>,
+    curvature: Vec<f32>,
+    water: Vec<HydrologySample>,
+    path: Vec<PathSample>,
+    scratch: RowScratch,
+}
+
+impl SurfaceInputs {
+    fn clear(&mut self, len: usize) {
+        for row in [&mut self.height, &mut self.gradient, &mut self.curvature] {
+            row.clear();
+            row.reserve(len);
+        }
+        self.water.clear();
+        self.path.clear();
+    }
 }
 
 impl Generator {
@@ -404,6 +435,12 @@ impl Generator {
             tile: None,
             placed: Vec::new(),
             placing: Placing::All,
+            spans: Vec::new(),
+            zs: (-1..=TILE_SAMPLES as i64)
+                .map(|i| (first[1] + i) as f32 * spacing)
+                .collect(),
+            inputs: SurfaceInputs::default(),
+            places: crate::placement::PlaceScratch::default(),
         }
     }
 
@@ -447,7 +484,25 @@ impl Generator {
             tile: Some(tile.with_placed(Vec::new())),
             placed: Vec::new(),
             placing: Placing::Far,
+            spans: Vec::new(),
+            zs: Box::default(),
+            inputs: SurfaceInputs::default(),
+            places: crate::placement::PlaceScratch::default(),
         }
+    }
+
+    /// Hydrology layer `index`'s rivers near the tile (decision 113), made
+    /// the first time a stage reads them; `None` without rivers.
+    fn span(&mut self, index: usize) -> Option<Arc<crate::rivers::RiverSpan>> {
+        let rivers = self.layers.rivers_of(index)?;
+        if self.spans.len() <= index {
+            self.spans.resize_with(index + 1, || None);
+        }
+        let span = &mut self.spans[index];
+        if span.is_none() {
+            *span = Some(Arc::new(rivers.span(&self.xs, &self.zs, self.spacing)));
+        }
+        span.clone()
     }
 
     /// A generator giving `tile` (of `pyramid`, its heights read from a
@@ -489,6 +544,25 @@ impl Generator {
         let Some(surface) = self.surface.clone() else {
             return;
         };
+        // Inputs the masks never read are left unread (decision 113); each
+        // sample's meters to the nearest river's edge are read along the row
+        // at once.
+        let reads = surface.reads();
+        let mut rivers = vec![crate::hydrology::RIVER_FAR; stride];
+        if reads.water
+            && let Some((index, _)) = self.layers.hydrology_layer()
+            && let Some(span) = self.span(index)
+            && let Some(found) = self.layers.rivers_of(index)
+        {
+            let z = self.zs[row];
+            found.nearest_row(
+                &span,
+                row,
+                (&self.xs, z),
+                crate::hydrology::RIVER_FAR,
+                &mut rivers,
+            );
+        }
         let control = self
             .control
             .get_or_insert_with(|| vec![0; stride * stride].into_boxed_slice());
@@ -496,7 +570,11 @@ impl Generator {
         let heights = &self.heights;
         let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
         let z = (self.first[1] + row as i64 - 1) as f32 * spacing;
-        for column in 0..stride {
+        // The row's inputs, then its control values all at once (decision
+        // 113).
+        let inputs = &mut self.inputs;
+        inputs.clear(stride);
+        for (column, &river) in rivers.iter().enumerate() {
             let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
             let at = |r: usize, c: usize| heights[r * stride + c];
             let height = at(row, column);
@@ -513,31 +591,44 @@ impl Generator {
             // roads they fade out.
             let shown = self.layers.shown(x, z);
             let water = match self.layers.hydrology() {
-                Some(water) if shown > 0.0 => water.at(x, z, spacing),
+                Some(water) if shown > 0.0 && reads.water => water.masks_at(x, z, spacing, river),
                 _ => HydrologySample::default(),
             };
-            let inputs = SampleInputs {
-                x,
-                z,
-                height,
-                gradient: (gx * gx + gz * gz).sqrt(),
-                curvature: (west + east + north + south - 4.0 * height) / (spacing * spacing),
-                spacing,
-                water: HydrologySample {
-                    flow: water.flow * shown,
-                    wetness: water.wetness * shown,
-                    lake: water.lake * shown,
-                    carve: water.carve * shown,
-                    river: water.river,
-                },
-                path: if shown > 0.0 {
-                    self.layers.path_at(x, z)
-                } else {
-                    PathSample::FAR
-                },
-            };
-            control[row * stride + column] = surface.control(&inputs, &mut self.weights).packed();
+            inputs.height.push(height);
+            inputs.gradient.push((gx * gx + gz * gz).sqrt());
+            inputs
+                .curvature
+                .push((west + east + north + south - 4.0 * height) / (spacing * spacing));
+            inputs.water.push(HydrologySample {
+                flow: water.flow * shown,
+                wetness: water.wetness * shown,
+                lake: water.lake * shown,
+                carve: water.carve * shown,
+                river: water.river,
+            });
+            inputs.path.push(if shown > 0.0 && reads.path {
+                self.layers.path_at(x, z)
+            } else {
+                PathSample::FAR
+            });
         }
+        inputs.zs.clear();
+        inputs.zs.resize(stride, z);
+        let row_inputs = RowInputs {
+            xs: &self.xs,
+            zs: &inputs.zs,
+            spacing,
+            height: &inputs.height,
+            gradient: &inputs.gradient,
+            curvature: &inputs.curvature,
+            water: &inputs.water,
+            path: &inputs.path,
+        };
+        surface.control_row(
+            &row_inputs,
+            &mut control[row * stride..(row + 1) * stride],
+            (&mut inputs.scratch, &mut self.weights),
+        );
     }
 
     /// Generates until the tile is done or `budget` work units run out
@@ -658,7 +749,7 @@ impl Generator {
                         tile,
                         (layer, row),
                         &mut self.placed,
-                        (&self.layers, self.placing),
+                        (&self.layers, self.placing, &mut self.places),
                     );
                     *budget = budget.saturating_sub(cost);
                     match next {
@@ -688,6 +779,8 @@ impl Generator {
         let vertical = QUARTER_WEIGHTS[i64::from(row).rem_euclid(GRID_STEP) as usize];
         for layer in 0..self.layers.layers().len() {
             let Some(tables) = self.layers.noise(layer) else {
+                let at = (row + 1) as usize;
+                let span = self.span(layer);
                 self.layers.apply_local(
                     layer,
                     &mut self.row,
@@ -695,6 +788,7 @@ impl Generator {
                     z,
                     (self.min, self.max),
                     self.spacing,
+                    span.as_deref().map(|span| (span, at)),
                 );
                 continue;
             };
@@ -764,7 +858,7 @@ impl Layers {
         let mut height = [0.0_f32];
         for layer in 0..self.layers().len() {
             let Some(tables) = self.noise(layer) else {
-                self.apply_local(layer, &mut height, &[x], z, (point, point), spacing);
+                self.apply_local(layer, &mut height, &[x], z, (point, point), spacing, None);
                 continue;
             };
             let (octaves, fine, gullies) = tables.bands(spacing);
