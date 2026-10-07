@@ -11,7 +11,8 @@ use crate::environment::{InvalidSetting, check_range};
 /// Contact shadow settings: whether they trace, how far each ray reaches
 /// toward the sun in meters (0.05 to 4), how much of the sun's light a hit
 /// takes away (0 to 1; 0 turns them off), and the meters from the camera
-/// within which surfaces trace (1 to 1000). Requires version 9.
+/// within which surfaces trace, their shadows fading out over its last
+/// third (decision 098; 1 to 1000). Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",

@@ -8,11 +8,12 @@
 // group's list for that view and level and count in its indirect draw.
 // Where the camera sees an object's impostor within the pixel error (on
 // frames that draw impostors, decision 048), it appends its pose and
-// impostor to the camera's cards instead, drawn facing it; shadow maps
-// drawn every frame leave it out. The kept shadow map, redrawn only where
-// objects come and go, holds every object as seen from afar: its impostor,
-// cast as a card facing the sun, or the coarsest level its texels hide
-// (decision 060).
+// impostor to the camera's cards instead, drawn facing it; the near
+// cascades cast it as a card facing the sun (decision 098), and the moving
+// map leaves it out. The kept shadow map, redrawn only where objects come
+// and go, holds every object as seen from afar: its impostor, cast as a
+// card facing the sun, or the coarsest level its texels hide (decision
+// 060).
 
 struct Frame {
     // The camera's eye (world) and pixels per world unit at unit distance
@@ -29,8 +30,8 @@ struct Frame {
 // planes pass everything, but a kept level's far one), the radius objects
 // need to draw in it (x, half its texel, which also bounds the error a
 // caster coarser than the camera's may add), the geometric error its texels
-// hide (y, world units; 0 for the camera) and whether it is a kept map's or
-// kept level's (z, 1).
+// hide (y, world units; 0 for the camera), whether it is a kept map's or
+// kept level's (z, 1) and whether it is a near cascade's (w, 1).
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
@@ -129,9 +130,9 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
     // The camera draws an impostor its texels show within the error, as a
-    // card, which maps drawn every frame leave out; kept maps cast one
-    // wherever their texels are no finer than the impostor's (decisions 060
-    // and 065).
+    // card, which near cascades cast too (decision 098) and the moving map
+    // leaves out; kept maps cast one wherever their texels are no finer than
+    // the impostor's (decisions 060 and 065).
     let impostor = group.impostor * record.scale;
     let impostors = frame.strides.z != 0u && impostor > 0.0;
     let takes_over = impostor * frame.eye.w + record.radius;
@@ -145,7 +146,8 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         let limits = views[view].limits;
         let kept = limits.z > 0.0;
         let card = impostors && select(seen_as_card, impostor <= limits.y, kept);
-        if record.radius < limits.x || (card && view != 0u && !kept)
+        let leaves_cards = view != 0u && !kept && limits.w == 0.0;
+        if record.radius < limits.x || (card && leaves_cards)
             || !inside(view, record.center, record.radius) {
             continue;
         }

@@ -613,6 +613,8 @@ impl Renderer {
             },
             |frame| frame.camera,
         );
+        camera.options[1] =
+            crate::gpu_data::pixel_angle(snapshot.view_projection, self.display.size().1);
         // The wind placed objects sway in (decision 058), and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
@@ -670,7 +672,7 @@ impl Renderer {
             ),
         ) {
             lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];
-            lighting.occupancy_heights = [area.reference, area.resolution as f32, 0.0, 0.0];
+            lighting.occupancy_heights = [area.reference, area.resolution as f32, area.reach, 0.0];
         }
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;

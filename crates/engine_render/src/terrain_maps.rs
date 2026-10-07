@@ -6,7 +6,8 @@
 //! changes; materials whose maps differ in size or are block compressed
 //! show their colors instead and count as dropped. Each layer's mean color,
 //! roughness and occlusion stand in for its maps where they repeat too
-//! small on screen to show.
+//! small on screen to show, and the variance of its normal map's slopes
+//! roughens it there (decision 098).
 
 use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
 
@@ -42,16 +43,18 @@ pub(crate) struct TerrainMaps {
     /// Materials whose maps the arrays cannot hold.
     pub(crate) dropped: u32,
     bytes: u64,
-    // Each layer's mean linear color, roughness and occlusion.
+    // Each layer's means.
     means: Vec<Means>,
 }
 
-/// A layer's mean linear base color, roughness and occlusion texels.
+/// A layer's mean linear base color, roughness and occlusion texels, and
+/// the mean square of its normal map's slopes at scale 1 (decision 098).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Means {
     pub color: [f32; 3],
     pub roughness: f32,
     pub occlusion: f32,
+    pub slopes: f32,
 }
 
 impl TerrainMaps {
@@ -203,7 +206,9 @@ impl TerrainMaps {
 }
 
 /// The means of `maps`' base color, decoded from sRGB, and of its
-/// metallic-roughness map's roughness and occlusion; 1 without them.
+/// metallic-roughness map's roughness and occlusion, 1 without them; and
+/// of the squares of its normal map's slopes, 0 without one, each normal at
+/// most about 76 degrees from flat.
 fn means(maps: &RenderSurfaceMaps) -> Means {
     let decode: Vec<f32> = (0..=255_u8)
         .map(|value| {
@@ -215,12 +220,25 @@ fn means(maps: &RenderSurfaceMaps) -> Means {
             }
         })
         .collect();
-    let [base_color, _, metallic_roughness] = textures(maps);
+    let [base_color, normal, metallic_roughness] = textures(maps);
     let mut result = Means {
         color: [1.0; 3],
         roughness: 1.0,
         occlusion: 1.0,
+        slopes: 0.0,
     };
+    if let Some(texture) = normal {
+        let pixels = texture.pixels().as_chunks::<4>().0;
+        let unit = |value: u8| f64::from(value) / 127.5 - 1.0;
+        let sum: f64 = pixels
+            .iter()
+            .map(|pixel| {
+                let (x, y, z) = (unit(pixel[0]), unit(pixel[1]), unit(pixel[2]).max(0.25));
+                (x * x + y * y) / (z * z)
+            })
+            .sum();
+        result.slopes = (sum / pixels.len().max(1) as f64) as f32;
+    }
     if let Some(texture) = base_color {
         let pixels = texture.pixels().as_chunks::<4>().0;
         let mut sum = [0.0_f64; 3];

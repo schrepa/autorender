@@ -9,9 +9,10 @@
 //! from the camera (`scatter_cull.wgsl`), appending it to its draw
 //! group's list for that view and level, or to the view's impostor cards
 //! (decisions 048 and 060); each group and level then draws indirectly, and
-//! each view's cards. Objects draw in the first opaque phase, and cast into
-//! the near cascades and the moving map, never the kept one: the tiles they
-//! stand on come and go with the camera. They are never occlusion culled.
+//! each view's cards. Objects draw in the first opaque phase and cast into
+//! every shadow map: the kept ones as seen from afar, the near cascades as
+//! the camera sees them, cards cast facing the sun (decision 098), and the
+//! moving map without the camera's cards. They are never occlusion culled.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::glam::{Mat4, Vec3};
@@ -463,9 +464,15 @@ impl ScatterPass {
             planes[4] = [0.0, 0.0, 0.0, 1.0];
             planes[5] = [0.0, 0.0, 0.0, 1.0];
             let half_texel = half_texel(clip);
+            // Near cascades cast the camera's cards (decision 098).
+            let cascade = if map < crate::shadows::MOVING_MAP {
+                1.0
+            } else {
+                0.0
+            };
             views.push(ViewData {
                 planes,
-                limits: [half_texel, 2.0 * half_texel, 0.0, 0.0],
+                limits: [half_texel, 2.0 * half_texel, 0.0, cascade],
             });
             self.maps.push(map);
         }

@@ -2,8 +2,9 @@
 //! placed objects cover, drawn from the scatter pass's slots
 //! (`occupancy.wgsl`) and read by the shared shading (`scene.wgsl`'s
 //! `occupancy_visibility`), which darkens the sky light of what lies under
-//! or within a cover. The map is drawn again only when it no longer holds
-//! the camera's surroundings or the objects changed.
+//! or within a cover, less toward the end of its reach around the eye
+//! (decision 098). The map is drawn again only when it no longer holds the
+//! camera's surroundings or the objects changed.
 
 use bytemuck::{Pod, Zeroable};
 use engine_core::Occupancy;
@@ -62,13 +63,15 @@ impl Cover {
 }
 
 /// Where the map lies: its center (x and z), meters a side, reference
-/// height and texels a side.
+/// height and texels a side, and the meters around the eye covers darken
+/// within (decision 098).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Area {
     pub center: [f32; 2],
     pub size: f32,
     pub reference: f32,
     pub resolution: u32,
+    pub reach: f32,
 }
 
 pub(crate) struct OccupancyPass {
@@ -158,7 +161,10 @@ impl OccupancyPass {
             self.drawn = None;
             return None;
         }
-        let size = 2.0 * settings.radius;
+        // Covers darken within the radius around the eye, which strays at
+        // most an eighth of the map's side from its center before it is
+        // drawn again (decision 098): the map reaches a third beyond.
+        let size = 8.0 / 3.0 * settings.radius;
         let resolution = settings.resolution;
         if self.targets[0].width() != resolution {
             let (targets, views) = targets(device, resolution);
@@ -182,17 +188,17 @@ impl OccupancyPass {
             self.covers_written = covers.to_vec();
             self.drawn = None;
         }
-        // The map follows the eye in steps of an eighth of its side, and
-        // is drawn again once the eye strays a quarter of it from its
+        // The map follows the eye in steps of a sixteenth of its side, and
+        // is drawn again once the eye strays an eighth of it from its
         // center.
-        let step = size / 8.0;
+        let step = size / 16.0;
         let snapped = [(eye.x / step).round() * step, (eye.z / step).round() * step];
         let current = self.drawn.filter(|(area, drawn)| {
             *drawn == version
                 && area.size == size
                 && area.resolution == resolution
-                && (eye.x - area.center[0]).abs() <= size / 4.0
-                && (eye.z - area.center[1]).abs() <= size / 4.0
+                && (eye.x - area.center[0]).abs() <= size / 8.0
+                && (eye.z - area.center[1]).abs() <= size / 8.0
         });
         let area = match current {
             Some((area, _)) => area,
@@ -202,6 +208,7 @@ impl OccupancyPass {
                     size,
                     reference: eye.y,
                     resolution,
+                    reach: settings.radius,
                 };
                 let uniform = SplatUniform {
                     area: [area.center[0], area.center[1], size, area.reference],

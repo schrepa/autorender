@@ -18,8 +18,10 @@ use engine_core::{
 /// its w is presentation time in seconds, for animated surfaces (decision
 /// 019). `options.x` is 1 while a reflection probe captures a cube face
 /// (decision 043): its surfaces read shadows from the far maps alone, which
-/// hold every caster whatever the main camera sees. The GPU buffer starts at
-/// offset zero; only these 240 initialized bytes are copied into it.
+/// hold every caster whatever the main camera sees; `options.y` is the angle
+/// a pixel spans at the view's center ([`pixel_angle`], decision 098). The
+/// GPU buffer starts at offset zero; only these 240 initialized bytes are
+/// copied into it.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct CameraUniform {
@@ -50,11 +52,17 @@ impl CameraUniform {
         }
     }
 
-    /// A reflection probe's cube face seen from `position` through
-    /// `view_projection` (decision 043), at presentation time `seconds`.
-    pub(crate) fn probe(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
+    /// A reflection probe's cube face `size` texels a side seen from
+    /// `position` through `view_projection` (decision 043), at presentation
+    /// time `seconds`.
+    pub(crate) fn probe(
+        view_projection: Mat4,
+        position: glam::Vec3,
+        seconds: f32,
+        size: u32,
+    ) -> Self {
         Self {
-            options: [1.0, 0.0, 0.0, 0.0],
+            options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
             ..Self::exact(view_projection, position, seconds)
         }
     }
@@ -83,6 +91,14 @@ impl CameraUniform {
             ..Self::exact(view_projection, position, seconds)
         }
     }
+}
+
+/// The angle (radians) a pixel spans at the center of a view `height`
+/// pixels tall seen through `view_projection`, which shading measures
+/// pixels' footprints by (decision 098).
+pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
+    let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
+    2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
 /// WGSL `Lighting` uniform of the scene's atmosphere (decision 018) and

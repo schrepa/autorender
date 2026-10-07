@@ -137,7 +137,7 @@ function snapshot(runtime: StressGame): Snapshot { return JSON.parse(runtime.str
 /** What a recording or a detailed profile notes about the run it measures, on a `canvas` sized canvas. */
 function runMetadata(data: Snapshot, canvas: [number, number]) {
   return { config: data.config, seed: data.config.seed, generation: data.generation, camera: data.camera,
-    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline, taa, occlusion, subpixel, visibility, lod, impostors,
+    culling: data.config.culling, resolution_scale: number("resolution"), canvas, presentation, pipeline, taa: temporal(data.config), occlusion, subpixel, visibility, lod, impostors,
     look: choice("look").value, effects: choice("effects").value,
     build: params.get("engine_build"), runtime: "stress-lab-0.1", mode: import.meta.env.MODE,
     start_frame: data.frame, start_tick: data.tick, workload: activeTitle, wasm: wasmIdentity, scroll: [scrollX, scrollY] };
@@ -239,7 +239,10 @@ async function apply(requested: Config, title: string) {
   let files: StressFiles | undefined;
   try { files = await sceneFiles(config); } catch (error) { notice(`Workload unchanged: ${String(error)}`, true); return; }
   try {
-    controls.mutate(runtime => runtime.configure(JSON.stringify(config), files));
+    controls.mutate(runtime => {
+      runtime.configure(JSON.stringify(config), files);
+      runtime.set_temporal_antialiasing(temporal(config) === "on");
+    });
     activeConfig = config; activeTitle = title;
     choice("view").value = "overview";
     chart.length = 0; intervals.length = 0; previousTimestamp = undefined;
@@ -304,10 +307,16 @@ function poll(runtime: StressGame) {
 const params = new URLSearchParams(location.search);
 // Ordinary frames blend, compose and cull on the GPU unless ?presentation=cpu,
 // GPU-presented frames split fixed ticks across frames unless ?pipeline=off,
-// and ?taa=on temporally antialiases them.
+// and ?taa=on temporally antialiases them, as the highlands' do unless
+// ?taa=off (decision 098).
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
-const taa = params.get("taa") === "on" ? "on" : "off";
+const taa = params.get("taa");
+/** Whether `config`'s frames antialias temporally. */
+function temporal(config: Config): "on" | "off" {
+  if (taa === "on" || taa === "off") return taa;
+  return config.scene === "highlands" ? "on" : "off";
+}
 // ?occlusion=off draws every frustum-visible object (decision 040), and
 // ?subpixel=off also those covering no pixel center (decision 041), for A/B.
 const occlusion = params.get("occlusion") === "off" ? "off" : "on";
@@ -377,7 +386,7 @@ boot({
     game = runtime; controls = host;
     runtime.set_gpu_presentation(presentation === "gpu");
     runtime.set_tick_pipelining(pipeline === "on");
-    runtime.set_temporal_antialiasing(taa === "on");
+    runtime.set_temporal_antialiasing(temporal(activeConfig) === "on");
     runtime.set_occlusion_culling(occlusion === "on");
     runtime.set_subpixel_culling(subpixel === "on");
     runtime.set_visibility_buffer(visibility === "on");

@@ -146,15 +146,7 @@ pub fn create_workload_with(
     // are opt-in engine effects; street lamps near the camera light the
     // city (decision 023), brighter as the look darkens.
     world.insert_resource(stress_shafts());
-    // The highlands' lakes (decision 067) mirror shores kilometers away.
-    world.insert_resource(if config.scene == StressScene::Highlands {
-        Reflections {
-            distance: 4000.0,
-            ..Reflections::default()
-        }
-    } else {
-        Reflections::default()
-    });
+    world.insert_resource(stress_reflections(config.scene));
     world.insert_resource(LocalLights {
         distance: 220.0,
         intensity: lamps,
@@ -494,6 +486,19 @@ pub fn stress_shafts() -> SunShafts {
     SunShafts {
         intensity: 1.5,
         ..SunShafts::default()
+    }
+}
+
+/// Screen-space reflections as `scene` has them: the highlands' lakes
+/// (decision 067) mirror shores kilometers away.
+pub fn stress_reflections(scene: StressScene) -> Reflections {
+    if scene == StressScene::Highlands {
+        Reflections {
+            distance: 4000.0,
+            ..Reflections::default()
+        }
+    } else {
+        Reflections::default()
     }
 }
 

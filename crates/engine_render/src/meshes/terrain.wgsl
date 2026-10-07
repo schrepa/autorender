@@ -36,7 +36,9 @@ struct TerrainPaletteEntry {
     maps: vec4<f32>,
     far: vec4<f32>,
     // The meters its heights span where the ground's relief shows (decision
-    // 082), and the meters tracks sink it at most (decision 083).
+    // 082), the meters tracks sink it at most (decision 083), and the
+    // variance of its normal maps' slopes at their scale, which its
+    // roughness takes over where they fade (decision 098).
     relief: vec4<f32>,
     // Its cover's canopy (decision 090): the linear color its blades show
     // seen from afar, and their leaves' area per square meter of ground (0
@@ -517,11 +519,11 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 }
 
 // Where a fragment is and how it is seen, as the ground's passes read it:
-// its world position and that's screen derivatives, a pixel's footprint
-// there (meters, its long side), the footprint the maps' anisotropic
-// filtering resolves (its short side, or a sixteenth of its long side where
-// filtering runs out), the terrain's normal, and the way toward the eye
-// and the meters to it.
+// its world position and how that changes per pixel on the terrain's smooth
+// surface (decision 098), a pixel's footprint there (meters, its long
+// side), the footprint the maps' anisotropic filtering resolves (its short
+// side, or a sixteenth of its long side where filtering runs out), the
+// terrain's normal, and the way toward the eye and the meters to it.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -544,20 +546,26 @@ fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
 }
 
 // How much of the ground at `site` a cover whose leaves' area is `leaves`
-// per square meter shows as its canopy (decision 090): past where blades
-// thin out (`terrain.cover`), as much as the leaves hide of the ground
-// along the view, 1 - exp(-G leaves / sin), all of it at grazing views.
+// per square meter shows as its canopy (decision 090): as much of the
+// leaves as its blades no longer show by their law (`terrain.cover`,
+// decision 098) hides of the ground along the view, 1 - exp(-G leaves /
+// sin), all of it at grazing views.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
-    let fade = terrain.cover;
-    if fade.y <= 0.0 || leaves <= 0.0 {
+    let cover = terrain.cover;
+    if cover.z <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
-    let thinned = smoothstep(fade.x, fade.y, site.distance);
+    var thinned = 1.0;
+    if cover.x > 0.0 {
+        let share = cover_share(site.distance, cover.x, cover.y,
+            cover_end(site.world.xz, cover.y));
+        thinned = 1.0 - cover_shown(site.distance, share, cover.x);
+    }
     if thinned <= 0.0 {
         return 0.0;
     }
     let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
-    return thinned * (1.0 - exp(-0.5 * leaves * fade.z / sine));
+    return thinned * (1.0 - exp(-0.5 * leaves * cover.z / sine));
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
@@ -649,16 +657,19 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         }
         color = mix(color, entry.color.rgb * albedo, slot.colored);
     }
+    // Normal maps where their deflections still show, fading with the
+    // other maps (decision 098).
+    let shown = terrain_relief(site.texel, entry.params.x) * slot.detail;
     if slot.detail > 0.0 {
         let mapping = terrain_mapping(entry, site.geometric);
-        // Normal maps where their deflections still show.
-        let relief = terrain_relief(site.texel, entry.params.x) * entry.maps.x;
+        let relief = entry.maps.x;
+        let deflected = shown > 0.0 && relief > 0.0;
         var albedo = vec3<f32>(0.0);
         var mapped = vec3<f32>(0.0);
         if slot.second < 1.0 {
             albedo += (1.0 - slot.second) * terrain_map(terrain_albedo, mapping, site.world,
                 site.world_dx, site.world_dy, 0u).rgb;
-            if relief > 0.0 {
+            if deflected {
                 mapped += (1.0 - slot.second) * terrain_mapped_normal(mapping, site.world,
                     site.world_dx, site.world_dy, 0u, site.geometric, relief);
             }
@@ -666,7 +677,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         if slot.second > 0.0 {
             albedo += slot.second * terrain_map(terrain_albedo, mapping, site.world,
                 site.world_dx, site.world_dy, 1u).rgb;
-            if relief > 0.0 {
+            if deflected {
                 mapped += slot.second * terrain_mapped_normal(mapping, site.world,
                     site.world_dx, site.world_dy, 1u, site.geometric, relief);
             }
@@ -675,9 +686,16 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         roughness = mix(roughness, entry.color.w * slot.texel.g, slot.detail);
         occlusion = mix(occlusion, 1.0 + entry.maps.y * (slot.texel.r - 1.0), slot.detail);
         metalness *= mix(1.0, slot.texel.b, slot.detail);
-        if relief > 0.0 {
-            turned = mapped;
+        if deflected {
+            turned = stable_normalize(mix(site.geometric, mapped, shown));
         }
+    }
+    // The slopes normal maps no longer show roughen the surface instead
+    // (decision 098), as their variance widens its highlights.
+    let lost = entry.relief.z * (1.0 - shown);
+    if lost > 0.0 {
+        let alpha = roughness * roughness;
+        roughness = sqrt(sqrt(min(alpha * alpha + lost, 1.0)));
     }
     if entry.params.w > 0.0 {
         (*ground).mapped += weight;
@@ -1017,20 +1035,31 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     let world = relative + camera.position.xyz;
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
-    let along = vec2<f32>(length(world_dx), length(world_dy));
-    let footprint = max(along.x, along.y);
+    let away = length(relative);
+    let ray = relative / max(away, 1.0e-6);
+    let ray_dx = dpdx(ray);
+    let ray_dy = dpdy(ray);
     let local = world.xz - terrain.origin.xz;
     let shading = terrain_shading_level(length(world - terrain.eye.xyz));
     let geometric = terrain_surface_normal(local, shading);
+    // How the point moves per pixel on the plane of the terrain's smooth
+    // normal (decision 098): where the rays one pixel over meet that plane,
+    // which change smoothly across the triangles drawn, so fading detail and
+    // mipmaps change with them rather than from one triangle to the next.
+    let facing = min(dot(geometric, ray), -0.015625);
+    let smooth_dx = away * (ray_dx - ray * (dot(geometric, ray_dx) / facing));
+    let smooth_dy = away * (ray_dy - ray * (dot(geometric, ray_dy) / facing));
+    let along = vec2<f32>(length(smooth_dx), length(smooth_dy));
+    let footprint = max(along.x, along.y);
     var site: TerrainSite;
     site.world = world;
-    site.world_dx = world_dx;
-    site.world_dy = world_dy;
+    site.world_dx = smooth_dx;
+    site.world_dy = smooth_dy;
     site.footprint = footprint;
     site.texel = max(min(along.x, along.y), footprint / 16.0);
     site.geometric = geometric;
-    site.distance = length(relative);
-    site.toward = -relative / max(site.distance, 1.0e-6);
+    site.distance = away;
+    site.toward = -ray;
     // Sunk where the ground's relief and tracks show (decisions 082 and
     // 083).
     let relief = terrain_parallax(site, shading);

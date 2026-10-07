@@ -75,10 +75,14 @@ const CONTACT_STEPS: u32 = 12u;
 // toward the sun (decision 062): a surface counts where the ray passes
 // behind it by less than a thickness growing along the ray, so thin things
 // shade and the fronts of distant ones do not. Hits nearer the ray's start
-// shade more, so its reach leaves no edge.
+// shade more, so its reach leaves no edge, and they shade less over the
+// last third of the distance surfaces trace within (decision 098), so its
+// end leaves none either.
 fn contact_visibility(p: vec3<f32>, normal: vec3<f32>, away: f32, noise: f32) -> f32 {
     let toward = post.sun_direction.xyz;
-    if post.contact.w == 0.0 || away > post.contact.z || dot(normal, toward) <= 0.0 {
+    let strength = post.contact.y * (1.0 - smoothstep(0.67 * post.contact.z, post.contact.z,
+        away));
+    if post.contact.w == 0.0 || strength <= 0.0 || dot(normal, toward) <= 0.0 {
         return 1.0;
     }
     let reach = post.contact.x;
@@ -102,7 +106,7 @@ fn contact_visibility(p: vec3<f32>, normal: vec3<f32>, away: f32, noise: f32) ->
         }
         let behind = length(q - post.eye.xyz) - length(surface.xyz - post.eye.xyz);
         if behind > 0.002 * away && behind < 0.1 + along {
-            return 1.0 - post.contact.y * (1.0 - along / reach);
+            return 1.0 - strength * (1.0 - along / reach);
         }
     }
     return 1.0;

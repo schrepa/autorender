@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::{
     FrameMetrics, StressConfig, StressFile, StressScene, create_workload_with, look, set_view,
-    stress_observation, stress_shafts,
+    stress_observation, stress_reflections, stress_shafts,
 };
 
 /// Files workloads read, by name: the dense scene's virtual meshes
@@ -208,7 +208,7 @@ impl StressGame {
             world.remove_resource::<SunShafts>();
         }
         if reflections {
-            world.insert_resource(Reflections::default());
+            world.insert_resource(stress_reflections(scene));
         } else {
             world.remove_resource::<Reflections>();
         }

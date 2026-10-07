@@ -1,20 +1,27 @@
 // Ground cover (decision 056): each frame, the blades around the eye, grown
-// from a terrain's control values and heights. A workgroup takes one cell
-// of a tier's grid; its lanes try the cell's candidate blades, each placed,
-// sized and ranked by a hash of the cell, its tier and its index, so blades
-// stay where they are as the eye moves. A candidate grows where its rank
-// falls under its material's density at its point (both cover materials of
-// a control value share it by their blend). Density falls with distance as
-// the radius's fifth over the distance, so every ring of the radius's disc
-// holds about as many blades, which widen to cover as much ground. Past
-// the radius, tiers of cells twice as wide each (decision 090) grow the
-// same candidates a cell, sparser as the cube of the distance, blades
-// still widening so they stay as wide on screen, until the tiers' reach;
-// without tiers cover thins out over the radius's outer half. Candidates
-// near their threshold grow short, so blades rise as the eye nears instead
-// of popping in. Survivors in the view append to the frame's blades; past
-// capacity they are only counted. Blades take the ground's large-scale
-// variety from its sky map, as the ground does (`terrain_variety.wgsl`).
+// from a terrain's control values and heights. Every cell of the terrain's
+// finest level holds the same candidate blades at every distance, each
+// placed, sized and ranked by a hash of the cell and its index, so blades
+// stay where they are as the eye moves (decision 098): its index counts the
+// cell's expected blades at which it grows, plus a share of one. A
+// candidate grows where that falls under its material's density at its
+// point times the cell's area (both cover materials of a control value
+// share it by their blend). Density falls with distance as the radius's
+// fifth over the distance, so every ring of the radius's disc holds about
+// as many blades, which widen to cover as much ground; past the radius,
+// sparser as the cube of the distance, blades still widening so they stay
+// as wide on screen, until the tiers' ragged reach (`terrain_variety.wgsl`'s
+// `cover_share`); without tiers cover thins out over the radius's outer
+// half. A workgroup takes one cell of a tier's grid: the radius's cells are
+// the finest level's, and each tier beyond (decision 090) has cells twice
+// as wide as the last, trying only the first indices of the finest cells
+// within them that its density can reach, so wherever a blade grows it is
+// the same blade. Candidates near their threshold grow short, so blades
+// rise as the eye nears instead of popping in. Blades stand on the ground
+// as the terrain draws it, morphing between its levels (decision 098).
+// Survivors in the view append to the frame's blades; past capacity they
+// are only counted. Blades take the ground's large-scale variety from its
+// sky map, as the ground does (`terrain_variety.wgsl`).
 
 struct Grow {
     // The terrain's origin (world) and its level-0 sample spacing.
@@ -22,15 +29,15 @@ struct Grow {
     // The eye (world) and the radius cover grows within.
     eye: vec4<f32>,
     // The first cell of the grid (terrain-local, in cells), the cells along
-    // its side, and the candidates each cell tries.
+    // its side, and the candidates each cell of the finest level holds.
     grid: vec4<i32>,
     // Where the terrain's levels start in the directory and how many there
     // are, where its materials start in the palette, and the blades'
     // capacity.
     counts: vec4<u32>,
-    // The density scale, the candidates' share of the densest cover
-    // (blades per candidate per square meter) in the radius's cells, and
-    // the terrain's sky map's layer plus one (0 until built).
+    // The density scale, how many of each finest cell's candidates this
+    // tier tries (decision 098), and the terrain's sky map's layer plus one
+    // (0 until built).
     scale: vec4<f32>,
     // This tier (decision 090): the meters from the eye it starts at, the
     // radius, where tiers end (0 without tiers), and how many level-0
@@ -42,6 +49,11 @@ struct Grow {
     // `deform_grid` and `deform`).
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
+    // Meters from the eye up to which each of the terrain's first eight
+    // levels draws, finest first: each morphs into the next coarser level
+    // over the last quarter of its range (decision 098); 0 for levels that
+    // never morph.
+    ranges: array<vec4<f32>, 2>,
 }
 
 // A surface material's cover: blades per square meter, the shortest and
@@ -101,43 +113,170 @@ fn unit(value: u32) -> f32 {
     return f32(value >> 8u) * (1.0 / 16777216.0);
 }
 
-// What the terrain holds at terrain-local `local`, from the finest
-// resident level: its height, and the nearest sample's control value.
+// What the terrain holds at terrain-local `local`: its height, and the
+// nearest sample's control value at the finest resident level.
 struct Ground {
     height: f32,
     control: u32,
     found: bool,
 }
 
+// A tile of a level: its layer (`NOT_RESIDENT` when not loaded) and its
+// first sample (the level's samples from the terrain's origin).
+struct LevelTile {
+    layer: u32,
+    first: vec2<u32>,
+}
+
+// The tile of `level` holding its sample `samples` (terrain-local).
+fn level_tile(level: u32, samples: vec2<f32>) -> LevelTile {
+    let header = grow.counts.x + level * 4u;
+    let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
+    let tile = min(vec2<u32>(max(samples, vec2<f32>(0.0)) / 256.0), tiles - vec2<u32>(1u));
+    var found: LevelTile;
+    found.layer = directory[directory[header] + tile.y * tiles.x + tile.x];
+    found.first = tile * 256u;
+    return found;
+}
+
+// The height of `tile`'s sample `sample` (its level's, terrain-local);
+// layers keep a border sample before the tile's first.
+fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32 {
+    let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
+    return textureLoad(heights, texel, tile.layer, 0).r;
+}
+
+// Where `level` stands morphing into the next coarser level `away` meters
+// from the eye: over the last quarter of its range (decision 098).
+fn level_morph(level: u32, away: f32) -> f32 {
+    if level >= 8u {
+        return 0.0;
+    }
+    let four = select(grow.ranges[0], grow.ranges[1], level >= 4u);
+    let range = dot(four, vec4<f32>(vec4<u32>(level % 4u) == vec4<u32>(0u, 1u, 2u, 3u)));
+    if range <= 0.0 {
+        return 0.0;
+    }
+    return saturate((away - 0.75 * range) / (0.25 * range));
+}
+
+// The height within a cell of corners `a` (0, 0), `b` (1, 0), `c` (0, 1)
+// and `d` (1, 1) at `f`, on the two triangles patches split cells into,
+// from the (0, 1) corner to the (1, 0) one.
+fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32 {
+    if f.x + f.y <= 1.0 {
+        return a + (b - a) * f.x + (c - a) * f.y;
+    }
+    return d + (c - d) * (1.0 - f.x) + (b - d) * (1.0 - f.y);
+}
+
+// The ground at terrain-local `local` as the terrain draws it `away` meters
+// from the eye (decision 098, `terrain_vertex.wgsl`): its finest resident
+// level, or the coarser one it has morphed into, morphing into the next
+// over the last quarter of its range, its odd samples sliding onto the
+// even ones before them as their heights blend into the coarser level's,
+// read on the triangles its patches draw. Control values come from the
+// nearest sample of the finest resident level. Nothing grows beyond the
+// terrain's far edges.
+fn drawn_ground(local: vec2<f32>, away: f32) -> Ground {
+    var ground: Ground;
+    let base = grow.counts.x;
+    let levels = grow.counts.y;
+    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * grow.origin.w;
+    if any(local > extent) {
+        return ground;
+    }
+    var level = 0u;
+    var tile: LevelTile;
+    tile.layer = NOT_RESIDENT;
+    for (; level < levels; level++) {
+        tile = level_tile(level, local / (grow.origin.w * f32(1u << level)));
+        if tile.layer != NOT_RESIDENT {
+            break;
+        }
+    }
+    if tile.layer == NOT_RESIDENT {
+        return ground;
+    }
+    let finest = max(local / (grow.origin.w * f32(1u << level)), vec2<f32>(0.0));
+    ground.control = textureLoad(control,
+        min(vec2<u32>(round(finest)) - tile.first, vec2<u32>(256u)) + vec2<u32>(1u),
+        tile.layer, 0).x;
+    ground.found = true;
+    // A level fully morphed draws as the next coarser one.
+    var morph = level_morph(level, away);
+    var coarse: LevelTile;
+    coarse.layer = NOT_RESIDENT;
+    while morph > 0.0 && level + 1u < levels {
+        coarse = level_tile(level + 1u, local / (grow.origin.w * f32(2u << level)));
+        if coarse.layer == NOT_RESIDENT {
+            morph = 0.0;
+            break;
+        }
+        if morph < 1.0 {
+            break;
+        }
+        level += 1u;
+        tile = coarse;
+        coarse.layer = NOT_RESIDENT;
+        morph = level_morph(level, away);
+    }
+    if level + 1u >= levels {
+        morph = 0.0;
+    }
+    // The morphed grid: within each pair of cells from an even sample, the
+    // odd sample between them stands `1 - morph` along.
+    let samples = max(local / (grow.origin.w * f32(1u << level)), vec2<f32>(0.0));
+    let block = floor(samples * 0.5) * 2.0;
+    let within = samples - block;
+    let edge = 1.0 - morph;
+    let second = within >= vec2<f32>(edge);
+    let start = select(vec2<f32>(0.0), vec2<f32>(edge), second);
+    let width = select(vec2<f32>(edge), vec2<f32>(1.0 + morph), second);
+    let f = saturate((within - start) / max(width, vec2<f32>(1.0e-6)));
+    let cell = vec2<u32>(block) + select(vec2<u32>(0u), vec2<u32>(1u), second);
+    var a = tile_height(tile, cell);
+    var b = tile_height(tile, cell + vec2<u32>(1u, 0u));
+    var c = tile_height(tile, cell + vec2<u32>(0u, 1u));
+    var d = tile_height(tile, cell + vec2<u32>(1u, 1u));
+    if morph > 0.0 {
+        // Each corner blends into the coarser level's sample at the even
+        // sample it slides onto: the block's first, or after the block for
+        // the second cell's far corners.
+        let pair = vec2<u32>(block) / 2u;
+        let next = pair + select(vec2<u32>(0u), vec2<u32>(1u), second);
+        a = mix(a, tile_height(coarse, pair), morph);
+        b = mix(b, tile_height(coarse, vec2<u32>(next.x, pair.y)), morph);
+        c = mix(c, tile_height(coarse, vec2<u32>(pair.x, next.y)), morph);
+        d = mix(d, tile_height(coarse, next), morph);
+    }
+    ground.height = triangle_height(a, b, c, d, f);
+    return ground;
+}
+
+// The ground at terrain-local `local` from the finest resident level, its
+// samples blended: where a cell's nearest blades stand, to bound them.
 fn ground_at(local: vec2<f32>) -> Ground {
     var ground: Ground;
     let base = grow.counts.x;
     let levels = grow.counts.y;
-    // Nothing grows beyond the terrain's far edges.
     let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * grow.origin.w;
     if any(local > extent) {
         return ground;
     }
     for (var index = 0u; index < levels; index++) {
-        let header = base + index * 4u;
         let samples = max(local / (grow.origin.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = directory[directory[header] + tile.y * tiles.x + tile.x];
-        if layer == NOT_RESIDENT {
+        let tile = level_tile(index, samples);
+        if tile.layer == NOT_RESIDENT {
             continue;
         }
-        // Layers keep a border sample before the tile's first.
-        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        let a = textureLoad(heights, texel, layer, 0).r;
-        let b = textureLoad(heights, texel + vec2<u32>(1u, 0u), layer, 0).r;
-        let c = textureLoad(heights, texel + vec2<u32>(0u, 1u), layer, 0).r;
-        let d = textureLoad(heights, texel + vec2<u32>(1u, 1u), layer, 0).r;
+        let corner = min(vec2<u32>(samples), tile.first + vec2<u32>(255u));
+        let f = saturate(samples - vec2<f32>(corner));
+        let a = tile_height(tile, corner);
+        let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
+        let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
+        let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
         ground.height = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-        ground.control = textureLoad(control, texel + vec2<u32>(round(f)), layer, 0).x;
         ground.found = true;
         return ground;
     }
@@ -178,27 +317,6 @@ fn pack_color(color: vec3<f32>, w: f32) -> u32 {
     return pack4x8unorm(vec4<f32>(sqrt(saturate(color)), saturate(w)));
 }
 
-// The share of the densest cover growing `away` meters from the eye: all
-// of it within a fifth of the radius, then the fifth over the distance;
-// past the radius, a fifth of the radius's cube over the distance's, which
-// meets it there. Without tiers it thins to none over the radius's outer
-// half; with them, over the last three tenths of their reach.
-fn cover_share(away: f32) -> f32 {
-    let radius = grow.tier.y;
-    let reach = grow.tier.z;
-    let near = 0.2 * radius;
-    let distance = max(away, 1.0e-3);
-    var share = min(1.0, near / distance);
-    if distance > radius {
-        let ratio = radius / distance;
-        share = 0.2 * ratio * ratio * ratio;
-    }
-    if reach > radius {
-        return share * (1.0 - smoothstep(0.7 * reach, reach, away));
-    }
-    return share * (1.0 - smoothstep(0.5 * radius, radius, away));
-}
-
 // The ground's large-scale variety at terrain-local `local` (decision
 // 090): its sky map's hollows and ridges, interpolated between texels;
 // level ground before the map is built.
@@ -234,6 +352,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
     // The tier's cells, as many level-0 samples wide as it asks.
     let scale = grow.tier.w;
+    let side = u32(scale);
     let spacing = grow.origin.w * scale;
     let cell = grow.grid.xy + vec2<i32>(group.xy);
     if any(cell < vec2<i32>(0)) {
@@ -264,22 +383,35 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     if nearest > radius {
         return;
     }
-    // Candidates in cells wider by `scale` each stand for as many more
-    // square meters.
-    let widened = scale * scale;
-    let bound = min(1.0, cover_share(nearest) * widened);
-    let cell_seed = hash((u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u)
-        ^ (u32(scale) * 0x9e3779b9u));
-    for (var index = lane; index < u32(grow.grid.w); index += 64u) {
-        let seed = hash(cell_seed + index * 0x632be5abu);
-        let rank = unit(hash(seed ^ 0x165667b1u));
-        if rank >= bound {
+    // The finest cells' candidates whose indices the cell's nearest point's
+    // share could reach, of those the tier tries: each index stands for a
+    // blade more of a finest cell's expected blades.
+    let radius_densest = grow.tier.y;
+    let reach = grow.tier.z;
+    let held = f32(grow.grid.w);
+    let tried = min(u32(grow.scale.y),
+        u32(ceil(held * cover_share(nearest, radius_densest, reach, reach))));
+    let finest = side * side;
+    let area = grow.origin.w * grow.origin.w;
+    for (var index = lane; index < finest * tried; index += 64u) {
+        // A finest cell within the tier's, and its candidate.
+        let within = index % finest;
+        let candidate = index / finest;
+        let at = cell * i32(side) + vec2<i32>(i32(within % side), i32(within / side));
+        let cell_seed = hash((u32(at.x) * 0x8da6b343u) ^ (u32(at.y) * 0xd8163841u));
+        let seed = hash(cell_seed + candidate * 0x632be5abu);
+        let rank = f32(candidate) + unit(hash(seed ^ 0x165667b1u));
+        let offset = vec2<f32>(unit(seed), unit(hash(seed ^ 0x5bd1e995u))) * grow.origin.w;
+        let local = vec2<f32>(at) * grow.origin.w + offset;
+        let world_xz = grow.origin.xz + local;
+        // No nearer than across the ground, it can grow no denser.
+        if rank >= held * cover_share(distance(world_xz, grow.eye.xz), radius_densest, reach,
+            reach) {
             continue;
         }
-        let offset = vec2<f32>(unit(seed), unit(hash(seed ^ 0x5bd1e995u))) * spacing;
-        let local = corner + offset;
-        let world_xz = grow.origin.xz + local;
-        let ground = ground_at(local);
+        // The ground morphs by the distance to the cell's ground there.
+        let level_away = distance(vec3<f32>(world_xz.x, cell_center.y, world_xz.y), grow.eye.xyz);
+        let ground = drawn_ground(local, level_away);
         if !ground.found {
             continue;
         }
@@ -296,8 +428,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             pick < share);
         let entry = min(grow.counts.z + material, 255u);
         let spec = covers[entry];
-        let falloff = cover_share(away);
-        let keep = spec.shape.x * grow.scale.x * grow.scale.y * widened * falloff;
+        let falloff = cover_share(away, radius_densest, reach, cover_end(world_xz, reach));
+        let keep = spec.shape.x * grow.scale.x * area * falloff;
         if rank >= keep {
             continue;
         }
@@ -321,7 +453,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         blade.height = height;
         blade.facing = unit(hash(seed ^ 0x85ebca6bu)) * TAU;
         // Wider where fewer stand, as wide on screen at every distance.
-        blade.width = spec.shape.w * max(1.0, away / (0.2 * grow.tier.y));
+        blade.width = spec.shape.w * max(1.0, away / (0.2 * radius_densest));
         blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation, spec.color.w);
         let slot = atomicAdd(&counts.appended, 1u);
