@@ -263,6 +263,7 @@ pub(crate) fn place_authored(
             asset: object.asset,
             layer: AUTHORED_LAYER,
             near_level: None,
+            rank: 0.0,
         });
     }
     cost
@@ -272,8 +273,11 @@ pub(crate) fn place_authored(
 /// about the vertical (radians), how its up leans (x and z of its up
 /// vector), its scale, how far its base sinks below the ground (meters),
 /// the ground's normal under it (x and z; decision 096), its asset and
-/// layer indices, and for objects standing far away (decision 061) the
-/// level whose resident tiles hold it instead.
+/// layer indices, for objects standing far away (decision 061) the level
+/// whose resident tiles hold it instead, and its rank under the density at
+/// its point (0 to 1; 0 for authored objects): the share of the density
+/// past which it stands, which renderers thin layers by with distance
+/// (decision 100). Far away, a layer stands the objects ranked first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -285,6 +289,7 @@ pub struct Placed {
     pub asset: u16,
     pub layer: u16,
     pub near_level: Option<u8>,
+    pub rank: f32,
 }
 
 impl Placed {
@@ -635,8 +640,9 @@ pub(crate) fn place_row(
             }),
             path: stack.path_at(point[0], point[1]),
         };
-        let keep = fill * share_of_materials * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
-        if rank >= keep {
+        // The density here, and of it the share standing on this tile.
+        let full = layer.fill * share_of_materials * clamp(layer.mask.evaluate(&inputs), 0.0, 1.0);
+        if rank >= full * share {
             continue;
         }
         let pick = unit(hash(square ^ 0x27d4_eb2f));
@@ -684,6 +690,7 @@ pub(crate) fn place_row(
             asset,
             layer: layer_index as u16,
             near_level,
+            rank: rank / full,
         });
     }
     let squares = (last[0] - first[0] + 1) as u64;

@@ -11,7 +11,7 @@ use engine_core::TileKey;
 use engine_core::glam::Vec3;
 
 use crate::gpu_data::{ColorData, GroundData, PoseData};
-use crate::scatter::{DEAD, NEAR_LEVEL_SHIFT, Record};
+use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record};
 
 /// A tile's objects as the pool takes them: poses, colors, records and
 /// grounds (decision 096).
@@ -204,7 +204,7 @@ fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
 
 /// Whether `record`'s object stands far away (decision 061).
 fn stands_far(record: &Record) -> bool {
-    record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & 0xff != 0
+    record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
 }
 
 /// The record of a dead slot, which culling skips.

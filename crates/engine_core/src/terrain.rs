@@ -925,6 +925,12 @@ const RETRY_AFTER: u64 = 120;
 /// patches (their normals), so they load further than they draw.
 const LOAD_REACH: f32 = 2.0;
 const KEEP_REACH: f32 = 2.5;
+/// Tiles also load around where the eye is headed (decision 100): its
+/// velocity carried this many seconds on, at most this many meters; the
+/// eye moving farther in a frame jumped there.
+const AHEAD_SECONDS: f32 = 2.0;
+const AHEAD_MAX: f32 = 1000.0;
+const JUMP: f32 = 100.0;
 
 /// One terrain's streaming state.
 struct TerrainState {
@@ -1205,6 +1211,9 @@ pub struct Terrains {
     /// Milliseconds now, from the host (decision 099); without one, a
     /// frame works a slice.
     clock: Option<fn() -> f64>,
+    /// The eye last streamed toward and its velocity (decision 100).
+    last_eye: Option<Vec3>,
+    velocity: Vec3,
     /// Whether the camera's view has loaded whole since terrains arrived.
     loaded: bool,
     // Scratch.
@@ -1666,6 +1675,24 @@ impl Terrains {
         self.loaded = false;
     }
 
+    /// Where `eye`, moved since the last frame `seconds` ago, is headed
+    /// (decision 100): its velocity, smoothed over frames, carried
+    /// `AHEAD_SECONDS` on, at most `AHEAD_MAX` meters; the eye itself after
+    /// a jump.
+    fn heading(&mut self, eye: Vec3, seconds: f32) -> Vec3 {
+        let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
+        self.last_eye = Some(eye);
+        if moved.length() > JUMP {
+            self.velocity = Vec3::ZERO;
+        } else if seconds > 0.0 {
+            self.velocity = self.velocity.lerp(moved / seconds, 0.25);
+        }
+        if !self.velocity.is_finite() {
+            self.velocity = Vec3::ZERO;
+        }
+        eye + (self.velocity * AHEAD_SECONDS).clamp_length_max(AHEAD_MAX)
+    }
+
     /// Moves the byte ranges hosts should fetch into `out`.
     pub fn take_requests(&mut self, out: &mut Vec<TileRequest>) {
         out.append(&mut self.requests);
@@ -1691,7 +1718,7 @@ impl Terrains {
         &mut self,
         settings: &TerrainSettings,
         camera: &Camera,
-        eye: Vec3,
+        (eye, ahead): (Vec3, Vec3),
         viewport: Viewport,
         focus: &[Vec3],
     ) {
@@ -1822,6 +1849,26 @@ impl Terrains {
                     order.push(key);
                 }
             }
+            // Then where the eye is headed (decision 100), so its tiles are
+            // ready before the view needs them.
+            if ahead != eye {
+                self.wanted.clear();
+                engine_terrain::wanted_tiles(
+                    &pyramid,
+                    &ranges,
+                    ahead - origin,
+                    forward,
+                    LOAD_REACH,
+                    settings.pinned_levels,
+                    cutout,
+                    &mut self.wanted,
+                );
+                for key in self.wanted.iter().map(|tile| tile.key) {
+                    if seen.insert(key) {
+                        order.push(key);
+                    }
+                }
+            }
             let kept = order.len().min(remaining);
             stats.dropped_tiles += (order.len() - kept) as u32;
             remaining -= kept;
@@ -1844,6 +1891,7 @@ impl Terrains {
                 .iter()
                 .map(|tile| tile.key)
                 .chain(state.collision.iter().copied())
+                .chain(target.iter().copied())
                 .collect();
             let before = state.tiles.len();
             state.tiles.retain(|key, _| keep.contains(key));
@@ -2232,6 +2280,11 @@ pub struct RenderTerrain {
     /// indices its tiles' placed objects hold; `None` where the mesh or
     /// material is missing.
     pub assets: Vec<Option<RenderPlacementAsset>>,
+    /// How each placement layer's objects thin with distance (decision
+    /// 100), by the layer indices its tiles' placed objects hold: the level
+    /// of the tiles holding them, the level they also stand far away at and
+    /// the share standing there (their own level and 0 without).
+    pub thinning: Vec<(u8, u8, f32)>,
     /// Its resident tiles: renderers upload those they lack and release
     /// the rest. The list changes only when `tiles_revision` advances.
     pub tiles: Arc<[Arc<Tile>]>,
@@ -2304,6 +2357,9 @@ impl TerrainExtraction {
             .get_resource::<TerrainDebug>()
             .and_then(|debug| debug.freeze)
             .unwrap_or_else(|| camera.eye());
+        let seconds = world
+            .get_resource::<crate::FrameTime>()
+            .map_or(0.0, |time| time.delta_seconds);
         self.points.clear();
         self.points.push(eye);
         if let Some(globals) = world.get_resource::<GlobalTransforms>() {
@@ -2365,7 +2421,10 @@ impl TerrainExtraction {
             terrains.loaded = true;
             return;
         };
-        terrains.stream(&settings, &camera, eye, viewport, &self.points);
+        // Where the eye is headed (decision 100), from its motion since the
+        // last frame.
+        let ahead = terrains.heading(eye, seconds);
+        terrains.stream(&settings, &camera, (eye, ahead), viewport, &self.points);
     }
 
     /// Lists every terrain's resident tiles and the camera's patches.
@@ -2397,6 +2456,7 @@ impl TerrainExtraction {
                     surface: Vec::new(),
                     maps: Vec::new(),
                     assets: Vec::new(),
+                    thinning: Vec::new(),
                     tiles: Arc::from(Vec::new()),
                     tiles_revision: 0,
                     patches: Vec::new(),
@@ -2425,6 +2485,20 @@ impl TerrainExtraction {
                     assets.and_then(|assets| RenderPlacementAsset::of(asset, assets, missing)),
                 );
             }
+            render.thinning.clear();
+            render.thinning.extend(
+                state
+                    .terrain
+                    .surface
+                    .rules
+                    .authored()
+                    .placements
+                    .iter()
+                    .map(|layer| match layer.far {
+                        Some(far) => (layer.level, far.level, far.share),
+                        None => (layer.level, layer.level, 0.0),
+                    }),
+            );
             render.maps.clear();
             for look in &state.terrain.surface.materials {
                 let material = look.material.and_then(|handle| {
