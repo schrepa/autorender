@@ -381,7 +381,7 @@
       ]
     },
     "Grounded": {
-      "description": "Stands its entity on the terrain (decision 086): its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation. Requires version 9.",
+      "description": "Stands its entity on the terrain (decision 086): its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too (decision 111). Requires\nversion 9.",
       "type": "object",
       "properties": {
         "offset": {

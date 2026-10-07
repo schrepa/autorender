@@ -255,6 +255,10 @@ pub struct TerrainsView {
     pub terrains: u32,
     pub resident_tiles: u32,
     pub loading_tiles: u32,
+    /// Of the resident tiles, those holding their shape alone so far
+    /// (decision 114): drawn with coarser levels' materials while the rest
+    /// loads.
+    pub shaped_tiles: u32,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,

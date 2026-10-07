@@ -185,11 +185,23 @@ fn terrain_view_albedo(albedo: vec3<f32>, normal: vec3<f32>, spacing: f32, cell:
     return albedo;
 }
 
+// How much of the next coarser level's normals (x) and surface materials
+// (y) still show over layer `layer`'s tile (decision 114): fading in after
+// it arrived, and wholly the coarser level's materials until its own
+// arrive. The first words of `terrain_holes` hold them, two layers a word.
+fn terrain_layer_fades(layer: u32) -> vec2<f32> {
+    let half = (terrain_holes[layer / 2u] >> ((layer % 2u) * 16u)) & 0xffffu;
+    return vec2<f32>(f32(half & 0xffu), f32(half >> 8u)) * (1.0 / 255.0);
+}
+
 // The normal at terrain-local `local` in `level`'s normal maps, or in the
-// nearest coarser level's where its tile is not resident.
+// nearest coarser level's where its tile is not resident; a tile fading in
+// shows the next resident coarser level's under it (decision 114).
 fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
+    var normal = vec3<f32>(0.0);
+    var left = 1.0;
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
@@ -201,9 +213,15 @@ fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
         }
         // Layers keep a border sample before the tile's first.
         let uv = (samples - vec2<f32>(tile * 256u) + vec2<f32>(1.5)) / 259.0;
-        return textureSampleLevel(terrain_normals, terrain_normal_sampler, uv, layer, 0.0).xyz;
+        let fade = terrain_layer_fades(layer).x;
+        normal += textureSampleLevel(terrain_normals, terrain_normal_sampler, uv, layer, 0.0).xyz
+            * (left * (1.0 - fade));
+        left *= fade;
+        if left <= 0.0 {
+            return normal;
+        }
     }
-    return vec3<f32>(0.0, 1.0, 0.0);
+    return normal + vec3<f32>(0.0, left, 0.0);
 }
 
 // Which level shades a point `distance` from the eye its tiles load
@@ -294,11 +312,14 @@ fn terrain_texel_blend(blend: ptr<function, TerrainBlend>, texel: vec2<u32>, lay
 
 // Adds `weight` of the materials at terrain-local `local` in `level`'s
 // control values, or the nearest coarser level's where its tile is not
-// resident: the four samples around it, bilinearly.
+// resident: the four samples around it, bilinearly. A tile fading in, or
+// without its own materials yet, shows the next resident coarser level's
+// under it (decision 114).
 fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level: u32,
         weight: f32) {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
+    var left = weight;
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
@@ -308,19 +329,26 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
         if layer == 0xffffffffu {
             continue;
         }
-        // Samples 0 to 256 within the tile; layers keep a border texel
-        // before the first.
-        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        terrain_texel_blend(blend, texel, layer, weight * (1.0 - f.x) * (1.0 - f.y));
-        terrain_texel_blend(blend, texel + vec2<u32>(1u, 0u), layer, weight * f.x * (1.0 - f.y));
-        terrain_texel_blend(blend, texel + vec2<u32>(0u, 1u), layer, weight * (1.0 - f.x) * f.y);
-        terrain_texel_blend(blend, texel + vec2<u32>(1u, 1u), layer, weight * f.x * f.y);
-        return;
+        let fade = terrain_layer_fades(layer).y;
+        if fade < 1.0 {
+            // Samples 0 to 256 within the tile; layers keep a border texel
+            // before the first.
+            let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
+            let corner = min(vec2<u32>(within), vec2<u32>(255u));
+            let f = within - vec2<f32>(corner);
+            let texel = corner + vec2<u32>(1u);
+            let own = left * (1.0 - fade);
+            terrain_texel_blend(blend, texel, layer, own * (1.0 - f.x) * (1.0 - f.y));
+            terrain_texel_blend(blend, texel + vec2<u32>(1u, 0u), layer, own * f.x * (1.0 - f.y));
+            terrain_texel_blend(blend, texel + vec2<u32>(0u, 1u), layer, own * (1.0 - f.x) * f.y);
+            terrain_texel_blend(blend, texel + vec2<u32>(1u, 1u), layer, own * f.x * f.y);
+        }
+        left *= fade;
+        if left <= 0.0 {
+            return;
+        }
     }
-    terrain_blend_add(blend, 0u, weight);
+    terrain_blend_add(blend, 0u, left);
 }
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,

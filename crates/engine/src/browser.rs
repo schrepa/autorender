@@ -558,6 +558,22 @@ impl BrowserApp {
         self.finish_job(id, Err(error));
     }
 
+    /// A part of job `id`'s output its worker handed back before the rest
+    /// (decision 114), such as a tile's shape.
+    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
+        if !(id.is_finite() && id >= 1.0) {
+            return;
+        }
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.part(engine_core::JobId(id as u64), part);
+        }
+    }
+
     fn finish_job(&mut self, id: f64, output: Result<Vec<u8>, String>) {
         if !(id.is_finite() && id >= 1.0) {
             return;

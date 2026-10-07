@@ -4,7 +4,8 @@
 //! out, terrain tiles, walks and bakes, with the code engines without
 //! workers run in place, so outputs are the same bits. Jobs run a slice at a
 //! time (decision 112): hosts start one, step it until done, and between
-//! steps take up a more urgent one or drop one the engine cancelled.
+//! steps take up a more urgent one or drop one the engine cancelled; parts
+//! of an output ready early go back before the rest (decision 114).
 
 use engine_terrain::jobs::TerrainWorker;
 
@@ -48,6 +49,12 @@ impl Worker {
     /// done, `None` while work is left.
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         self.terrain.step(id, budget)
+    }
+
+    /// A part of job `id`'s output ready before the rest (decision 114),
+    /// taken once.
+    pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
+        self.terrain.take_part(id)
     }
 
     /// Stops job `id`.
@@ -101,6 +108,10 @@ mod browser {
             self.worker
                 .step(id as u64, budget as u64)
                 .map_err(|error| JsValue::from_str(&error))
+        }
+
+        pub fn take_part(&mut self, id: f64) -> Option<Vec<u8>> {
+            self.worker.take_part(id as u64)
         }
 
         pub fn cancel(&mut self, id: f64) {

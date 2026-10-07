@@ -11,7 +11,9 @@
 // back its jobs. Jobs carry priorities (decision 112): each goes to the
 // worker with the fewest in flight, among those the one whose most urgent
 // job is least urgent, and workers run their most urgent job a slice at a
-// time; jobs the engine cancels stop at their worker's next slice.
+// time; jobs the engine cancels stop at their worker's next slice. Parts of
+// outputs ready early, as a tile's shape (decision 114), go back as they
+// come.
 
 import { engineWorkerModule } from "./bindings";
 import type { TranscodedImage } from "./ktx2";
@@ -22,6 +24,7 @@ export interface JobRuntime {
   take_jobs?(): unknown;
   complete_job?(id: number, output: Uint8Array): void;
   fail_job?(id: number, error: string): void;
+  part_job?(id: number, part: Uint8Array): void;
 }
 
 /** What `take_jobs` lists, in order. */
@@ -35,6 +38,7 @@ type EngineMessage =
 /** What workers send back. */
 type WorkerMessage =
   | { type: "done"; id: number; output: Uint8Array }
+  | { type: "part"; id: number; output: Uint8Array }
   | { type: "failed"; id: number; error: string }
   | { type: "task"; task: number; result: unknown }
   | { type: "task_failed"; task: number; error: string }
@@ -186,6 +190,9 @@ export class JobPool {
       // Jobs cancelled since are no one's.
       case "done":
         if (slot.jobs.delete(message.id)) this.runtime?.complete_job?.(message.id, message.output);
+        break;
+      case "part":
+        if (slot.jobs.has(message.id)) this.runtime?.part_job?.(message.id, message.output);
         break;
       case "failed":
         if (slot.jobs.delete(message.id)) this.runtime?.fail_job?.(message.id, message.error);

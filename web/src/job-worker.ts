@@ -5,7 +5,9 @@
 // Messages take effect in the order they came, so shares come before the
 // jobs reading them. Jobs run a slice at a time (decision 112): between
 // slices the worker reads its messages and runs its most urgent job, and
-// a job the engine cancelled stops there. A module that traps is unusable:
+// a job the engine cancelled stops there. A part of a job's output ready
+// before the rest, as a tile's shape (decision 114), goes back after its
+// slice. A module that traps is unusable:
 // the worker then says it broke, and the pool replaces it.
 
 import type { JobWorker } from "../pkg/engine_worker";
@@ -105,6 +107,9 @@ async function work() {
         if (output !== undefined) {
           drop(job);
           scope.postMessage({ type: "done", id: job.id, output }, [output.buffer as ArrayBuffer]);
+        } else {
+          const part = worker.take_part(job.id);
+          if (part !== undefined) scope.postMessage({ type: "part", id: job.id, output: part }, [part.buffer as ArrayBuffer]);
         }
       } catch (error) {
         drop(job);

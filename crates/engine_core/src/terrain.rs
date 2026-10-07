@@ -893,6 +893,10 @@ pub struct TerrainStats {
     /// 108).
     pub loading_tiles: u32,
     pub missing_tiles: u32,
+    /// Of the resident tiles, those holding their shape alone so far
+    /// (decision 114): heights and holes, drawn with coarser levels'
+    /// materials while the rest loads.
+    pub shaped_tiles: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -1048,8 +1052,13 @@ fn load_tiles(
                     break;
                 }
                 let rules = &state.terrain.surface.rules;
+                // Tiles not resident hand out their shape first (decision
+                // 114).
+                let staged = !state.tiles.contains_key(&key);
                 let job = state.jobs.entry(key).or_insert_with(|| {
-                    Generator::new(layers.clone(), &pyramid, key).with_surface(rules.clone())
+                    Generator::new(layers.clone(), &pyramid, key)
+                        .with_surface(rules.clone())
+                        .with_staged(staged)
                 });
                 let tile = if whole {
                     let mut unlimited = u64::MAX;
@@ -1067,7 +1076,11 @@ fn load_tiles(
                 if let Some(tile) = tile {
                     state.jobs.remove(&key);
                     state.stale.remove(&key);
+                    state.shaped.remove(&key);
                     state.insert(tile);
+                } else if let Some(shape) = state.jobs.get_mut(&key).and_then(Generator::take_shape)
+                {
+                    state.shape(shape);
                 }
             }
         }
@@ -1111,7 +1124,7 @@ fn load_tiles(
                 }
                 if state.in_flight.contains(&key)
                     || state.jobs.contains_key(&key)
-                    || state.tiles.contains_key(&key)
+                    || (state.tiles.contains_key(&key) && !state.shaped.contains(&key))
                     || state
                         .failed
                         .get(&key)
@@ -1336,6 +1349,7 @@ fn generate_on_workers(
         match tile {
             Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
                 state.stale.remove(&key);
+                state.shaped.remove(&key);
                 state.failed.remove(&key);
                 state.far_jobs.remove(&key);
                 state.far_wanted.remove(&key);
@@ -1350,6 +1364,29 @@ fn generate_on_workers(
                 state.failed.insert(key, frame);
                 state.worker_failures += 1;
             }
+        }
+    }
+    // Tiles still generating hand out their shape first (decision 114): it
+    // draws, with coarser levels' materials, and collides until the whole
+    // tile arrives.
+    let shaping: Vec<(TileKey, JobId, u64)> = state
+        .dispatched
+        .iter()
+        .map(|(&key, &(id, made, _, _))| (key, id, made))
+        .collect();
+    for (key, id, made) in shaping {
+        if inserted && work.expired() {
+            break;
+        }
+        let Some(part) = slots.jobs.take_part(id) else {
+            continue;
+        };
+        if let Ok(shape) = engine_terrain::jobs::tile_output(&part)
+            && made == revision
+            && target.contains(&key)
+            && shape.key() == key
+        {
+            inserted |= state.shape(shape);
         }
     }
     let placing: Vec<(TileKey, JobId)> = state
@@ -1418,14 +1455,17 @@ fn generate_on_workers(
             state.far_jobs.insert(key, (id, tile));
         } else {
             // A tile replacing one resident, as after an edit, comes whole,
-            // so its objects standing far away never leave the view.
-            let placing =
-                if rules.places(key.level, Placing::Far) && !state.tiles.contains_key(&key) {
-                    Placing::Near
-                } else {
-                    Placing::All
-                };
-            let input = engine_terrain::jobs::tile_input(&recipe, key, placing);
+            // so its objects standing far away never leave the view; one not
+            // resident hands out its shape first (decision 114).
+            let resident = state.tiles.contains_key(&key);
+            let placing = if rules.places(key.level, Placing::Far)
+                && (!resident || state.shaped.contains(&key))
+            {
+                Placing::Near
+            } else {
+                Placing::All
+            };
+            let input = engine_terrain::jobs::tile_input(&recipe, key, placing, !resident);
             let id = slots.jobs.submit(TILE_JOB, input, priority);
             state
                 .dispatched
@@ -1587,6 +1627,10 @@ struct TerrainState {
     /// resident tiles under edits since, which draw until regenerated.
     edited: Option<(Arc<Layers>, Arc<Layers>)>,
     stale: HashSet<TileKey>,
+    /// Resident tiles holding their shape alone so far (decision 114):
+    /// heights and holes, drawn with coarser levels' materials and collided
+    /// with while the rest loads.
+    shaped: HashSet<TileKey>,
     /// For a terrain's surroundings (decision 094), what they were drawn
     /// from.
     around: Option<Around>,
@@ -1654,6 +1698,7 @@ impl TerrainState {
             falls: Arc::from(Vec::new()),
             edited: None,
             stale: HashSet::new(),
+            shaped: HashSet::new(),
             around: None,
             missing: Vec::new(),
             target: HashSet::new(),
@@ -1779,6 +1824,8 @@ impl TerrainState {
             Some(tile) => self.insert(tile),
             None => {
                 self.jobs.insert(key, job);
+                // Its shape draws meanwhile (decision 114).
+                self.shape(tile);
             }
         }
     }
@@ -1791,8 +1838,44 @@ impl TerrainState {
         };
         if let Some(tile) = job.advance(budget) {
             self.jobs.remove(&key);
+            self.shaped.remove(&key);
             self.insert(tile);
         }
+        true
+    }
+
+    /// Whether `key` still loads: not resident, resident under edits since
+    /// (decision 080), or resident with its shape alone (decision 114).
+    fn loads(&self, key: &TileKey) -> bool {
+        !self.tiles.contains_key(key) || self.stale.contains(key) || self.shaped.contains(key)
+    }
+
+    /// Makes `shape`, a tile's heights and holes alone, resident until the
+    /// whole tile arrives (decision 114), unless its key is resident or no
+    /// coarser resident tile holds materials to draw it with; whether it
+    /// did.
+    fn shape(&mut self, shape: Tile) -> bool {
+        let key = shape.key();
+        if self.tiles.contains_key(&key) {
+            return false;
+        }
+        let pyramid = self.terrain.pyramid;
+        let mut ancestor = pyramid.parent(key);
+        loop {
+            let Some(at) = ancestor else {
+                return false;
+            };
+            if self
+                .tiles
+                .get(&at)
+                .is_some_and(|tile| tile.control().is_some())
+            {
+                break;
+            }
+            ancestor = pyramid.parent(at);
+        }
+        self.shaped.insert(key);
+        self.insert(shape);
         true
     }
 
@@ -2430,7 +2513,7 @@ impl Terrains {
             }
             let missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
                 .into_iter()
-                .filter(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .filter(|(key, _)| state.loads(key))
                 .collect();
             if missing.is_empty() && state.far_wanted.is_empty() && state.far_jobs.is_empty() {
                 continue;
@@ -2449,7 +2532,7 @@ impl Terrains {
             );
             state.missing = missing
                 .into_iter()
-                .filter(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .filter(|(key, _)| state.loads(key))
                 .collect();
             state.target = target;
             state.keep = keep;
@@ -2753,14 +2836,11 @@ impl Terrains {
             // Tiles under edits since they loaded (decision 080) regenerate
             // in their turn and draw until they do.
             state.stale.retain(|key| state.tiles.contains_key(key));
+            state.shaped.retain(|key| state.tiles.contains_key(key));
             let missing: Vec<(TileKey, u32)> = order
                 .iter()
                 .enumerate()
-                .filter(|(_, key)| {
-                    settings.enabled
-                        && target.contains(key)
-                        && (!state.tiles.contains_key(key) || state.stale.contains(key))
-                })
+                .filter(|(_, key)| settings.enabled && target.contains(key) && state.loads(key))
                 .map(|(index, &key)| {
                     let class = if index < urgent {
                         URGENT_JOBS
@@ -2794,11 +2874,14 @@ impl Terrains {
                 stats.baking += 1;
                 continue;
             }
-            state
-                .missing
-                .retain(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key));
+            let missing = std::mem::take(&mut state.missing);
+            state.missing = missing
+                .into_iter()
+                .filter(|(key, _)| state.loads(key))
+                .collect();
             stats.resident_tiles += state.tiles.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
+            stats.shaped_tiles += state.shaped.len() as u32;
             stats.loading_tiles += (state.jobs.len()
                 + state.in_flight.len()
                 + state.arrivals.len()
