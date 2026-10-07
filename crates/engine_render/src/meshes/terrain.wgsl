@@ -553,6 +553,22 @@ fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
     return 1.0 - cover_shown(distance, share, cover.x);
 }
 
+// How much light reaches blades on average, which their canopy takes
+// (decision 105): their occlusion rises from 0.35 at the root to 1 at the
+// tip (`meshes/cover.wgsl`), 0.675 over their height, and the half of them
+// seen through from the side away from the sun shows 0.8 of its color.
+const TERRAIN_CANOPY_OCCLUSION: f32 = 0.6;
+
+// How bright blades seen at `sine` (the sine of the view's angle over the
+// ground) show their color on average, which their canopy shows too
+// (decision 105): seen along the ground their lit tops give way to their
+// sides and the shade among them. Measured against blades under the low
+// and the high sun alike: about 0.6 along the ground, 0.7 from 25 degrees
+// up and 0.75 from 45.
+fn terrain_canopy_shown(sine: f32) -> f32 {
+    return 0.6 + 0.22 * saturate(sine);
+}
+
 // The normal blades standing on ground of normal `ground` light with, on
 // average (decision 090; `meshes/cover.wgsl`): leaning most of the way up
 // from their sides toward the sun, which face it by two over pi on
@@ -715,9 +731,12 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         // (decision 090): their color, rougher and shaded among the
         // blades, and lit as blades are, their sides toward the sun.
         let canopy = terrain_canopy(entry.canopy.w, site);
-        color = mix(color, entry.canopy.rgb, canopy);
+        let shown = terrain_canopy_shown(abs(dot(site.toward, site.geometric)));
+        color = mix(color, entry.canopy.rgb * shown, canopy);
         roughness = mix(roughness, 0.7, canopy);
-        occlusion = mix(occlusion, 0.75, canopy);
+        // The sky they reflect too: a flat ground seen along it would
+        // mirror much more of it than blades facing the eye do.
+        occlusion = mix(occlusion, TERRAIN_CANOPY_OCCLUSION * shown, canopy);
         turned = mix(turned, terrain_blade_normal(site.geometric), canopy);
         (*ground).vegetated += weight;
         (*ground).canopy += weight * canopy;
