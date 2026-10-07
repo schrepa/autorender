@@ -4437,6 +4437,45 @@
         "id"
       ]
     },
+    "SceneTerrainMotionDetail": {
+      "description": "How terrain loads while the camera moves fast (decision 115): the\nfinest levels' tiles in its view wait, more of them the faster it\nmoves, and tiles out of its view wait until it settles. The coarsest\npinned levels, collision's tiles and those under focus entities never\nwait, and tiles resident stay.",
+      "type": "object",
+      "properties": {
+        "fastest": {
+          "description": "Meters per second at which the finest `levels` levels wait, from\n`speed` to 100,000; between, fewer wait, at least one.",
+          "type": "number",
+          "format": "float",
+          "default": 300.0,
+          "maximum": 100000.0,
+          "minimum": 0.0
+        },
+        "levels": {
+          "description": "Finest levels whose tiles wait at `fastest`, 0 to 8.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "maximum": 8,
+          "minimum": 0
+        },
+        "settle": {
+          "description": "Seconds after the camera slows below `speed` before tiles out of its\nview load, 0 to 10.",
+          "type": "number",
+          "format": "float",
+          "default": 0.20000000298023224,
+          "maximum": 10.0,
+          "minimum": 0.0
+        },
+        "speed": {
+          "description": "Meters per second above which the camera moves fast, 0 to 100,000.",
+          "type": "number",
+          "format": "float",
+          "default": 30.0,
+          "maximum": 100000.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
     "SceneTerrainSettings": {
       "description": "Terrain settings (decision 051). Requires version 9.",
       "type": "object",
@@ -4469,6 +4508,17 @@
           ],
           "format": "uint32",
           "minimum": 1
+        },
+        "motion_detail": {
+          "description": "Detail lowered while the camera moves fast (decision 115): off by\ndefault, as it lowers detail in motion on purpose.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainMotionDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pinned_levels": {
           "description": "The coarsest levels kept resident over the whole terrain, so it\nalways draws whole, from 1 to 8.",

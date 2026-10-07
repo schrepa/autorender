@@ -459,6 +459,32 @@ try {
   await settle();
   checks.push({ check: "settings section", more: finer.terrain_triangles, terrainPixels: shown.changed });
 
+  // Speed-aware detail (decision 115): while the camera moves fast the
+  // finest levels' tiles in view wait, and those out of view until it
+  // settles; then they load. Collision's tiles never wait, so collision is
+  // off here.
+  const moving = { samples_per_frame: 50_000_000, collision_radius: 0, motion_detail: { speed: 1, fastest: 2, levels: 8, settle: 0.25 } };
+  await command("environment", { terrain: moving });
+  let waited = 0;
+  for (let step = 0; step < 12; step++) {
+    const along = -300 + step * 50;
+    await command("camera", { position: [along, 120, along], target: [along + 100, 30, along + 100], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 });
+    await command("step", { ticks: 1 });
+    waited = Math.max(waited, (await command("inspect", { component: "Terrains" })).result.value.waiting_tiles);
+  }
+  assert.ok(waited > 0, `tiles wait while the camera moves fast: ${waited}`);
+  for (let step = 0; step < 80; step++) await command("step", { ticks: 1 });
+  const rested = (await command("inspect", { component: "Terrains" })).result.value;
+  assert.equal(rested.waiting_tiles, 0, `nothing waits once the camera settles: ${JSON.stringify(rested)}`);
+  await settle();
+  const tooMany = await command("environment", { terrain: { ...moving, motion_detail: { levels: 9 } } }, false);
+  assert.equal(tooMany.error.code, "invalid_environment");
+  assert.equal(tooMany.error.path, "$.terrain.motion_detail.levels");
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("camera", overview);
+  await settle();
+  checks.push({ check: "motion detail", waited });
+
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.
   const baseline = await capture("view-shaded");

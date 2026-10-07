@@ -206,6 +206,9 @@ pub struct JobsView {
     pub completed: u64,
     pub failed: u64,
     pub cancelled: u64,
+    /// Parts of outputs handed back before the rest (decision 114), as
+    /// tiles' shapes.
+    pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
 }
@@ -259,6 +262,9 @@ pub struct TerrainsView {
     /// (decision 114): drawn with coarser levels' materials while the rest
     /// loads.
     pub shaped_tiles: u32,
+    /// Tiles the view wants that wait while the camera moves fast (decision
+    /// 115).
+    pub waiting_tiles: u32,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,
