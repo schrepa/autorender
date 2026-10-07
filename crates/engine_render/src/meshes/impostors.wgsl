@@ -537,43 +537,91 @@ fn impostor_output(input: ImpostorTemporalOutput) -> ImpostorOutput {
     return output;
 }
 
-fn shade_impostor(input: ImpostorOutput) -> Shaded {
-    return finish(impostor_point(input), vec3<f32>(0.0));
+// A card fragment's shading and the depth of the surface it shows: cards
+// stand in front of their meshes' bounds, and the ground and their
+// neighbors hide what they would hide of the meshes, so objects sunk into
+// slopes show only what stands out of them (decision 103).
+struct ImpostorShaded {
+    shaded: Shaded,
+    depth: f32,
 }
 
-fn shade_impostor_lit(input: ImpostorOutput) -> Shaded {
+fn impostor_shaded(point: SurfacePoint, light: vec3<f32>) -> ImpostorShaded {
+    let clip = camera.view_projection * vec4<f32>(point.world, 1.0);
+    return ImpostorShaded(finish(point, light), saturate(clip.z / clip.w));
+}
+
+fn shade_impostor(input: ImpostorOutput) -> ImpostorShaded {
+    return impostor_shaded(impostor_point(input), vec3<f32>(0.0));
+}
+
+fn shade_impostor_lit(input: ImpostorOutput) -> ImpostorShaded {
     let point = impostor_point(input);
-    return finish(point, local_light(point, input.clip_position.xy));
+    return impostor_shaded(point, local_light(point, input.clip_position.xy));
+}
+
+struct ImpostorColor {
+    @location(0) color: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+struct ImpostorSceneTargets {
+    @location(0) color: vec4<f32>,
+    @location(1) glow: vec2<f32>,
+    @location(2) surface: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+struct ImpostorTemporalTargets {
+    @location(0) color: vec4<f32>,
+    @location(1) motion: vec2<f32>,
+    @location(2) glow: vec2<f32>,
+    @location(3) surface: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+}
+
+fn impostor_color(shaded: ImpostorShaded) -> ImpostorColor {
+    return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color), 1.0), shaded.depth);
+}
+
+fn impostor_scene_targets(shaded: ImpostorShaded) -> ImpostorSceneTargets {
+    let targets = scene_targets(shaded.shaded);
+    return ImpostorSceneTargets(targets.color, targets.glow, targets.surface, shaded.depth);
+}
+
+fn impostor_temporal_targets(shaded: ImpostorShaded, input: ImpostorTemporalOutput)
+        -> ImpostorTemporalTargets {
+    let targets = temporal_targets(shaded.shaded, input.clip_position, input.previous);
+    return ImpostorTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
+        shaded.depth);
 }
 
 @fragment
-fn fs_impostor(input: ImpostorOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_impostor(input).color), 1.0);
+fn fs_impostor(input: ImpostorOutput) -> ImpostorColor {
+    return impostor_color(shade_impostor(input));
 }
 
 @fragment
-fn fs_impostor_lit(input: ImpostorOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_impostor_lit(input).color), 1.0);
+fn fs_impostor_lit(input: ImpostorOutput) -> ImpostorColor {
+    return impostor_color(shade_impostor_lit(input));
 }
 
 @fragment
-fn fs_impostor_post(input: ImpostorOutput) -> SceneTargets {
-    return scene_targets(shade_impostor(input));
+fn fs_impostor_post(input: ImpostorOutput) -> ImpostorSceneTargets {
+    return impostor_scene_targets(shade_impostor(input));
 }
 
 @fragment
-fn fs_impostor_post_lit(input: ImpostorOutput) -> SceneTargets {
-    return scene_targets(shade_impostor_lit(input));
+fn fs_impostor_post_lit(input: ImpostorOutput) -> ImpostorSceneTargets {
+    return impostor_scene_targets(shade_impostor_lit(input));
 }
 
 @fragment
-fn fs_impostor_temporal(input: ImpostorTemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade_impostor(impostor_output(input)), input.clip_position,
-        input.previous);
+fn fs_impostor_temporal(input: ImpostorTemporalOutput) -> ImpostorTemporalTargets {
+    return impostor_temporal_targets(shade_impostor(impostor_output(input)), input);
 }
 
 @fragment
-fn fs_impostor_temporal_lit(input: ImpostorTemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade_impostor_lit(impostor_output(input)), input.clip_position,
-        input.previous);
+fn fs_impostor_temporal_lit(input: ImpostorTemporalOutput) -> ImpostorTemporalTargets {
+    return impostor_temporal_targets(shade_impostor_lit(impostor_output(input)), input);
 }
