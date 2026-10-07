@@ -9,10 +9,12 @@
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
 //! first, and level-0 tiles load around the camera and [`TerrainFocus`]
-//! entities for collision. Generating and decoding share a per-frame work
-//! budget; past a tile budget or the device's capacity the least important
-//! tiles drop and count as dropped. Frames list each terrain's resident
-//! tiles and the patches the camera draws in [`RenderSnapshot::terrain`].
+//! entities for collision. Generating, decoding and baking share a frame's
+//! work time (decision 099), larger until the camera's view first loads
+//! whole than after; past a tile budget or the device's capacity the least
+//! important tiles drop and count as dropped. Frames list each terrain's
+//! resident tiles and the patches the camera draws in
+//! [`RenderSnapshot::terrain`].
 //!
 //! Queries ([`Terrains::sample`], [`Terrains::height_at`] and the rest)
 //! answer from the finest resident tile at a point, on the triangles
@@ -684,10 +686,19 @@ pub struct TerrainSettings {
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tiles: Option<u32>,
-    /// Work generated or decoded per frame, in samples' worth (67,000 a
-    /// decoded tile, about 500,000 a generated one).
+    /// Work generated, decoded or baked between checks of the frame's work
+    /// time, in samples' worth (67,000 a decoded tile, about 500,000 a
+    /// generated one); a frame's whole work where hosts give terrain no
+    /// clock.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub samples_per_frame: u32,
+    /// Milliseconds a frame works on terrain until the camera's view first
+    /// loads whole (decision 099), and after, 0.1 to 1000 each: loading
+    /// takes large slices of frames, play small ones.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
+    pub loading_work_ms: f32,
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
+    pub work_ms: f32,
     /// Meters around the camera and focus entities within which level-0
     /// tiles load for collision, 0 to 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4096.0)))]
@@ -731,6 +742,8 @@ impl Default for TerrainSettings {
             pinned_levels: 2,
             max_tiles: None,
             samples_per_frame: 24_576,
+            loading_work_ms: 50.0,
+            work_ms: 4.0,
             collision_radius: 192.0,
             sun_shadows: true,
             shadow_resolution: 1024,
@@ -757,6 +770,8 @@ impl TerrainSettings {
                 "must be at least 1",
             ));
         }
+        check_range("loading_work_ms", self.loading_work_ms, 0.1..=1000.0)?;
+        check_range("work_ms", self.work_ms, 0.1..=1000.0)?;
         check_range("collision_radius", self.collision_radius, 0.0..=4096.0)?;
         if !(64..=4096).contains(&self.shadow_resolution) {
             return Err(InvalidSetting::new(
@@ -792,6 +807,12 @@ impl TerrainSettings {
             pinned_levels: self.pinned_levels.clamp(1, 8),
             max_tiles: self.max_tiles.map(|budget| budget.max(1)),
             samples_per_frame: self.samples_per_frame.max(1),
+            loading_work_ms: crate::math::clamp(
+                finite(self.loading_work_ms, defaults.loading_work_ms),
+                0.1,
+                1000.0,
+            ),
+            work_ms: crate::math::clamp(finite(self.work_ms, defaults.work_ms), 0.1, 1000.0),
             collision_radius: crate::math::clamp(
                 finite(self.collision_radius, defaults.collision_radius),
                 0.0,
@@ -866,6 +887,35 @@ pub struct TerrainStats {
     /// (decision 094).
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
+    /// Whether the camera's view has yet to load whole since terrains
+    /// arrived or [`Terrains::begin_loading`] (decision 099): frames work
+    /// on terrain for the settings' `loading_work_ms`, then `work_ms`.
+    pub loading: bool,
+}
+
+/// A frame's terrain work (decision 099): slices of samples' worth handed
+/// out while its time lasts, or a single slice without a clock.
+struct Work {
+    slice: u64,
+    clock: Option<fn() -> f64>,
+    end: f64,
+}
+
+impl Work {
+    /// Refills `budget` with a slice once spent, while the frame's time
+    /// lasts; whether it did.
+    fn refill(&self, budget: &mut u64) -> bool {
+        if *budget > 0 {
+            return false;
+        }
+        match self.clock {
+            Some(clock) if clock() < self.end => {
+                *budget = self.slice;
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Frames a failed fetch waits before it is requested again.
@@ -1152,6 +1202,11 @@ pub struct Terrains {
     frame: u64,
     stats: TerrainStats,
     requests: Vec<TileRequest>,
+    /// Milliseconds now, from the host (decision 099); without one, a
+    /// frame works a slice.
+    clock: Option<fn() -> f64>,
+    /// Whether the camera's view has loaded whole since terrains arrived.
+    loaded: bool,
     // Scratch.
     wanted: Vec<WantedTile>,
 }
@@ -1592,6 +1647,25 @@ impl Terrains {
         self.device_tiles = tiles;
     }
 
+    /// The clock frames time their terrain work by (decision 099):
+    /// milliseconds, from any origin. Hosts without one work a slice of
+    /// `samples_per_frame` a frame.
+    pub fn set_clock(&mut self, clock: fn() -> f64) {
+        self.clock = Some(clock);
+    }
+
+    /// Whether the camera's view has yet to load whole (decision 099);
+    /// never without terrains.
+    pub fn loading(&self) -> bool {
+        !self.loaded && self.entries.iter().any(|state| state.around.is_none())
+    }
+
+    /// Works on terrain for the settings' `loading_work_ms` a frame again
+    /// until the camera's view loads whole, as after the camera jumps far.
+    pub fn begin_loading(&mut self) {
+        self.loaded = false;
+    }
+
     /// Moves the byte ranges hosts should fetch into `out`.
     pub fn take_requests(&mut self, out: &mut Vec<TileRequest>) {
         out.append(&mut self.requests);
@@ -1656,7 +1730,20 @@ impl Terrains {
         } else {
             Camera::default().vertical_fov_radians
         };
-        let mut budget = u64::from(settings.samples_per_frame);
+        // The frame's work (decision 099): slices until its time is up.
+        let work = Work {
+            slice: u64::from(settings.samples_per_frame),
+            clock: self.clock,
+            end: self.clock.map_or(0.0, |clock| {
+                clock()
+                    + if self.loaded {
+                        f64::from(settings.work_ms)
+                    } else {
+                        f64::from(settings.loading_work_ms)
+                    }
+            }),
+        };
+        let mut budget = work.slice;
         let limit = match (settings.max_tiles, self.device_tiles) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -1802,7 +1889,15 @@ impl Terrains {
                             TerrainBake::new(&layers, unbaked.clone(), &pyramid)
                         });
                         let _profile = engine_profile::span("cpu", "terrain_bake");
-                        if let Some(baked) = bake.advance(&pyramid, &mut budget) {
+                        let baked = loop {
+                            if let Some(baked) = bake.advance(&pyramid, &mut budget) {
+                                break Some(baked);
+                            }
+                            if !work.refill(&mut budget) {
+                                break None;
+                            }
+                        };
+                        if let Some(baked) = baked {
                             match &baked {
                                 Baked::Hydrology(found) => state.hydrology = Some(found.stats),
                                 Baked::Erosion(found) => state.erosion = Some(found.stats),
@@ -1843,13 +1938,8 @@ impl Terrains {
                     // The coarsest level always draws: generate it whole at once.
                     let first = state.tiles.is_empty();
                     for key in missing {
-                        let mut unlimited = u64::MAX;
-                        let work = if first && u32::from(key.level) + 1 == pyramid.levels() {
-                            &mut unlimited
-                        } else {
-                            &mut budget
-                        };
-                        if *work == 0 {
+                        let whole = first && u32::from(key.level) + 1 == pyramid.levels();
+                        if !whole && budget == 0 && !work.refill(&mut budget) {
                             break;
                         }
                         let rules = &state.terrain.surface.rules;
@@ -1857,7 +1947,20 @@ impl Terrains {
                             Generator::new(layers.clone(), &pyramid, key)
                                 .with_surface(rules.clone())
                         });
-                        if let Some(tile) = job.advance(work) {
+                        let tile = if whole {
+                            let mut unlimited = u64::MAX;
+                            job.advance(&mut unlimited)
+                        } else {
+                            loop {
+                                if let Some(tile) = job.advance(&mut budget) {
+                                    break Some(tile);
+                                }
+                                if !work.refill(&mut budget) {
+                                    break None;
+                                }
+                            }
+                        };
+                        if let Some(tile) = tile {
                             state.jobs.remove(&key);
                             state.stale.remove(&key);
                             state.insert(tile);
@@ -1869,10 +1972,10 @@ impl Terrains {
                     url: _,
                     data: Some(data),
                 } => {
-                    // The whole file is here: decode within the budget, then
-                    // give each tile its surface.
+                    // The whole file is here: decode within the frame's work,
+                    // then give each tile its surface.
                     for key in missing {
-                        if budget == 0 {
+                        if budget == 0 && !work.refill(&mut budget) {
                             break;
                         }
                         if state.surface_job(key, &mut budget) {
@@ -1899,7 +2002,7 @@ impl Terrains {
                     data: None,
                 } => {
                     for &key in &missing {
-                        if budget > 0 {
+                        if budget > 0 || work.refill(&mut budget) {
                             state.surface_job(key, &mut budget);
                         }
                         if state.in_flight.contains(&key)
@@ -1927,6 +2030,9 @@ impl Terrains {
                     let arrivals = std::mem::take(&mut state.arrivals);
                     let mut later = Vec::new();
                     for (key, bytes) in arrivals {
+                        if budget == 0 {
+                            work.refill(&mut budget);
+                        }
                         if budget == 0 || !target.contains(&key) {
                             if target.contains(&key) {
                                 later.push((key, bytes));
@@ -1971,6 +2077,17 @@ impl Terrains {
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
+        // The camera's view has loaded whole once nothing bakes, loads or
+        // stands in for a finer level (decision 099).
+        if !self.loaded
+            && stats.terrains > 0
+            && stats.baking == 0
+            && stats.loading_tiles == 0
+            && stats.fallback_patches == 0
+        {
+            self.loaded = true;
+        }
+        stats.loading = self.loading();
         self.stats = stats;
     }
 }
@@ -2135,6 +2252,11 @@ pub struct RenderTerrain {
     /// Whether it is a terrain's surroundings (decision 094), which grow
     /// no blades: their grassy ground shows as canopy at every distance.
     pub surroundings: bool,
+    /// Whether its tiles may hold holes and whether a hydrology bake will
+    /// give it water: renderers create what draws them before it shows,
+    /// while it loads (decision 099).
+    pub may_hole: bool,
+    pub hydrology: bool,
 }
 
 /// The frame's terrains (decision 051).
@@ -2212,6 +2334,7 @@ impl TerrainExtraction {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
                         *state = TerrainState::new(entity, terrain);
+                        terrains.loaded = false;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone());
@@ -2220,7 +2343,10 @@ impl TerrainExtraction {
                         state.terrain.surroundings = terrain.surroundings;
                     }
                 }
-                None => terrains.entries.push(TerrainState::new(entity, terrain)),
+                None => {
+                    terrains.entries.push(TerrainState::new(entity, terrain));
+                    terrains.loaded = false;
+                }
             }
         }
         let Some(settings) = settings else {
@@ -2235,6 +2361,8 @@ impl TerrainExtraction {
                     .count() as u32,
                 ..TerrainStats::default()
             };
+            // Terrains that do not stream have nothing to load.
+            terrains.loaded = true;
             return;
         };
         terrains.stream(&settings, &camera, eye, viewport, &self.points);
@@ -2277,11 +2405,17 @@ impl TerrainExtraction {
                     water: None,
                     rivers: None,
                     surroundings: false,
+                    may_hole: false,
+                    hydrology: false,
                 });
             }
             let render = &mut listing.terrains[index];
             render.id = state.render_id();
             render.surroundings = state.around.is_some();
+            (render.may_hole, render.hydrology) = match &state.terrain.source {
+                TerrainSource::Generated(layers) => (layers.may_hole(), layers.has_hydrology()),
+                TerrainSource::File { .. } => (false, false),
+            };
             render.origin = state.terrain.origin;
             render.pyramid = state.terrain.pyramid;
             render.surface.clone_from(&state.terrain.surface.materials);

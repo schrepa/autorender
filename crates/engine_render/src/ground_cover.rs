@@ -400,6 +400,12 @@ impl GroundCoverPass {
         });
     }
 
+    /// Creates the growth's pipelines unless they exist (decision 099).
+    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+        self.compute
+            .get_or_insert_with(|| compute(device, &self.grow_layout));
+    }
+
     /// Creates the pipeline drawing blades into `targets` (`lit` or not)
     /// unless it exists.
     pub(crate) fn ensure_pipeline(

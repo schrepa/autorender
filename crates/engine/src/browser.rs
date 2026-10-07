@@ -9,6 +9,16 @@ use web_sys::HtmlCanvasElement;
 #[path = "browser_profiling.rs"]
 mod profiling;
 
+/// Milliseconds on the page's clock, which terrain times its work by
+/// (decision 099); 0 without one.
+fn page_clock() -> f64 {
+    thread_local! {
+        static CLOCK: Option<web_sys::Performance> =
+            web_sys::window().and_then(|window| window.performance());
+    }
+    CLOCK.with(|clock| clock.as_ref().map_or(0.0, web_sys::Performance::now))
+}
+
 /// Decoded images and buffers of the files a scene references (decision
 /// 030), filled by the page before the scene loads.
 #[wasm_bindgen]
@@ -247,6 +257,9 @@ pub struct FrameStats {
     /// Whether the GPU may still be compiling pipelines earlier frames
     /// created, read when the stats are (decision 049).
     pub pipelines_compiling: bool,
+    /// Whether terrains have yet to load the camera's view whole, read
+    /// when the stats are (decision 099): hosts keep preparing meanwhile.
+    pub loading: bool,
     #[serde(flatten)]
     pub render: engine_render::RenderStats,
 }
@@ -323,13 +336,15 @@ impl BrowserApp {
 
     fn with(mut engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
         // Terrain residency never exceeds the device's texture array layers
-        // (decision 051).
+        // (decision 051), and its work runs for the settings' time a frame
+        // (decision 099).
         if let Some(mut terrains) = engine
             .app
             .world_mut()
             .get_resource_mut::<engine_core::Terrains>()
         {
             terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
+            terrains.set_clock(page_clock);
         }
         Self {
             engine,
@@ -414,6 +429,23 @@ impl BrowserApp {
 
     pub fn subpixel_culling(&self) -> bool {
         self.renderer.subpixel_culling()
+    }
+
+    /// Streams terrains for a frame's work time on a `width` × `height`
+    /// canvas without simulating or rendering (decision 099): hosts call it
+    /// in place of frames while the GPU compiles pipelines, which frames
+    /// would only queue behind, so loading goes on meanwhile.
+    pub fn work(&mut self, width: u32, height: u32) {
+        let viewport = engine_core::Viewport {
+            width: width.max(1),
+            height: height.max(1),
+        };
+        let world = self.engine.app.world_mut();
+        if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
+            world.insert_resource(viewport);
+        }
+        self.terrain_fetches.exchange(&mut self.engine);
+        self.engine.stream_terrain();
     }
 
     /// Advance once per animation frame; input is a bounded, owned value.
@@ -647,6 +679,7 @@ impl BrowserApp {
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             pipelines_compiling: false,
+            loading: false,
             render: rendered,
         };
         Ok(())
@@ -655,6 +688,12 @@ impl BrowserApp {
     pub fn stats(&self) -> FrameStats {
         FrameStats {
             pipelines_compiling: self.renderer.pipelines_compiling(),
+            loading: self
+                .engine
+                .app
+                .world()
+                .get_resource::<engine_core::Terrains>()
+                .is_some_and(engine_core::Terrains::loading),
             ..self.stats
         }
     }

@@ -683,6 +683,13 @@ impl Engine {
             .delta_seconds = 0.0;
     }
 
+    /// Streams terrains toward the camera for a frame's work time without
+    /// simulating or extracting a frame (decision 099): hosts call it while
+    /// the GPU compiles pipelines, so loading goes on meanwhile.
+    pub fn stream_terrain(&mut self) {
+        self.terrain.update(self.app.world_mut());
+    }
+
     /// Refreshes world matrices without advancing simulation or frame counters.
     ///
     /// Call after direct world edits when inspecting derived data before the

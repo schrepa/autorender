@@ -425,6 +425,15 @@ impl ScatterPass {
         self.objects = records.len() as u32;
     }
 
+    /// Creates the pipelines objects are set on the ground and culled with
+    /// unless they exist (decision 099).
+    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+        self.pipeline
+            .get_or_insert_with(|| pipeline(device, &self.layout));
+        self.snap_pipeline
+            .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
+    }
+
     /// Plans this frame's culling: the camera's view, from its
     /// `view_projection` (world) and eye, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, `resolution` texels

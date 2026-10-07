@@ -53,14 +53,16 @@ struct TerrainUniform {
 // A patch: its first sample counted from the anchor at its level; its
 // spacing, the distances its vertices morph over and its skirt's depth; its
 // tile's layer, its parent tile's layer, and its first texel in each (x |
-// z << 16), borders aside; and where its tile's hole bits start in
-// `terrain_holes` (0xffffffff without holes).
+// z << 16), borders aside; where its tile's hole bits start in
+// `terrain_holes` (0xffffffff without holes); and how far it still stands
+// morphed into its parent since its tile arrived (decision 099).
 struct PatchInput {
     @builtin(vertex_index) vertex: u32,
     @location(0) first: vec2<i32>,
     @location(1) shape: vec4<f32>,
     @location(2) atlas: vec4<u32>,
     @location(3) holes: u32,
+    @location(4) fade: f32,
 }
 
 // Vertices along a patch side, and the grid's vertices before the skirts'.
@@ -102,8 +104,8 @@ fn terrain_vertex(input: PatchInput) -> TerrainVertex {
     let base = vec2<f32>(input.first + vec2<i32>(grid));
     let unmorphed = vec3<f32>(base.x * spacing + terrain.anchor.x, fine + terrain.anchor.y,
         base.y * spacing + terrain.anchor.z);
-    let morph = clamp((length(unmorphed) - input.shape.y) / (input.shape.z - input.shape.y),
-        0.0, 1.0);
+    let morph = max(clamp((length(unmorphed) - input.shape.y) / (input.shape.z - input.shape.y),
+        0.0, 1.0), input.fade);
     let odd = grid & vec2<u32>(1u);
     let parent_texel = vec2<u32>(input.atlas.w & 0xffffu, input.atlas.w >> 16u)
         + (grid - odd) / 2u + 1u;
