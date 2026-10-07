@@ -945,6 +945,7 @@ impl Layers {
                     check(index, "width", water.width, 0.1, 1000.0)?;
                     check(index, "max_depth", water.max_depth, 0.0, 100.0)?;
                     check(index, "max_width", water.max_width, 0.1, 1000.0)?;
+                    check(index, "stream_area", water.stream_area, 0.0, 1.0e10)?;
                 }
             }
         }

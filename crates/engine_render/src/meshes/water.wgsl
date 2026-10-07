@@ -5,8 +5,10 @@
 // the water between its surface and the ground behind it, which a copy of
 // the opaque depth gives (decision 074), reflecting the sky, the sun and,
 // through screen-space reflections, the scene; its ripples ride the wind on
-// lakes and run downstream on rivers, and foam gathers where it runs
-// shallow along shores and where rivers run fast.
+// lakes and run downstream on rivers, carried along their flow in two
+// phases half a cycle apart (decision 097), and foam gathers where it runs
+// shallow along shores and where rivers run fast. Streams narrower than a
+// pixel or two fade out.
 
 // The water's surface (terrain-local meters), a texel a bake sample.
 @group(1) @binding(33) var water_surface: texture_2d<f32>;
@@ -70,16 +72,20 @@ struct WaterOutput {
     @builtin(position) clip_position: vec4<f32>,
     // The point less the eye.
     @location(0) relative: vec3<f32>,
-    // Meters of water over the ground, and its flow along x and z.
-    @location(1) water: vec3<f32>,
+    // Meters of water over the ground, its flow along x and z, and half the
+    // width of a river's water (lakes: unbounded).
+    @location(1) water: vec4<f32>,
 }
 
 struct WaterTemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) relative: vec3<f32>,
-    @location(1) water: vec3<f32>,
+    @location(1) water: vec4<f32>,
     @location(2) previous: vec3<f32>,
 }
+
+// What lakes' outputs give as half their width: no edge to fade toward.
+const WATER_UNBOUNDED: f32 = 1.0e6;
 
 // The corners of a quad's two triangles, split along the diagonal from its
 // (1, 0) corner to its (0, 1) corner, or turned, along the other one.
@@ -122,7 +128,8 @@ fn water_output(input: WaterChunk) -> WaterOutput {
     var output: WaterOutput;
     output.clip_position = water.relative_view_projection * vec4<f32>(relative, 1.0);
     output.relative = relative;
-    output.water = vec3<f32>(info.x * 32.0, (info.yz - vec2<f32>(0.5)) * 16.0);
+    output.water = vec4<f32>(info.x * 32.0, (info.yz - vec2<f32>(0.5)) * 16.0,
+        WATER_UNBOUNDED);
     return output;
 }
 
@@ -132,10 +139,11 @@ fn vs_water(input: WaterChunk) -> WaterOutput {
 }
 
 // A point of a river's ribbon (decision 092): terrain-local, and the
-// water's depth over the bed there and its flow along x and z.
+// water's depth over the bed there, its flow along x and z and half the
+// river's width.
 struct RiverVertex {
     @location(0) position: vec3<f32>,
-    @location(1) water: vec3<f32>,
+    @location(1) water: vec4<f32>,
 }
 
 fn river_output(input: RiverVertex) -> WaterOutput {
@@ -223,21 +231,55 @@ struct WaterShade {
     coverage: f32,
 }
 
+// Flowing water's ripples and foam (decision 097): two sets, each carried
+// along the flow for WATER_FLOW_CYCLE seconds and then starting over, half
+// a cycle apart: the seconds each has run, and how much the second shows,
+// so each restarts unseen before the flow stretches it (Vlachos's flow
+// maps).
+const WATER_FLOW_CYCLE: f32 = 1.6;
+// Where the second set lies in the noise, so the two never pulse in step.
+const WATER_FLOW_SHIFT: vec2<f32> = vec2<f32>(17.3, 9.1);
+
+struct WaterFlow {
+    first: f32,
+    second: f32,
+    blend: f32,
+}
+
+fn water_flow(time: f32) -> WaterFlow {
+    let phase = fract(time / WATER_FLOW_CYCLE);
+    var carried: WaterFlow;
+    carried.first = phase * WATER_FLOW_CYCLE;
+    carried.second = fract(phase + 0.5) * WATER_FLOW_CYCLE;
+    carried.blend = abs(phase * 2.0 - 1.0);
+    return carried;
+}
+
 fn shade_water(input: WaterOutput) -> WaterShade {
     let world = input.relative + camera.position.xyz;
     let depth = max(input.water.x, 0.0);
     let flow = input.water.yz;
     let time = camera.position.w;
-    // Rivers' ripples run downstream; lakes' drift with the wind. Two sets
-    // half a cycle apart cross-fade, so drifting never stretches them.
+    // Rivers' ripples run downstream, carried along their flow in two sets
+    // that cross-fade (decision 097); lakes' drift with the wind, which
+    // moves them all alike and never stretches them.
     let wind = water.ripples.zw;
-    let drift = select(wind * 0.12, flow, dot(flow, flow) > 1.0e-4);
+    let flowing = dot(flow, flow) > 1.0e-4;
+    let drift = select(wind * 0.12, flow, flowing);
     // Running water breaks into smaller, livelier ripples.
     let running = saturate(length(flow) * 0.5);
     let size = water.ripples.y * mix(1.0, 0.35, running);
     // How far the pixel spans on the water: finer ripples fade out.
     let footprint = max(length(dpdx(world.xz)), length(dpdy(world.xz)));
-    let slopes = water_slopes(world.xz, size, drift, time, footprint);
+    let carried = water_flow(time);
+    var slopes = vec2<f32>(0.0);
+    if flowing {
+        slopes = mix(water_slopes(world.xz, size, flow, carried.first, footprint),
+            water_slopes(world.xz + WATER_FLOW_SHIFT, size, flow, carried.second, footprint),
+            carried.blend);
+    } else {
+        slopes = water_slopes(world.xz, size, drift, time, footprint);
+    }
     let distance = length(input.relative);
     let strength = water.ripples.x * mix(1.0, 1.3, running);
     let normal = normalize(vec3<f32>(-slopes.x * strength, 1.0, -slopes.y * strength));
@@ -258,6 +300,11 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     if (depth < 0.05 && below > 1.0) {
         discard;
     }
+    // Nor does water stand far over ground lowered after its bake (a stamp
+    // or a road's cut), where it would hang as a slab.
+    if (below > depth * 2.0 + 1.5) {
+        discard;
+    }
     // What comes back from inside the water, lit as a diffuse surface:
     // the scattered color, for as much light as the water stops. The bake
     // bounds the path where its surfaces reach past the shore, which on
@@ -270,10 +317,19 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     // fast, broken by drifting noise and fading before it would alias.
     let shore = 1.0 - smoothstep(0.0, water.foam.y, below);
     let rapids = smoothstep(2.5, 6.0, length(flow));
-    let grain = water_noise((world.xz - drift * time * 0.8) * 1.3).x * 0.65
-        + water_noise(world.xz * 4.1 + vec2<f32>(time * 0.35, 0.0)).x * 0.35;
+    var grain = water_noise((world.xz - drift * time * 0.8) * 1.3).x * 0.65;
+    if flowing {
+        // Foam rides the current in the ripples' two sets.
+        grain = mix(water_noise((world.xz - flow * carried.first * 0.8) * 1.3).x,
+            water_noise((world.xz + WATER_FLOW_SHIFT - flow * carried.second * 0.8) * 1.3).x,
+            carried.blend) * 0.65;
+    }
+    grain += water_noise(world.xz * 4.1 + vec2<f32>(time * 0.35, 0.0)).x * 0.35;
+    // Streams narrower than a pixel or two fade out (decision 097): their
+    // width over what a pixel spans.
+    let shown = smoothstep(0.75, 2.0, 2.0 * input.water.w / max(footprint, 1.0e-4));
     let foam = water.foam.x * saturate((max(shore, rapids * 0.8) - grain * 0.7) * 2.5)
-        * saturate(1.6 - footprint * 3.0) * real;
+        * saturate(1.6 - footprint * 3.0) * real * shown;
     var point: SurfacePoint;
     point.albedo = water.color.rgb;
     point.opacity = 1.0;
@@ -303,9 +359,10 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     let reflectance = saturate(luminance(environment_brdf(point.f0, point.roughness,
         point.n_v)));
     // Foam covers what lies below, and the water thins out to nothing where
-    // it meets the shore.
+    // it meets the shore and where a stream begins (its depth grows from
+    // nothing, decision 097).
     result.coverage = max(1.0 - (1.0 - reflectance) * transmit, foam)
-        * smoothstep(0.0, 0.08, below);
+        * smoothstep(0.0, 0.08, below) * smoothstep(0.0, 0.05, depth) * shown;
     return result;
 }
 

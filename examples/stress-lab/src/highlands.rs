@@ -607,7 +607,9 @@ pub(crate) fn populate(
             op: StampOp::Flatten(60.0),
         }),
         // Streams and rivers (decision 066) carved where water gathers off
-        // the mountains, baked over the sixteen-meter tiles erosion shaped.
+        // the mountains, baked over the sixteen-meter tiles erosion shaped;
+        // streams a meter or so wide run down to them from a sixth of a
+        // river's head (decision 097).
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
                 level: 4,
@@ -616,6 +618,7 @@ pub(crate) fn populate(
                 width: 7.0,
                 max_depth: 7.0,
                 max_width: 70.0,
+                stream_area: 25_000.0,
             },
             baked: None,
         }),
@@ -1783,19 +1786,9 @@ fn rules() -> Biomes {
         mask,
         opacity: 1.0,
     };
-    // Streams and rivers (decision 066): where enough water gathers, but
-    // not across the pits it would fill as lakes.
-    // Rivers' beds and the two meters of their banks (decision 092), and
-    // where streams too narrow for rivers gather off the lakes.
-    let channels = || {
-        Mask::Max(vec![
-            Mask::Multiply(vec![
-                Mask::Flow([5.12, 5.3]),
-                Mask::Invert(Box::new(Mask::Lake([0.5, 2.0]))),
-            ]),
-            Mask::River([2.0, 0.0]),
-        ])
-    };
+    // Rivers' and streams' beds and a meter and a half of their banks
+    // (decisions 092 and 097), along their lines.
+    let channels = || Mask::River([1.5, 0.0]);
     // Where spruces stand in broad stands below the tree line on gentle
     // ground, thinning at their edges and kept out of stream beds; their
     // needles litter the ground there.
