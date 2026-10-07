@@ -211,6 +211,13 @@ pub struct JobsView {
     pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
+    /// The host's output cache (decision 116): outputs it handed back
+    /// instead of running their jobs, jobs it lacked, its bytes and,
+    /// verifying, outputs that differed from a fresh run.
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_bytes: u64,
+    pub cache_mismatches: u64,
 }
 
 /// One agent of [`NavAgentsView`].
@@ -265,6 +272,13 @@ pub struct TerrainsView {
     /// Tiles the view wants that wait while the camera moves fast (decision
     /// 115).
     pub waiting_tiles: u32,
+    /// Tiles kept in memory after the view left them (decision 116) and
+    /// their bytes, tiles returned from there since terrains started, and
+    /// tiles generating ahead of the view.
+    pub cached_tiles: u32,
+    pub cached_bytes: u64,
+    pub restored_tiles: u64,
+    pub idle_tiles: u32,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,

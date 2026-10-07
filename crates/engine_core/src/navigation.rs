@@ -311,7 +311,13 @@ pub(crate) fn walk_agents(
             .and_then(|jobs| {
                 let (_, origin, input) = terrains.walk_job(from, to, &options)?;
                 let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
-                Some((origin, jobs.submit(WALK_JOB, input, priority)))
+                // Hosts may keep walks (decision 116): their input names
+                // the recipe by its content.
+                let identity = input.clone();
+                Some((
+                    origin,
+                    jobs.submit_cacheable(WALK_JOB, input, priority, identity),
+                ))
             });
         if let Some((origin, id)) = handed {
             navigation.walks.push((entity, origin, id));

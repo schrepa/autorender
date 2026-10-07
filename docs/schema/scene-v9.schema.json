@@ -4480,6 +4480,13 @@
       "description": "Terrain settings (decision 051). Requires version 9.",
       "type": "object",
       "properties": {
+        "cache_bytes": {
+          "description": "Bytes of tiles kept in memory after the view leaves them (decision\n116), about 600 KB each, to return at once when it comes back: the\nleast recently used beyond drop, and 0 keeps none.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 268435456,
+          "minimum": 0
+        },
         "collision_radius": {
           "description": "Meters around the camera and focus entities within which level-0\ntiles load for collision, 0 to 4096.",
           "type": "number",
@@ -4491,6 +4498,14 @@
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "idle_reach": {
+          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing (decision\n116), 0 to 8; within the keeping reach (2.5) none.",
+          "type": "number",
+          "format": "float",
+          "default": 3.0,
+          "maximum": 8.0,
+          "minimum": 0.0
         },
         "loading_work_ms": {
           "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole (decision 099), and after, 0.1 to 1000 each: loading\ntakes large slices of frames, play small ones.",
@@ -4596,6 +4611,13 @@
           "description": "Ground generated around terrains with surroundings (decision 094)\nstreams and draws; off, every terrain ends at its edges.",
           "type": "boolean",
           "default": true
+        },
+        "upload_bytes": {
+          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame (decision 116), about 540 KB a tile: tiles beyond wait for\nthe next, though each frame's first arrives whatever its size; at\nleast 1.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 8388608,
+          "minimum": 1
         },
         "work_ms": {
           "type": "number",

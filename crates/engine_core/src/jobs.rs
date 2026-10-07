@@ -13,6 +13,13 @@
 //! cancels stops at its next slice, so its worker takes up wanted work at
 //! once. A job may hand back a part of its output before the rest (decision
 //! 114), as a tile its shape, for its owner to use while it runs.
+//!
+//! Hosts may keep outputs (decision 116): a job submitted with an identity,
+//! what its output depends on, takes its output from a host's cache when
+//! the same build ran the same identity before, in this session or an
+//! earlier one. Owners name what they share by its content
+//! ([`content_hash`]), so inputs reading shares are the same bytes in every
+//! session.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -29,13 +36,16 @@ static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 pub struct JobId(pub u64);
 
 /// A job to hand a worker: its id, its kind (which work workers run on
-/// it), its input and its priority, lower first ([`job_priority`]).
+/// it), its input, its priority, lower first ([`job_priority`]), and, where
+/// hosts may keep its output (decision 116), its identity: the same kind
+/// and identity give the same output from the same build.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
     pub id: JobId,
     pub kind: &'static str,
     pub input: Vec<u8>,
     pub priority: u32,
+    pub identity: Option<Vec<u8>>,
 }
 
 /// Classes of jobs (decision 112), most urgent first: what a view or its
@@ -45,6 +55,8 @@ pub struct JobRequest {
 pub const URGENT_JOBS: u8 = 0;
 pub const GAMEPLAY_JOBS: u8 = 1;
 pub const VIEW_JOBS: u8 = 2;
+/// Work ahead of need while nothing else waits (decision 116).
+pub const IDLE_JOBS: u8 = 3;
 
 /// A job's priority: its `class`, then its `place` among the class's jobs
 /// (at most 2^24 - 1).
@@ -55,6 +67,66 @@ pub const fn job_priority(class: u8, place: u32) -> u32 {
 /// A job priority's class.
 pub const fn job_class(priority: u32) -> u8 {
     (priority >> 24) as u8
+}
+
+/// A 128-bit hash of `bytes` (MurmurHash3, x64 128-bit, seed 0) naming
+/// content by what it holds (decision 116): shares named so make the jobs
+/// reading them the same bytes in every session, which hosts' caches key
+/// outputs by.
+pub fn content_hash(bytes: &[u8]) -> u128 {
+    const C1: u64 = 0x87c3_7b91_1142_53d5;
+    const C2: u64 = 0x4cf5_ad43_2745_937f;
+    let mix = |mut k: u64| {
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xff51_afd7_ed55_8ccd);
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
+        k ^ (k >> 33)
+    };
+    let word = |bytes: &[u8]| {
+        let mut word = [0_u8; 8];
+        word[..bytes.len()].copy_from_slice(bytes);
+        u64::from_le_bytes(word)
+    };
+    let (mut h1, mut h2) = (0_u64, 0_u64);
+    let (blocks, tail) = bytes.as_chunks::<16>();
+    for block in blocks {
+        let (k1, k2) = (word(&block[..8]), word(&block[8..]));
+        h1 ^= k1.wrapping_mul(C1).rotate_left(31).wrapping_mul(C2);
+        h1 = h1
+            .rotate_left(27)
+            .wrapping_add(h2)
+            .wrapping_mul(5)
+            .wrapping_add(0x52dc_e729);
+        h2 ^= k2.wrapping_mul(C2).rotate_left(33).wrapping_mul(C1);
+        h2 = h2
+            .rotate_left(31)
+            .wrapping_add(h1)
+            .wrapping_mul(5)
+            .wrapping_add(0x3849_5ab5);
+    }
+    if tail.len() > 8 {
+        h2 ^= word(&tail[8..])
+            .wrapping_mul(C2)
+            .rotate_left(33)
+            .wrapping_mul(C1);
+    }
+    if !tail.is_empty() {
+        h1 ^= word(&tail[..tail.len().min(8)])
+            .wrapping_mul(C1)
+            .rotate_left(31)
+            .wrapping_mul(C2);
+    }
+    let len = bytes.len() as u64;
+    h1 ^= len;
+    h2 ^= len;
+    h1 = h1.wrapping_add(h2);
+    h2 = h2.wrapping_add(h1);
+    h1 = mix(h1);
+    h2 = mix(h2);
+    h1 = h1.wrapping_add(h2);
+    h2 = h2.wrapping_add(h1);
+    (u128::from(h2) << 64) | u128::from(h1)
 }
 
 /// What every worker should hold, in order with the requests: nothing an
@@ -70,7 +142,10 @@ pub enum JobShare {
 /// Workers and their jobs (decision 110): workers running them, jobs
 /// handed out and not done, jobs submitted, completed, failed and cancelled
 /// while running (decision 112), parts handed back early (decision 114),
-/// keys shared and their bytes.
+/// keys shared and their bytes; and the host's output cache (decision
+/// 116): outputs it handed back instead of running their jobs, jobs it
+/// lacked, the bytes it holds and, verifying, outputs differing from a
+/// fresh run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct JobStats {
     pub workers: u32,
@@ -82,6 +157,10 @@ pub struct JobStats {
     pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_bytes: u64,
+    pub cache_mismatches: u64,
 }
 
 /// Jobs handed to the host's workers (decision 110). Inserted by default,
@@ -99,6 +178,9 @@ pub struct Jobs {
     // Parts of running jobs' outputs handed back early (decision 114),
     // the latest of each.
     parts: HashMap<JobId, Vec<u8>>,
+    // The host's cache counters (decision 116): hits, misses, bytes and
+    // mismatches.
+    cache: [u64; 4],
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
     stats: JobStats,
@@ -114,6 +196,7 @@ impl Default for Jobs {
             cancels: Vec::new(),
             done: HashMap::new(),
             parts: HashMap::new(),
+            cache: [0; 4],
             shared: HashMap::new(),
             stats: JobStats::default(),
         }
@@ -148,6 +231,29 @@ impl Jobs {
     /// [`Self::take`] its output once done. Without workers it fails at
     /// once.
     pub fn submit(&mut self, kind: &'static str, input: Vec<u8>, priority: u32) -> JobId {
+        self.submit_with(kind, input, priority, None)
+    }
+
+    /// [`Self::submit`] for a job whose output hosts may keep and hand back
+    /// for the same `identity` without running it (decision 116): what its
+    /// output depends on, as the same build computes it.
+    pub fn submit_cacheable(
+        &mut self,
+        kind: &'static str,
+        input: Vec<u8>,
+        priority: u32,
+        identity: Vec<u8>,
+    ) -> JobId {
+        self.submit_with(kind, input, priority, Some(identity))
+    }
+
+    fn submit_with(
+        &mut self,
+        kind: &'static str,
+        input: Vec<u8>,
+        priority: u32,
+        identity: Option<Vec<u8>>,
+    ) -> JobId {
         let id = JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1);
         self.stats.submitted += 1;
         if self.workers == 0 {
@@ -160,6 +266,7 @@ impl Jobs {
             kind,
             input,
             priority,
+            identity,
         });
         id
     }
@@ -197,6 +304,11 @@ impl Jobs {
     pub fn share(&mut self, key: String, bytes: Vec<u8>) {
         self.shared.insert(key.clone(), bytes.len() as u64);
         self.shares.push(JobShare::Set { key, bytes });
+    }
+
+    /// Whether `key` is shared now.
+    pub fn is_shared(&self, key: &str) -> bool {
+        self.shared.contains_key(key)
     }
 
     /// Drops what is shared as `key` from every worker.
@@ -242,6 +354,13 @@ impl Jobs {
         }
     }
 
+    /// Hosts: their output cache's counters (decision 116): outputs handed
+    /// back from it, jobs it lacked, its bytes and, verifying, outputs that
+    /// differed from a fresh run.
+    pub fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
+        self.cache = [hits, misses, bytes, mismatches];
+    }
+
     fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
         self.parts.remove(&id);
         match &output {
@@ -257,6 +376,10 @@ impl Jobs {
             running: self.running.len() as u32,
             shares: self.shared.len() as u32,
             shared_bytes: self.shared.values().sum(),
+            cache_hits: self.cache[0],
+            cache_misses: self.cache[1],
+            cache_bytes: self.cache[2],
+            cache_mismatches: self.cache[3],
             ..self.stats
         }
     }

@@ -86,6 +86,9 @@ async function session(name, query, walk) {
 const checks = [];
 try {
   const workers = await session("workers", {}, true);
+  // The page's job cache (decision 116) writes its index a little after
+  // its last change.
+  await delay(3000);
   assert.ok(workers.jobs.workers > 0, `workers run jobs: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);
@@ -100,8 +103,17 @@ try {
   assert.deepEqual(workers.samples, page_.samples, "heights, normals, holes, levels, bakes and roads match bit for bit");
   assert.ok(workers.drawn.placed_objects > 0, `objects stand on the tiles: ${JSON.stringify(workers.drawn)}`);
   assert.deepEqual(workers.drawn, page_.drawn, "an exact frame draws the same tiles, water and placed objects");
+  // Decision 116: the first session kept its jobs' outputs; a session
+  // verifying them takes them from the cache, runs every job anyway and
+  // finds the same bytes, and samples and draws as the first did.
+  const kept = await session("kept", { jobcache: "verify" }, true);
+  assert.ok(kept.jobs.cache_hits > 0, `outputs come from the cache: ${JSON.stringify(kept.jobs)}`);
+  assert.equal(kept.jobs.cache_mismatches, 0, `kept outputs match fresh runs: ${JSON.stringify(kept.jobs)}`);
+  assert.deepEqual(kept.samples, workers.samples, "kept outputs sample as fresh ones");
+  assert.deepEqual(kept.drawn, workers.drawn, "kept outputs draw as fresh ones");
   checks.push({ workers: { shown: workers.shown, jobs: workers.jobs, terrains: workers.terrains, drawn: workers.drawn },
-    page: { shown: page_.shown, terrains: page_.terrains, drawn: page_.drawn }, answered });
+    page: { shown: page_.shown, terrains: page_.terrains, drawn: page_.drawn },
+    kept: { shown: kept.shown, jobs: kept.jobs }, answered });
   assert.deepEqual(errors, [], `page errors: ${errors.join("\n")}`);
   await writeFile(`${output}/report.json`, JSON.stringify(checks, null, 2));
   console.log(JSON.stringify({ ok: true, output, checks }, null, 2));

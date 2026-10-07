@@ -522,7 +522,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains; resident, loading, shape-only (decision 114), waiting (decision 115) and dropped tiles; patches drawn and those standing in for finer levels not resident yet; and of those the surroundings' (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
+            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains; resident, loading, shape-only (decision 114), waiting (decision 115), kept in memory, restored from there and generating ahead (decision 116) and dropped tiles; patches drawn and those standing in for finer levels not resident yet; and of those the surroundings' (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -531,6 +531,10 @@ impl DevTools {
                     loading_tiles: stats.loading_tiles,
                     shaped_tiles: stats.shaped_tiles,
                     waiting_tiles: stats.waiting_tiles,
+                    cached_tiles: stats.cached_tiles,
+                    cached_bytes: stats.cached_bytes,
+                    restored_tiles: stats.restored_tiles,
+                    idle_tiles: stats.idle_tiles,
                     dropped_tiles: stats.dropped_tiles,
                     patches: stats.patches,
                     fallback_patches: stats.fallback_patches,
@@ -544,7 +548,7 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Jobs>(
-            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers running jobs (none keeps terrain bakes, tiles and walks on the engine's thread), jobs handed out and not done, jobs submitted, completed, failed and cancelled while running (decision 112) since the engine started, parts of outputs handed back early such as tiles' shapes (decision 114), and keys shared with every worker and their bytes. Workers run the most urgent job they hold a slice at a time. Pages take ?workers=N or ?workers=off.", schemas["Jobs"].clone()),
+            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers (none keeps bakes, tiles and walks on the engine's thread), jobs in flight, submitted, completed, failed and cancelled (decision 112), parts handed back early (decision 114), keys shared and their bytes, and the page's output cache (decision 116). Workers run their most urgent job a slice at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.", schemas["Jobs"].clone()),
             |jobs| {
                 let stats = jobs.stats();
                 json!(crate::views::JobsView {
@@ -557,6 +561,10 @@ impl DevTools {
                     parts: stats.parts,
                     shares: stats.shares,
                     shared_bytes: stats.shared_bytes,
+                    cache_hits: stats.cache_hits,
+                    cache_misses: stats.cache_misses,
+                    cache_bytes: stats.cache_bytes,
+                    cache_mismatches: stats.cache_mismatches,
                 })
             },
         ).expect("built-in descriptor is bounded");

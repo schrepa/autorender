@@ -485,6 +485,37 @@ try {
   await settle();
   checks.push({ check: "motion detail", waited });
 
+  // Decision 116: tiles the view leaves stay in memory and return at once
+  // when it comes back; with nothing missing, workers generate the tiles
+  // within the idle reach into memory.
+  const inspectTerrains = async () => (await command("inspect", { component: "Terrains" })).result.value;
+  const home = await inspectTerrains();
+  await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
+  await settle();
+  await command("camera", overview);
+  await settle();
+  const back = await inspectTerrains();
+  assert.ok(back.restored_tiles > home.restored_tiles, `tiles return from memory: ${JSON.stringify(back)}`);
+  // A budget of a byte empties memory, so what it holds next was made
+  // ahead of the view.
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, cache_bytes: 1 } });
+  await command("render");
+  const emptied = await inspectTerrains();
+  assert.equal(emptied.cached_tiles, 0, `a byte keeps no tile: ${JSON.stringify(emptied)}`);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 4 } });
+  let ahead = emptied;
+  let generating = 0;
+  for (let frame = 0; frame < 300 && ahead.cached_tiles === 0; frame++) {
+    await command("render");
+    await new Promise(resolve => setTimeout(resolve, 25));
+    ahead = await inspectTerrains();
+    generating = Math.max(generating, ahead.idle_tiles);
+  }
+  assert.ok(ahead.cached_tiles > 0, `workers generate tiles ahead of the view: ${JSON.stringify(ahead)}`);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await settle();
+  checks.push({ check: "memory", restored: back.restored_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
+
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.
   const baseline = await capture("view-shaded");

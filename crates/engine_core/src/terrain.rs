@@ -63,8 +63,8 @@ use engine_terrain::{
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
 use crate::{
-    Camera, GlobalTransforms, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
-    RenderTexture, URGENT_JOBS, VIEW_JOBS, job_class, job_priority,
+    Camera, GlobalTransforms, IDLE_JOBS, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
+    RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
 
 /// Where a terrain's tiles come from.
@@ -757,6 +757,21 @@ pub struct TerrainSettings {
     /// default, as it lowers detail in motion on purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub motion_detail: Option<MotionDetail>,
+    /// Bytes of tiles kept in memory after the view leaves them (decision
+    /// 116), about 600 KB each, to return at once when it comes back: the
+    /// least recently used beyond drop, and 0 keeps none.
+    pub cache_bytes: u64,
+    /// Bytes of tiles becoming resident in a frame, which the GPU takes in
+    /// that frame (decision 116), about 540 KB a tile: tiles beyond wait for
+    /// the next, though each frame's first arrives whatever its size; at
+    /// least 1.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub upload_bytes: u32,
+    /// Multiples of each level's range within which workers generate tiles
+    /// ahead of the view into memory while nothing is missing (decision
+    /// 116), 0 to 8; within the keeping reach (2.5) none.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
+    pub idle_reach: f32,
 }
 
 /// How terrain loads while the camera moves fast (decision 115): the
@@ -863,6 +878,9 @@ impl Default for TerrainSettings {
             relief_steps: 8,
             surroundings: true,
             motion_detail: None,
+            cache_bytes: 256 << 20,
+            upload_bytes: 8 << 20,
+            idle_reach: 3.0,
         }
     }
 }
@@ -903,6 +921,10 @@ impl TerrainSettings {
         if let Some(detail) = &self.motion_detail {
             detail.validate()?;
         }
+        if self.upload_bytes == 0 {
+            return Err(InvalidSetting::new("upload_bytes", "must be at least 1"));
+        }
+        check_range("idle_reach", self.idle_reach, 0.0..=8.0)?;
         Ok(())
     }
 
@@ -948,6 +970,9 @@ impl TerrainSettings {
             relief_steps: self.relief_steps.clamp(2, 64),
             surroundings: self.surroundings,
             motion_detail: self.motion_detail.map(MotionDetail::sanitized),
+            cache_bytes: self.cache_bytes,
+            upload_bytes: self.upload_bytes.max(1),
+            idle_reach: crate::math::clamp(finite(self.idle_reach, defaults.idle_reach), 0.0, 8.0),
         }
     }
 }
@@ -993,6 +1018,13 @@ pub struct TerrainStats {
     /// Tiles the view wants that wait while the camera moves fast (decision
     /// 115).
     pub waiting_tiles: u32,
+    /// Tiles kept in memory after the view left them (decision 116) and
+    /// their bytes, tiles that returned from there since terrains started,
+    /// and tiles generating ahead of the view.
+    pub cached_tiles: u32,
+    pub cached_bytes: u64,
+    pub restored_tiles: u64,
+    pub idle_tiles: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -1023,6 +1055,8 @@ struct Work {
     slice: u64,
     clock: Option<fn() -> f64>,
     end: f64,
+    /// Bytes tiles may still bring the GPU this frame (decision 116).
+    upload: std::cell::Cell<u64>,
 }
 
 impl Work {
@@ -1044,6 +1078,17 @@ impl Work {
     /// Whether the work's time is up; never without a clock.
     fn expired(&self) -> bool {
         self.clock.is_some_and(|clock| clock() >= self.end)
+    }
+
+    /// Whether tiles may still become resident within the frame's upload
+    /// budget (decision 116).
+    fn uploads(&self) -> bool {
+        self.upload.get() > 0
+    }
+
+    /// Spends `bytes` of the frame's upload budget.
+    fn upload(&self, bytes: u64) {
+        self.upload.set(self.upload.get().saturating_sub(bytes));
     }
 }
 
@@ -1305,6 +1350,12 @@ impl JobSlots<'_> {
         self.urgent = self.urgent.saturating_sub(1);
         true
     }
+
+    /// Gives back the slot of a job cancelled while running.
+    fn release(&mut self) {
+        self.slots += 1;
+        self.urgent += 1;
+    }
 }
 
 /// A terrain's recipe as workers hold it (decision 110): its key, the
@@ -1350,7 +1401,10 @@ fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, py
     let Some(id) = state.bake_job else {
         let input = engine_terrain::jobs::bake_input(layers, pyramid);
         let priority = job_priority(URGENT_JOBS, 0);
-        state.bake_job = Some(jobs.submit(BAKE_JOB, input, priority));
+        // Hosts may keep the baked layers (decision 116), by the input's
+        // hash.
+        let identity = content_hash(&input).to_le_bytes().to_vec();
+        state.bake_job = Some(jobs.submit_cacheable(BAKE_JOB, input, priority, identity));
         return;
     };
     let Some(output) = jobs.take(id) else {
@@ -1432,7 +1486,7 @@ fn generate_on_workers(
     let rules = state.terrain.surface.rules.clone();
     let mut inserted = false;
     for (key, (id, made, priority, placing)) in handed {
-        if inserted && work.expired() {
+        if inserted && (work.expired() || !work.uploads()) {
             break;
         }
         let Some(output) = slots.jobs.take(id) else {
@@ -1444,6 +1498,13 @@ fn generate_on_workers(
             .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok());
         match tile {
             Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
+                // After its shape a tile uploads its control values alone
+                // (decision 116).
+                work.upload(if state.shaped.contains(&key) {
+                    TILE_ARRAY_BYTES
+                } else {
+                    2 * TILE_ARRAY_BYTES
+                });
                 state.stale.remove(&key);
                 state.shaped.remove(&key);
                 state.failed.remove(&key);
@@ -1471,7 +1532,7 @@ fn generate_on_workers(
         .map(|(&key, &(id, made, _, _))| (key, id, made))
         .collect();
     for (key, id, made) in shaping {
-        if inserted && work.expired() {
+        if inserted && (work.expired() || !work.uploads()) {
             break;
         }
         let Some(part) = slots.jobs.take_part(id) else {
@@ -1481,8 +1542,11 @@ fn generate_on_workers(
             && made == revision
             && target.contains(&key)
             && shape.key() == key
+            && state.shape(shape)
         {
-            inserted |= state.shape(shape);
+            // Its heights, and its ancestor's control values for cover.
+            work.upload(2 * TILE_ARRAY_BYTES);
+            inserted = true;
         }
     }
     let placing: Vec<(TileKey, JobId)> = state
@@ -1513,6 +1577,31 @@ fn generate_on_workers(
                 state.far_wanted.insert(key, job_priority(VIEW_JOBS, 0));
                 state.worker_failures += 1;
             }
+        }
+    }
+    // Tiles generated ahead of need go to memory (decision 116); with tiles
+    // missing, or out of the idle reach, their jobs stop.
+    let idle: Vec<(TileKey, JobId, u64)> = state
+        .idle
+        .iter()
+        .map(|(&key, &(id, made))| (key, id, made))
+        .collect();
+    for (key, id, made) in idle {
+        if let Some(output) = slots.jobs.take(id) {
+            state.idle.remove(&key);
+            if let Some(tile) = output
+                .ok()
+                .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok())
+                && made == revision
+                && tile.key() == key
+                && !state.tiles.contains_key(&key)
+            {
+                state.cache_tile(key, Arc::new(tile), frame);
+            }
+        } else if !missing.is_empty() || made != revision || !state.ahead.contains(&key) {
+            slots.jobs.cancel(id);
+            slots.release();
+            state.idle.remove(&key);
         }
     }
     // Then what is missing, most urgent first: tiles, and the objects
@@ -1546,7 +1635,10 @@ fn generate_on_workers(
                 continue;
             };
             let input = engine_terrain::jobs::far_input(&recipe, &tile);
-            let id = slots.jobs.submit(FAR_JOB, input, priority);
+            let identity = engine_terrain::jobs::far_identity(&recipe, key);
+            let id = slots
+                .jobs
+                .submit_cacheable(FAR_JOB, input, priority, identity);
             state.far_wanted.remove(&key);
             state.far_jobs.insert(key, (id, tile));
         } else {
@@ -1562,10 +1654,41 @@ fn generate_on_workers(
                 Placing::All
             };
             let input = engine_terrain::jobs::tile_input(&recipe, key, placing, !resident);
-            let id = slots.jobs.submit(TILE_JOB, input, priority);
+            // Staged or not, the same tile (decision 116).
+            let identity = engine_terrain::jobs::tile_input(&recipe, key, placing, false);
+            let id = slots
+                .jobs
+                .submit_cacheable(TILE_JOB, input, priority, identity);
             state
                 .dispatched
                 .insert(key, (id, revision, priority, placing));
+        }
+    }
+    // With nothing else to hand out, a job a worker generates the nearest
+    // tiles within the idle reach (decision 116), whole, into memory.
+    if missing.is_empty()
+        && state.dispatched.is_empty()
+        && state.far_wanted.is_empty()
+        && state.far_jobs.is_empty()
+    {
+        let workers = slots.jobs.workers() as usize;
+        for index in 0..state.ahead.len() {
+            if state.idle.len() >= workers {
+                break;
+            }
+            let key = state.ahead[index];
+            if state.idle.contains_key(&key) {
+                continue;
+            }
+            let priority = job_priority(IDLE_JOBS, index as u32);
+            if !slots.take(priority) {
+                break;
+            }
+            let input = engine_terrain::jobs::tile_input(&recipe, key, Placing::All, false);
+            let id = slots
+                .jobs
+                .submit_cacheable(TILE_JOB, input.clone(), priority, input);
+            state.idle.insert(key, (id, revision));
         }
     }
 }
@@ -1573,12 +1696,15 @@ fn generate_on_workers(
 /// Shares the recipe workers generate `state`'s tiles from (decision 110)
 /// once its bakes are done, and again whenever the layers its tiles
 /// generate from change: their stack, shared once for every terrain seeing
-/// it, and how its terrain sees it. New keys come from `shares`.
+/// it, and how its terrain sees it. Shares are named by their content
+/// (decision 116), so jobs reading them are the same bytes in every
+/// session; `shares` counts recipes for their revisions, and the key of
+/// the recipe replaced goes to `released`.
 fn share_recipe(
     state: &mut TerrainState,
     jobs: &mut Jobs,
-    stacks: &mut Vec<(Arc<Layers>, String)>,
-    shares: &mut u64,
+    (stacks, shares): (&mut Vec<(Arc<Layers>, String)>, &mut u64),
+    released: &mut Vec<String>,
 ) {
     let TerrainSource::Generated(authored) = &state.terrain.source else {
         return;
@@ -1614,29 +1740,34 @@ fn share_recipe(
     let stack_key = match shared {
         Some(key) => key,
         None => {
-            *shares += 1;
-            let key = format!("stack-{shares}");
-            jobs.share(key.clone(), engine_terrain::jobs::share_stack(&stack));
+            let bytes = engine_terrain::jobs::share_stack(&stack);
+            let key = format!("stack-{:032x}", content_hash(&bytes));
+            if !jobs.is_shared(&key) {
+                jobs.share(key.clone(), bytes);
+            }
             stacks.push((stack.clone(), key.clone()));
             key
         }
     };
     *shares += 1;
-    let key = format!("recipe-{shares}");
     let recipe = TerrainRecipe {
         stack: stack_key,
         view,
         pyramid: state.terrain.pyramid,
         surface: state.terrain.surface.rules.authored().clone(),
     };
-    jobs.share(key.clone(), engine_terrain::jobs::share_recipe(&recipe));
+    let bytes = engine_terrain::jobs::share_recipe(&recipe);
+    let key = format!("recipe-{:032x}", content_hash(&bytes));
+    if !jobs.is_shared(&key) {
+        jobs.share(key.clone(), bytes);
+    }
     let shared = SharedRecipe {
         key,
         stack,
         revision: *shares,
     };
     if let Some(old) = state.recipe.replace(shared) {
-        jobs.unshare(old.key);
+        released.push(old.key);
     }
 }
 
@@ -1750,6 +1881,35 @@ struct TerrainState {
     bake_job: Option<JobId>,
     bake_inline: bool,
     worker_failures: u32,
+    /// Tiles that left whole (decision 116), kept in memory to return at
+    /// once while the layers they generated from stay, and their bytes.
+    cache: HashMap<TileKey, CachedTile>,
+    cached_bytes: u64,
+    /// Tiles generating ahead of the view on workers while nothing is
+    /// missing (decision 116), for memory: each one's job and the recipe's
+    /// revision it generates from; and the tiles to generate so, nearest
+    /// first.
+    idle: HashMap<TileKey, (JobId, u64)>,
+    ahead: Vec<TileKey>,
+}
+
+/// A tile kept in memory after it left the view (decision 116): its bytes
+/// there and the frame it left.
+struct CachedTile {
+    tile: Arc<Tile>,
+    bytes: u64,
+    left: u64,
+}
+
+/// Bytes of one of a tile's arrays on the GPU, heights or control values:
+/// what a tile arriving uploads, once or twice (decision 116).
+const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
+
+/// Bytes `tile` holds in memory (decision 116).
+fn memory_bytes(tile: &Tile) -> u64 {
+    let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
+    let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
+    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
 }
 
 /// What a terrain's surroundings (decision 094) were drawn from: the layers
@@ -1806,6 +1966,10 @@ impl TerrainState {
             bake_job: None,
             bake_inline: false,
             worker_failures: 0,
+            cache: HashMap::new(),
+            cached_bytes: 0,
+            idle: HashMap::new(),
+            ahead: Vec::new(),
         }
     }
 
@@ -1819,6 +1983,7 @@ impl TerrainState {
             .jobs
             .extend(self.far_jobs.values().map(|&(id, _)| id));
         retired.jobs.extend(self.bake_job);
+        retired.jobs.extend(self.idle.values().map(|&(id, _)| id));
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
@@ -1881,6 +2046,17 @@ impl TerrainState {
             .collect();
         self.stale.extend(stale);
         self.jobs.retain(|key, _| !under(key));
+        // Tiles kept in memory under the edits are no longer the ground
+        // (decision 116).
+        let gone: Vec<TileKey> = self
+            .cache
+            .keys()
+            .filter(|key| under(key))
+            .copied()
+            .collect();
+        for key in gone {
+            self.uncache(key);
+        }
         self.revision += 1;
     }
 
@@ -1978,6 +2154,12 @@ impl TerrainState {
     /// Makes `tile` resident, measuring how far it lies from its resident
     /// parent and its resident children from it.
     fn insert(&mut self, tile: Tile) {
+        self.insert_shared(Arc::new(tile));
+    }
+
+    /// [`Self::insert`] for a tile already shared, as one kept in memory
+    /// (decision 116).
+    fn insert_shared(&mut self, tile: Arc<Tile>) {
         let key = tile.key();
         let pyramid = self.terrain.pyramid;
         let level = usize::from(key.level);
@@ -1996,8 +2178,67 @@ impl TerrainState {
                 }
             }
         }
-        self.tiles.insert(key, Arc::new(tile));
+        self.tiles.insert(key, tile);
         self.revision += 1;
+    }
+
+    /// Keeps `tile`, leaving residency at frame `frame`, in memory
+    /// (decision 116) where it is whole: not its shape alone, not under
+    /// edits since and not waiting for its objects standing far away.
+    fn cache_leaving(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
+        if !(self.shaped.contains(&key)
+            || self.stale.contains(&key)
+            || self.far_wanted.contains_key(&key)
+            || self.far_jobs.contains_key(&key))
+        {
+            self.cache_tile(key, tile, frame);
+        }
+    }
+
+    /// Keeps `tile` in memory (decision 116) as of frame `frame`.
+    fn cache_tile(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
+        let bytes = memory_bytes(&tile);
+        self.uncache(key);
+        self.cached_bytes += bytes;
+        self.cache.insert(
+            key,
+            CachedTile {
+                tile,
+                bytes,
+                left: frame,
+            },
+        );
+    }
+
+    /// Drops `key`'s tile from memory, if kept; it.
+    fn uncache(&mut self, key: TileKey) -> Option<Arc<Tile>> {
+        let cached = self.cache.remove(&key)?;
+        self.cached_bytes -= cached.bytes;
+        Some(cached.tile)
+    }
+
+    /// Makes the tiles of `missing` kept in memory resident again
+    /// (decision 116), most important first, within `work`'s upload
+    /// budget; how many.
+    fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work) -> u64 {
+        let mut restored = 0;
+        for &(key, _) in missing {
+            if self.cache.is_empty() {
+                break;
+            }
+            if self.tiles.contains_key(&key) || !self.cache.contains_key(&key) {
+                continue;
+            }
+            if restored > 0 && !work.uploads() {
+                break;
+            }
+            if let Some(tile) = self.uncache(key) {
+                work.upload(2 * TILE_ARRAY_BYTES);
+                self.insert_shared(tile);
+                restored += 1;
+            }
+        }
+        restored
     }
 
     /// The finest resident tile holding terrain-local `local`, and its
@@ -2069,6 +2310,12 @@ pub struct Terrains {
     stacks: Vec<(Arc<Layers>, String)>,
     shares: u64,
     retired: Retired,
+    /// Tiles returned from memory since terrains started (decision 116);
+    /// and bytes of the frame's upload budget left for work between
+    /// frames, and spent there since the last frame.
+    restored: u64,
+    upload_left: u64,
+    between: u64,
 }
 
 /// The workers' jobs and recipes of terrains gone (decision 110).
@@ -2603,6 +2850,7 @@ impl Terrains {
             slice: u64::from(settings.samples_per_frame / 4).max(1),
             clock: Some(clock),
             end: clock() + milliseconds,
+            upload: std::cell::Cell::new(self.upload_left),
         };
         let mut budget = work.slice;
         let frame = self.frame;
@@ -2612,10 +2860,15 @@ impl Terrains {
             if !state.terrain.is_usable() || !settings.enabled {
                 continue;
             }
-            let missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
+            let mut missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
                 .into_iter()
                 .filter(|(key, _)| state.loads(key))
                 .collect();
+            // Tiles kept in memory return at once (decision 116).
+            if !state.cache.is_empty() {
+                self.restored += state.restore(&missing, &work);
+                missing.retain(|(key, _)| state.loads(key));
+            }
             if missing.is_empty() && state.far_wanted.is_empty() && state.far_jobs.is_empty() {
                 continue;
             }
@@ -2649,6 +2902,9 @@ impl Terrains {
                 break;
             }
         }
+        // What arrived uploads with the next frame (decision 116).
+        self.between += self.upload_left - work.upload.get();
+        self.upload_left = work.upload.get();
         remaining
     }
 
@@ -2718,13 +2974,15 @@ impl Terrains {
         let mut slots = jobs.map(JobSlots::of);
         let retired = std::mem::take(&mut self.retired);
         self.workers = slots.as_ref().map_or(0, |slots| slots.jobs.workers());
+        let workers = self.workers;
+        // Keys no recipe may hold any longer, unshared at the end unless
+        // one does (decision 116).
+        let mut released = Vec::new();
         if let Some(slots) = slots.as_mut() {
             for id in retired.jobs {
                 slots.jobs.cancel(id);
             }
-            for key in retired.recipes {
-                slots.jobs.unshare(key);
-            }
+            released.extend(retired.recipes);
         }
         let mut stats = TerrainStats {
             terrains: self
@@ -2772,6 +3030,10 @@ impl Terrains {
                         f64::from(settings.loading_work_ms)
                     }
             }),
+            // Tiles arriving between frames upload with this frame's.
+            upload: std::cell::Cell::new(
+                u64::from(settings.upload_bytes).saturating_sub(std::mem::take(&mut self.between)),
+            ),
         };
         let mut budget = work.slice;
         // Speed-aware detail (decision 115): the finest levels waiting at
@@ -2846,7 +3108,16 @@ impl Terrains {
             // their reach of the eye and where it is headed (decision 100),
             // and what it keeps, within a wider reach; distances run to each
             // tile's ground.
-            let (wanted, headed, held) = {
+            // Ahead of need (decision 116), while nothing was missing, nor
+            // generating, at the last frame and memory has room.
+            let idle = workers > 0
+                && settings.idle_reach > KEEP_REACH
+                && state.cached_bytes < settings.cache_bytes
+                && state.missing.is_empty()
+                && state.dispatched.is_empty()
+                && state.far_wanted.is_empty()
+                && state.far_jobs.is_empty();
+            let (wanted, headed, held, around) = {
                 let tiles = &state.tiles;
                 let errors = &state.errors;
                 let ground = |key: TileKey| ground_bounds(tiles, &pyramid, errors, key);
@@ -2878,6 +3149,11 @@ impl Terrains {
                         want(ahead - origin, LOAD_REACH)
                     },
                     want(local_eye, KEEP_REACH),
+                    if idle {
+                        want(local_eye, settings.idle_reach)
+                    } else {
+                        Vec::new()
+                    },
                 )
             };
             // What to load, most important first, each tile after its
@@ -2938,7 +3214,18 @@ impl Terrains {
                 .chain(target.iter().copied())
                 .collect();
             let before = state.tiles.len();
-            state.tiles.retain(|key, _| keep.contains(key));
+            // Tiles leaving stay in memory (decision 116).
+            let leaving: Vec<TileKey> = state
+                .tiles
+                .keys()
+                .filter(|key| !keep.contains(key))
+                .copied()
+                .collect();
+            for key in leaving {
+                if let Some(tile) = state.tiles.remove(&key) {
+                    state.cache_leaving(key, tile, frame);
+                }
+            }
             if state.tiles.len() > kept {
                 // Over budget: drop resident tiles outside the target, finest
                 // first.
@@ -2950,7 +3237,9 @@ impl Terrains {
                     .collect();
                 extra.sort_unstable_by_key(|key| key.level);
                 for key in extra.into_iter().take(state.tiles.len() - kept) {
-                    state.tiles.remove(&key);
+                    if let Some(tile) = state.tiles.remove(&key) {
+                        state.cache_leaving(key, tile, frame);
+                    }
                 }
             }
             if state.tiles.len() != before {
@@ -2993,7 +3282,7 @@ impl Terrains {
                 .iter()
                 .filter(|key| target.contains(key) && state.loads(key) && waits(key))
                 .count() as u32;
-            let missing: Vec<(TileKey, u32)> = order
+            let mut missing: Vec<(TileKey, u32)> = order
                 .iter()
                 .enumerate()
                 .filter(|(_, key)| {
@@ -3008,6 +3297,21 @@ impl Terrains {
                     (key, job_priority(class, index as u32))
                 })
                 .collect();
+            // Tiles kept in memory return at once (decision 116).
+            if !state.cache.is_empty() {
+                self.restored += state.restore(&missing, &work);
+                missing.retain(|(key, _)| state.loads(key));
+            }
+            // What workers generate ahead of need: the nearest tiles within
+            // the idle reach not resident, kept or kept in memory.
+            state.ahead.clear();
+            state
+                .ahead
+                .extend(around.iter().map(|tile| tile.key).filter(|key| {
+                    !keep.contains(key)
+                        && !state.tiles.contains_key(key)
+                        && !state.cache.contains_key(key)
+                }));
             // What the frame found missing loads between frames too
             // (decision 108).
             state.missing.clone_from(&missing);
@@ -3017,7 +3321,12 @@ impl Terrains {
             if let Some(slots) = slots.as_mut()
                 && slots.jobs.workers() > 0
             {
-                share_recipe(state, slots.jobs, &mut self.stacks, &mut self.shares);
+                share_recipe(
+                    state,
+                    slots.jobs,
+                    (&mut self.stacks, &mut self.shares),
+                    &mut released,
+                );
             }
             if load_tiles(
                 state,
@@ -3040,6 +3349,9 @@ impl Terrains {
             stats.resident_tiles += state.tiles.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
             stats.shaped_tiles += state.shaped.len() as u32;
+            stats.cached_tiles += state.cache.len() as u32;
+            stats.cached_bytes += state.cached_bytes;
+            stats.idle_tiles += state.idle.len() as u32;
             stats.loading_tiles += (state.jobs.len()
                 + state.in_flight.len()
                 + state.arrivals.len()
@@ -3067,8 +3379,44 @@ impl Terrains {
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
+        // Tiles kept in memory beyond its budget go, those that left first
+        // (decision 116).
+        let cached: u64 = self.entries.iter().map(|state| state.cached_bytes).sum();
+        if cached > settings.cache_bytes {
+            let mut oldest: Vec<(u64, usize, TileKey)> = self
+                .entries
+                .iter()
+                .enumerate()
+                .flat_map(|(index, state)| {
+                    state
+                        .cache
+                        .iter()
+                        .map(move |(key, kept)| (kept.left, index, *key))
+                })
+                .collect();
+            oldest.sort_unstable();
+            let mut over = cached - settings.cache_bytes;
+            for (_, index, key) in oldest {
+                if over == 0 {
+                    break;
+                }
+                let state = &mut self.entries[index];
+                let before = state.cached_bytes;
+                state.uncache(key);
+                over = over.saturating_sub(before - state.cached_bytes);
+            }
+        }
+        stats.restored_tiles = self.restored;
+        stats.cached_bytes = self.entries.iter().map(|state| state.cached_bytes).sum();
+        stats.cached_tiles = self
+            .entries
+            .iter()
+            .map(|state| state.cache.len() as u32)
+            .sum();
+        self.upload_left = work.upload.get();
         // Stacks no terrain's recipe shares any longer leave the workers
-        // (decision 110).
+        // (decision 110); keys named by content (decision 116) leave once
+        // no recipe or stack holds them.
         if let Some(slots) = slots.as_mut() {
             let entries = &self.entries;
             self.stacks.retain(|(stack, key)| {
@@ -3079,10 +3427,22 @@ impl Terrains {
                         .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
                 });
                 if !held {
-                    slots.jobs.unshare(key.clone());
+                    released.push(key.clone());
                 }
                 held
             });
+            for key in released {
+                let held = self.stacks.iter().any(|(_, shared)| *shared == key)
+                    || self.entries.iter().any(|state| {
+                        state
+                            .recipe
+                            .as_ref()
+                            .is_some_and(|recipe| recipe.key == key)
+                    });
+                if !held {
+                    slots.jobs.unshare(key);
+                }
+            }
         }
         // The camera's view has loaded whole once nothing bakes, loads or
         // stands in for a finer level (decision 099).
