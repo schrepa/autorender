@@ -1615,12 +1615,14 @@ fn open_cave(world: &mut World) {
         },
         LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0),
     ));
-    // An interior over the whole tube.
-    let (low, high) = points.iter().fold(
+    // An interior over the tube from its first bend in, darkening over its
+    // blend from there: the mouth's walls and the blocks framing it stand
+    // in the open.
+    let (low, high) = points[1..].iter().fold(
         (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
         |(low, high), &point| (low.min(point), high.max(point)),
     );
-    let reach = Vec3::new(CAVE_RADIUS[0], CAVE_RADIUS[1], CAVE_RADIUS[0]) * 1.9;
+    let reach = Vec3::new(CAVE_RADIUS[0], CAVE_RADIUS[1], CAVE_RADIUS[0]) * 1.2;
     let (low, high) = (low - reach, high + reach);
     world.spawn((
         Transform {
