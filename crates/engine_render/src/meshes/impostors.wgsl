@@ -548,18 +548,24 @@ struct ImpostorShaded {
     depth: f32,
 }
 
-fn impostor_shaded(point: SurfacePoint, light: vec3<f32>) -> ImpostorShaded {
+// Cards fading over their steady meshes (decision 107) keep their card's
+// depth, in front of the mesh.
+fn impostor_shaded(input: ImpostorOutput, point: SurfacePoint, light: vec3<f32>)
+        -> ImpostorShaded {
+    if impostor_over(input.batch) {
+        return ImpostorShaded(finish(point, light), input.clip_position.z);
+    }
     let clip = camera.view_projection * vec4<f32>(point.world, 1.0);
     return ImpostorShaded(finish(point, light), saturate(clip.z / clip.w));
 }
 
 fn shade_impostor(input: ImpostorOutput) -> ImpostorShaded {
-    return impostor_shaded(impostor_point(input), vec3<f32>(0.0));
+    return impostor_shaded(input, impostor_point(input), vec3<f32>(0.0));
 }
 
 fn shade_impostor_lit(input: ImpostorOutput) -> ImpostorShaded {
     let point = impostor_point(input);
-    return impostor_shaded(point, local_light(point, input.clip_position.xy));
+    return impostor_shaded(input, point, local_light(point, input.clip_position.xy));
 }
 
 struct ImpostorColor {

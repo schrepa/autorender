@@ -473,6 +473,21 @@ pub(crate) const PRESENTATION_COMPACT: Table = Table {
     ],
 };
 
+/// Levels of detail kept and faded after culling (decision 107): each
+/// slot's level as last drawn, and the cards fading over their meshes.
+pub(crate) const PRESENTATION_FADES: Table = Table {
+    label: "engine/presentation-fades-layout",
+    bindings: &[
+        uniform(0, "frame", C),
+        read(7, "batches", C),
+        write(8, "poses", C),
+        write(9, "scan", C),
+        read(14, "slot_candidates", C),
+        write(25, "lod_states", C),
+        write(26, "fade_cards", C),
+    ],
+};
+
 /// Skinned slots' bounds (decision 036) from their palettes, culled.
 pub(crate) const PRESENTATION_SKIN_BOUNDS: Table = Table {
     label: "engine/presentation-skin-bounds-layout",

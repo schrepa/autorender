@@ -6,8 +6,8 @@
 use std::cell::OnceCell;
 
 use crate::bindings::{
-    PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_LEVEL,
-    PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
+    PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_FADES,
+    PRESENTATION_LEVEL, PRESENTATION_SKIN_BOUNDS, PRESENTATION_TESTS,
 };
 use crate::gpu_data::PRESENTATION_SHADER;
 use crate::pipelines::{Family, Fillers, layout};
@@ -19,6 +19,7 @@ pub(super) struct Families {
     pub(super) cull: Family,
     pub(super) tests: Family,
     pub(super) compact: Family,
+    pub(super) fades: Family,
     skin_bounds: OnceCell<Family>,
 }
 
@@ -35,6 +36,7 @@ pub(super) struct Pipelines {
     pub(super) batch_args: wgpu::ComputePipeline,
     pub(super) scatter: wgpu::ComputePipeline,
     pub(super) occlusion_test: wgpu::ComputePipeline,
+    pub(super) fade_levels: wgpu::ComputePipeline,
     skin_palette: OnceCell<wgpu::ComputePipeline>,
     skin_bounds: OnceCell<wgpu::ComputePipeline>,
     count_still: OnceCell<wgpu::ComputePipeline>,
@@ -63,6 +65,7 @@ impl Shaders {
             cull: Family::new(device, &PRESENTATION_CULL, &[]),
             tests: Family::new(device, &PRESENTATION_TESTS, &[]),
             compact: Family::new(device, &PRESENTATION_COMPACT, &[]),
+            fades: Family::new(device, &PRESENTATION_FADES, &[]),
             skin_bounds: OnceCell::new(),
         };
         let pipeline = |entry: &str, family: &Family| {
@@ -77,6 +80,7 @@ impl Shaders {
             batch_args: pipeline("batch_args", &families.compact),
             scatter: pipeline("scatter", &families.compact),
             occlusion_test: pipeline("occlusion_test", &families.tests),
+            fade_levels: pipeline("fade_levels", &families.fades),
             skin_palette: OnceCell::new(),
             skin_bounds: OnceCell::new(),
             count_still: OnceCell::new(),

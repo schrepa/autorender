@@ -256,6 +256,9 @@ pub struct Renderer {
     scatter: crate::scatter::ScatterPass,
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
     scatter_draws: scatter_draws::ScatterDraws,
+    // How far switches between how objects show fade this frame
+    // (decisions 104 and 107).
+    switch_fades: frame::SwitchFades,
     // What placed objects cover around the camera (decision 059).
     occupancy: crate::occupancy::OccupancyPass,
     // The presentation time of the last frame written, which temporal
@@ -541,6 +544,7 @@ impl Renderer {
             scatter,
             scatter_meshes: (BTreeSet::new(), 0),
             scatter_draws: scatter_draws::ScatterDraws::default(),
+            switch_fades: frame::SwitchFades::default(),
             occupancy,
             last_seconds: None,
             post: None,

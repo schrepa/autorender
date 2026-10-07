@@ -238,7 +238,7 @@ fn show_fading(id: u32, record: Record, group: Group, way: u32, fade: f32, out: 
         return;
     }
     if way == SHOWN_CARD {
-        if group.record >= 0x10000u {
+        if group.record >= 0x8000u {
             if !out {
                 card(0u, id, group.record);
             }

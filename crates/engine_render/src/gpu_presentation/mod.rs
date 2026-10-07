@@ -13,6 +13,7 @@
 //! frames and reflection probe faces (`probes`), and the totals read back
 //! (`totals`). Bind groups are kept by the generations of what they bind.
 
+mod fades;
 mod groups;
 mod inputs;
 mod joints;
@@ -31,6 +32,7 @@ use crate::mesh_arena::Ids;
 use crate::profiling::{GpuProfiler, Span};
 use crate::staging::Prestaged;
 
+use fades::Fades;
 use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
 use inputs::NodeInputs;
 pub(crate) use inputs::Staging;
@@ -162,6 +164,9 @@ pub(crate) struct CullingView {
     /// Whether reflection probes (decision 043) need slots' still frames,
     /// and whether this frame counts them (while captures wait).
     pub stillness: Option<bool>,
+    /// The share of a switch between a mesh and its card this frame fades
+    /// (decision 107): 1 or more switches at once.
+    pub fade: f32,
 }
 
 // Groups over node inputs alone: the previous-pose shift and parent
@@ -176,15 +181,16 @@ struct NodeGroups {
 // (decision 043) while still frames are kept.
 struct PoseGroups {
     cull: wgpu::BindGroup,
+    fades: wgpu::BindGroup,
     skin: wgpu::BindGroup,
     skin_bounds: Option<wgpu::BindGroup>,
     count_still: Option<wgpu::BindGroup>,
 }
 
-// Node, draw group, joint and still frame storage generations, the pose
-// storage generation that one pose buffer's groups bind, and whether
+// Node, draw group, joint, still frame and fade storage generations, the
+// pose storage generation that one pose buffer's groups bind, and whether
 // candidates include skinned slots.
-type PoseKey = (u64, u64, u64, u64, u64, bool);
+type PoseKey = (u64, u64, u64, u64, u64, u64, bool);
 
 // The occlusion test group's pose buffer index, depth pyramid generation,
 // draw group generation and pose storage generation.
@@ -201,6 +207,7 @@ pub(crate) struct GpuPresentationPass {
     groups: DrawGroups,
     joints: Joints,
     stillness: Stillness,
+    fades: Fades,
     probes: ProbeFaces,
     totals: Totals,
     // Each frame's hidden and sub-pixel counts (decisions 040 and 041).
@@ -249,6 +256,7 @@ impl GpuPresentationPass {
             groups: DrawGroups::new(device),
             joints: Joints::new(device),
             stillness: Stillness::new(device),
+            fades: Fades::new(device),
             probes: ProbeFaces::new(std::array::from_fn(|_| {
                 uniform("engine/presentation-frame-probe")
             })),
@@ -374,6 +382,8 @@ impl GpuPresentationPass {
         );
         self.stillness
             .ensure(device, view.stillness, poses.current());
+        self.fades
+            .ensure(device, poses.current(), self.groups.capacity());
         self.poses = (poses.parity, poses.generation);
 
         // Node inputs: records newer than the last uploaded gather.
@@ -438,6 +448,7 @@ impl GpuPresentationPass {
             groups,
             joints,
             stillness,
+            fades,
             occlusion_counts,
             node_groups: node_cache,
             compact_groups,
@@ -473,6 +484,7 @@ impl GpuPresentationPass {
             groups.generation(),
             joints.generation(),
             stillness.generation(),
+            fades.generation(),
             poses.generation,
             groups.skinned_count() != 0,
         );
@@ -496,6 +508,19 @@ impl GpuPresentationPass {
                         entry("poses", current),
                         entry("scan", &groups.scan),
                         entry("slot_candidates", &groups.slot_candidates),
+                    ],
+                ),
+                fades: group(
+                    &shaders.families.fades,
+                    "engine/presentation-fades-group",
+                    &[
+                        entry("frame", frame),
+                        entry("batches", &groups.batches),
+                        entry("poses", current),
+                        entry("scan", &groups.scan),
+                        entry("slot_candidates", &groups.slot_candidates),
+                        entry("lod_states", &fades.states),
+                        entry("fade_cards", &fades.cards),
                     ],
                 ),
                 skin: group(
@@ -605,8 +630,10 @@ impl GpuPresentationPass {
                 .eye
                 .extend(if view.impostors { 1.0 } else { 0.0 })
                 .to_array(),
+            fade: [view.fade, fades::FADE_MARGIN, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&uniform));
+        self.fades.begin_frame(queue);
         self.frame_uniform = Some(uniform);
         if self.occlusion {
             uniform.mask = FLAG_PHASE2;
@@ -634,6 +661,9 @@ impl GpuPresentationPass {
         let candidates = self.groups.count();
         let joints = self.joints.count();
         let skinned = self.groups.skinned_count();
+        let lod = self
+            .frame_uniform
+            .is_some_and(|uniform| uniform.lod_error > 0.0);
         // Hidden and sub-pixel counts start at zero every frame.
         if candidates != 0 {
             encoder.clear_buffer(&self.occlusion_counts, 0, None);
@@ -679,6 +709,12 @@ impl GpuPresentationPass {
                     pass.set_pipeline(shaders.skin_bounds(device));
                     pass.set_bind_group(0, group, &[]);
                     pass.dispatch_workgroups(skinned.div_ceil(SKINNED_GROUP), 1, 1);
+                }
+                // Levels kept and faded (decision 107), on frames with them.
+                if lod {
+                    pass.set_pipeline(&pipelines.fade_levels);
+                    pass.set_bind_group(0, &posed.fades, &[]);
+                    pass.dispatch_workgroups(workgroups, 1, 1);
                 }
                 pass.set_pipeline(&pipelines.sum_groups);
                 pass.set_bind_group(0, &compact[PHASE_ONE], &[]);
@@ -845,6 +881,12 @@ impl GpuPresentationPass {
     /// of the non-indexed draw of their cards.
     pub(crate) fn impostor_source(&self, phase: usize) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         self.groups.impostor_source(phase)
+    }
+
+    /// The cards fading over their meshes this frame (decision 107): their
+    /// instances and the arguments of their non-indexed draw.
+    pub(crate) fn fading_cards(&self) -> (wgpu::BufferSlice<'_>, &wgpu::Buffer, u64) {
+        self.fades.source()
     }
 }
 

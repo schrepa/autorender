@@ -47,6 +47,11 @@ struct Frame {
     // The eye the frame rasterizes from; w: 1 when draw groups' impostors
     // (decision 048) may draw.
     eye: vec4<f32>,
+    // Fades (decision 107): the share of a switch between a mesh and its
+    // card this frame fades (1 or more switches at once, keeping no level
+    // past its distance), and the share of its distance past a switch the
+    // eye goes before a candidate switches back.
+    fade: vec4<f32>,
 }
 
 // One local pose per node in 10 floats: [t.xyz, s.x, r.xyzw, s.yz]. Current
@@ -170,6 +175,12 @@ struct Skinned {
 // Impostors (decision 048): each impostor instance's visible ID and draw
 // group, compacted over every group.
 @group(0) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
+// Fades (decision 107): each slot's level of detail as last drawn
+// (`LOD_STATE`), and the cards fading over their meshes: the arguments of
+// their non-indexed draw, then each card's slot and batch word, as
+// `impostor_ids` holds them.
+@group(0) @binding(25) var<storage, read_write> lod_states: array<u32>;
+@group(0) @binding(26) var<storage, read_write> fade_cards: array<atomic<u32>>;
 @group(1) @binding(0) var<uniform> level: Level;
 
 const NO_PARENT: u32 = 0xffffffffu;
@@ -205,6 +216,19 @@ const LOD_LEVELS: u32 = 3u;
 const IMPOSTOR: u32 = 3u;
 // Vertices of an impostor card: two triangles.
 const IMPOSTOR_VERTICES: u32 = 6u;
+// A slot's level of detail as last drawn (decision 107): the level (bits 0
+// and 1), the one before it (2 and 3) and how far the switch between them
+// has faded, of LOD_FADED (from bit 4); its batch's low byte from bit 23,
+// so a slot another batch takes starts over; and LOD_STATE, which zeroed
+// storage lacks.
+const LOD_STATE: u32 = 0x80000000u;
+const LOD_FADED: u32 = 65535u;
+// A card's batch word while it fades (`impostor_frames.wgsl`): its fade (of
+// 16383) from bit 16, fading out, and drawn over its steady mesh at its
+// card's depth (decision 107).
+const CARD_FADING: u32 = 0x80000000u;
+const CARD_FADING_OUT: u32 = 0x40000000u;
+const CARD_OVER: u32 = 0x8000u;
 // Pixels the projected bounds are widened by before looking for pixel
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
@@ -513,6 +537,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
 // wherever that fits; 0 for groups without levels, frames without them and
 // spheres around the eye.
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
+    return lod_level_at(batch, model, 1.0);
+}
+
+// `lod_level` with the distance to the eye scaled by `scale`.
+fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32) -> u32 {
     let levels = u32(batch.lod_errors.z);
     let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
     if (levels <= 1u && !impostor) || !(frame.lod_error > 0.0) {
@@ -531,7 +560,7 @@ fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
     // (perspective); orthographic views keep the same scale everywhere.
     let perspective = length(w_row) > 0.5;
     let to_eye = center - frame.eye.xyz;
-    let distance_squared = dot(to_eye, to_eye);
+    let distance_squared = dot(to_eye, to_eye) * scale_distance * scale_distance;
     var level = 0u;
     for (var l = 1u; l < IMPOSTOR + 1u; l++) {
         var error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u);
@@ -560,6 +589,81 @@ fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
 // Indices of mesh level `level` (1 or 2) of `batch`: 0 for an empty level.
 fn level_indices(batch: Batch, level: u32) -> u32 {
     return select(batch.lod_ranges.w, batch.lod_ranges.y, level == 1u);
+}
+
+// Levels of detail kept and faded (decision 107), after culling: a
+// candidate drawn this frame keeps its slot's level until the eye goes a
+// margin past the level's distance (so candidates near a switch do not
+// flicker between two levels as the eye wavers), and switching between a
+// mesh and its card, the card fades in or out over its steady mesh over
+// frames, drawn over it at its card's depth. Switches between meshes,
+// whose errors stay within the pixel error, happen at once. Candidates
+// not drawn this frame forget their level, shown as they stand when they
+// come into view; previews (a fade of 1) keep none.
+@compute @workgroup_size(256)
+fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x >= frame.candidates || !(frame.lod_error > 0.0) {
+        return;
+    }
+    let candidate = slot_candidates[id.x];
+    let flags = scan[candidate.position];
+    let batch = batches[candidate.batch];
+    // Meshes with joints keep the level culling chose.
+    if batch.bounds_min.w != 0.0 {
+        return;
+    }
+    if (flags & frame.mask) == 0u || frame.fade.x >= 1.0 {
+        lod_states[candidate.slot] = 0u;
+        return;
+    }
+    let level = (flags >> LOD_SHIFT) & 3u;
+    let tag = (candidate.batch & 0xffu) << 23u;
+    let state = lod_states[candidate.slot];
+    var shown = level;
+    var previous = level;
+    var progress = LOD_FADED;
+    if (state & LOD_STATE) != 0u && (state & (0xffu << 23u)) == tag {
+        shown = state & 3u;
+        previous = (state >> 2u) & 3u;
+        progress = (state >> 4u) & 0xffffu;
+        let model = rows_matrix(poses[candidate.slot]);
+        let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y);
+        let farther = lod_level_at(batch, model, 1.0 + frame.fade.y);
+        let wanted = max(nearer, min(shown, farther));
+        if progress >= LOD_FADED {
+            if wanted != shown {
+                previous = shown;
+                shown = wanted;
+                progress = 0u;
+            }
+        } else if wanted == previous {
+            // Switching back before the fade ends turns it around.
+            previous = shown;
+            shown = wanted;
+            progress = LOD_FADED - progress;
+        }
+        // Only a card and its mesh fade, while cards draw, and only for
+        // candidates that stand still, whose words can carry the fade.
+        let cards = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
+        let card_switch = (shown == IMPOSTOR) != (previous == IMPOSTOR);
+        if !card_switch || !cards || (flags & MOVING) != 0u || candidate.batch >= CARD_OVER {
+            progress = LOD_FADED;
+        }
+        progress = min(progress + u32(frame.fade.x * f32(LOD_FADED)), LOD_FADED);
+    }
+    lod_states[candidate.slot] = LOD_STATE | tag | shown | (previous << 2u) | (progress << 4u);
+    // The steady level: the mesh while its card fades.
+    var steady = shown;
+    if progress < LOD_FADED {
+        steady = select(shown, previous, shown == IMPOSTOR);
+        let fade = u32(f32(progress) / f32(LOD_FADED) * 16383.0);
+        let word = candidate.batch | CARD_OVER | CARD_FADING | (fade << 16u)
+            | select(CARD_FADING_OUT, 0u, shown == IMPOSTOR);
+        let index = atomicAdd(&fade_cards[1], 1u);
+        atomicStore(&fade_cards[4u + 2u * index], candidate.slot);
+        atomicStore(&fade_cards[5u + 2u * index], word);
+    }
+    scan[candidate.position] = (flags & ~(3u << LOD_SHIFT)) | (steady << LOD_SHIFT);
 }
 
 // Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
