@@ -3339,12 +3339,19 @@
       ]
     },
     "SceneOccupancy": {
-      "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(decision 098; 64 to 4096), the map's texels a side (128 to 4096), and\nhow much of the sky light full cover takes away (0 to 1). Requires\nversion 9.",
+      "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(decision 098; 64 to 4096), the map's texels a side (128 to 4096), how\nmuch of the sky light full cover takes away (0 to 1), and the meters\nthe coarser far map reaches (decision 101; 0, none, or the radius to\n65536), its texels as many. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
           "default": true
+        },
+        "far_radius": {
+          "type": "number",
+          "format": "float",
+          "default": 4096.0,
+          "maximum": 65536.0,
+          "minimum": 0.0
         },
         "radius": {
           "type": "number",

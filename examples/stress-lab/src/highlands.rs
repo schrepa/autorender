@@ -1855,13 +1855,14 @@ fn rules() -> Biomes {
                 sink: 0.3,
                 bed: 0.0,
                 level: 3,
-                // Half of them stand on the pinned four-kilometer tiles too,
-                // so forests reach the horizon (decision 061), the rest
+                // A third of them stand on the pinned four-kilometer tiles
+                // too, so forests reach the horizon (decision 061), the rest
                 // thinning out before the two-kilometer tiles end (decision
-                // 100).
+                // 100), where the far occupancy map darkens their floors
+                // (decision 101).
                 far: Some(FarPlacement {
                     level: 4,
-                    share: 0.5,
+                    share: 0.3,
                 }),
             },
             PlacementLayer {

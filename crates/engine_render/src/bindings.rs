@@ -248,9 +248,10 @@ pub(crate) const CAMERA: Table = Table {
         texture(14, "terrain_horizon_records", Unfilterable, D2, F),
         sampler(15, "terrain_horizon_sampler", Filtering, F),
         // What placed objects cover around the camera (decision 059): its
-        // density, filtered, and the covers' tops and bottoms.
-        texture(16, "occupancy_coverage", Float, D2, F),
-        texture(17, "occupancy_heights", Unfilterable, D2, F),
+        // density, filtered, and the covers' tops and bottoms; the near map
+        // in the first layer, the far one (decision 101) in the second.
+        texture(16, "occupancy_coverage", Float, D2Array, F),
+        texture(17, "occupancy_heights", Unfilterable, D2Array, F),
         // The kept shadow levels (decision 065), one layer each.
         texture(18, "kept_levels", Depth, D2Array, F),
         // Clouds' shadows (decision 084): the eighth storage buffer the
@@ -850,7 +851,9 @@ pub(crate) const SCATTER_SNAP: Table = Table {
 };
 
 /// Occupancy (decision 059; `occupancy.wgsl`): the map's area and counts,
-/// and the placed objects' records, poses and draw groups' covers.
+/// and the placed objects' records, poses and draw groups' covers, and how
+/// their layers thin (decision 100), which the far map weighs far objects
+/// by.
 pub(crate) const OCCUPANCY: Table = Table {
     label: "engine/occupancy-layout",
     bindings: &[
@@ -858,6 +861,7 @@ pub(crate) const OCCUPANCY: Table = Table {
         read(1, "records", V),
         read(2, "poses", V),
         read(3, "covers", V),
+        read(4, "thins", V),
     ],
 };
 

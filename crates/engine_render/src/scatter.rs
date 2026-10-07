@@ -761,8 +761,8 @@ impl ScatterPass {
 
     /// The objects' records and poses, and a generation advancing when the
     /// buffers are replaced.
-    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
-        (&self.records, &self.poses, self.generation)
+    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, &wgpu::Buffer, u64) {
+        (&self.records, &self.poses, &self.thins, self.generation)
     }
 
     /// The pose groups of plain and temporal mesh pipelines.

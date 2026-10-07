@@ -2,11 +2,15 @@
 // top-down map around the camera, a disc as wide as its draw group's
 // footprint at its scale, softening at its rim. One target keeps the
 // densest cover over each texel; the other the highest top and lowest
-// bottom over it, as heights above the map's reference height.
+// bottom over it, as heights above the map's reference height. The far
+// map (decision 101) adds up covers instead, each footprint at least a
+// texel wide carrying its share of the texel, so its texels keep how much
+// of their ground covers hide.
 
 struct Splat {
     // The map's center (x and z, world), meters a side and reference
-    // height; then slots and draw groups.
+    // height; then slots, draw groups, 1 for the far map, and its texels
+    // a side.
     area: vec4<f32>,
     counts: vec4<u32>,
 }
@@ -46,6 +50,16 @@ const HIDDEN: u32 = 0x80000000u;
 @group(0) @binding(1) var<storage, read> records: array<Record>;
 @group(0) @binding(2) var<storage, read> poses: array<Pose>;
 @group(0) @binding(3) var<storage, read> covers: array<Cover>;
+// How each terrain's placement layers thin (decision 100; `scatter_cull.wgsl`):
+// the far map weighs an object standing far away by the share standing
+// there, as it stands for the rest of its layer's objects.
+@group(0) @binding(4) var<storage, read> thins: array<vec4<f32>>;
+
+const THIN_LAYERS: u32 = 64u;
+const TERRAIN_INDEX: u32 = 0x1ffu;
+const LAYER_SHIFT: u32 = 9u;
+const NO_LAYER: u32 = 0x7fu;
+const NEAR_LEVEL_SHIFT: u32 = 16u;
 
 struct SplatOutput {
     @builtin(position) clip: vec4<f32>,
@@ -82,12 +96,30 @@ fn vs_splat(@builtin(vertex_index) vertex: u32, @builtin(instance_index) slot: u
     let pose = poses[slot];
     let root = vec3<f32>(pose.r0.w, pose.r1.w, pose.r2.w);
     let corner = CORNERS[vertex];
-    let point = root.xz + corner * cover.footprint * record.scale;
+    var footprint = cover.footprint * record.scale;
+    var density = cover.density;
+    if splat.counts.z != 0u {
+        // The far map: footprints at least most of a texel wide, carrying
+        // their share of it.
+        let texel = splat.area.z / f32(max(splat.counts.w, 1u));
+        let widened = max(footprint, 0.75 * texel);
+        density *= (footprint * footprint) / (widened * widened);
+        footprint = widened;
+        // An object standing far away stands for its layer's objects that
+        // do not.
+        let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
+        let thin = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
+        if ((record.terrain >> NEAR_LEVEL_SHIFT) & 0x1fu) != 0u && layer != NO_LAYER
+            && thin < arrayLength(&thins) && thins[thin].w > 0.0 {
+            density /= max(thins[thin].x, 0.25);
+        }
+    }
+    let point = root.xz + corner * footprint;
     // Map texels run with x across and z down.
     let uv = (point - splat.area.xy) / splat.area.z;
     output.clip = vec4<f32>(uv.x * 2.0, -uv.y * 2.0, 0.5, 1.0);
     output.corner = corner;
-    output.cover = vec3<f32>(cover.density, root.y + cover.bottom * record.scale - splat.area.w,
+    output.cover = vec3<f32>(density, root.y + cover.bottom * record.scale - splat.area.w,
         root.y + cover.top * record.scale - splat.area.w);
     return output;
 }

@@ -663,7 +663,7 @@ impl Renderer {
         // What placed objects cover around the camera (decision 059): the
         // map shading reads, drawn this frame when it no longer holds the
         // camera's surroundings or the objects changed.
-        if let Some((area, strength)) = self.occupancy.prepare(
+        if let Some((area, far, strength)) = self.occupancy.prepare(
             &self.device,
             &self.queue,
             &snapshot.environment.occupancy,
@@ -675,7 +675,16 @@ impl Renderer {
             ),
         ) {
             lighting.occupancy = [area.center[0], area.center[1], 1.0 / area.size, strength];
-            lighting.occupancy_heights = [area.reference, area.resolution as f32, area.reach, 0.0];
+            lighting.occupancy_heights = [
+                area.reference,
+                area.resolution as f32,
+                area.reach,
+                far.map_or(0.0, |far| far.reference),
+            ];
+            // The far map (decision 101).
+            if let Some(far) = far {
+                lighting.occupancy_far = [far.center[0], far.center[1], 1.0 / far.size, far.reach];
+            }
         }
         camera_upload_bytes += self.camera.write_lighting(&self.queue, lighting);
         let mut color_upload_bytes = 0_u64;

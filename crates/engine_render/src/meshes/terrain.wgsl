@@ -523,7 +523,8 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 // surface (decision 098), a pixel's footprint there (meters, its long
 // side), the footprint the maps' anisotropic filtering resolves (its short
 // side, or a sixteenth of its long side where filtering runs out), the
-// terrain's normal, and the way toward the eye and the meters to it.
+// terrain's normal, the way toward the eye and the meters to it, and the
+// share of its cover's leaves blades no longer show there (decision 098).
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -533,6 +534,23 @@ struct TerrainSite {
     geometric: vec3<f32>,
     toward: vec3<f32>,
     distance: f32,
+    thinned: f32,
+}
+
+// The share of the cover's leaves blades no longer show `distance` meters
+// from the eye at `world` by their law (`terrain.cover`, decision 098): all
+// of them where a terrain's surroundings show its cover as canopy from the
+// eye on; none without cover.
+fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
+    let cover = terrain.cover;
+    if cover.z <= 0.0 {
+        return 0.0;
+    }
+    if cover.x <= 0.0 {
+        return 1.0;
+    }
+    let share = cover_share(distance, cover.x, cover.y, cover_end(world.xz, cover.y));
+    return 1.0 - cover_shown(distance, share, cover.x);
 }
 
 // The normal blades standing on ground of normal `ground` light with, on
@@ -551,21 +569,11 @@ fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
 // decision 098) hides of the ground along the view, 1 - exp(-G leaves /
 // sin), all of it at grazing views.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
-    let cover = terrain.cover;
-    if cover.z <= 0.0 || leaves <= 0.0 {
-        return 0.0;
-    }
-    var thinned = 1.0;
-    if cover.x > 0.0 {
-        let share = cover_share(site.distance, cover.x, cover.y,
-            cover_end(site.world.xz, cover.y));
-        thinned = 1.0 - cover_shown(site.distance, share, cover.x);
-    }
-    if thinned <= 0.0 {
+    if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
     }
     let sine = max(abs(dot(site.toward, site.geometric)), 0.03);
-    return thinned * (1.0 - exp(-0.5 * leaves * cover.z / sine));
+    return site.thinned * (1.0 - exp(-0.5 * leaves * terrain.cover.z / sine));
 }
 
 // One material of a fragment's blend after its first pass: its occlusion,
@@ -1060,6 +1068,7 @@ fn terrain_point(relative_spacing: vec4<f32>, cell: vec2<f32>) -> SurfacePoint {
     site.geometric = geometric;
     site.distance = away;
     site.toward = -ray;
+    site.thinned = terrain_thinned(world, away);
     // Sunk where the ground's relief and tracks show (decisions 082 and
     // 083).
     let relief = terrain_parallax(site, shading);
