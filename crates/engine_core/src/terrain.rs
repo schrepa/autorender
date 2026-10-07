@@ -21,6 +21,17 @@
 //! hand them the most important missing tiles and make the tiles they
 //! finish resident, which takes frames little time.
 //!
+//! Tiles load in the order the view needs them (decision 112): the pinned
+//! levels; the tiles the view draws and shows, with those under focus
+//! entities; the tiles it draws out of sight, then collision's; those that
+//! only shade what it shows; where the eye is headed; the rest. Distances
+//! run to each tile's ground, so a high eye wants fine tiles only as near
+//! as their ground is. Jobs carry that order as their priority, the first
+//! tiers taking a third job per worker, which workers run first; jobs for
+//! tiles no longer kept stop at once. Far tiles' objects standing far away
+//! at their level are placed by jobs of their own after their tiles, so
+//! the tiles under the view stop waiting for far forests.
+//!
 //! Queries ([`Terrains::sample`], [`Terrains::height_at`] and the rest)
 //! answer from the finest resident tile at a point, on the triangles
 //! renderers and collision use, and return `None` where no tile is
@@ -36,23 +47,24 @@ use bevy_ecs::{
     prelude::{Component, Entity, Resource, With, World},
     query::QueryState,
 };
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{BAKE_JOB, StackView, TILE_JOB, TerrainRecipe};
+use engine_terrain::jobs::{BAKE_JOB, FAR_JOB, StackView, TILE_JOB, TerrainRecipe};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
     Fall, FileHeader, FormatError, Generator, HydrologyStage, HydrologyStats, Layer, Layers,
-    LodRanges, Mask, NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, Patch, PathStage,
-    Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake,
-    Tile, TileKey, TileSample, WantedTile, decode_tile,
+    LodRanges, Mask, NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE,
+    Patch, PathStage, Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS,
+    TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, WantedView, decode_tile,
+    merge_placed,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
 use crate::{
     Camera, GlobalTransforms, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
-    RenderTexture,
+    RenderTexture, URGENT_JOBS, VIEW_JOBS, job_class, job_priority,
 };
 
 /// Where a terrain's tiles come from.
@@ -938,15 +950,16 @@ impl Work {
 /// Loads `missing` tiles of `state`, most important first, within `work`'s
 /// time from slices of `budget`: generated after the terrain's bakes,
 /// decoded, or requested and decoded once delivered; `target` is every tile
-/// it keeps. Frames load what they find missing, and hosts what is left
-/// between frames (decision 108). Where `slots` has workers, they bake and
-/// generate instead (decision 110). Returns whether a bake is still in
-/// progress, which nothing loads behind.
+/// it loads and `keep` every tile it keeps. Frames load what they find
+/// missing, and hosts what is left between frames (decision 108). Where
+/// `slots` has workers, they bake and generate instead (decision 110), each
+/// tile at its job priority (decision 112). Returns whether a bake is still
+/// in progress, which nothing loads behind.
 #[allow(clippy::too_many_arguments)]
 fn load_tiles(
     state: &mut TerrainState,
-    missing: &[TileKey],
-    target: &HashSet<TileKey>,
+    missing: &[(TileKey, u32)],
+    (target, keep): (&HashSet<TileKey>, &HashSet<TileKey>),
     work: &Work,
     budget: &mut u64,
     frame: u64,
@@ -1007,18 +1020,29 @@ fn load_tiles(
                 && state.recipe.is_some()
                 && state.worker_failures < WORKER_FAILURES
             {
-                generate_on_workers(state, missing, target, work, slots, frame);
+                generate_on_workers(state, missing, (target, keep), work, slots, frame);
                 return false;
             }
-            // Tiles handed to workers that stopped generate here.
-            for (_, (id, _)) in state.dispatched.drain() {
+            // Tiles handed to workers that stopped generate here, whole.
+            for (key, (id, _, _, _)) in state.dispatched.drain() {
                 if let Some(slots) = slots.as_deref_mut() {
                     slots.jobs.cancel(id);
                 }
+                state.failed.remove(&key);
+            }
+            for (key, (id, _)) in state.far_jobs.drain() {
+                if let Some(slots) = slots.as_deref_mut() {
+                    slots.jobs.cancel(id);
+                }
+                state.far_wanted.insert(key, 0);
+            }
+            for key in std::mem::take(&mut state.far_wanted).into_keys() {
+                state.tiles.remove(&key);
+                state.revision += 1;
             }
             // The coarsest level always draws: generate it whole at once.
             let first = state.tiles.is_empty();
-            for &key in missing {
+            for &(key, _) in missing {
                 let whole = first && u32::from(key.level) + 1 == pyramid.levels();
                 if !whole && *budget == 0 && !work.refill(budget) {
                     break;
@@ -1054,7 +1078,7 @@ fn load_tiles(
         } => {
             // The whole file is here: decode within the frame's work,
             // then give each tile its surface.
-            for &key in missing {
+            for &(key, _) in missing {
                 if *budget == 0 && !work.refill(budget) {
                     break;
                 }
@@ -1081,7 +1105,7 @@ fn load_tiles(
             url,
             data: None,
         } => {
-            for &key in missing {
+            for &(key, _) in missing {
                 if *budget > 0 || work.refill(budget) {
                     state.surface_job(key, budget);
                 }
@@ -1137,18 +1161,40 @@ fn load_tiles(
 }
 
 /// Workers a frame hands terrain jobs to (decision 110): the jobs, and how
-/// many more it may hand out.
+/// many more it may hand out, of any priority and urgent (decision 112).
 struct JobSlots<'a> {
     jobs: &'a mut Jobs,
     slots: usize,
+    urgent: usize,
 }
 
 impl JobSlots<'_> {
     /// The frame's jobs: two in flight per worker, so each has its next
-    /// ready, less those still running.
+    /// ready, and a third for urgent jobs, which workers take up first;
+    /// less those still running.
     fn of(jobs: &mut Jobs) -> JobSlots<'_> {
-        let slots = (jobs.workers() as usize * 2).saturating_sub(jobs.running());
-        JobSlots { jobs, slots }
+        let workers = jobs.workers() as usize;
+        let running = jobs.running();
+        JobSlots {
+            slots: (workers * 2).saturating_sub(running),
+            urgent: (workers * 3).saturating_sub(running),
+            jobs,
+        }
+    }
+
+    /// Takes a slot for a job of `priority`; whether one was free.
+    fn take(&mut self, priority: u32) -> bool {
+        let free = if job_class(priority) == URGENT_JOBS {
+            self.urgent
+        } else {
+            self.slots
+        };
+        if free == 0 {
+            return false;
+        }
+        self.slots = self.slots.saturating_sub(1);
+        self.urgent = self.urgent.saturating_sub(1);
+        true
     }
 }
 
@@ -1194,7 +1240,8 @@ fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
 fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, pyramid: &Pyramid) {
     let Some(id) = state.bake_job else {
         let input = engine_terrain::jobs::bake_input(layers, pyramid);
-        state.bake_job = Some(jobs.submit(BAKE_JOB, input));
+        let priority = job_priority(URGENT_JOBS, 0);
+        state.bake_job = Some(jobs.submit(BAKE_JOB, input, priority));
         return;
     };
     let Some(output) = jobs.take(id) else {
@@ -1226,11 +1273,15 @@ fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, py
 /// important first, while the frame may hand out jobs; makes the tiles
 /// workers finished resident, the first at once and the rest within
 /// `work`'s time, when still wanted and generated from the layers tiles
-/// generate from now. Tiles that failed are asked for again later.
+/// generate from now. Tiles that failed are asked for again later. Jobs
+/// for tiles `keep` no longer holds, or from layers since replaced, stop
+/// (decision 112), and tiles of levels with objects standing far away
+/// arrive without them: jobs of their own place those after, merged into
+/// the tile in the order one pass places them.
 fn generate_on_workers(
     state: &mut TerrainState,
-    missing: &[TileKey],
-    target: &HashSet<TileKey>,
+    missing: &[(TileKey, u32)],
+    (target, keep): (&HashSet<TileKey>, &HashSet<TileKey>),
     work: &Work,
     slots: &mut JobSlots<'_>,
     frame: u64,
@@ -1244,13 +1295,34 @@ fn generate_on_workers(
     };
     // Tiles generating here stop: workers generate them.
     state.jobs.clear();
-    let handed: Vec<(TileKey, JobId, u64)> = state
+    // Work no longer wanted stops, so its workers take up what is.
+    state.dispatched.retain(|key, &mut (id, made, _, _)| {
+        let wanted = made == revision && keep.contains(key);
+        if !wanted {
+            slots.jobs.cancel(id);
+        }
+        wanted
+    });
+    let tiles = &state.tiles;
+    state.far_jobs.retain(|key, (id, tile)| {
+        let wanted =
+            keep.contains(key) && tiles.get(key).is_some_and(|held| Arc::ptr_eq(held, tile));
+        if !wanted {
+            slots.jobs.cancel(*id);
+        }
+        wanted
+    });
+    state
+        .far_wanted
+        .retain(|key, _| keep.contains(key) && tiles.contains_key(key));
+    let handed: Vec<(TileKey, (JobId, u64, u32, Placing))> = state
         .dispatched
         .iter()
-        .map(|(&key, &(id, made))| (key, id, made))
+        .map(|(&key, &job)| (key, job))
         .collect();
+    let rules = state.terrain.surface.rules.clone();
     let mut inserted = false;
-    for (key, id, made) in handed {
+    for (key, (id, made, priority, placing)) in handed {
         if inserted && work.expired() {
             break;
         }
@@ -1265,6 +1337,11 @@ fn generate_on_workers(
             Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
                 state.stale.remove(&key);
                 state.failed.remove(&key);
+                state.far_jobs.remove(&key);
+                state.far_wanted.remove(&key);
+                if placing == Placing::Near {
+                    state.far_wanted.insert(key, priority);
+                }
                 state.insert(tile);
                 inserted = true;
             }
@@ -1275,22 +1352,85 @@ fn generate_on_workers(
             }
         }
     }
-    for &key in missing {
-        if slots.slots == 0 {
+    let placing: Vec<(TileKey, JobId)> = state
+        .far_jobs
+        .iter()
+        .map(|(&key, &(id, _))| (key, id))
+        .collect();
+    for (key, id) in placing {
+        if inserted && work.expired() {
             break;
         }
-        if state.dispatched.contains_key(&key)
-            || state
-                .failed
-                .get(&key)
-                .is_some_and(|&at| frame < at + RETRY_AFTER)
-        {
+        let Some(output) = slots.jobs.take(id) else {
             continue;
+        };
+        let Some((_, tile)) = state.far_jobs.remove(&key) else {
+            continue;
+        };
+        match output
+            .ok()
+            .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
+        {
+            Some(far) => {
+                let placed = merge_placed(tile.placed(), &far);
+                state.insert(Tile::clone(&tile).with_placed(placed));
+                inserted = true;
+            }
+            None => {
+                state.far_wanted.insert(key, job_priority(VIEW_JOBS, 0));
+                state.worker_failures += 1;
+            }
         }
-        let input = engine_terrain::jobs::tile_input(&recipe, key);
-        let id = slots.jobs.submit(TILE_JOB, input);
-        state.dispatched.insert(key, (id, revision));
-        slots.slots -= 1;
+    }
+    // Then what is missing, most urgent first: tiles, and the objects
+    // standing far away on tiles that arrived without them, ranked after
+    // the urgent tiles where their tiles ranked.
+    let mut wanted: Vec<(u32, TileKey, bool)> = missing
+        .iter()
+        .filter(|(key, _)| {
+            !state.dispatched.contains_key(key)
+                && !state
+                    .failed
+                    .get(key)
+                    .is_some_and(|&at| frame < at + RETRY_AFTER)
+        })
+        .map(|&(key, priority)| (priority, key, false))
+        .collect();
+    wanted.extend(
+        state
+            .far_wanted
+            .iter()
+            .filter(|(key, _)| !state.far_jobs.contains_key(key))
+            .map(|(&key, &priority)| (job_priority(VIEW_JOBS, priority & 0xff_ffff), key, true)),
+    );
+    wanted.sort_by_key(|&(priority, key, far)| (priority, far, key));
+    for (priority, key, far) in wanted {
+        if !slots.take(priority) {
+            break;
+        }
+        if far {
+            let Some(tile) = state.tiles.get(&key).cloned() else {
+                continue;
+            };
+            let input = engine_terrain::jobs::far_input(&recipe, &tile);
+            let id = slots.jobs.submit(FAR_JOB, input, priority);
+            state.far_wanted.remove(&key);
+            state.far_jobs.insert(key, (id, tile));
+        } else {
+            // A tile replacing one resident, as after an edit, comes whole,
+            // so its objects standing far away never leave the view.
+            let placing =
+                if rules.places(key.level, Placing::Far) && !state.tiles.contains_key(&key) {
+                    Placing::Near
+                } else {
+                    Placing::All
+                };
+            let input = engine_terrain::jobs::tile_input(&recipe, key, placing);
+            let id = slots.jobs.submit(TILE_JOB, input, priority);
+            state
+                .dispatched
+                .insert(key, (id, revision, priority, placing));
+        }
     }
 }
 
@@ -1450,16 +1590,23 @@ struct TerrainState {
     /// For a terrain's surroundings (decision 094), what they were drawn
     /// from.
     around: Option<Around>,
-    /// The tiles the last frame found missing, most important first, and
-    /// every tile it keeps: what loads between frames (decision 108).
-    missing: Vec<TileKey>,
+    /// The tiles the last frame found missing, most important first with
+    /// their jobs' priorities (decision 112), every tile it loads and every
+    /// tile it keeps: what loads between frames (decision 108).
+    missing: Vec<(TileKey, u32)>,
     target: HashSet<TileKey>,
+    keep: HashSet<TileKey>,
     /// Workers' share (decision 110): the recipe they generate its tiles
-    /// from, the tiles generating there (each one's job and the recipe's
-    /// revision it generates from) and its bakes running there, unless
-    /// they failed there; and the tiles that failed there.
+    /// from, the tiles generating there (each one's job, the recipe's
+    /// revision it generates from and its priority) and its bakes running
+    /// there, unless they failed there; and the tiles that failed there.
     recipe: Option<SharedRecipe>,
-    dispatched: HashMap<TileKey, (JobId, u64)>,
+    dispatched: HashMap<TileKey, (JobId, u64, u32, Placing)>,
+    /// Resident tiles without their objects standing far away (decision
+    /// 112), with their tiles' priorities, and the jobs placing those, each
+    /// with the tile it places on.
+    far_wanted: HashMap<TileKey, u32>,
+    far_jobs: HashMap<TileKey, (JobId, Arc<Tile>)>,
     bake_job: Option<JobId>,
     bake_inline: bool,
     worker_failures: u32,
@@ -1510,8 +1657,11 @@ impl TerrainState {
             around: None,
             missing: Vec::new(),
             target: HashSet::new(),
+            keep: HashSet::new(),
             recipe: None,
             dispatched: HashMap::new(),
+            far_wanted: HashMap::new(),
+            far_jobs: HashMap::new(),
             bake_job: None,
             bake_inline: false,
             worker_failures: 0,
@@ -1523,7 +1673,10 @@ impl TerrainState {
     fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
-            .extend(self.dispatched.values().map(|&(id, _)| id));
+            .extend(self.dispatched.values().map(|&(id, _, _, _)| id));
+        retired
+            .jobs
+            .extend(self.far_jobs.values().map(|&(id, _)| id));
         retired.jobs.extend(self.bake_job);
         retired
             .recipes
@@ -1732,8 +1885,6 @@ pub struct Terrains {
     stacks: Vec<(Arc<Layers>, String)>,
     shares: u64,
     retired: Retired,
-    // Scratch.
-    wanted: Vec<WantedTile>,
 }
 
 /// The workers' jobs and recipes of terrains gone (decision 110).
@@ -2277,18 +2428,19 @@ impl Terrains {
             if !state.terrain.is_usable() || !settings.enabled {
                 continue;
             }
-            let missing: Vec<TileKey> = std::mem::take(&mut state.missing)
+            let missing: Vec<(TileKey, u32)> = std::mem::take(&mut state.missing)
                 .into_iter()
-                .filter(|key| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .filter(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key))
                 .collect();
-            if missing.is_empty() {
+            if missing.is_empty() && state.far_wanted.is_empty() && state.far_jobs.is_empty() {
                 continue;
             }
             let target = std::mem::take(&mut state.target);
+            let keep = std::mem::take(&mut state.keep);
             let baking = load_tiles(
                 state,
                 &missing,
-                &target,
+                (&target, &keep),
                 &work,
                 &mut budget,
                 frame,
@@ -2297,14 +2449,18 @@ impl Terrains {
             );
             state.missing = missing
                 .into_iter()
-                .filter(|key| !state.tiles.contains_key(key) || state.stale.contains(key))
+                .filter(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key))
                 .collect();
             state.target = target;
+            state.keep = keep;
             // Tiles waiting on their fetch load once delivered.
             let waiting = matches!(state.terrain.source, TerrainSource::File { data: None, .. })
                 && state.arrivals.is_empty();
-            remaining |=
-                baking || (!state.missing.is_empty() && !waiting) || !state.dispatched.is_empty();
+            remaining |= baking
+                || (!state.missing.is_empty() && !waiting)
+                || !state.dispatched.is_empty()
+                || !state.far_wanted.is_empty()
+                || !state.far_jobs.is_empty();
             if budget == 0 && !work.refill(&mut budget) {
                 break;
             }
@@ -2406,8 +2562,9 @@ impl Terrains {
                 .sum(),
             ..TerrainStats::default()
         };
-        let forward = camera.target - eye;
+        let forward = camera.target - camera.eye();
         let forward = Vec2::new(forward.x, forward.z);
+        let planes = ViewPlanes::new(camera, eye, viewport);
         let fov = camera.vertical_fov_radians;
         let fov = if fov.is_finite() && fov > 0.0 && fov < std::f32::consts::PI {
             fov
@@ -2456,91 +2613,116 @@ impl Terrains {
                 .ranges
                 .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
             let local_eye = eye - origin;
-            // What to load: pinned levels and the camera's tiles, then
-            // collision's, most important first.
-            self.wanted.clear();
-            engine_terrain::wanted_tiles(
-                &pyramid,
-                &ranges,
-                local_eye,
-                forward,
-                LOAD_REACH,
-                settings.pinned_levels,
-                cutout,
-                &mut self.wanted,
-            );
             // Collision's tiles load within its radius of the camera and
             // focus entities and stay, colliding, a quarter farther, as the
             // camera's tiles do: focus moving to and fro across a tile's
             // edge must not regenerate it each time.
             state.collision.clear();
             let mut loading = Vec::new();
+            let mut under = Vec::new();
             if state.terrain.collision && settings.collision_radius > 0.0 {
                 let held = settings.collision_radius * KEEP_REACH / LOAD_REACH;
                 for point in focus {
                     let local = *point - origin;
                     collision_keys(&pyramid, local, settings.collision_radius, &mut loading);
                     collision_keys(&pyramid, local, held, &mut state.collision);
+                    under.extend(pyramid.tile_at(0, Vec2::new(local.x, local.z)));
                 }
                 loading.sort_unstable();
                 loading.dedup();
                 state.collision.sort_unstable();
                 state.collision.dedup();
             }
-            let pinned_end = self
-                .wanted
-                .iter()
-                .position(|tile| {
-                    u32::from(tile.key.level) + settings.pinned_levels < pyramid.levels()
-                })
-                .unwrap_or(self.wanted.len());
-            let mut order: Vec<TileKey> = Vec::with_capacity(self.wanted.len() + loading.len());
-            let mut seen: HashSet<TileKey> = HashSet::with_capacity(order.capacity());
-            for key in self.wanted[..pinned_end]
-                .iter()
-                .map(|tile| tile.key)
-                .chain(loading.iter().copied())
-                .chain(self.wanted[pinned_end..].iter().map(|tile| tile.key))
-            {
-                push_with_ancestors(&pyramid, key, &mut order, &mut seen);
-            }
-            // Then where the eye is headed (decision 100), so its tiles are
-            // ready before the view needs them.
-            if ahead != eye {
-                self.wanted.clear();
-                engine_terrain::wanted_tiles(
-                    &pyramid,
-                    &ranges,
-                    ahead - origin,
+            // What the view wants (decision 112), the camera's tiles within
+            // their reach of the eye and where it is headed (decision 100),
+            // and what it keeps, within a wider reach; distances run to each
+            // tile's ground.
+            let (wanted, headed, held) = {
+                let tiles = &state.tiles;
+                let errors = &state.errors;
+                let ground = |key: TileKey| ground_bounds(tiles, &pyramid, errors, key);
+                let seen = |low: Vec3, high: Vec3| planes.sees(low + origin, high + origin);
+                let view = |eye: Vec3| WantedView {
+                    eye,
                     forward,
-                    LOAD_REACH,
-                    settings.pinned_levels,
-                    cutout,
-                    &mut self.wanted,
-                );
-                for key in self.wanted.iter().map(|tile| tile.key) {
-                    push_with_ancestors(&pyramid, key, &mut order, &mut seen);
-                }
+                    ground: &ground,
+                    seen: &seen,
+                };
+                let want = |eye: Vec3, reach: f32| {
+                    let mut out = Vec::new();
+                    engine_terrain::wanted_tiles(
+                        &pyramid,
+                        &ranges,
+                        &view(eye),
+                        reach,
+                        settings.pinned_levels,
+                        cutout,
+                        &mut out,
+                    );
+                    out
+                };
+                (
+                    want(local_eye, LOAD_REACH),
+                    if ahead == eye {
+                        Vec::new()
+                    } else {
+                        want(ahead - origin, LOAD_REACH)
+                    },
+                    want(local_eye, KEEP_REACH),
+                )
+            };
+            // What to load, most important first, each tile after its
+            // ancestors (decision 112): the pinned levels; the tiles the
+            // view draws and shows, then those under focus entities, which
+            // jobs take up first; the tiles it draws out of sight, then
+            // collision's; those only shading what it shows; where the eye
+            // is headed; the rest.
+            let tier = |pick: fn(&WantedTile) -> bool| {
+                wanted
+                    .iter()
+                    .filter(move |tile| pick(tile))
+                    .map(|tile| tile.key)
+            };
+            let mut order: Vec<TileKey> = Vec::with_capacity(wanted.len() + loading.len());
+            let mut pushed: HashSet<TileKey> = HashSet::with_capacity(order.capacity());
+            for key in tier(|tile| tile.score < 0.0)
+                .chain(tier(|tile| tile.score >= 0.0 && tile.drawn && tile.seen))
+                .chain(under.iter().copied())
+            {
+                push_with_ancestors(&pyramid, key, &mut order, &mut pushed);
             }
-            let kept = order.len().min(remaining);
+            let urgent = order.len();
+            for key in tier(|tile| tile.score >= 0.0 && tile.drawn && !tile.seen)
+                .chain(loading.iter().copied())
+                .chain(tier(|tile| tile.score >= 0.0 && !tile.drawn && tile.seen))
+                .chain(headed.iter().map(|tile| tile.key))
+                .chain(tier(|tile| tile.score >= 0.0 && !tile.drawn && !tile.seen))
+            {
+                push_with_ancestors(&pyramid, key, &mut order, &mut pushed);
+            }
+            // Over a tile budget, the pinned levels and collision's tiles
+            // stay first, then the rest in order.
+            let target: HashSet<TileKey> = if order.len() <= remaining {
+                order.iter().copied().collect()
+            } else {
+                let mut first = Vec::new();
+                let mut held = HashSet::new();
+                for key in tier(|tile| tile.score < 0.0).chain(loading.iter().copied()) {
+                    push_with_ancestors(&pyramid, key, &mut first, &mut held);
+                }
+                first
+                    .iter()
+                    .copied()
+                    .chain(order.iter().copied().filter(|key| !held.contains(key)))
+                    .take(remaining)
+                    .collect()
+            };
+            let kept = target.len();
             stats.dropped_tiles += (order.len() - kept) as u32;
             remaining -= kept;
-            let target: HashSet<TileKey> = order[..kept].iter().copied().collect();
             // What to keep: everything within a wider reach, unless over
             // budget.
-            self.wanted.clear();
-            engine_terrain::wanted_tiles(
-                &pyramid,
-                &ranges,
-                local_eye,
-                forward,
-                KEEP_REACH,
-                settings.pinned_levels,
-                cutout,
-                &mut self.wanted,
-            );
-            let keep: HashSet<TileKey> = self
-                .wanted
+            let keep: HashSet<TileKey> = held
                 .iter()
                 .map(|tile| tile.key)
                 .chain(state.collision.iter().copied())
@@ -2571,18 +2753,28 @@ impl Terrains {
             // Tiles under edits since they loaded (decision 080) regenerate
             // in their turn and draw until they do.
             state.stale.retain(|key| state.tiles.contains_key(key));
-            let missing: Vec<TileKey> = order[..kept]
+            let missing: Vec<(TileKey, u32)> = order
                 .iter()
-                .copied()
-                .filter(|key| {
+                .enumerate()
+                .filter(|(_, key)| {
                     settings.enabled
+                        && target.contains(key)
                         && (!state.tiles.contains_key(key) || state.stale.contains(key))
+                })
+                .map(|(index, &key)| {
+                    let class = if index < urgent {
+                        URGENT_JOBS
+                    } else {
+                        VIEW_JOBS
+                    };
+                    (key, job_priority(class, index as u32))
                 })
                 .collect();
             // What the frame found missing loads between frames too
             // (decision 108).
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
+            state.keep.clone_from(&keep);
             // Workers generate from its recipe (decision 110).
             if let Some(slots) = slots.as_mut()
                 && slots.jobs.workers() > 0
@@ -2592,7 +2784,7 @@ impl Terrains {
             if load_tiles(
                 state,
                 &missing,
-                &target,
+                (&target, &keep),
                 &work,
                 &mut budget,
                 frame,
@@ -2604,13 +2796,15 @@ impl Terrains {
             }
             state
                 .missing
-                .retain(|key| !state.tiles.contains_key(key) || state.stale.contains(key));
+                .retain(|(key, _)| !state.tiles.contains_key(key) || state.stale.contains(key));
             stats.resident_tiles += state.tiles.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
             stats.loading_tiles += (state.jobs.len()
                 + state.in_flight.len()
                 + state.arrivals.len()
-                + state.dispatched.len()) as u32;
+                + state.dispatched.len()
+                + state.far_wanted.len()
+                + state.far_jobs.len()) as u32;
             if settings.enabled {
                 let tiles = &state.tiles;
                 engine_terrain::select_patches(
@@ -2661,6 +2855,108 @@ impl Terrains {
         }
         stats.loading = self.loading();
         self.stats = stats;
+    }
+}
+
+/// The lowest and highest ground tile `key` can hold (decision 112),
+/// terrain-local, as distances to it take them: a resident tile's own,
+/// widened by how far its level measured from the next coarser (its
+/// patches morph toward that); else its nearest resident ancestor's over
+/// its ground, widened by how far the levels between measured apart and by
+/// four of the ancestor's spacings, as finer levels add detail. `None`
+/// without either.
+fn ground_bounds(
+    tiles: &HashMap<TileKey, Arc<Tile>>,
+    pyramid: &Pyramid,
+    errors: &[f32],
+    key: TileKey,
+) -> Option<[f32; 2]> {
+    let error = |level: u8| errors.get(usize::from(level)).copied().unwrap_or(0.0);
+    if let Some(tile) = tiles.get(&key) {
+        let [low, high] = tile.bounds();
+        return Some([low - error(key.level), high + error(key.level)]);
+    }
+    let size = pyramid.tile_size(u32::from(key.level));
+    let low = Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
+    let high = low + size;
+    let mut ancestor = key;
+    let mut margin = 0.0;
+    while let Some(parent) = pyramid.parent(ancestor) {
+        margin += error(ancestor.level);
+        ancestor = parent;
+        let Some(tile) = tiles.get(&ancestor) else {
+            continue;
+        };
+        let level = u32::from(ancestor.level);
+        let spacing = pyramid.spacing(level);
+        let patch = PATCH_QUADS as f32 * spacing;
+        let corner =
+            Vec2::new(f32::from(ancestor.x), f32::from(ancestor.z)) * pyramid.tile_size(level);
+        let last = (PATCHES_PER_TILE - 1) as f32;
+        let first = ((low - corner) / patch)
+            .floor()
+            .clamp(Vec2::ZERO, Vec2::splat(last));
+        let end = ((high - corner) / patch - 1.0)
+            .ceil()
+            .clamp(Vec2::ZERO, Vec2::splat(last));
+        let (mut bottom, mut top) = (f32::INFINITY, f32::NEG_INFINITY);
+        for z in first.y as u32..=end.y as u32 {
+            for x in first.x as u32..=end.x as u32 {
+                let [patch_low, patch_high] = tile.patch_bounds(x, z);
+                bottom = crate::math::min(bottom, patch_low);
+                top = crate::math::max(top, patch_high);
+            }
+        }
+        let margin = margin + 4.0 * spacing;
+        return Some([bottom - margin, top + margin]);
+    }
+    None
+}
+
+/// The view's side planes and near plane, inward, in world space (decision
+/// 112): which boxes show in it, however far away.
+struct ViewPlanes(Option<[Vec4; 5]>);
+
+impl ViewPlanes {
+    /// `camera`'s view from `eye` (its own, unless frozen) on `viewport`.
+    fn new(camera: &Camera, eye: Vec3, viewport: Viewport) -> Self {
+        let aspect = viewport.width as f32 / viewport.height.max(1) as f32;
+        let from = Camera {
+            position: eye,
+            target: eye + (camera.target - camera.eye()),
+            ..*camera
+        };
+        let rows = from.view_projection(aspect).transpose();
+        let planes = [
+            rows.w_axis + rows.x_axis,
+            rows.w_axis - rows.x_axis,
+            rows.w_axis + rows.y_axis,
+            rows.w_axis - rows.y_axis,
+            // Reversed depth (decision 042): the near plane is depth 1.
+            rows.w_axis - rows.z_axis,
+        ];
+        Self(
+            planes
+                .iter()
+                .all(|plane| plane.is_finite())
+                .then_some(planes),
+        )
+    }
+
+    /// Whether any of the box from `low` to `high` lies inside every plane;
+    /// always without planes.
+    fn sees(&self, low: Vec3, high: Vec3) -> bool {
+        let Some(planes) = &self.0 else {
+            return true;
+        };
+        planes.iter().all(|plane| {
+            let corner = Vec3::new(
+                if plane.x >= 0.0 { high.x } else { low.x },
+                if plane.y >= 0.0 { high.y } else { low.y },
+                if plane.z >= 0.0 { high.z } else { low.z },
+            );
+            plane.truncate().dot(corner) + plane.w >= 0.0
+        })
     }
 }
 

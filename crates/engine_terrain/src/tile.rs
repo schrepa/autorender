@@ -11,8 +11,8 @@ use engine_math::{max, min};
 use crate::layers::{Layers, state_len};
 use crate::surface::{BiomeRules, Control, SampleInputs};
 use crate::{
-    HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Pyramid, TILE_QUADS, TILE_SAMPLES,
-    TILE_STRIDE, TileKey,
+    HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid, TILE_QUADS,
+    TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
 
 /// Cells with a hole bit: those starting at samples 0..=256, so tiles agree
@@ -304,6 +304,7 @@ enum Stage {
     Biomes { row: usize },
     Done,
     Place { layer: usize, row: usize },
+    Failed,
 }
 
 /// Generates one tile from a layer stack in steps, so streaming can spread
@@ -337,9 +338,11 @@ pub struct Generator {
     control: Option<Box<[u32]>>,
     weights: Vec<(u8, f32)>,
     // The finished tile while its objects are placed (decision 057), a row
-    // of candidate squares at a time, and the objects placed so far.
+    // of candidate squares at a time, the objects placed so far and which
+    // of them it places (decision 112).
     tile: Option<Tile>,
     placed: Vec<crate::Placed>,
+    placing: Placing,
 }
 
 impl Generator {
@@ -400,6 +403,7 @@ impl Generator {
             weights: Vec::new(),
             tile: None,
             placed: Vec::new(),
+            placing: Placing::All,
         }
     }
 
@@ -407,6 +411,43 @@ impl Generator {
     pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
         self.surface = Some(surface);
         self
+    }
+
+    /// The generator placing only `placing`'s objects (decision 112).
+    pub fn with_placing(mut self, placing: Placing) -> Self {
+        self.placing = placing;
+        self
+    }
+
+    /// A generator placing on `tile` (generated from `layers`) the objects
+    /// of `surface`'s layers standing far away at its level (decision
+    /// 112), under the same budget as generation: the tile it returns
+    /// holds those alone.
+    pub fn far(tile: Tile, layers: Arc<Layers>, surface: Arc<BiomeRules>) -> Self {
+        Self {
+            layers,
+            key: tile.key(),
+            spacing: tile.spacing(),
+            first: [0; 2],
+            bands: Vec::new(),
+            grids: Vec::new(),
+            stage: Stage::Place { layer: 0, row: 0 },
+            heights: Box::default(),
+            holes: None,
+            xs: Box::default(),
+            row: Box::default(),
+            values: Box::default(),
+            column: Box::default(),
+            state: Box::default(),
+            min: Vec2::ZERO,
+            max: Vec2::ZERO,
+            surface: Some(surface),
+            control: None,
+            weights: Vec::new(),
+            tile: Some(tile.with_placed(Vec::new())),
+            placed: Vec::new(),
+            placing: Placing::Far,
+        }
     }
 
     /// A generator giving `tile` (of `pyramid`, its heights read from a
@@ -423,6 +464,12 @@ impl Generator {
 
     pub fn key(&self) -> TileKey {
         self.key
+    }
+
+    /// Whether generation stopped without a tile: its heights or control
+    /// values were invalid (decision 112).
+    pub fn failed(&self) -> bool {
+        matches!(self.stage, Stage::Failed)
     }
 
     /// The stage after the samples and holes: the surface's, if any.
@@ -584,34 +631,45 @@ impl Generator {
                 }
                 Stage::Done => {
                     let heights = std::mem::take(&mut self.heights);
+                    self.stage = Stage::Failed;
                     let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
                     let tile = match self.control.take() {
                         Some(control) => tile.with_control(control)?,
                         None => tile,
                     };
+                    self.stage = Stage::Done;
                     // Objects stand on the tiles of their layers' levels
                     // (decision 057), placed in the stage after.
                     match &self.surface {
-                        Some(surface) if surface.places_on(self.key.level) => {
+                        Some(surface) if surface.places(self.key.level, self.placing) => {
                             self.tile = Some(tile);
                             self.stage = Stage::Place { layer: 0, row: 0 };
                         }
                         _ => return Some(tile),
                     }
                 }
+                Stage::Failed => return None,
                 Stage::Place { layer, row } => {
                     let (Some(surface), Some(tile)) = (&self.surface, &self.tile) else {
+                        self.stage = Stage::Failed;
                         return None;
                     };
-                    let (cost, next) =
-                        surface.place_row(tile, (layer, row), &mut self.placed, &self.layers);
+                    let (cost, next) = surface.place_row(
+                        tile,
+                        (layer, row),
+                        &mut self.placed,
+                        (&self.layers, self.placing),
+                    );
                     *budget = budget.saturating_sub(cost);
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },
                         None => {
-                            // Then what authors stand on it (decision 085).
-                            *budget = budget
-                                .saturating_sub(surface.place_authored(tile, &mut self.placed));
+                            // Then what authors stand on it (decision 085),
+                            // with its own level's objects.
+                            if self.placing != Placing::Far {
+                                *budget = budget
+                                    .saturating_sub(surface.place_authored(tile, &mut self.placed));
+                            }
                             let tile = self.tile.take()?;
                             return Some(tile.with_placed(std::mem::take(&mut self.placed)));
                         }

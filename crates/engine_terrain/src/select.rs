@@ -100,6 +100,10 @@ pub struct Selection {
     pub fallbacks: u32,
 }
 
+/// How far below and above the eye ground of unknown height is taken to
+/// reach (decision 112): any ground at all.
+const UNKNOWN_GROUND: f32 = 1.0e6;
+
 /// The squared distance from `point` to the box from `min` to `max`.
 fn distance_squared(point: Vec3, min: Vec3, max: Vec3) -> f32 {
     let nearest = point.clamp(min, max);
@@ -224,31 +228,46 @@ pub fn select_patches<'a>(
 /// units of its level's range, ahead of the eye before behind, so the
 /// tiles that show the most of the view's detail load first whatever their
 /// level, a tile's parent (twice as far in range, half as far in its
-/// units) before it.
+/// units) before it. And whether the view draws it, within its level's
+/// range, and whether its ground shows in the view (decision 112).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WantedTile {
     pub key: TileKey,
     pub score: f32,
+    pub drawn: bool,
+    pub seen: bool,
+}
+
+/// How a view sees a terrain (decision 112): its eye (terrain-local) and
+/// horizontal view direction, the lowest and highest ground a tile can
+/// hold (`None` where unknown), and whether a terrain-local box shows in
+/// the view.
+pub struct WantedView<'a> {
+    pub eye: Vec3,
+    pub forward: Vec2,
+    pub ground: &'a dyn Fn(TileKey) -> Option<[f32; 2]>,
+    pub seen: &'a dyn Fn(Vec3, Vec3) -> bool,
 }
 
 /// Appends the tiles of every level within `reach` times its range of
-/// `eye` (terrain-local, with `forward` its horizontal view direction), and
-/// every tile of the coarsest `pinned` levels, to `out`, most important
-/// first; none wholly within `cutout` (decision 094).
-#[allow(clippy::too_many_arguments)]
+/// `view`'s eye, and every tile of the coarsest `pinned` levels, to `out`,
+/// most important first; none wholly within `cutout` (decision 094).
+/// Distances run to a tile's ground (decision 112): a high eye wants fine
+/// tiles only as far as it is from their ground, as patches draw and
+/// ground shades by those distances.
 pub fn wanted_tiles(
     pyramid: &Pyramid,
     ranges: &LodRanges,
-    eye: Vec3,
-    forward: Vec2,
+    view: &WantedView<'_>,
     reach: f32,
     pinned: u32,
     cutout: Option<(Vec2, Vec2)>,
     out: &mut Vec<WantedTile>,
 ) {
     let start = out.len();
+    let eye = view.eye;
     let eye2 = Vec2::new(eye.x, eye.z);
-    let forward = forward.try_normalize().unwrap_or(Vec2::ZERO);
+    let forward = view.forward.try_normalize().unwrap_or(Vec2::ZERO);
     for level in (0..pyramid.levels()).rev() {
         let size = pyramid.tile_size(level);
         let [tiles_x, tiles_z] = pyramid.tiles(level);
@@ -277,8 +296,15 @@ pub fn wanted_tiles(
                 if cut_out(cutout, low, high) {
                     continue;
                 }
+                let key = TileKey::new(level as u8, x as u16, z as u16);
                 let nearest = eye2.clamp(low, high);
-                let distance = nearest.distance(eye2);
+                let ground = (view.ground)(key);
+                // Above or below its ground, the eye is that much farther.
+                let rise = ground.map_or(0.0, |[bottom, top]| {
+                    max(max(bottom - eye.y, eye.y - top), 0.0)
+                });
+                let across = nearest.distance(eye2);
+                let distance = (across * across + rise * rise).sqrt();
                 if !everywhere && distance > radius {
                     continue;
                 }
@@ -292,9 +318,15 @@ pub fn wanted_tiles(
                 } else {
                     distance / max(ranges.range(level), 1.0e-3) * (1.0 + behind)
                 };
+                let [bottom, top] = ground.unwrap_or([-UNKNOWN_GROUND, UNKNOWN_GROUND]);
                 out.push(WantedTile {
-                    key: TileKey::new(level as u8, x as u16, z as u16),
+                    key,
                     score,
+                    drawn: distance <= ranges.range(level),
+                    seen: (view.seen)(
+                        Vec3::new(low.x, bottom, low.y),
+                        Vec3::new(high.x, top, high.y),
+                    ),
                 });
             }
         }

@@ -2,7 +2,9 @@
 //! Web Workers beside the engine. It holds what the engine shares with its
 //! workers (terrain stacks and recipes) and runs the jobs the engine hands
 //! out, terrain tiles, walks and bakes, with the code engines without
-//! workers run in place, so outputs are the same bits.
+//! workers run in place, so outputs are the same bits. Jobs run a slice at a
+//! time (decision 112): hosts start one, step it until done, and between
+//! steps take up a more urgent one or drop one the engine cancelled.
 
 use engine_terrain::jobs::TerrainWorker;
 
@@ -27,14 +29,30 @@ impl Worker {
         self.terrain.unshare(key);
     }
 
-    /// Drops everything shared.
+    /// Drops everything shared, and every job started.
     pub fn clear(&mut self) {
         self.terrain = TerrainWorker::new();
     }
 
-    /// Runs job `kind` on `input`; its output.
+    /// Runs job `kind` on `input` whole; its output.
     pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         self.terrain.run(kind, input)
+    }
+
+    /// Starts job `id` of `kind` on `input`, to [`Self::step`] until done.
+    pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
+        self.terrain.start(id, kind, input)
+    }
+
+    /// Works on job `id` for about `budget` work units: its output once
+    /// done, `None` while work is left.
+    pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
+        self.terrain.step(id, budget)
+    }
+
+    /// Stops job `id`.
+    pub fn cancel(&mut self, id: u64) {
+        self.terrain.cancel(id);
     }
 }
 
@@ -42,7 +60,8 @@ impl Worker {
 mod browser {
     use wasm_bindgen::prelude::*;
 
-    /// [`super::Worker`] for a Web Worker's script.
+    /// [`super::Worker`] for a Web Worker's script. Job ids and budgets are
+    /// JavaScript numbers.
     #[wasm_bindgen]
     pub struct JobWorker {
         worker: super::Worker,
@@ -72,10 +91,20 @@ mod browser {
             self.worker.clear();
         }
 
-        pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, JsValue> {
+        pub fn start(&mut self, id: f64, kind: &str, input: &[u8]) -> Result<(), JsValue> {
             self.worker
-                .run(kind, input)
+                .start(id as u64, kind, input)
                 .map_err(|error| JsValue::from_str(&error))
+        }
+
+        pub fn step(&mut self, id: f64, budget: f64) -> Result<Option<Vec<u8>>, JsValue> {
+            self.worker
+                .step(id as u64, budget as u64)
+                .map_err(|error| JsValue::from_str(&error))
+        }
+
+        pub fn cancel(&mut self, id: f64) {
+            self.worker.cancel(id as u64);
         }
     }
 

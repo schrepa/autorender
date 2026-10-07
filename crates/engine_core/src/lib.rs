@@ -103,7 +103,10 @@ pub use interpolation::{
     PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
     reset_interpolation,
 };
-pub use jobs::{JobId, JobRequest, JobShare, JobStats, Jobs};
+pub use jobs::{
+    GAMEPLAY_JOBS, JobId, JobRequest, JobShare, JobStats, Jobs, URGENT_JOBS, VIEW_JOBS, job_class,
+    job_priority,
+};
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};

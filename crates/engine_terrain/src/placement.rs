@@ -20,6 +20,12 @@
 //! point, on the tiles of its level (the finest for small things, coarser
 //! for large ones, which then show as far as those tiles stay resident),
 //! drawn, shadowed and collided with as the layers' objects are.
+//!
+//! A tile's objects may be placed in two parts (decision 112): those of
+//! its own level's layers and its authored objects, then those of layers
+//! standing far away at its level, which far tiles hold by the tens of
+//! thousands; [`merge_placed`] puts the parts in the order one pass places
+//! them, so the tile holds the same objects either way.
 
 use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
@@ -30,6 +36,42 @@ use crate::{TILE_QUADS, Tile};
 /// The placement layer authored objects (decision 085) report collision
 /// hits in, beside bridges' `u16::MAX`.
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
+
+/// Which of a tile's objects a generator places (decision 112): all of
+/// them; those of layers of its own level and its authored objects; or
+/// those of layers standing far away at its level.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Placing {
+    #[default]
+    All,
+    Near,
+    Far,
+}
+
+/// A tile's objects placed in two parts (decision 112), `near` (its own
+/// level's layers' objects, then its authored ones) and `far` (layers
+/// standing far away at its level), in the order one pass places them:
+/// layer by layer, authored objects last.
+pub fn merge_placed(near: &[Placed], far: &[Placed]) -> Vec<Placed> {
+    let layered = near
+        .iter()
+        .position(|object| object.layer == AUTHORED_LAYER)
+        .unwrap_or(near.len());
+    let (layered, authored) = near.split_at(layered);
+    let mut merged = Vec::with_capacity(near.len() + far.len());
+    let (mut a, mut b) = (layered.iter().peekable(), far.iter().peekable());
+    loop {
+        let next = match (a.peek(), b.peek()) {
+            (Some(near), Some(far)) if far.layer < near.layer => b.next(),
+            (Some(_), _) => a.next(),
+            (None, Some(_)) => b.next(),
+            (None, None) => break,
+        };
+        merged.extend(next.copied());
+    }
+    merged.extend_from_slice(authored);
+    merged
+}
 
 /// Validity guards: how many layers a surface places, how many assets a
 /// layer chooses from, the coarsest level a layer's tiles may be, and the
@@ -553,7 +595,7 @@ pub(crate) fn place_row(
     seed: u32,
     (layer_index, row): (usize, usize),
     out: &mut Vec<Placed>,
-    stack: &crate::Layers,
+    (stack, placing): (&crate::Layers, Placing),
 ) -> (u64, Option<(usize, usize)>) {
     let water = stack.hydrology();
     let spacing = tile.spacing();
@@ -569,8 +611,13 @@ pub(crate) fn place_row(
         Some((level, share)) if level == key.level => (share, Some(layer.level)),
         _ => (0.0, None),
     };
+    let skipped = match placing {
+        Placing::All => false,
+        Placing::Near => near_level.is_some(),
+        Placing::Far => near_level.is_none(),
+    };
     let fill = layer.fill * share;
-    if fill <= 0.0 {
+    if fill <= 0.0 || skipped {
         return (0, Some((layer_index + 1, 0)));
     }
     let footprint = layer.footprint;

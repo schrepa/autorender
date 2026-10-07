@@ -56,10 +56,13 @@ pub use path::{
 };
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Placed, PlacementChoice, PlacementLayer,
+    Placing, merge_placed,
 };
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use rivers::{BANK_OFFSET, RIVER_STEP, River, RiverPoint, Rivers};
-pub use select::{LodRanges, Patch, Selection, WantedTile, select_patches, wanted_tiles};
+pub use select::{
+    LodRanges, Patch, Selection, WantedTile, WantedView, select_patches, wanted_tiles,
+};
 pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,

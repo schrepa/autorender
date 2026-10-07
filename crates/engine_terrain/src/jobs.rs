@@ -4,6 +4,13 @@
 //! their bakes, and the recipes generating a terrain's tiles from one. Jobs
 //! run the same code in workers as engines without them run in place, so
 //! their results are the same bits.
+//!
+//! Workers run jobs a slice at a time (decision 112): [`TerrainWorker::start`]
+//! one, [`TerrainWorker::step`] it within a budget until it is done, and
+//! between slices take up a more urgent one or drop one its engine no longer
+//! wants. A tile's objects of layers standing far away at its level may be
+//! placed by a job of their own after it, as far tiles hold them by the tens
+//! of thousands.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,15 +19,35 @@ use glam::Vec2;
 
 use crate::codec::{self, CodecError, Reader, Writer, record};
 use crate::{
-    BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Pyramid, Tile, TileKey,
-    WalkSearch,
+    BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placed, Placing, Pyramid,
+    Tile, TileKey, WalkSearch,
 };
 
-/// The kinds of terrain jobs: a tile of a shared recipe, a walk over one,
-/// and a stack's bakes.
+/// The kinds of terrain jobs: a tile of a shared recipe, the objects
+/// standing far away on one, a walk over one, and a stack's bakes.
 pub const TILE_JOB: &str = "terrain_tile";
+pub const FAR_JOB: &str = "terrain_far";
 pub const WALK_JOB: &str = "terrain_walk";
 pub const BAKE_JOB: &str = "terrain_bake";
+
+impl codec::Codec for Placing {
+    fn write(&self, out: &mut Writer) {
+        out.put(&match self {
+            Placing::All => 0_u8,
+            Placing::Near => 1,
+            Placing::Far => 2,
+        });
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        match input.get::<u8>()? {
+            0 => Ok(Placing::All),
+            1 => Ok(Placing::Near),
+            2 => Ok(Placing::Far),
+            _ => Err(CodecError("invalid placing")),
+        }
+    }
+}
 
 /// How a terrain's surroundings (decision 094) see a stack: as
 /// [`Layers::surroundings`] takes them.
@@ -76,15 +103,29 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
 }
 
 /// The input of a [`TILE_JOB`]: tile `key` of the recipe shared as
-/// `recipe`.
-pub fn tile_input(recipe: &str, key: TileKey) -> Vec<u8> {
+/// `recipe`, with `placing`'s objects (decision 112).
+pub fn tile_input(recipe: &str, key: TileKey, placing: Placing) -> Vec<u8> {
     let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(&key);
+    writer.put(&recipe.to_owned()).put(&key).put(&placing);
     writer.into_bytes()
 }
 
 /// A [`TILE_JOB`]'s output: the tile.
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
+    codec::decode(bytes)
+}
+
+/// The input of a [`FAR_JOB`] (decision 112): the objects of the recipe
+/// shared as `recipe` standing far away on `tile`, one of its tiles.
+pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
+    let mut writer = Writer::new();
+    writer.put(&recipe.to_owned()).put(tile);
+    writer.into_bytes()
+}
+
+/// A [`FAR_JOB`]'s output: the objects, which [`crate::merge_placed`] adds
+/// to the tile's own.
+pub fn far_output(bytes: &[u8]) -> Result<Vec<Placed>, CodecError> {
     codec::decode(bytes)
 }
 
@@ -132,11 +173,20 @@ struct Recipe {
     rules: Arc<BiomeRules>,
 }
 
+/// A job a worker started (decision 112), to step until done.
+enum Running {
+    Tile(Generator),
+    Far(Generator),
+    Walk(Box<WalkSearch>),
+    Bake(Box<(Layers, Pyramid)>),
+}
+
 /// What a worker holds of terrains, and runs their jobs over.
 #[derive(Default)]
 pub struct TerrainWorker {
     stacks: HashMap<String, Arc<Layers>>,
     recipes: HashMap<String, Recipe>,
+    running: HashMap<u64, Running>,
 }
 
 impl TerrainWorker {
@@ -190,26 +240,51 @@ impl TerrainWorker {
         self.recipes.remove(key);
     }
 
-    /// Runs job `kind` on `input`; its output.
+    /// Runs job `kind` on `input` whole; its output.
     pub fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+        const WHOLE: u64 = u64::MAX;
+        self.start(WHOLE, kind, input)?;
+        loop {
+            if let Some(output) = self.step(WHOLE, u64::MAX)? {
+                return Ok(output);
+            }
+        }
+    }
+
+    /// Starts job `id` of `kind` on `input` (decision 112), to
+    /// [`Self::step`] until done; another of the same id stops.
+    pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         let invalid = |error: CodecError| error.to_string();
         let mut reader = Reader::new(input);
-        match kind {
+        let running = match kind {
             TILE_JOB => {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let key: TileKey = reader.get().map_err(invalid)?;
+                let placing: Placing = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(key) {
                     return Err("tile outside its pyramid".into());
                 }
-                let mut generator = Generator::new(recipe.layers.clone(), &recipe.pyramid, key)
-                    .with_surface(recipe.rules.clone());
-                let mut unlimited = u64::MAX;
-                let tile = generator
-                    .advance(&mut unlimited)
-                    .ok_or("the tile's heights are invalid")?;
-                Ok(codec::encode(&tile))
+                Running::Tile(
+                    Generator::new(recipe.layers.clone(), &recipe.pyramid, key)
+                        .with_surface(recipe.rules.clone())
+                        .with_placing(placing),
+                )
+            }
+            FAR_JOB => {
+                let recipe: String = reader.get().map_err(invalid)?;
+                let tile: Tile = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                let recipe = self.recipe(&recipe)?;
+                if !recipe.pyramid.contains(tile.key()) {
+                    return Err("tile outside its pyramid".into());
+                }
+                Running::Far(Generator::far(
+                    tile,
+                    recipe.layers.clone(),
+                    recipe.rules.clone(),
+                ))
             }
             WALK_JOB => {
                 let recipe: String = reader.get().map_err(invalid)?;
@@ -222,29 +297,61 @@ impl TerrainWorker {
                     .validate()
                     .map_err(|(field, rule)| format!("{field} {rule}"))?;
                 let recipe = self.recipe(&recipe)?;
-                let mut search = WalkSearch::new(
+                Running::Walk(Box::new(WalkSearch::new(
                     recipe.layers.clone(),
                     &recipe.pyramid,
                     (from, to),
                     obstacles,
                     &options,
-                );
-                let walk = loop {
-                    let mut unlimited = u64::MAX;
-                    if let Some(found) = search.step(&mut unlimited) {
-                        break found;
-                    }
-                };
-                Ok(codec::encode(&walk))
+                )))
             }
             BAKE_JOB => {
                 let layers: Layers = reader.get().map_err(invalid)?;
                 let pyramid: Pyramid = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
-                Ok(codec::encode(&layers.bake_all(&pyramid)))
+                Running::Bake(Box::new((layers, pyramid)))
             }
-            _ => Err(format!("unknown job kind {kind}")),
-        }
+            _ => return Err(format!("unknown job kind {kind}")),
+        };
+        self.running.insert(id, running);
+        Ok(())
+    }
+
+    /// Works on job `id` for about `budget` work units (about one per
+    /// sample; bakes run whole): its output once done, `None` while work is
+    /// left. A job that failed or finished is gone.
+    pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
+        let Some(running) = self.running.get_mut(&id) else {
+            return Err("no such job".into());
+        };
+        let mut budget = budget.max(1);
+        let output = match running {
+            Running::Tile(generator) => match generator.advance(&mut budget) {
+                Some(tile) => Ok(codec::encode(&tile)),
+                None if generator.failed() => Err("the tile's heights are invalid".into()),
+                None => return Ok(None),
+            },
+            Running::Far(generator) => match generator.advance(&mut budget) {
+                Some(tile) => Ok(codec::encode(&tile.placed().to_vec())),
+                None if generator.failed() => Err("the tile is invalid".into()),
+                None => return Ok(None),
+            },
+            Running::Walk(search) => match search.step(&mut budget) {
+                Some(walk) => Ok(codec::encode(&walk)),
+                None => return Ok(None),
+            },
+            Running::Bake(bake) => {
+                let (layers, pyramid) = &**bake;
+                Ok(codec::encode(&layers.bake_all(pyramid)))
+            }
+        };
+        self.running.remove(&id);
+        output.map(Some)
+    }
+
+    /// Stops job `id`, if it runs.
+    pub fn cancel(&mut self, id: u64) {
+        self.running.remove(&id);
     }
 
     fn recipe(&self, key: &str) -> Result<&Recipe, String> {

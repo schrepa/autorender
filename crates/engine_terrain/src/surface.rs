@@ -588,10 +588,22 @@ impl BiomeRules {
     /// Whether any placement layer or authored object (decision 085)
     /// stands on tiles of `level`.
     pub fn places_on(&self, level: u8) -> bool {
-        self.placements
+        self.places(level, crate::Placing::All)
+    }
+
+    /// Whether `placing`'s objects (decision 112) stand on tiles of `level`.
+    pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
+        let near = self.placements.iter().any(|layer| layer.level == level)
+            || self.placed.iter().any(|object| object.level == level);
+        let far = self
+            .placements
             .iter()
-            .any(|layer| layer.level == level || layer.far.is_some_and(|(far, _)| far == level))
-            || self.placed.iter().any(|object| object.level == level)
+            .any(|layer| layer.far.is_some_and(|(far, _)| far == level));
+        match placing {
+            crate::Placing::All => near || far,
+            crate::Placing::Near => near,
+            crate::Placing::Far => far,
+        }
     }
 
     /// The authored objects (decision 085) standing on `tile`, appended to
@@ -602,14 +614,15 @@ impl BiomeRules {
 
     /// The objects row `row` of placement layer `layer`'s candidate squares
     /// stand on `tile` (decision 057), appended to `out`: layers of other
-    /// levels than `tile`'s hold none. Returns the work it took (samples'
-    /// worth) and the next row, none after the last layer's last.
+    /// levels than `tile`'s hold none, nor layers `placing` leaves out
+    /// (decision 112). Returns the work it took (samples' worth) and the
+    /// next row, none after the last layer's last.
     pub fn place_row(
         &self,
         tile: &crate::Tile,
         (layer, row): (usize, usize),
         out: &mut Vec<crate::Placed>,
-        layers: &crate::Layers,
+        (layers, placing): (&crate::Layers, crate::Placing),
     ) -> (u64, Option<(usize, usize)>) {
         crate::placement::place_row(
             &self.placements,
@@ -617,7 +630,7 @@ impl BiomeRules {
             0x5eed_0057,
             (layer, row),
             out,
-            layers,
+            (layers, placing),
         )
     }
 
