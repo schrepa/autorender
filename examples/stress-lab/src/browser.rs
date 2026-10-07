@@ -327,6 +327,11 @@ impl StressGame {
         self.app.part_job(id, part);
     }
 
+    /// The page's job output cache counters (decision 116).
+    pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
+        self.app.report_job_cache(hits, misses, bytes, mismatches);
+    }
+
     /// The last frame's statistics as a JSON object.
     pub fn stats(&self) -> String {
         self.app.stats_json()

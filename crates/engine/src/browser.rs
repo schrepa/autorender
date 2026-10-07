@@ -542,6 +542,14 @@ impl BrowserApp {
                 "priority",
                 &JsValue::from_f64(f64::from(request.priority)),
             );
+            // What hosts may keep its output by (decision 116).
+            if let Some(identity) = &request.identity {
+                set(
+                    &object,
+                    "identity",
+                    &js_sys::Uint8Array::from(identity.as_slice()),
+                );
+            }
             out.push(&object);
         }
         out
@@ -556,6 +564,27 @@ impl BrowserApp {
     /// takes the work back.
     pub fn fail_job(&mut self, id: f64, error: String) {
         self.finish_job(id, Err(error));
+    }
+
+    /// The host's output cache's counters (decision 116): outputs handed
+    /// back from it, jobs it lacked, its bytes and, verifying, outputs that
+    /// differed from a fresh run.
+    pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
+        let count = |value: f64| {
+            if value.is_finite() && value > 0.0 {
+                value as u64
+            } else {
+                0
+            }
+        };
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.report_cache(count(hits), count(misses), count(bytes), count(mismatches));
+        }
     }
 
     /// A part of job `id`'s output its worker handed back before the rest

@@ -13,9 +13,12 @@
 // job is least urgent, and workers run their most urgent job a slice at a
 // time; jobs the engine cancels stop at their worker's next slice. Parts of
 // outputs ready early, as a tile's shape (decision 114), go back as they
-// come.
+// come. Outputs of jobs the engine marks keepable, and KTX2 textures, come
+// from the page's job cache where the same build made them before
+// (decision 116, job-cache.ts).
 
 import { engineWorkerModule } from "./bindings";
+import { JobCache, jobCacheSettings } from "./job-cache";
 import type { TranscodedImage } from "./ktx2";
 
 /** The engine bindings a pool serves (Rust `BrowserApp`'s job methods). */
@@ -25,7 +28,12 @@ export interface JobRuntime {
   complete_job?(id: number, output: Uint8Array): void;
   fail_job?(id: number, error: string): void;
   part_job?(id: number, part: Uint8Array): void;
+  report_job_cache?(hits: number, misses: number, bytes: number, mismatches: number): void;
 }
+
+/** A job `take_jobs` lists: its identity where its output may be kept
+ * (decision 116). */
+interface JobMessage { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
 
 /** What `take_jobs` lists, in order. */
 type EngineMessage =
@@ -33,7 +41,7 @@ type EngineMessage =
   | { clear: true }
   | { share: string; bytes: Uint8Array }
   | { unshare: string }
-  | { id: number; kind: string; input: Uint8Array; priority: number };
+  | JobMessage;
 
 /** What workers send back. */
 type WorkerMessage =
@@ -68,6 +76,16 @@ export class JobPool {
   private timer = 0;
   private nextTask = 1;
   private restarts = 0;
+  /** The output cache (decision 116), once open; the keys of jobs whose
+   * outputs it keeps when done; jobs looking it up and those cancelled
+   * meanwhile; outputs kept that fresh runs verify; and the counters last
+   * reported. */
+  private readonly cache: Promise<JobCache | undefined> = openCache();
+  private readonly keys = new Map<number, string>();
+  private readonly looking = new Set<number>();
+  private readonly dropped = new Set<number>();
+  private readonly verifying = new Map<number, Uint8Array>();
+  private reported = "";
 
   constructor(private readonly count: number) {
     for (let index = 0; index < count; index++) this.slots.push(this.spawn());
@@ -103,6 +121,11 @@ export class JobPool {
     const messages = runtime.take_jobs() as EngineMessage[];
     for (const message of messages) {
       if ("cancel" in message) {
+        if (this.looking.has(message.cancel)) {
+          this.dropped.add(message.cancel);
+          continue;
+        }
+        this.keys.delete(message.cancel);
         const slot = this.slots.find(slot => slot.jobs.has(message.cancel));
         if (!slot) continue;
         slot.jobs.delete(message.cancel);
@@ -117,21 +140,80 @@ export class JobPool {
       } else if ("unshare" in message) {
         this.shares.delete(message.unshare);
         this.broadcast({ type: "unshare", key: message.unshare });
+      } else if (message.identity) {
+        void this.cached(runtime, message, message.identity);
       } else {
-        const slot = this.least();
-        if (!slot) {
-          runtime.fail_job?.(message.id, "no workers");
-          continue;
-        }
-        slot.jobs.set(message.id, message.priority);
-        slot.worker.postMessage({ type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
+        this.dispatch(runtime, message);
       }
+    }
+    this.report();
+  }
+
+  /** Hands `message`'s job to the worker with the fewest in flight. */
+  private dispatch(runtime: JobRuntime, message: JobMessage) {
+    const slot = this.least();
+    if (!slot) {
+      runtime.fail_job?.(message.id, "no workers");
+      return;
+    }
+    slot.jobs.set(message.id, message.priority);
+    slot.worker.postMessage({ type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
+  }
+
+  /** Answers a keepable job (decision 116) from the cache, or hands it to
+   * a worker and keeps its output once done; verifying, runs it anyway
+   * and compares. */
+  private async cached(runtime: JobRuntime, message: JobMessage, identity: Uint8Array) {
+    this.looking.add(message.id);
+    try {
+      const cache = await this.cache;
+      const key = cache && await cache.key(message.kind, identity);
+      const kept = cache && key ? await cache.lookup(key) : undefined;
+      if (this.dropped.has(message.id) || this.runtime !== runtime) return;
+      if (kept) {
+        runtime.complete_job?.(message.id, kept);
+        if (!cache?.verify) return;
+        this.verifying.set(message.id, kept);
+      }
+      if (key) this.keys.set(message.id, key);
+      this.dispatch(runtime, message);
+    } catch (error) {
+      runtime.fail_job?.(message.id, String(error));
+    } finally {
+      this.looking.delete(message.id);
+      this.dropped.delete(message.id);
     }
   }
 
-  /** KTX2 image `uri` transcoded to `format` on a worker (decision 037). */
-  transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
-    return this.task({ type: "ktx2", uri, bytes, format, basis }, [bytes.buffer as ArrayBuffer]) as Promise<TranscodedImage>;
+  /** Tells the runtime the cache's counters when they change. */
+  private report() {
+    const runtime = this.runtime;
+    if (!runtime?.report_job_cache) return;
+    void this.cache.then(cache => {
+      if (!cache) return;
+      const { hits, misses, bytes, mismatches } = cache.stats();
+      const text = `${hits} ${misses} ${bytes} ${mismatches}`;
+      if (text === this.reported || this.runtime !== runtime) return;
+      this.reported = text;
+      runtime.report_job_cache?.(hits, misses, bytes, mismatches);
+    });
+  }
+
+  /** KTX2 image `uri` transcoded to `format` on a worker (decision 037),
+   * or kept from an earlier transcoding by the same build (decision 116). */
+  async transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
+    const cache = await this.cache;
+    const key = cache && await cache.key(`ktx2 ${format} ${basis}`, bytes);
+    const kept = cache && key ? await cache.lookup(key) : undefined;
+    const image = kept && readTranscoded(kept);
+    if (image && !cache?.verify) return image;
+    const fresh = await this.task({ type: "ktx2", uri, bytes, format, basis }, [bytes.buffer as ArrayBuffer]) as TranscodedImage;
+    if (cache && key) {
+      const written = writeTranscoded(fresh);
+      if (!kept) cache.store(key, written);
+      else if (!sameBytes(kept, written)) cache.mismatch(key);
+    }
+    return fresh;
   }
 
   /** Image `uri`'s RGBA8 pixels, decoded on a worker. */
@@ -188,13 +270,30 @@ export class JobPool {
   private receive(slot: Slot, message: WorkerMessage) {
     switch (message.type) {
       // Jobs cancelled since are no one's.
-      case "done":
-        if (slot.jobs.delete(message.id)) this.runtime?.complete_job?.(message.id, message.output);
+      case "done": {
+        if (!slot.jobs.delete(message.id)) break;
+        const key = this.keys.get(message.id);
+        this.keys.delete(message.id);
+        const kept = this.verifying.get(message.id);
+        this.verifying.delete(message.id);
+        // A kept output the engine already took is compared, not taken.
+        if (kept) {
+          if (key && !sameBytes(kept, message.output)) void this.cache.then(cache => cache?.mismatch(key));
+          break;
+        }
+        this.runtime?.complete_job?.(message.id, message.output);
+        if (key) void this.cache.then(cache => cache?.store(key, message.output));
         break;
+      }
       case "part":
         if (slot.jobs.has(message.id)) this.runtime?.part_job?.(message.id, message.output);
         break;
       case "failed":
+        this.keys.delete(message.id);
+        if (this.verifying.delete(message.id)) {
+          slot.jobs.delete(message.id);
+          break;
+        }
         if (slot.jobs.delete(message.id)) this.runtime?.fail_job?.(message.id, message.error);
         break;
       case "task":
@@ -221,7 +320,10 @@ export class JobPool {
     slot.broken = true;
     slot.worker.terminate();
     console.warn(`An engine worker stopped: ${error}`);
-    for (const id of slot.jobs.keys()) this.runtime?.fail_job?.(id, error);
+    for (const id of slot.jobs.keys()) {
+      this.keys.delete(id);
+      if (!this.verifying.delete(id)) this.runtime?.fail_job?.(id, error);
+    }
     slot.jobs.clear();
     for (const task of slot.tasks) {
       this.tasks.get(task)?.reject(new Error(error));
@@ -233,6 +335,60 @@ export class JobPool {
       this.slots[this.slots.indexOf(slot)] = this.spawn();
     }
     this.runtime?.set_job_workers?.(this.size);
+  }
+}
+
+/** Opens the page's job output cache (decision 116) for the job worker
+ * module the pool's workers run, unless the page turned it off. */
+async function openCache(): Promise<JobCache | undefined> {
+  const settings = jobCacheSettings();
+  if (!settings) return undefined;
+  try {
+    const pinned = engineWorkerModule();
+    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : new URL("../pkg/engine_worker_bg.wasm", import.meta.url).href;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${url}: ${response.status}`);
+    return await JobCache.open(await response.arrayBuffer(), settings.budget, settings.verify);
+  } catch (error) {
+    console.warn(`The job cache is off: ${String(error)}`);
+    return undefined;
+  }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let index = 0; index < a.length; index++) if (a[index] !== b[index]) return false;
+  return true;
+}
+
+/** A transcoded image as the cache keeps it: its header's length, its
+ * header as JSON and its texels. */
+function writeTranscoded(image: TranscodedImage): Uint8Array {
+  const header = image.format === "rgba8"
+    ? { format: image.format, width: image.width, height: image.height }
+    : { format: image.format, width: image.width, height: image.height, levels: Array.from(image.levels) };
+  const head = new TextEncoder().encode(JSON.stringify(header));
+  const body = image.format === "rgba8" ? image.pixels : image.data;
+  const out = new Uint8Array(4 + head.length + body.length);
+  new DataView(out.buffer).setUint32(0, head.length, true);
+  out.set(head, 4);
+  out.set(body, 4 + head.length);
+  return out;
+}
+
+function readTranscoded(bytes: Uint8Array): TranscodedImage | undefined {
+  try {
+    const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
+    const header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length))) as {
+      format: TranscodedImage["format"]; width: number; height: number; levels?: number[];
+    };
+    const body = bytes.slice(4 + length);
+    if (!Number.isSafeInteger(header.width) || !Number.isSafeInteger(header.height)) return undefined;
+    if (header.format === "rgba8") return { format: "rgba8", width: header.width, height: header.height, pixels: body };
+    if (!["bc7", "etc2", "astc"].includes(header.format) || !Array.isArray(header.levels)) return undefined;
+    return { format: header.format, width: header.width, height: header.height, data: body, levels: Uint32Array.from(header.levels) };
+  } catch {
+    return undefined;
   }
 }
 

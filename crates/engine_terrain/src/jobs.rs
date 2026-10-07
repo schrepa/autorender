@@ -130,6 +130,14 @@ pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
     writer.into_bytes()
 }
 
+/// What a [`FAR_JOB`]'s output depends on (decision 116): its recipe and
+/// tile, which that recipe generates.
+pub fn far_identity(recipe: &str, key: TileKey) -> Vec<u8> {
+    let mut writer = Writer::new();
+    writer.put(&recipe.to_owned()).put(&key);
+    writer.into_bytes()
+}
+
 /// A [`FAR_JOB`]'s output: the objects, which [`crate::merge_placed`] adds
 /// to the tile's own.
 pub fn far_output(bytes: &[u8]) -> Result<Vec<Placed>, CodecError> {
