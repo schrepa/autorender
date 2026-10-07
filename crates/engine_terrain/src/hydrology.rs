@@ -920,3 +920,47 @@ fn smooth_grid(heights: &[f32], width: usize) -> Vec<f32> {
     };
     pass(&pass(heights, true), false)
 }
+
+crate::codec::record!(HydrologyLayer {
+    level,
+    channel_area,
+    depth,
+    width,
+    max_depth,
+    max_width,
+    stream_area,
+});
+crate::codec::record!(HydrologyStats {
+    samples,
+    channel_samples,
+    lake_samples,
+    max_area,
+    falls,
+});
+crate::codec::record!(Fall {
+    top,
+    bottom,
+    path,
+    width,
+    area,
+});
+crate::codec::record!(Hydrology {
+    spacing,
+    carve,
+    max_depth,
+    flow,
+    wetness,
+    lakes,
+    water,
+    rivers,
+    falls,
+    stats,
+});
+crate::codec::record!(WaterGrid {
+    width,
+    height,
+    spacing,
+    surface,
+    depth,
+    flow,
+});

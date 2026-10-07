@@ -1118,3 +1118,43 @@ impl Ord for Ordered {
         self.0.total_cmp(&other.0)
     }
 }
+
+crate::codec::record!(PathLayer {
+    points,
+    width,
+    shoulder,
+    smoothing,
+    bridge_fill,
+    tunnel_cut,
+});
+crate::codec::record!(PathStats {
+    length,
+    samples,
+    steepest,
+    deepest_cut,
+    highest_fill,
+    bridges,
+    bridged,
+    tunnels,
+    tunneled,
+});
+crate::codec::record!(PathProfile {
+    line,
+    along,
+    step,
+    heights,
+    ground,
+    spans,
+    tunnels,
+    tunnel_box,
+    half,
+    shoulder,
+    radius,
+    cell,
+    min,
+    columns,
+    rows,
+    starts,
+    segments,
+    stats,
+});

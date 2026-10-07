@@ -20,10 +20,12 @@ pub fn repository_root() -> Result<PathBuf, String> {
 }
 
 /// The browser clients: each one's Cargo package and Wasm crate name.
-pub const CLIENTS: [(&str, &str); 3] = [
+pub const CLIENTS: [(&str, &str); 4] = [
     ("orbit-demo", "orbit_demo"),
     ("playground", "playground"),
     ("stress-lab", "stress_lab"),
+    // The job worker pages run beside them (decision 110).
+    ("engine_worker", "engine_worker"),
 ];
 
 /// `-p PACKAGE` for every client.
@@ -32,7 +34,7 @@ pub fn client_packages<'a>() -> impl Iterator<Item = &'a str> {
 }
 
 /// Every client's Wasm crate name.
-pub fn client_crates() -> [&'static str; 3] {
+pub fn client_crates() -> [&'static str; 4] {
     CLIENTS.map(|(_, name)| name)
 }
 

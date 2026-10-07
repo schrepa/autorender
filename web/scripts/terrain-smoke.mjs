@@ -146,15 +146,18 @@ const scene = routedScene(page, fixture);
 const checks = [];
 
 /** Renders until every wanted tile has been resident for a frame (bakes,
- * decisions 066 and 068, load them all at once); returns the observation. */
+ * decisions 066 and 068, load them all at once); returns the observation.
+ * Job workers bake and generate tiles beside the page (decision 110), their
+ * outputs arriving between commands, so renders wait a little for them. */
 async function settle() {
   let rendering;
   let resident = 0;
-  for (let frame = 0; frame < 40; frame++) {
+  for (let frame = 0; frame < 600; frame++) {
     rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
     const ready = rendering.terrain_tiles > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0;
     resident = ready ? resident + 1 : 0;
     if (resident > 1) return rendering;
+    if (!ready) await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.fail(`terrain did not settle: ${JSON.stringify(rendering)}`);
 }
@@ -476,6 +479,8 @@ try {
   for (let frame = 0; frame < 60; frame++) {
     grown = (await command("render")).result.rendering;
     if (grown.ground_cover_blades > 0) break;
+    // The tiles around the eye arrive from workers (decision 110).
+    await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.ok(grown.ground_cover_blades > 0, `grass grows: ${JSON.stringify(grown)}`);
   assert.equal(grown.dropped_ground_cover, 0);
@@ -644,10 +649,12 @@ try {
     const spot = [-200, 150];
     const ground = async () => (await heights([spot]))[0].height;
     const until = async (wanted, what) => {
-      for (let frame = 0; frame < 60; frame++) {
+      // Workers regenerate the tiles under it (decision 110).
+      for (let frame = 0; frame < 400; frame++) {
         const height = await ground();
         if (Math.abs(height - wanted) < 0.05) return height;
         await command("render");
+        await new Promise(resolve => setTimeout(resolve, 25));
       }
       assert.fail(`${what}: the ground at ${spot} stays at ${await ground()}, not ${wanted}`);
     };
@@ -695,6 +702,14 @@ try {
     const sent = await command("nav_go", { entity: "hiker", destination: goal });
     assert.deepEqual(sent.result.destination, goal);
     let agent;
+    // Its walk is searched on a job worker beside the page (decision 110),
+    // in the page's time, which paused steps outrun; or over ticks.
+    for (let attempt = 0; attempt < 400; attempt++) {
+      await command("step", { ticks: 1 });
+      agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
+      if (agent.status !== "searching") break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
     for (let round = 0; round < 30; round++) {
       await command("step", { ticks: 60 });
       agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
@@ -894,6 +909,7 @@ try {
   for (let frame = 0; frame < 200; frame++) {
     sky = (await command("render")).result.rendering;
     if (sky.terrain_sky_maps === 2 && sky.terrain_sky_rows === 0) break;
+    if (sky.terrain_sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
   }
   // One for the terrain and one for its surroundings (decision 094).
   assert.equal(sky.terrain_sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);

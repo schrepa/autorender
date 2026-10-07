@@ -6,6 +6,7 @@ import type { StressFiles, StressGame } from "../pkg/stress_lab";
 import { fetchVirtualPrefix } from "./virtual-mesh";
 import { isKtx2, readRgba8Ktx2 } from "./ktx2";
 import { adapterFeatures } from "./adapter";
+import { jobPool } from "./jobs";
 import "./stress.css";
 
 type Scene = "field" | "city" | "metro" | "dense" | "highlands";
@@ -370,6 +371,8 @@ fill(activeConfig);
 
 boot({
   async create(canvas) {
+    // Job workers (decision 110) start while the game's module loads.
+    jobPool();
     const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;
     prefixBytes = virtual_prefix_bytes;

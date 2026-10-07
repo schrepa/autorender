@@ -636,3 +636,19 @@ impl Ord for Ordered {
         self.0.total_cmp(&other.0)
     }
 }
+
+crate::codec::record!(NavOptions {
+    level,
+    max_slope,
+    radius,
+    max_water,
+    margin,
+    max_samples,
+});
+crate::codec::record!(Obstacle { center, radius });
+crate::codec::record!(NavPath {
+    points,
+    length,
+    level,
+    searched,
+});

@@ -184,3 +184,17 @@ impl Pyramid {
             .sum()
     }
 }
+
+crate::codec::record!(TileKey { level, x, z });
+
+impl crate::codec::Codec for Pyramid {
+    fn write(&self, out: &mut crate::codec::Writer) {
+        out.put(&self.tiles).put(&self.spacing);
+    }
+
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+        let tiles = input.get()?;
+        let spacing = input.get()?;
+        Self::new(tiles, spacing).map_err(|_| crate::codec::CodecError("invalid pyramid"))
+    }
+}

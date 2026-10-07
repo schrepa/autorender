@@ -541,6 +541,21 @@ impl DevTools {
                 })
             },
         ).expect("built-in descriptor is bounded");
+        self.register_resource::<engine_core::Jobs>(
+            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers running jobs (none keeps terrain bakes, tiles and walks on the engine's thread), jobs handed out and not done, jobs submitted, completed and failed since the engine started, and keys shared with every worker and their bytes. Pages take ?workers=N or ?workers=off.", schemas["Jobs"].clone()),
+            |jobs| {
+                let stats = jobs.stats();
+                json!(crate::views::JobsView {
+                    workers: stats.workers,
+                    running: stats.running,
+                    submitted: stats.submitted,
+                    completed: stats.completed,
+                    failed: stats.failed,
+                    shares: stats.shares,
+                    shared_bytes: stats.shared_bytes,
+                })
+            },
+        ).expect("built-in descriptor is bounded");
         self.register_component::<ParticleEmitter>(
             InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
                 .with_default(json!(SceneEmitter::default())),

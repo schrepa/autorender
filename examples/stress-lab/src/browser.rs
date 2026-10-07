@@ -300,6 +300,28 @@ impl StressGame {
         self.app.work_between_frames(milliseconds)
     }
 
+    /// Workers the page runs jobs on (decision 110); see
+    /// `BrowserApp::set_job_workers`.
+    pub fn set_job_workers(&mut self, workers: u32) {
+        self.app.set_job_workers(workers);
+    }
+
+    /// Shares and jobs to hand workers (decision 110); see
+    /// `BrowserApp::take_jobs`.
+    pub fn take_jobs(&mut self) -> JsValue {
+        self.app.take_jobs().into()
+    }
+
+    /// A worker's output of job `id` (decision 110).
+    pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
+        self.app.complete_job(id, output);
+    }
+
+    /// Job `id` failed on its worker (decision 110).
+    pub fn fail_job(&mut self, id: f64, error: String) {
+        self.app.fail_job(id, error);
+    }
+
     /// The last frame's statistics as a JSON object.
     pub fn stats(&self) -> String {
         self.app.stats_json()

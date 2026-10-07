@@ -168,3 +168,22 @@ pub(crate) fn finish(
         },
     }
 }
+
+crate::codec::record!(ErosionLayer {
+    level,
+    rounds,
+    incision,
+    creep,
+});
+crate::codec::record!(ErosionStats {
+    samples,
+    rounds,
+    deepest,
+    highest,
+});
+crate::codec::record!(Erosion {
+    spacing,
+    change,
+    range,
+    stats,
+});

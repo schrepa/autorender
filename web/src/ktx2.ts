@@ -27,7 +27,7 @@ interface KTX2File {
   close(): void;
   delete(): void;
 }
-interface BasisModule {
+export interface BasisModule {
   initializeBasis(): void;
   KTX2File: new (bytes: Uint8Array) => KTX2File;
   transcoder_texture_format: Record<string, BasisEnum>;
@@ -69,29 +69,52 @@ export function readRgba8Ktx2(uri: string, bytes: Uint8Array): { width: number; 
 let transcoder: Promise<BasisModule> | undefined;
 let target: Promise<TranscodedImage["format"]> | undefined;
 
+/** Where the vendored transcoder's files are, as an absolute URL. */
+export function basisBase(): string {
+  return new URL(`${import.meta.env?.BASE_URL ?? "/"}basis/`, location.href).href;
+}
+
+/** The transcoder `factory` makes, its files under `base`. */
+async function startTranscoder(factory: BasisFactory | undefined, base: string): Promise<BasisModule> {
+  if (!factory) throw new Error("The KTX2 transcoder did not initialize.");
+  const module = await factory({ locateFile: (path) => `${base}${path}` });
+  module.initializeBasis();
+  return module;
+}
+
 function loadTranscoder(): Promise<BasisModule> {
   transcoder ??= (async () => {
-    const basisBase = `${import.meta.env?.BASE_URL ?? "/"}basis/`;
+    const base = basisBase();
     // A classic script: it defines the global BASIS factory.
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
-      script.src = `${basisBase}basis_transcoder.js`;
+      script.src = `${base}basis_transcoder.js`;
       script.onload = () => resolve();
       script.onerror = () => reject(new Error("The KTX2 transcoder could not be loaded."));
       document.head.appendChild(script);
     });
-    const factory = (globalThis as { BASIS?: BasisFactory }).BASIS;
-    if (!factory) throw new Error("The KTX2 transcoder did not initialize.");
-    const module = await factory({ locateFile: (path) => `${basisBase}${path}` });
-    module.initializeBasis();
-    return module;
+    return startTranscoder((globalThis as { BASIS?: BasisFactory }).BASIS, base);
+  })();
+  transcoder.catch(() => { transcoder = undefined; });
+  return transcoder;
+}
+
+/** The transcoder in a job worker (decision 110), which has no document to
+ * add its classic script to: its source runs as a function returning the
+ * factory it defines. */
+export function workerTranscoder(base: string): Promise<BasisModule> {
+  transcoder ??= (async () => {
+    const response = await fetch(`${base}basis_transcoder.js`);
+    if (!response.ok) throw new Error("The KTX2 transcoder could not be loaded.");
+    const factory = new Function(`${await response.text()}\nreturn BASIS;`)() as BasisFactory;
+    return startTranscoder(factory, base);
   })();
   transcoder.catch(() => { transcoder = undefined; });
   return transcoder;
 }
 
 // The adapter the engine requests: its first block-compressed format.
-function targetFormat(): Promise<TranscodedImage["format"]> {
+export function targetFormat(): Promise<TranscodedImage["format"]> {
   target ??= (async () => {
     const features = await adapterFeatures();
     if (features.has("texture-compression-bc")) return "bc7";
@@ -109,6 +132,15 @@ export async function transcodeKtx2(uri: string, bytes: Uint8Array): Promise<Tra
   const plain = readRgba8Ktx2(uri, bytes);
   if (plain) return { format: "rgba8", ...plain };
   const [module, preferred] = await Promise.all([loadTranscoder(), targetFormat()]);
+  return transcodeWith(module, uri, bytes, preferred);
+}
+
+/** Transcodes KTX2 image `uri` with `module` to `preferred`, or to RGBA8
+ * where its base level is not whole blocks; uncompressed RGBA8 images read
+ * as they are. */
+export function transcodeWith(module: BasisModule, uri: string, bytes: Uint8Array, preferred: TranscodedImage["format"]): TranscodedImage {
+  const plain = readRgba8Ktx2(uri, bytes);
+  if (plain) return { format: "rgba8", ...plain };
   const file = new module.KTX2File(bytes);
   try {
     if (!file.isValid()) throw new Error(`Scene file ${uri} is not a valid KTX2 image.`);
