@@ -479,9 +479,12 @@ impl BrowserApp {
     }
 
     /// What to hand workers since the last call, in order (decision 110):
-    /// `{clear: true}` to drop every share an earlier engine made,
-    /// `{share, bytes}` to hold bytes as a key and `{unshare}` to drop one,
-    /// to every worker, then `{id, kind, input}` jobs, each to one.
+    /// `{cancel}` for jobs handed out that their owners cancelled, which
+    /// their workers stop (decision 112), `{clear: true}` to drop every
+    /// share an earlier engine made, `{share, bytes}` to hold bytes as a key
+    /// and `{unshare}` to drop one, to every worker, then
+    /// `{id, kind, input, priority}` jobs, each to one, lower priorities
+    /// first.
     pub fn take_jobs(&mut self) -> js_sys::Array {
         let out = js_sys::Array::new();
         let Some(mut jobs) = self
@@ -492,14 +495,21 @@ impl BrowserApp {
         else {
             return out;
         };
+        let mut cancels = Vec::new();
         let mut shares = Vec::new();
         let mut requests = Vec::new();
+        jobs.take_cancels(&mut cancels);
         jobs.take_shares(&mut shares);
         jobs.take_requests(&mut requests);
         let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
             // Setting a field of a plain new object cannot fail.
             let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), value);
         };
+        for id in cancels {
+            let object = js_sys::Object::new();
+            set(&object, "cancel", &JsValue::from_f64(id.0 as f64));
+            out.push(&object);
+        }
         for share in shares {
             let object = js_sys::Object::new();
             match share {
@@ -526,6 +536,11 @@ impl BrowserApp {
                 &object,
                 "input",
                 &js_sys::Uint8Array::from(request.input.as_slice()),
+            );
+            set(
+                &object,
+                "priority",
+                &JsValue::from_f64(f64::from(request.priority)),
             );
             out.push(&object);
         }

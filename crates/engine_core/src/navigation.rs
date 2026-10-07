@@ -310,7 +310,8 @@ pub(crate) fn walk_agents(
             .filter(|jobs| jobs.workers() > 0)
             .and_then(|jobs| {
                 let (_, origin, input) = terrains.walk_job(from, to, &options)?;
-                Some((origin, jobs.submit(WALK_JOB, input)))
+                let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
+                Some((origin, jobs.submit(WALK_JOB, input, priority)))
             });
         if let Some((origin, id)) = handed {
             navigation.walks.push((entity, origin, id));

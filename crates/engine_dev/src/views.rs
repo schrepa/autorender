@@ -194,8 +194,9 @@ pub struct NavAgentsView {
 }
 
 /// The host's job workers (decision 110): workers running jobs, jobs handed
-/// out and not done, jobs submitted, completed and failed since the engine
-/// started, and keys shared with every worker and their bytes.
+/// out and not done, jobs submitted, completed, failed and cancelled while
+/// running (decision 112) since the engine started, and keys shared with
+/// every worker and their bytes.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct JobsView {
@@ -204,6 +205,7 @@ pub struct JobsView {
     pub submitted: u64,
     pub completed: u64,
     pub failed: u64,
+    pub cancelled: u64,
     pub shares: u32,
     pub shared_bytes: u64,
 }

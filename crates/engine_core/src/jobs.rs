@@ -7,6 +7,11 @@
 //! and say how many workers run them; without any (native builds, tools,
 //! hosts that start none, `0` after a failure) owners do the work in place,
 //! as before. Results never depend on where a job ran.
+//!
+//! Jobs carry a priority (decision 112): workers run a job a slice at a
+//! time and, between slices, the most urgent they hold; a job its owner
+//! cancels stops at its next slice, so its worker takes up wanted work at
+//! once.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,12 +28,32 @@ static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 pub struct JobId(pub u64);
 
 /// A job to hand a worker: its id, its kind (which work workers run on
-/// it) and its input.
+/// it), its input and its priority, lower first ([`job_priority`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
     pub id: JobId,
     pub kind: &'static str,
     pub input: Vec<u8>,
+    pub priority: u32,
+}
+
+/// Classes of jobs (decision 112), most urgent first: what a view or its
+/// gameplay cannot do without (bakes, the coarsest tiles, the tiles a view
+/// draws and shows, those under focus entities); gameplay's searches; and
+/// the rest of what views load.
+pub const URGENT_JOBS: u8 = 0;
+pub const GAMEPLAY_JOBS: u8 = 1;
+pub const VIEW_JOBS: u8 = 2;
+
+/// A job's priority: its `class`, then its `place` among the class's jobs
+/// (at most 2^24 - 1).
+pub const fn job_priority(class: u8, place: u32) -> u32 {
+    ((class as u32) << 24) | if place > 0xff_ffff { 0xff_ffff } else { place }
+}
+
+/// A job priority's class.
+pub const fn job_class(priority: u32) -> u8 {
+    (priority >> 24) as u8
 }
 
 /// What every worker should hold, in order with the requests: nothing an
@@ -42,8 +67,8 @@ pub enum JobShare {
 }
 
 /// Workers and their jobs (decision 110): workers running them, jobs
-/// handed out and not done, jobs submitted, completed and failed, keys
-/// shared and their bytes.
+/// handed out and not done, jobs submitted, completed, failed and cancelled
+/// while running (decision 112), keys shared and their bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct JobStats {
     pub workers: u32,
@@ -51,6 +76,7 @@ pub struct JobStats {
     pub submitted: u64,
     pub completed: u64,
     pub failed: u64,
+    pub cancelled: u64,
     pub shares: u32,
     pub shared_bytes: u64,
 }
@@ -62,9 +88,10 @@ pub struct Jobs {
     workers: u32,
     requests: Vec<JobRequest>,
     shares: Vec<JobShare>,
-    // Jobs handed out and not done, and those whose owners dropped them.
+    // Jobs handed out and not done, and those handed out that their owners
+    // cancelled, for hosts to stop.
     running: HashSet<JobId>,
-    dropped: HashSet<JobId>,
+    cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
@@ -78,7 +105,7 @@ impl Default for Jobs {
             requests: Vec::new(),
             shares: vec![JobShare::Clear],
             running: HashSet::new(),
-            dropped: HashSet::new(),
+            cancels: Vec::new(),
             done: HashMap::new(),
             shared: HashMap::new(),
             stats: JobStats::default(),
@@ -103,15 +130,17 @@ impl Jobs {
         self.workers = workers;
         if workers == 0 {
             self.requests.clear();
+            self.cancels.clear();
             for id in std::mem::take(&mut self.running) {
                 self.finish(id, Err("no workers".into()));
             }
         }
     }
 
-    /// Submits a job of `kind` on `input`; [`Self::take`] its output once
-    /// done. Without workers it fails at once.
-    pub fn submit(&mut self, kind: &'static str, input: Vec<u8>) -> JobId {
+    /// Submits a job of `kind` on `input` at `priority` ([`job_priority`]);
+    /// [`Self::take`] its output once done. Without workers it fails at
+    /// once.
+    pub fn submit(&mut self, kind: &'static str, input: Vec<u8>, priority: u32) -> JobId {
         let id = JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1);
         self.stats.submitted += 1;
         if self.workers == 0 {
@@ -119,7 +148,12 @@ impl Jobs {
             return id;
         }
         self.running.insert(id);
-        self.requests.push(JobRequest { id, kind, input });
+        self.requests.push(JobRequest {
+            id,
+            kind,
+            input,
+            priority,
+        });
         id
     }
 
@@ -128,10 +162,18 @@ impl Jobs {
         self.done.remove(&id)
     }
 
-    /// Drops job `id`: its output is thrown away once done.
+    /// Drops job `id`: a worker running it stops at its next slice
+    /// (decision 112), and its output, if any, is thrown away.
     pub fn cancel(&mut self, id: JobId) {
-        if self.done.remove(&id).is_none() && self.running.contains(&id) {
-            self.dropped.insert(id);
+        if self.done.remove(&id).is_some() || !self.running.remove(&id) {
+            return;
+        }
+        self.stats.cancelled += 1;
+        match self.requests.iter().position(|request| request.id == id) {
+            Some(index) => {
+                self.requests.remove(index);
+            }
+            None => self.cancels.push(id),
         }
     }
 
@@ -161,7 +203,14 @@ impl Jobs {
         out.append(&mut self.requests);
     }
 
-    /// Hosts: job `id`'s output from its worker, or why it failed.
+    /// Hosts: moves the jobs handed out that their owners cancelled into
+    /// `out` (decision 112): their workers should stop them.
+    pub fn take_cancels(&mut self, out: &mut Vec<JobId>) {
+        out.append(&mut self.cancels);
+    }
+
+    /// Hosts: job `id`'s output from its worker, or why it failed; ignored
+    /// for jobs cancelled since.
     pub fn complete(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
         if self.running.remove(&id) {
             self.finish(id, output);
@@ -173,9 +222,7 @@ impl Jobs {
             Ok(_) => self.stats.completed += 1,
             Err(_) => self.stats.failed += 1,
         }
-        if !self.dropped.remove(&id) {
-            self.done.insert(id, output);
-        }
+        self.done.insert(id, output);
     }
 
     pub fn stats(&self) -> JobStats {

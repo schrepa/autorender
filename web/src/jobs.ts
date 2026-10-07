@@ -8,7 +8,10 @@
 // as Blobs, which every worker reads without the page copying them again.
 // ?workers=N runs N workers and ?workers=off none, so the engine does the
 // work itself; a worker that breaks is replaced once, and the engine takes
-// back its jobs.
+// back its jobs. Jobs carry priorities (decision 112): each goes to the
+// worker with the fewest in flight, among those the one whose most urgent
+// job is least urgent, and workers run their most urgent job a slice at a
+// time; jobs the engine cancels stop at their worker's next slice.
 
 import { engineWorkerModule } from "./bindings";
 import type { TranscodedImage } from "./ktx2";
@@ -23,10 +26,11 @@ export interface JobRuntime {
 
 /** What `take_jobs` lists, in order. */
 type EngineMessage =
+  | { cancel: number }
   | { clear: true }
   | { share: string; bytes: Uint8Array }
   | { unshare: string }
-  | { id: number; kind: string; input: Uint8Array };
+  | { id: number; kind: string; input: Uint8Array; priority: number };
 
 /** What workers send back. */
 type WorkerMessage =
@@ -41,7 +45,8 @@ export interface Pixels { width: number; height: number; pixels: Uint8Array }
 
 interface Slot {
   worker: Worker;
-  jobs: Set<number>;
+  /** Jobs in flight, each with its priority (lower first). */
+  jobs: Map<number, number>;
   tasks: Set<number>;
   broken: boolean;
 }
@@ -93,7 +98,12 @@ export class JobPool {
     if (!runtime?.take_jobs) return;
     const messages = runtime.take_jobs() as EngineMessage[];
     for (const message of messages) {
-      if ("clear" in message) {
+      if ("cancel" in message) {
+        const slot = this.slots.find(slot => slot.jobs.has(message.cancel));
+        if (!slot) continue;
+        slot.jobs.delete(message.cancel);
+        slot.worker.postMessage({ type: "cancel", id: message.cancel });
+      } else if ("clear" in message) {
         this.shares.clear();
         this.broadcast({ type: "clear" });
       } else if ("share" in message) {
@@ -109,8 +119,8 @@ export class JobPool {
           runtime.fail_job?.(message.id, "no workers");
           continue;
         }
-        slot.jobs.add(message.id);
-        slot.worker.postMessage({ type: "run", id: message.id, kind: message.kind, input: message.input }, [message.input.buffer as ArrayBuffer]);
+        slot.jobs.set(message.id, message.priority);
+        slot.worker.postMessage({ type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
       }
     }
   }
@@ -138,7 +148,7 @@ export class JobPool {
 
   private spawn(): Slot {
     const worker = new Worker(new URL("./job-worker.ts", import.meta.url), { type: "module", name: "engine-jobs" });
-    const slot: Slot = { worker, jobs: new Set(), tasks: new Set(), broken: false };
+    const slot: Slot = { worker, jobs: new Map(), tasks: new Set(), broken: false };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
     worker.postMessage({ type: "init", bindings: engineWorkerModule() });
@@ -150,25 +160,35 @@ export class JobPool {
     for (const slot of this.slots) if (!slot.broken) slot.worker.postMessage(message);
   }
 
-  /** The working slot with the fewest jobs and tasks in flight. */
+  /** The working slot with the fewest jobs and tasks in flight; among
+   * those, the one whose most urgent job is least urgent, where a new job
+   * would wait least (decision 112). */
   private least(): Slot | undefined {
     let best: Slot | undefined;
+    let bestLoad = Infinity;
+    let bestUrgent = -Infinity;
     for (const slot of this.slots) {
       if (slot.broken) continue;
-      if (!best || slot.jobs.size + slot.tasks.size < best.jobs.size + best.tasks.size) best = slot;
+      const load = slot.jobs.size + slot.tasks.size;
+      let urgent = Infinity;
+      for (const priority of slot.jobs.values()) urgent = Math.min(urgent, priority);
+      if (load < bestLoad || (load === bestLoad && urgent > bestUrgent)) {
+        best = slot;
+        bestLoad = load;
+        bestUrgent = urgent;
+      }
     }
     return best;
   }
 
   private receive(slot: Slot, message: WorkerMessage) {
     switch (message.type) {
+      // Jobs cancelled since are no one's.
       case "done":
-        slot.jobs.delete(message.id);
-        this.runtime?.complete_job?.(message.id, message.output);
+        if (slot.jobs.delete(message.id)) this.runtime?.complete_job?.(message.id, message.output);
         break;
       case "failed":
-        slot.jobs.delete(message.id);
-        this.runtime?.fail_job?.(message.id, message.error);
+        if (slot.jobs.delete(message.id)) this.runtime?.fail_job?.(message.id, message.error);
         break;
       case "task":
         slot.tasks.delete(message.task);
@@ -194,7 +214,7 @@ export class JobPool {
     slot.broken = true;
     slot.worker.terminate();
     console.warn(`An engine worker stopped: ${error}`);
-    for (const id of slot.jobs) this.runtime?.fail_job?.(id, error);
+    for (const id of slot.jobs.keys()) this.runtime?.fail_job?.(id, error);
     slot.jobs.clear();
     for (const task of slot.tasks) {
       this.tasks.get(task)?.reject(new Error(error));

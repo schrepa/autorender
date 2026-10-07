@@ -542,7 +542,7 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Jobs>(
-            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers running jobs (none keeps terrain bakes, tiles and walks on the engine's thread), jobs handed out and not done, jobs submitted, completed and failed since the engine started, and keys shared with every worker and their bytes. Pages take ?workers=N or ?workers=off.", schemas["Jobs"].clone()),
+            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers running jobs (none keeps terrain bakes, tiles and walks on the engine's thread), jobs handed out and not done, jobs submitted, completed, failed and cancelled while running (decision 112) since the engine started, and keys shared with every worker and their bytes. Workers run the most urgent job they hold a slice at a time. Pages take ?workers=N or ?workers=off.", schemas["Jobs"].clone()),
             |jobs| {
                 let stats = jobs.stats();
                 json!(crate::views::JobsView {
@@ -551,6 +551,7 @@ impl DevTools {
                     submitted: stats.submitted,
                     completed: stats.completed,
                     failed: stats.failed,
+                    cancelled: stats.cancelled,
                     shares: stats.shares,
                     shared_bytes: stats.shared_bytes,
                 })
