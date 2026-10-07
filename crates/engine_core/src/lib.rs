@@ -131,7 +131,7 @@ pub use streaming::{
     StreamingGrid, WorldCells, WorldChanges, WorldStreaming, remove_streamed,
 };
 pub use terrain::{
-    MAX_PLACEMENT_LODS, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
+    MAX_PLACEMENT_LODS, MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
     SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug,
     TerrainEdit, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats,
@@ -950,9 +950,9 @@ pub mod prelude {
     pub use crate::{
         AuthoredPlacement, Biome, BiomeLayer, Biomes, Blend, ErosionLayer, ErosionStage,
         FarPlacement, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers,
-        Mask, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider, PlacedShape,
-        PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap, Stamp,
-        StampOp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainFocus,
+        Mask, MotionDetail, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider,
+        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap,
+        Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainFocus,
         TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
     };
     pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};

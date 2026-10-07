@@ -753,6 +753,94 @@ pub struct TerrainSettings {
     /// Ground generated around terrains with surroundings (decision 094)
     /// streams and draws; off, every terrain ends at its edges.
     pub surroundings: bool,
+    /// Detail lowered while the camera moves fast (decision 115): off by
+    /// default, as it lowers detail in motion on purpose.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub motion_detail: Option<MotionDetail>,
+}
+
+/// How terrain loads while the camera moves fast (decision 115): the
+/// finest levels' tiles in its view wait, more of them the faster it
+/// moves, and tiles out of its view wait until it settles. The coarsest
+/// pinned levels, collision's tiles and those under focus entities never
+/// wait, and tiles resident stay.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(rename = "SceneTerrainMotionDetail")
+)]
+#[serde(default, deny_unknown_fields)]
+pub struct MotionDetail {
+    /// Meters per second above which the camera moves fast, 0 to 100,000.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100000.0)))]
+    pub speed: f32,
+    /// Meters per second at which the finest `levels` levels wait, from
+    /// `speed` to 100,000; between, fewer wait, at least one.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100000.0)))]
+    pub fastest: f32,
+    /// Finest levels whose tiles wait at `fastest`, 0 to 8.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 8)))]
+    pub levels: u32,
+    /// Seconds after the camera slows below `speed` before tiles out of its
+    /// view load, 0 to 10.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
+    pub settle: f32,
+}
+
+impl Default for MotionDetail {
+    fn default() -> Self {
+        Self {
+            speed: 30.0,
+            fastest: 300.0,
+            levels: 2,
+            settle: 0.2,
+        }
+    }
+}
+
+impl MotionDetail {
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        check_range("motion_detail.speed", self.speed, 0.0..=100_000.0)?;
+        check_range(
+            "motion_detail.fastest",
+            self.fastest,
+            self.speed..=100_000.0,
+        )?;
+        if self.levels > 8 {
+            return Err(InvalidSetting::new(
+                "motion_detail.levels",
+                "must be in [0, 8]",
+            ));
+        }
+        check_range("motion_detail.settle", self.settle, 0.0..=10.0)
+    }
+
+    /// Every value in range.
+    pub fn sanitized(self) -> Self {
+        let defaults = Self::default();
+        let finite = |value: f32, fallback: f32| if value.is_finite() { value } else { fallback };
+        let speed = crate::math::clamp(finite(self.speed, defaults.speed), 0.0, 100_000.0);
+        Self {
+            speed,
+            fastest: crate::math::clamp(finite(self.fastest, defaults.fastest), speed, 100_000.0),
+            levels: self.levels.min(8),
+            settle: crate::math::clamp(finite(self.settle, defaults.settle), 0.0, 10.0),
+        }
+    }
+
+    /// The finest levels whose tiles wait at `speed` meters per second.
+    pub fn waiting(&self, speed: f32) -> u32 {
+        if speed <= self.speed || speed.is_nan() || self.levels == 0 {
+            return 0;
+        }
+        let share = if self.fastest > self.speed {
+            crate::math::clamp((speed - self.speed) / (self.fastest - self.speed), 0.0, 1.0)
+        } else {
+            1.0
+        };
+        ((share * self.levels as f32).ceil() as u32).clamp(1, self.levels)
+    }
 }
 
 impl Default for TerrainSettings {
@@ -774,6 +862,7 @@ impl Default for TerrainSettings {
             relief_distance: 24.0,
             relief_steps: 8,
             surroundings: true,
+            motion_detail: None,
         }
     }
 }
@@ -810,6 +899,9 @@ impl TerrainSettings {
         check_range("relief_distance", self.relief_distance, 0.0..=200.0)?;
         if !(2..=64).contains(&self.relief_steps) {
             return Err(InvalidSetting::new("relief_steps", "must be in [2, 64]"));
+        }
+        if let Some(detail) = &self.motion_detail {
+            detail.validate()?;
         }
         Ok(())
     }
@@ -855,6 +947,7 @@ impl TerrainSettings {
             ),
             relief_steps: self.relief_steps.clamp(2, 64),
             surroundings: self.surroundings,
+            motion_detail: self.motion_detail.map(MotionDetail::sanitized),
         }
     }
 }
@@ -897,6 +990,9 @@ pub struct TerrainStats {
     /// (decision 114): heights and holes, drawn with coarser levels'
     /// materials while the rest loads.
     pub shaped_tiles: u32,
+    /// Tiles the view wants that wait while the camera moves fast (decision
+    /// 115).
+    pub waiting_tiles: u32,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -1956,9 +2052,14 @@ pub struct Terrains {
     /// Milliseconds now, from the host (decision 099); without one, a
     /// frame works a slice.
     clock: Option<fn() -> f64>,
-    /// The eye last streamed toward and its velocity (decision 100).
+    /// The eye last streamed toward and its velocity (decision 100), the
+    /// last frame's seconds, and the seconds since the eye last moved faster
+    /// than the settings' motion detail speed (decision 115), `None` when
+    /// it has not since they asked for it.
     last_eye: Option<Vec3>,
     velocity: Vec3,
+    seconds: f32,
+    fast_ago: Option<f32>,
     /// Whether the camera's view has loaded whole since terrains arrived.
     loaded: bool,
     /// Workers' share (decision 110): how many ran at the last frame, the
@@ -2558,6 +2659,11 @@ impl Terrains {
     fn heading(&mut self, eye: Vec3, seconds: f32) -> Vec3 {
         let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
         self.last_eye = Some(eye);
+        self.seconds = if seconds.is_finite() {
+            crate::math::max(seconds, 0.0)
+        } else {
+            0.0
+        };
         if moved.length() > JUMP {
             // A jump loads the view again at the loading budget (decision
             // 108), as the first view loads, unless workers load it
@@ -2668,6 +2774,26 @@ impl Terrains {
             }),
         };
         let mut budget = work.slice;
+        // Speed-aware detail (decision 115): the finest levels waiting at
+        // the eye's speed, and whether it has yet to settle.
+        let (waiting, unsettled) = match settings.motion_detail {
+            Some(detail) => {
+                let speed = self.velocity.length();
+                self.fast_ago = if speed > detail.speed {
+                    Some(0.0)
+                } else {
+                    self.fast_ago.map(|ago| ago + self.seconds)
+                };
+                (
+                    detail.waiting(speed),
+                    self.fast_ago.is_some_and(|ago| ago < detail.settle),
+                )
+            }
+            None => {
+                self.fast_ago = None;
+                (0, false)
+            }
+        };
         let limit = match (settings.max_tiles, self.device_tiles) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -2837,10 +2963,42 @@ impl Terrains {
             // in their turn and draw until they do.
             state.stale.retain(|key| state.tiles.contains_key(key));
             state.shaped.retain(|key| state.tiles.contains_key(key));
+            // While the eye moves fast (decision 115), the finest levels'
+            // tiles wait, and until it settles those it does not show; the
+            // pinned levels, collision's tiles and those under focus
+            // entities, with their ancestors, never wait.
+            let mut never = HashSet::new();
+            let mut shown = HashSet::new();
+            if waiting > 0 || unsettled {
+                let mut chain = Vec::new();
+                for key in tier(|tile| tile.score < 0.0)
+                    .chain(loading.iter().copied())
+                    .chain(under.iter().copied())
+                {
+                    push_with_ancestors(&pyramid, key, &mut chain, &mut never);
+                }
+                if unsettled {
+                    chain.clear();
+                    for key in tier(|tile| tile.seen) {
+                        push_with_ancestors(&pyramid, key, &mut chain, &mut shown);
+                    }
+                }
+            }
+            let waits = |key: &TileKey| {
+                (waiting > 0 || unsettled)
+                    && !never.contains(key)
+                    && (u32::from(key.level) < waiting || (unsettled && !shown.contains(key)))
+            };
+            stats.waiting_tiles += order
+                .iter()
+                .filter(|key| target.contains(key) && state.loads(key) && waits(key))
+                .count() as u32;
             let missing: Vec<(TileKey, u32)> = order
                 .iter()
                 .enumerate()
-                .filter(|(_, key)| settings.enabled && target.contains(key) && state.loads(key))
+                .filter(|(_, key)| {
+                    settings.enabled && target.contains(key) && state.loads(key) && !waits(key)
+                })
                 .map(|(index, &key)| {
                     let class = if index < urgent {
                         URGENT_JOBS

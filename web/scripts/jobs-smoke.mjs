@@ -89,6 +89,8 @@ try {
   assert.ok(workers.jobs.workers > 0, `workers run jobs: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);
+  // Decision 114: tiles hand out their shape before the rest.
+  assert.ok(workers.jobs.parts > 0, `tiles hand out their shapes first: ${JSON.stringify(workers.jobs)}`);
   const page_ = await session("page", { workers: "off" }, false);
   assert.equal(page_.jobs.workers, 0, `?workers=off runs none: ${JSON.stringify(page_.jobs)}`);
   assert.equal(page_.jobs.submitted, 0, "without workers no job is handed out");
