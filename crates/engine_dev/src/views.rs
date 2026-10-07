@@ -193,6 +193,21 @@ pub struct NavAgentsView {
     pub first: Vec<NavAgentRow>,
 }
 
+/// The host's job workers (decision 110): workers running jobs, jobs handed
+/// out and not done, jobs submitted, completed and failed since the engine
+/// started, and keys shared with every worker and their bytes.
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct JobsView {
+    pub workers: u32,
+    pub running: u32,
+    pub submitted: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub shares: u32,
+    pub shared_bytes: u64,
+}
+
 /// One agent of [`NavAgentsView`].
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]

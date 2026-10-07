@@ -19,9 +19,11 @@
 //! renderers, collision and [`Tile::height_at`] use the same split.
 
 mod bake;
+pub mod codec;
 mod erosion;
 mod format;
 mod hydrology;
+pub mod jobs;
 mod layers;
 mod nav;
 mod noise;

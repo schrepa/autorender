@@ -695,3 +695,75 @@ impl BiomeRules {
         }
     }
 }
+
+// Binary encoding (decision 110).
+use crate::codec::{Codec, CodecError, Reader, Writer, record};
+
+impl Codec for Mask {
+    fn write(&self, out: &mut Writer) {
+        match self {
+            Self::Constant(value) => out.put(&0_u8).put(value),
+            Self::Height(ends) => out.put(&1_u8).put(ends),
+            Self::Slope(ends) => out.put(&2_u8).put(ends),
+            Self::Curvature(ends) => out.put(&3_u8).put(ends),
+            Self::Flow(ends) => out.put(&4_u8).put(ends),
+            Self::Wetness(ends) => out.put(&5_u8).put(ends),
+            Self::Lake(ends) => out.put(&6_u8).put(ends),
+            Self::River(ends) => out.put(&7_u8).put(ends),
+            Self::Path(ends) => out.put(&8_u8).put(ends),
+            Self::Noise(noise) => out.put(&9_u8).put(noise),
+            Self::Multiply(masks) => out.put(&10_u8).put(masks),
+            Self::Add(masks) => out.put(&11_u8).put(masks),
+            Self::Min(masks) => out.put(&12_u8).put(masks),
+            Self::Max(masks) => out.put(&13_u8).put(masks),
+            Self::Invert(mask) => out.put(&14_u8).put(mask),
+            Self::Remap(remap) => out.put(&15_u8).put(remap),
+        };
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        Ok(match input.get::<u8>()? {
+            0 => Self::Constant(input.get()?),
+            1 => Self::Height(input.get()?),
+            2 => Self::Slope(input.get()?),
+            3 => Self::Curvature(input.get()?),
+            4 => Self::Flow(input.get()?),
+            5 => Self::Wetness(input.get()?),
+            6 => Self::Lake(input.get()?),
+            7 => Self::River(input.get()?),
+            8 => Self::Path(input.get()?),
+            9 => Self::Noise(input.get()?),
+            10 => Self::Multiply(input.get()?),
+            11 => Self::Add(input.get()?),
+            12 => Self::Min(input.get()?),
+            13 => Self::Max(input.get()?),
+            14 => Self::Invert(input.get()?),
+            15 => Self::Remap(input.get()?),
+            _ => return Err(CodecError("invalid mask")),
+        })
+    }
+}
+
+record!(NoiseMask {
+    wavelength,
+    seed,
+    octaves,
+});
+record!(Remap { mask, from, to });
+record!(BiomeLayer {
+    material,
+    mask,
+    opacity,
+});
+record!(Biome {
+    id,
+    fitness,
+    layers,
+});
+record!(Biomes {
+    materials,
+    biomes,
+    assets,
+    placements,
+    placed,
+});

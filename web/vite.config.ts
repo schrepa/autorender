@@ -66,10 +66,13 @@ export default defineConfig(({ command, mode }) => ({
   resolve: {
     alias: instrumented.has(mode) ? [{
       find: "../pkg/stress_lab", replacement: resolve(import.meta.dirname, `pkg-${instrumented.get(mode)}/stress_lab.js`),
-    }] : command === "serve" ? ["orbit_demo", "playground", "stress_lab"].map(name => ({
+    }] : command === "serve" ? ["orbit_demo", "playground", "stress_lab", "engine_worker"].map(name => ({
       find: `../pkg/${name}`, replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     })) : [],
   },
+  // Job workers (decision 110) are modules: they import the engine's job
+  // worker bindings as the page imports the game's.
+  worker: { format: "es" },
   build: {
     outDir: instrumented.has(mode) ? `dist-${instrumented.get(mode)}` : "dist",
     rollupOptions: {

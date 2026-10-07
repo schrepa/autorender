@@ -73,7 +73,12 @@ try {
   await openPaused(page, url);
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   let rendering = await look(0, 0);
-  for (let frame = 0; frame < 40 && (rendering.terrain_loading_tiles > 0 || rendering.terrain_fallback_patches > 0); frame++) rendering = await rendered();
+  // Job workers generate tiles beside the page (decision 110), their
+  // outputs arriving between commands.
+  for (let frame = 0; frame < 400 && (rendering.terrain_loading_tiles > 0 || rendering.terrain_fallback_patches > 0); frame++) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+    rendering = await rendered();
+  }
 
   // Binning and what loads around the start.
   let state = await cells();

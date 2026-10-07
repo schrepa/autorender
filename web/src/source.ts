@@ -1,4 +1,6 @@
-import { isKtx2, transcodeKtx2 } from "./ktx2.ts";
+import { decodeImagePixels } from "./decode.ts";
+import { jobPool } from "./jobs.ts";
+import { basisBase, isKtx2, targetFormat, transcodeKtx2 } from "./ktx2.ts";
 import { fetchPrefix, fetchVirtualPrefix } from "./virtual-mesh.ts";
 
 /** Read a UTF-8 authoring source with a hard transport budget, including chunked replies. */
@@ -55,12 +57,15 @@ export interface SceneFileBindings {
  * Fetch the image and buffer files a scene references, relative to its URL,
  * decode images with the browser's own decoder into RGBA8 pixels, and
  * transcode KTX2 images to a block-compressed format the GPU samples
- * (decision 037). Runs at load boundaries only, never per frame.
+ * (decision 037). Runs at load boundaries only, never per frame: on the
+ * page's job workers where it runs them (decision 110), several at once,
+ * else on the page.
  */
 export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
   const list = JSON.parse(bindings.scene_file_list(source)) as { uri: string; kind: "image" | "buffer" | "virtual_mesh" | "terrain" }[];
   const files = new bindings.SceneFileSet();
   const base = new URL(sceneUrl, location.href);
+  const pool = jobPool();
   try {
     await Promise.all(list.map(async ({ uri, kind }) => {
       // Virtual meshes (decision 044) load their prefix; the renderer
@@ -89,22 +94,16 @@ export async function loadSceneFiles(sceneUrl: string, source: string, bindings:
       }
       const head = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
       if (isKtx2(head)) {
-        const image = await transcodeKtx2(uri, new Uint8Array(await blob.arrayBuffer()));
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        // A worker that fails leaves the image to the page.
+        const image = (pool && await pool.transcodeKtx2(uri, bytes.slice(), await targetFormat(), basisBase()).catch(() => undefined))
+          || await transcodeKtx2(uri, bytes);
         if (image.format === "rgba8") files.add_image(uri, image.width, image.height, image.pixels);
         else files.add_compressed_image(uri, image.format, image.width, image.height, image.data, image.levels);
         return;
       }
-      const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
-      try {
-        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        if (!context) throw new Error(`Scene file ${uri} could not be decoded.`);
-        context.drawImage(bitmap, 0, 0);
-        const pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
-        files.add_image(uri, bitmap.width, bitmap.height, new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength));
-      } finally {
-        bitmap.close();
-      }
+      const image = (pool && await pool.decodeImage(uri, blob).catch(() => undefined)) || await decodeImagePixels(uri, blob);
+      files.add_image(uri, image.width, image.height, image.pixels);
     }));
     return files;
   } catch (error) {

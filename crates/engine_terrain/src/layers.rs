@@ -1258,3 +1258,141 @@ fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     let nearest = Vec2::from(center).clamp(min, max);
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }
+
+// Binary encoding (decision 110).
+use crate::codec::{Codec, CodecError, Reader, Writer, record};
+
+impl Codec for Blend {
+    fn write(&self, out: &mut Writer) {
+        let tag: u8 = match self {
+            Self::Add => 0,
+            Self::Max => 1,
+            Self::Min => 2,
+            Self::Replace => 3,
+        };
+        out.put(&tag);
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        Ok(match input.get::<u8>()? {
+            0 => Self::Add,
+            1 => Self::Max,
+            2 => Self::Min,
+            3 => Self::Replace,
+            _ => return Err(CodecError("invalid blend")),
+        })
+    }
+}
+
+record!(NoiseLayer {
+    seed,
+    height,
+    offset,
+    wavelength,
+    ridges,
+    warp,
+    erosion,
+    smoothing,
+    valleys,
+    roughness,
+    blend,
+});
+
+impl Codec for StampOp {
+    fn write(&self, out: &mut Writer) {
+        match self {
+            Self::Raise(meters) => out.put(&0_u8).put(meters),
+            Self::Lower(meters) => out.put(&1_u8).put(meters),
+            Self::Flatten(height) => out.put(&2_u8).put(height),
+            Self::Hole => out.put(&3_u8),
+        };
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        Ok(match input.get::<u8>()? {
+            0 => Self::Raise(input.get()?),
+            1 => Self::Lower(input.get()?),
+            2 => Self::Flatten(input.get()?),
+            3 => Self::Hole,
+            _ => return Err(CodecError("invalid stamp")),
+        })
+    }
+}
+
+record!(Stamp {
+    center,
+    radius,
+    falloff,
+    op,
+});
+record!(HeightImage {
+    width,
+    height,
+    samples,
+    levels,
+});
+record!(ImageLevel {
+    width,
+    height,
+    samples,
+});
+record!(HeightmapLayer {
+    image,
+    min,
+    size,
+    low,
+    high,
+    falloff,
+    blend,
+    uri,
+    source,
+    attribution,
+});
+record!(PathStage { layer, baked });
+record!(ErosionStage { layer, baked });
+record!(HydrologyStage { layer, baked });
+record!(Fade { low, high, blend });
+
+impl Codec for Layer {
+    fn write(&self, out: &mut Writer) {
+        match self {
+            Self::Noise(layer) => out.put(&0_u8).put(layer),
+            Self::Heightmap(layer) => out.put(&1_u8).put(layer),
+            Self::Stamp(layer) => out.put(&2_u8).put(layer),
+            Self::Hydrology(stage) => out.put(&3_u8).put(stage),
+            Self::Erosion(stage) => out.put(&4_u8).put(stage),
+            Self::Path(stage) => out.put(&5_u8).put(stage),
+        };
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        Ok(match input.get::<u8>()? {
+            0 => Self::Noise(input.get()?),
+            1 => Self::Heightmap(input.get()?),
+            2 => Self::Stamp(input.get()?),
+            3 => Self::Hydrology(input.get()?),
+            4 => Self::Erosion(input.get()?),
+            5 => Self::Path(input.get()?),
+            _ => return Err(CodecError("invalid layer")),
+        })
+    }
+}
+
+/// The stack's layers with their bakes, its offset and its fade; reading
+/// validates the layers as [`Layers::new`] does and rebuilds the noise
+/// tables they derive.
+impl Codec for Layers {
+    fn write(&self, out: &mut Writer) {
+        out.put(&self.layers).put(&self.offset).put(&self.fade);
+    }
+
+    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+        let layers = input.get()?;
+        let offset = input.get()?;
+        let fade = input.get()?;
+        let mut stack = Self::new(layers).map_err(|_| CodecError("invalid layers"))?;
+        stack.offset = offset;
+        stack.fade = fade;
+        Ok(stack)
+    }
+}

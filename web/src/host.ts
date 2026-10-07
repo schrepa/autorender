@@ -1,4 +1,5 @@
 import { BrowserInput } from "./input";
+import { type JobPool, type JobRuntime, jobPool } from "./jobs";
 import "./style.css";
 
 /**
@@ -20,7 +21,7 @@ export interface RuntimeStats {
 export function readStats(runtime: { stats(): string }): RuntimeStats {
   return JSON.parse(runtime.stats()) as RuntimeStats;
 }
-export interface Runtime {
+export interface Runtime extends JobRuntime {
   /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
   stats(): string;
@@ -196,6 +197,8 @@ const BETWEEN_MARGIN_MS = 4;
 // ?between=off loads terrain within frames alone, for comparisons.
 const betweenFrames = new URLSearchParams(location.search).get("between") !== "off";
 const hud = new FrameHud(canvas);
+// Job workers (decision 110), for games that hand out jobs.
+let jobs: JobPool | undefined;
 let pixelWidth = 1;
 let pixelHeight = 1;
 let resolutionScale = 1;
@@ -260,6 +263,7 @@ function workBetweenFrames(due: number) {
   const start = performance.now();
   const spare = due - start - BETWEEN_MARGIN_MS;
   if (spare > 1) game.work_between_frames(spare);
+  jobs?.exchange();
   betweenSpent = performance.now() - start;
 }
 
@@ -280,6 +284,7 @@ function workWhileCompiling() {
   if (disposed || !game || paused || document.hidden || failed || !preparing || !game.work) return;
   if (!readStats(game).pipelines_compiling) return;
   game.work(pixelWidth, pixelHeight);
+  jobs?.exchange();
   working = window.setTimeout(workWhileCompiling, 0);
 }
 
@@ -295,6 +300,7 @@ function prepareFrame(current: T, timestamp: number) {
   }
   current.suspend();
   current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
+  jobs?.exchange();
   const after = readStats(current);
   quietFrames = after.pipelines_created === 0 ? quietFrames + 1 : 0;
   if ((quietFrames < QUIET_FRAMES || after.loading) && !late) return;
@@ -319,6 +325,7 @@ function frame(timestamp: number) {
     game.frame(timestamp, pixelWidth, pixelHeight, inputEnabled ? input.forward : 0, inputEnabled ? input.right : 0, inputEnabled ? input.upAxis : 0,
       inputEnabled ? input.yaw : 0, inputEnabled ? input.pitch : 0, inputEnabled ? input.held : 0, inputEnabled ? input.pressed : 0, inputEnabled ? input.released : 0);
     input.consumed();
+    jobs?.exchange();
     options.afterFrame?.(game, timestamp);
     if (hud.frame(game, timestamp)) options.poll?.(game);
     options.afterHostFrame?.(game, timestamp);
@@ -394,6 +401,11 @@ async function start() {
   // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
+  // Games handing out jobs run them on the page's workers (decision 110).
+  if (created.take_jobs) {
+    jobs = jobPool();
+    jobs?.attach(created);
+  }
   resize();
   message.hidden = true;
   pause.disabled = false;
@@ -442,6 +454,7 @@ window.addEventListener("pagehide", () => { stopClock(); }, listenerOptions);
 window.addEventListener("pageshow", () => resume(), listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   disposed = true;
+  jobs?.detach();
   disposeDevelopment?.();
   lifecycle.abort();
   stopClock(); observer.disconnect(); input.dispose(); game?.free(); game = undefined;

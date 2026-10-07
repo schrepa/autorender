@@ -16,6 +16,11 @@
 //! resident tiles and the patches the camera draws in
 //! [`RenderSnapshot::terrain`].
 //!
+//! Where the host runs workers (decision 110), terrains bake and generate
+//! tiles on them instead: frames share each terrain's layers with them,
+//! hand them the most important missing tiles and make the tiles they
+//! finish resident, which takes frames little time.
+//!
 //! Queries ([`Terrains::sample`], [`Terrains::height_at`] and the rest)
 //! answer from the finest resident tile at a point, on the triangles
 //! renderers and collision use, and return `None` where no tile is
@@ -35,16 +40,20 @@ use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
+use engine_terrain::jobs::{BAKE_JOB, StackView, TILE_JOB, TerrainRecipe};
 use engine_terrain::{
-    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStats, Fall,
-    FileHeader, FormatError, Generator, HydrologyStats, Layer, Layers, LodRanges, Mask, NavOptions,
-    NavPath, NoiseMask, Obstacle, PATCH_QUADS, Patch, PathStage, Pyramid, Remap, Route,
-    RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake, Tile, TileKey,
-    TileSample, WantedTile, decode_tile,
+    Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
+    Fall, FileHeader, FormatError, Generator, HydrologyStage, HydrologyStats, Layer, Layers,
+    LodRanges, Mask, NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, Patch, PathStage,
+    Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS, TILE_STRIDE, TerrainBake,
+    Tile, TileKey, TileSample, WantedTile, decode_tile,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
-use crate::{Camera, GlobalTransforms, RenderMaterial, RenderMesh, RenderSnapshot, RenderTexture};
+use crate::{
+    Camera, GlobalTransforms, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
+    RenderTexture,
+};
 
 /// Where a terrain's tiles come from.
 #[derive(Clone, Debug, PartialEq)]
@@ -919,14 +928,21 @@ impl Work {
             _ => false,
         }
     }
+
+    /// Whether the work's time is up; never without a clock.
+    fn expired(&self) -> bool {
+        self.clock.is_some_and(|clock| clock() >= self.end)
+    }
 }
 
 /// Loads `missing` tiles of `state`, most important first, within `work`'s
 /// time from slices of `budget`: generated after the terrain's bakes,
 /// decoded, or requested and decoded once delivered; `target` is every tile
 /// it keeps. Frames load what they find missing, and hosts what is left
-/// between frames (decision 108). Returns whether a bake is still in
+/// between frames (decision 108). Where `slots` has workers, they bake and
+/// generate instead (decision 110). Returns whether a bake is still in
 /// progress, which nothing loads behind.
+#[allow(clippy::too_many_arguments)]
 fn load_tiles(
     state: &mut TerrainState,
     missing: &[TileKey],
@@ -935,14 +951,30 @@ fn load_tiles(
     budget: &mut u64,
     frame: u64,
     requests: &mut Vec<TileRequest>,
+    mut slots: Option<&mut JobSlots<'_>>,
 ) -> bool {
     let pyramid = state.terrain.pyramid;
     match state.terrain.source.clone() {
         TerrainSource::Generated(authored) => {
             // Bakes (decisions 066 and 068) run before any tile loads,
-            // each reading the layers below it, in stack order.
+            // each reading the layers below it, in stack order: on a
+            // worker where workers run (decision 110), unless one failed
+            // there.
             let layers = state.baked.clone().unwrap_or(authored);
             if let Some(unbaked) = layers.unbaked() {
+                if let Some(slots) = slots.as_deref_mut()
+                    && slots.jobs.workers() > 0
+                    && !state.bake_inline
+                {
+                    bake_on_worker(state, slots.jobs, &layers, &pyramid);
+                    return true;
+                }
+                // A bake handed to workers that stopped runs here.
+                if let Some(id) = state.bake_job.take()
+                    && let Some(slots) = slots.as_deref_mut()
+                {
+                    slots.jobs.cancel(id);
+                }
                 let bake = state
                     .bake
                     .get_or_insert_with(|| TerrainBake::new(&layers, unbaked.clone(), &pyramid));
@@ -962,36 +994,28 @@ fn load_tiles(
                         Baked::Path(_) => {}
                     }
                     let index = unbaked.0;
-                    let baked = Arc::new(layers.with_baked(index, baked));
-                    if baked.unbaked().is_none() {
-                        // Its roads' bridges (decision 072), once every
-                        // bake is done; collision follows the revision.
-                        state.bridges = baked
-                            .layers()
-                            .iter()
-                            .filter_map(|layer| match layer {
-                                Layer::Path(PathStage {
-                                    baked: Some(profile),
-                                    ..
-                                }) => Some(profile.bridges()),
-                                _ => None,
-                            })
-                            .flatten()
-                            .collect::<Vec<_>>()
-                            .into();
-                        // Its rivers' waterfalls (decision 075).
-                        state.falls = baked
-                            .hydrology()
-                            .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
-                        state.revision += 1;
-                    }
-                    state.baked = Some(baked);
-                    state.bake = None;
+                    finish_bake(state, Arc::new(layers.with_baked(index, baked)));
                 }
                 return true;
             }
             // Edits (decision 080) stand over every bake.
             let layers = state.generation(layers);
+            // Workers generate tiles where they run (decision 110), unless
+            // they failed it again and again.
+            if let Some(slots) = slots.as_deref_mut()
+                && slots.jobs.workers() > 0
+                && state.recipe.is_some()
+                && state.worker_failures < WORKER_FAILURES
+            {
+                generate_on_workers(state, missing, target, work, slots, frame);
+                return false;
+            }
+            // Tiles handed to workers that stopped generate here.
+            for (_, (id, _)) in state.dispatched.drain() {
+                if let Some(slots) = slots.as_deref_mut() {
+                    slots.jobs.cancel(id);
+                }
+            }
             // The coarsest level always draws: generate it whole at once.
             let first = state.tiles.is_empty();
             for &key in missing {
@@ -1112,6 +1136,234 @@ fn load_tiles(
     false
 }
 
+/// Workers a frame hands terrain jobs to (decision 110): the jobs, and how
+/// many more it may hand out.
+struct JobSlots<'a> {
+    jobs: &'a mut Jobs,
+    slots: usize,
+}
+
+impl JobSlots<'_> {
+    /// The frame's jobs: two in flight per worker, so each has its next
+    /// ready, less those still running.
+    fn of(jobs: &mut Jobs) -> JobSlots<'_> {
+        let slots = (jobs.workers() as usize * 2).saturating_sub(jobs.running());
+        JobSlots { jobs, slots }
+    }
+}
+
+/// A terrain's recipe as workers hold it (decision 110): its key, the
+/// stack it shares (the layers its tiles generate from, which surroundings
+/// see from afar) and its revision, which its tiles' jobs carry.
+struct SharedRecipe {
+    key: String,
+    stack: Arc<Layers>,
+    revision: u64,
+}
+
+/// Makes `baked` the layers `state`'s tiles generate from: once every bake
+/// is done, with its roads' bridges (decision 072; collision follows the
+/// revision) and its rivers' waterfalls (decision 075).
+fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
+    if baked.unbaked().is_none() {
+        state.bridges = baked
+            .layers()
+            .iter()
+            .filter_map(|layer| match layer {
+                Layer::Path(PathStage {
+                    baked: Some(profile),
+                    ..
+                }) => Some(profile.bridges()),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>()
+            .into();
+        state.falls = baked
+            .hydrology()
+            .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
+        state.revision += 1;
+    }
+    state.baked = Some(baked);
+    state.bake = None;
+}
+
+/// Bakes `layers` over `pyramid` on a worker (decision 110): hands it every
+/// bake at once, then makes what it baked the layers tiles generate from. A
+/// bake that failed there runs in place instead.
+fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, pyramid: &Pyramid) {
+    let Some(id) = state.bake_job else {
+        let input = engine_terrain::jobs::bake_input(layers, pyramid);
+        state.bake_job = Some(jobs.submit(BAKE_JOB, input));
+        return;
+    };
+    let Some(output) = jobs.take(id) else {
+        return;
+    };
+    state.bake_job = None;
+    let Some(baked) = output
+        .ok()
+        .and_then(|bytes| engine_terrain::jobs::bake_output(&bytes).ok())
+    else {
+        state.bake_inline = true;
+        return;
+    };
+    for layer in baked.layers() {
+        match layer {
+            Layer::Hydrology(HydrologyStage {
+                baked: Some(found), ..
+            }) => state.hydrology = Some(found.stats),
+            Layer::Erosion(ErosionStage {
+                baked: Some(found), ..
+            }) => state.erosion = Some(found.stats),
+            _ => {}
+        }
+    }
+    finish_bake(state, Arc::new(baked));
+}
+
+/// Generates `state`'s missing tiles on workers (decision 110), most
+/// important first, while the frame may hand out jobs; makes the tiles
+/// workers finished resident, the first at once and the rest within
+/// `work`'s time, when still wanted and generated from the layers tiles
+/// generate from now. Tiles that failed are asked for again later.
+fn generate_on_workers(
+    state: &mut TerrainState,
+    missing: &[TileKey],
+    target: &HashSet<TileKey>,
+    work: &Work,
+    slots: &mut JobSlots<'_>,
+    frame: u64,
+) {
+    let Some((recipe, revision)) = state
+        .recipe
+        .as_ref()
+        .map(|recipe| (recipe.key.clone(), recipe.revision))
+    else {
+        return;
+    };
+    // Tiles generating here stop: workers generate them.
+    state.jobs.clear();
+    let handed: Vec<(TileKey, JobId, u64)> = state
+        .dispatched
+        .iter()
+        .map(|(&key, &(id, made))| (key, id, made))
+        .collect();
+    let mut inserted = false;
+    for (key, id, made) in handed {
+        if inserted && work.expired() {
+            break;
+        }
+        let Some(output) = slots.jobs.take(id) else {
+            continue;
+        };
+        state.dispatched.remove(&key);
+        let tile = output
+            .ok()
+            .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok());
+        match tile {
+            Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
+                state.stale.remove(&key);
+                state.failed.remove(&key);
+                state.insert(tile);
+                inserted = true;
+            }
+            Some(_) => {}
+            None => {
+                state.failed.insert(key, frame);
+                state.worker_failures += 1;
+            }
+        }
+    }
+    for &key in missing {
+        if slots.slots == 0 {
+            break;
+        }
+        if state.dispatched.contains_key(&key)
+            || state
+                .failed
+                .get(&key)
+                .is_some_and(|&at| frame < at + RETRY_AFTER)
+        {
+            continue;
+        }
+        let input = engine_terrain::jobs::tile_input(&recipe, key);
+        let id = slots.jobs.submit(TILE_JOB, input);
+        state.dispatched.insert(key, (id, revision));
+        slots.slots -= 1;
+    }
+}
+
+/// Shares the recipe workers generate `state`'s tiles from (decision 110)
+/// once its bakes are done, and again whenever the layers its tiles
+/// generate from change: their stack, shared once for every terrain seeing
+/// it, and how its terrain sees it. New keys come from `shares`.
+fn share_recipe(
+    state: &mut TerrainState,
+    jobs: &mut Jobs,
+    stacks: &mut Vec<(Arc<Layers>, String)>,
+    shares: &mut u64,
+) {
+    let TerrainSource::Generated(authored) = &state.terrain.source else {
+        return;
+    };
+    let layers = state.baked.clone().unwrap_or_else(|| authored.clone());
+    if layers.unbaked().is_some() {
+        return;
+    }
+    // Surroundings (decision 094) see their terrain's stack from afar.
+    let (stack, view) = match &state.around {
+        Some(around) => (
+            around.base.clone(),
+            Some(StackView {
+                offset: -around.cutout.0,
+                low: Vec2::ZERO,
+                high: around.cutout.1 - around.cutout.0,
+                blend: around.surroundings.blend,
+            }),
+        ),
+        None => (state.generation(layers), None),
+    };
+    if state
+        .recipe
+        .as_ref()
+        .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, &stack))
+    {
+        return;
+    }
+    let shared = stacks
+        .iter()
+        .find(|(shared, _)| Arc::ptr_eq(shared, &stack))
+        .map(|(_, key)| key.clone());
+    let stack_key = match shared {
+        Some(key) => key,
+        None => {
+            *shares += 1;
+            let key = format!("stack-{shares}");
+            jobs.share(key.clone(), engine_terrain::jobs::share_stack(&stack));
+            stacks.push((stack.clone(), key.clone()));
+            key
+        }
+    };
+    *shares += 1;
+    let key = format!("recipe-{shares}");
+    let recipe = TerrainRecipe {
+        stack: stack_key,
+        view,
+        pyramid: state.terrain.pyramid,
+        surface: state.terrain.surface.rules.authored().clone(),
+    };
+    jobs.share(key.clone(), engine_terrain::jobs::share_recipe(&recipe));
+    let shared = SharedRecipe {
+        key,
+        stack,
+        revision: *shares,
+    };
+    if let Some(old) = state.recipe.replace(shared) {
+        jobs.unshare(old.key);
+    }
+}
+
 /// Pushes `key` onto `order` after those of its ancestors not yet there,
 /// coarsest first (decision 108): a tile draws only within its parent, so a
 /// finer one loaded first would wait unused, while what stands on the
@@ -1142,6 +1394,9 @@ fn push_with_ancestors(
 
 /// Frames a failed fetch waits before it is requested again.
 const RETRY_AFTER: u64 = 120;
+/// Tiles failing on workers (decision 110) after which a terrain generates
+/// its own, as when the workers' module does not match the engine's.
+const WORKER_FAILURES: u32 = 8;
 /// Ranges, as multiples of each level's, within which tiles load and stay:
 /// beyond its range a level's tiles still shade the coarser level's
 /// patches (their normals), so they load further than they draw.
@@ -1199,6 +1454,15 @@ struct TerrainState {
     /// every tile it keeps: what loads between frames (decision 108).
     missing: Vec<TileKey>,
     target: HashSet<TileKey>,
+    /// Workers' share (decision 110): the recipe they generate its tiles
+    /// from, the tiles generating there (each one's job and the recipe's
+    /// revision it generates from) and its bakes running there, unless
+    /// they failed there; and the tiles that failed there.
+    recipe: Option<SharedRecipe>,
+    dispatched: HashMap<TileKey, (JobId, u64)>,
+    bake_job: Option<JobId>,
+    bake_inline: bool,
+    worker_failures: u32,
 }
 
 /// What a terrain's surroundings (decision 094) were drawn from: the layers
@@ -1246,7 +1510,24 @@ impl TerrainState {
             around: None,
             missing: Vec::new(),
             target: HashSet::new(),
+            recipe: None,
+            dispatched: HashMap::new(),
+            bake_job: None,
+            bake_inline: false,
+            worker_failures: 0,
         }
+    }
+
+    /// Its workers' jobs and recipe, for the next frame with workers to
+    /// drop (decision 110) once the state is gone.
+    fn retire(&self, retired: &mut Retired) {
+        retired
+            .jobs
+            .extend(self.dispatched.values().map(|&(id, _)| id));
+        retired.jobs.extend(self.bake_job);
+        retired
+            .recipes
+            .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
     }
 
     /// The id renderers key its tiles by: its entity's bits, the top bit
@@ -1444,8 +1725,22 @@ pub struct Terrains {
     velocity: Vec3,
     /// Whether the camera's view has loaded whole since terrains arrived.
     loaded: bool,
+    /// Workers' share (decision 110): how many ran at the last frame, the
+    /// stacks shared with them and keys handed out so far, and the jobs and
+    /// recipes of terrains gone, to drop.
+    workers: u32,
+    stacks: Vec<(Arc<Layers>, String)>,
+    shares: u64,
+    retired: Retired,
     // Scratch.
     wanted: Vec<WantedTile>,
+}
+
+/// The workers' jobs and recipes of terrains gone (decision 110).
+#[derive(Default)]
+struct Retired {
+    jobs: Vec<JobId>,
+    recipes: Vec<String>,
 }
 
 impl Terrains {
@@ -1559,18 +1854,23 @@ impl Terrains {
                 wanted.push((state.entity, base, surroundings, layout, surface));
             }
         }
+        let retired = &mut self.retired;
         self.entries.retain(|state| {
             let Some(around) = &state.around else {
                 return true;
             };
-            wanted
+            let kept = wanted
                 .iter()
                 .any(|(entity, base, surroundings, (_, _, cutout), _)| {
                     *entity == state.entity
                         && Arc::ptr_eq(base, &around.base)
                         && *surroundings == around.surroundings
                         && *cutout == around.cutout
-                })
+                });
+            if !kept {
+                state.retire(retired);
+            }
+            kept
         });
         for (entity, base, surroundings, (origin, pyramid, cutout), surface) in wanted {
             if self
@@ -1695,18 +1995,7 @@ impl Terrains {
         to: Vec2,
         options: &NavOptions,
     ) -> Option<(Entity, Vec3, engine_terrain::WalkSearch)> {
-        let state = self.entries.iter().find(|state| {
-            let pyramid = &state.terrain.pyramid;
-            let [x, z] = pyramid.tiles(0);
-            let size = Vec2::new(x as f32, z as f32)
-                * engine_terrain::TILE_QUADS as f32
-                * pyramid.spacing(0);
-            let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
-            [from, to].iter().all(|&point| {
-                let local = point - corner;
-                local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
-            })
-        })?;
+        let state = self.walked(from, to)?;
         let layers = self.layers(state.entity)?;
         let origin = state.terrain.origin;
         let corner = Vec2::new(origin.x, origin.z);
@@ -1718,6 +2007,55 @@ impl Terrains {
             options,
         );
         Some((state.entity, origin, search))
+    }
+
+    /// The input of a walk job (decision 110) over the generated terrain
+    /// under world `from` and `to` (x and z) as `options` walk, once workers
+    /// hold its recipe for the layers its tiles generate from now: the
+    /// terrain, its origin, which the walk's terrain-local points are from,
+    /// and the input. `None` otherwise, as for [`Self::walk_search`].
+    pub fn walk_job(
+        &self,
+        from: Vec2,
+        to: Vec2,
+        options: &NavOptions,
+    ) -> Option<(Entity, Vec3, Vec<u8>)> {
+        let state = self.walked(from, to)?;
+        let (entity, origin) = (state.entity, state.terrain.origin);
+        let recipe = state.recipe.as_ref()?;
+        let layers = self.layers(entity)?;
+        if !Arc::ptr_eq(&recipe.stack, &layers) {
+            return None;
+        }
+        let corner = Vec2::new(origin.x, origin.z);
+        let input = engine_terrain::jobs::walk_input(
+            &recipe.key,
+            (from - corner, to - corner),
+            &Self::obstacles(state),
+            options,
+        );
+        Some((entity, origin, input))
+    }
+
+    /// The terrain both world `from` and `to` (x and z) lie on, which walks
+    /// between them cross: never surroundings (decision 094), which no one
+    /// walks.
+    fn walked(&self, from: Vec2, to: Vec2) -> Option<&TerrainState> {
+        self.entries.iter().find(|state| {
+            if state.around.is_some() {
+                return false;
+            }
+            let pyramid = &state.terrain.pyramid;
+            let [x, z] = pyramid.tiles(0);
+            let size = Vec2::new(x as f32, z as f32)
+                * engine_terrain::TILE_QUADS as f32
+                * pyramid.spacing(0);
+            let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
+            [from, to].iter().all(|&point| {
+                let local = point - corner;
+                local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
+            })
+        })
     }
 
     /// The footprints of the placed objects that collide on `state`'s
@@ -1915,10 +2253,16 @@ impl Terrains {
     /// takes a few milliseconds of. Patches are selected anew with the next
     /// frame. Returns whether tiles are still to load; nothing without a
     /// clock (`set_clock`).
-    pub fn work_between_frames(&mut self, settings: &TerrainSettings, milliseconds: f64) -> bool {
+    pub fn work_between_frames(
+        &mut self,
+        settings: &TerrainSettings,
+        milliseconds: f64,
+        jobs: Option<&mut Jobs>,
+    ) -> bool {
         let Some(clock) = self.clock else {
             return false;
         };
+        let mut slots = jobs.map(JobSlots::of);
         // Smaller slices than frames take, so work ends close to its time.
         let work = Work {
             slice: u64::from(settings.samples_per_frame / 4).max(1),
@@ -1949,6 +2293,7 @@ impl Terrains {
                 &mut budget,
                 frame,
                 requests,
+                slots.as_mut(),
             );
             state.missing = missing
                 .into_iter()
@@ -1958,7 +2303,8 @@ impl Terrains {
             // Tiles waiting on their fetch load once delivered.
             let waiting = matches!(state.terrain.source, TerrainSource::File { data: None, .. })
                 && state.arrivals.is_empty();
-            remaining |= baking || (!state.missing.is_empty() && !waiting);
+            remaining |=
+                baking || (!state.missing.is_empty() && !waiting) || !state.dispatched.is_empty();
             if budget == 0 && !work.refill(&mut budget) {
                 break;
             }
@@ -1975,9 +2321,12 @@ impl Terrains {
         self.last_eye = Some(eye);
         if moved.length() > JUMP {
             // A jump loads the view again at the loading budget (decision
-            // 108), as the first view loads.
+            // 108), as the first view loads, unless workers load it
+            // (decision 110).
             self.velocity = Vec3::ZERO;
-            self.loaded = false;
+            if self.workers == 0 {
+                self.loaded = false;
+            }
         } else if seconds > 0.0 {
             self.velocity = self.velocity.lerp(moved / seconds, 0.25);
         }
@@ -2015,9 +2364,23 @@ impl Terrains {
         (eye, ahead): (Vec3, Vec3),
         viewport: Viewport,
         focus: &[Vec3],
+        jobs: Option<&mut Jobs>,
     ) {
         self.frame += 1;
         self.sync_surroundings();
+        // Jobs of terrains gone are dropped, and so are their recipes
+        // (decision 110).
+        let mut slots = jobs.map(JobSlots::of);
+        let retired = std::mem::take(&mut self.retired);
+        self.workers = slots.as_ref().map_or(0, |slots| slots.jobs.workers());
+        if let Some(slots) = slots.as_mut() {
+            for id in retired.jobs {
+                slots.jobs.cancel(id);
+            }
+            for key in retired.recipes {
+                slots.jobs.unshare(key);
+            }
+        }
         let mut stats = TerrainStats {
             terrains: self
                 .entries
@@ -2220,6 +2583,12 @@ impl Terrains {
             // (decision 108).
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
+            // Workers generate from its recipe (decision 110).
+            if let Some(slots) = slots.as_mut()
+                && slots.jobs.workers() > 0
+            {
+                share_recipe(state, slots.jobs, &mut self.stacks, &mut self.shares);
+            }
             if load_tiles(
                 state,
                 &missing,
@@ -2228,6 +2597,7 @@ impl Terrains {
                 &mut budget,
                 frame,
                 &mut self.requests,
+                slots.as_mut(),
             ) {
                 stats.baking += 1;
                 continue;
@@ -2237,8 +2607,10 @@ impl Terrains {
                 .retain(|key| !state.tiles.contains_key(key) || state.stale.contains(key));
             stats.resident_tiles += state.tiles.len() as u32;
             stats.missing_tiles += state.missing.len() as u32;
-            stats.loading_tiles +=
-                (state.jobs.len() + state.in_flight.len() + state.arrivals.len()) as u32;
+            stats.loading_tiles += (state.jobs.len()
+                + state.in_flight.len()
+                + state.arrivals.len()
+                + state.dispatched.len()) as u32;
             if settings.enabled {
                 let tiles = &state.tiles;
                 engine_terrain::select_patches(
@@ -2259,6 +2631,23 @@ impl Terrains {
                 stats.surroundings_tiles += state.tiles.len() as u32;
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
+        }
+        // Stacks no terrain's recipe shares any longer leave the workers
+        // (decision 110).
+        if let Some(slots) = slots.as_mut() {
+            let entries = &self.entries;
+            self.stacks.retain(|(stack, key)| {
+                let held = entries.iter().any(|state| {
+                    state
+                        .recipe
+                        .as_ref()
+                        .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
+                });
+                if !held {
+                    slots.jobs.unshare(key.clone());
+                }
+                held
+            });
         }
         // The camera's view has loaded whole once nothing bakes, loads or
         // stands in for a finer level (decision 099).
@@ -2485,9 +2874,16 @@ impl TerrainExtraction {
         else {
             return false;
         };
-        world
+        let mut jobs = world.remove_resource::<Jobs>();
+        let remaining = world
             .get_resource_mut::<Terrains>()
-            .is_some_and(|mut terrains| terrains.work_between_frames(&settings, milliseconds))
+            .is_some_and(|mut terrains| {
+                terrains.work_between_frames(&settings, milliseconds, jobs.as_mut())
+            });
+        if let Some(jobs) = jobs {
+            world.insert_resource(jobs);
+        }
+        remaining
     }
 
     /// Follows added, changed and removed terrains, then streams them
@@ -2524,13 +2920,23 @@ impl TerrainExtraction {
             .iter(world)
             .map(|(entity, terrain)| (entity, terrain.clone()))
             .collect();
+        // Workers' jobs (decision 110) stream with the terrains.
+        let mut jobs = world.remove_resource::<Jobs>();
         let Some(mut terrains) = world.get_resource_mut::<Terrains>() else {
+            if let Some(jobs) = jobs {
+                world.insert_resource(jobs);
+            }
             return;
         };
         let terrains = terrains.as_mut();
-        terrains
-            .entries
-            .retain(|state| present.iter().any(|(entity, _)| *entity == state.entity));
+        let retired = &mut terrains.retired;
+        terrains.entries.retain(|state| {
+            let kept = present.iter().any(|(entity, _)| *entity == state.entity);
+            if !kept {
+                state.retire(retired);
+            }
+            kept
+        });
         for (entity, terrain) in present {
             match terrains
                 .entries
@@ -2539,6 +2945,7 @@ impl TerrainExtraction {
             {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
+                        state.retire(&mut terrains.retired);
                         *state = TerrainState::new(entity, terrain);
                         terrains.loaded = false;
                     } else {
@@ -2569,12 +2976,25 @@ impl TerrainExtraction {
             };
             // Terrains that do not stream have nothing to load.
             terrains.loaded = true;
+            if let Some(jobs) = jobs {
+                world.insert_resource(jobs);
+            }
             return;
         };
         // Where the eye is headed (decision 100), from its motion since the
         // last frame.
         let ahead = terrains.heading(eye, seconds);
-        terrains.stream(&settings, &camera, (eye, ahead), viewport, &self.points);
+        terrains.stream(
+            &settings,
+            &camera,
+            (eye, ahead),
+            viewport,
+            &self.points,
+            jobs.as_mut(),
+        );
+        if let Some(jobs) = jobs {
+            world.insert_resource(jobs);
+        }
     }
 
     /// Lists every terrain's resident tiles and the camera's patches.

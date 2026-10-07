@@ -708,3 +708,42 @@ pub(crate) fn place_row(
     };
     (cost, Some(next))
 }
+
+crate::codec::record!(PlacementChoice { asset, weight });
+crate::codec::record!(FarPlacement { level, share });
+crate::codec::record!(PlacementLayer {
+    id,
+    assets,
+    density,
+    footprint,
+    materials,
+    mask,
+    scale,
+    align,
+    face,
+    sink,
+    bed,
+    level,
+    far,
+});
+crate::codec::record!(AuthoredPlacement {
+    asset,
+    position,
+    yaw,
+    scale,
+    sink,
+    align,
+    level,
+});
+crate::codec::record!(Placed {
+    position,
+    yaw,
+    lean,
+    scale,
+    sink,
+    ground,
+    asset,
+    layer,
+    near_level,
+    rank,
+});

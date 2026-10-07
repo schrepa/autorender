@@ -518,3 +518,21 @@ pub(crate) fn profile(
         head: line.head,
     }
 }
+
+crate::codec::record!(River {
+    points,
+    surface,
+    half,
+    depth,
+    speed,
+    falls,
+    head,
+});
+crate::codec::record!(Rivers {
+    rivers,
+    min,
+    columns,
+    rows,
+    starts,
+    segments,
+});

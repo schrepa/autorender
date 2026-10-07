@@ -22,6 +22,7 @@ mod grounded;
 mod hierarchy;
 mod input;
 mod interpolation;
+mod jobs;
 mod level_of_detail;
 mod lights;
 pub mod math;
@@ -102,6 +103,7 @@ pub use interpolation::{
     PresentationState, PresentedTransform, PresentedTransforms, reset_all_interpolation,
     reset_interpolation,
 };
+pub use jobs::{JobId, JobRequest, JobShare, JobStats, Jobs};
 pub use level_of_detail::LevelOfDetail;
 pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
 pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};
@@ -354,6 +356,7 @@ impl Engine {
             .init_resource::<WorldChanges>()
             .init_resource::<Navigation>()
             .init_resource::<NavAgents>()
+            .init_resource::<Jobs>()
             .init_resource::<Terrains>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()

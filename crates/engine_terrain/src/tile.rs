@@ -766,3 +766,32 @@ impl Layers {
         }
     }
 }
+
+/// A tile's key, spacing, samples, holes, control values and placed
+/// objects; reading rebuilds its bounds as [`Tile::new`] does.
+impl crate::codec::Codec for Tile {
+    fn write(&self, out: &mut crate::codec::Writer) {
+        out.put(&self.key)
+            .put(&self.spacing)
+            .put(&self.heights)
+            .put(&self.holes)
+            .put(&self.control)
+            .put(&self.placed);
+    }
+
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+        let invalid = crate::codec::CodecError("invalid tile");
+        let key = input.get()?;
+        let spacing = input.get()?;
+        let heights = input.get()?;
+        let holes = input.get()?;
+        let control: Option<Box<[u32]>> = input.get()?;
+        let placed: Option<Arc<[crate::Placed]>> = input.get()?;
+        let mut tile = Self::new(key, spacing, heights, holes).ok_or(invalid)?;
+        if let Some(control) = control {
+            tile = tile.with_control(control).ok_or(invalid)?;
+        }
+        tile.placed = placed;
+        Ok(tile)
+    }
+}

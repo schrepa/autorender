@@ -260,6 +260,9 @@ pub struct FrameStats {
     /// Whether terrains have yet to load the camera's view whole, read
     /// when the stats are (decision 099): hosts keep preparing meanwhile.
     pub loading: bool,
+    /// The host's workers and their jobs (decision 110), read when the
+    /// stats are.
+    pub jobs: engine_core::JobStats,
     #[serde(flatten)]
     pub render: engine_render::RenderStats,
 }
@@ -458,6 +461,100 @@ impl BrowserApp {
         }
         self.terrain_fetches.exchange(&mut self.engine);
         self.engine.work_terrain(milliseconds)
+    }
+
+    /// Workers the host runs jobs on (decision 110): with any, terrains bake
+    /// and generate tiles and agents search walks there; with none, the
+    /// default, that work stays in the engine, which takes back every job
+    /// handed out.
+    pub fn set_job_workers(&mut self, workers: u32) {
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.set_workers(workers);
+        }
+    }
+
+    /// What to hand workers since the last call, in order (decision 110):
+    /// `{clear: true}` to drop every share an earlier engine made,
+    /// `{share, bytes}` to hold bytes as a key and `{unshare}` to drop one,
+    /// to every worker, then `{id, kind, input}` jobs, each to one.
+    pub fn take_jobs(&mut self) -> js_sys::Array {
+        let out = js_sys::Array::new();
+        let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        else {
+            return out;
+        };
+        let mut shares = Vec::new();
+        let mut requests = Vec::new();
+        jobs.take_shares(&mut shares);
+        jobs.take_requests(&mut requests);
+        let set = |object: &js_sys::Object, field: &str, value: &JsValue| {
+            // Setting a field of a plain new object cannot fail.
+            let _ = js_sys::Reflect::set(object, &JsValue::from_str(field), value);
+        };
+        for share in shares {
+            let object = js_sys::Object::new();
+            match share {
+                engine_core::JobShare::Clear => set(&object, "clear", &JsValue::TRUE),
+                engine_core::JobShare::Set { key, bytes } => {
+                    set(&object, "share", &JsValue::from_str(&key));
+                    set(
+                        &object,
+                        "bytes",
+                        &js_sys::Uint8Array::from(bytes.as_slice()),
+                    );
+                }
+                engine_core::JobShare::Remove { key } => {
+                    set(&object, "unshare", &JsValue::from_str(&key));
+                }
+            }
+            out.push(&object);
+        }
+        for request in requests {
+            let object = js_sys::Object::new();
+            set(&object, "id", &JsValue::from_f64(request.id.0 as f64));
+            set(&object, "kind", &JsValue::from_str(request.kind));
+            set(
+                &object,
+                "input",
+                &js_sys::Uint8Array::from(request.input.as_slice()),
+            );
+            out.push(&object);
+        }
+        out
+    }
+
+    /// Job `id`'s output from its worker (decision 110).
+    pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
+        self.finish_job(id, Ok(output));
+    }
+
+    /// Job `id` failed on its worker, for `error` (decision 110): its owner
+    /// takes the work back.
+    pub fn fail_job(&mut self, id: f64, error: String) {
+        self.finish_job(id, Err(error));
+    }
+
+    fn finish_job(&mut self, id: f64, output: Result<Vec<u8>, String>) {
+        if !(id.is_finite() && id >= 1.0) {
+            return;
+        }
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_core::Jobs>()
+        {
+            jobs.complete(engine_core::JobId(id as u64), output);
+        }
     }
 
     /// Advance once per animation frame; input is a bounded, owned value.
@@ -692,6 +789,7 @@ impl BrowserApp {
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             pipelines_compiling: false,
             loading: false,
+            jobs: engine_core::JobStats::default(),
             render: rendered,
         };
         Ok(())
@@ -706,6 +804,13 @@ impl BrowserApp {
                 .world()
                 .get_resource::<engine_core::Terrains>()
                 .is_some_and(engine_core::Terrains::loading),
+            jobs: self
+                .engine
+                .app
+                .world()
+                .get_resource::<engine_core::Jobs>()
+                .map(engine_core::Jobs::stats)
+                .unwrap_or_default(),
             ..self.stats
         }
     }
