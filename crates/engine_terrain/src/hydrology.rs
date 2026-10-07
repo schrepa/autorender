@@ -51,6 +51,19 @@ pub struct HydrologyLayer {
     pub max_depth: f32,
     #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
     pub max_width: f32,
+    /// Square meters of upstream area where streams begin (decision 097):
+    /// channels draining less than `channel_area` run as streams down to
+    /// the rivers they join, their width falling with the area they drain
+    /// below a river's at its head and their depth with its square root,
+    /// cut a little into the ground. 0, the default, has none, as has
+    /// `channel_area` or more; at most 1e10.
+    #[serde(skip_serializing_if = "is_zero")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0e10)))]
+    pub stream_area: f32,
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
 }
 
 impl Default for HydrologyLayer {
@@ -62,6 +75,7 @@ impl Default for HydrologyLayer {
             width: 6.0,
             max_depth: 6.0,
             max_width: 60.0,
+            stream_area: 0.0,
         }
     }
 }
@@ -479,9 +493,19 @@ pub(crate) fn bake(
             rank: &rank,
         },
         (width, spacing),
-        layer.channel_area,
+        if layer.stream_area > 0.0 {
+            min(layer.stream_area, layer.channel_area)
+        } else {
+            layer.channel_area
+        },
         |drained| {
             let ratio = drained / layer.channel_area;
+            if ratio < 1.0 {
+                // Streams (decision 097) narrow with the area they drain
+                // and grow shallow with its square root, meeting a river's
+                // size at its head.
+                return (0.5 * layer.width * ratio, MIN_DEPTH * ratio.sqrt());
+            }
             let half = 0.5 * min(layer.width * ratio.sqrt(), layer.max_width);
             let depth = min(layer.depth * ratio.sqrt().sqrt(), layer.max_depth);
             (half, max(depth * RIVER_FILL, MIN_DEPTH))

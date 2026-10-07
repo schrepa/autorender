@@ -116,22 +116,31 @@ struct TerrainWater {
 }
 
 /// A point of a river's ribbon: terrain-local, and the water's depth over
-/// the bed there and its flow along x and z (`meshes/water.wgsl`'s
-/// `RiverVertex`).
+/// the bed there, its flow along x and z and half the river's width
+/// (`meshes/water.wgsl`'s `RiverVertex`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct RiverVertex {
     position: [f32; 3],
-    water: [f32; 3],
+    water: [f32; 4],
 }
 
-/// A terrain's rivers' ribbons: their vertices and indices, and their
-/// chunks' index ranges and terrain-local bounds.
+/// A terrain's rivers' ribbons: their vertices and indices, and each
+/// chunk's index ranges at each of `RIBBON_STRIDES` and its terrain-local
+/// bounds.
 struct RiverMesh {
     rivers: Arc<Rivers>,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    chunks: Vec<(Range<u32>, Vec3, Vec3)>,
+    chunks: Vec<RibbonChunk>,
+}
+
+/// A chunk of a ribbon: its index range drawing every point, every second,
+/// fourth and eighth (decision 097), and its terrain-local bounds.
+struct RibbonChunk {
+    ranges: [Range<u32>; 4],
+    low: Vec3,
+    high: Vec3,
 }
 
 /// Where a ribbon's points lie across a river: shares of half its width,
@@ -140,6 +149,17 @@ const RIBBON_ACROSS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
 const RIBBON_EDGE: f32 = 1.5;
 /// River points a ribbon's chunk holds at most.
 const RIBBON_CHUNK: usize = 48;
+/// Meters from a river's head over which its water deepens from nothing
+/// (decision 097): a stream starts without an edge across it.
+const RIBBON_HEAD: f32 = 9.0;
+/// Ribbons by distance (decision 097): the points between their rows and
+/// the columns across them they keep, within each reach (meters).
+const RIBBON_STRIDES: [(usize, &[u32], f32); 4] = [
+    (1, &[0, 1, 2, 3, 4, 5, 6], 300.0),
+    (2, &[0, 1, 2, 3, 4, 5, 6], 800.0),
+    (4, &[0, 1, 3, 5, 6], 1600.0),
+    (8, &[0, 3, 6], f32::INFINITY),
+];
 
 /// The opaque depth's copy water reads (decision 074), its group and its
 /// size.
@@ -456,9 +476,19 @@ impl WaterPass {
                 _ => water.rivers = None,
             }
             if let Some(mesh) = &water.rivers {
-                for (range, low, high) in &mesh.chunks {
-                    let (min, max) = (relative_origin + *low, relative_origin + *high);
+                for chunk in &mesh.chunks {
+                    let (min, max) = (relative_origin + chunk.low, relative_origin + chunk.high);
                     if !crate::terrain::visible(&planes, min, max) {
+                        continue;
+                    }
+                    // Coarser rows and fewer columns with distance.
+                    let distance = ((min + max) * 0.5).length();
+                    let tier = RIBBON_STRIDES
+                        .iter()
+                        .position(|(_, _, reach)| distance < *reach)
+                        .unwrap_or(RIBBON_STRIDES.len() - 1);
+                    let range = &chunk.ranges[tier];
+                    if range.is_empty() {
                         continue;
                     }
                     self.chunks_drawn += 1;
@@ -826,9 +856,10 @@ fn upload(
 
 /// `rivers`' ribbons on the GPU (decision 092): at each point of each river
 /// a row of vertices across it at its water's surface, from beyond one
-/// edge to beyond the other, with the water's depth over its bed and its
-/// flow; stretches without water (falls) left out; chunks of
-/// `RIBBON_CHUNK` points. `None` without any water to draw.
+/// edge to beyond the other, with the water's depth over its bed, its flow
+/// and half its width; stretches without water (falls) left out; chunks of
+/// `RIBBON_CHUNK` points, each drawn at every one of `RIBBON_STRIDES`
+/// (decision 097). `None` without any water to draw.
 fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
     let mut vertices: Vec<RiverVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -851,7 +882,16 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
             let run = engine_core::glam::Vec2::new(next[0] - previous[0], next[1] - previous[1])
                 .normalize_or(engine_core::glam::Vec2::X);
             let side = Vec3::new(-run.y, 0.0, run.x);
-            let (half, depth) = (river.half[index], river.depth[index]);
+            let (half, mut depth) = (river.half[index], river.depth[index]);
+            if river.head {
+                let along = Vec3::new(
+                    river.points[index][0] - river.points[0][0],
+                    0.0,
+                    river.points[index][1] - river.points[0][1],
+                )
+                .length();
+                depth *= engine_core::math::min(along / RIBBON_HEAD, 1.0);
+            }
             let flow = [run.x * river.speed[index], run.y * river.speed[index]];
             let offsets = std::iter::once(-(half + RIBBON_EDGE))
                 .chain(RIBBON_ACROSS.iter().map(|share| share * half))
@@ -865,44 +905,51 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
                 };
                 vertices.push(RiverVertex {
                     position: (point + side * offset).to_array(),
-                    water: [below, flow[0], flow[1]],
+                    water: [below, flow[0], flow[1], half],
                 });
             }
         }
-        // Quads between each pair of points that carries water, in chunks.
+        // Quads between rows of points that carry water between them, in
+        // chunks, at each stride.
+        let wet = |from: usize, to: usize| {
+            (from..to).all(|index| !river.falls_at(index))
+                && (from..=to).all(|index| river.surface[index].is_finite())
+        };
         for start in (0..count - 1).step_by(RIBBON_CHUNK) {
             let end = (start + RIBBON_CHUNK).min(count - 1);
-            let begin = indices.len() as u32;
             let mut low = Vec3::splat(f32::INFINITY);
             let mut high = Vec3::splat(f32::NEG_INFINITY);
-            for index in start..end {
-                if river.falls_at(index)
-                    || !river.surface[index].is_finite()
-                    || !river.surface[index + 1].is_finite()
-                {
-                    continue;
+            let ranges = RIBBON_STRIDES.map(|(stride, kept, _)| {
+                let begin = indices.len() as u32;
+                let mut rows: Vec<usize> = (start..end).step_by(stride).collect();
+                rows.push(end);
+                for pair in rows.windows(2) {
+                    let (from, to) = (pair[0], pair[1]);
+                    if !wet(from, to) {
+                        continue;
+                    }
+                    let row = first + (from * columns) as u32;
+                    let next = first + (to * columns) as u32;
+                    for across in kept.windows(2) {
+                        let (a, b) = (row + across[0], row + across[1]);
+                        let (c, d) = (next + across[0], next + across[1]);
+                        indices.extend_from_slice(&[a, c, b, b, c, d]);
+                    }
+                    for vertex in [
+                        row,
+                        row + columns as u32 - 1,
+                        next,
+                        next + columns as u32 - 1,
+                    ] {
+                        let position = Vec3::from(vertices[vertex as usize].position);
+                        low = low.min(position);
+                        high = high.max(position);
+                    }
                 }
-                let row = first + (index * columns) as u32;
-                let next = row + columns as u32;
-                for column in 0..columns as u32 - 1 {
-                    let (a, b) = (row + column, row + column + 1);
-                    let (c, d) = (next + column, next + column + 1);
-                    indices.extend_from_slice(&[a, c, b, b, c, d]);
-                }
-                for vertex in [
-                    row,
-                    row + columns as u32 - 1,
-                    next,
-                    next + columns as u32 - 1,
-                ] {
-                    let position = Vec3::from(vertices[vertex as usize].position);
-                    low = low.min(position);
-                    high = high.max(position);
-                }
-            }
-            let finish = indices.len() as u32;
-            if finish > begin {
-                chunks.push((begin..finish, low, high));
+                begin..indices.len() as u32
+            });
+            if !ranges[0].is_empty() {
+                chunks.push(RibbonChunk { ranges, low, high });
             }
         }
     }
@@ -934,7 +981,7 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
 /// `RiverVertex`'s locations.
 fn river_layout() -> wgpu::VertexBufferLayout<'static> {
     const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4];
     wgpu::VertexBufferLayout {
         array_stride: size_of::<RiverVertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,

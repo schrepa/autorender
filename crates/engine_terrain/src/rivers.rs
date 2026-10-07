@@ -27,18 +27,28 @@ pub const BANK_OFFSET: f32 = 1.0;
 const BANK_SLOPE: f32 = 0.6;
 const BANK_REACH: f32 = 12.0;
 const BANK_ROUNDING: f32 = 1.5;
-/// The least water a river holds at its middle (meters).
+/// The least water a river holds at its middle (meters): shallower points
+/// are streams' (decision 097).
 pub const MIN_DEPTH: f32 = 0.35;
+/// Meters below the lowest of a stream's ground and banks its water stands
+/// (decision 097), following the ground rather than never rising, and the
+/// meters from its edge its banks are cut over: a stream cuts its course a
+/// little into the ground instead of a trench through every rise.
+const STREAM_MARGIN: f32 = 0.12;
+const STREAM_BANK_REACH: f32 = 2.5;
 /// Rounds of corner cutting that smooth a river's line off the grid.
 const SMOOTHING: usize = 3;
 /// Meters across the cells of the grid that finds the rivers near a point.
 const CELL: f32 = 32.0;
 
-/// One river between confluences: its points (terrain-local x and z, from
-/// upstream), and at each its water's surface (terrain-local meters), half
-/// its wet width, the water's depth at its middle and its speed downstream
-/// (meters a second). Stretches dropping steeper than the bake's falls
-/// (decision 075) carry no surface, which waterfalls show instead.
+/// One river or stream (decision 097) between confluences: its points
+/// (terrain-local x and z, from upstream), and at each its water's surface
+/// (terrain-local meters), half its wet width, the water's depth at its
+/// middle and its speed downstream (meters a second). Stretches dropping
+/// steeper than the bake's falls (decision 075) carry no surface, which
+/// waterfalls show instead. A river beginning at a head, where no channel
+/// flows in, rather than at a confluence, is `head`: its water starts there
+/// (decision 097).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct River {
     pub points: Vec<[f32; 2]>,
@@ -47,6 +57,7 @@ pub struct River {
     pub depth: Vec<f32>,
     pub speed: Vec<f32>,
     pub falls: Vec<bool>,
+    pub head: bool,
 }
 
 impl River {
@@ -216,8 +227,9 @@ impl Rivers {
     /// `ground` at terrain-local `(x, z)` as rivers cut it at a level whose
     /// samples lie `spacing` meters apart: below each river's water within
     /// its width (at least most of a sample wide, so coarse levels keep the
-    /// cut), its bed deepest at the middle, and its banks rising from the
-    /// water at most [`BANK_SLOPE`] for [`BANK_REACH`] meters, the cut easing
+    /// cut; streams only their own, decision 097), its bed deepest at the
+    /// middle, and its banks rising from the water at most [`BANK_SLOPE`] for
+    /// [`BANK_REACH`] meters (streams' `STREAM_BANK_REACH`), the cut easing
     /// back to the ground over their outer half, each cut rounding into the
     /// ground over [`BANK_ROUNDING`] meters.
     pub fn cap(&self, x: f32, z: f32, ground: f32, spacing: f32) -> f32 {
@@ -228,12 +240,25 @@ impl Rivers {
             if !river.surface.is_finite() {
                 continue;
             }
-            let half = max(river.half, 0.75 * spacing);
+            // Streams (decision 097) keep their own width at every level,
+            // too narrow for coarse samples to carve (their water fades out
+            // there), and cut their banks over a short reach.
+            let stream = river.depth < MIN_DEPTH;
+            let half = if stream {
+                river.half
+            } else {
+                max(river.half, 0.75 * spacing)
+            };
+            let reach = if stream {
+                STREAM_BANK_REACH
+            } else {
+                BANK_REACH
+            };
             let cap = if river.distance <= half {
                 let across = river.distance / half;
                 river.surface - river.depth * (1.0 - across * across)
-            } else if river.distance < half + BANK_REACH {
-                let out = (river.distance - half) / BANK_REACH;
+            } else if river.distance < half + reach {
+                let out = (river.distance - half) / reach;
                 let bank = river.surface + (river.distance - half) * BANK_SLOPE;
                 // Easing back to the ground: no step where the cut ends.
                 let ease = max(out * 2.0 - 1.0, 0.0);
@@ -270,11 +295,13 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
 }
 
 /// A river's line from the bake's grid before its water is set: its
-/// points, and at each half its width and its depth at the middle.
+/// points, at each half its width and its depth at the middle, and whether
+/// it begins at a head.
 pub(crate) struct RiverLine {
     pub(crate) points: Vec<Vec2>,
     pub(crate) half: Vec<f32>,
     pub(crate) depth: Vec<f32>,
+    pub(crate) head: bool,
 }
 
 /// What a bake's grid says of where water runs: upstream areas, receivers,
@@ -348,11 +375,13 @@ pub(crate) fn trace(
         }
         let points: Vec<Vec2> = course.iter().map(|&sample| place(sample)).collect();
         let sizes: Vec<(f32, f32)> = course.iter().map(|&sample| size(area[sample])).collect();
-        lines.push(smooth_line(
+        let mut line = smooth_line(
             &points,
             &sizes.iter().map(|size| size.0).collect::<Vec<_>>(),
             &sizes.iter().map(|size| size.1).collect::<Vec<_>>(),
-        ));
+        );
+        line.head = inflows[start] == 0;
+        lines.push(line);
     }
     lines
 }
@@ -403,6 +432,7 @@ fn smooth_line(points: &[Vec2], half: &[f32], depth: &[f32]) -> RiverLine {
         points: Vec::with_capacity(steps + 1),
         half: Vec::with_capacity(steps + 1),
         depth: Vec::with_capacity(steps + 1),
+        head: false,
     };
     let mut segment = 0;
     for step in 0..=steps {
@@ -439,9 +469,11 @@ pub(crate) fn across(points: &[Vec2], index: usize) -> Vec2 {
 /// River `line` with its water set from the ground read at its points
 /// (`ground`: at its middle and each bank, terrain-local meters): below the
 /// lowest of them by [`BANK_MARGIN`], never rising downstream, starting no
-/// higher than `incoming` (the rivers meeting where it starts); its speed
-/// from the water's fall, and stretches falling steeper than `fall_slope`
-/// marked.
+/// higher than `incoming` (the rivers meeting where it starts); along
+/// streams (points shallower than [`MIN_DEPTH`], decision 097) just below
+/// the lowest by `STREAM_MARGIN`, rising with the ground. Its speed comes
+/// from the water's fall, and rivers' stretches falling steeper than
+/// `fall_slope` are marked; streams tumble down theirs.
 pub(crate) fn profile(
     line: &RiverLine,
     ground: &[[f32; 3]],
@@ -451,9 +483,14 @@ pub(crate) fn profile(
     let count = line.points.len();
     let mut surface = Vec::with_capacity(count);
     let mut level = incoming.unwrap_or(f32::INFINITY);
-    for read in ground.iter().take(count) {
+    let stream = |index: usize| line.depth[index] < MIN_DEPTH;
+    for (index, read) in ground.iter().take(count).enumerate() {
         let lowest = min(read[0], min(read[1], read[2]));
-        level = min(level, lowest - BANK_MARGIN);
+        level = if stream(index) {
+            lowest - STREAM_MARGIN
+        } else {
+            min(level, lowest - BANK_MARGIN)
+        };
         surface.push(level);
     }
     let mut speed = Vec::with_capacity(count);
@@ -465,7 +502,7 @@ pub(crate) fn profile(
         let slope = drop / run;
         // Steeper water runs faster, up to a torrent.
         speed.push(min(0.6 + 12.0 * slope.sqrt(), 4.0));
-        falls.push(next != index && slope > fall_slope);
+        falls.push(next != index && slope > fall_slope && !stream(index));
     }
     River {
         points: line.points.iter().map(|point| point.to_array()).collect(),
@@ -474,5 +511,6 @@ pub(crate) fn profile(
         depth: line.depth.clone(),
         speed,
         falls,
+        head: line.head,
     }
 }

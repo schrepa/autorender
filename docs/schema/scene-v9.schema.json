@@ -434,6 +434,13 @@
           "maximum": 1000.0,
           "minimum": 0.1
         },
+        "stream_area": {
+          "description": "Square meters of upstream area where streams begin (decision 097):\nchannels draining less than `channel_area` run as streams down to\nthe rivers they join, their width falling with the area they drain\nbelow a river's at its head and their depth with its square root,\ncut a little into the ground. 0, the default, has none, as has\n`channel_area` or more; at most 1e10.",
+          "type": "number",
+          "format": "float",
+          "maximum": 10000000000.0,
+          "minimum": 0.0
+        },
         "width": {
           "type": "number",
           "format": "float",
