@@ -145,6 +145,7 @@ pub(crate) struct LightingUniform {
     /// a side.
     pub occupancy: [f32; 4],
     pub occupancy_heights: [f32; 4],
+    pub occupancy_far: [f32; 4],
     /// Under the sea (decision 077): the light its water scatters toward
     /// the eye (rgb) and the meters through which half the light passes
     /// (w); zero above it.
@@ -257,6 +258,7 @@ impl LightingUniform {
             aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
             occupancy: [0.0; 4],
             occupancy_heights: [0.0; 4],
+            occupancy_far: [0.0; 4],
             underwater: [0.0; 4],
             sea: [0.0; 4],
             cloud_shadow: [0.0; 4],

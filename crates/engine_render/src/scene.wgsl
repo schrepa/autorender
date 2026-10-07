@@ -57,10 +57,13 @@ struct Lighting {
     aerial_color: vec4<f32>,
     // Occupancy (decision 059): the map's center (x and z), the inverse of
     // its side and the strength covers darken by (0 without a map); then
-    // the reference height its heights are above, its texels a side and
-    // the meters from the eye it fades out by (decision 098).
+    // the reference height its heights are above, its texels a side, the
+    // meters from the eye it fades out by (decision 098) and the far map's
+    // reference height; the far map's center, the inverse of its side and
+    // its reach (decision 101; 0 without one).
     occupancy: vec4<f32>,
     occupancy_heights: vec4<f32>,
+    occupancy_far: vec4<f32>,
     // Under the sea (decision 077): the light its water scatters toward the
     // eye (rgb) and the meters through which half the light passes (w);
     // zero above it.
@@ -137,42 +140,65 @@ struct Shadow {
 // What placed objects cover around the camera (decision 059): the densest
 // cover over each texel, and the covers' highest top and lowest bottom
 // (negated), above the map's reference height.
-@group(0) @binding(16) var occupancy_coverage: texture_2d<f32>;
-@group(0) @binding(17) var occupancy_heights: texture_2d<f32>;
+@group(0) @binding(16) var occupancy_coverage: texture_2d_array<f32>;
+@group(0) @binding(17) var occupancy_heights: texture_2d_array<f32>;
 // The kept shadow levels (decision 065), one layer each.
 @group(0) @binding(18) var kept_levels: texture_depth_2d_array;
 
-// The share of the sky light placed objects' covers leave at `world`
-// (decision 059): under a cover, its density's worth less; within it, less
-// the deeper below its top; above it or outside the map, all of it. Covers
-// darken less over the outer two fifths of the map's reach around the eye
-// (decision 098), so their edge is never seen.
-fn occupancy_visibility(world: vec3<f32>) -> f32 {
-    let reach = lighting.occupancy_heights.z;
-    let away = length(world.xz - camera.position.xz);
-    let strength = lighting.occupancy.w * (1.0 - smoothstep(0.6 * reach, reach, away));
-    if strength <= 0.0 {
-        return 1.0;
-    }
-    let uv = (world.xz - lighting.occupancy.xy) * lighting.occupancy.z + 0.5;
+// How much the covers in occupancy layer `layer` (centered at `center`,
+// `inverse` over its side, heights above `reference`) hide the sky from
+// `world`: their cover there, the more the deeper below their top; none
+// above them or outside the map.
+fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32,
+        reference: f32) -> f32 {
+    let uv = (world.xz - center) * inverse + 0.5;
     if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
-        return 1.0;
+        return 0.0;
     }
-    let coverage = textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv, 0.0).r;
+    let coverage = min(textureSampleLevel(occupancy_coverage, terrain_horizon_sampler, uv,
+        layer, 0.0).r, 1.0);
     if coverage <= 0.0 {
-        return 1.0;
+        return 0.0;
     }
     let size = lighting.occupancy_heights.y;
     let texel = min(vec2<u32>(uv * size), vec2<u32>(u32(size) - 1u));
-    let heights = textureLoad(occupancy_heights, texel, 0).rg;
-    let height = world.y - lighting.occupancy_heights.x;
+    let heights = textureLoad(occupancy_heights, texel, layer, 0).rg;
+    let height = world.y - reference;
     let top = heights.x;
     let bottom = -heights.y;
     if height >= top {
+        return 0.0;
+    }
+    return coverage * saturate((top - height) / max(top - bottom, 0.5));
+}
+
+// The share of the sky light placed objects' covers leave at `world`
+// (decision 059): under a cover, its density's worth less; within it, less
+// the deeper below its top; above it or outside the maps, all of it. Covers
+// darken less over the outer two fifths of the map's reach around the eye
+// (decision 098), so their edge is never seen, where the far map's take
+// over (decision 101), fading out over the outer two fifths of theirs.
+fn occupancy_visibility(world: vec3<f32>) -> f32 {
+    let strength = lighting.occupancy.w;
+    if strength <= 0.0 {
         return 1.0;
     }
-    let depth = saturate((top - height) / max(top - bottom, 0.5));
-    return 1.0 - strength * coverage * depth;
+    let reach = lighting.occupancy_heights.z;
+    let away = length(world.xz - camera.position.xz);
+    let near = 1.0 - smoothstep(0.6 * reach, reach, away);
+    let far_reach = lighting.occupancy_far.w;
+    let far = (1.0 - near) * select(0.0, 1.0 - smoothstep(0.6 * far_reach, far_reach, away),
+        far_reach > 0.0);
+    var hidden = 0.0;
+    if near > 0.0 {
+        hidden += near * occupancy_cover(world, 0u, lighting.occupancy.xy, lighting.occupancy.z,
+            lighting.occupancy_heights.x);
+    }
+    if far > 0.0 {
+        hidden += far * occupancy_cover(world, 1u, lighting.occupancy_far.xy,
+            lighting.occupancy_far.z, lighting.occupancy_heights.w);
+    }
+    return 1.0 - strength * hidden;
 }
 
 const PI: f32 = 3.14159265;

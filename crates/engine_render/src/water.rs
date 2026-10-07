@@ -865,6 +865,7 @@ fn upload(
 fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
     let mut vertices: Vec<RiverVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
+    let mut strides: [Vec<u32>; 4] = Default::default();
     let mut chunks = Vec::new();
     let columns = RIBBON_ACROSS.len() + 2;
     for river in rivers.rivers() {
@@ -921,8 +922,10 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
             let end = (start + RIBBON_CHUNK).min(count - 1);
             let mut low = Vec3::splat(f32::INFINITY);
             let mut high = Vec3::splat(f32::NEG_INFINITY);
-            let ranges = RIBBON_STRIDES.map(|(stride, kept, _)| {
-                let begin = indices.len() as u32;
+            let mut ranges: [Range<u32>; 4] = Default::default();
+            for (tier, &(stride, kept, _)) in RIBBON_STRIDES.iter().enumerate() {
+                let list = &mut strides[tier];
+                let begin = list.len() as u32;
                 let mut rows: Vec<usize> = (start..end).step_by(stride).collect();
                 rows.push(end);
                 for pair in rows.windows(2) {
@@ -935,7 +938,7 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
                     for across in kept.windows(2) {
                         let (a, b) = (row + across[0], row + across[1]);
                         let (c, d) = (next + across[0], next + across[1]);
-                        indices.extend_from_slice(&[a, c, b, b, c, d]);
+                        list.extend_from_slice(&[a, c, b, b, c, d]);
                     }
                     for vertex in [
                         row,
@@ -948,11 +951,23 @@ fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> 
                         high = high.max(position);
                     }
                 }
-                begin..indices.len() as u32
-            });
+                ranges[tier] = begin..list.len() as u32;
+            }
             if !ranges[0].is_empty() {
                 chunks.push(RibbonChunk { ranges, low, high });
             }
+        }
+    }
+    // Each stride's quads one after the other, so neighboring chunks drawn
+    // at one stride merge into one draw.
+    let mut bases = [0_u32; 4];
+    for (tier, list) in strides.iter().enumerate() {
+        bases[tier] = indices.len() as u32;
+        indices.extend_from_slice(list);
+    }
+    for chunk in &mut chunks {
+        for (range, base) in chunk.ranges.iter_mut().zip(bases) {
+            *range = range.start + base..range.end + base;
         }
     }
     if indices.is_empty() {
