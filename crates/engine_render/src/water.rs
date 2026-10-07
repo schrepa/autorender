@@ -41,6 +41,12 @@ pub(crate) const CHUNK_QUADS: u32 = 32;
 /// first reach, half within the second, and so on (meters).
 const STRIDES: [(u32, f32); 4] = [(1, 700.0), (2, 1600.0), (4, 3200.0), (8, f32::INFINITY)];
 
+/// The deepest water the depth texture holds (meters, `water.wgsl`'s
+/// `WATER_DEPTH_RANGE`): it keeps the square root of each depth's share of
+/// it, so shallows keep centimeters and a deep lake's middle its depth
+/// (decision 102).
+const DEPTH_RANGE: f32 = 256.0;
+
 /// Cells around the sea's grid, the sectors it splits into for culling,
 /// and the rings a cell apart at its middle: about the cells around over
 /// 2 pi, where a cell's share of the circumference reaches a cell.
@@ -780,7 +786,7 @@ fn upload(
         .zip(&grid.flow)
         .flat_map(|(&depth, &[x, z])| {
             [
-                unit(depth / 32.0),
+                unit((max(depth, 0.0) / DEPTH_RANGE).sqrt()),
                 unit(x / 16.0 + 0.5),
                 unit(z / 16.0 + 0.5),
                 0,

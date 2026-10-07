@@ -238,12 +238,59 @@ fn world_plane_normal(sampled: vec3<f32>, axis: u32, normal: vec3<f32>, scale: f
     return stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y));
 }
 
+// How much of a world-mapped material's maps (decision 093) show where a
+// pixel spans `footprint` repeats of them: all while a repeat spans 16
+// pixels or more, none from 8 down, where their mipmaps' last levels would
+// show little but their strata as even stripes and their means stand in,
+// as terrains' do (decisions 090 and 102).
+fn world_map_detail(footprint: f32) -> f32 {
+    return 1.0 - smoothstep(0.0625, 0.125, footprint);
+}
+
+// `map`'s mean texel: its mip chain's last level.
+fn map_mean(map: texture_2d<f32>, map_sampler: sampler) -> vec4<f32> {
+    return textureSampleLevel(map, map_sampler, vec2<f32>(0.5), f32(textureNumLevels(map) - 1u));
+}
+
+// `texels` with only `detail` of their maps showing, their means standing
+// in for the rest; the normal map's deflection fades toward the surface's
+// `normal` in world space.
+fn world_mean_texels(texels: MaterialTexels, detail: f32, normal: vec3<f32>) -> MaterialTexels {
+    var result = texels;
+    let mean = 1.0 - detail;
+    result.base = texels.base * detail + mean * map_mean(base_color_texture, base_color_sampler);
+    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        let mapped = map_mean(metallic_roughness_texture, metallic_roughness_sampler);
+        result.factors = texels.factors * detail + mean * mapped.gb;
+        result.height = texels.height * detail + mean * mapped.a;
+        if material_flag(1024u, PACKED_OCCLUSION) {
+            result.occlusion = texels.occlusion * detail + mean * mapped.r;
+        }
+    }
+    if material_flag(256u, OCCLUSION_MAP) && !material_flag(1024u, PACKED_OCCLUSION) {
+        result.occlusion = texels.occlusion * detail
+            + mean * map_mean(occlusion_texture, occlusion_sampler).r;
+    }
+    if material_flag(512u, EMISSIVE_MAP) {
+        result.emissive = texels.emissive * detail
+            + mean * map_mean(emissive_texture, emissive_sampler).rgb;
+    }
+    if material_flag(2u, NORMAL_MAP) {
+        result.world_normal = texels.world_normal * detail + mean * normal;
+        result.normal = mix(vec3<f32>(0.0, 0.0, 1.0), texels.normal, detail);
+    }
+    return result;
+}
+
 // The texels of a world-mapped material (decision 093) at `world` on a
 // surface of `normal`, changing by `dx` across and `dy` down a pixel: each
 // map blended over the projections the surface faces, its normal map's
-// normal in world space.
+// normal in world space, as much of them as a repeat's size on screen
+// shows.
 fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
         -> MaterialTexels {
+    let detail = world_map_detail(max(length(dx), length(dy))
+        / max(material_maps.emissive.w, 1.0e-6));
     var texels = untextured();
     let shares = world_shares(normal);
     var base = vec4<f32>(0.0);
@@ -253,7 +300,7 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     var mapped = vec3<f32>(0.0);
     for (var axis = 0u; axis < 3u; axis++) {
         let share = shares[axis];
-        if share <= 0.0 {
+        if share <= 0.0 || detail <= 0.0 {
             continue;
         }
         base += share * world_map_texel(base_color_texture, base_color_sampler, 0u, world, dx, dy,
@@ -292,6 +339,9 @@ fn world_texels(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32
     }
     if material_flag(2u, NORMAL_MAP) {
         texels.world_normal = mapped;
+    }
+    if detail < 1.0 {
+        return world_mean_texels(texels, detail, normal);
     }
     return texels;
 }
@@ -433,19 +483,10 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         point.normal = mapped;
     }
     if material_flag(8192u, TOP_LAYER) {
-        // The top layer (decision 093) settles on faces turned up, broken
-        // by noise and gathering in the low parts of the material's height
-        // map (its metallic-roughness map's alpha) and the darker hollows
-        // of its base color.
+        // The top layer (decision 093) settles on faces turned up.
         let breakup = variety_noise(world.xz * 2.3 + vec2<f32>(world.y * 0.7, 3.1)) * 0.6
             + variety_noise(world.xz * 0.55 - vec2<f32>(world.y * 0.4, 7.7)) * 0.4;
-        var hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
-        if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
-            hollow = mix(hollow, 1.0 - texels.height, 0.6);
-        }
-        let lift = point.normal.y + 0.5 * (breakup - 0.5) + 0.4 * (hollow - 0.5);
-        let reach = material_maps.top.w;
-        let amount = smoothstep(1.0 - reach, 1.2 - reach, lift) * step(1.0e-4, reach);
+        let amount = top_layer_amount(point.normal.y, breakup, texels);
         point.albedo = mix(point.albedo, material_maps.top.rgb, amount);
         point.diffuse_color = mix(point.diffuse_color, material_maps.top.rgb, amount);
         point.f0 = mix(point.f0, vec3<f32>(0.04), amount);
@@ -462,6 +503,20 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     return point;
+}
+
+// How much of the top layer (decision 093) settles on a face turned up by
+// `up` (its normal's y): broken by noise `breakup` (0 to 1) and gathering
+// in the low parts of the material's height map (its metallic-roughness
+// map's alpha) and the darker hollows of its base color.
+fn top_layer_amount(up: f32, breakup: f32, texels: MaterialTexels) -> f32 {
+    var hollow = 1.0 - dot(texels.base.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    if material_flag(128u, METALLIC_ROUGHNESS_MAP) {
+        hollow = mix(hollow, 1.0 - texels.height, 0.6);
+    }
+    let lift = up + 0.5 * (breakup - 0.5) + 0.4 * (hollow - 0.5);
+    let reach = material_maps.top.w;
+    return smoothstep(1.0 - reach, 1.2 - reach, lift) * step(1.0e-4, reach);
 }
 
 // Specular antialiasing (Kaplanyan et al.'s kernel, with Filament's variance

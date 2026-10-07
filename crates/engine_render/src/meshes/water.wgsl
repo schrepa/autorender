@@ -87,6 +87,15 @@ struct WaterTemporalOutput {
 // What lakes' outputs give as half their width: no edge to fade toward.
 const WATER_UNBOUNDED: f32 = 1.0e6;
 
+// The deepest water `water_info` holds (meters, `water.rs`'s
+// `DEPTH_RANGE`): it keeps the square root of each depth's share of it,
+// fine in shallows and reaching deep lakes' middles (decision 102).
+const WATER_DEPTH_RANGE: f32 = 256.0;
+
+fn water_meters(info: f32) -> f32 {
+    return info * info * WATER_DEPTH_RANGE;
+}
+
 // The corners of a quad's two triangles, split along the diagonal from its
 // (1, 0) corner to its (0, 1) corner, or turned, along the other one.
 const WATER_CORNERS = array<vec2<u32>, 6>(
@@ -100,7 +109,7 @@ const WATER_CORNERS_TURNED = array<vec2<u32>, 6>(
 
 // Meters of water over the ground at bake sample `sample`.
 fn water_depth_at(sample: vec2<u32>) -> f32 {
-    return textureLoad(water_info, min(sample, water.grid.xy - vec2<u32>(1u)), 0).x * 32.0;
+    return water_meters(textureLoad(water_info, min(sample, water.grid.xy - vec2<u32>(1u)), 0).x);
 }
 
 fn water_output(input: WaterChunk) -> WaterOutput {
@@ -128,7 +137,7 @@ fn water_output(input: WaterChunk) -> WaterOutput {
     var output: WaterOutput;
     output.clip_position = water.relative_view_projection * vec4<f32>(relative, 1.0);
     output.relative = relative;
-    output.water = vec4<f32>(info.x * 32.0, (info.yz - vec2<f32>(0.5)) * 16.0,
+    output.water = vec4<f32>(water_meters(info.x), (info.yz - vec2<f32>(0.5)) * 16.0,
         WATER_UNBOUNDED);
     return output;
 }

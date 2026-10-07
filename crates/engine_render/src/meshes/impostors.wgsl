@@ -156,15 +156,35 @@ fn bake_mask(texels: MaterialTexels, color: vec4<f32>) {
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    let texels = material_texels(uv, uv1);
+    var texels = material_texels(uv, uv1);
     let local = input.local_v.xyz;
     let local_dx = dpdx(local);
     let local_dy = dpdy(local);
     let geometric = geometric_normal(input.normal_u.xyz, front);
+    // World-mapped maps (decisions 093 and 102) bake through the mesh's own
+    // coordinates, which repeat about as often as its maker meant it to
+    // stand: as much of them as a repeat's texels across a frame show, as
+    // fragments show as much as a repeat's pixels do, cards taking over
+    // where a texel spans a pixel.
+    let footprint = max(length(dpdx(uv)), length(dpdy(uv)));
+    if material_flag(4096u, WORLD_MAPPING) {
+        texels = world_mean_texels(texels,
+            select(0.0, world_map_detail(footprint), footprint > 0.0), geometric);
+    }
     var normal = geometric;
     if material_flag(2u, NORMAL_MAP) {
         normal = mapped_normal(geometric, local_dx, local_dy, texels.normal_dx,
             texels.normal_dy, texels.normal, material_maps.params.x);
+    }
+    var albedo = texels.base.rgb * color.rgb;
+    if material_flag(8192u, TOP_LAYER) {
+        // The top layer settles on the faces turned up as fragments settle
+        // it, its noise's breakup averaged over the texel.
+        let up = stable_normalize(normal).y;
+        let amount = (top_layer_amount(up, 0.25, texels) + top_layer_amount(up, 0.5, texels)
+            + top_layer_amount(up, 0.75, texels)) / 3.0;
+        albedo = mix(albedo, material_maps.top.rgb, amount);
+        normal = mix(normal, geometric, 0.5 * amount);
     }
     var emissive = vec3<f32>(0.0);
     var occlusion = 1.0;
@@ -174,7 +194,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     }
     bake_mask(texels, color);
     var targets: BakeTargets;
-    targets.albedo = vec4<f32>(texels.base.rgb * color.rgb, 1.0);
+    targets.albedo = vec4<f32>(albedo, 1.0);
     // Texture alpha masks emission (decision 019).
     targets.emissive = vec4<f32>(emissive, texels.base.a);
     targets.geometry = vec4<f32>(stable_normalize(normal) * 0.5 + 0.5, 0.5 + 0.5 * input.depth);
