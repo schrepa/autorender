@@ -380,6 +380,58 @@ impl TerrainWorker {
         self.running.remove(&id);
     }
 
+    /// Generates a small fixed tile (decision 113), so a new worker's tile
+    /// code reaches its optimized tier before real tiles: what any tile
+    /// runs, over a noise layer and a surface of two materials, one on
+    /// slopes in noise.
+    pub fn warm(&mut self) {
+        let layers = Layers::new(vec![crate::Layer::Noise(crate::NoiseLayer {
+            seed: 7,
+            height: 400.0,
+            wavelength: 1200.0,
+            ridges: 0.5,
+            ..crate::NoiseLayer::default()
+        })]);
+        let surface = Biomes {
+            materials: vec!["ground".into(), "rock".into()],
+            biomes: vec![crate::Biome {
+                id: "warm".into(),
+                fitness: crate::Mask::one(),
+                layers: vec![
+                    crate::BiomeLayer {
+                        material: "ground".into(),
+                        mask: crate::Mask::one(),
+                        opacity: 1.0,
+                    },
+                    crate::BiomeLayer {
+                        material: "rock".into(),
+                        mask: crate::Mask::Multiply(vec![
+                            crate::Mask::Slope([20.0, 40.0]),
+                            crate::Mask::Noise(crate::NoiseMask {
+                                wavelength: 40.0,
+                                seed: 3,
+                                octaves: 3,
+                            }),
+                        ]),
+                        opacity: 1.0,
+                    },
+                ],
+            }],
+            assets: Vec::new(),
+            placements: Vec::new(),
+            placed: Vec::new(),
+        };
+        let (Ok(layers), Ok(rules), Ok(pyramid)) =
+            (layers, surface.compile(), Pyramid::new([1, 1], 4.0))
+        else {
+            return;
+        };
+        let mut generator = Generator::new(Arc::new(layers), &pyramid, TileKey::new(0, 0, 0))
+            .with_surface(Arc::new(rules));
+        let mut budget = u64::MAX;
+        let _ = generator.advance(&mut budget);
+    }
+
     fn recipe(&self, key: &str) -> Result<&Recipe, String> {
         self.recipes
             .get(key)

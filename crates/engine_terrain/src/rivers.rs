@@ -904,11 +904,15 @@ crate::codec::record!(River {
     falls,
     head,
 });
-crate::codec::record!(Rivers {
-    rivers,
-    min,
-    columns,
-    rows,
-    starts,
-    segments,
-});
+// Rivers travel without the grid that finds them, which readers build
+// again from the same rivers, to the same bits: most of a shared stack's
+// bytes otherwise (decision 113).
+impl crate::codec::Codec for Rivers {
+    fn write(&self, out: &mut crate::codec::Writer) {
+        self.rivers.write(out);
+    }
+
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+        Ok(Self::new(Vec::read(input)?))
+    }
+}

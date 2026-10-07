@@ -57,6 +57,12 @@ impl Worker {
         self.terrain.take_part(id)
     }
 
+    /// Runs a small fixed job (decision 113), so the module's hot code
+    /// reaches its optimized tier before real jobs.
+    pub fn warm(&mut self) {
+        self.terrain.warm();
+    }
+
     /// Stops job `id`.
     pub fn cancel(&mut self, id: u64) {
         self.terrain.cancel(id);
@@ -112,6 +118,10 @@ mod browser {
 
         pub fn take_part(&mut self, id: f64) -> Option<Vec<u8>> {
             self.worker.take_part(id as u64)
+        }
+
+        pub fn warm(&mut self) {
+            self.worker.warm();
         }
 
         pub fn cancel(&mut self, id: f64) {
