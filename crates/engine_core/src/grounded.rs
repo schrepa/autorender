@@ -15,7 +15,9 @@ use crate::{Parent, Terrains, Transform};
 /// Stands its entity on the terrain (decision 086): its translation's y is
 /// kept `offset` meters above the ground under its x and z. Unparented
 /// entities only; without a resident tile under it (or over a hole) the
-/// entity keeps its translation. Requires version 9.
+/// entity keeps its translation, as walking navigation agents keep theirs:
+/// their walks stand them, on bridges' decks too (decision 111). Requires
+/// version 9.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -46,6 +48,7 @@ type GroundedQuery = QueryState<
         &'static Grounded,
         &'static Transform,
         Option<&'static GroundedAt>,
+        Option<&'static crate::NavWalk>,
     ),
     Without<Parent>,
 >;
@@ -65,7 +68,10 @@ impl Grounding {
         };
         let revision = terrains.revision();
         let mut settled = Vec::new();
-        for (entity, grounded, transform, at) in self.query.iter(world) {
+        for (entity, grounded, transform, at, walk) in self.query.iter(world) {
+            if walk.is_some_and(|walk| walk.status == crate::NavStatus::Walking) {
+                continue;
+            }
             let position = Vec2::new(transform.translation.x, transform.translation.z);
             let stale = at.is_none_or(|at| {
                 at.position != position

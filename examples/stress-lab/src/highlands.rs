@@ -733,12 +733,19 @@ const FOOT: Grounding = Grounding {
 };
 
 /// A hiker walking between two points (decision 089): the ends (world x
-/// and z) and the one it walks toward.
+/// and z), the one it walks toward, and the seconds it rests before
+/// setting off again after finding no way (decision 111).
 #[derive(Component)]
 struct Hiker {
     ends: [[f32; 2]; 2],
     toward: usize,
+    rest: f32,
 }
+
+/// Seconds a hiker that found no way waits before turning back: searches
+/// are not free, so a walk that cannot be found is not searched again and
+/// again (decision 111).
+const HIKER_REST: f32 = 10.0;
 
 /// A hiker in a red jacket walking from `road`'s start (terrain-local, the
 /// terrain's corner at `-half`) to the first of its points 350 meters away
@@ -777,19 +784,30 @@ fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> 
         Hiker {
             ends: [start, far],
             toward: 1,
+            rest: 0.0,
         },
     ));
     Ok(())
 }
 
-/// Turns each hiker back when it arrives or finds no way (decision 089).
-fn hike(mut hikers: Query<(&mut NavAgent, &NavWalk, &mut Hiker)>) {
+/// Turns each hiker back when it arrives (decision 089), or after a rest
+/// when it finds no way (decision 111).
+fn hike(time: Res<FixedTime>, mut hikers: Query<(&mut NavAgent, &NavWalk, &mut Hiker)>) {
     for (mut agent, walk, mut hiker) in &mut hikers {
-        let done = matches!(walk.status, NavStatus::Arrived | NavStatus::Unreachable);
-        if done && walk.destination == agent.destination {
-            hiker.toward = 1 - hiker.toward;
-            agent.destination = Some(hiker.ends[hiker.toward]);
+        if walk.destination != agent.destination {
+            continue;
         }
+        match walk.status {
+            NavStatus::Unreachable if hiker.rest < HIKER_REST => {
+                hiker.rest += time.delta_seconds;
+                continue;
+            }
+            NavStatus::Arrived | NavStatus::Unreachable => {}
+            _ => continue,
+        }
+        hiker.rest = 0.0;
+        hiker.toward = 1 - hiker.toward;
+        agent.destination = Some(hiker.ends[hiker.toward]);
     }
 }
 

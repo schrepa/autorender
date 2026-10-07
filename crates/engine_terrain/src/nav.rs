@@ -2,7 +2,9 @@
 //! pyramid level an agent can stand on (not holes, not under water deeper
 //! than it wades, not within its radius of a placed obstacle) and the
 //! shortest walk between two points across them, each step between
-//! neighboring samples no steeper than it climbs. A* walks the eight
+//! neighboring samples no steeper than it climbs. Roads' bridges carry
+//! walks at their decks' height over the water and ground below them
+//! (decision 111). A* walks the eight
 //! neighbors of each sample without cutting corners; the walk is then
 //! pulled taut wherever a straight stretch stays walkable, and follows the
 //! ground in steps of a few meters. Walks longer than a level's sample
@@ -18,6 +20,7 @@ use engine_math::{max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use crate::layers::{Layer, PathStage};
 use crate::{Generator, Layers, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
 /// How an agent walks: the finest pyramid level it walks (0 by default);
@@ -275,6 +278,7 @@ impl WalkSearch {
                     mut generator,
                 } => {
                     let Some(&key) = tiles.get(next) else {
+                        self.lay_bridges();
                         self.stage = Stage::Mask {
                             walkable: vec![false; self.width * self.height],
                             row: 0,
@@ -374,17 +378,67 @@ impl WalkSearch {
         }
     }
 
+    /// Lays roads' bridge decks (decision 072) over the grid's ground
+    /// (decision 111): samples within a deck's width read its height, so
+    /// walks cross at it, above the water and ground under it. Tunnels
+    /// stay below the ground they bore through.
+    fn lay_bridges(&mut self) {
+        let corner = self.corner();
+        let (width, height, spacing) = (self.width, self.height, self.spacing);
+        let last = Vec2::new((width - 1) as f32, (height - 1) as f32);
+        for layer in self.layers.layers() {
+            let Layer::Path(PathStage {
+                baked: Some(profile),
+                ..
+            }) = layer
+            else {
+                continue;
+            };
+            for bridge in profile.bridges().iter().filter(|bridge| !bridge.tunnel) {
+                let half = bridge.width * 0.5;
+                for pair in bridge.deck.windows(2) {
+                    let (a, b) = (
+                        Vec2::new(pair[0].x, pair[0].z),
+                        Vec2::new(pair[1].x, pair[1].z),
+                    );
+                    let low = ((a.min(b) - Vec2::splat(half) - corner) / spacing)
+                        .floor()
+                        .clamp(Vec2::ZERO, last);
+                    let high = ((a.max(b) + Vec2::splat(half) - corner) / spacing)
+                        .ceil()
+                        .clamp(Vec2::ZERO, last);
+                    let along = b - a;
+                    let run = max(along.length_squared(), 1.0e-6);
+                    for row in low.y as usize..=high.y as usize {
+                        for column in low.x as usize..=high.x as usize {
+                            let sample = row * width + column;
+                            let point = self.position(sample);
+                            let t = min(max((point - a).dot(along) / run, 0.0), 1.0);
+                            if point.distance(a + along * t) <= half {
+                                self.heights[sample] = pair[0].y + (pair[1].y - pair[0].y) * t;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Marks `rows`' samples an agent stands on: not holes, not under water
-    /// deeper than it wades.
+    /// deeper than it wades. Water stands as deep as its surface rises over
+    /// the ground the walk reads there (decision 111), not over the ground
+    /// the hydrology bake read: roads, stamps and edits after the bake fill
+    /// over its streams and dig below them.
     fn mask_rows(&self, walkable: &mut [bool], rows: std::ops::Range<usize>) {
         let water = self.layers.hydrology();
         let samples = rows.start * self.width..rows.end * self.width;
         for (stands, sample) in walkable[samples.clone()].iter_mut().zip(samples) {
             let point = self.position(sample);
+            let ground = self.heights[sample];
             *stands = !self.layers.hole_at(point.x, point.y)
                 && !water
                     .and_then(|water| water.water_at(point.x, point.y))
-                    .is_some_and(|(_, depth)| depth > self.options.max_water);
+                    .is_some_and(|(surface, _)| surface - ground > self.options.max_water);
         }
     }
 
