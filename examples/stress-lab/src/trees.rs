@@ -23,7 +23,11 @@ const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
 /// How finely a conifer is built: its trunk's sides and segments (each
 /// mapping the bark once), the meters between its whorls, its fewest
 /// branches a whorl, how much wider their cards grow, their segments, and
-/// whether each has a hanging card under its flat one.
+/// whether each has a hanging card under its flat one. Coarser versions'
+/// cards grow wide enough to keep most of the full tree's needle area,
+/// branches times width over whorl spacing, which overlapping less they
+/// cover about as well: thinner crowns showed between the full trees near
+/// the eye and their impostors far from it (decision 106).
 struct Detail {
     sides: u32,
     segments: u32,
@@ -50,7 +54,7 @@ const DETAILS: [Detail; 4] = [
         segments: 4,
         whorls: 0.84,
         branches: 5,
-        widen: 1.35,
+        widen: 2.0,
         bends: 2,
         hanging: true,
     },
@@ -59,7 +63,7 @@ const DETAILS: [Detail; 4] = [
         segments: 2,
         whorls: 1.6,
         branches: 5,
-        widen: 1.8,
+        widen: 3.8,
         bends: 1,
         hanging: true,
     },
@@ -68,9 +72,9 @@ const DETAILS: [Detail; 4] = [
         segments: 1,
         whorls: 2.8,
         branches: 4,
-        widen: 2.4,
+        widen: 7.9,
         bends: 1,
-        hanging: false,
+        hanging: true,
     },
 ];
 
