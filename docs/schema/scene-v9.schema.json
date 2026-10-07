@@ -2685,6 +2685,14 @@
           "type": "boolean",
           "default": true
         },
+        "fade_seconds": {
+          "description": "Seconds placed objects take to fade between how the camera shows\nthem, from 0 (at once) to 4 (decision 104).",
+          "type": "number",
+          "format": "float",
+          "default": 0.5,
+          "maximum": 4.0,
+          "minimum": 0.0
+        },
         "impostors": {
           "description": "Whether draw groups draw impostors where they fit (decision 048).",
           "type": "boolean",

@@ -8,7 +8,7 @@ fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
 }
 
 // Linear color and opacity of a vertex output's packed material.
-fn output_color(material: vec3<u32>) -> vec4<f32> {
+fn output_color(material: vec4<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16unorm(material.x), unpack2x16unorm(material.y));
 }
 
@@ -24,11 +24,12 @@ fn octahedral_normal(encoded: vec2<f32>) -> vec3<f32> {
 
 fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
     // Transparent draws of temporal frames see moving slots' marks.
-    let index = input.slot & ~MOVED_SLOT;
+    let index = slot_index(input.slot);
     let model = pose_matrix(poses[index]);
     let slot = colors[index];
     var output = transform_vertex(input.position, input.normal, slot.color, slot.surface,
         input.uv, model);
+    output.material.w = slot_fade(input.slot);
     let sway = slot_sway(slot.flags);
     if sway > 0.0 {
         let world = output.world_v.xyz
@@ -37,8 +38,8 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
         output.clip_position = camera.view_projection * vec4<f32>(world, 1.0);
     }
     if GROUNDING {
-        output.material = vec3<u32>(grounded(slot.color, index, model[3].xyz,
-            output.world_v.xyz), output.material.z);
+        output.material = vec4<u32>(grounded(slot.color, index, model[3].xyz,
+            output.world_v.xyz), output.material.zw);
     }
     return output;
 }
@@ -125,7 +126,7 @@ const COLLAPSED = vec4<f32>(2.0, 2.0, 0.5, 1.0);
 @vertex
 fn vs_virtual(input: VirtualInput) -> VertexOutput {
     let corner = virtual_corner(input.cluster, input.vertex);
-    let index = input.slot & ~MOVED_SLOT;
+    let index = slot_index(input.slot);
     let slot = colors[index];
     var output = transform_vertex(corner.position, corner.normal, slot.color, slot.surface,
         corner.uv, pose_matrix(poses[index]));
@@ -138,7 +139,7 @@ fn vs_virtual(input: VirtualInput) -> VertexOutput {
 @vertex
 fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
     let corner = virtual_corner(input.cluster, input.vertex);
-    let slot = input.slot & ~MOVED_SLOT;
+    let slot = slot_index(input.slot);
     let model = pose_matrix(poses[slot]);
     let material = colors[slot];
     let vertex = transform_vertex(corner.position, corner.normal, material.color,
@@ -146,7 +147,7 @@ fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
     let point = vec4<f32>(corner.position, 1.0);
     var world = model * point;
     // Only moving slots read their previous pose, as `vertex_affine_temporal`.
-    if (input.slot & MOVED_SLOT) != 0u {
+    if slot_moved(input.slot) {
         let pose = previous_poses[slot];
         world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
             dot(pose.row_2, point), 1.0);
@@ -173,7 +174,7 @@ struct VisibilityOutput {
 fn vs_visibility(input: VirtualInput, @builtin(instance_index) instance: u32)
         -> VisibilityOutput {
     let corner = virtual_corner(input.cluster, input.vertex);
-    let model = pose_matrix(poses[input.slot & ~MOVED_SLOT]);
+    let model = pose_matrix(poses[slot_index(input.slot)]);
     var output: VisibilityOutput;
     output.clip_position = select(COLLAPSED,
         camera.view_projection * (model * vec4<f32>(corner.position, 1.0)), corner.valid);
@@ -203,7 +204,7 @@ struct ExtendedOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec3<u32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
     // Linear vertex color and opacity, and second texture coordinates.
     @location(3) color: vec4<f32>,
     @location(4) uv1: vec2<f32>,
@@ -213,7 +214,7 @@ struct ExtendedTemporalOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec3<u32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
@@ -281,7 +282,7 @@ fn previous_skin_matrix(flags: u32, joints: vec4<u32>, weights: vec4<f32>) -> ma
 // vertex by their palette, rigid slots drawing the same mesh by their pose.
 fn vertex_affine_skinned(input: AffineVertexInput, joints: vec4<u32>,
         weights: vec4<f32>) -> VertexOutput {
-    let index = input.slot & ~MOVED_SLOT;
+    let index = slot_index(input.slot);
     let slot = colors[index];
     var model = pose_matrix(poses[index]);
     if slot.flags != 0u {
@@ -304,14 +305,14 @@ fn vs_affine_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
 fn vs_affine_temporal_skinned(input: AffineVertexInput, @location(9) color: vec4<f32>,
         @location(10) uv1: vec2<f32>, @location(11) joints: vec4<u32>,
         @location(12) weights: vec4<f32>) -> ExtendedTemporalOutput {
-    let slot = input.slot & ~MOVED_SLOT;
+    let slot = slot_index(input.slot);
     let material = colors[slot];
     var model = pose_matrix(poses[slot]);
     var previous_model = model;
     if material.flags != 0u {
         model = skin_matrix(material.flags, joints, weights);
         previous_model = previous_skin_matrix(material.flags, joints, weights);
-    } else if (input.slot & MOVED_SLOT) != 0u {
+    } else if slot_moved(input.slot) {
         previous_model = pose_matrix(previous_poses[slot]);
     }
     let vertex = transform_vertex(input.position, input.normal, material.color,
@@ -330,16 +331,17 @@ fn vs_affine_temporal_skinned(input: AffineVertexInput, @location(9) color: vec4
 }
 
 fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
-    let slot = input.slot & ~MOVED_SLOT;
+    let slot = slot_index(input.slot);
     let model = pose_matrix(poses[slot]);
     let material = colors[slot];
     var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
+    vertex.material.w = slot_fade(input.slot);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
     // Reading previous poses costs more than the rest of the motion: only
     // moving slots do.
-    if (input.slot & MOVED_SLOT) != 0u {
+    if slot_moved(input.slot) {
         let pose = previous_poses[slot];
         world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
             dot(pose.row_2, point), 1.0);
@@ -354,8 +356,8 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
         world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
     }
     if GROUNDING {
-        vertex.material = vec3<u32>(grounded(material.color, slot, model[3].xyz,
-            vertex.world_v.xyz), vertex.material.z);
+        vertex.material = vec4<u32>(grounded(material.color, slot, model[3].xyz,
+            vertex.world_v.xyz), vertex.material.zw);
     }
     let previous = camera.previous_view_projection * world;
     var output: TemporalOutput;
@@ -388,6 +390,6 @@ fn transform_vertex(position: vec3<f32>, encoded_normal: vec2<f32>, color: vec2<
     output.clip_position = camera.view_projection * world_position;
     output.normal_u = vec4<f32>(stable_normalize(transformed) * sign(dot(x, yz)), uv.x);
     output.world_v = vec4<f32>(world_position.xyz, uv.y);
-    output.material = vec3<u32>(color, surface);
+    output.material = vec4<u32>(color, surface, 0u);
     return output;
 }

@@ -32,7 +32,22 @@ struct FrameUniform {
     eye: [f32; 4],
     counts: [u32; 4],
     strides: [u32; 4],
+    fade: [f32; 4],
 }
+
+/// How the camera shows an object (decision 104; `scatter_cull.wgsl`): its
+/// levels, its card or nothing, and how far its last switch has faded.
+/// Objects new to the view start showing nothing, so they fade in; those
+/// written again in place take what the camera would show at once.
+const SHOWN_NONE: u32 = 6;
+const FADED: u32 = 65535;
+pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
+pub(crate) const STATE_ADOPT: u32 = u32::MAX;
+
+/// The share of its distance past a switch the eye goes before the camera
+/// switches an object back (decision 104), so objects near a switch's
+/// distance do not flicker between two ways as the eye wavers.
+const FADE_MARGIN: f32 = 0.1;
 
 /// WGSL `View`: a view's frustum planes, the radius objects need in it,
 /// the error its texels hide and whether it is the kept shadow map's.
@@ -77,8 +92,8 @@ pub(crate) const RANK_MAX: f32 = 1023.0;
 pub(crate) const THIN_LAYERS: usize = 64;
 
 /// WGSL `Record`: an object's bounding sphere, draw group and scale, the
-/// terrain word (see [`TERRAIN_INDEX`]) and how far its base sinks below
-/// the ground.
+/// terrain word (see [`TERRAIN_INDEX`]), how far its base sinks below the
+/// ground, and how the camera shows it ([`STATE_FRESH`]).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct Record {
@@ -88,6 +103,8 @@ pub(crate) struct Record {
     pub scale: f32,
     pub terrain: u32,
     pub sink: f32,
+    pub state: u32,
+    pub pad: [u32; 3],
 }
 
 /// WGSL `TerrainInfo` of `scatter_snap.wgsl`: a terrain's origin and
@@ -212,8 +229,10 @@ pub(crate) struct ScatterPass {
     args: Vec<DrawArgs>,
     objects: u32,
     group_count: u32,
-    // The IDs each view's lists take.
+    // The IDs each view's lists take, and the view whose lists hold the
+    // camera's fading objects (decision 104): the one after the last.
     ids_per_view: u32,
+    fading_view: usize,
     // The shadow map each view after the camera's draws into.
     maps: Vec<usize>,
     // Advances when the terrains' buffer is replaced.
@@ -297,6 +316,7 @@ impl ScatterPass {
             objects: 0,
             group_count: 0,
             ids_per_view: 0,
+            fading_view: 0,
             maps: Vec::new(),
             resident: 0,
         }
@@ -374,14 +394,15 @@ impl ScatterPass {
     }
 
     /// Writes slots `dirty` of `poses`, `colors`, `records` and `grounds`,
-    /// every slot when the buffers grow to hold them all.
+    /// every slot when the buffers grow to hold them all; returns the slots
+    /// written.
     pub(crate) fn write_slots(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
-    ) {
+    ) -> Option<std::ops::Range<u32>> {
         let mut grown = false;
         for (buffer, label, bytes) in [
             (&mut self.poses, "engine/scatter-poses", size_of_val(poses)),
@@ -417,6 +438,10 @@ impl ScatterPass {
         } else {
             dirty.map(|range| range.start as usize..range.end as usize)
         };
+        let written = range
+            .clone()
+            .filter(|range| !range.is_empty())
+            .map(|range| range.start as u32..range.end as u32);
         if let Some(range) = range.filter(|range| !range.is_empty()) {
             self.slots_written = true;
             self.version += 1;
@@ -445,6 +470,7 @@ impl ScatterPass {
             );
         }
         self.objects = records.len() as u32;
+        written
     }
 
     /// Creates the pipelines objects are set on the ground and culled with
@@ -491,13 +517,15 @@ impl ScatterPass {
     /// only); maps draw a coarser level where a texel hides its error, and
     /// the camera draws impostors within the error when `impostors`, which
     /// kept maps draw wherever their texels are no finer than an impostor's
-    /// (decision 060). Returns whether any object draws.
+    /// (decision 060). The camera's switches fade `fade` of their way this
+    /// frame (decision 104), or stand still where it is negative. Returns
+    /// whether any object draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         (view_projection, eye): (Mat4, Vec3),
-        (pixel_error, height, impostors): (Option<f32>, f32, bool),
+        (pixel_error, height, impostors, fade): (Option<f32>, f32, bool, f32),
         (maps, kept, level, resolution): ShadowViews<'_>,
     ) -> bool {
         self.maps.clear();
@@ -546,6 +574,9 @@ impl ScatterPass {
         }
         let view_count = views.len() as u32;
         let draws_per_view = self.group_count * LEVELS;
+        // The camera's fading objects list after the last view's.
+        self.fading_view = views.len();
+        let lists = view_count + 1;
         let mut replaced = false;
         replaced |= grow(
             device,
@@ -558,14 +589,14 @@ impl ScatterPass {
             device,
             &mut self.ids,
             "engine/scatter-ids",
-            u64::from(self.ids_per_view) * u64::from(view_count) * 4,
+            u64::from(self.ids_per_view) * u64::from(lists) * 4,
             wgpu::BufferUsages::VERTEX,
         );
         replaced |= grow(
             device,
             &mut self.draws,
             "engine/scatter-draws",
-            u64::from(draws_per_view) * u64::from(view_count) * size_of::<DrawArgs>() as u64,
+            u64::from(draws_per_view) * u64::from(lists) * size_of::<DrawArgs>() as u64,
             wgpu::BufferUsages::INDIRECT,
         );
         replaced |= grow(
@@ -594,13 +625,14 @@ impl ScatterPass {
                 u32::from(impostors),
                 self.objects,
             ],
+            fade: [fade, FADE_MARGIN, 0.0, 0.0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
         let card_args = [CARD_VERTICES, 0, 0, 0].repeat(view_count as usize);
         queue.write_buffer(&self.card_args, 0, bytemuck::cast_slice(&card_args));
         queue.write_buffer(&self.views, 0, bytemuck::cast_slice(&views));
         self.args.clear();
-        for _ in 0..view_count {
+        for _ in 0..lists {
             self.args.extend_from_slice(&self.template);
         }
         queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args));
@@ -773,6 +805,12 @@ impl ScatterPass {
     /// The pose group of depth passes.
     pub(crate) fn shadow_group(&self) -> Option<&wgpu::BindGroup> {
         self.shadow_group.get()
+    }
+
+    /// The view whose lists hold the camera's fading objects this frame
+    /// (decision 104).
+    pub(crate) fn fading_view(&self) -> usize {
+        self.fading_view
     }
 
     /// The view shadow map `map` reads its lists from this frame, if it

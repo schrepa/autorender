@@ -14,7 +14,7 @@ use crate::impostors::{BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord};
 use crate::occupancy::Cover;
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
-    SnapSources, TERRAIN_INDEX, TerrainInfo,
+    STATE_FRESH, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
 use engine_core::TileKey;
 use engine_core::glam::{Mat4, Vec3};
@@ -42,6 +42,9 @@ pub(super) struct ScatterDraws {
     changed: bool,
     // Each group's cover (decision 059).
     covers: Vec<Cover>,
+    // The presentation time of the last frame placed objects were culled
+    // for, which their fades advance by (decision 104).
+    presented: f32,
 }
 
 impl ScatterDraws {
@@ -109,12 +112,15 @@ impl Renderer {
     /// draw groups when their assets changed, gives tiles that arrived
     /// slots and frees those of tiles that left, uploads what changed,
     /// creates the groups' pipelines for `kind`, and plans this frame's
-    /// culling; returns whether any object draws.
+    /// culling, with impostors when `impostors`; GPU-presented frames
+    /// (`gpu_mode`) advance how the camera shows objects (decision 104),
+    /// over time where `display`, at once in previews; exact ones show it
+    /// as it stands. Returns whether any object draws.
     pub(super) fn prepare_scatter(
         &mut self,
         snapshot: &RenderSnapshot,
         kind: PassKind,
-        impostors: bool,
+        (gpu_mode, display, impostors): (bool, bool, bool),
     ) -> bool {
         let terrains = &snapshot.terrain.terrains;
         let key = self.scatter_key(terrains);
@@ -198,7 +204,7 @@ impl Renderer {
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
         }
-        self.scatter.write_slots(
+        let written = self.scatter.write_slots(
             &self.device,
             &self.queue,
             (
@@ -209,6 +215,9 @@ impl Renderer {
             ),
             dirty,
         );
+        if let Some(slots) = written {
+            draws.pool.uploaded(slots);
+        }
         if counts_changed || std::mem::take(&mut draws.changed) {
             let mut ids = 0;
             for (group, &count) in draws.groups.iter_mut().zip(&draws.pool.counts) {
@@ -232,12 +241,16 @@ impl Renderer {
         });
         self.scatter
             .prepare_snap(&self.device, &self.queue, sources);
-        // Each group's pipeline variant.
+        // Each group's pipeline variant, and the one its fading objects draw
+        // with (decision 104).
         let variants: Vec<Variant> = self
             .scatter_draws
             .groups
             .iter()
-            .map(|draw| self.scatter_binding(draw).1)
+            .flat_map(|draw| {
+                let variant = self.scatter_binding(draw).1;
+                [variant, variant.with_fading(true)]
+            })
             .collect();
         for variant in variants {
             if !self.mesh_pipelines.variants.contains_key(&(kind, variant)) {
@@ -252,6 +265,25 @@ impl Renderer {
         let pixel_error = level_of_detail
             .enabled
             .then_some(level_of_detail.pixel_error);
+        // How much of their way the camera's switches fade this frame
+        // (decision 104): displayed frames by the presentation time since
+        // the last over the settings' fade (none for a frame presenting the
+        // same moment again, as the first after a pause does); previews
+        // switch at once, and exact frames advance nothing (a negative
+        // share).
+        let fade = match (gpu_mode, display) {
+            (false, _) => -1.0,
+            (true, false) => 1.0,
+            (true, true) => {
+                let seconds = snapshot.elapsed_seconds;
+                let since = seconds - std::mem::replace(&mut self.scatter_draws.presented, seconds);
+                if level_of_detail.fade_seconds > 0.0 && since < 1.0 {
+                    engine_core::math::clamp(since / level_of_detail.fade_seconds, 0.0, 1.0)
+                } else {
+                    1.0
+                }
+            }
+        };
         let height = self.display.size().1 as f32;
         // Frames keeping still casters cast placed objects into the kept map
         // (decision 060), not the moving one.
@@ -267,7 +299,7 @@ impl Renderer {
             &self.device,
             &self.queue,
             (snapshot.view_projection, snapshot.camera_position),
-            (pixel_error, height, impostors),
+            (pixel_error, height, impostors, fade),
             (
                 &maps,
                 self.shadows.kept_refresh(),
@@ -567,6 +599,25 @@ impl Renderer {
             pass.set_bind_group(1, group, &[]);
             draws += self.draw_scatter_levels(pass, (index, draw), 0, true);
         }
+        // Objects fading between how the camera shows them (decision 104),
+        // at the levels the camera draws.
+        let fading = self.scatter.fading_view();
+        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+            if draw.count == 0 {
+                continue;
+            }
+            let (group, variant) = self.scatter_binding(draw);
+            let Some(pipeline) = self
+                .mesh_pipelines
+                .variants
+                .get(&(kind, variant.with_fading(true)))
+            else {
+                continue;
+            };
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(1, group, &[]);
+            draws += self.draw_scatter_levels(pass, (index, draw), fading, true);
+        }
         // Impostors (decision 048): every group's cards in one draw, over
         // the poses and lights the meshes bound.
         if let Some((targets, lit)) = state.passes.impostor_pass
@@ -722,6 +773,8 @@ fn tile_objects(
             scale: placed.scale,
             terrain: index | layer << LAYER_SHIFT | near << NEAR_LEVEL_SHIFT | rank << RANK_SHIFT,
             sink: placed.sink,
+            state: STATE_FRESH,
+            pad: [0; 3],
         });
         objects.3.push(crate::gpu_data::ground_data(
             draw.source.grounding(),
