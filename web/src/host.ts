@@ -26,6 +26,8 @@ export interface Runtime {
   stats(): string;
   /** Loading work in place of a frame while the GPU compiles pipelines (decision 099). */
   work?(width: number, height: number): void;
+  /** Terrain loading for some milliseconds between frames (decision 108); whether tiles remain. */
+  work_between_frames?(milliseconds: number): boolean;
   suspend(): void;
   reset_camera(): void;
   set_count?(count: number): void;
@@ -179,6 +181,20 @@ let request = 0;
 // Loading work while pipelines compile (decision 099): browsers stop calling
 // animation frames while their GPU process compiles, so it runs in tasks.
 let working = 0;
+// Terrain loading between frames (decision 108): after a frame, a task
+// loads terrain until shortly before the next frame is due, by the recent
+// frame interval, while the frame found tiles to load. Frames waiting on
+// the GPU leave that time free; frames waiting on the CPU leave none.
+let between = 0;
+let lastFrameAt = 0;
+let frameInterval = 1000 / 60;
+// Milliseconds the last task between frames loaded terrain: frames'
+// intervals are measured without them, so loading never takes the time it
+// made itself.
+let betweenSpent = 0;
+const BETWEEN_MARGIN_MS = 4;
+// ?between=off loads terrain within frames alone, for comparisons.
+const betweenFrames = new URLSearchParams(location.search).get("between") !== "off";
 const hud = new FrameHud(canvas);
 let pixelWidth = 1;
 let pixelHeight = 1;
@@ -215,6 +231,10 @@ function stopClock() {
   request = 0;
   clearTimeout(working);
   working = 0;
+  clearTimeout(between);
+  between = 0;
+  lastFrameAt = 0;
+  betweenSpent = 0;
   hud.reset();
   clearInput();
   game?.suspend();
@@ -231,6 +251,27 @@ function fail(error: unknown) {
   if (count) count.disabled = true;
   reset.disabled = true;
   console.error(error);
+}
+
+/** Terrain loading until shortly before the frame due at `due` (decision 108). */
+function workBetweenFrames(due: number) {
+  between = 0;
+  if (disposed || !game || paused || document.hidden || failed || preparing || !game.work_between_frames) return;
+  const start = performance.now();
+  const spare = due - start - BETWEEN_MARGIN_MS;
+  if (spare > 1) game.work_between_frames(spare);
+  betweenSpent = performance.now() - start;
+}
+
+/** Schedules terrain loading after the frame that started at `timestamp`. */
+function scheduleBetweenFrames(timestamp: number) {
+  const interval = timestamp - lastFrameAt - betweenSpent;
+  betweenSpent = 0;
+  if (lastFrameAt > 0 && interval > 0 && interval < 100) frameInterval += (interval - frameInterval) * 0.1;
+  lastFrameAt = timestamp;
+  if (between || !betweenFrames || !game?.work_between_frames) return;
+  const due = timestamp + frameInterval;
+  between = window.setTimeout(() => workBetweenFrames(due), 0);
 }
 
 /** Loading work in tasks while preparation waits on compiles (decision 099). */
@@ -281,6 +322,7 @@ function frame(timestamp: number) {
     options.afterFrame?.(game, timestamp);
     if (hud.frame(game, timestamp)) options.poll?.(game);
     options.afterHostFrame?.(game, timestamp);
+    scheduleBetweenFrames(timestamp);
     if (!disposed) request = requestAnimationFrame(frame);
   } catch (error) { fail(error); }
 }

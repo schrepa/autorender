@@ -219,8 +219,12 @@ pub fn select_patches<'a>(
     }
 }
 
-/// A tile a view wants resident, with its importance: coarser levels
-/// first, then nearer tiles, those ahead of the eye before those behind.
+/// A tile a view wants resident, with its importance (decision 108): the
+/// pinned levels' first, coarser first; then by the distance to the eye in
+/// units of its level's range, ahead of the eye before behind, so the
+/// tiles that show the most of the view's detail load first whatever their
+/// level, a tile's parent (twice as far in range, half as far in its
+/// units) before it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WantedTile {
     pub key: TileKey,
@@ -282,17 +286,22 @@ pub fn wanted_tiles(
                     .try_normalize()
                     .unwrap_or(forward);
                 let behind = 1.0 - forward.dot(toward);
+                // Pinned tiles come first, whatever their distance.
+                let score = if everywhere {
+                    -1.0
+                } else {
+                    distance / max(ranges.range(level), 1.0e-3) * (1.0 + behind)
+                };
                 out.push(WantedTile {
                     key: TileKey::new(level as u8, x as u16, z as u16),
-                    score: distance * (1.0 + behind),
+                    score,
                 });
             }
         }
     }
     out[start..].sort_by(|a, b| {
-        b.key
-            .level
-            .cmp(&a.key.level)
-            .then(a.score.total_cmp(&b.score))
+        a.score
+            .total_cmp(&b.score)
+            .then(b.key.level.cmp(&a.key.level))
     });
 }

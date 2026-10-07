@@ -448,6 +448,18 @@ impl BrowserApp {
         self.engine.stream_terrain();
     }
 
+    /// Loads terrain for `milliseconds` between frames (decision 108): hosts
+    /// call it after a frame with the time left before the next one is due,
+    /// while the last frame found tiles to load. Returns whether tiles are
+    /// still to load.
+    pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
+        if !milliseconds.is_finite() || milliseconds <= 0.0 {
+            return false;
+        }
+        self.terrain_fetches.exchange(&mut self.engine);
+        self.engine.work_terrain(milliseconds)
+    }
+
     /// Advance once per animation frame; input is a bounded, owned value.
     pub fn frame(
         &mut self,

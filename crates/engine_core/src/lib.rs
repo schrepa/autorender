@@ -690,6 +690,13 @@ impl Engine {
         self.terrain.update(self.app.world_mut());
     }
 
+    /// Loads terrain tiles the last frame found missing for `milliseconds`
+    /// between frames (decision 108), where frames leave time free while the
+    /// GPU draws them; whether tiles are still to load.
+    pub fn work_terrain(&mut self, milliseconds: f64) -> bool {
+        self.terrain.work(self.app.world_mut(), milliseconds)
+    }
+
     /// Refreshes world matrices without advancing simulation or frame counters.
     ///
     /// Call after direct world edits when inspecting derived data before the
