@@ -61,6 +61,7 @@ impl Renderer {
                     .sun_direction
                     .normalize(),
                 fades,
+                now: snapshot.elapsed_seconds,
                 cover: canopy,
             },
             (self.display.max_layers, self.materials.mips()),

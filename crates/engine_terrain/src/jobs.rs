@@ -10,7 +10,8 @@
 //! between slices take up a more urgent one or drop one its engine no longer
 //! wants. A tile's objects of layers standing far away at its level may be
 //! placed by a job of their own after it, as far tiles hold them by the tens
-//! of thousands.
+//! of thousands. A staged tile job hands out the tile's shape as a part
+//! (decision 114), [`TerrainWorker::take_part`], before the rest is done.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -103,14 +104,20 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
 }
 
 /// The input of a [`TILE_JOB`]: tile `key` of the recipe shared as
-/// `recipe`, with `placing`'s objects (decision 112).
-pub fn tile_input(recipe: &str, key: TileKey, placing: Placing) -> Vec<u8> {
+/// `recipe`, with `placing`'s objects (decision 112), its shape handed out
+/// first where `staged` (decision 114).
+pub fn tile_input(recipe: &str, key: TileKey, placing: Placing, staged: bool) -> Vec<u8> {
     let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(&key).put(&placing);
+    writer
+        .put(&recipe.to_owned())
+        .put(&key)
+        .put(&placing)
+        .put(&staged);
     writer.into_bytes()
 }
 
-/// A [`TILE_JOB`]'s output: the tile.
+/// A [`TILE_JOB`]'s output, and its part: the tile, or its shape alone
+/// (decision 114).
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
@@ -261,6 +268,7 @@ impl TerrainWorker {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let key: TileKey = reader.get().map_err(invalid)?;
                 let placing: Placing = reader.get().map_err(invalid)?;
+                let staged: bool = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(key) {
@@ -269,7 +277,8 @@ impl TerrainWorker {
                 Running::Tile(
                     Generator::new(recipe.layers.clone(), &recipe.pyramid, key)
                         .with_surface(recipe.rules.clone())
-                        .with_placing(placing),
+                        .with_placing(placing)
+                        .with_staged(staged),
                 )
             }
             FAR_JOB => {
@@ -347,6 +356,15 @@ impl TerrainWorker {
         };
         self.running.remove(&id);
         output.map(Some)
+    }
+
+    /// A part of job `id`'s output ready before the rest (decision 114),
+    /// taken once: a staged tile's shape.
+    pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
+        match self.running.get_mut(&id)? {
+            Running::Tile(generator) => generator.take_shape().map(|shape| codec::encode(&shape)),
+            _ => None,
+        }
     }
 
     /// Stops job `id`, if it runs.

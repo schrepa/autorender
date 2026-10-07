@@ -11,7 +11,8 @@
 //! Jobs carry a priority (decision 112): workers run a job a slice at a
 //! time and, between slices, the most urgent they hold; a job its owner
 //! cancels stops at its next slice, so its worker takes up wanted work at
-//! once.
+//! once. A job may hand back a part of its output before the rest (decision
+//! 114), as a tile its shape, for its owner to use while it runs.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -68,7 +69,8 @@ pub enum JobShare {
 
 /// Workers and their jobs (decision 110): workers running them, jobs
 /// handed out and not done, jobs submitted, completed, failed and cancelled
-/// while running (decision 112), keys shared and their bytes.
+/// while running (decision 112), parts handed back early (decision 114),
+/// keys shared and their bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct JobStats {
     pub workers: u32,
@@ -77,6 +79,7 @@ pub struct JobStats {
     pub completed: u64,
     pub failed: u64,
     pub cancelled: u64,
+    pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
 }
@@ -93,6 +96,9 @@ pub struct Jobs {
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
+    // Parts of running jobs' outputs handed back early (decision 114),
+    // the latest of each.
+    parts: HashMap<JobId, Vec<u8>>,
     // What is shared now, by key: its size.
     shared: HashMap<String, u64>,
     stats: JobStats,
@@ -107,6 +113,7 @@ impl Default for Jobs {
             running: HashSet::new(),
             cancels: Vec::new(),
             done: HashMap::new(),
+            parts: HashMap::new(),
             shared: HashMap::new(),
             stats: JobStats::default(),
         }
@@ -162,9 +169,17 @@ impl Jobs {
         self.done.remove(&id)
     }
 
+    /// A part of running job `id`'s output handed back before the rest
+    /// (decision 114), taken; parts not taken before the job is done are
+    /// dropped.
+    pub fn take_part(&mut self, id: JobId) -> Option<Vec<u8>> {
+        self.parts.remove(&id)
+    }
+
     /// Drops job `id`: a worker running it stops at its next slice
     /// (decision 112), and its output, if any, is thrown away.
     pub fn cancel(&mut self, id: JobId) {
+        self.parts.remove(&id);
         if self.done.remove(&id).is_some() || !self.running.remove(&id) {
             return;
         }
@@ -217,7 +232,18 @@ impl Jobs {
         }
     }
 
+    /// Hosts: a part of running job `id`'s output its worker handed back
+    /// before the rest (decision 114), replacing an earlier one not taken;
+    /// ignored for jobs cancelled or done since.
+    pub fn part(&mut self, id: JobId, part: Vec<u8>) {
+        if self.running.contains(&id) {
+            self.stats.parts += 1;
+            self.parts.insert(id, part);
+        }
+    }
+
     fn finish(&mut self, id: JobId, output: Result<Vec<u8>, String>) {
+        self.parts.remove(&id);
         match &output {
             Ok(_) => self.stats.completed += 1,
             Err(_) => self.stats.failed += 1,

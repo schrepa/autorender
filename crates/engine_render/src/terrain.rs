@@ -78,9 +78,11 @@ pub(crate) struct PatchRecord {
     fade: f32,
 }
 
-/// Frames over which a tile that arrived grows out of its parent level
-/// (decision 099): its patches draw morphed into the parent's at first.
-const ARRIVAL_FRAMES: u64 = 24;
+/// Seconds over which a tile that arrived grows out of its parent level
+/// (decision 099), its patches drawn morphed into the parent's at first, and
+/// its normals and surface materials take over from the coarser level's
+/// (decision 114): the same time however fast frames come.
+const ARRIVAL_SECONDS: f32 = 0.4;
 
 /// `PatchRecord::holes` of tiles without holes.
 const NO_HOLES: u32 = u32::MAX;
@@ -193,8 +195,10 @@ pub(crate) struct TerrainViews<'a> {
     pub sun: Vec3,
     /// Whether tiles that arrive grow out of their parents over a few frames
     /// (decision 099): ordinary frames; exact ones draw every tile as it
-    /// is.
+    /// is. And the frame's presentation time in seconds, which their fades
+    /// follow (decision 114).
     pub fades: bool,
+    pub now: f32,
     /// Ground cover's settings, sanitized, and the pixels a meter spans a
     /// meter from the eye, while cover grows: where blades thin out, the
     /// ground shows as its canopy (decisions 090 and 098).
@@ -216,10 +220,12 @@ pub(crate) struct TerrainPass {
     atlas: Option<Atlas>,
     atlas_generation: u64,
     slots: HashMap<(u64, TileKey), u32>,
-    // The frame each resident tile arrived at, and frames prepared
-    // (decision 099).
-    arrivals: HashMap<(u64, TileKey), u64>,
-    frames: u64,
+    // When each resident tile arrived (decision 099), and when its surface
+    // materials did (decision 114), in seconds of presentation time; tiles
+    // without them are absent; and this frame's time.
+    arrivals: HashMap<(u64, TileKey), f32>,
+    surfaced: HashMap<(u64, TileKey), f32>,
+    now: f32,
     // The tile each slot holds: edits (decision 080) replace tiles under the
     // same key, which upload again into their layers.
     held: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>>,
@@ -233,10 +239,14 @@ pub(crate) struct TerrainPass {
     views: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     uniform_generation: u64,
-    // Hole bits of the tiles with holes, and where each tile's start.
+    // Each layer's fades (decision 114), then the hole bits of the tiles
+    // with holes, and where each tile's start; the fades last written and
+    // the words they take.
     holes: wgpu::Buffer,
     hole_offsets: HashMap<(u64, TileKey), u32>,
     holes_generation: u64,
+    fades_written: Vec<u32>,
+    fade_words: u32,
     group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
@@ -301,7 +311,8 @@ impl TerrainPass {
             atlas_generation: 0,
             slots: HashMap::new(),
             arrivals: HashMap::new(),
-            frames: 0,
+            surfaced: HashMap::new(),
+            now: 0.0,
             held: HashMap::new(),
             free: Vec::new(),
             next_layer: 0,
@@ -320,6 +331,8 @@ impl TerrainPass {
             ),
             hole_offsets: HashMap::new(),
             holes_generation: 0,
+            fades_written: Vec::new(),
+            fade_words: 0,
             group: Cached::default(),
             pipelines: HashMap::new(),
             probe_pipelines: HashMap::new(),
@@ -417,10 +430,11 @@ impl TerrainPass {
         (max_layers, mips): (u32, &MipGenerator),
     ) -> bool {
         self.uploads = 0;
-        self.frames += 1;
+        self.now = views.now;
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
+        self.write_fades(queue, views.fades);
         self.write_directory(device, queue, terrains);
         self.maps.prepare(device, queue, mips, terrains);
         self.write_palette(queue, terrains);
@@ -643,10 +657,7 @@ impl TerrainPass {
         };
         // A tile that arrived grows out of its parent (decision 099).
         let fade = match self.arrivals.get(&(terrain.id, key)) {
-            Some(&at) if fades => {
-                let since = self.frames.saturating_sub(at);
-                1.0 - engine_core::math::min(since as f32 / ARRIVAL_FRAMES as f32, 1.0)
-            }
+            Some(&at) if fades => self.fade_since(at),
             _ => 0.0,
         };
         Some(PatchRecord {
@@ -694,7 +705,22 @@ impl TerrainPass {
         });
         self.held.retain(|key, _| listed.contains_key(key));
         self.arrivals.retain(|key, _| listed.contains_key(key));
-        // Tiles replaced under their keys upload again into their layers.
+        self.surfaced.retain(|key, _| listed.contains_key(key));
+        // Tiles replaced under their keys upload again into their layers; one
+        // whose surface materials arrive with it takes them over gradually
+        // (decision 114), and edits change them in place.
+        for (key, tile) in &listed {
+            let had = self.held.get(key).map(|held| held.control().is_some());
+            match (had, tile.control().is_some()) {
+                (_, false) => {
+                    self.surfaced.remove(key);
+                }
+                (Some(false), true) => {
+                    self.surfaced.insert(*key, self.now);
+                }
+                _ => {}
+            }
+        }
         let replaced: Vec<((u64, TileKey), u32)> = self
             .slots
             .iter()
@@ -705,11 +731,23 @@ impl TerrainPass {
             })
             .map(|(key, layer)| (*key, *layer))
             .collect();
+        // What they replace, so arrays keep what did not change (decision
+        // 114): a tile arriving whole after its shape, or with its objects
+        // standing far away, has the same heights.
+        let mut previous: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>> =
+            HashMap::new();
         for (key, _) in &replaced {
             self.slots.remove(key);
-            self.held.remove(key);
+            if let Some(held) = self.held.remove(key) {
+                previous.insert(*key, held);
+            }
         }
         let mut reused: HashMap<(u64, TileKey), u32> = replaced.into_iter().collect();
+        let pyramids: HashMap<u64, engine_core::terrain_data::Pyramid> = terrains
+            .terrains
+            .iter()
+            .map(|terrain| (terrain.id, terrain.pyramid))
+            .collect();
         // Upload the rest, coarse levels first.
         let mut missing: Vec<(u64, TileKey)> = listed
             .keys()
@@ -720,12 +758,15 @@ impl TerrainPass {
         let needed = self.slots.len() as u32 + missing.len() as u32;
         self.ensure_atlas(device, queue, needed.min(max_layers), max_layers);
         let capacity = self.atlas.as_ref().map_or(0, |atlas| atlas.layers);
-        let edited = !reused.is_empty();
+        let mut edited = false;
         for key in missing {
             // Tiles arriving grow out of their parents; edited ones
             // (decision 080) change in place.
             if !reused.contains_key(&key) {
-                self.arrivals.insert(key, self.frames);
+                self.arrivals.insert(key, self.now);
+                if listed[&key].control().is_some() {
+                    self.surfaced.insert(key, self.now);
+                }
             }
             let layer = match reused.remove(&key).or_else(|| self.free.pop()) {
                 Some(layer) => layer,
@@ -739,66 +780,69 @@ impl TerrainPass {
                 }
             };
             let atlas = self.atlas.as_ref().expect("allocated above");
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &atlas.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer,
-                    },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                bytemuck::cast_slice(listed[&key].heights()),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(LAYER_SIZE * 4),
-                    rows_per_image: Some(LAYER_SIZE),
-                },
-                wgpu::Extent3d {
-                    width: LAYER_SIZE,
-                    height: LAYER_SIZE,
-                    depth_or_array_layers: 1,
-                },
-            );
-            // Its control values; without a surface, the first material
-            // everywhere.
-            let blank;
-            let control = match listed[&key].control() {
-                Some(control) => control,
-                None => {
-                    blank = vec![0_u32; (LAYER_SIZE * LAYER_SIZE) as usize];
-                    &blank
-                }
+            let tile = listed[&key];
+            let before = previous.remove(&key);
+            edited |= before
+                .as_ref()
+                .is_some_and(|held| held.hole_bits() != tile.hole_bits());
+            let layout = wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(LAYER_SIZE * 4),
+                rows_per_image: Some(LAYER_SIZE),
             };
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &atlas.control,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: layer,
-                    },
-                    aspect: wgpu::TextureAspect::All,
+            let extent = wgpu::Extent3d {
+                width: LAYER_SIZE,
+                height: LAYER_SIZE,
+                depth_or_array_layers: 1,
+            };
+            let place = |texture| wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer,
                 },
-                bytemuck::cast_slice(control),
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(LAYER_SIZE * 4),
-                    rows_per_image: Some(LAYER_SIZE),
-                },
-                wgpu::Extent3d {
-                    width: LAYER_SIZE,
-                    height: LAYER_SIZE,
-                    depth_or_array_layers: 1,
-                },
-            );
+                aspect: wgpu::TextureAspect::All,
+            };
+            let heights = before
+                .as_ref()
+                .is_none_or(|held| held.heights() != tile.heights());
+            if heights {
+                queue.write_texture(
+                    place(&atlas.texture),
+                    bytemuck::cast_slice(tile.heights()),
+                    layout,
+                    extent,
+                );
+                self.normal_jobs.push((layer, tile.spacing()));
+            }
+            // Its control values; a tile without its own yet (decision 114)
+            // takes its nearest ancestor's for ground cover, and without a
+            // surface, the first material everywhere.
+            let control = tile.control().is_none()
+                || before
+                    .as_ref()
+                    .is_none_or(|held| held.control() != tile.control());
+            if control {
+                let borrowed;
+                let values = match tile.control() {
+                    Some(values) => values,
+                    None => {
+                        borrowed = ancestor_control(&listed, key, pyramids[&key.0]);
+                        &borrowed
+                    }
+                };
+                queue.write_texture(
+                    place(&atlas.control),
+                    bytemuck::cast_slice(values),
+                    layout,
+                    extent,
+                );
+            }
             self.slots.insert(key, layer);
-            self.held.insert(key, listed[&key].clone());
-            self.normal_jobs.push((layer, listed[&key].spacing()));
-            self.uploads += 1;
+            self.held.insert(key, tile.clone());
+            self.uploads += u32::from(heights || control);
         }
         // Layers of replaced tiles that found no upload are free again.
         self.free.extend(reused.into_values());
@@ -815,15 +859,20 @@ impl TerrainPass {
             .map(|(key, _)| *key)
             .collect();
         holed.sort_unstable();
+        // Each layer's fades come first (decision 114): two layers a word.
+        let fade_words = max_layers.div_ceil(2).max(1);
         let unchanged = !edited
+            && fade_words == self.fade_words
             && holed.len() == self.hole_offsets.len()
             && holed.iter().all(|key| self.hole_offsets.contains_key(key));
         if !unchanged {
+            self.fade_words = fade_words;
             self.hole_offsets.clear();
             let mut words: Vec<u32> = Vec::with_capacity(holed.len() * HOLE_WORDS);
             for key in holed {
                 let bits = listed[&key].hole_bits().expect("filtered above");
-                self.hole_offsets.insert(key, words.len() as u32);
+                self.hole_offsets
+                    .insert(key, fade_words + words.len() as u32);
                 let mut tile: Vec<u32> = bits
                     .iter()
                     .flat_map(|word| [*word as u32, (word >> 32) as u32])
@@ -831,7 +880,8 @@ impl TerrainPass {
                 tile.truncate(HOLE_WORDS);
                 words.extend_from_slice(&tile);
             }
-            let bytes = (words.len() * 4) as u64;
+            let start = u64::from(fade_words) * 4;
+            let bytes = start + (words.len() * 4) as u64;
             if bytes > self.holes.size() {
                 self.holes = crate::buffers::storage(
                     device,
@@ -840,10 +890,48 @@ impl TerrainPass {
                     wgpu::BufferUsages::empty(),
                 );
                 self.holes_generation += 1;
+                // A new buffer holds no fades yet.
+                self.fades_written.clear();
             }
             if !words.is_empty() {
-                queue.write_buffer(&self.holes, 0, bytemuck::cast_slice(&words));
+                queue.write_buffer(&self.holes, start, bytemuck::cast_slice(&words));
             }
+        }
+    }
+
+    /// How much of a coarser level still shows of what arrived at `at`
+    /// (decision 114): 1 then, 0 [`ARRIVAL_SECONDS`] later.
+    fn fade_since(&self, at: f32) -> f32 {
+        let since = engine_core::math::max(self.now - at, 0.0);
+        1.0 - engine_core::math::min(since / ARRIVAL_SECONDS, 1.0)
+    }
+
+    /// Writes each layer's fades before the hole bits (decision 114): how
+    /// much of the next coarser level's normals and surface materials still
+    /// show over its tile's, 0 to 255 in two bytes, two layers a word. On
+    /// exact frames tiles show as they are, but one without surface
+    /// materials yet always shows the coarser level's.
+    fn write_fades(&mut self, queue: &wgpu::Queue, fades: bool) {
+        let mut words = vec![0_u32; self.fade_words as usize];
+        let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
+        for (key, &layer) in &self.slots {
+            let normals = match self.arrivals.get(key) {
+                Some(&at) if fades => self.fade_since(at),
+                _ => 0.0,
+            };
+            let materials = match self.surfaced.get(key) {
+                None => 1.0,
+                Some(&at) if fades => self.fade_since(at),
+                Some(_) => 0.0,
+            };
+            let Some(word) = words.get_mut(layer as usize / 2) else {
+                continue;
+            };
+            *word |= (byte(normals) | (byte(materials) << 8)) << ((layer % 2) * 16);
+        }
+        if words != self.fades_written {
+            queue.write_buffer(&self.holes, 0, bytemuck::cast_slice(&words));
+            self.fades_written = words;
         }
     }
 
@@ -1620,6 +1708,46 @@ fn geometry(
 }
 
 /// `PatchInput`'s locations 0 to 3.
+/// Control values for tile `key` (of terrain `key.0`, over `pyramid`)
+/// without its own yet (decision 114), for ground cover to grow from: its
+/// nearest listed ancestor's holding some, each sample its nearest sample's
+/// there; the first material everywhere without one.
+fn ancestor_control(
+    listed: &HashMap<(u64, TileKey), &std::sync::Arc<engine_core::Tile>>,
+    (id, key): (u64, TileKey),
+    pyramid: engine_core::terrain_data::Pyramid,
+) -> Vec<u32> {
+    let size = LAYER_SIZE as usize;
+    let mut out = vec![0_u32; size * size];
+    let (mut at, mut shift) = (key, 0_u32);
+    let control = loop {
+        let Some(parent) = pyramid.parent(at) else {
+            return out;
+        };
+        (at, shift) = (parent, shift + 1);
+        if let Some(control) = listed.get(&(id, at)).and_then(|tile| tile.control()) {
+            break control;
+        }
+    };
+    // Layers keep a border sample before the tile's first: texel `i` holds
+    // sample `i - 1`, counted from the level's first.
+    let quads = i64::from(engine_core::terrain_data::TILE_QUADS);
+    let half = 1_i64 << (shift - 1);
+    let nearest = |texel: usize, tile: u16, ancestor: u16| {
+        let sample = i64::from(tile) * quads + texel as i64 - 1;
+        let there = (sample + half).div_euclid(1 << shift) - i64::from(ancestor) * quads + 1;
+        there.clamp(0, size as i64 - 1) as usize
+    };
+    let columns: Vec<usize> = (0..size).map(|x| nearest(x, key.x, at.x)).collect();
+    for (z, row) in out.chunks_exact_mut(size).enumerate() {
+        let from = nearest(z, key.z, at.z) * size;
+        for (value, &x) in row.iter_mut().zip(&columns) {
+            *value = control[from + x];
+        }
+    }
+    out
+}
+
 const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Uint32x4, 3 => Uint32, 4 => Float32];
 
 /// Patch instances.

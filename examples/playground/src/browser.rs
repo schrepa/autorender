@@ -112,6 +112,11 @@ impl PlaygroundGame {
         self.app.fail_job(id, error);
     }
 
+    /// A part of job `id`'s output from its worker (decision 114).
+    pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
+        self.app.part_job(id, part);
+    }
+
     /// The last frame's statistics as a JSON object.
     pub fn stats(&self) -> String {
         self.app.stats_json()

@@ -350,6 +350,10 @@ pub struct Generator {
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
+    // Whether it hands out the tile's shape before its surface (decision
+    // 114), and the shape until taken.
+    staged: bool,
+    shape: Option<Tile>,
 }
 
 /// A row's inputs to a surface's masks, reused row after row (decision
@@ -441,6 +445,8 @@ impl Generator {
                 .collect(),
             inputs: SurfaceInputs::default(),
             places: crate::placement::PlaceScratch::default(),
+            staged: false,
+            shape: None,
         }
     }
 
@@ -454,6 +460,21 @@ impl Generator {
     pub fn with_placing(mut self, placing: Placing) -> Self {
         self.placing = placing;
         self
+    }
+
+    /// The generator handing out its tile's shape, its heights and holes,
+    /// once they are done (decision 114): [`Self::take_shape`] it while the
+    /// surface and objects follow.
+    pub fn with_staged(mut self, staged: bool) -> Self {
+        self.staged = staged;
+        self
+    }
+
+    /// The tile's shape once its heights and holes are done, before its
+    /// surface (decision 114), where staged: a tile without control values
+    /// or objects, taken once.
+    pub fn take_shape(&mut self) -> Option<Tile> {
+        self.shape.take()
     }
 
     /// A generator placing on `tile` (generated from `layers`) the objects
@@ -488,6 +509,8 @@ impl Generator {
             zs: Box::default(),
             inputs: SurfaceInputs::default(),
             places: crate::placement::PlaceScratch::default(),
+            staged: false,
+            shape: None,
         }
     }
 
@@ -527,13 +550,21 @@ impl Generator {
         matches!(self.stage, Stage::Failed)
     }
 
-    /// The stage after the samples and holes: the surface's, if any.
-    fn after_holes(&self) -> Stage {
-        if self.surface.is_some() {
-            Stage::Biomes { row: 0 }
-        } else {
-            Stage::Done
+    /// The stage after the samples and holes: the surface's, if any, the
+    /// tile's shape handed out first where staged (decision 114).
+    fn after_holes(&mut self) -> Stage {
+        if self.surface.is_none() {
+            return Stage::Done;
         }
+        if self.staged {
+            self.shape = Tile::new(
+                self.key,
+                self.spacing,
+                self.heights.clone(),
+                self.holes.clone(),
+            );
+        }
+        Stage::Biomes { row: 0 }
     }
 
     /// Control values of stored row `row` (0 to 258, samples -1 to 257),
