@@ -42,9 +42,6 @@ pub(super) struct ScatterDraws {
     changed: bool,
     // Each group's cover (decision 059).
     covers: Vec<Cover>,
-    // The presentation time of the last frame placed objects were culled
-    // for, which their fades advance by (decision 104).
-    presented: f32,
 }
 
 impl ScatterDraws {
@@ -112,15 +109,14 @@ impl Renderer {
     /// draw groups when their assets changed, gives tiles that arrived
     /// slots and frees those of tiles that left, uploads what changed,
     /// creates the groups' pipelines for `kind`, and plans this frame's
-    /// culling, with impostors when `impostors`; GPU-presented frames
-    /// (`gpu_mode`) advance how the camera shows objects (decision 104),
-    /// over time where `display`, at once in previews; exact ones show it
-    /// as it stands. Returns whether any object draws.
+    /// culling, with impostors when `impostors`, advancing how the camera
+    /// shows objects by this frame's fades (decision 104). Returns whether
+    /// any object draws.
     pub(super) fn prepare_scatter(
         &mut self,
         snapshot: &RenderSnapshot,
         kind: PassKind,
-        (gpu_mode, display, impostors): (bool, bool, bool),
+        impostors: bool,
     ) -> bool {
         let terrains = &snapshot.terrain.terrains;
         let key = self.scatter_key(terrains);
@@ -266,24 +262,8 @@ impl Renderer {
             .enabled
             .then_some(level_of_detail.pixel_error);
         // How much of their way the camera's switches fade this frame
-        // (decision 104): displayed frames by the presentation time since
-        // the last over the settings' fade (none for a frame presenting the
-        // same moment again, as the first after a pause does); previews
-        // switch at once, and exact frames advance nothing (a negative
-        // share).
-        let fade = match (gpu_mode, display) {
-            (false, _) => -1.0,
-            (true, false) => 1.0,
-            (true, true) => {
-                let seconds = snapshot.elapsed_seconds;
-                let since = seconds - std::mem::replace(&mut self.scatter_draws.presented, seconds);
-                if level_of_detail.fade_seconds > 0.0 && since < 1.0 {
-                    engine_core::math::clamp(since / level_of_detail.fade_seconds, 0.0, 1.0)
-                } else {
-                    1.0
-                }
-            }
-        };
+        // (decision 104).
+        let fade = self.switch_fades.share;
         let height = self.display.size().1 as f32;
         // Frames keeping still casters cast placed objects into the kept map
         // (decision 060), not the moving one.

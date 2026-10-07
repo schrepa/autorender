@@ -10,6 +10,37 @@ use crate::post::PostFrame;
 use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
+/// How far switches between how objects show fade each frame (decisions
+/// 104 and 107): the presentation time of the last displayed GPU-presented
+/// frame, and this frame's share of a switch's fade.
+#[derive(Default)]
+pub(super) struct SwitchFades {
+    presented: f32,
+    pub(super) share: f32,
+}
+
+impl SwitchFades {
+    /// This frame's share of a fade `fade_seconds` long, at presentation time
+    /// `seconds`: displayed GPU-presented frames advance by the time since
+    /// the last (none for one presenting the same moment again, as the
+    /// first after a pause does); previews switch at once (1), and exact
+    /// frames show objects as they stand (a negative share).
+    fn advance(&mut self, kind: FrameKind, seconds: f32, fade_seconds: f32) {
+        self.share = match (kind.gpu_mode, kind.display) {
+            (false, _) => -1.0,
+            (true, false) => 1.0,
+            (true, true) => {
+                let since = seconds - std::mem::replace(&mut self.presented, seconds);
+                if fade_seconds > 0.0 && since < 1.0 {
+                    engine_core::math::clamp(since / fade_seconds, 0.0, 1.0)
+                } else {
+                    1.0
+                }
+            }
+        };
+    }
+}
+
 /// What kind of frame this is, decided before any GPU work.
 #[derive(Clone, Copy)]
 pub(super) struct FrameKind {
@@ -149,6 +180,11 @@ impl Renderer {
         if self.display.suspended {
             return Ok(self.residency_stats());
         }
+        self.switch_fades.advance(
+            kind,
+            snapshot.elapsed_seconds,
+            snapshot.environment.level_of_detail.fade_seconds,
+        );
         let Some(surface) = self.display.acquire(&self.device, &mut self.depth)? else {
             return Ok(self.residency_stats());
         };
@@ -192,11 +228,8 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
-        let scatter = self.prepare_scatter(
-            snapshot,
-            passes.opaque_kind,
-            (kind.gpu_mode, kind.display, passes.impostor_pass.is_some()),
-        );
+        let scatter =
+            self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         // Water on terrains (decision 067).
         let water = self.prepare_water(snapshot, passes.opaque_kind);
         // Terrain's horizon maps (decision 052) may have been replaced.
@@ -979,6 +1012,7 @@ impl Renderer {
                 stillness: (snapshot.environment.reflection_probes.enabled
                     && !snapshot.reflection_probes.is_empty())
                 .then(|| self.probes.slots.waiting()),
+                fade: self.switch_fades.share,
             };
             // Temporal frames alternate pose buffers; the other keeps the
             // previous frame's poses.
@@ -2122,6 +2156,13 @@ impl Renderer {
             pass.set_vertex_buffer(0, ids.slice(..));
             pass.draw_indirect(args, offset);
             draws += 1;
+            // Cards fading over their meshes (decision 107), once.
+            if phase == 0 {
+                let (cards, args, offset) = self.gpu_presentation.fading_cards();
+                pass.set_vertex_buffer(0, cards);
+                pass.draw_indirect(args, offset);
+                draws += 1;
+            }
         }
         // Virtual geometry (decision 044): each bin's selected
         // clusters, in phase one, then each bin's twin of clusters

@@ -1095,6 +1095,11 @@ pub(crate) struct PresentationFrame {
     /// The eye the frame rasterizes from (w unused): levels of detail
     /// follow the distance to it (decision 047).
     pub eye: [f32; 4],
+    /// Fades (decision 107): the share of a switch between a mesh and its
+    /// card this frame fades (1 for previews, which keep no level) and the
+    /// share of its distance past a switch the eye goes before a candidate
+    /// switches back.
+    pub fade: [f32; 4],
 }
 
 /// Candidate flags of `presentation.wgsl` the compaction passes gather.

@@ -6,15 +6,23 @@ const IMPOSTOR_FRAMES: u32 = 8u;
 // their texels across a frame.
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
 
-// The flags of a placed object's card fading in or out as the camera's
-// view of it switches (decision 104): its record's index in the low 16
-// bits, how far its fade has come (of 16383) in the 14 above.
+// The flags of a card fading in or out as the camera's view of its object
+// switches (decisions 104 and 107): its record's index in the low 15
+// bits, whether it draws over its steady mesh at its card's depth (bit
+// 15; scene objects' cards), and how far its fade has come (of 16383) in
+// the 14 bits from 16.
 const IMPOSTOR_FADING: u32 = 0x80000000u;
 const IMPOSTOR_FADING_OUT: u32 = 0x40000000u;
+const IMPOSTOR_OVER: u32 = 0x8000u;
 
 // The record index of a card's `batch` word.
 fn impostor_index(batch: u32) -> u32 {
-    return select(batch, batch & 0xffffu, (batch & IMPOSTOR_FADING) != 0u);
+    return select(batch, batch & 0x7fffu, (batch & IMPOSTOR_FADING) != 0u);
+}
+
+// Whether a card draws over its steady mesh while it fades.
+fn impostor_over(batch: u32) -> bool {
+    return (batch & IMPOSTOR_FADING) != 0u && (batch & IMPOSTOR_OVER) != 0u;
 }
 
 // How far a card's fade has come: 1 for cards not fading.
