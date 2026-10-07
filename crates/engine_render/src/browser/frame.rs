@@ -185,7 +185,10 @@ impl Renderer {
             snapshot,
             &packing.temporal_frame,
             passes.opaque_kind,
-            kind.gpu_mode && !features.probe_list.is_empty(),
+            (
+                kind.gpu_mode && !features.probe_list.is_empty(),
+                kind.gpu_mode,
+            ),
         );
         let scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());

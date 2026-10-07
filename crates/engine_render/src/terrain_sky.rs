@@ -151,6 +151,13 @@ impl SkyMaps {
     /// once its source level is wholly resident, with terrain `settings`
     /// asking for sky visibility; `slots` names each resident tile's layer
     /// of the height array. Without it the maps are released.
+    /// Creates the pipeline sky maps build with unless it exists
+    /// (decision 099).
+    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+        self.pipeline
+            .get_or_insert_with(|| pipeline(device, &self.layout));
+    }
+
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,

@@ -13,7 +13,7 @@ export interface RuntimeStats {
   missing_assets: number; culling_enabled: boolean; triangles: number | null;
   resident_meshes: number; mesh_upload_bytes: number; resident_mesh_bytes: number;
   resident_textures: number; texture_upload_bytes: number; resident_texture_bytes: number;
-  pipelines_created: number; pipelines_compiling: boolean;
+  pipelines_created: number; pipelines_compiling: boolean; loading?: boolean;
   [field: string]: unknown;
 }
 /** The last frame's statistics of `runtime`. */
@@ -24,6 +24,8 @@ export interface Runtime {
   /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
   stats(): string;
+  /** Loading work in place of a frame while the GPU compiles pipelines (decision 099). */
+  work?(width: number, height: number): void;
   suspend(): void;
   reset_camera(): void;
   set_count?(count: number): void;
@@ -152,14 +154,18 @@ const input = new BrowserInput(canvas);
 let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
-let paused = development;
+// ?prepare=1 starts a development session as ordinary sessions start, so
+// agents can inspect loading as players see it (decision 099).
+const preparedDevelopment = development && new URLSearchParams(location.search).get("prepare") === "1";
+let paused = development && !preparedDevelopment;
 // Pipelines compile when a frame first needs them (decision 049). Ordinary
 // sessions first render their starting state without advancing time behind a
 // hidden canvas (Firefox paints a visible WebGPU canvas by waiting on its GPU
-// process), until rendered frames stop creating pipelines and the GPU has
-// compiled them; then play starts. Development sessions start paused and
-// compile with the frames their commands render.
-let preparing = !development;
+// process), until rendered frames stop creating pipelines, the GPU has
+// compiled them and terrains have loaded the camera's view (decision 099);
+// then play starts. Development sessions start paused and compile with the
+// frames their commands render.
+let preparing = !development || preparedDevelopment;
 // Hidden from the start: creating the renderer already compiles pipelines.
 if (preparing) canvas.style.visibility = "hidden";
 let preparedSince: number | undefined;
@@ -170,6 +176,9 @@ let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 let failed = false;
 let request = 0;
+// Loading work while pipelines compile (decision 099): browsers stop calling
+// animation frames while their GPU process compiles, so it runs in tasks.
+let working = 0;
 const hud = new FrameHud(canvas);
 let pixelWidth = 1;
 let pixelHeight = 1;
@@ -204,6 +213,8 @@ function stopClock() {
   options.interrupted?.("suspension");
   cancelAnimationFrame(request);
   request = 0;
+  clearTimeout(working);
+  working = 0;
   hud.reset();
   clearInput();
   game?.suspend();
@@ -222,17 +233,30 @@ function fail(error: unknown) {
   console.error(error);
 }
 
+/** Loading work in tasks while preparation waits on compiles (decision 099). */
+function workWhileCompiling() {
+  working = 0;
+  if (disposed || !game || paused || document.hidden || failed || !preparing || !game.work) return;
+  if (!readStats(game).pipelines_compiling) return;
+  game.work(pixelWidth, pixelHeight);
+  working = window.setTimeout(workWhileCompiling, 0);
+}
+
 function prepareFrame(current: T, timestamp: number) {
   preparedSince ??= performance.now();
   const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
   const compiling = readStats(current).pipelines_compiling;
-  // Frames rendered while compiles run would only queue behind them.
-  if (compiling && !late) return;
+  // Frames rendered while compiles run would only queue behind them; loading
+  // work goes on meanwhile (decision 099).
+  if (compiling && !late) {
+    if (!working) working = window.setTimeout(workWhileCompiling, 0);
+    return;
+  }
   current.suspend();
   current.frame(timestamp, pixelWidth, pixelHeight, 0, 0, 0, 0, 0, 0, 0, 0);
-  const created = readStats(current).pipelines_created;
-  quietFrames = created === 0 ? quietFrames + 1 : 0;
-  if (quietFrames < QUIET_FRAMES && !late) return;
+  const after = readStats(current);
+  quietFrames = after.pipelines_created === 0 ? quietFrames + 1 : 0;
+  if ((quietFrames < QUIET_FRAMES || after.loading) && !late) return;
   preparing = false;
   current.suspend();
   hud.skipInterval();
@@ -267,8 +291,8 @@ function resume() {
   if (game && !paused && !document.hidden && !failed && !request) {
     if (preparing) {
       message.hidden = false;
-      message.textContent = "Compiling shaders…";
-      setStatus("Compiling shaders", "preparing");
+      message.textContent = "Loading…";
+      setStatus("Loading", "preparing");
     } else {
       setStatus("WebGPU active", "running");
     }

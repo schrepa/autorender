@@ -125,7 +125,11 @@ impl Rivers {
                     Vec2::from(river.points[segment + 1]),
                 );
                 let half = max(river.half[segment], river.half[segment + 1]);
-                let margin = half + BANK_REACH + 64.0;
+                // Rivers widen to most of a coarse level's sample; streams
+                // keep their width (decision 097), so they reach no further
+                // than a river's banks and list in far fewer cells.
+                let stream = max(river.depth[segment], river.depth[segment + 1]) < MIN_DEPTH;
+                let margin = half + BANK_REACH + if stream { 0.0 } else { 64.0 };
                 let first = ((a.min(b) - Vec2::splat(margin) - corner) / CELL).floor();
                 let last = ((a.max(b) + Vec2::splat(margin) - corner) / CELL).floor();
                 for row in max(first.y, 0.0) as usize..=min(last.y, rows as f32 - 1.0) as usize {

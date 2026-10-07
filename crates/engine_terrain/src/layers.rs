@@ -968,6 +968,24 @@ impl Layers {
         &self.layers
     }
 
+    /// Whether its tiles may hold holes: it stamps one, or a road may
+    /// tunnel (decision 073). Renderers prepare to draw them before any
+    /// tile does (decision 099).
+    pub fn may_hole(&self) -> bool {
+        self.layers.iter().any(|layer| match layer {
+            Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
+            Layer::Path(stage) => stage.layer.tunnel_cut > 0.0,
+            _ => false,
+        })
+    }
+
+    /// Whether a hydrology layer gives it water once baked (decision 067).
+    pub fn has_hydrology(&self) -> bool {
+        self.layers
+            .iter()
+            .any(|layer| matches!(layer, Layer::Hydrology(_)))
+    }
+
     /// These layers as a terrain's surroundings draw them (decision 094):
     /// a point reads what this stack holds `offset` meters further along x
     /// and z, and every layer but noise (stamps, heightmaps, bakes and

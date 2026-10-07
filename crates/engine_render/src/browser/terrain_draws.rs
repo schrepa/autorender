@@ -15,7 +15,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
         opaque_kind: PassKind,
-        probes: bool,
+        (probes, fades): (bool, bool),
     ) -> bool {
         let terrains = &snapshot.terrain;
         if terrains.terrains.is_empty() && self.terrain.resident() == 0 {
@@ -60,10 +60,14 @@ impl Renderer {
                     .sanitized()
                     .sun_direction
                     .normalize(),
+                fades,
                 cover: canopy,
             },
             (self.display.max_layers, self.materials.mips()),
         );
+        // What terrains draw with is created before they first draw
+        // (decision 099), so the GPU compiles it while they bake and load.
+        self.warm_terrain(snapshot, opaque_kind, probes);
         if !drawn {
             return false;
         }
@@ -135,8 +139,82 @@ impl Renderer {
         true
     }
 
+    /// Creates the pipelines `snapshot`'s terrains draw with unless they
+    /// exist, before any draws (decision 099): their patches into
+    /// `opaque_kind`'s targets, with holes where tiles may hold any, into
+    /// reflection probe faces when `probes` capture and into shadow maps;
+    /// their tiles' normal and sky maps; their cover's growth and blades;
+    /// and their placed objects' culling and occupancy.
+    fn warm_terrain(&mut self, snapshot: &RenderSnapshot, opaque_kind: PassKind, probes: bool) {
+        let terrains = &snapshot.terrain.terrains;
+        if terrains.is_empty() {
+            return;
+        }
+        self.terrain.warm(&self.device);
+        let lit = opaque_kind.lit;
+        let lights = self.lights.as_ref().map(LightPass::fragment_layout);
+        let layouts = (
+            &self.camera.layout,
+            &self.mesh_pipelines.empty_layout,
+            lights,
+        );
+        let holes = terrains.iter().any(|terrain| terrain.may_hole) || self.terrain.has_holes();
+        let variants: &[bool] = if holes { &[false, true] } else { &[false] };
+        for &holes in variants {
+            if let Some(targets) = opaque_kind.targets() {
+                self.terrain.ensure_pipeline(
+                    &self.device,
+                    &self.mesh_shader,
+                    layouts,
+                    (targets, lit, holes),
+                    self.display.format(),
+                    DEPTH_FORMAT,
+                );
+            }
+            if probes {
+                self.terrain.ensure_probe_pipeline(
+                    &self.device,
+                    &self.mesh_shader,
+                    layouts,
+                    (lit, holes),
+                    ENVIRONMENT_FORMAT,
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        if snapshot.environment.shadows.enabled {
+            self.terrain.ensure_shadow_pipeline(&self.device);
+        }
+        let cover = snapshot.environment.ground_cover.sanitized();
+        let grows = cover.enabled
+            && cover.density > 0.0
+            && terrains.iter().any(|terrain| {
+                !terrain.surroundings && terrain.surface.iter().any(|look| look.cover.is_some())
+            });
+        if grows {
+            self.ground_cover.warm(&self.device);
+            if let Some(targets) = opaque_kind.targets() {
+                self.ground_cover.ensure_pipeline(
+                    &self.device,
+                    &self.mesh_shader,
+                    layouts,
+                    (targets, lit),
+                    self.display.format(),
+                    DEPTH_FORMAT,
+                );
+            }
+        }
+        if terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
+            self.scatter.warm(&self.device);
+            if snapshot.environment.occupancy.enabled {
+                self.occupancy.warm(&self.device);
+            }
+        }
+    }
+
     /// Prepares this frame's water (decision 067) and its pipeline into
-    /// `opaque_kind`'s targets; returns whether any of it draws.
+    /// `opaque_kind`'s targets, created while terrains with hydrology still
+    /// bake (decision 099); returns whether any of it draws.
     pub(super) fn prepare_water(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -145,6 +223,20 @@ impl Renderer {
         let Some(targets) = opaque_kind.targets() else {
             return false;
         };
+        let coming = snapshot
+            .terrain
+            .terrains
+            .iter()
+            .any(|terrain| terrain.hydrology && terrain.water.is_none());
+        if coming {
+            self.water.ensure_pipeline(
+                &self.device,
+                &self.mesh_shader,
+                &self.camera.layout,
+                (targets, true),
+                (self.display.format(), DEPTH_FORMAT),
+            );
+        }
         let environment = &snapshot.environment;
         if !self.water.prepare(
             &self.device,
@@ -164,7 +256,7 @@ impl Renderer {
             &self.device,
             &self.mesh_shader,
             &self.camera.layout,
-            targets,
+            (targets, false),
             (self.display.format(), DEPTH_FORMAT),
         );
         true

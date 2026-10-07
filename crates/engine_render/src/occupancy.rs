@@ -223,6 +223,12 @@ impl OccupancyPass {
         Some((area, settings.strength))
     }
 
+    /// Creates the map's pipeline unless it exists (decision 099).
+    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+        self.pipeline
+            .get_or_insert_with(|| pipeline(device, &self.layout));
+    }
+
     /// Whether this frame draws the map.
     pub(crate) fn redrawing(&self) -> bool {
         self.pending.is_some()

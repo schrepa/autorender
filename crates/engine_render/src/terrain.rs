@@ -75,7 +75,12 @@ pub(crate) struct PatchRecord {
     shape: [f32; 4],
     atlas: [u32; 4],
     holes: u32,
+    fade: f32,
 }
+
+/// Frames over which a tile that arrived grows out of its parent level
+/// (decision 099): its patches draw morphed into the parent's at first.
+const ARRIVAL_FRAMES: u64 = 24;
 
 /// `PatchRecord::holes` of tiles without holes.
 const NO_HOLES: u32 = u32::MAX;
@@ -186,6 +191,10 @@ pub(crate) struct TerrainViews<'a> {
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
     pub sun: Vec3,
+    /// Whether tiles that arrive grow out of their parents over a few frames
+    /// (decision 099): ordinary frames; exact ones draw every tile as it
+    /// is.
+    pub fades: bool,
     /// Ground cover's settings, sanitized, and the pixels a meter spans a
     /// meter from the eye, while cover grows: where blades thin out, the
     /// ground shows as its canopy (decisions 090 and 098).
@@ -207,6 +216,10 @@ pub(crate) struct TerrainPass {
     atlas: Option<Atlas>,
     atlas_generation: u64,
     slots: HashMap<(u64, TileKey), u32>,
+    // The frame each resident tile arrived at, and frames prepared
+    // (decision 099).
+    arrivals: HashMap<(u64, TileKey), u64>,
+    frames: u64,
     // The tile each slot holds: edits (decision 080) replace tiles under the
     // same key, which upload again into their layers.
     held: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>>,
@@ -287,6 +300,8 @@ impl TerrainPass {
             atlas: None,
             atlas_generation: 0,
             slots: HashMap::new(),
+            arrivals: HashMap::new(),
+            frames: 0,
             held: HashMap::new(),
             free: Vec::new(),
             next_layer: 0,
@@ -402,6 +417,7 @@ impl TerrainPass {
         (max_layers, mips): (u32, &MipGenerator),
     ) -> bool {
         self.uploads = 0;
+        self.frames += 1;
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
@@ -491,7 +507,7 @@ impl TerrainPass {
             let start = self.records.len() as u32;
             let mut all = Vec::new();
             for patch in &terrain.patches {
-                let Some(record) = self.record(terrain, patch, &anchors) else {
+                let Some(record) = self.record(terrain, patch, &anchors, views.fades) else {
                     continue;
                 };
                 all.push((record, patch.min, patch.max));
@@ -597,6 +613,7 @@ impl TerrainPass {
         terrain: &RenderTerrain,
         patch: &engine_core::Patch,
         anchors: &[i64],
+        fades: bool,
     ) -> Option<PatchRecord> {
         let key = patch.tile;
         let level = u32::from(key.level);
@@ -624,11 +641,20 @@ impl TerrainPass {
         } else {
             NO_HOLES
         };
+        // A tile that arrived grows out of its parent (decision 099).
+        let fade = match self.arrivals.get(&(terrain.id, key)) {
+            Some(&at) if fades => {
+                let since = self.frames.saturating_sub(at);
+                1.0 - engine_core::math::min(since as f32 / ARRIVAL_FRAMES as f32, 1.0)
+            }
+            _ => 0.0,
+        };
         Some(PatchRecord {
             first: [first[0] as i32, first[1] as i32],
             shape: [spacing, patch.morph[0], patch.morph[1], 4.0 * spacing],
             atlas: [layer, parent_layer, texel, parent_texel],
             holes,
+            fade,
         })
     }
 
@@ -667,6 +693,7 @@ impl TerrainPass {
             keep
         });
         self.held.retain(|key, _| listed.contains_key(key));
+        self.arrivals.retain(|key, _| listed.contains_key(key));
         // Tiles replaced under their keys upload again into their layers.
         let replaced: Vec<((u64, TileKey), u32)> = self
             .slots
@@ -695,6 +722,11 @@ impl TerrainPass {
         let capacity = self.atlas.as_ref().map_or(0, |atlas| atlas.layers);
         let edited = !reused.is_empty();
         for key in missing {
+            // Tiles arriving grow out of their parents; edited ones
+            // (decision 080) change in place.
+            if !reused.contains_key(&key) {
+                self.arrivals.insert(key, self.frames);
+            }
             let layer = match reused.remove(&key).or_else(|| self.free.pop()) {
                 Some(layer) => layer,
                 None if self.next_layer < capacity => {
@@ -815,17 +847,17 @@ impl TerrainPass {
         }
     }
 
-    /// Computes the normal maps of the tiles uploaded this frame, after
-    /// their heights, in a submission of its own.
-    fn compute_normals(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        let Some(atlas) = &self.atlas else {
-            self.normal_jobs.clear();
-            return;
-        };
-        if self.normal_jobs.is_empty() {
-            return;
-        }
-        let (layout, pipeline) = self.normal_pass.get_or_insert_with(|| {
+    /// Creates the compute pipelines tiles' normal maps and sky maps build
+    /// with unless they exist (decision 099).
+    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+        self.normal_pass(device);
+        self.sky.warm(device);
+    }
+
+    /// Creates the pipeline computing tiles' normal maps and its group's
+    /// layout unless they exist.
+    fn normal_pass(&mut self, device: &wgpu::Device) {
+        self.normal_pass.get_or_insert_with(|| {
             let layout = crate::pipelines::layout(device, &TERRAIN_NORMALS);
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("engine/terrain-normals.wgsl"),
@@ -840,6 +872,22 @@ impl TerrainPass {
                 crate::pipelines::compute_entry(device, &pipeline_layout, &module, "tile_normals");
             (layout, pipeline)
         });
+    }
+
+    /// Computes the normal maps of the tiles uploaded this frame, after
+    /// their heights, in a submission of its own.
+    fn compute_normals(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.atlas.is_none() {
+            self.normal_jobs.clear();
+            return;
+        }
+        if self.normal_jobs.is_empty() {
+            return;
+        }
+        self.normal_pass(device);
+        let (Some(atlas), Some((layout, pipeline))) = (&self.atlas, &self.normal_pass) else {
+            return;
+        };
         // One uniform slot per job.
         let mut words = vec![0_u32; self.normal_jobs.len() * SLOT as usize / 4];
         for (index, &(layer, spacing)) in self.normal_jobs.iter().enumerate() {
@@ -1572,8 +1620,7 @@ fn geometry(
 }
 
 /// `PatchInput`'s locations 0 to 3.
-const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-    wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Uint32x4, 3 => Uint32];
+const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Uint32x4, 3 => Uint32, 4 => Float32];
 
 /// Patch instances.
 fn patch_layout() -> wgpu::VertexBufferLayout<'static> {

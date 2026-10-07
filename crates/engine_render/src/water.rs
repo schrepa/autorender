@@ -549,24 +549,26 @@ impl WaterPass {
     }
 
     /// Creates the pipelines into `targets` this frame's water and sea
-    /// draw with unless they exist; `camera` is the main passes' first
-    /// group.
+    /// draw with unless they exist, and lakes' and rivers' when `coming`,
+    /// before a bake gives any (decision 099); `camera` is the main passes'
+    /// first group.
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         camera: &wgpu::BindGroupLayout,
-        targets: Targets,
+        (targets, coming): (Targets, bool),
         formats: (wgpu::TextureFormat, wgpu::TextureFormat),
     ) {
-        if !self.records.is_empty() && !self.pipelines.contains_key(&targets) {
+        if (coming || !self.records.is_empty()) && !self.pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::Grid);
             self.pipelines.insert(targets, pipeline);
         }
-        let rivers = self
-            .terrains
-            .values()
-            .any(|water| !water.river_draws.is_empty());
+        let rivers = coming
+            || self
+                .terrains
+                .values()
+                .any(|water| !water.river_draws.is_empty());
         if rivers && !self.river_pipelines.contains_key(&targets) {
             let pipeline = self.pipeline(device, shader, camera, targets, formats, Surface::River);
             self.river_pipelines.insert(targets, pipeline);

@@ -4438,6 +4438,14 @@
           "type": "boolean",
           "default": true
         },
+        "loading_work_ms": {
+          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole (decision 099), and after, 0.1 to 1000 each: loading\ntakes large slices of frames, play small ones.",
+          "type": "number",
+          "format": "float",
+          "default": 50.0,
+          "maximum": 1000.0,
+          "minimum": 0.1
+        },
         "max_tiles": {
           "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
           "type": [
@@ -4479,7 +4487,7 @@
           "minimum": 2
         },
         "samples_per_frame": {
-          "description": "Work generated or decoded per frame, in samples' worth (67,000 a\ndecoded tile, about 500,000 a generated one).",
+          "description": "Work generated, decoded or baked between checks of the frame's work\ntime, in samples' worth (67,000 a decoded tile, about 500,000 a\ngenerated one); a frame's whole work where hosts give terrain no\nclock.",
           "type": "integer",
           "format": "uint32",
           "default": 24576,
@@ -4523,6 +4531,13 @@
           "description": "Ground generated around terrains with surroundings (decision 094)\nstreams and draws; off, every terrain ends at its edges.",
           "type": "boolean",
           "default": true
+        },
+        "work_ms": {
+          "type": "number",
+          "format": "float",
+          "default": 4.0,
+          "maximum": 1000.0,
+          "minimum": 0.1
         }
       },
       "additionalProperties": false

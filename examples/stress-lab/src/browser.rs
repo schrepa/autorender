@@ -288,6 +288,12 @@ impl StressGame {
         )
     }
 
+    /// Loading work in place of a frame while the GPU compiles pipelines
+    /// (decision 099); see `BrowserApp::work`.
+    pub fn work(&mut self, width: u32, height: u32) {
+        self.app.work(width, height);
+    }
+
     /// The last frame's statistics as a JSON object.
     pub fn stats(&self) -> String {
         self.app.stats_json()
