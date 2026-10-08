@@ -577,6 +577,60 @@ impl Compiled {
         }
     }
 
+    /// Its code for the GPU interpreter (decision 118), in postfix order,
+    /// onto `out`: the most values the interpreter's stack then holds.
+    pub(crate) fn emit(&self, out: &mut Vec<u32>) -> u32 {
+        use crate::gpu::op;
+        let ramp = |out: &mut Vec<u32>, code: u32, ends: &[f32; 2]| {
+            out.extend([code, ends[0].to_bits(), ends[1].to_bits()]);
+            1
+        };
+        let list = |out: &mut Vec<u32>, code: u32, masks: &[Compiled]| {
+            let mut depth = 1;
+            for (index, mask) in masks.iter().enumerate() {
+                depth = depth.max(index as u32 + mask.emit(out));
+            }
+            out.extend([code, masks.len() as u32]);
+            depth
+        };
+        match self {
+            Self::Constant(value) => {
+                out.extend([op::CONSTANT, value.to_bits()]);
+                1
+            }
+            Self::Height(ends) => ramp(out, op::HEIGHT, ends),
+            Self::Gradient(ends) => ramp(out, op::GRADIENT, ends),
+            Self::Curvature(ends) => ramp(out, op::CURVATURE, ends),
+            Self::Flow(ends) => ramp(out, op::FLOW, ends),
+            Self::Wetness(ends) => ramp(out, op::WETNESS, ends),
+            Self::Lake(ends) => ramp(out, op::LAKE, ends),
+            Self::River(ends) => ramp(out, op::RIVER, ends),
+            Self::Path(ends) => ramp(out, op::PATH, ends),
+            Self::Noise {
+                frequency,
+                seed,
+                octaves,
+            } => {
+                out.extend([op::NOISE, frequency.to_bits(), *seed, *octaves]);
+                1
+            }
+            Self::Multiply(masks) => list(out, op::MULTIPLY, masks),
+            Self::Add(masks) => list(out, op::ADD, masks),
+            Self::Min(masks) => list(out, op::MIN, masks),
+            Self::Max(masks) => list(out, op::MAX, masks),
+            Self::Invert(mask) => {
+                let depth = mask.emit(out);
+                out.push(op::INVERT);
+                depth
+            }
+            Self::Remap(mask, ends) => {
+                let depth = mask.emit(out);
+                out.extend([op::REMAP, ends[0].to_bits(), ends[1].to_bits()]);
+                depth
+            }
+        }
+    }
+
     pub(crate) fn evaluate(&self, inputs: &SampleInputs) -> f32 {
         match self {
             Self::Constant(value) => *value,
@@ -850,7 +904,7 @@ impl BiomeRules {
             0x5eed_0057,
             (layer, row),
             out,
-            (layers, placing, scratch),
+            (layers, placing, scratch, self),
         )
     }
 
@@ -858,6 +912,48 @@ impl BiomeRules {
     /// of a layer.
     pub fn cost(&self) -> u64 {
         self.cost
+    }
+
+    /// Its program for the GPU interpreter (decision 118), onto `words`
+    /// (where it starts at their length), laid out as
+    /// [`crate::gpu::header::PROGRAM`] describes: the most values the
+    /// interpreter's stack holds, its biomes, and the materials its control
+    /// values index.
+    pub(crate) fn program(&self, words: &mut Vec<u32>) -> (u32, u32, u32) {
+        use crate::gpu::op;
+        let table = words.len();
+        words.extend(std::iter::repeat_n(0, 2 * self.biomes.len()));
+        let (mut stack, mut materials) = (1, 0);
+        let mut mask = |words: &mut Vec<u32>, compiled: &Compiled| {
+            let at = words.len() as u32;
+            stack = stack.max(compiled.emit(words));
+            words.push(op::END);
+            at
+        };
+        for (index, biome) in self.biomes.iter().enumerate() {
+            // The first biome and each biome's first layer take no mask.
+            words[table + 2 * index] = if index == 0 {
+                u32::MAX
+            } else {
+                mask(words, &biome.fitness)
+            };
+            let list = words.len();
+            words[table + 2 * index + 1] = list as u32;
+            words.push(biome.layers.len() as u32);
+            words.extend(std::iter::repeat_n(0, 3 * biome.layers.len()));
+            for (layer_index, layer) in biome.layers.iter().enumerate() {
+                let entry = list + 1 + 3 * layer_index;
+                words[entry] = u32::from(layer.material);
+                words[entry + 1] = layer.opacity.to_bits();
+                words[entry + 2] = if layer_index == 0 {
+                    u32::MAX
+                } else {
+                    mask(words, &layer.mask)
+                };
+                materials = materials.max(u32::from(layer.material) + 1);
+            }
+        }
+        (stack, self.biomes.len() as u32, materials)
     }
 
     /// The control value at a sample with `inputs`. `weights` is scratch

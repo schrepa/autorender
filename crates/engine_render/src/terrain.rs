@@ -26,7 +26,7 @@ use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
 use engine_core::{RenderTerrain, RenderTerrains, TileKey};
 use wgpu::util::DeviceExt;
 
-use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_NORMALS};
+use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
 use crate::cached::Cached;
 use crate::mipmaps::MipGenerator;
 use crate::render_graph::Targets;
@@ -260,12 +260,20 @@ pub(crate) struct TerrainPass {
     /// of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
+    /// Tiles the GPU gave control values this frame (decision 118).
+    pub(crate) controls: u32,
     /// Long sun shadows (decision 052).
     pub(crate) horizons: Horizons,
     // Normal maps of tiles uploaded this frame (layer, spacing), the pass
     // computing them, and their sampler.
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    // Control values the GPU gives tiles uploaded this frame (decision
+    // 118), the pass giving them, and each terrain's surface data there
+    // (by the data's address, which changes with it).
+    control_jobs: Vec<ControlJob>,
+    control_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
+    surfaces: HashMap<u64, (usize, wgpu::Buffer)>,
     normal_sampler: wgpu::Sampler,
     // Every terrain's levels and their resident tiles' layers, and where
     // each terrain's start.
@@ -343,9 +351,13 @@ impl TerrainPass {
             frame: TerrainFrame::default(),
             uploads: 0,
             dropped: 0,
+            controls: 0,
             horizons: Horizons::new(device),
             normal_jobs: Vec::new(),
             normal_pass: None,
+            control_jobs: Vec::new(),
+            control_pass: None,
+            surfaces: HashMap::new(),
             normal_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-normal-sampler"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -430,6 +442,7 @@ impl TerrainPass {
         (max_layers, mips): (u32, &MipGenerator),
     ) -> bool {
         self.uploads = 0;
+        self.controls = 0;
         self.now = views.now;
         self.frame = TerrainFrame::default();
         self.eye = views.eye;
@@ -706,13 +719,21 @@ impl TerrainPass {
         self.held.retain(|key, _| listed.contains_key(key));
         self.arrivals.retain(|key, _| listed.contains_key(key));
         self.surfaced.retain(|key, _| listed.contains_key(key));
+        // Terrains whose tiles' control values the GPU gives (decision 118).
+        let surfaces: HashMap<u64, &std::sync::Arc<engine_core::terrain_data::gpu::SurfaceData>> =
+            terrains
+                .terrains
+                .iter()
+                .filter_map(|terrain| Some((terrain.id, terrain.gpu_surface.as_ref()?)))
+                .collect();
+        self.sync_surfaces(device, queue, &surfaces);
         // Tiles replaced under their keys upload again into their layers; one
         // whose surface materials arrive with it takes them over gradually
         // (decision 114), and edits change them in place.
         for (key, tile) in &listed {
             let had = self.held.get(key).map(|held| held.control().is_some());
             match (had, tile.control().is_some()) {
-                (_, false) => {
+                (_, false) if !surfaces.contains_key(&key.0) => {
                     self.surfaced.remove(key);
                 }
                 (Some(false), true) => {
@@ -817,13 +838,32 @@ impl TerrainPass {
                 );
                 self.normal_jobs.push((layer, tile.spacing()));
             }
+            // Without control values on a terrain whose surface the GPU
+            // reads (decision 118), the GPU gives them as its heights
+            // change, its materials then taking over from the coarser
+            // level's.
+            let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
+            if gpu && heights {
+                let surface = surfaces[&key.0];
+                let spacing = tile.spacing();
+                let first = surface.first_sample(key.1, spacing);
+                self.control_jobs.push(ControlJob {
+                    layer,
+                    terrain: key.0,
+                    first: [first[0] as i32, first[1] as i32],
+                    spacing,
+                    level: surface.level(spacing),
+                });
+                self.surfaced.insert(key, self.now);
+            }
             // Its control values; a tile without its own yet (decision 114)
             // takes its nearest ancestor's for ground cover, and without a
             // surface, the first material everywhere.
-            let control = tile.control().is_none()
-                || before
-                    .as_ref()
-                    .is_none_or(|held| held.control() != tile.control());
+            let control = !gpu
+                && (tile.control().is_none()
+                    || before
+                        .as_ref()
+                        .is_none_or(|held| held.control() != tile.control()));
             if control {
                 let borrowed;
                 let values = match tile.control() {
@@ -844,6 +884,7 @@ impl TerrainPass {
             self.held.insert(key, tile.clone());
             self.uploads += u32::from(heights || control);
         }
+        self.compute_controls(device, queue);
         // Layers of replaced tiles that found no upload are free again.
         self.free.extend(reused.into_values());
         self.compute_normals(device, queue);
@@ -935,11 +976,136 @@ impl TerrainPass {
         }
     }
 
-    /// Creates the compute pipelines tiles' normal maps and sky maps build
-    /// with unless they exist (decision 099).
+    /// Creates the compute pipelines tiles' normal maps, control values
+    /// and sky maps build with unless they exist (decision 099).
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.normal_pass(device);
+        self.control_pass(device);
         self.sky.warm(device);
+    }
+
+    /// Creates the pipeline giving tiles control values (decision 118) and
+    /// its group's layout unless they exist.
+    fn control_pass(&mut self, device: &wgpu::Device) {
+        self.control_pass.get_or_insert_with(|| {
+            let layout = crate::pipelines::layout(device, &TERRAIN_CONTROL);
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("engine/terrain-control.wgsl"),
+                source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_CONTROL_SHADER.into()),
+            });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/terrain-control-layout"),
+                bind_group_layouts: &[Some(&layout)],
+                immediate_size: 0,
+            });
+            let pipeline =
+                crate::pipelines::compute_entry(device, &pipeline_layout, &module, "tile_control");
+            (layout, pipeline)
+        });
+    }
+
+    /// Uploads each terrain's surface data for the GPU (decision 118) when
+    /// it changes, and releases those of terrains without.
+    fn sync_surfaces(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surfaces: &HashMap<u64, &std::sync::Arc<engine_core::terrain_data::gpu::SurfaceData>>,
+    ) {
+        self.surfaces.retain(|id, _| surfaces.contains_key(id));
+        for (&id, &surface) in surfaces {
+            let address = std::sync::Arc::as_ptr(surface) as usize;
+            if self
+                .surfaces
+                .get(&id)
+                .is_some_and(|&(held, _)| held == address)
+            {
+                continue;
+            }
+            let bytes = (surface.words.len().max(1) * 4) as u64;
+            let buffer = crate::buffers::storage(
+                device,
+                "engine/terrain-surface",
+                bytes.next_power_of_two(),
+                wgpu::BufferUsages::empty(),
+            );
+            queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&surface.words));
+            self.surfaces.insert(id, (address, buffer));
+        }
+    }
+
+    /// Gives the tiles uploaded this frame without control values theirs
+    /// (decision 118), after their heights, in a submission of its own.
+    fn compute_controls(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.atlas.is_none() || self.control_jobs.is_empty() {
+            self.control_jobs.clear();
+            return;
+        }
+        self.control_pass(device);
+        let (Some(atlas), Some((layout, pipeline))) = (&self.atlas, &self.control_pass) else {
+            return;
+        };
+        // One uniform slot per job.
+        let mut words = vec![0_u32; self.control_jobs.len() * SLOT as usize / 4];
+        for (index, job) in self.control_jobs.iter().enumerate() {
+            let at = index * SLOT as usize / 4;
+            words[at] = job.layer;
+            words[at + 1] = job.level;
+            words[at + 2] = job.first[0] as u32;
+            words[at + 3] = job.first[1] as u32;
+            words[at + 4] = job.spacing.to_bits();
+        }
+        let jobs = crate::buffers::uniform(
+            device,
+            "engine/terrain-control-jobs",
+            (words.len() * 4) as u64,
+        );
+        queue.write_buffer(&jobs, 0, bytemuck::cast_slice(&words));
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/terrain-control"),
+        });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("engine/terrain-control"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            for (index, job) in self.control_jobs.iter().enumerate() {
+                let Some((_, data)) = self.surfaces.get(&job.terrain) else {
+                    continue;
+                };
+                let target = atlas.control.create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: job.layer,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+                let group = crate::pipelines::group(
+                    device,
+                    "engine/terrain-control-group",
+                    &TERRAIN_CONTROL,
+                    layout,
+                    &[
+                        ("heights", crate::pipelines::view(&atlas.view)),
+                        (
+                            "job",
+                            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &jobs,
+                                offset: index as u64 * SLOT,
+                                size: wgpu::BufferSize::new(32),
+                            }),
+                        ),
+                        ("data", data.as_entire_binding()),
+                        ("control", crate::pipelines::view(&target)),
+                    ],
+                );
+                pass.set_bind_group(0, &group, &[]);
+                pass.dispatch_workgroups(LAYER_SIZE.div_ceil(8), LAYER_SIZE.div_ceil(8), 1);
+            }
+        }
+        queue.submit([encoder.finish()]);
+        self.controls += self.control_jobs.len() as u32;
+        self.control_jobs.clear();
     }
 
     /// Creates the pipeline computing tiles' normal maps and its group's
@@ -1338,10 +1504,11 @@ impl TerrainPass {
             NORMAL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
         );
+        // The GPU writes control values (decision 118).
         let control = array(
             "engine/terrain-control",
             CONTROL_FORMAT,
-            wgpu::TextureUsages::empty(),
+            wgpu::TextureUsages::STORAGE_BINDING,
         );
         if let Some(old) = &self.atlas
             && self.next_layer > 0
@@ -1746,6 +1913,17 @@ fn ancestor_control(
         }
     }
     out
+}
+
+/// A tile the GPU gives control values (decision 118): its layer, its
+/// terrain, its first sample, spacing and the hydrology images' level its
+/// masks read.
+struct ControlJob {
+    layer: u32,
+    terrain: u64,
+    first: [i32; 2],
+    spacing: f32,
+    level: u32,
 }
 
 const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x4, 2 => Uint32x4, 3 => Uint32, 4 => Float32];

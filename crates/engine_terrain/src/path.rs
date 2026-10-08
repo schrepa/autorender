@@ -209,25 +209,25 @@ pub struct PathStats {
 /// tunnels lie in, and a grid of the segments near each cell.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathProfile {
-    line: Vec<Vec2>,
-    along: Vec<f32>,
+    pub(crate) line: Vec<Vec2>,
+    pub(crate) along: Vec<f32>,
     step: f32,
     heights: Vec<f32>,
     ground: Vec<f32>,
-    spans: Vec<[f32; 2]>,
-    tunnels: Vec<[f32; 2]>,
+    pub(crate) spans: Vec<[f32; 2]>,
+    pub(crate) tunnels: Vec<[f32; 2]>,
     tunnel_box: Option<(Vec2, Vec2)>,
-    half: f32,
+    pub(crate) half: f32,
     shoulder: f32,
     // Square cells `cell` meters wide from `min`, `columns` across, each
     // listing the segments within `radius` of its points.
-    radius: f32,
-    cell: f32,
-    min: Vec2,
-    columns: usize,
-    rows: usize,
-    starts: Vec<u32>,
-    segments: Vec<u32>,
+    pub(crate) radius: f32,
+    pub(crate) cell: f32,
+    pub(crate) min: Vec2,
+    pub(crate) columns: usize,
+    pub(crate) rows: usize,
+    pub(crate) starts: Vec<u32>,
+    pub(crate) segments: Vec<u32>,
     pub stats: PathStats,
 }
 

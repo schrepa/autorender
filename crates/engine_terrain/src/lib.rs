@@ -22,6 +22,7 @@ mod bake;
 pub mod codec;
 mod erosion;
 mod format;
+pub mod gpu;
 mod hydrology;
 pub mod jobs;
 mod layers;

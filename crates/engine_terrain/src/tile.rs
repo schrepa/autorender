@@ -438,6 +438,9 @@ pub struct Generator {
     // once done until taken.
     rows: Option<(usize, usize)>,
     banded: Option<TileBand>,
+    // Whether it gives its tile control values; the GPU gives them where
+    // not (decision 118).
+    materials: bool,
 }
 
 /// A row's inputs to a surface's masks, reused row after row (decision
@@ -533,7 +536,16 @@ impl Generator {
             shape: None,
             rows: None,
             banded: None,
+            materials: true,
         }
+    }
+
+    /// The generator leaving its tile without control values (decision
+    /// 118), which the GPU gives to rendering and the rules to gameplay at
+    /// the samples it asks for; it still places objects.
+    pub fn with_materials(mut self, materials: bool) -> Self {
+        self.materials = materials;
+        self
     }
 
     /// A generator of stored rows `rows` of tile `key` alone (decision
@@ -680,6 +692,7 @@ impl Generator {
             shape: None,
             rows: None,
             banded: None,
+            materials: true,
         }
     }
 
@@ -719,13 +732,23 @@ impl Generator {
         matches!(self.stage, Stage::Failed)
     }
 
-    /// The stage after the samples and holes: the surface's, if any, the
-    /// tile's shape handed out first where staged (decision 114).
+    /// The stage after the samples and holes: the surface's control values
+    /// unless the GPU gives them (decision 118), else done; the tile's shape
+    /// handed out first where staged and more follows (decision 114), its
+    /// control values or its objects.
     fn after_holes(&mut self) -> Stage {
-        if self.surface.is_none() {
-            return Stage::Done;
-        }
-        if self.staged && self.rows.is_none() {
+        let next = match &self.surface {
+            Some(_) if self.materials => Stage::Biomes {
+                row: self.control_rows().0,
+            },
+            _ => Stage::Done,
+        };
+        let more = matches!(next, Stage::Biomes { .. })
+            || self
+                .surface
+                .as_ref()
+                .is_some_and(|surface| surface.places(self.key.level, self.placing));
+        if self.staged && self.rows.is_none() && more {
             self.shape = Tile::new(
                 self.key,
                 self.spacing,
@@ -733,9 +756,7 @@ impl Generator {
                 self.holes.clone(),
             );
         }
-        Stage::Biomes {
-            row: self.control_rows().0,
-        }
+        next
     }
 
     /// Control values of stored row `row` (0 to 258, samples -1 to 257),

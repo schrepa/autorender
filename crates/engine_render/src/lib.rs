@@ -162,6 +162,8 @@ pub struct RenderStats {
     pub terrain_shadow_patches: u32,
     pub terrain_tiles: u32,
     pub terrain_loading_tiles: u32,
+    /// Tiles the GPU gave control values this frame (decision 118).
+    pub terrain_gpu_controls: u32,
     pub dropped_terrain_tiles: u32,
     pub terrain_fallback_patches: u32,
     /// Terrains casting long sun shadows through horizon maps (decision
