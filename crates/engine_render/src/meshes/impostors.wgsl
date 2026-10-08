@@ -435,11 +435,14 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     let frames = vec3<u32>(packed & 63u, (packed >> 6u) & 63u, (packed >> 12u) & 63u);
     // The level whose texels match the pixels, and half a texel of the
     // coarser level sampled, which keeps each frame's samples in its cell.
-    let size = f32(textureDimensions(impostor_albedo).x);
+    // The atlas is its frames' texels across and has their levels down to
+    // two texels a frame (`AtlasShape`), which the record holds.
+    let texels = record.flags & (IMPOSTOR_HEMISPHERE - 1u);
+    let size = f32(IMPOSTOR_FRAMES * texels);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
         * size;
     let level = clamp(log2(max(footprint, 1.0e-6)), 0.0,
-        f32(textureNumLevels(impostor_albedo) - 1u));
+        f32(countTrailingZeros(texels) - 1u));
     let inset = 0.5 * exp2(ceil(level)) / size;
     let span = 1.0 / f32(IMPOSTOR_FRAMES);
     let unclamped = array<vec2<f32>, 3>(input.frames_ab.xy, input.frames_ab.zw, input.frame_c);

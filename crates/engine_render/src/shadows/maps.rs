@@ -252,6 +252,18 @@ impl ShadowMaps {
             self.written = Some(uniform);
         }
     }
+
+    /// Sets the written uniform's count of terrain horizon records
+    /// (`level_state.w`) where it changed.
+    pub(super) fn write_horizon_records(&mut self, queue: &wgpu::Queue, count: f32) {
+        if let Some(written) = &mut self.written
+            && written.level_state[3] != count
+        {
+            written.level_state[3] = count;
+            let offset = std::mem::offset_of!(ShadowUniform, level_state) + 12;
+            queue.write_buffer(&self.uniform, offset as u64, bytemuck::bytes_of(&count));
+        }
+    }
 }
 
 /// A depth pass into `view`, loading or clearing it as `load` says.

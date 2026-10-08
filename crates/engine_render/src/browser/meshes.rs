@@ -71,7 +71,7 @@ impl MeshPipelines {
 #[derive(Default)]
 pub(super) struct DrawOrder {
     pub(super) order: Vec<u32>,
-    pub(super) keys: Vec<(Variant, Option<MaterialHandle>, u8, u32)>,
+    pub(super) keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
 }
 
 // Position, octahedral normal and texture coordinates.
@@ -312,11 +312,12 @@ impl Renderer {
         )
     }
 
-    /// Orders the plan's opaque batches for drawing: by pipeline variant,
-    /// then material and vertex buffers. Meshes share the arena's buffers,
-    /// so passes then switch pipelines and bind groups once per run rather
-    /// than per batch.
-    pub(super) fn order_draws(&mut self) {
+    /// Orders the plan's opaque batches for drawing: flat ground last, so
+    /// depth testing leaves it only the pixels nothing standing on it covers;
+    /// then by pipeline variant, material and vertex buffers. Meshes share
+    /// the arena's buffers, so passes then switch pipelines and bind groups
+    /// once per run rather than per batch.
+    pub(super) fn order_draws(&mut self, snapshot: &engine_core::RenderSnapshot) {
         let key = self.structure_key();
         if self.structure_keys.order == Some(key) {
             return;
@@ -337,7 +338,14 @@ impl Renderer {
                         Ok(placement) => placement.streams as u8,
                         Err(_) => u8::MAX,
                     };
-                    (variant, batch.material, buffers, index as u32)
+                    let flat = flat_batch(snapshot, &self.plan, batch);
+                    (
+                        u8::from(flat),
+                        variant,
+                        batch.material,
+                        buffers,
+                        index as u32,
+                    )
                 }),
         );
         keys.sort_unstable();
@@ -347,6 +355,31 @@ impl Renderer {
             .order
             .extend(self.draw_order.keys.iter().map(|&(.., index)| index));
     }
+}
+
+/// Whether `batch` draws flat ground: its first instance's world box is
+/// under a tenth as tall as it is wide.
+fn flat_batch(
+    snapshot: &engine_core::RenderSnapshot,
+    plan: &crate::batches::BatchPlan,
+    batch: &crate::batches::DrawBatch,
+) -> bool {
+    let Some(instance) = plan
+        .ordered_instances
+        .get(batch.instances.start as usize)
+        .and_then(|&slot| snapshot.instances.get(slot))
+    else {
+        return false;
+    };
+    let bounds = snapshot.meshes[batch.source_index].mesh.bounds();
+    let size = bounds.max() - bounds.min();
+    let model = instance.model;
+    let extent = |row: usize| {
+        model.x_axis[row].abs() * size.x
+            + model.y_axis[row].abs() * size.y
+            + model.z_axis[row].abs() * size.z
+    };
+    extent(1) < 0.1 * engine_core::math::max(extent(0), extent(2))
 }
 
 /// The sky pass of `fragment` into `targets`: one triangle at the far plane,

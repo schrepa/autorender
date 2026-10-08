@@ -112,7 +112,8 @@ struct Shadow {
     // vectors a level.
     level_valid: array<vec4<u32>, 6>,
     // x: levels in use; y: their texels a side; z: a bit for each level
-    // with tiles not yet drawn.
+    // with tiles not yet drawn; w: the terrains whose horizon records
+    // lookups loop over (decision 052).
     level_state: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -441,14 +442,21 @@ fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3
         return vec4<f32>(mix(light, underwater_light(direction), covered), covered);
     }
     let fogged = fog(eye, point);
-    var color = mix(light, haze(direction), fogged);
+    // Without fog, mixing in none of its haze leaves the light.
+    var color = light;
+    if fogged != 0.0 {
+        color = mix(light, haze(direction), fogged);
+    }
     var covered = fogged;
     if lighting.aerial.y > 0.0 {
         let depth = height_depth(eye, point, lighting.aerial.x, lighting.aerial.y,
             lighting.aerial.z);
-        let air = 1.0 - exp(-depth);
-        color = mix(color, air_light(direction), air);
-        covered = fogged + (1.0 - fogged) * air;
+        // Where the air is no depth, mixing in none of it leaves the color.
+        if depth != 0.0 {
+            let air = 1.0 - exp(-depth);
+            color = mix(color, air_light(direction), air);
+            covered = fogged + (1.0 - fogged) * air;
+        }
     }
     return vec4<f32>(color, covered);
 }
@@ -713,21 +721,29 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     let uv = point.texel / size;
     let inside = all(abs(uv * 2.0 - vec2<f32>(1.0)) < vec2<f32>(1.0)) && point.depth < 1.0;
     let corner = gather_uv(point, size);
+    var still = 1.0;
+    if shadow.state.y != 0.0 {
+        // Still casters first: where they leave nothing, the moving ones
+        // cannot leave less.
+        let levels = level_visibility(world, normal, dx, dy);
+        still = levels.x;
+        if levels.y > 0.0 {
+            var kept = 1.0;
+            if inside {
+                kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
+            }
+            still += levels.y * kept;
+        }
+        if still == 0.0 {
+            return 0.0;
+        }
+    }
     var moving = 1.0;
     if inside {
         moving = plane_visibility(textureGather(moving_shadows, shadow_texels, corner), point);
     }
     if shadow.state.y == 0.0 {
         return moving;
-    }
-    let levels = level_visibility(world, normal, dx, dy);
-    var still = levels.x;
-    if levels.y > 0.0 {
-        var kept = 1.0;
-        if inside {
-            kept = plane_visibility(textureGather(kept_shadows, shadow_texels, corner), point);
-        }
-        still += levels.y * kept;
     }
     return min(moving, still);
 }
@@ -738,7 +754,8 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 // map's ground, which terrain's own surfaces (`on_terrain`) lie on whatever
 // detail they draw at.
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
-    let count = textureDimensions(terrain_horizon_records).x / 2u;
+    // Their count: the records' texels over two (`level_state.w`).
+    let count = u32(shadow.level_state.w);
     var visible = 1.0;
     for (var index = 0u; index < count; index++) {
         let place = textureLoad(terrain_horizon_records, vec2<u32>(2u * index, 0u), 0);
@@ -754,6 +771,10 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
         let elevation = select(world.y - texel.z, 0.0, on_terrain);
         let edge = max(texel.y * shape.z, 0.5);
         visible = min(visible, smoothstep(-edge, edge, elevation + shape.w - texel.x));
+        // Below one horizon, no other lets the sun back.
+        if visible <= 0.0 {
+            break;
+        }
     }
     return visible;
 }
@@ -764,16 +785,20 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
 // that what the shadow maps leave. `on_terrain`: the point is terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32, on_terrain: bool) -> f32 {
-    // Clouds shade whatever else does (decision 084).
-    let clouds = cloud_passing(world);
     if shadow.state.x == 0.0 {
-        return clouds;
+        return cloud_passing(world);
     }
     let terrain = terrain_visibility(world, on_terrain);
     if terrain <= 0.0 {
         return 0.0;
     }
-    return min(terrain, map_visibility(world, normal, dx, dy, distance)) * clouds;
+    // Clouds shade whatever else does (decision 084): only what the terrain
+    // and the maps leave.
+    let visible = min(terrain, map_visibility(world, normal, dx, dy, distance));
+    if visible == 0.0 {
+        return 0.0;
+    }
+    return visible * cloud_passing(world);
 }
 
 // Clouds' shadows (decision 084): CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS
@@ -807,8 +832,9 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     }
     let count = i32(CLOUD_SHADOW_CELLS);
     let first = vec2<i32>(floor(cells));
-    let a = vec2<u32>(((first % count) + count) % count);
-    let b = vec2<u32>((((first + vec2<i32>(1)) % count) + count) % count);
+    // The cells are a power of two: the wrap is the low bits.
+    let a = vec2<u32>(first & vec2<i32>(count - 1));
+    let b = vec2<u32>((first + vec2<i32>(1)) & vec2<i32>(count - 1));
     let f = cells - floor(cells);
     let passing = mix(
         mix(cloud_shadow_cell(a.x, a.y), cloud_shadow_cell(b.x, a.y), f.x),
@@ -822,8 +848,12 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
 // shadow distance.
 fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32) -> f32 {
-    let visible = far_surface_visibility(world, normal, dx, dy);
     let fade = saturate((distance - shadow.state.w) / (shadow.offsets.x - shadow.state.w));
+    // Faded out entirely, every visibility mixes to all of it.
+    if fade >= 1.0 {
+        return 1.0;
+    }
+    let visible = far_surface_visibility(world, normal, dx, dy);
     return mix(visible, 1.0, fade);
 }
 
