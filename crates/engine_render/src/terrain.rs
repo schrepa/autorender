@@ -110,6 +110,9 @@ struct TerrainUniform {
     deform_grid: [i32; 4],
     deform: [f32; 4],
     cover: [f32; 4],
+    vt: [u32; 4],
+    vt_scale: [f32; 4],
+    vt_layout: [u32; 4],
 }
 
 /// Bytes of a terrain's uniform.
@@ -304,6 +307,9 @@ pub(crate) struct TerrainPass {
     fades_written: Vec<u32>,
     fade_words: u32,
     group: Cached<GroupKey, wgpu::BindGroup>,
+    // The group the runtime virtual texture's bakes bind (decision 124),
+    // its material maps' views leaving out the sheets they draw into.
+    bake_group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
     // Deferred shading (decision 123): the visibility pipelines (by
     // holes), the resolves (by targets and lighting) and the layout of the
@@ -366,6 +372,16 @@ pub(crate) struct TerrainPass {
     pub(crate) sky: SkyMaps,
     /// Runtime deformation's map (decision 083).
     pub(crate) deformation: crate::deformation::DeformationPass,
+    /// The runtime virtual texture (decision 124), the tiles that arrived,
+    /// left, were replaced or finished fading in this frame, whose pages it
+    /// drops, and the tiles fading in last frame.
+    pub(crate) vt: crate::terrain_vt::VirtualTexture,
+    changed_tiles: Vec<(u64, TileKey)>,
+    fading: std::collections::HashSet<(u64, TileKey)>,
+    // Where the texture's windows and tables start in the directory buffer,
+    // and each frame terrain's id, whose uniform sits at its index's slot.
+    vt_base: u32,
+    uniform_ids: Vec<u64>,
 }
 
 impl TerrainPass {
@@ -405,6 +421,7 @@ impl TerrainPass {
             fades_written: Vec::new(),
             fade_words: 0,
             group: Cached::default(),
+            bake_group: Cached::default(),
             pipelines: HashMap::new(),
             deferred_ids: HashMap::new(),
             resolves: HashMap::new(),
@@ -464,6 +481,11 @@ impl TerrainPass {
             cover_densities: Vec::new(),
             sky: SkyMaps::new(device, queue),
             deformation: crate::deformation::DeformationPass::new(device),
+            vt: crate::terrain_vt::VirtualTexture::new(device),
+            changed_tiles: Vec::new(),
+            fading: std::collections::HashSet::new(),
+            vt_base: 0,
+            uniform_ids: Vec::new(),
         }
     }
 
@@ -486,6 +508,7 @@ impl TerrainPass {
             + self.sky.capacity_bytes()
             + self.maps.capacity_bytes()
             + self.deformation.capacity_bytes()
+            + self.vt.capacity_bytes()
     }
 
     /// Records this frame's horizon map builds (decision 052).
@@ -520,10 +543,12 @@ impl TerrainPass {
             ..TerrainFrame::default()
         };
         self.eye = views.eye;
+        self.changed_tiles.clear();
         self.sync_tiles(device, queue, terrains, max_layers);
         self.write_fades(queue, views.fades);
         self.write_directory(device, queue, terrains);
-        self.maps.prepare(device, queue, mips, terrains);
+        let vt_pages = self.vt.wanted(&views.settings);
+        self.maps.prepare(device, queue, mips, terrains, vt_pages);
         self.write_palette(queue, terrains);
         self.horizons.prepare(
             device,
@@ -537,6 +562,17 @@ impl TerrainPass {
             .prepare(device, queue, terrains, &views.settings, &self.slots);
         let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
         self.sky.build(device, queue, heights);
+        // The runtime virtual texture (decision 124).
+        let textures = self.vt.prepare(
+            device,
+            queue,
+            terrains,
+            (views.eye, &views.settings),
+            &self.maps,
+            &self.sky,
+            &self.changed_tiles,
+            (&self.directory, self.vt_base, self.directory_generation),
+        );
         if terrains
             .terrains
             .iter()
@@ -556,6 +592,7 @@ impl TerrainPass {
         }
         let eye = views.eye.as_dvec3();
         self.records.clear();
+        self.uniform_ids = terrains.terrains.iter().map(|terrain| terrain.id).collect();
         let mut uniforms = vec![0_u8; uniform_bytes as usize];
         for (index, terrain) in terrains.terrains.iter().enumerate() {
             // What the terrain shows: 0 shaded, then its development views.
@@ -599,6 +636,11 @@ impl TerrainPass {
                     [cover.radius, reach, cover.density, 0.0]
                 }
             };
+            if let Some(&(vt, vt_scale, vt_layout)) = textures.get(index) {
+                uniform.vt = vt;
+                uniform.vt_scale = vt_scale;
+                uniform.vt_layout = vt_layout;
+            }
             let at = index * SLOT as usize;
             uniforms[at..at + size_of::<TerrainUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&uniform));
@@ -806,10 +848,12 @@ impl TerrainPass {
             }
         }
         let free = &mut self.free;
+        let changed = &mut self.changed_tiles;
         self.slots.retain(|key, layer| {
             let keep = listed.contains_key(key);
             if !keep {
                 free.push(*layer);
+                changed.push(*key);
             }
             keep
         });
@@ -897,6 +941,9 @@ impl TerrainPass {
                     continue;
                 }
             };
+            // What draws over it changes only as it uploads; tiles finding
+            // no layer leave their parents standing in.
+            self.changed_tiles.push(key);
             let atlas = self.atlas.as_ref().expect("allocated above");
             let tile = listed[&key];
             let before = previous.remove(&key);
@@ -1052,6 +1099,9 @@ impl TerrainPass {
     fn write_fades(&mut self, queue: &wgpu::Queue, fades: bool) {
         let mut words = vec![0_u32; self.fade_words as usize];
         let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
+        // Tiles that finished fading in change what pages over them hold
+        // (decision 124).
+        let mut fading = std::collections::HashSet::new();
         for (key, &layer) in &self.slots {
             let normals = match self.arrivals.get(key) {
                 Some(&at) if fades => self.fade_since(at),
@@ -1062,11 +1112,17 @@ impl TerrainPass {
                 Some(&at) if fades => self.fade_since(at),
                 Some(_) => 0.0,
             };
+            if normals > 0.0 || materials > 0.0 {
+                fading.insert(*key);
+            }
             let Some(word) = words.get_mut(layer as usize / 2) else {
                 continue;
             };
             *word |= (byte(normals) | (byte(materials) << 8)) << ((layer % 2) * 16);
         }
+        self.changed_tiles
+            .extend(self.fading.difference(&fading).copied());
+        self.fading = fading;
         if words != self.fades_written {
             queue.write_buffer(&self.holes, 0, bytemuck::cast_slice(&words));
             self.fades_written = words;
@@ -1540,11 +1596,13 @@ impl TerrainPass {
                 }
             }
         }
-        if words.is_empty() || words == self.directory_written {
-            return;
-        }
-        let bytes = (words.len() * 4) as u64;
-        if bytes > self.directory.size() {
+        // The runtime virtual texture's windows and tables follow (decision
+        // 124), at a multiple of 64 words.
+        self.vt_base = words.len().next_multiple_of(64) as u32;
+        let texture_words = crate::terrain_vt::VirtualTexture::words(terrains.terrains.len());
+        let bytes = ((self.vt_base as usize + texture_words) * 4) as u64;
+        let grown = bytes > self.directory.size();
+        if grown {
             self.directory = crate::buffers::storage(
                 device,
                 "engine/terrain-directory",
@@ -1552,6 +1610,9 @@ impl TerrainPass {
                 wgpu::BufferUsages::empty(),
             );
             self.directory_generation += 1;
+        }
+        if words.is_empty() || (words == self.directory_written && !grown) {
+            return;
         }
         queue.write_buffer(&self.directory, 0, bytemuck::cast_slice(&words));
         self.directory_written = words;
@@ -1663,14 +1724,14 @@ impl TerrainPass {
             self.uniform_generation,
             self.holes_generation,
             self.directory_generation,
-            self.maps.generation,
+            self.maps.views_generation,
             self.sky.generation(),
             self.deformation.map().1,
         );
-        if self.group.stale(&key) {
-            let group = crate::pipelines::group(
+        let build = |label: &str, maps: &[wgpu::TextureView; 3]| {
+            crate::pipelines::group(
                 device,
-                "engine/terrain-group",
+                label,
                 &TERRAIN,
                 &self.layout,
                 &[
@@ -1713,15 +1774,9 @@ impl TerrainPass {
                             size: None,
                         }),
                     ),
-                    (
-                        "terrain_albedo",
-                        crate::pipelines::view(&self.maps.views[0]),
-                    ),
-                    (
-                        "terrain_material_normals",
-                        crate::pipelines::view(&self.maps.views[1]),
-                    ),
-                    ("terrain_orm", crate::pipelines::view(&self.maps.views[2])),
+                    ("terrain_albedo", crate::pipelines::view(&maps[0])),
+                    ("terrain_material_normals", crate::pipelines::view(&maps[1])),
+                    ("terrain_orm", crate::pipelines::view(&maps[2])),
                     (
                         "terrain_material_sampler",
                         crate::pipelines::sampler(&self.maps.sampler),
@@ -1733,8 +1788,15 @@ impl TerrainPass {
                         crate::pipelines::sampler(&self.control_sampler),
                     ),
                 ],
-            );
+            )
+        };
+        if self.group.stale(&key) {
+            let group = build("engine/terrain-group", &self.maps.views);
+            // The runtime virtual texture's bakes read the materials' layers
+            // alone while they draw into its sheets (decision 124).
+            let bake = build("engine/terrain-bake-group", &self.maps.material_views);
             self.group.set(key, group);
+            self.bake_group.set(key, bake);
         }
     }
 
@@ -1759,6 +1821,68 @@ impl TerrainPass {
         pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
         pass.draw_indexed(0..self.index_count, 0, range.clone());
         1
+    }
+
+    /// Records the runtime virtual texture's bakes (decision 124) through
+    /// the camera's terrain group `camera`.
+    pub(crate) fn encode_vt_bakes(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        shader: &wgpu::ShaderModule,
+        camera: (&wgpu::BindGroupLayout, &wgpu::BindGroup),
+    ) {
+        if !self.vt.baking() {
+            return;
+        }
+        let (Some(group), Some(atlas)) = (self.bake_group.get(), &self.atlas) else {
+            return;
+        };
+        let ids = self.uniform_ids.clone();
+        let uniform_of = |id: u64| {
+            ids.iter()
+                .position(|&known| known == id)
+                .map(|index| (index as u64 * SLOT) as u32)
+        };
+        self.vt.encode_bakes(
+            device,
+            encoder,
+            shader,
+            camera,
+            (&self.layout, group),
+            &atlas.view,
+            &self.maps,
+            uniform_of,
+        );
+    }
+
+    /// Records the runtime virtual texture's feedback (decision 124) over
+    /// terrain's visibility target `ids`, `size` pixels, with the camera's
+    /// uniform buffer `camera`.
+    pub(crate) fn encode_vt_feedback(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        shader: &wgpu::ShaderModule,
+        camera: &wgpu::Buffer,
+        (ids, size): (&wgpu::TextureView, (u32, u32)),
+    ) {
+        let known = self.uniform_ids.clone();
+        let uniform_of = |id: u64| {
+            known
+                .iter()
+                .position(|&other| other == id)
+                .map(|index| (index as u64 * SLOT) as u32)
+        };
+        self.vt.encode_feedback(
+            device,
+            encoder,
+            shader,
+            camera,
+            (&self.views, &self.uniforms, &self.directory),
+            (ids, size),
+            uniform_of,
+        );
     }
 
     /// Binds the terrain group for the view at `view` and the terrain whose
@@ -2221,6 +2345,9 @@ fn terrain_uniform(
         deform_grid: deformation.grid,
         deform: deformation.scale,
         cover: [0.0; 4],
+        vt: [0; 4],
+        vt_scale: [0.0; 4],
+        vt_layout: [0; 4],
     };
     (uniform, anchors)
 }

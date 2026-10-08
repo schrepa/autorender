@@ -174,6 +174,17 @@ pub struct RenderStats {
     /// the rows of them this frame built.
     pub terrain_sky_maps: u32,
     pub terrain_sky_rows: u32,
+    /// The runtime virtual texture (decision 124): the pages its sheets
+    /// hold, pages resident, baked this frame (absent or stale), asked for
+    /// but absent (in the last feedback read back), asked for with no slot
+    /// left under its budget or the device's texture array layers, and
+    /// evicted for others this frame.
+    pub terrain_vt_slots: u32,
+    pub terrain_vt_pages: u32,
+    pub terrain_vt_bakes: u32,
+    pub terrain_vt_missing: u32,
+    pub dropped_terrain_vt_pages: u32,
+    pub terrain_vt_evictions: u32,
     /// Ground cover (decision 056): blades the last read-back frame drew,
     /// and those past the capacity or budget, which dropped.
     pub ground_cover_blades: u32,
@@ -325,6 +336,8 @@ mod terrain_horizons;
 mod terrain_maps;
 #[cfg(target_arch = "wasm32")]
 mod terrain_sky;
+#[cfg(target_arch = "wasm32")]
+mod terrain_vt;
 #[cfg(target_arch = "wasm32")]
 mod transparent;
 #[cfg(target_arch = "wasm32")]

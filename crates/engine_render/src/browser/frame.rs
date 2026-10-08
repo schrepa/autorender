@@ -1701,12 +1701,35 @@ impl Renderer {
                         encoder,
                         &self.profiler,
                     );
+                    // The runtime virtual texture's pages bake before the
+                    // resolves read them (decision 124).
+                    self.terrain.encode_vt_bakes(
+                        &self.device,
+                        encoder,
+                        &self.mesh_shader,
+                        (&self.camera.terrain_layout, &self.camera.terrain_group),
+                    );
                 }
                 if phase == 0 && state.terrain {
                     self.ground_cover
                         .encode(&self.device, encoder, &self.profiler);
                 }
                 let draws = self.encode_opaque(state, encoder, view, node, usize::from(phase));
+                // The pages the first phase's terrain resolves wanted of the
+                // runtime virtual texture (decision 124).
+                if phase == 0
+                    && self.terrain_deferred(state)
+                    && let Some(ids) = &self.terrain_ids
+                {
+                    let size = self.depth.texture.size();
+                    self.terrain.encode_vt_feedback(
+                        &self.device,
+                        encoder,
+                        &self.mesh_shader,
+                        &self.camera.buffer,
+                        (&ids.view, (size.width, size.height)),
+                    );
+                }
                 // Phase two (decision 040) issues phase one's draws again for
                 // the instances its test revealed: count each once.
                 if phase == 0 {
@@ -2812,6 +2835,7 @@ impl Renderer {
         }
         self.shadows.after_submit();
         self.ground_cover.after_submit();
+        self.terrain.vt.after_submit();
         if let Some(lights) = self.lights.as_mut() {
             lights.after_submit();
         }

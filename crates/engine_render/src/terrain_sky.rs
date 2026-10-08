@@ -67,6 +67,9 @@ pub(crate) struct SkyMaps {
     // next row it builds.
     built: Vec<Option<Source>>,
     building: Vec<Option<(Source, u32)>>,
+    // Builds each layer finished, which pages of the runtime virtual
+    // texture (decision 124) baked from it follow.
+    finished: Vec<u64>,
     // Advances when the bound view is replaced.
     generation: u64,
     /// Rows built this frame, over every terrain.
@@ -112,6 +115,7 @@ impl SkyMaps {
             ),
             built: Vec::new(),
             building: Vec::new(),
+            finished: Vec::new(),
             generation: 0,
             rows: 0,
         }
@@ -132,6 +136,19 @@ impl SkyMaps {
         match self.built.get(index) {
             Some(Some(_)) => index as u32 + 1,
             _ => 0,
+        }
+    }
+
+    /// Builds terrain `index`'s map finished while none is under way, so
+    /// what bakes read of it holds still; `None` while one is; 0 without
+    /// maps, which leave open sky everywhere.
+    pub(crate) fn settled(&self, index: usize) -> Option<u64> {
+        if self.maps.is_none() {
+            return Some(0);
+        }
+        match (self.built.get(index), self.building.get(index)) {
+            (Some(Some(_)), Some(None)) => self.finished.get(index).copied(),
+            _ => None,
         }
     }
 
@@ -173,6 +190,7 @@ impl SkyMaps {
             }
             self.built.clear();
             self.building.clear();
+            self.finished.clear();
             return;
         }
         let size = settings.sky_resolution;
@@ -185,6 +203,7 @@ impl SkyMaps {
             self.maps = Some(maps(device, size, layers as u32));
             self.built = vec![None; layers];
             self.building = vec![None; layers];
+            self.finished = vec![self.generation + 1; layers];
             self.generation += 1;
         }
         let mut sources = Vec::with_capacity(layers);
@@ -328,6 +347,7 @@ impl SkyMaps {
             self.rows += next - row;
             if next >= maps.size {
                 self.built[layer] = Some(source);
+                self.finished[layer] += 1;
             } else {
                 self.building[layer] = Some((source, next));
             }

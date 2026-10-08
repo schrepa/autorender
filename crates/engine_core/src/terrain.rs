@@ -806,6 +806,23 @@ pub struct TerrainSettings {
     /// gameplay reads the rules at the points it asks. Off, the CPU gives
     /// them.
     pub gpu_materials: bool,
+    /// The runtime virtual texture (decision 124): the ground's materials
+    /// baked into pages the views ask for, which pixels read in place of
+    /// computing them; ground finer than its texels, steep ground and pages
+    /// not baked yet compute theirs.
+    pub virtual_texture: bool,
+    /// An optional budget of pages it keeps (about 340 KB each). Omitted,
+    /// it keeps as many as the views ask for, up to the device's texture
+    /// array layers; beyond either, pages unasked for a while make room,
+    /// and those asked for with none left drop (the ground computes
+    /// itself).
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub virtual_texture_pages: Option<u32>,
+    /// Pages it bakes in a frame at most, at least 1 (about 0.1 ms each on
+    /// an integrated GPU).
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+    pub virtual_texture_bakes: u32,
 }
 
 /// How terrain loads while the camera moves fast (decision 115): the
@@ -917,6 +934,9 @@ impl Default for TerrainSettings {
             idle_reach: 3.0,
             max_bands: 4,
             gpu_materials: true,
+            virtual_texture: true,
+            virtual_texture_pages: None,
+            virtual_texture_bakes: 16,
         }
     }
 }
@@ -963,6 +983,13 @@ impl TerrainSettings {
         check_range("idle_reach", self.idle_reach, 0.0..=8.0)?;
         if !(1..=16).contains(&self.max_bands) {
             return Err(InvalidSetting::new("max_bands", "must be in [1, 16]"));
+        }
+        crate::environment::check_budget("virtual_texture_pages", self.virtual_texture_pages)?;
+        if self.virtual_texture_bakes == 0 {
+            return Err(InvalidSetting::new(
+                "virtual_texture_bakes",
+                "must be at least 1",
+            ));
         }
         Ok(())
     }
@@ -1014,6 +1041,9 @@ impl TerrainSettings {
             idle_reach: crate::math::clamp(finite(self.idle_reach, defaults.idle_reach), 0.0, 8.0),
             max_bands: self.max_bands.clamp(1, 16),
             gpu_materials: self.gpu_materials,
+            virtual_texture: self.virtual_texture,
+            virtual_texture_pages: self.virtual_texture_pages.map(|budget| budget.max(1)),
+            virtual_texture_bakes: self.virtual_texture_bakes.max(1),
         }
     }
 }
