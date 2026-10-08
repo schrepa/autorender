@@ -686,6 +686,7 @@ version = "0.1.0"
 dependencies = [
  "engine_math",
  "glam 0.30.9",
+ "libm",
  "schemars",
  "serde",
 ]
