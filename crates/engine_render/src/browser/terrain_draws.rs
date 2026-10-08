@@ -364,11 +364,21 @@ impl Renderer {
             };
             pass.set_bind_group(3, lights.fragment_group(), &[]);
         }
+        // Each within the pixels its patches cover: elsewhere it would only
+        // read the visibility target and discard.
+        let size = self.depth.texture.size();
         let mut draws = 0;
         for terrain in &self.terrain.frame.terrains {
-            if terrain.camera.is_empty() || !self.terrain.bind(pass, 0, terrain.uniform) {
+            if terrain.camera.is_empty() {
                 continue;
             }
+            let Some([x, y, width, height]) = terrain.scissor((size.width, size.height)) else {
+                continue;
+            };
+            if !self.terrain.bind(pass, 0, terrain.uniform) {
+                continue;
+            }
+            pass.set_scissor_rect(x, y, width, height);
             pass.draw(0..3, 0..1);
             draws += 1;
         }
