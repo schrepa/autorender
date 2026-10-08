@@ -1987,6 +1987,20 @@ impl Renderer {
         // Profiled frames time both phases as one opaque span, which the
         // visibility buffer's last resolve ends when it resolves this phase.
         let (begins, ends) = (phase == 0, phase + 1 == phases && !resolve_phase);
+        // Terrain (decision 051), the main occluder, draws in the first phase
+        // so occlusion culling's pyramid holds it; shaded deferred (decision
+        // 123) where it can be.
+        if phase == 0 && self.terrain_deferred(state) {
+            return self.encode_opaque_deferred(
+                state,
+                encoder,
+                view,
+                node,
+                (phase, phases),
+                (begins, ends),
+                virtual_first,
+            );
+        }
         let timestamp_writes = (begins || ends)
             .then(|| self.profiler.span("opaque_meshes"))
             .flatten()
@@ -2013,12 +2027,123 @@ impl Renderer {
         }
         // Last, so depth testing leaves the sky only uncovered pixels.
         if phase + 1 == phases && !resolve_phase {
-            pass.set_pipeline(self.sky_pipeline(state));
-            pass.set_bind_group(0, &self.camera.group, &[]);
-            pass.set_bind_group(1, self.clouds.sky_group(), &[]);
-            pass.draw(0..3, 0..1);
+            self.draw_sky(state, &mut pass);
         }
         draws
+    }
+
+    /// The first opaque phase with terrain shaded deferred (decision 123):
+    /// the meshes; terrain's visibility, writing each pixel's terrain and
+    /// depth; each terrain's resolve, shading its pixels once each; then
+    /// its cover, placed objects and the sky; each in a pass of its own.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_opaque_deferred(
+        &self,
+        state: &FrameState<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        node: &Node,
+        (phase, phases): (usize, usize),
+        (begins, ends): (bool, bool),
+        virtual_first: Option<usize>,
+    ) -> u32 {
+        let resolve_phase = state.shape.resolves[phase];
+        let loaded = wgpu::Operations {
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+        };
+        let loaded_depth = wgpu::Operations {
+            load: wgpu::LoadOp::Load,
+            store: wgpu::StoreOp::Store,
+        };
+        // The meshes, as the opaque pass's start.
+        let mut draws = 0;
+        {
+            let timestamp_writes = begins
+                .then(|| self.profiler.span("opaque_meshes"))
+                .flatten()
+                .map(|span| span.render_part(true, false));
+            let (colors, count) = self.color_attachments(node, view);
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/opaque-meshes"),
+                color_attachments: &colors[..count],
+                depth_stencil_attachment: self.depth_attachment(node),
+                timestamp_writes,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if state.kind.instance_count > 0 {
+                draws += self.draw_opaque(state, &mut pass, phase, virtual_first);
+            }
+        }
+        let Some(ids) = &self.terrain_ids else {
+            return draws;
+        };
+        let depth = wgpu::RenderPassDepthStencilAttachment {
+            view: &self.depth.view,
+            depth_ops: Some(loaded_depth),
+            stencil_ops: None,
+        };
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/terrain-ids"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &ids.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(depth.clone()),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            draws += self.draw_terrain_ids(&mut pass);
+        }
+        let (mut colors, count) = self.color_attachments(node, view);
+        for color in colors.iter_mut().flatten() {
+            color.ops = loaded;
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("engine/terrain-resolve"),
+                color_attachments: &colors[..count],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            draws += self.draw_terrain_resolve(state, &mut pass);
+        }
+        let timestamp_writes = ends
+            .then(|| self.profiler.span("opaque_meshes"))
+            .flatten()
+            .map(|span| span.render_part(false, true));
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("engine/opaque-meshes"),
+            color_attachments: &colors[..count],
+            depth_stencil_attachment: Some(depth),
+            timestamp_writes,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        draws += self.draw_terrain_cover(state, &mut pass);
+        draws += self.draw_scatter(state, &mut pass);
+        if phase + 1 == phases && !resolve_phase {
+            self.draw_sky(state, &mut pass);
+        }
+        draws
+    }
+
+    /// The sky over the pixels nothing covers, after the opaque surfaces.
+    fn draw_sky(&self, state: &FrameState<'_>, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_pipeline(self.sky_pipeline(state));
+        pass.set_bind_group(0, &self.camera.group, &[]);
+        pass.set_bind_group(1, self.clouds.sky_group(), &[]);
+        pass.draw(0..3, 0..1);
     }
 
     /// Occlusion culling's test between the opaque phases (decision 040): the

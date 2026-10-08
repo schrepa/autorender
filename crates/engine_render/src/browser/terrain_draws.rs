@@ -5,6 +5,16 @@ use super::frame::FrameState;
 use super::*;
 use crate::terrain::{FrameTerrain, TerrainViews};
 
+/// Terrain's visibility target (decision 123): each pixel's terrain (its
+/// directory start plus one; 0 where none shows) and depth's bits, of the
+/// depth target generation `generation`, and the group its resolves read
+/// it through.
+pub(super) struct TerrainIds {
+    generation: u64,
+    pub(super) view: wgpu::TextureView,
+    group: wgpu::BindGroup,
+}
+
 impl Renderer {
     /// Prepares this frame's terrain: tile uploads, each view's patches and
     /// the pipelines drawing them into `opaque_kind`'s targets, the shadow
@@ -121,6 +131,7 @@ impl Renderer {
                     (targets, lit, holes),
                     self.display.format(),
                     DEPTH_FORMAT,
+                    &self.camera.terrain_layout,
                 );
             }
             if probes {
@@ -170,6 +181,7 @@ impl Renderer {
                     (targets, lit, holes),
                     self.display.format(),
                     DEPTH_FORMAT,
+                    &self.camera.terrain_layout,
                 );
             }
             if probes {
@@ -260,7 +272,129 @@ impl Renderer {
             (targets, false),
             (self.display.format(), DEPTH_FORMAT),
         );
+        // Terrain's visibility target (decision 123), the depth target's
+        // size.
+        let generation = self.depth.generation;
+        if self
+            .terrain_ids
+            .as_ref()
+            .is_none_or(|ids| ids.generation != generation)
+        {
+            let size = self.depth.texture.size();
+            let texture = crate::targets::texture_2d(
+                &self.device,
+                "engine/terrain-ids",
+                (size.width, size.height),
+                1,
+                1,
+                wgpu::TextureFormat::Rg32Uint,
+                crate::targets::RENDER_TARGET,
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let group = crate::pipelines::group(
+                &self.device,
+                "engine/terrain-resolve-group",
+                &crate::bindings::TERRAIN_RESOLVE,
+                &self.terrain.resolve_layout,
+                &[("terrain_ids_texture", crate::pipelines::view(&view))],
+            );
+            self.terrain_ids = Some(TerrainIds {
+                generation,
+                view,
+                group,
+            });
+        }
         true
+    }
+
+    /// Whether this frame's terrain draws deferred (decision 123): shaded
+    /// (its development views read what only its patches hold) into the
+    /// effects' targets, its pipelines and target ready.
+    pub(super) fn terrain_deferred(&self, state: &FrameState<'_>) -> bool {
+        let kind = state.passes.opaque_kind;
+        state.terrain
+            && self.terrain.frame.shaded
+            && self.terrain_ids.is_some()
+            && kind
+                .targets()
+                .is_some_and(|targets| self.terrain.resolves.contains_key(&(targets, kind.lit)))
+            && !self.terrain.frame.terrains.is_empty()
+    }
+
+    /// The camera's terrain patches into terrain's visibility target
+    /// (decision 123); returns the draws.
+    pub(super) fn draw_terrain_ids(&self, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        pass.set_bind_group(0, &self.camera.group, &[]);
+        let mut draws = 0;
+        for holes in [false, true] {
+            let Some(pipeline) = self.terrain.deferred_ids.get(&holes) else {
+                continue;
+            };
+            pass.set_pipeline(pipeline);
+            for terrain in &self.terrain.frame.terrains {
+                let range =
+                    &FrameTerrain::split(&terrain.camera, terrain.camera_holes)[usize::from(holes)];
+                draws += self.terrain.draw(pass, range, 0, terrain.uniform);
+            }
+        }
+        draws
+    }
+
+    /// Each terrain's pixels shaded once from its visibility target
+    /// (decision 123); returns the draws.
+    pub(super) fn draw_terrain_resolve(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> u32 {
+        let kind = state.passes.opaque_kind;
+        let (Some(targets), Some(TerrainIds { group, .. })) = (kind.targets(), &self.terrain_ids)
+        else {
+            return 0;
+        };
+        let Some(pipeline) = self.terrain.resolves.get(&(targets, kind.lit)) else {
+            return 0;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &self.camera.terrain_group, &[]);
+        pass.set_bind_group(2, group, &[]);
+        if kind.lit {
+            let Some(lights) = self.lights.as_ref() else {
+                return 0;
+            };
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        }
+        let mut draws = 0;
+        for terrain in &self.terrain.frame.terrains {
+            if terrain.camera.is_empty() || !self.terrain.bind(pass, 0, terrain.uniform) {
+                continue;
+            }
+            pass.draw(0..3, 0..1);
+            draws += 1;
+        }
+        draws
+    }
+
+    /// The terrain's cover, after it so depth tests leave only blades in
+    /// view; returns the draws.
+    pub(super) fn draw_terrain_cover(
+        &self,
+        state: &FrameState<'_>,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> u32 {
+        let kind = state.passes.opaque_kind;
+        let Some(targets) = kind.targets().filter(|_| state.terrain) else {
+            return 0;
+        };
+        pass.set_bind_group(0, &self.camera.group, &[]);
+        if kind.lit {
+            let Some(lights) = self.lights.as_ref() else {
+                return 0;
+            };
+            pass.set_bind_group(2, &self.mesh_pipelines.empty_group, &[]);
+            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        }
+        self.ground_cover.draw(pass, targets, kind.lit)
     }
 
     /// Draws the camera's terrain patches into the opaque pass; returns the
@@ -294,9 +428,7 @@ impl Renderer {
                 draws += self.terrain.draw(pass, range, 0, terrain.uniform);
             }
         }
-        // Its cover, after it so depth tests leave only blades in view.
-        draws += self.ground_cover.draw(pass, targets, kind.lit);
-        draws
+        draws + self.draw_terrain_cover(state, pass)
     }
 
     /// Draws every terrain patch into reflection probe face `face` of the
