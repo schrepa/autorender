@@ -154,20 +154,20 @@ impl Stamp {
 /// with coarser levels for coarser terrain.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightImage {
-    width: u32,
-    height: u32,
-    samples: Box<[u16]>,
-    levels: Vec<ImageLevel>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) samples: Box<[u16]>,
+    pub(crate) levels: Vec<ImageLevel>,
 }
 
 /// A coarser level of a [`HeightImage`]: every other sample of the level
 /// before, filtered `[1, 2, 1] / 4` along each axis, so terrain levels whose
 /// samples lie further apart than the image's read it without aliasing.
 #[derive(Clone, Debug, PartialEq)]
-struct ImageLevel {
-    width: u32,
-    height: u32,
-    samples: Box<[f32]>,
+pub(crate) struct ImageLevel {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) samples: Box<[f32]>,
 }
 
 impl ImageLevel {
@@ -834,18 +834,18 @@ pub struct Layers {
     // As a terrain's surroundings draw them (decision 094): a point reads
     // what the stack holds `offset` meters further along x and z, and
     // every layer but noise fades out beyond `fade`'s region.
-    offset: Vec2,
-    fade: Option<Fade>,
+    pub(crate) offset: Vec2,
+    pub(crate) fade: Option<Fade>,
 }
 
 /// Where a stack's layers other than noise show (decision 094): all of
 /// them from `low` to `high` (the stack's own ground), fading out over
 /// `blend` meters beyond.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Fade {
-    low: Vec2,
-    high: Vec2,
-    blend: f32,
+pub(crate) struct Fade {
+    pub(crate) low: Vec2,
+    pub(crate) high: Vec2,
+    pub(crate) blend: f32,
 }
 
 /// Checks stamp layer `index`'s center, reach and operation.
@@ -1101,6 +1101,17 @@ impl Layers {
     /// The baked road whose edge lies nearest terrain-local `(x, z)`: meters
     /// from its line and half its width; far beyond every path's masks'
     /// reach.
+    /// Its roads' baked profiles, in layer order (decision 118).
+    pub(crate) fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
+        self.layers.iter().filter_map(|layer| match layer {
+            Layer::Path(PathStage {
+                baked: Some(profile),
+                ..
+            }) => Some(profile.as_ref()),
+            _ => None,
+        })
+    }
+
     pub fn path_at(&self, x: f32, z: f32) -> PathSample {
         let point = Vec2::new(x, z);
         self.layers

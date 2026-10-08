@@ -33,7 +33,7 @@ pub const BANK_OFFSET: f32 = 1.0;
 /// ground over their outer half), and the meters over which a cut rounds
 /// into the ground it meets.
 const BANK_SLOPE: f32 = 0.6;
-const BANK_REACH: f32 = 12.0;
+pub(crate) const BANK_REACH: f32 = 12.0;
 const BANK_ROUNDING: f32 = 1.5;
 /// The least water a river holds at its middle (meters): shallower points
 /// are streams' (decision 097).
@@ -47,7 +47,7 @@ const STREAM_BANK_REACH: f32 = 2.5;
 /// Rounds of corner cutting that smooth a river's line off the grid.
 const SMOOTHING: usize = 3;
 /// Meters across the cells of the grid that finds the rivers near a point.
-const CELL: f32 = 32.0;
+pub(crate) const CELL: f32 = 32.0;
 /// How far past a reading's own reach rows still measure a segment
 /// (decision 113): a share and meters, so rounding never skips a sample
 /// reading sample by sample would take.
@@ -102,12 +102,12 @@ pub struct RiverPoint {
 /// reach of each cell.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Rivers {
-    rivers: Vec<River>,
-    min: Vec2,
-    columns: usize,
-    rows: usize,
-    starts: Vec<u32>,
-    segments: Vec<[u32; 2]>,
+    pub(crate) rivers: Vec<River>,
+    pub(crate) min: Vec2,
+    pub(crate) columns: usize,
+    pub(crate) rows: usize,
+    pub(crate) starts: Vec<u32>,
+    pub(crate) segments: Vec<[u32; 2]>,
 }
 
 impl Rivers {

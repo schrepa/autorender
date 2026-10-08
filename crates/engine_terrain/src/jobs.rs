@@ -83,6 +83,9 @@ pub struct TerrainRecipe {
     pub view: Option<StackView>,
     pub pyramid: Pyramid,
     pub surface: Biomes,
+    /// Whether tiles hold control values; without, the GPU gives them
+    /// (decision 118).
+    pub materials: bool,
 }
 
 record!(TerrainRecipe {
@@ -90,6 +93,7 @@ record!(TerrainRecipe {
     view,
     pyramid,
     surface,
+    materials,
 });
 
 /// What shared bytes hold: a stack, or a recipe naming one.
@@ -228,6 +232,7 @@ struct Recipe {
     layers: Arc<Layers>,
     pyramid: Pyramid,
     rules: Arc<BiomeRules>,
+    materials: bool,
 }
 
 /// A job a worker started (decision 112), to step until done.
@@ -284,6 +289,7 @@ impl TerrainWorker {
                         layers,
                         pyramid: recipe.pyramid,
                         rules: Arc::new(rules),
+                        materials: recipe.materials,
                     },
                 );
             }
@@ -329,7 +335,8 @@ impl TerrainWorker {
                     Generator::new(recipe.layers.clone(), &recipe.pyramid, key)
                         .with_surface(recipe.rules.clone())
                         .with_placing(placing)
-                        .with_staged(staged),
+                        .with_staged(staged)
+                        .with_materials(recipe.materials),
                 )
             }
             FAR_JOB => {
@@ -379,7 +386,11 @@ impl TerrainWorker {
                     first as usize..end as usize,
                 )
                 .ok_or("rows outside the tile")?;
-                Running::Band(generator.with_surface(recipe.rules.clone()))
+                Running::Band(
+                    generator
+                        .with_surface(recipe.rules.clone())
+                        .with_materials(recipe.materials),
+                )
             }
             WALK_JOB => {
                 let recipe: String = reader.get().map_err(invalid)?;

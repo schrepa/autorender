@@ -4499,6 +4499,11 @@
           "type": "boolean",
           "default": true
         },
+        "gpu_materials": {
+          "description": "Tiles' surface materials from the GPU (decision 118): tiles generate\nwithout control values, which a compute pass gives each as it\nuploads, the rules' own but where GPU rounding crosses a threshold;\ngameplay reads the rules at the points it asks. Off, the CPU gives\nthem.",
+          "type": "boolean",
+          "default": true
+        },
         "idle_reach": {
           "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing (decision\n116), 0 to 8; within the keeping reach (2.5) none.",
           "type": "number",

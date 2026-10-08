@@ -317,6 +317,7 @@ impl Renderer {
             terrain_shadow_patches: self.terrain.frame.shadow_patches,
             terrain_tiles: self.terrain.resident(),
             terrain_loading_tiles: snapshot.terrain.stats.loading_tiles,
+            terrain_gpu_controls: self.terrain.controls,
             dropped_terrain_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.dropped,
             terrain_fallback_patches: snapshot.terrain.stats.fallback_patches,
             terrain_horizons: self.terrain.horizons.count(),

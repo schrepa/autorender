@@ -31,7 +31,7 @@ use engine_math::{clamp, max, min, sin_cos};
 use serde::{Deserialize, Serialize};
 
 use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch};
-use crate::{TILE_QUADS, Tile};
+use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
 /// The placement layer authored objects (decision 085) report collision
 /// hits in, beside bridges' `u16::MAX`.
@@ -607,6 +607,10 @@ pub(crate) struct PlaceScratch {
     path: Vec<crate::PathSample>,
     values: Vec<f32>,
     rows: RowScratch,
+    // Control values the rules gave samples of a tile holding none
+    // (decision 118), packed, `u32::MAX` where not asked yet: each sample's
+    // once a tile, however many candidates share it.
+    controls: Vec<u32>,
 }
 
 #[derive(Clone, Copy)]
@@ -625,7 +629,12 @@ pub(crate) fn place_row(
     seed: u32,
     (layer_index, row): (usize, usize),
     out: &mut Vec<Placed>,
-    (stack, placing, scratch): (&crate::Layers, Placing, &mut PlaceScratch),
+    (stack, placing, scratch, rules): (
+        &crate::Layers,
+        Placing,
+        &mut PlaceScratch,
+        &crate::BiomeRules,
+    ),
 ) -> (u64, Option<(usize, usize)>) {
     let water = stack.hydrology();
     let spacing = tile.spacing();
@@ -675,6 +684,7 @@ pub(crate) fn place_row(
         path: paths,
         values,
         rows,
+        controls,
     } = scratch;
     candidates.clear();
     for list in [
@@ -718,8 +728,25 @@ pub(crate) fn place_row(
             (local[0] / spacing).round() as i32,
             (local[1] / spacing).round() as i32,
         ];
-        let Some(control) = tile.control_at(nearest[0], nearest[1]) else {
-            continue;
+        // Tiles whose control values the GPU gives (decision 118) hold
+        // none: the rules give the sample's, the same bits.
+        let control = match tile.control_at(nearest[0], nearest[1]) {
+            Some(control) => control,
+            None => {
+                let stride = TILE_STRIDE as usize;
+                let stored = |sample: i32| (sample.clamp(-1, stride as i32 - 2) + 1) as usize;
+                let (column, row) = (stored(nearest[0]), stored(nearest[1]));
+                if controls.len() != stride * stride {
+                    controls.clear();
+                    controls.resize(stride * stride, u32::MAX);
+                }
+                let held = &mut controls[row * stride + column];
+                if *held == u32::MAX {
+                    *held =
+                        crate::gpu::sample_control(tile, (stack, rules), (column, row)).packed();
+                }
+                Control::unpack(*held)
+            }
         };
         let share_of_materials = material_share(control, &layer.materials);
         if share_of_materials <= 0.0 {

@@ -459,6 +459,7 @@ try {
   await settle();
   checks.push({ check: "settings section", more: finer.terrain_triangles, terrainPixels: shown.changed });
 
+
   // Speed-aware detail (decision 115): while the camera moves fast the
   // finest levels' tiles in view wait, and those out of view until it
   // settles; then they load. Collision's tiles never wait, so collision is
@@ -523,6 +524,31 @@ try {
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
+
+  // Decision 118: the GPU gives tiles their surface materials, the rules'
+  // own but where its rounding crosses a threshold: the view drawn with
+  // the CPU's differs in few pixels. Back on the GPU, tiles loading at a
+  // new place get theirs from it as they upload.
+  const gpuView = await capture("gpu-materials");
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, gpu_materials: false } });
+  await settle();
+  const cpuView = await capture("cpu-materials");
+  const materials = await differentPixels(page, [gpuView, cpuView], { tolerance: 8 });
+  assert.ok(materials.changed < materials.total * 0.01, `GPU materials differ from the CPU's in ${materials.changed} of ${materials.total} pixels`);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await settle();
+  await command("camera", { ...overview, position: [380, 90, -420], target: [300, 30, -300] });
+  let controls = 0;
+  for (let frame = 0; frame < 300; frame++) {
+    const rendering = (await command("render")).result.rendering;
+    controls += rendering.terrain_gpu_controls;
+    if (controls > 0 && rendering.terrain_loading_tiles === 0 && rendering.terrain_fallback_patches === 0) break;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  assert.ok(controls > 0, "the GPU gives new tiles their control values");
+  await command("camera", overview);
+  await settle();
+  checks.push({ check: "gpu materials", differing: materials.changed, controls });
 
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.

@@ -779,6 +779,12 @@ pub struct TerrainSettings {
     /// tiles) to 16.
     #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
     pub max_bands: u32,
+    /// Tiles' surface materials from the GPU (decision 118): tiles generate
+    /// without control values, which a compute pass gives each as it
+    /// uploads, the rules' own but where GPU rounding crosses a threshold;
+    /// gameplay reads the rules at the points it asks. Off, the CPU gives
+    /// them.
+    pub gpu_materials: bool,
 }
 
 /// How terrain loads while the camera moves fast (decision 115): the
@@ -889,6 +895,7 @@ impl Default for TerrainSettings {
             upload_bytes: 8 << 20,
             idle_reach: 3.0,
             max_bands: 4,
+            gpu_materials: true,
         }
     }
 }
@@ -985,6 +992,7 @@ impl TerrainSettings {
             upload_bytes: self.upload_bytes.max(1),
             idle_reach: crate::math::clamp(finite(self.idle_reach, defaults.idle_reach), 0.0, 8.0),
             max_bands: self.max_bands.clamp(1, 16),
+            gpu_materials: self.gpu_materials,
         }
     }
 }
@@ -1223,10 +1231,12 @@ fn load_tiles(
                 // Tiles not resident hand out their shape first (decision
                 // 114).
                 let staged = !state.tiles.contains_key(&key);
+                let materials = state.materials;
                 let job = state.jobs.entry(key).or_insert_with(|| {
                     Generator::new(layers.clone(), &pyramid, key)
                         .with_surface(rules.clone())
                         .with_staged(staged)
+                        .with_materials(materials)
                 });
                 let tile = if whole {
                     let mut unlimited = u64::MAX;
@@ -1392,6 +1402,7 @@ struct SharedRecipe {
     key: String,
     stack: Arc<Layers>,
     revision: u64,
+    materials: bool,
 }
 
 /// Makes `baked` the layers `state`'s tiles generate from: once every bake
@@ -1934,11 +1945,9 @@ fn share_recipe(
         ),
         None => (state.generation(layers), None),
     };
-    if state
-        .recipe
-        .as_ref()
-        .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, &stack))
-    {
+    if state.recipe.as_ref().is_some_and(|recipe| {
+        Arc::ptr_eq(&recipe.stack, &stack) && recipe.materials == state.materials
+    }) {
         return;
     }
     let shared = stacks
@@ -1963,6 +1972,7 @@ fn share_recipe(
         view,
         pyramid: state.terrain.pyramid,
         surface: state.terrain.surface.rules.authored().clone(),
+        materials: state.materials,
     };
     let bytes = engine_terrain::jobs::share_recipe(&recipe);
     let key = format!("recipe-{:032x}", content_hash(&bytes));
@@ -1973,6 +1983,7 @@ fn share_recipe(
         key,
         stack,
         revision: *shares,
+        materials: state.materials,
     };
     if let Some(old) = state.recipe.replace(shared) {
         released.push(old.key);
@@ -2106,6 +2117,12 @@ struct TerrainState {
     banded: HashMap<TileKey, Banding>,
     placements: HashMap<TileKey, (JobId, u64, u32, Placing)>,
     banded_tiles: u64,
+    /// The layers its tiles generate from and its surface's data for the
+    /// GPU from them (decision 118), `None` where the program needs more
+    /// than the GPU's interpreter holds; and whether its tiles hold control
+    /// values, as without GPU materials.
+    surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
+    materials: bool,
 }
 
 /// A tile generating in bands of rows (decision 117): the recipe's revision
@@ -2198,6 +2215,46 @@ impl TerrainState {
             banded: HashMap::new(),
             placements: HashMap::new(),
             banded_tiles: 0,
+            surface: None,
+            materials: true,
+        }
+    }
+
+    /// Whether its tiles hold control values, as `gpu` (the settings' GPU
+    /// materials, decision 118) and its surface allow: generated terrains
+    /// whose surface the GPU's interpreter holds leave them to the GPU.
+    /// Tiles resident when that changes regenerate, drawn until they do.
+    fn update_materials(&mut self, gpu: bool) {
+        let TerrainSource::Generated(authored) = &self.terrain.source else {
+            self.materials = true;
+            return;
+        };
+        let layers = self.baked.clone().unwrap_or_else(|| authored.clone());
+        let materials = if gpu && layers.unbaked().is_none() {
+            let layers = self.generation(layers);
+            let current = self
+                .surface
+                .as_ref()
+                .is_some_and(|(held, _)| Arc::ptr_eq(held, &layers));
+            if !current {
+                let data =
+                    engine_terrain::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
+                        .map(Arc::new);
+                self.surface = Some((layers, data));
+            }
+            self.surface.as_ref().is_none_or(|(_, data)| data.is_none())
+        } else {
+            true
+        };
+        if materials != self.materials {
+            self.materials = materials;
+            let resident: Vec<TileKey> = self.tiles.keys().copied().collect();
+            self.stale.extend(resident);
+            let kept: Vec<TileKey> = self.cache.keys().copied().collect();
+            for key in kept {
+                self.uncache(key);
+            }
+            self.revision += 1;
         }
     }
 
@@ -2369,6 +2426,12 @@ impl TerrainState {
         }
         let pyramid = self.terrain.pyramid;
         let mut ancestor = pyramid.parent(key);
+        // The GPU gives shapes their materials (decision 118).
+        if !self.materials {
+            self.shaped.insert(key);
+            self.insert(shape);
+            return true;
+        }
         loop {
             let Some(at) = ancestor else {
                 return false;
@@ -2504,7 +2567,22 @@ impl TerrainState {
             let key = pyramid.tile_at(level, local)?;
             let tile = self.tiles.get(&key)?;
             let at = (local - pyramid.tile_origin(key)) / tile.spacing();
-            let control = tile.control_at(at.x.round() as i32, at.y.round() as i32)?;
+            let (x, z) = (at.x.round() as i32, at.y.round() as i32);
+            // Tiles whose materials the GPU gives (decision 118): the rules'
+            // at the sample.
+            let control = match (tile.control_at(x, z), &self.surface) {
+                (Some(control), _) => control,
+                (None, Some((layers, _))) => {
+                    let stored =
+                        |sample: i32| (sample.clamp(-1, TILE_STRIDE as i32 - 2) + 1) as usize;
+                    engine_terrain::gpu::sample_control(
+                        tile,
+                        (layers, &self.terrain.surface.rules),
+                        (stored(x), stored(z)),
+                    )
+                }
+                (None, None) => return None,
+            };
             let materials = &self.terrain.surface.materials;
             let deform = |index: u8| {
                 materials
@@ -3557,6 +3635,9 @@ impl Terrains {
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
             state.keep.clone_from(&keep);
+            // GPU materials (decision 118) before the recipe that carries
+            // them.
+            state.update_materials(settings.gpu_materials);
             // Workers generate from its recipe (decision 110).
             if let Some(slots) = slots.as_mut()
                 && slots.jobs.workers() > 0
@@ -3974,6 +4055,9 @@ pub struct RenderTerrain {
     /// while it loads (decision 099).
     pub may_hole: bool,
     pub hydrology: bool,
+    /// Its surface for the GPU to give its tiles control values (decision
+    /// 118), which they then hold none of; `None` where they hold them.
+    pub gpu_surface: Option<Arc<engine_terrain::gpu::SurfaceData>>,
 }
 
 /// The frame's terrains (decision 051).
@@ -4177,6 +4261,7 @@ impl TerrainExtraction {
                     surroundings: false,
                     may_hole: false,
                     hydrology: false,
+                    gpu_surface: None,
                 });
             }
             let render = &mut listing.terrains[index];
@@ -4236,6 +4321,11 @@ impl TerrainExtraction {
             let hydrology = state.baked.as_ref().and_then(|layers| layers.hydrology());
             render.water = hydrology.map(|hydrology| Arc::clone(&hydrology.water));
             render.rivers = hydrology.map(|hydrology| Arc::clone(&hydrology.rivers));
+            render.gpu_surface = if state.materials {
+                None
+            } else {
+                state.surface.as_ref().and_then(|(_, data)| data.clone())
+            };
             render.reach.clear();
             render
                 .reach

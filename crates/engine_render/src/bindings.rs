@@ -198,7 +198,7 @@ const fn sampler(binding: u32, name: &'static str, sampling: Sampling, stages: S
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
 use View::{Cube, CubeArray, D2, D2Array, D3};
-use wgpu::TextureFormat::{R32Float, Rgba8Snorm, Rgba8Unorm, Rgba16Float};
+use wgpu::TextureFormat::{R32Float, R32Uint, Rgba8Snorm, Rgba8Unorm, Rgba16Float};
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
@@ -747,6 +747,19 @@ pub(crate) const TERRAIN_NORMALS: Table = Table {
         texture(0, "heights", Unfilterable, D2Array, C),
         uniform_of(1, "job", 16, C),
         bind(2, "normals", Kind::Storage(Rgba8Snorm), C),
+    ],
+};
+
+/// A tile's control values from its terrain's surface (decision 118;
+/// `terrain_control.wgsl`): the height array, the job's uniform, the
+/// surface's data and the control layer it writes.
+pub(crate) const TERRAIN_CONTROL: Table = Table {
+    label: "engine/terrain-control-layout",
+    bindings: &[
+        texture(0, "heights", Unfilterable, D2Array, C),
+        uniform_of(1, "job", 32, C),
+        bind(2, "data", Kind::Read { min_size: 4 }, C),
+        bind(3, "control", Kind::Storage(R32Uint), C),
     ],
 };
 

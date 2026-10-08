@@ -499,6 +499,8 @@ pub(crate) const SHADER: &str = concat!(
 );
 /// Terrain normal maps (decision 051).
 pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");
+/// Terrain control values from the surface's rules (decision 118).
+pub(crate) const TERRAIN_CONTROL_SHADER: &str = include_str!("terrain_control.wgsl");
 /// Terrain horizon map builds (decision 052).
 pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
 /// Terrain sky visibility map builds (decision 055).
