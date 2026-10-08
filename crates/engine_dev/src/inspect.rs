@@ -228,6 +228,11 @@ impl DevTools {
                 .with_default(json!(engine_core::Floating::default())),
             |floating| json!(floating),
         ).expect("built-in descriptor is bounded");
+        self.register_component::<engine_core::TerrainPrefetch>(
+            InspectorDescriptor::new("TerrainPrefetch", "Names a place the camera may be sent to (decision 120) as a scene version 9 `prefetch` field: while the view wants nothing, workers generate the terrain tiles a camera here wants into memory, which keeps them while named; each level's within `reach` times its range, 2 being what a camera loads. The Terrains view counts tiles kept and generating.", schemas["TerrainPrefetch"].clone())
+                .with_default(json!(engine_core::TerrainPrefetch::default())),
+            |prefetch| json!(prefetch),
+        ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::Deformer>(
             InspectorDescriptor::new("Deformer", "Presses tracks into deformable ground (decision 083) as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.", schemas["Deformer"].clone())
                 .with_default(json!(engine_core::Deformer::default())),

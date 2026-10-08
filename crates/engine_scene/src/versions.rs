@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// The rules, newest version first: the order validation checks them in.
-fn rules() -> [Rule; 27] {
+fn rules() -> [Rule; 28] {
     [
         Rule {
             since: 9,
@@ -29,6 +29,13 @@ fn rules() -> [Rule; 27] {
             what: "grounded objects",
             first_use: |document| {
                 document.entity_use(|entity| entity.grounded.is_some().then_some("grounded"))
+            },
+        },
+        Rule {
+            since: 9,
+            what: "terrain prefetch places",
+            first_use: |document| {
+                document.entity_use(|entity| entity.prefetch.is_some().then_some("prefetch"))
             },
         },
         Rule {

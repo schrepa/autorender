@@ -643,6 +643,10 @@ pub struct SceneObject {
     /// version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounded: Option<engine_core::Grounded>,
+    /// Names it a place the camera may be sent to (decision 120), whose
+    /// terrain workers generate ahead of need. Requires version 9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefetch: Option<engine_core::TerrainPrefetch>,
     #[serde(default)]
     pub transform: SceneTransform,
     /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.

@@ -134,8 +134,8 @@ pub use terrain::{
     MAX_PLACEMENT_LODS, MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
     RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
     SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug,
-    TerrainEdit, TerrainFocus, TerrainSample, TerrainSettings, TerrainSource, TerrainStats,
-    TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
+    TerrainEdit, TerrainFocus, TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource,
+    TerrainStats, TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;
@@ -953,7 +953,8 @@ pub mod prelude {
         Mask, MotionDetail, NoiseLayer, NoiseMask, PathLayer, PathStage, PlacedCollider,
         PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Remap,
         Stamp, StampOp, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainFocus,
-        TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains, TileKey, Viewport,
+        TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource, TerrainSurface, Terrains,
+        TileKey, Viewport,
     };
     pub use crate::{Clouds, Deformation, Deformer, Track, TrackDepth, Tracks};
     pub use crate::{ContactShadows, Cover, GroundCover, Occupancy, Ocean, Water, Wind};

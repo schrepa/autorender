@@ -668,6 +668,27 @@ pub struct TerrainDebug {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerrainFocus;
 
+/// Names a place the camera may be sent to, such as a spawn point
+/// (decision 120): while the view wants nothing, workers generate the
+/// terrain tiles a camera there wants into memory, as they do ahead of the
+/// camera (decision 116), and those tiles stay there while it is named, so
+/// the camera sent there finds them at once. Each level's tiles within
+/// `reach` times its range, 0 to 8; 2 is what a camera there loads.
+/// Requires version 9.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(default, deny_unknown_fields)]
+pub struct TerrainPrefetch {
+    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
+    pub reach: f32,
+}
+
+impl Default for TerrainPrefetch {
+    fn default() -> Self {
+        Self { reach: LOAD_REACH }
+    }
+}
+
 /// The size in pixels of the viewport frames render to, which terrain level
 /// of detail measures pixels on; hosts set it each frame. Without it,
 /// 1920x1080.
@@ -2175,6 +2196,9 @@ struct TerrainState {
     /// first.
     idle: HashMap<TileKey, (JobId, u64)>,
     ahead: Vec<TileKey>,
+    /// The most memory one tile kept took: the room each tile generated
+    /// ahead of need is given (decision 120).
+    tile_bytes: u64,
     /// Tiles generating in bands of rows on several workers (decision
     /// 117); tiles their bands made whose objects a job places, each with
     /// that job, the recipe's revision, its priority and its placing; and
@@ -2211,7 +2235,8 @@ struct Banding {
 }
 
 /// A tile kept in memory after it left the view (decision 116): its bytes
-/// there and the frame it left.
+/// there and the frame it left, or the last a place a game names wanted it
+/// (decision 120).
 struct CachedTile {
     tile: Arc<Tile>,
     bytes: u64,
@@ -2285,6 +2310,7 @@ impl TerrainState {
             worker_failures: 0,
             cache: HashMap::new(),
             cached_bytes: 0,
+            tile_bytes: 0,
             idle: HashMap::new(),
             ahead: Vec::new(),
             banded: HashMap::new(),
@@ -2576,6 +2602,7 @@ impl TerrainState {
         let bytes = memory_bytes(&tile);
         self.uncache(key);
         self.cached_bytes += bytes;
+        self.tile_bytes = self.tile_bytes.max(bytes);
         self.cache.insert(
             key,
             CachedTile {
@@ -3356,7 +3383,7 @@ impl Terrains {
         camera: &Camera,
         (eye, ahead): (Vec3, Vec3),
         viewport: Viewport,
-        focus: &[Vec3],
+        (focus, places): (&[Vec3], &[(Vec3, f32)]),
         jobs: Option<&mut Jobs>,
     ) {
         self.frame += 1;
@@ -3456,6 +3483,13 @@ impl Terrains {
         // Budgets cover every terrain: each takes what is left.
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
+        // Memory's room for tiles generated ahead of need (decision 120).
+        let room = settings.cache_bytes.saturating_sub(
+            self.entries
+                .iter()
+                .map(|state| state.cached_bytes)
+                .sum::<u64>(),
+        );
         for state in &mut self.entries {
             if !state.terrain.is_usable() {
                 continue;
@@ -3503,16 +3537,14 @@ impl Terrains {
             // tile's ground.
             // Ahead of need (decision 116), while nothing was missing, nor
             // generating, at the last frame and memory has room.
-            let idle = workers > 0
-                && settings.idle_reach > KEEP_REACH
-                && state.cached_bytes < settings.cache_bytes
+            let quiet = workers > 0
                 && state.missing.is_empty()
                 && state.dispatched.is_empty()
                 && state.banded.is_empty()
                 && state.placements.is_empty()
                 && state.far_wanted.is_empty()
                 && state.far_jobs.is_empty();
-            let (wanted, headed, held, around) = {
+            let (wanted, headed, held, around, named) = {
                 let tiles = &state.tiles;
                 let errors = &state.errors;
                 let ground = |key: TileKey| ground_bounds(tiles, &pyramid, errors, key);
@@ -3544,11 +3576,16 @@ impl Terrains {
                         want(ahead - origin, LOAD_REACH)
                     },
                     want(local_eye, KEEP_REACH),
-                    if idle {
+                    if quiet && settings.idle_reach > KEEP_REACH {
                         want(local_eye, settings.idle_reach)
                     } else {
                         Vec::new()
                     },
+                    // What places games name want (decision 120), each frame.
+                    places
+                        .iter()
+                        .flat_map(|&(place, reach)| want(place - origin, reach))
+                        .collect::<Vec<_>>(),
                 )
             };
             // What to load, most important first, each tile after its
@@ -3697,16 +3734,42 @@ impl Terrains {
                 self.restored += state.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
+            // Tiles places games name want stay in memory before those
+            // that only left the view (decision 120).
+            for tile in &named {
+                if let Some(cached) = state.cache.get_mut(&tile.key) {
+                    cached.left = frame;
+                }
+            }
             // What workers generate ahead of need: the nearest tiles within
-            // the idle reach not resident, kept or kept in memory.
+            // the idle reach and that places games name want (decision 120),
+            // not resident, kept or kept in memory, as many as memory has
+            // room for, so none it holds goes to make room for another.
             state.ahead.clear();
-            state
-                .ahead
-                .extend(around.iter().map(|tile| tile.key).filter(|key| {
-                    !keep.contains(key)
-                        && !state.tiles.contains_key(key)
-                        && !state.cache.contains_key(key)
-                }));
+            if quiet {
+                let mut nearest: Vec<&WantedTile> = around.iter().chain(&named).collect();
+                nearest.sort_by(|a, b| {
+                    a.score
+                        .total_cmp(&b.score)
+                        .then(b.key.level.cmp(&a.key.level))
+                });
+                let fits = room
+                    .checked_div(state.tile_bytes)
+                    .map_or(usize::MAX, |fits| fits as usize);
+                let mut listed = HashSet::new();
+                state.ahead.extend(
+                    nearest
+                        .into_iter()
+                        .map(|tile| tile.key)
+                        .filter(|key| {
+                            listed.insert(*key)
+                                && !keep.contains(key)
+                                && !state.tiles.contains_key(key)
+                                && !state.cache.contains_key(key)
+                        })
+                        .take(fits),
+                );
+            }
             // What the frame found missing loads between frames too
             // (decision 108).
             state.missing.clone_from(&missing);
@@ -4153,7 +4216,9 @@ pub struct RenderTerrains {
 pub(crate) struct TerrainExtraction {
     terrains: QueryState<(Entity, &'static Terrain)>,
     focus: QueryState<Entity, With<TerrainFocus>>,
+    prefetch: QueryState<(Entity, &'static TerrainPrefetch)>,
     points: Vec<Vec3>,
+    places: Vec<(Vec3, f32)>,
 }
 
 impl TerrainExtraction {
@@ -4161,7 +4226,9 @@ impl TerrainExtraction {
         Self {
             terrains: world.query::<(Entity, &Terrain)>(),
             focus: world.query_filtered::<Entity, With<TerrainFocus>>(),
+            prefetch: world.query::<(Entity, &TerrainPrefetch)>(),
             points: Vec::new(),
+            places: Vec::new(),
         }
     }
 
@@ -4209,10 +4276,21 @@ impl TerrainExtraction {
             .map_or(0.0, |time| time.delta_seconds);
         self.points.clear();
         self.points.push(eye);
+        self.places.clear();
         if let Some(globals) = world.get_resource::<GlobalTransforms>() {
             for entity in self.focus.iter(world) {
                 if let Some(point) = globals.get(entity).and_then(|global| global.translation()) {
                     self.points.push(point);
+                }
+            }
+            // Places games name (decision 120), within their reach.
+            for (entity, prefetch) in self.prefetch.iter(world) {
+                let reach = prefetch.reach;
+                if reach.is_finite()
+                    && reach > 0.0
+                    && let Some(point) = globals.get(entity).and_then(|global| global.translation())
+                {
+                    self.places.push((point, crate::math::min(reach, 8.0)));
                 }
             }
         }
@@ -4290,7 +4368,7 @@ impl TerrainExtraction {
             &camera,
             (eye, ahead),
             viewport,
-            &self.points,
+            (&self.points, &self.places),
             jobs.as_mut(),
         );
         if let Some(jobs) = jobs {
