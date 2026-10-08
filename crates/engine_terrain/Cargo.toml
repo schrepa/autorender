@@ -12,6 +12,7 @@ schema = ["dep:schemars"]
 
 [dependencies]
 engine_math.workspace = true
+libm.workspace = true
 glam.workspace = true
 serde.workspace = true
 schemars = { workspace = true, optional = true }

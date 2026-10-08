@@ -875,7 +875,9 @@ pub(crate) fn place_row(
         let turn = unit(hash(square ^ 0x85eb_ca6b));
         let downhill = (normal.x * normal.x + normal.z * normal.z).sqrt();
         let yaw = if layer.face > 0.0 && downhill > 0.05 {
-            (-normal.x).atan2(normal.z) + (turn - 0.5) * std::f32::consts::TAU * (1.0 - layer.face)
+            // libm's, as browsers compute it: the platform's differs.
+            libm::atan2f(-normal.x, normal.z)
+                + (turn - 0.5) * std::f32::consts::TAU * (1.0 - layer.face)
         } else {
             turn * std::f32::consts::TAU
         };

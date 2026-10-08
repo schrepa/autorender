@@ -525,9 +525,11 @@ pub(crate) fn bake(
         } else {
             0.0
         };
-        flow.push(encode(area[sample].log10(), FLOW_RANGE));
+        // libm's logarithms, as browsers compute them: the platform's
+        // differ.
+        flow.push(encode(libm::log10f(area[sample]), FLOW_RANGE));
         let catchment = area[sample] / spacing;
-        let index = (catchment / max(slopes[sample], 1.0e-3)).ln();
+        let index = libm::logf(catchment / max(slopes[sample], 1.0e-3));
         wetness.push(encode(index, WETNESS_RANGE));
         lakes.push(encode(standing, LAKE_RANGE));
         carved.push(encode(carve[sample], [0.0, max(layer.max_depth, 1.0e-3)]));
