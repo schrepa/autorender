@@ -525,6 +525,26 @@ try {
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
 
+  // Decision 119: tiles generated in bands place their objects in bands
+  // too, the same objects as whole tiles place: the view of tiles banded
+  // draws as many as of the same tiles generated whole.
+  const cornerView = { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] };
+  await command("camera", cornerView);
+  await settle();
+  const bandedObjects = (await command("render")).result.rendering.placed_objects;
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, max_bands: 1, cache_bytes: 1 } });
+  await command("camera", overview);
+  await settle();
+  await command("camera", cornerView);
+  await settle();
+  const wholeObjects = (await command("render")).result.rendering.placed_objects;
+  assert.ok(bandedObjects > 0, "objects stand on the banded tiles");
+  assert.equal(wholeObjects, bandedObjects, "banded and whole tiles place the same objects");
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await command("camera", overview);
+  await settle();
+  checks.push({ check: "placing bands", objects: bandedObjects });
+
   // Decision 118: the GPU gives tiles their surface materials, the rules'
   // own but where its rounding crosses a threshold: the view drawn with
   // the CPU's differs in few pixels. Back on the GPU, tiles loading at a

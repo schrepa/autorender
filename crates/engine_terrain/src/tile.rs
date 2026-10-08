@@ -441,6 +441,10 @@ pub struct Generator {
     // Whether it gives its tile control values; the GPU gives them where
     // not (decision 118).
     materials: bool,
+    // Where a band of placing stops (decision 119): the layer and row it
+    // leaves to the next band, none for the last, which also places what
+    // authors stand on the tile.
+    place_end: Option<(usize, usize)>,
 }
 
 /// A row's inputs to a surface's masks, reused row after row (decision
@@ -537,6 +541,7 @@ impl Generator {
             rows: None,
             banded: None,
             materials: true,
+            place_end: None,
         }
     }
 
@@ -693,7 +698,28 @@ impl Generator {
             rows: None,
             banded: None,
             materials: true,
+            place_end: None,
         }
+    }
+
+    /// A generator placing on `tile` as [`Self::placing`] does, from
+    /// layer and row `start` up to `end` alone (decision 119), the rows
+    /// [`crate::BiomeRules::place_rows`] counts: bands of a tile's placing
+    /// on several workers, their objects joined in order giving the tile's.
+    /// The band without an end also places what authors stand on it.
+    pub fn placing_rows(
+        tile: Tile,
+        (layers, surface): (Arc<Layers>, Arc<BiomeRules>),
+        placing: Placing,
+        (start, end): ((usize, usize), Option<(usize, usize)>),
+    ) -> Self {
+        let mut generator = Self::placing(tile, layers, surface, placing);
+        generator.stage = Stage::Place {
+            layer: start.0,
+            row: start.1,
+        };
+        generator.place_end = end;
+        generator
     }
 
     /// Hydrology layer `index`'s rivers near the tile (decision 113), made
@@ -995,12 +1021,16 @@ impl Generator {
                         (&self.layers, self.placing, &mut self.places),
                     );
                     *budget = budget.saturating_sub(cost);
+                    // A band stops where the next starts (decision 119).
+                    let band_ends = next.is_some() && next == self.place_end;
                     match next {
-                        Some((layer, row)) => self.stage = Stage::Place { layer, row },
-                        None => {
+                        Some((layer, row)) if !band_ends => {
+                            self.stage = Stage::Place { layer, row }
+                        }
+                        _ => {
                             // Then what authors stand on it (decision 085),
                             // with its own level's objects.
-                            if self.placing != Placing::Far {
+                            if self.placing != Placing::Far && !band_ends {
                                 *budget = budget
                                     .saturating_sub(surface.place_authored(tile, &mut self.placed));
                             }
