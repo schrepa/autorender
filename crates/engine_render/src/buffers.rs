@@ -57,7 +57,7 @@ pub(crate) fn entry<'a>(
 
 /// Read-backs in flight at most: a frame records one while the two before
 /// it may still be mapping.
-const READBACKS: usize = 3;
+pub(crate) const READBACKS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {

@@ -4643,6 +4643,27 @@
           "default": 8388608,
           "minimum": 1
         },
+        "virtual_texture": {
+          "description": "The runtime virtual texture (decision 124): the ground's materials\nbaked into pages the views ask for, which pixels read in place of\ncomputing them; ground finer than its texels, steep ground and pages\nnot baked yet compute theirs.",
+          "type": "boolean",
+          "default": true
+        },
+        "virtual_texture_bakes": {
+          "description": "Pages it bakes in a frame at most, at least 1 (about 0.1 ms each on\nan integrated GPU).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 16,
+          "minimum": 1
+        },
+        "virtual_texture_pages": {
+          "description": "An optional budget of pages it keeps (about 340 KB each). Omitted,\nit keeps as many as the views ask for, up to the device's texture\narray layers; beyond either, pages unasked for a while make room,\nand those asked for with none left drop (the ground computes\nitself).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
         "work_ms": {
           "type": "number",
           "format": "float",

@@ -50,6 +50,16 @@ struct TerrainUniform {
     // 098; a radius of 0 shows it from the eye on), and its density scale;
     // all 0 without cover.
     cover: vec4<f32>,
+    // Its runtime virtual texture (decision 124; `terrain.wgsl`): its index
+    // among the textured terrains, its mips (0 without one), slots along a
+    // sheet's side, and this frame's feedback pixel (0 to 63) of each 8x8
+    // block; the meters a texel of mip 0 spans and the inverse of a sheet's
+    // texels along a side; where its windows and tables start in
+    // `terrain_directory`, and its sheets' first layers in the base color and
+    // normal map arrays.
+    vt: vec4<u32>,
+    vt_scale: vec4<f32>,
+    vt_layout: vec4<u32>,
 }
 @group(1) @binding(19) var<uniform> terrain: TerrainUniform;
 

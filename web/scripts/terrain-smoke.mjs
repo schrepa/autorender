@@ -58,7 +58,9 @@ const terrain = {
       { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 }, deform: 0.05 },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
       { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5, deform: 0.3 },
-      { id: "gravel", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1, deform: 0.04 },
+      // Gravel's grain is the first map, which sets the maps' size: two
+      // pages of the runtime virtual texture (decision 124) along a side.
+      { id: "gravel", material: "grain", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1, deform: 0.04 },
     ],
     biomes: [
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
@@ -119,10 +121,22 @@ function dome() {
   }
   return bytes;
 }
+/** A 288-texel square of gray grain, base64 RGBA8. */
+function grain() {
+  const size = 288;
+  const bytes = Buffer.alloc(size * size * 4);
+  for (let texel = 0; texel < size * size; texel++) {
+    const hash = Math.imul(texel ^ (texel >>> 7), 0x9e3779b1) >>> 0;
+    const value = 150 + (hash >>> 26) * 1.5;
+    bytes.set([value, value * 0.95, value * 0.9, 255], texel * 4);
+  }
+  return bytes.toString("base64");
+}
 const fixture = {
   version: 9, id: "terrain-fixture", revision: 1,
   camera: { position: [0, 80, 140], target: [0, 30, 0], fov_degrees: 60, near: 0.5, far: 4000 },
-  materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }],
+  textures: [{ id: "grain", width: 288, height: 288, rgba8: grain() }],
+  materials: [{ id: "plain", color: [0.8, 0.3, 0.2, 1] }, { id: "grain", color: [1, 1, 1, 1], texture: "grain" }],
   meshes: [{ id: "box", source: { kind: "cube" } }, { id: "ball", source: { kind: "inline", ...ball() } }],
   entities: [
     { id: "player", mesh: "box", material: "plain", tags: ["player"], collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false }, transform: { translation: [0, 31, 0] } },
@@ -191,6 +205,18 @@ async function skyColor(png) {
     }
     return sum.map(value => value / (data.length / 4));
   }, png);
+}
+
+/** Renders until `done` holds for a frame's observation, the virtual
+ * texture's read-backs arriving a few frames late; returns it. */
+async function rendersUntil(done, what) {
+  let rendering;
+  for (let frame = 0; frame < 600; frame++) {
+    rendering = (await command("render")).result.rendering;
+    if (done(rendering)) return rendering;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail(`${what}: ${JSON.stringify(rendering)}`);
 }
 
 async function heights(points) {
@@ -569,6 +595,29 @@ try {
   await command("camera", overview);
   await settle();
   checks.push({ check: "gpu materials", differing: materials.changed, controls });
+
+  // Decision 124: the runtime virtual texture bakes the ground into the
+  // pages the view asks for, its sheets growing to hold them, and the
+  // pixels reading them show the ground as computing it does; turned off,
+  // it keeps no sheets. Under a budget too small, the pages asked for
+  // beyond it drop and the ground computes itself.
+  const vt = rendering => ({ slots: rendering.terrain_vt_slots, pages: rendering.terrain_vt_pages, bakes: rendering.terrain_vt_bakes, missing: rendering.terrain_vt_missing, dropped: rendering.dropped_terrain_vt_pages });
+  const textured = await rendersUntil(rendering => rendering.terrain_vt_pages > 0 && rendering.terrain_vt_missing === 0 && rendering.terrain_vt_bakes === 0, "the view's pages bake");
+  assert.ok(textured.terrain_vt_slots >= textured.terrain_vt_pages && textured.dropped_terrain_vt_pages === 0, `pages bake into the sheets: ${JSON.stringify(vt(textured))}`);
+  const bakedView = await capture("virtual-texture");
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture: false } });
+  const computed = await settle();
+  assert.ok(computed.terrain_vt_slots === 0 && computed.terrain_vt_pages === 0, `turned off, it keeps nothing: ${JSON.stringify(vt(computed))}`);
+  const computedView = await capture("virtual-texture-off");
+  const reading = await differentPixels(page, [bakedView, computedView]);
+  const seen = await differentPixels(page, [bakedView, computedView], { tolerance: 8 });
+  assert.ok(reading.changed > 0 && seen.changed < seen.total * 0.03, `pixels read the pages (${reading.changed} differ) and show the computed ground (${seen.changed} of ${seen.total} by more than 8)`);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, virtual_texture_pages: 4 } });
+  const scarce = await rendersUntil(rendering => rendering.dropped_terrain_vt_pages > 0, "pages beyond the budget drop");
+  assert.ok(scarce.terrain_vt_slots === 4 && scarce.terrain_vt_pages <= 4, `the budget bounds the pages: ${JSON.stringify(vt(scarce))}`);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
+  await settle();
+  checks.push({ check: "virtual texture", pages: textured.terrain_vt_pages, slots: textured.terrain_vt_slots, read: reading.changed, differing: seen.changed, dropped: scarce.dropped_terrain_vt_pages });
 
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.

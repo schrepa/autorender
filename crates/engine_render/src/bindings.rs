@@ -679,6 +679,49 @@ pub(crate) const TERRAIN_RESOLVE: Table = Table {
     bindings: &[texture(62, "terrain_ids_texture", Uint, D2, F)],
 };
 
+/// Group 2 of the runtime virtual texture's bakes (decision 124): the
+/// pages to bake, and every resident tile's heights, which the terrain
+/// group gives vertex stages alone.
+pub(crate) const TERRAIN_VT_BAKE: Table = Table {
+    label: "engine/terrain-vt-bake-layout",
+    bindings: &[
+        read(67, "terrain_vt_bakes", VF),
+        texture(68, "terrain_vt_heights", Unfilterable, D2Array, F),
+    ],
+};
+
+/// The runtime virtual texture's feedback (decision 124), a compute pass
+/// over terrain's visibility target: the camera (group 0); the view, the
+/// terrain and the directory with the texture's windows and tables (group
+/// 1, as the terrain group binds them); the visibility target and the
+/// pages wanted (group 2).
+pub(crate) const TERRAIN_VT_CAMERA: Table = Table {
+    label: "engine/terrain-vt-camera-layout",
+    bindings: &[uniform_of(0, "camera", size_of::<CameraUniform>(), C)],
+};
+
+pub(crate) const TERRAIN_VT_TERRAIN: Table = Table {
+    label: "engine/terrain-vt-terrain-layout",
+    bindings: &[
+        dynamic_uniform(18, "terrain_view", 144, C),
+        dynamic_uniform(
+            19,
+            "terrain",
+            crate::terrain::TERRAIN_UNIFORM_BYTES as u64,
+            C,
+        ),
+        read(23, "terrain_directory", C),
+    ],
+};
+
+pub(crate) const TERRAIN_VT_FEEDBACK: Table = Table {
+    label: "engine/terrain-vt-feedback-layout",
+    bindings: &[
+        texture(62, "terrain_ids_texture", Uint, D2, C),
+        write(66, "terrain_vt_wanted", C),
+    ],
+};
+
 /// The clouds' noise volume (decision 084; `clouds.wgsl`), made once.
 pub(crate) const CLOUD_NOISE: Table = Table {
     label: "engine/cloud-noise-layout",
