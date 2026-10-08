@@ -1210,7 +1210,10 @@ fn load_tiles(
                 .banded
                 .drain()
                 .flat_map(|(_, banding)| banding.jobs.into_iter().map(|(id, _)| id));
-            let placing = state.placements.drain().map(|(_, (id, _, _, _))| id);
+            let placing = state
+                .placements
+                .drain()
+                .flat_map(|(_, placements)| placements.jobs.into_iter().map(|(id, _)| id));
             for id in banded.chain(placing).collect::<Vec<_>>() {
                 if let Some(slots) = slots.as_deref_mut() {
                     slots.jobs.cancel(id);
@@ -1527,10 +1530,14 @@ fn generate_on_workers(
         }
         wanted
     });
-    state.placements.retain(|key, &mut (id, made, _, _)| {
-        let wanted = made == revision && keep.contains(key) && tiles.contains_key(key);
+    state.placements.retain(|key, placements| {
+        let wanted = placements.made == revision && keep.contains(key) && tiles.contains_key(key);
         if !wanted {
-            slots.jobs.cancel(id);
+            for &(id, ref objects) in &placements.jobs {
+                if objects.is_none() {
+                    slots.jobs.cancel(id);
+                }
+            }
         }
         wanted
     });
@@ -1638,14 +1645,49 @@ fn generate_on_workers(
         state.stale.remove(&key);
         state.failed.remove(&key);
         if rules.places(key.level, banding.placing) {
-            let input = engine_terrain::jobs::place_input(&recipe, &tile, banding.placing);
-            let identity = engine_terrain::jobs::place_identity(&recipe, key, banding.placing);
-            let id = slots
-                .jobs
-                .submit_cacheable(PLACE_JOB, input, banding.priority, identity);
-            state
-                .placements
-                .insert(key, (id, revision, banding.priority, banding.placing));
+            // Its objects in bands of candidate rows across workers too
+            // (decision 119), joined in order.
+            let rows = rules.place_rows(key, spacing, banding.placing);
+            let starts: Vec<(u32, u32)> = rows
+                .iter()
+                .enumerate()
+                .flat_map(|(layer, &rows)| (0..rows).map(move |row| (layer as u32, row)))
+                .collect();
+            let bands = work.bands.min(starts.len()).max(1);
+            let mut jobs = Vec::with_capacity(bands);
+            for band in 0..bands {
+                let start = if band == 0 {
+                    (0, 0)
+                } else {
+                    starts[band * starts.len() / bands]
+                };
+                let end = (band + 1 < bands).then(|| starts[(band + 1) * starts.len() / bands]);
+                let input = engine_terrain::jobs::place_input(
+                    &recipe,
+                    &tile,
+                    banding.placing,
+                    (start, end),
+                );
+                let identity = engine_terrain::jobs::place_identity(
+                    &recipe,
+                    key,
+                    banding.placing,
+                    (start, end),
+                );
+                let id = slots
+                    .jobs
+                    .submit_cacheable(PLACE_JOB, input, banding.priority, identity);
+                jobs.push((id, None));
+            }
+            state.placements.insert(
+                key,
+                Placements {
+                    made: revision,
+                    priority: banding.priority,
+                    placing: banding.placing,
+                    jobs,
+                },
+            );
             state.shaped.insert(key);
         } else {
             state.shaped.remove(&key);
@@ -1653,41 +1695,64 @@ fn generate_on_workers(
         state.insert(tile);
         inserted = true;
     }
-    // Then their objects (decision 117).
-    let placed: Vec<(TileKey, (JobId, u64, u32, Placing))> = state
-        .placements
-        .iter()
-        .map(|(&key, &job)| (key, job))
-        .collect();
-    for (key, (id, made, priority, placing)) in placed {
+    // Then their objects (decision 117), once every band of them is done
+    // (decision 119), joined in order.
+    let placing_keys: Vec<TileKey> = state.placements.keys().copied().collect();
+    for key in placing_keys {
         if inserted && work.expired() {
             break;
         }
-        let Some(output) = slots.jobs.take(id) else {
+        let Some(placements) = state.placements.get_mut(&key) else {
             continue;
         };
-        state.placements.remove(&key);
+        let mut failed = false;
+        for (id, objects) in &mut placements.jobs {
+            if objects.is_none()
+                && let Some(output) = slots.jobs.take(*id)
+            {
+                match output
+                    .ok()
+                    .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
+                {
+                    Some(placed) => *objects = Some(placed),
+                    None => failed = true,
+                }
+            }
+        }
+        if !failed && placements.jobs.iter().any(|(_, objects)| objects.is_none()) {
+            continue;
+        }
+        let Some(placements) = state.placements.remove(&key) else {
+            continue;
+        };
+        if failed {
+            for (id, objects) in placements.jobs {
+                if objects.is_none() {
+                    slots.jobs.cancel(id);
+                    slots.release();
+                }
+            }
+            state.failed.insert(key, frame);
+            state.worker_failures += 1;
+            continue;
+        }
         let Some(tile) = state.tiles.get(&key).cloned() else {
             continue;
         };
-        match output
-            .ok()
-            .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
-        {
-            Some(objects) if made == revision && target.contains(&key) => {
-                state.shaped.remove(&key);
-                if placing == Placing::Near {
-                    state.far_wanted.insert(key, priority);
-                }
-                state.insert(Tile::clone(&tile).with_placed(objects));
-                inserted = true;
-            }
-            Some(_) => {}
-            None => {
-                state.failed.insert(key, frame);
-                state.worker_failures += 1;
-            }
+        if placements.made != revision || !target.contains(&key) {
+            continue;
         }
+        let objects: Vec<engine_terrain::Placed> = placements
+            .jobs
+            .into_iter()
+            .flat_map(|(_, objects)| objects.unwrap_or_default())
+            .collect();
+        state.shaped.remove(&key);
+        if placements.placing == Placing::Near {
+            state.far_wanted.insert(key, placements.priority);
+        }
+        state.insert(Tile::clone(&tile).with_placed(objects));
+        inserted = true;
     }
     // Tiles still generating hand out their shape first (decision 114): it
     // draws, with coarser levels' materials, and collides until the whole
@@ -2115,7 +2180,7 @@ struct TerrainState {
     /// that job, the recipe's revision, its priority and its placing; and
     /// how many tiles generated so.
     banded: HashMap<TileKey, Banding>,
-    placements: HashMap<TileKey, (JobId, u64, u32, Placing)>,
+    placements: HashMap<TileKey, Placements>,
     banded_tiles: u64,
     /// The layers its tiles generate from and its surface's data for the
     /// GPU from them (decision 118), `None` where the program needs more
@@ -2123,6 +2188,16 @@ struct TerrainState {
     /// values, as without GPU materials.
     surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
     materials: bool,
+}
+
+/// The objects of a tile its bands made (decision 117), placed in bands of
+/// candidate rows (decision 119): the recipe's revision, its priority and
+/// placing, and each band's job with its objects once done.
+struct Placements {
+    made: u64,
+    priority: u32,
+    placing: Placing,
+    jobs: Vec<(JobId, Option<Vec<engine_terrain::Placed>>)>,
 }
 
 /// A tile generating in bands of rows (decision 117): the recipe's revision
@@ -2274,9 +2349,11 @@ impl TerrainState {
                 .values()
                 .flat_map(|banding| banding.jobs.iter().map(|&(id, _)| id)),
         );
-        retired
-            .jobs
-            .extend(self.placements.values().map(|&(id, _, _, _)| id));
+        retired.jobs.extend(
+            self.placements
+                .values()
+                .flat_map(|placements| placements.jobs.iter().map(|&(id, _)| id)),
+        );
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));

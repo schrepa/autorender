@@ -160,19 +160,43 @@ pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
 }
 
 /// The input of a [`PLACE_JOB`] (decision 117): `placing`'s objects of the
-/// recipe shared as `recipe` on `tile`, one of its tiles without them. Its
-/// output is the objects, as a [`FAR_JOB`]'s ([`far_output`]).
-pub fn place_input(recipe: &str, tile: &Tile, placing: Placing) -> Vec<u8> {
+/// recipe shared as `recipe` on `tile`, one of its tiles without them,
+/// from layer and row `start` up to `end` (decision 119; none for the
+/// rest, with what authors stand on it). Its output is the objects, as a
+/// [`FAR_JOB`]'s ([`far_output`]).
+pub fn place_input(
+    recipe: &str,
+    tile: &Tile,
+    placing: Placing,
+    rows: ((u32, u32), Option<(u32, u32)>),
+) -> Vec<u8> {
     let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(tile).put(&placing);
+    writer
+        .put(&recipe.to_owned())
+        .put(tile)
+        .put(&placing)
+        .put(&rows.0.0)
+        .put(&rows.0.1)
+        .put(&rows.1);
     writer.into_bytes()
 }
 
 /// What a [`PLACE_JOB`]'s output depends on (decision 116): its recipe,
-/// tile and placing.
-pub fn place_identity(recipe: &str, key: TileKey, placing: Placing) -> Vec<u8> {
+/// tile, placing and rows.
+pub fn place_identity(
+    recipe: &str,
+    key: TileKey,
+    placing: Placing,
+    rows: ((u32, u32), Option<(u32, u32)>),
+) -> Vec<u8> {
     let mut writer = Writer::new();
-    writer.put(&recipe.to_owned()).put(&key).put(&placing);
+    writer
+        .put(&recipe.to_owned())
+        .put(&key)
+        .put(&placing)
+        .put(&rows.0.0)
+        .put(&rows.0.1)
+        .put(&rows.1);
     writer.into_bytes()
 }
 
@@ -357,16 +381,22 @@ impl TerrainWorker {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let tile: Tile = reader.get().map_err(invalid)?;
                 let placing: Placing = reader.get().map_err(invalid)?;
+                let layer: u32 = reader.get().map_err(invalid)?;
+                let row: u32 = reader.get().map_err(invalid)?;
+                let end: Option<(u32, u32)> = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(tile.key()) {
                     return Err("tile outside its pyramid".into());
                 }
-                Running::Far(Generator::placing(
+                Running::Far(Generator::placing_rows(
                     tile,
-                    recipe.layers.clone(),
-                    recipe.rules.clone(),
+                    (recipe.layers.clone(), recipe.rules.clone()),
                     placing,
+                    (
+                        (layer as usize, row as usize),
+                        end.map(|(layer, row)| (layer as usize, row as usize)),
+                    ),
                 ))
             }
             BAND_JOB => {

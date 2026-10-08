@@ -862,6 +862,22 @@ impl BiomeRules {
     }
 
     /// Whether `placing`'s objects (decision 112) stand on tiles of `level`.
+    /// The rows of candidate squares each placement layer walks on tile
+    /// `key` at `spacing` placing `placing`'s objects (decision 119), none
+    /// where it places nothing: where placing splits into bands.
+    pub fn place_rows(
+        &self,
+        key: crate::TileKey,
+        spacing: f32,
+        placing: crate::Placing,
+    ) -> Vec<u32> {
+        (0..self.placements.len())
+            .map(|layer| {
+                crate::placement::layer_rows(&self.placements, layer, key, spacing, placing)
+            })
+            .collect()
+    }
+
     pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
         let near = self.placements.iter().any(|layer| layer.level == level)
             || self.placed.iter().any(|object| object.level == level);

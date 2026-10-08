@@ -623,6 +623,39 @@ struct Candidate {
     share_of_materials: f32,
 }
 
+/// The rows of candidate squares layer `layer_index` of `layers` places on
+/// tile `key` at `spacing` with `placing`'s objects (decision 119), as
+/// [`place_row`] walks them: none where it places nothing there.
+pub(crate) fn layer_rows(
+    layers: &[CompiledPlacement],
+    layer_index: usize,
+    key: crate::TileKey,
+    spacing: f32,
+    placing: Placing,
+) -> u32 {
+    let Some(layer) = layers.get(layer_index) else {
+        return 0;
+    };
+    let size = TILE_QUADS as f32 * spacing;
+    let origin = [f32::from(key.x) * size, f32::from(key.z) * size];
+    let (share, near_level) = match layer.far {
+        _ if layer.level == key.level => (1.0, None),
+        Some((level, share)) if level == key.level => (share, Some(layer.level)),
+        _ => (0.0, None),
+    };
+    let skipped = match placing {
+        Placing::All => false,
+        Placing::Near => near_level.is_some(),
+        Placing::Far => near_level.is_none(),
+    };
+    if layer.fill * share <= 0.0 || skipped {
+        return 0;
+    }
+    let first = (origin[1] / layer.footprint).floor() as i64;
+    let last = ((origin[1] + size) / layer.footprint).floor() as i64;
+    (last - first + 1).max(0) as u32
+}
+
 pub(crate) fn place_row(
     layers: &[CompiledPlacement],
     tile: &Tile,
