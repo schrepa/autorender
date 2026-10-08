@@ -3688,9 +3688,12 @@ impl Terrains {
                     state.cache_leaving(key, tile, frame);
                 }
             }
-            if state.tiles.len() > kept {
+            if kept < order.len() && state.tiles.len() > kept {
                 // Over budget: drop resident tiles outside the target, finest
-                // first.
+                // first. Within it, tiles the view only keeps (between the
+                // loading and keeping reaches) stay: a tile whose own
+                // bounds put it past the loading reach, where its parent's
+                // had it inside, must not leave and return frame by frame.
                 let mut extra: Vec<TileKey> = state
                     .tiles
                     .keys()
