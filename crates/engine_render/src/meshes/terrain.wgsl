@@ -1366,13 +1366,14 @@ fn terrain_resolved(position: vec4<f32>) -> TerrainResolved {
     let others = vec2<f32>(dpdxFine(here), dpdyFine(here));
     let farther = vec2<f32>(dpdxFine(away), dpdyFine(away));
     let same = (others == vec2<f32>(0.0)) & (abs(farther) < vec2<f32>(reach));
-    let quad = floor(position.xy * 0.5) * 2.0 + vec2<f32>(0.5);
-    let corner = terrain_ray_at(quad, size);
+    // The quad's rays change by its first row's and column's differences;
+    // discarded lanes still help with them.
+    let ray = terrain_ray_at(position.xy, size);
     var look: TerrainLook;
     look.world_dx = dpdxFine(relative);
     look.world_dy = dpdyFine(relative);
-    look.ray_dx = terrain_ray_at(quad + vec2<f32>(1.0, 0.0), size) - corner;
-    look.ray_dy = terrain_ray_at(quad + vec2<f32>(0.0, 1.0), size) - corner;
+    look.ray_dx = dpdxCoarse(ray);
+    look.ray_dy = dpdyCoarse(ray);
     look.raw = same;
     let seen = terrain_point_seen(vec4<f32>(relative, 0.0), vec2<f32>(0.0), look);
     var resolved: TerrainResolved;
