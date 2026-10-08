@@ -67,7 +67,7 @@ pub use surface::{
     Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, MAX_BIOMES, MAX_SURFACE_MATERIALS,
     Mask, NoiseMask, Remap, SampleInputs,
 };
-pub use tile::{Generator, Tile, TileSample};
+pub use tile::{Generator, Tile, TileBand, TileSample, merge_bands};
 
 /// Quads along each side of a tile.
 pub const TILE_QUADS: u32 = 256;

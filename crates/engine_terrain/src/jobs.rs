@@ -12,6 +12,9 @@
 //! placed by a job of their own after it, as far tiles hold them by the tens
 //! of thousands. A staged tile job hands out the tile's shape as a part
 //! (decision 114), [`TerrainWorker::take_part`], before the rest is done.
+//! A tile may also generate in bands of rows on several workers at once
+//! (decision 117), joined by its engine, with its objects placed by a job
+//! after.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,13 +24,17 @@ use glam::Vec2;
 use crate::codec::{self, CodecError, Reader, Writer, record};
 use crate::{
     BiomeRules, Biomes, Generator, Layers, NavOptions, NavPath, Obstacle, Placed, Placing, Pyramid,
-    Tile, TileKey, WalkSearch,
+    Tile, TileBand, TileKey, WalkSearch,
 };
 
 /// The kinds of terrain jobs: a tile of a shared recipe, the objects
 /// standing far away on one, a walk over one, and a stack's bakes.
 pub const TILE_JOB: &str = "terrain_tile";
 pub const FAR_JOB: &str = "terrain_far";
+/// A band of a tile's rows, and the objects placed on a tile its bands
+/// made (decision 117).
+pub const BAND_JOB: &str = "terrain_band";
+pub const PLACE_JOB: &str = "terrain_place";
 pub const WALK_JOB: &str = "terrain_walk";
 pub const BAKE_JOB: &str = "terrain_bake";
 
@@ -130,6 +137,41 @@ pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
     writer.into_bytes()
 }
 
+/// The input of a [`BAND_JOB`] (decision 117): stored rows `rows` (0 to
+/// 259) of tile `key` of the recipe shared as `recipe`.
+pub fn band_input(recipe: &str, key: TileKey, rows: std::ops::Range<u32>) -> Vec<u8> {
+    let mut writer = Writer::new();
+    writer
+        .put(&recipe.to_owned())
+        .put(&key)
+        .put(&rows.start)
+        .put(&rows.end);
+    writer.into_bytes()
+}
+
+/// A [`BAND_JOB`]'s output: the band's rows, which
+/// [`crate::merge_bands`] joins with the tile's other bands.
+pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
+    codec::decode(bytes)
+}
+
+/// The input of a [`PLACE_JOB`] (decision 117): `placing`'s objects of the
+/// recipe shared as `recipe` on `tile`, one of its tiles without them. Its
+/// output is the objects, as a [`FAR_JOB`]'s ([`far_output`]).
+pub fn place_input(recipe: &str, tile: &Tile, placing: Placing) -> Vec<u8> {
+    let mut writer = Writer::new();
+    writer.put(&recipe.to_owned()).put(tile).put(&placing);
+    writer.into_bytes()
+}
+
+/// What a [`PLACE_JOB`]'s output depends on (decision 116): its recipe,
+/// tile and placing.
+pub fn place_identity(recipe: &str, key: TileKey, placing: Placing) -> Vec<u8> {
+    let mut writer = Writer::new();
+    writer.put(&recipe.to_owned()).put(&key).put(&placing);
+    writer.into_bytes()
+}
+
 /// What a [`FAR_JOB`]'s output depends on (decision 116): its recipe and
 /// tile, which that recipe generates.
 pub fn far_identity(recipe: &str, key: TileKey) -> Vec<u8> {
@@ -192,6 +234,7 @@ struct Recipe {
 enum Running {
     Tile(Generator),
     Far(Generator),
+    Band(Generator),
     Walk(Box<WalkSearch>),
     Bake(Box<(Layers, Pyramid)>),
 }
@@ -303,6 +346,41 @@ impl TerrainWorker {
                     recipe.rules.clone(),
                 ))
             }
+            PLACE_JOB => {
+                let recipe: String = reader.get().map_err(invalid)?;
+                let tile: Tile = reader.get().map_err(invalid)?;
+                let placing: Placing = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                let recipe = self.recipe(&recipe)?;
+                if !recipe.pyramid.contains(tile.key()) {
+                    return Err("tile outside its pyramid".into());
+                }
+                Running::Far(Generator::placing(
+                    tile,
+                    recipe.layers.clone(),
+                    recipe.rules.clone(),
+                    placing,
+                ))
+            }
+            BAND_JOB => {
+                let recipe: String = reader.get().map_err(invalid)?;
+                let key: TileKey = reader.get().map_err(invalid)?;
+                let first: u32 = reader.get().map_err(invalid)?;
+                let end: u32 = reader.get().map_err(invalid)?;
+                reader.finish().map_err(invalid)?;
+                let recipe = self.recipe(&recipe)?;
+                if !recipe.pyramid.contains(key) {
+                    return Err("tile outside its pyramid".into());
+                }
+                let generator = Generator::band(
+                    recipe.layers.clone(),
+                    &recipe.pyramid,
+                    key,
+                    first as usize..end as usize,
+                )
+                .ok_or("rows outside the tile")?;
+                Running::Band(generator.with_surface(recipe.rules.clone()))
+            }
             WALK_JOB => {
                 let recipe: String = reader.get().map_err(invalid)?;
                 let from: Vec2 = reader.get().map_err(invalid)?;
@@ -353,6 +431,14 @@ impl TerrainWorker {
                 None if generator.failed() => Err("the tile is invalid".into()),
                 None => return Ok(None),
             },
+            Running::Band(generator) => {
+                let _ = generator.advance(&mut budget);
+                match generator.take_band() {
+                    Some(band) => Ok(codec::encode(&band)),
+                    None if generator.failed() => Err("the band is invalid".into()),
+                    None => return Ok(None),
+                }
+            }
             Running::Walk(search) => match search.step(&mut budget) {
                 Some(walk) => Ok(codec::encode(&walk)),
                 None => return Ok(None),
