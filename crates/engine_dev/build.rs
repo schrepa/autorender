@@ -43,6 +43,7 @@ fn main() {
         "Tracks": schemars::schema_for!(views::TracksView),
         "WorldCells": schemars::schema_for!(views::WorldCellsView),
         "Grounded": schemars::schema_for!(views::GroundedView),
+        "TerrainPrefetch": schemars::schema_for!(engine_core::TerrainPrefetch),
         "WorldChanges": schemars::schema_for!(views::WorldChangesView),
         "StreamedId": schemars::schema_for!(views::StreamedIdView),
         "NavAgent": schemars::schema_for!(views::NavAgentView),

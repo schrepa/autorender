@@ -3255,6 +3255,17 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
+        "prefetch": {
+          "description": "Names it a place the camera may be sent to (decision 120), whose\nterrain workers generate ahead of need. Requires version 9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerrainPrefetch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "reflection_probe": {
           "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect (decision 043). Requires\nversion 8.",
           "anyOf": [
@@ -5343,6 +5354,20 @@
         "top",
         "biplanar"
       ]
+    },
+    "TerrainPrefetch": {
+      "description": "Names a place the camera may be sent to, such as a spawn point\n(decision 120): while the view wants nothing, workers generate the\nterrain tiles a camera there wants into memory, as they do ahead of the\ncamera (decision 116), and those tiles stay there while it is named, so\nthe camera sent there finds them at once. Each level's tiles within\n`reach` times its range, 0 to 8; 2 is what a camera there loads.\nRequires version 9.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "type": "number",
+          "format": "float",
+          "default": 2.0,
+          "maximum": 8.0,
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

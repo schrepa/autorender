@@ -1085,6 +1085,33 @@ try {
   await settle();
   checks.push({ check: "aerial perspective", pixels: air.changed });
 
+  // Decision 120: while the view wants nothing, workers generate the
+  // terrain a camera at a place a game names wants into memory, with no
+  // idle reach around the camera, and the camera sent there finds it.
+  const spawnPoint = [380, 90, 380];
+  const named = structuredClone(fixture);
+  named.entities.push({ id: "spawn-point", prefetch: {}, transform: { translation: spawnPoint } });
+  await scene.reload(command, named);
+  await command("environment", { terrain: { samples_per_frame: 50_000_000, idle_reach: 0 } });
+  await command("camera", overview);
+  await settle();
+  const prefetch = (await command("inspect", { entity: "spawn-point", component: "TerrainPrefetch" })).result.entity.components.TerrainPrefetch;
+  assert.equal(prefetch.reach, 2, `a place reaches as far as a camera loads: ${JSON.stringify(prefetch)}`);
+  let stored = await inspectTerrains();
+  for (let frame = 0; frame < 600 && !(stored.cached_tiles > 0 && stored.idle_tiles === 0); frame++) {
+    await command("render");
+    await new Promise(resolve => setTimeout(resolve, 25));
+    stored = await inspectTerrains();
+  }
+  assert.ok(stored.cached_tiles > 0 && stored.idle_tiles === 0, `workers generate the place's tiles into memory: ${JSON.stringify(stored)}`);
+  await command("camera", { ...overview, position: spawnPoint, target: [300, 30, 300] });
+  await settle();
+  const sent = await inspectTerrains();
+  assert.ok(sent.restored_tiles > stored.restored_tiles, `the place's tiles return from memory: ${JSON.stringify(sent)}`);
+  await command("camera", overview);
+  await settle();
+  checks.push({ check: "prefetch", cached: stored.cached_tiles, bytes: stored.cached_bytes, restored: sent.restored_tiles - stored.restored_tiles });
+
   // An ETR1 file of the same layers streams by byte range and matches; the
   // bake reads the heightmap beside the scene, as the page does.
   await writeFile(source, JSON.stringify(fixture));

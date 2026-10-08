@@ -491,6 +491,9 @@ fn spawn_entity(
     if let Some(deformer) = source.deformer {
         entity.insert(deformer);
     }
+    if let Some(prefetch) = source.prefetch {
+        entity.insert(prefetch);
+    }
     if let Some(grounded) = source.grounded {
         entity.insert(grounded);
     }
