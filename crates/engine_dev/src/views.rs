@@ -279,6 +279,9 @@ pub struct TerrainsView {
     pub cached_bytes: u64,
     pub restored_tiles: u64,
     pub idle_tiles: u32,
+    /// Tiles that generated in bands of rows on several workers since
+    /// terrains started (decision 117).
+    pub banded_tiles: u64,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,

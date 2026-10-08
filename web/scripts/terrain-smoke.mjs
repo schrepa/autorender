@@ -492,6 +492,14 @@ try {
   const home = await inspectTerrains();
   await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
+  // Decision 117: the few tiles under the view after the move generated in
+  // bands of rows across idle workers, and hold the heights the layers
+  // give, as whole tiles do.
+  const corner = await inspectTerrains();
+  assert.ok(corner.banded_tiles > home.banded_tiles, `tiles under the view generate in bands: ${JSON.stringify(corner)}`);
+  const joined = (await command("terrain_sweep", { center: [-380, -380], half_extent: 100, samples: 24 })).result;
+  assert.ok(joined.layers.compared > 100, `the sweep compared ${joined.layers.compared}`);
+  assert.ok(joined.layers.worst.max_difference < 5e-3, `banded tiles differ from the layers by ${joined.layers.worst.max_difference}`);
   await command("camera", overview);
   await settle();
   const back = await inspectTerrains();
@@ -514,7 +522,7 @@ try {
   assert.ok(ahead.cached_tiles > 0, `workers generate tiles ahead of the view: ${JSON.stringify(ahead)}`);
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   await settle();
-  checks.push({ check: "memory", restored: back.restored_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
+  checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
 
   // The terrain control: development views change pixels, freezing keeps
   // the patches while the camera moves away.

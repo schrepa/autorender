@@ -4515,6 +4515,14 @@
           "maximum": 1000.0,
           "minimum": 0.1
         },
+        "max_bands": {
+          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free (decision 117), 1 (whole\ntiles) to 16.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4,
+          "maximum": 16,
+          "minimum": 1
+        },
         "max_tiles": {
           "description": "An optional budget of resident tiles (about 270 KB each, twice that\non the GPU); the least important beyond it drop.",
           "type": [

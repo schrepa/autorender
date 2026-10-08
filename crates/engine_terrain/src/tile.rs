@@ -305,6 +305,86 @@ enum Stage {
     Done,
     Place { layer: usize, row: usize },
     Failed,
+    // A band's rows are done (decision 117).
+    Banded,
+}
+
+/// Rows of a tile a band of its generation made (decision 117): the tile's
+/// key, the first stored row (0 to 258, samples -1 to 257), and those rows'
+/// heights and control values, with the hole bits of the cells starting in
+/// them; [`merge_bands`] joins a tile's bands.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileBand {
+    pub key: TileKey,
+    pub first: u32,
+    pub heights: Vec<f32>,
+    pub holes: Option<Vec<u64>>,
+    pub control: Option<Vec<u32>>,
+}
+
+crate::codec::record!(TileBand {
+    key,
+    first,
+    heights,
+    holes,
+    control,
+});
+
+/// Tile `key` at `spacing` joined from `bands` (decision 117), each row from
+/// its band: the same tile generating it whole gives, without objects.
+/// `None` unless the bands cover every row once, alike in holes and
+/// control values, with valid heights and control values.
+pub fn merge_bands(key: TileKey, spacing: f32, bands: &[TileBand]) -> Option<Tile> {
+    let stride = TILE_STRIDE as usize;
+    let mut heights = vec![0.0; stride * stride];
+    let mut covered = vec![false; stride];
+    let holed = bands.first()?.holes.is_some();
+    let surfaced = bands.first()?.control.is_some();
+    let mut holes = holed.then(|| vec![0_u64; HOLE_WORDS]);
+    let mut control = surfaced.then(|| vec![0_u32; stride * stride]);
+    for band in bands {
+        let rows = band.heights.len() / stride;
+        let first = band.first as usize;
+        if band.key != key
+            || band.heights.len() != rows * stride
+            || first + rows > stride
+            || band.holes.is_some() != holed
+            || band.control.as_ref().map(Vec::len) != surfaced.then_some(rows * stride)
+        {
+            return None;
+        }
+        for row in &mut covered[first..first + rows] {
+            if std::mem::replace(row, true) {
+                return None;
+            }
+        }
+        let at = first * stride..(first + rows) * stride;
+        heights[at.clone()].copy_from_slice(&band.heights);
+        if let (Some(out), Some(values)) = (&mut control, &band.control) {
+            out[at].copy_from_slice(values);
+        }
+        if let (Some(out), Some(bits)) = (&mut holes, &band.holes) {
+            if bits.len() != HOLE_WORDS {
+                return None;
+            }
+            for (word, bits) in out.iter_mut().zip(bits) {
+                *word |= bits;
+            }
+        }
+    }
+    if !covered.iter().all(|&row| row) {
+        return None;
+    }
+    let tile = Tile::new(
+        key,
+        spacing,
+        heights.into_boxed_slice(),
+        holes.map(Vec::into_boxed_slice),
+    )?;
+    match control {
+        Some(control) => tile.with_control(control.into_boxed_slice()),
+        None => Some(tile),
+    }
 }
 
 /// Generates one tile from a layer stack in steps, so streaming can spread
@@ -354,6 +434,10 @@ pub struct Generator {
     // 114), and the shape until taken.
     staged: bool,
     shape: Option<Tile>,
+    // The stored rows a band generates alone (decision 117), and its rows
+    // once done until taken.
+    rows: Option<(usize, usize)>,
+    banded: Option<TileBand>,
 }
 
 /// A row's inputs to a surface's masks, reused row after row (decision
@@ -447,7 +531,77 @@ impl Generator {
             places: crate::placement::PlaceScratch::default(),
             staged: false,
             shape: None,
+            rows: None,
+            banded: None,
         }
+    }
+
+    /// A generator of stored rows `rows` of tile `key` alone (decision
+    /// 117; 0 to 259, samples -1 to 257): their heights, holes and control
+    /// values as generating the whole tile gives them, for [`merge_bands`]
+    /// to join with the tile's other bands ([`Self::take_band`]). `None`
+    /// for rows outside the tile.
+    pub fn band(
+        layers: Arc<Layers>,
+        pyramid: &Pyramid,
+        key: TileKey,
+        rows: Range<usize>,
+    ) -> Option<Self> {
+        if rows.start >= rows.end || rows.end > TILE_STRIDE as usize {
+            return None;
+        }
+        let mut generator = Self::new(layers, pyramid, key);
+        generator.rows = Some((rows.start, rows.end));
+        generator.stage = Stage::Coarse {
+            layer: 0,
+            row: generator.grid_rows().0,
+        };
+        Some(generator)
+    }
+
+    /// A band's rows once done (decision 117), taken once.
+    pub fn take_band(&mut self) -> Option<TileBand> {
+        self.banded.take()
+    }
+
+    /// The sample rows it samples heights of: every row (-1 to 257), or a
+    /// band's (decision 117) with the rows on either side its control
+    /// values read.
+    fn height_rows(&self) -> (i32, i32) {
+        let end = TILE_SAMPLES as i32 + 1;
+        match self.rows {
+            None => (-1, end),
+            Some((first, last)) => (
+                std::cmp::max(first as i32 - 2, -1),
+                std::cmp::min(last as i32, end),
+            ),
+        }
+    }
+
+    /// The coarse grid rows its height rows read: each sample row reads
+    /// four from the one after its grid point's.
+    fn grid_rows(&self) -> (usize, usize) {
+        let (first, end) = self.height_rows();
+        let low = i64::from(first).div_euclid(GRID_STEP) - GRID_FIRST - 1;
+        let high = i64::from(end - 1).div_euclid(GRID_STEP) - GRID_FIRST + 3;
+        (low as usize, std::cmp::min(high as usize, GRID))
+    }
+
+    /// The rows of hole cells it marks, each cell starting at its sample
+    /// row (0 to 256).
+    fn hole_rows(&self) -> (u32, u32) {
+        match self.rows {
+            None => (0, HOLE_CELLS as u32),
+            Some((first, end)) => (
+                first.saturating_sub(1) as u32,
+                std::cmp::min(end.saturating_sub(1), HOLE_CELLS) as u32,
+            ),
+        }
+    }
+
+    /// The stored rows it gives control values.
+    fn control_rows(&self) -> (usize, usize) {
+        self.rows.unwrap_or((0, TILE_STRIDE as usize))
     }
 
     /// The generator giving its tile `surface`'s control values.
@@ -482,6 +636,19 @@ impl Generator {
     /// 112), under the same budget as generation: the tile it returns
     /// holds those alone.
     pub fn far(tile: Tile, layers: Arc<Layers>, surface: Arc<BiomeRules>) -> Self {
+        Self::placing(tile, layers, surface, Placing::Far)
+    }
+
+    /// A generator placing `placing`'s objects of `surface`'s layers on
+    /// `tile`, generated from `layers` without them (decisions 112 and
+    /// 117), under the same budget as generation: the tile it returns
+    /// holds those alone, as generating it whole places them.
+    pub fn placing(
+        tile: Tile,
+        layers: Arc<Layers>,
+        surface: Arc<BiomeRules>,
+        placing: Placing,
+    ) -> Self {
         Self {
             layers,
             key: tile.key(),
@@ -504,13 +671,15 @@ impl Generator {
             weights: Vec::new(),
             tile: Some(tile.with_placed(Vec::new())),
             placed: Vec::new(),
-            placing: Placing::Far,
+            placing,
             spans: Vec::new(),
             zs: Box::default(),
             inputs: SurfaceInputs::default(),
             places: crate::placement::PlaceScratch::default(),
             staged: false,
             shape: None,
+            rows: None,
+            banded: None,
         }
     }
 
@@ -556,7 +725,7 @@ impl Generator {
         if self.surface.is_none() {
             return Stage::Done;
         }
-        if self.staged {
+        if self.staged && self.rows.is_none() {
             self.shape = Tile::new(
                 self.key,
                 self.spacing,
@@ -564,7 +733,9 @@ impl Generator {
                 self.holes.clone(),
             );
         }
-        Stage::Biomes { row: 0 }
+        Stage::Biomes {
+            row: self.control_rows().0,
+        }
     }
 
     /// Control values of stored row `row` (0 to 258, samples -1 to 257),
@@ -674,13 +845,15 @@ impl Generator {
             match self.stage {
                 Stage::Coarse { layer, row } => {
                     if layer >= self.grids.len() {
-                        self.stage = Stage::Samples { row: -1 };
+                        self.stage = Stage::Samples {
+                            row: self.height_rows().0,
+                        };
                         continue;
                     }
                     let Some(tables) = self.layers.noise(layer) else {
                         self.stage = Stage::Coarse {
                             layer: layer + 1,
-                            row: 0,
+                            row: self.grid_rows().0,
                         };
                         continue;
                     };
@@ -696,7 +869,8 @@ impl Generator {
                         tables.coarse(x, z, coarse, gullies, &mut grid[at..at + len]);
                     }
                     *budget = budget.saturating_sub(GRID as u64 * COARSE_COST);
-                    self.stage = if row + 1 < GRID {
+                    let (first, end) = self.grid_rows();
+                    self.stage = if row + 1 < end {
                         Stage::Coarse {
                             layer,
                             row: row + 1,
@@ -704,7 +878,7 @@ impl Generator {
                     } else {
                         Stage::Coarse {
                             layer: layer + 1,
-                            row: 0,
+                            row: first,
                         }
                     };
                 }
@@ -716,10 +890,11 @@ impl Generator {
                         .map(|grid| if grid.is_some() { NOISE_SAMPLE_COST } else { 1 })
                         .sum::<u64>();
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * layers.max(1));
-                    self.stage = if row < TILE_SAMPLES as i32 {
+                    let (first, end) = self.hole_rows();
+                    self.stage = if row + 1 < self.height_rows().1 {
                         Stage::Samples { row: row + 1 }
-                    } else if self.holes.is_some() {
-                        Stage::Holes { row: 0 }
+                    } else if self.holes.is_some() && first < end {
+                        Stage::Holes { row: first }
                     } else {
                         self.after_holes()
                     };
@@ -735,7 +910,7 @@ impl Generator {
                         }
                     }
                     *budget = budget.saturating_sub(HOLE_CELLS as u64);
-                    self.stage = if (row as usize) + 1 < HOLE_CELLS {
+                    self.stage = if row + 1 < self.hole_rows().1 {
                         Stage::Holes { row: row + 1 }
                     } else {
                         self.after_holes()
@@ -745,12 +920,28 @@ impl Generator {
                     self.surface_row(row);
                     let cost = self.surface.as_ref().map_or(1, |surface| surface.cost());
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * cost);
-                    self.stage = if row + 1 < TILE_STRIDE as usize {
+                    self.stage = if row + 1 < self.control_rows().1 {
                         Stage::Biomes { row: row + 1 }
                     } else {
                         Stage::Done
                     };
                 }
+                // A band hands out its own rows (decision 117).
+                Stage::Done if self.rows.is_some() => {
+                    let (first, end) = self.control_rows();
+                    let stride = TILE_STRIDE as usize;
+                    let at = first * stride..end * stride;
+                    self.banded = Some(TileBand {
+                        key: self.key,
+                        first: first as u32,
+                        heights: self.heights[at.clone()].to_vec(),
+                        holes: self.holes.as_deref().map(<[u64]>::to_vec),
+                        control: self.control.as_deref().map(|control| control[at].to_vec()),
+                    });
+                    self.stage = Stage::Banded;
+                    return None;
+                }
+                Stage::Banded => return None,
                 Stage::Done => {
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;

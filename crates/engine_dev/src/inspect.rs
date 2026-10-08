@@ -522,7 +522,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains; resident, loading, shape-only (decision 114), waiting (decision 115), kept in memory, restored from there and generating ahead (decision 116) and dropped tiles; patches drawn and those standing in for finer levels not resident yet; and of those the surroundings' (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
+            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains; resident, loading, shape-only (decision 114), waiting (decision 115), kept, restored and idle (decision 116), banded (decision 117) and dropped tiles; patches drawn and those standing in for finer levels; and the surroundings' (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -535,6 +535,7 @@ impl DevTools {
                     cached_bytes: stats.cached_bytes,
                     restored_tiles: stats.restored_tiles,
                     idle_tiles: stats.idle_tiles,
+                    banded_tiles: stats.banded_tiles,
                     dropped_tiles: stats.dropped_tiles,
                     patches: stats.patches,
                     fallback_patches: stats.fallback_patches,

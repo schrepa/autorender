@@ -51,14 +51,16 @@ use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
-use engine_terrain::jobs::{BAKE_JOB, FAR_JOB, StackView, TILE_JOB, TerrainRecipe};
+use engine_terrain::jobs::{
+    BAKE_JOB, BAND_JOB, FAR_JOB, PLACE_JOB, StackView, TILE_JOB, TerrainRecipe,
+};
 use engine_terrain::{
     Baked, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats,
     Fall, FileHeader, FormatError, Generator, HydrologyStage, HydrologyStats, Layer, Layers,
     LodRanges, Mask, NavOptions, NavPath, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE,
     Patch, PathStage, Placing, Pyramid, Remap, Route, RouteOptions, Selection, Stamp, TILE_QUADS,
-    TILE_STRIDE, TerrainBake, Tile, TileKey, TileSample, WantedTile, WantedView, decode_tile,
-    merge_placed,
+    TILE_STRIDE, TerrainBake, Tile, TileBand, TileKey, TileSample, WantedTile, WantedView,
+    decode_tile, merge_placed,
 };
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
@@ -772,6 +774,11 @@ pub struct TerrainSettings {
     /// 116), 0 to 8; within the keeping reach (2.5) none.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
     pub idle_reach: f32,
+    /// The most bands of rows a tile under the view generates in at once
+    /// on workers the other such tiles leave free (decision 117), 1 (whole
+    /// tiles) to 16.
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
+    pub max_bands: u32,
 }
 
 /// How terrain loads while the camera moves fast (decision 115): the
@@ -881,6 +888,7 @@ impl Default for TerrainSettings {
             cache_bytes: 256 << 20,
             upload_bytes: 8 << 20,
             idle_reach: 3.0,
+            max_bands: 4,
         }
     }
 }
@@ -925,6 +933,9 @@ impl TerrainSettings {
             return Err(InvalidSetting::new("upload_bytes", "must be at least 1"));
         }
         check_range("idle_reach", self.idle_reach, 0.0..=8.0)?;
+        if !(1..=16).contains(&self.max_bands) {
+            return Err(InvalidSetting::new("max_bands", "must be in [1, 16]"));
+        }
         Ok(())
     }
 
@@ -973,6 +984,7 @@ impl TerrainSettings {
             cache_bytes: self.cache_bytes,
             upload_bytes: self.upload_bytes.max(1),
             idle_reach: crate::math::clamp(finite(self.idle_reach, defaults.idle_reach), 0.0, 8.0),
+            max_bands: self.max_bands.clamp(1, 16),
         }
     }
 }
@@ -1025,6 +1037,9 @@ pub struct TerrainStats {
     pub cached_bytes: u64,
     pub restored_tiles: u64,
     pub idle_tiles: u32,
+    /// Tiles that generated in bands of rows on several workers since
+    /// terrains started (decision 117).
+    pub banded_tiles: u64,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
     /// Patches the camera draws, and of those how many stand in for finer
@@ -1057,6 +1072,8 @@ struct Work {
     end: f64,
     /// Bytes tiles may still bring the GPU this frame (decision 116).
     upload: std::cell::Cell<u64>,
+    /// The most bands a tile under the view splits into (decision 117).
+    bands: usize,
 }
 
 impl Work {
@@ -1180,6 +1197,16 @@ fn load_tiles(
                     slots.jobs.cancel(id);
                 }
                 state.far_wanted.insert(key, 0);
+            }
+            let banded = state
+                .banded
+                .drain()
+                .flat_map(|(_, banding)| banding.jobs.into_iter().map(|(id, _)| id));
+            let placing = state.placements.drain().map(|(_, (id, _, _, _))| id);
+            for id in banded.chain(placing).collect::<Vec<_>>() {
+                if let Some(slots) = slots.as_deref_mut() {
+                    slots.jobs.cancel(id);
+                }
             }
             for key in std::mem::take(&mut state.far_wanted).into_keys() {
                 state.tiles.remove(&key);
@@ -1478,6 +1505,24 @@ fn generate_on_workers(
     state
         .far_wanted
         .retain(|key, _| keep.contains(key) && tiles.contains_key(key));
+    state.banded.retain(|key, banding| {
+        let wanted = banding.made == revision && keep.contains(key);
+        if !wanted {
+            for &(id, ref band) in &banding.jobs {
+                if band.is_none() {
+                    slots.jobs.cancel(id);
+                }
+            }
+        }
+        wanted
+    });
+    state.placements.retain(|key, &mut (id, made, _, _)| {
+        let wanted = made == revision && keep.contains(key) && tiles.contains_key(key);
+        if !wanted {
+            slots.jobs.cancel(id);
+        }
+        wanted
+    });
     let handed: Vec<(TileKey, (JobId, u64, u32, Placing))> = state
         .dispatched
         .iter()
@@ -1514,6 +1559,116 @@ fn generate_on_workers(
                     state.far_wanted.insert(key, priority);
                 }
                 state.insert(tile);
+                inserted = true;
+            }
+            Some(_) => {}
+            None => {
+                state.failed.insert(key, frame);
+                state.worker_failures += 1;
+            }
+        }
+    }
+    // Tiles generating in bands (decision 117) join once every band is
+    // done: resident at once with their materials, their objects placed by
+    // a job after.
+    let joining: Vec<TileKey> = state.banded.keys().copied().collect();
+    for key in joining {
+        if inserted && (work.expired() || !work.uploads()) {
+            break;
+        }
+        let Some(banding) = state.banded.get_mut(&key) else {
+            continue;
+        };
+        let mut failed = false;
+        for (id, band) in &mut banding.jobs {
+            if band.is_none()
+                && let Some(output) = slots.jobs.take(*id)
+            {
+                match output
+                    .ok()
+                    .and_then(|bytes| engine_terrain::jobs::band_output(&bytes).ok())
+                {
+                    Some(done) => *band = Some(done),
+                    None => failed = true,
+                }
+            }
+        }
+        if !failed && banding.jobs.iter().any(|(_, band)| band.is_none()) {
+            continue;
+        }
+        let Some(banding) = state.banded.remove(&key) else {
+            continue;
+        };
+        let (mut bands, mut running) = (Vec::new(), Vec::new());
+        for (id, band) in banding.jobs {
+            match band {
+                Some(band) => bands.push(band),
+                None => running.push(id),
+            }
+        }
+        let spacing = state.terrain.pyramid.spacing(u32::from(key.level));
+        let tile = (!failed)
+            .then(|| engine_terrain::merge_bands(key, spacing, &bands))
+            .flatten();
+        let Some(tile) = tile else {
+            for id in running {
+                slots.jobs.cancel(id);
+                slots.release();
+            }
+            state.failed.insert(key, frame);
+            state.worker_failures += 1;
+            continue;
+        };
+        if banding.made != revision || !target.contains(&key) {
+            continue;
+        }
+        work.upload(2 * TILE_ARRAY_BYTES);
+        state.banded_tiles += 1;
+        state.stale.remove(&key);
+        state.failed.remove(&key);
+        if rules.places(key.level, banding.placing) {
+            let input = engine_terrain::jobs::place_input(&recipe, &tile, banding.placing);
+            let identity = engine_terrain::jobs::place_identity(&recipe, key, banding.placing);
+            let id = slots
+                .jobs
+                .submit_cacheable(PLACE_JOB, input, banding.priority, identity);
+            state
+                .placements
+                .insert(key, (id, revision, banding.priority, banding.placing));
+            state.shaped.insert(key);
+        } else {
+            state.shaped.remove(&key);
+        }
+        state.insert(tile);
+        inserted = true;
+    }
+    // Then their objects (decision 117).
+    let placed: Vec<(TileKey, (JobId, u64, u32, Placing))> = state
+        .placements
+        .iter()
+        .map(|(&key, &job)| (key, job))
+        .collect();
+    for (key, (id, made, priority, placing)) in placed {
+        if inserted && work.expired() {
+            break;
+        }
+        let Some(output) = slots.jobs.take(id) else {
+            continue;
+        };
+        state.placements.remove(&key);
+        let Some(tile) = state.tiles.get(&key).cloned() else {
+            continue;
+        };
+        match output
+            .ok()
+            .and_then(|bytes| engine_terrain::jobs::far_output(&bytes).ok())
+        {
+            Some(objects) if made == revision && target.contains(&key) => {
+                state.shaped.remove(&key);
+                if placing == Placing::Near {
+                    state.far_wanted.insert(key, priority);
+                }
+                state.insert(Tile::clone(&tile).with_placed(objects));
                 inserted = true;
             }
             Some(_) => {}
@@ -1611,6 +1766,8 @@ fn generate_on_workers(
         .iter()
         .filter(|(key, _)| {
             !state.dispatched.contains_key(key)
+                && !state.banded.contains_key(key)
+                && !state.placements.contains_key(key)
                 && !state
                     .failed
                     .get(key)
@@ -1626,6 +1783,13 @@ fn generate_on_workers(
             .map(|(&key, &priority)| (job_priority(VIEW_JOBS, priority & 0xff_ffff), key, true)),
     );
     wanted.sort_by_key(|&(priority, key, far)| (priority, far, key));
+    // Tiles under the view split into bands of rows across the slots the
+    // urgent tiles left share (decision 117): each arrives sooner, though
+    // workers do a little more in all.
+    let mut urgent_left = wanted
+        .iter()
+        .filter(|&&(priority, _, far)| !far && job_class(priority) == URGENT_JOBS)
+        .count();
     for (priority, key, far) in wanted {
         if !slots.take(priority) {
             break;
@@ -1653,6 +1817,48 @@ fn generate_on_workers(
             } else {
                 Placing::All
             };
+            let urgent = job_class(priority) == URGENT_JOBS;
+            urgent_left = urgent_left.saturating_sub(usize::from(urgent));
+            let bands = if urgent && !resident {
+                std::cmp::min(1 + slots.urgent / (urgent_left + 1), work.bands)
+            } else {
+                1
+            };
+            if bands > 1 {
+                let size = (TILE_STRIDE as usize).div_ceil(bands);
+                let mut jobs = Vec::with_capacity(bands);
+                for band in 0..bands {
+                    if band > 0 && !slots.take(priority) {
+                        break;
+                    }
+                    let end = std::cmp::min((band + 1) * size, TILE_STRIDE as usize);
+                    let rows = (band * size) as u32..end as u32;
+                    let input = engine_terrain::jobs::band_input(&recipe, key, rows);
+                    let id = slots
+                        .jobs
+                        .submit_cacheable(BAND_JOB, input.clone(), priority, input);
+                    jobs.push((id, None));
+                }
+                // Unless every band found a slot, the tile generates whole.
+                let covered = jobs.len() * size;
+                if covered < TILE_STRIDE as usize {
+                    for (id, _) in jobs.drain(..) {
+                        slots.jobs.cancel(id);
+                        slots.release();
+                    }
+                } else {
+                    state.banded.insert(
+                        key,
+                        Banding {
+                            made: revision,
+                            priority,
+                            placing,
+                            jobs,
+                        },
+                    );
+                    continue;
+                }
+            }
             let input = engine_terrain::jobs::tile_input(&recipe, key, placing, !resident);
             // Staged or not, the same tile (decision 116).
             let identity = engine_terrain::jobs::tile_input(&recipe, key, placing, false);
@@ -1668,6 +1874,8 @@ fn generate_on_workers(
     // tiles within the idle reach (decision 116), whole, into memory.
     if missing.is_empty()
         && state.dispatched.is_empty()
+        && state.banded.is_empty()
+        && state.placements.is_empty()
         && state.far_wanted.is_empty()
         && state.far_jobs.is_empty()
     {
@@ -1891,6 +2099,23 @@ struct TerrainState {
     /// first.
     idle: HashMap<TileKey, (JobId, u64)>,
     ahead: Vec<TileKey>,
+    /// Tiles generating in bands of rows on several workers (decision
+    /// 117); tiles their bands made whose objects a job places, each with
+    /// that job, the recipe's revision, its priority and its placing; and
+    /// how many tiles generated so.
+    banded: HashMap<TileKey, Banding>,
+    placements: HashMap<TileKey, (JobId, u64, u32, Placing)>,
+    banded_tiles: u64,
+}
+
+/// A tile generating in bands of rows (decision 117): the recipe's revision
+/// and the priority it generates at, the objects placed after, and its
+/// bands' jobs, each with its band once done.
+struct Banding {
+    made: u64,
+    priority: u32,
+    placing: Placing,
+    jobs: Vec<(JobId, Option<TileBand>)>,
 }
 
 /// A tile kept in memory after it left the view (decision 116): its bytes
@@ -1970,6 +2195,9 @@ impl TerrainState {
             cached_bytes: 0,
             idle: HashMap::new(),
             ahead: Vec::new(),
+            banded: HashMap::new(),
+            placements: HashMap::new(),
+            banded_tiles: 0,
         }
     }
 
@@ -1984,6 +2212,14 @@ impl TerrainState {
             .extend(self.far_jobs.values().map(|&(id, _)| id));
         retired.jobs.extend(self.bake_job);
         retired.jobs.extend(self.idle.values().map(|&(id, _)| id));
+        retired.jobs.extend(
+            self.banded
+                .values()
+                .flat_map(|banding| banding.jobs.iter().map(|&(id, _)| id)),
+        );
+        retired
+            .jobs
+            .extend(self.placements.values().map(|&(id, _, _, _)| id));
         retired
             .recipes
             .extend(self.recipe.as_ref().map(|recipe| recipe.key.clone()));
@@ -2851,6 +3087,7 @@ impl Terrains {
             clock: Some(clock),
             end: clock() + milliseconds,
             upload: std::cell::Cell::new(self.upload_left),
+            bands: settings.max_bands as usize,
         };
         let mut budget = work.slice;
         let frame = self.frame;
@@ -3034,6 +3271,7 @@ impl Terrains {
             upload: std::cell::Cell::new(
                 u64::from(settings.upload_bytes).saturating_sub(std::mem::take(&mut self.between)),
             ),
+            bands: settings.max_bands as usize,
         };
         let mut budget = work.slice;
         // Speed-aware detail (decision 115): the finest levels waiting at
@@ -3115,6 +3353,8 @@ impl Terrains {
                 && state.cached_bytes < settings.cache_bytes
                 && state.missing.is_empty()
                 && state.dispatched.is_empty()
+                && state.banded.is_empty()
+                && state.placements.is_empty()
                 && state.far_wanted.is_empty()
                 && state.far_jobs.is_empty();
             let (wanted, headed, held, around) = {
@@ -3357,7 +3597,10 @@ impl Terrains {
                 + state.arrivals.len()
                 + state.dispatched.len()
                 + state.far_wanted.len()
-                + state.far_jobs.len()) as u32;
+                + state.far_jobs.len()
+                + state.banded.len()
+                + state.placements.len()) as u32;
+            stats.banded_tiles += state.banded_tiles;
             if settings.enabled {
                 let tiles = &state.tiles;
                 engine_terrain::select_patches(
