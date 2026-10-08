@@ -4,7 +4,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3, Vec4};
 
 use engine_math::{max, min};
 
@@ -296,6 +296,28 @@ const QUARTER_WEIGHTS: [[f32; 4]; 4] = [
     [-0.023_437_5, 0.226_562_5, 0.867_187_5, -0.070_312_5],
 ];
 
+/// [`QUARTER_WEIGHTS`] by tap, a coarse cell's four samples in lanes.
+const LANE_WEIGHTS: [Vec4; 4] = {
+    let w = QUARTER_WEIGHTS;
+    [
+        Vec4::new(w[0][0], w[1][0], w[2][0], w[3][0]),
+        Vec4::new(w[0][1], w[1][1], w[2][1], w[3][1]),
+        Vec4::new(w[0][2], w[1][2], w[2][2], w[3][2]),
+        Vec4::new(w[0][3], w[1][3], w[2][3], w[3][3]),
+    ]
+};
+
+/// [`interpolate`] for the four samples of a coarse cell at once (decision
+/// 121), sample `k` in lane `k` with [`QUARTER_WEIGHTS`]`[k]`.
+#[inline(always)]
+fn interpolate4(out: &mut [Vec4], taps: [&[f32]; 4]) {
+    let [a, b, c, d] = taps;
+    let [wa, wb, wc, wd] = LANE_WEIGHTS;
+    for ((((value, &a), &b), &c), &d) in out.iter_mut().zip(a).zip(b).zip(c).zip(d) {
+        *value = wa * a + wb * b + wc * c + wd * d;
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Stage {
     Coarse { layer: usize, row: usize },
@@ -407,9 +429,10 @@ pub struct Generator {
     row: Box<[f32]>,
     values: Box<[f32]>,
     // A row's coarse states interpolated along z, grid column by column,
-    // and one sample's.
+    // and one sample's, and a coarse cell's four samples' in lanes.
     column: Box<[f32]>,
     state: Box<[f32]>,
+    lanes: Box<[Vec4]>,
     min: Vec2,
     max: Vec2,
     // The surface whose control values the tile gets, their samples, and
@@ -522,6 +545,7 @@ impl Generator {
             values: vec![0.0; stride].into_boxed_slice(),
             column: vec![0.0; GRID * widest].into_boxed_slice(),
             state: vec![0.0; widest].into_boxed_slice(),
+            lanes: vec![Vec4::ZERO; widest].into_boxed_slice(),
             min,
             max,
             surface: None,
@@ -681,6 +705,7 @@ impl Generator {
             values: Box::default(),
             column: Box::default(),
             state: Box::default(),
+            lanes: Box::default(),
             min: Vec2::ZERO,
             max: Vec2::ZERO,
             surface: Some(surface),
@@ -909,11 +934,23 @@ impl Generator {
                         * self.spacing;
                     let grid = self.grids[layer].as_mut().expect("noise layers have grids");
                     let len = state_len(coarse);
-                    for column in 0..GRID {
-                        let x = (self.first[0] + (GRID_FIRST + column as i64) * GRID_STEP) as f32
-                            * self.spacing;
+                    let (first, spacing) = (self.first[0], self.spacing);
+                    let x = |column: usize| {
+                        (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing
+                    };
+                    // Four columns at once (decision 121), the rest one by
+                    // one, to the same bits.
+                    let mut column = 0;
+                    while column < GRID {
                         let at = (row * GRID + column) * len;
-                        tables.coarse(x, z, coarse, gullies, &mut grid[at..at + len]);
+                        if column + 4 <= GRID {
+                            let xs = Vec4::from_array([0, 1, 2, 3].map(|lane| x(column + lane)));
+                            tables.coarse4(xs, z, coarse, gullies, &mut grid[at..at + 4 * len]);
+                            column += 4;
+                        } else {
+                            tables.coarse(x(column), z, coarse, gullies, &mut grid[at..at + len]);
+                            column += 1;
+                        }
                     }
                     *budget = budget.saturating_sub(GRID as u64 * COARSE_COST);
                     let (first, end) = self.grid_rows();
@@ -1078,19 +1115,35 @@ impl Generator {
                 let taps = [0, 1, 2, 3].map(|row| tap(row, column));
                 interpolate(sum, vertical, taps);
             }
-            // Then along x for every sample, which sums every octave.
+            // Then along x for every sample, which sums every octave: the
+            // four samples of a coarse cell at once (decision 121), the
+            // rest one by one, to the same bits.
             let sum = &mut self.state[..len];
-            for (index, value) in self.values.iter_mut().enumerate() {
+            let lanes = &mut self.lanes[..len];
+            let samples = self.values.len();
+            let mut index = 0;
+            while index < samples {
                 let sample = index as i64 - 1;
                 let coarse = sample.div_euclid(GRID_STEP);
-                let weights = QUARTER_WEIGHTS[sample.rem_euclid(GRID_STEP) as usize];
+                let quarter = sample.rem_euclid(GRID_STEP) as usize;
                 let first = (coarse - 1 - GRID_FIRST) as usize;
                 let taps = [0, 1, 2, 3].map(|tap| {
                     let at = (first + tap) * len;
                     &self.column[at..at + len]
                 });
-                interpolate(sum, weights, taps);
-                *value = tables.finish(self.xs[index], z, sum, octaves, fine.clone());
+                if quarter == 0 && index + 4 <= samples {
+                    interpolate4(lanes, taps);
+                    let xs = Vec4::from_slice(&self.xs[index..index + 4]);
+                    tables
+                        .finish4(xs, z, lanes, octaves, fine.clone())
+                        .write_to_slice(&mut self.values[index..index + 4]);
+                    index += 4;
+                } else {
+                    interpolate(sum, QUARTER_WEIGHTS[quarter], taps);
+                    self.values[index] =
+                        tables.finish(self.xs[index], z, sum, octaves, fine.clone());
+                    index += 1;
+                }
             }
             self.layers.apply_noise(layer, &mut self.row, &self.values);
         }
