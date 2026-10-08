@@ -150,6 +150,12 @@ impl Horizons {
         ]
     }
 
+    /// Terrains the records texture holds (two texels each), which the
+    /// main passes' lookups loop over (decision 052).
+    pub(crate) fn record_count(&self) -> u32 {
+        self.records.width() / 2
+    }
+
     /// Terrains casting long shadows.
     pub(crate) fn count(&self) -> u32 {
         self.maps

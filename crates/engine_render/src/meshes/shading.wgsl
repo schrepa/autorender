@@ -708,10 +708,16 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
         + lighting.horizon.rgb * rim) * interior.x + reflection) * point.occlusion * covered_sky
         + point.diffuse_color * point.bounce * covered_sky * interior.x;
-    let sun_light = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb
-        * sun_visibility(point.world + point.shadow_offset, point.geometric, point.world_dx,
-            point.world_dy, point.distance, point.on_terrain) * (1.0 - point.sun_shade)
-        * interior.y;
+    // The sun's light before shadows: where it, the point's sun shade or its
+    // interior's share is zero, so is what shadows leave, which then goes
+    // unlooked up.
+    let sunlit = (point.diffuse_color * wrapped + highlight * specular) * lighting.sun_color.rgb;
+    var visible = 1.0;
+    if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && interior.y != 0.0 {
+        visible = sun_visibility(point.world + point.shadow_offset, point.geometric,
+            point.world_dx, point.world_dy, point.distance, point.on_terrain);
+    }
+    let sun_light = sunlit * visible * (1.0 - point.sun_shade) * interior.y;
     let emitted = (point.albedo * point.emission + point.emissive) * lighting.effects.x;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);
@@ -821,6 +827,10 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
         var falloff = window * window / max(d2, 0.01);
         if light.cos_outer > -1.5 {
             falloff *= smoothstep(light.cos_outer, light.cos_inner, dot(-l, light.direction));
+        }
+        // Outside its cone a spot adds exactly nothing.
+        if falloff == 0.0 {
+            continue;
         }
         let half_vector = normalize(point.view + l);
         let n_h = max(dot(point.normal, half_vector), 0.0);

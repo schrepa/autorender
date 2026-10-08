@@ -485,6 +485,7 @@ impl Regions {
                 (0..levels.len())
                     .filter(|&index| levels.has_pending(index))
                     .fold(0, |bits, index| bits | 1 << index) as f32,
+                // The horizon records, which the shadows set (decision 052).
                 0.0,
             ],
         }

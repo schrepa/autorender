@@ -265,6 +265,9 @@ pub(crate) struct ShadowPass {
     layout: (u64, u64),
     material_layout: wgpu::BindGroupLayout,
     maps: ShadowMaps,
+    // Terrains whose horizon records lookups loop over (decision 052), as
+    // last set, which the lookup uniform carries.
+    horizon_records: f32,
     kept: KeptMap,
     levels: KeptLevels,
     casters: CasterGroups,
@@ -307,6 +310,7 @@ impl ShadowPass {
             layout,
             material_layout: material_layout.clone(),
             maps: ShadowMaps::new(device),
+            horizon_records: 0.0,
             kept: KeptMap::default(),
             levels: KeptLevels::default(),
             casters: CasterGroups::new(),
@@ -655,10 +659,9 @@ impl ShadowPass {
             queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
             self.written_cull = Some(cull);
         }
-        self.maps.write_uniform(
-            queue,
-            regions.lookup_uniform(&settings, classify, &self.levels),
-        );
+        let mut lookup = regions.lookup_uniform(&settings, classify, &self.levels);
+        lookup.level_state[3] = self.horizon_records;
+        self.maps.write_uniform(queue, lookup);
         // Bindings: poses of this frame, and the selection inputs.
         if self.pose_groups.stale(&poses.generation)
             || self
@@ -737,6 +740,14 @@ impl ShadowPass {
     /// Creates the pipeline of placed objects' impostor cards (decision
     /// 060), whose group 2 `impostor_layout` binds, once shadows have
     /// pipelines.
+    /// Sets how many terrains' horizon records the lookups loop over
+    /// (decision 052) once the terrain's horizon maps are prepared, after
+    /// the frame's lookup uniform: written before the frame is submitted.
+    pub(crate) fn set_horizon_records(&mut self, queue: &wgpu::Queue, count: u32) {
+        self.horizon_records = count as f32;
+        self.maps.write_horizon_records(queue, self.horizon_records);
+    }
+
     pub(crate) fn prepare_impostor_casters(
         &mut self,
         device: &wgpu::Device,

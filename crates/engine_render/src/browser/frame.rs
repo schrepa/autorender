@@ -228,6 +228,10 @@ impl Renderer {
                 kind.gpu_mode,
             ),
         );
+        // Lookups loop over the horizon records the terrain now binds.
+        let horizon_records = self.terrain.horizons.record_count();
+        self.shadows
+            .set_horizon_records(&self.queue, horizon_records);
         let scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
         // Water on terrains (decision 067).
@@ -566,7 +570,7 @@ impl Renderer {
         self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
         self.prepare_scatter_impostors(snapshot, gpu_mode, &mut mip_encoder);
         drop(profile_upload);
-        self.order_draws();
+        self.order_draws(snapshot);
         AssetUploads {
             mesh_bytes: mesh_upload_bytes,
             texture_bytes: texture_upload_bytes,

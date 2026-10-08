@@ -640,6 +640,8 @@ pub(crate) const TERRAIN: Table = Table {
         texture(30, "terrain_sky", Float, D2Array, F),
         // Runtime deformation's map (decision 083).
         read(37, "terrain_deformation", F),
+        // Gathers of the control values (nearest).
+        sampler(50, "terrain_control_sampler", NonFiltering, F),
     ],
 };
 

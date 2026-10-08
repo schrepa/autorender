@@ -23,6 +23,8 @@ override TERRAIN_HOLES: bool = false;
 // heights: per sample, its two strongest surface materials (bits 0 to 7
 // and 8 to 15), the second's share (16 to 23) and its strongest biome.
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
+// Gathers a 2x2 block of control values at once.
+@group(1) @binding(50) var terrain_control_sampler: sampler;
 
 // A surface material: its linear color (its base color factor with maps)
 // and roughness; its tiling in meters, height contrast, projection and its
@@ -127,27 +129,43 @@ fn vs_terrain_temporal(input: PatchInput) -> TerrainTemporalOutput {
 // Value noise of the material, 0 to 1.
 fn terrain_hash(cell: vec2<f32>) -> f32 {
     let p = vec2<u32>(vec2<i32>(cell));
-    var h = (p.x * 0x8da6b343u) ^ (p.y * 0xd8163841u);
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
+    return terrain_hash_of((p.x * 0x8da6b343u) ^ (p.y * 0xd8163841u));
 }
 
 fn terrain_value(p: vec2<f32>) -> f32 {
     let cell = floor(p);
     let f = p - cell;
     let u = f * f * (3.0 - 2.0 * f);
-    let a = terrain_hash(cell);
-    let b = terrain_hash(cell + vec2<f32>(1.0, 0.0));
-    let c = terrain_hash(cell + vec2<f32>(0.0, 1.0));
-    let d = terrain_hash(cell + vec2<f32>(1.0, 1.0));
+    // `terrain_hash` of the four corners: the next cell's products are the
+    // cell's plus each multiplier (wrapping integers), one product per axis.
+    let q = vec2<u32>(vec2<i32>(cell));
+    let x0 = q.x * 0x8da6b343u;
+    let x1 = x0 + 0x8da6b343u;
+    let y0 = q.y * 0xd8163841u;
+    let y1 = y0 + 0xd8163841u;
+    let a = terrain_hash_of(x0 ^ y0);
+    let b = terrain_hash_of(x1 ^ y0);
+    let c = terrain_hash_of(x0 ^ y1);
+    let d = terrain_hash_of(x1 ^ y1);
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+// `terrain_hash` after its first products.
+fn terrain_hash_of(mixed: u32) -> f32 {
+    var h = mixed;
+    h = (h ^ (h >> 16u)) * 0x7feb352du;
+    h = (h ^ (h >> 15u)) * 0x846ca68bu;
+    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
 }
 
 // Noise of feature size `size` meters at `p`, fading to its mean where a
 // pixel spans more than its features (`footprint` meters).
 fn terrain_detail(p: vec2<f32>, size: f32, footprint: f32) -> f32 {
     let fade = saturate(2.0 - 2.0 * footprint / size);
+    // Faded out entirely, it is its mean.
+    if fade == 0.0 {
+        return 0.5;
+    }
     return 0.5 + (terrain_value(p / size) - 0.5) * fade;
 }
 
@@ -300,14 +318,18 @@ fn terrain_blend_add(blend: ptr<function, TerrainBlend>, material: u32, weight: 
     }
 }
 
-// Adds `weight` shared between one control texel's two materials by its
-// blend.
-fn terrain_texel_blend(blend: ptr<function, TerrainBlend>, texel: vec2<u32>, layer: u32,
-        weight: f32) {
-    let control = textureLoad(terrain_control, texel, layer, 0).x;
+// Adds `weight` shared between control value `control`'s two materials by
+// its blend. Adding nothing changes no weight and inserts no material.
+fn terrain_control_blend(blend: ptr<function, TerrainBlend>, control: u32, weight: f32) {
     let share = f32((control >> 16u) & 0xffu) * (1.0 / 255.0);
-    terrain_blend_add(blend, control & 0xffu, weight * (1.0 - share));
-    terrain_blend_add(blend, (control >> 8u) & 0xffu, weight * share);
+    let first = weight * (1.0 - share);
+    if first != 0.0 {
+        terrain_blend_add(blend, control & 0xffu, first);
+    }
+    let second = weight * share;
+    if second != 0.0 {
+        terrain_blend_add(blend, (control >> 8u) & 0xffu, second);
+    }
 }
 
 // Adds `weight` of the materials at terrain-local `local` in `level`'s
@@ -338,10 +360,26 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
             let f = within - vec2<f32>(corner);
             let texel = corner + vec2<u32>(1u);
             let own = left * (1.0 - fade);
-            terrain_texel_blend(blend, texel, layer, own * (1.0 - f.x) * (1.0 - f.y));
-            terrain_texel_blend(blend, texel + vec2<u32>(1u, 0u), layer, own * f.x * (1.0 - f.y));
-            terrain_texel_blend(blend, texel + vec2<u32>(0u, 1u), layer, own * (1.0 - f.x) * f.y);
-            terrain_texel_blend(blend, texel + vec2<u32>(1u, 1u), layer, own * f.x * f.y);
+            // The 2x2 block's four control values in one gather at its
+            // shared corner (x: (0, 1), y: (1, 1), z: (1, 0), w: (0, 0)),
+            // which no subtexel rounding moves off the block; layers are 259
+            // samples a side.
+            let controls = textureGather(0, terrain_control, terrain_control_sampler,
+                (vec2<f32>(texel) + vec2<f32>(1.0)) / 259.0, layer);
+            let weights = vec4<f32>(own * (1.0 - f.x) * (1.0 - f.y), own * f.x * (1.0 - f.y),
+                own * (1.0 - f.x) * f.y, own * f.x * f.y);
+            if weights.x != 0.0 {
+                terrain_control_blend(blend, controls.w, weights.x);
+            }
+            if weights.y != 0.0 {
+                terrain_control_blend(blend, controls.z, weights.y);
+            }
+            if weights.z != 0.0 {
+                terrain_control_blend(blend, controls.x, weights.z);
+            }
+            if weights.w != 0.0 {
+                terrain_control_blend(blend, controls.y, weights.w);
+            }
         }
         left *= fade;
         if left <= 0.0 {
@@ -517,6 +555,9 @@ fn terrain_mapped_normal(mapping: TerrainMapping, world: vec3<f32>, world_dx: ve
 fn terrain_second_lattice(world: vec3<f32>, tiling: f32, footprint: f32) -> f32 {
     let size = tiling * 3.1;
     let fade = saturate(2.0 - 2.0 * footprint / size);
+    if fade == 0.0 {
+        return 0.0;
+    }
     let p = (world.xz + world.y * vec2<f32>(0.71, -0.43)) / size;
     return smoothstep(0.4, 0.6, terrain_value(p + vec2<f32>(7.3, -2.9))) * fade;
 }
@@ -577,7 +618,13 @@ fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
     if cover.x <= 0.0 {
         return 1.0;
     }
-    let share = cover_share(distance, cover.x, cover.y, cover_end(world.xz, cover.y));
+    var end = cover.y;
+    // Within 0.55 of the reach the fade has not begun and past it has
+    // ended, wherever the noise draws the end in (0.8 to 1 of the reach).
+    if cover.y <= cover.x || (distance > 0.55 * cover.y && distance < cover.y) {
+        end = cover_end(world.xz, cover.y);
+    }
+    let share = cover_share(distance, cover.x, cover.y, end);
     return 1.0 - cover_shown(distance, share, cover.x);
 }
 
@@ -694,18 +741,27 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     var occlusion = entry.maps.w;
     var metalness = entry.maps.z;
     var turned = site.geometric;
+    // Each lattice's color texels, kept for the full maps' pass below.
+    var first_albedo = vec3<f32>(0.0);
+    var second_albedo = vec3<f32>(0.0);
+    var have_first = false;
+    var have_second = false;
     if slot.colored > slot.detail {
         // Past its maps' full detail, its color map alone, the lattices
         // shared by their pattern.
         let mapping = terrain_mapping(entry, site.geometric);
         var albedo = vec3<f32>(0.0);
         if slot.pattern < 1.0 {
-            albedo += (1.0 - slot.pattern) * terrain_map(terrain_albedo, mapping, site.world,
-                site.world_dx, site.world_dy, 0u).rgb;
+            first_albedo = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
+                site.world_dy, 0u).rgb;
+            have_first = true;
+            albedo += (1.0 - slot.pattern) * first_albedo;
         }
         if slot.pattern > 0.0 {
-            albedo += slot.pattern * terrain_map(terrain_albedo, mapping, site.world,
-                site.world_dx, site.world_dy, 1u).rgb;
+            second_albedo = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
+                site.world_dy, 1u).rgb;
+            have_second = true;
+            albedo += slot.pattern * second_albedo;
         }
         color = mix(color, entry.color.rgb * albedo, slot.colored);
     }
@@ -719,16 +775,24 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         var albedo = vec3<f32>(0.0);
         var mapped = vec3<f32>(0.0);
         if slot.second < 1.0 {
-            albedo += (1.0 - slot.second) * terrain_map(terrain_albedo, mapping, site.world,
-                site.world_dx, site.world_dy, 0u).rgb;
+            var texel = first_albedo;
+            if !have_first {
+                texel = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
+                    site.world_dy, 0u).rgb;
+            }
+            albedo += (1.0 - slot.second) * texel;
             if deflected {
                 mapped += (1.0 - slot.second) * terrain_mapped_normal(mapping, site.world,
                     site.world_dx, site.world_dy, 0u, site.geometric, relief);
             }
         }
         if slot.second > 0.0 {
-            albedo += slot.second * terrain_map(terrain_albedo, mapping, site.world,
-                site.world_dx, site.world_dy, 1u).rgb;
+            var texel = second_albedo;
+            if !have_second {
+                texel = terrain_map(terrain_albedo, mapping, site.world, site.world_dx,
+                    site.world_dy, 1u).rgb;
+            }
+            albedo += slot.second * texel;
             if deflected {
                 mapped += slot.second * terrain_mapped_normal(mapping, site.world,
                     site.world_dx, site.world_dy, 1u, site.geometric, relief);
@@ -882,6 +946,14 @@ fn terrain_relief_sink(layer: TerrainReliefLayer, point: vec2<f32>) -> f32 {
 // World texel `texel`'s slot in the deformation map, whose texels wrap.
 fn terrain_deform_slot(texel: vec2<i32>) -> vec2<i32> {
     let size = terrain.deform_grid.z;
+    // A power of two wraps by its low bits; any other by one remainder.
+    if size > 0 && (size & (size - 1)) == 0 {
+        return texel & vec2<i32>(size - 1);
+    }
+    if size > 0 {
+        let rest = texel % size;
+        return select(rest, rest + size, rest < vec2<i32>(0));
+    }
     return ((texel % size) + size) % size;
 }
 

@@ -328,12 +328,14 @@ fn traced_pixel(texel: vec2<i32>) -> vec2<i32> {
 // The nearest depth (the largest, reversed) of cell `cell` of mip `mip`:
 // mip 0 is the depth buffer, mip m > 0 the pyramid's level m - 1, whose
 // texels cover 2^m pixels a side (the pyramid repeats the buffer's edge).
-fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
+// `pyramid` is the pyramid's first level's size: each level halves it, as
+// mip levels do, so the march asks the texture its size once.
+fn nearest_depth_at(cell: vec2<i32>, mip: i32, pyramid: vec2<u32>) -> f32 {
     if mip == 0 {
         let last = vec2<i32>(post.size.xy) - 1;
         return textureLoad(depth_texture, clamp(cell, vec2<i32>(0), last), 0);
     }
-    let last = vec2<i32>(textureDimensions(nearest_depth, mip - 1)) - 1;
+    let last = vec2<i32>(max(pyramid >> vec2<u32>(u32(mip - 1)), vec2<u32>(1u))) - 1;
     return textureLoad(nearest_depth, clamp(cell, vec2<i32>(0), last), mip - 1).r;
 }
 
@@ -419,6 +421,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let ahead = select(vec2<f32>(0.0), vec2<f32>(1.0), forward);
     let past = select(vec2<f32>(-0.005), vec2<f32>(0.005), forward);
     let top = i32(textureNumLevels(nearest_depth));
+    let pyramid = textureDimensions(nearest_depth);
     // Leave the starting pixel first: a surface does not reflect itself.
     var t = FLOAT_MAX;
     let exits = select(vec2<f32>(FLOAT_MAX),
@@ -434,7 +437,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         }
         let size = exp2(f32(mip));
         let cell = floor(point.xy / size);
-        let surface = nearest_depth_at(vec2<i32>(cell), mip);
+        let surface = nearest_depth_at(vec2<i32>(cell), mip, pyramid);
         let edges = select(vec2<f32>(FLOAT_MAX),
             ((cell + ahead) * size + past - origin.xy) / select(vec2<f32>(1.0), ray.xy, moving),
             moving);

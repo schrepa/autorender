@@ -275,6 +275,7 @@ pub(crate) struct TerrainPass {
     control_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
     surfaces: HashMap<u64, (usize, wgpu::Buffer)>,
     normal_sampler: wgpu::Sampler,
+    control_sampler: wgpu::Sampler,
     // Every terrain's levels and their resident tiles' layers, and where
     // each terrain's start.
     directory: wgpu::Buffer,
@@ -358,6 +359,11 @@ impl TerrainPass {
             control_jobs: Vec::new(),
             control_pass: None,
             surfaces: HashMap::new(),
+            // Nearest texels: control values gather as stored.
+            control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/terrain-control-sampler"),
+                ..Default::default()
+            }),
             normal_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-normal-sampler"),
                 mag_filter: wgpu::FilterMode::Linear,
@@ -1631,6 +1637,10 @@ impl TerrainPass {
                     ),
                     ("terrain_sky", crate::pipelines::view(self.sky.view())),
                     crate::buffers::entry("terrain_deformation", self.deformation.map().0),
+                    (
+                        "terrain_control_sampler",
+                        crate::pipelines::sampler(&self.control_sampler),
+                    ),
                 ],
             );
             self.group.set(key, group);
