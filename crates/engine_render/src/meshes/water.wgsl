@@ -194,16 +194,23 @@ fn vs_water_temporal(input: WaterChunk) -> WaterTemporalOutput {
 }
 
 // Value noise at `p` and its gradient (x: value, yz: d/dx and d/dz), from
-// hashed lattice values blended by quintic steps.
+// hashed lattice values blended by quintic steps. The next cell's
+// products are the cell's plus each multiplier (wrapping integers), one
+// product per axis.
 fn water_noise(p: vec2<f32>) -> vec3<f32> {
     let cell = floor(p);
     let f = p - cell;
     let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     let du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
-    let a = terrain_hash(cell);
-    let b = terrain_hash(cell + vec2<f32>(1.0, 0.0));
-    let c = terrain_hash(cell + vec2<f32>(0.0, 1.0));
-    let d = terrain_hash(cell + vec2<f32>(1.0, 1.0));
+    let q = vec2<u32>(vec2<i32>(cell));
+    let x0 = q.x * 0x8da6b343u;
+    let x1 = x0 + 0x8da6b343u;
+    let y0 = q.y * 0xd8163841u;
+    let y1 = y0 + 0xd8163841u;
+    let a = terrain_hash_of(x0 ^ y0);
+    let b = terrain_hash_of(x1 ^ y0);
+    let c = terrain_hash_of(x0 ^ y1);
+    let d = terrain_hash_of(x1 ^ y1);
     let k = vec4<f32>(a, b - a, c - a, a - b - c + d);
     return vec3<f32>(k.x + k.y * u.x + k.z * u.y + k.w * u.x * u.y,
         du * vec2<f32>(k.y + k.w * u.y, k.z + k.w * u.x));

@@ -127,17 +127,12 @@ fn vs_terrain_temporal(input: PatchInput) -> TerrainTemporalOutput {
 }
 
 // Value noise of the material, 0 to 1.
-fn terrain_hash(cell: vec2<f32>) -> f32 {
-    let p = vec2<u32>(vec2<i32>(cell));
-    return terrain_hash_of((p.x * 0x8da6b343u) ^ (p.y * 0xd8163841u));
-}
-
 fn terrain_value(p: vec2<f32>) -> f32 {
     let cell = floor(p);
     let f = p - cell;
     let u = f * f * (3.0 - 2.0 * f);
-    // `terrain_hash` of the four corners: the next cell's products are the
-    // cell's plus each multiplier (wrapping integers), one product per axis.
+    // The four corners' hashes: the next cell's products are the cell's
+    // plus each multiplier (wrapping integers), one product per axis.
     let q = vec2<u32>(vec2<i32>(cell));
     let x0 = q.x * 0x8da6b343u;
     let x1 = x0 + 0x8da6b343u;
@@ -150,7 +145,8 @@ fn terrain_value(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// `terrain_hash` after its first products.
+// The hash of a lattice cell, 0 to 1, from its coordinates' products, x
+// times 0x8da6b343 and y times 0xd8163841 (wrapping), mixed.
 fn terrain_hash_of(mixed: u32) -> f32 {
     var h = mixed;
     h = (h ^ (h >> 16u)) * 0x7feb352du;

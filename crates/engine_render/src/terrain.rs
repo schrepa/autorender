@@ -146,7 +146,10 @@ pub(crate) struct CoverSources<'a> {
 /// One terrain's draws this frame: its uniform slot, the camera's patches,
 /// every patch (for probe faces) and each shadow map's. The camera's and
 /// every patch's ranges end with the patches with holes, which draw with
-/// their own pipelines: as many as `*_holes`.
+/// their own pipelines: as many as `*_holes`. And the rectangle of the
+/// screen the camera's patches cover, in normalized device coordinates
+/// (least x and y, then greatest; `None` where it is unbounded), which its
+/// resolve shades within (decision 123).
 pub(crate) struct FrameTerrain {
     pub uniform: u32,
     pub camera: Range<u32>,
@@ -154,6 +157,7 @@ pub(crate) struct FrameTerrain {
     pub all: Range<u32>,
     pub all_holes: u32,
     pub maps: Vec<(usize, Range<u32>)>,
+    pub screen: Option<[f32; 4]>,
 }
 
 impl FrameTerrain {
@@ -162,6 +166,54 @@ impl FrameTerrain {
         let middle = range.end - holes;
         [range.start..middle, middle..range.end]
     }
+
+    /// The pixels of a `size` target its resolve shades: its screen
+    /// rectangle, widened a pixel for rasterization's rounding (x, y, width
+    /// and height); `None` where it covers none.
+    pub(crate) fn scissor(&self, size: (u32, u32)) -> Option<[u32; 4]> {
+        let (width, height) = (size.0 as f32, size.1 as f32);
+        let Some([left, bottom, right, top]) = self.screen else {
+            return (size.0 > 0 && size.1 > 0).then_some([0, 0, size.0, size.1]);
+        };
+        let pixel = |value: f32, extent: f32| engine_core::math::clamp(value, 0.0, extent) as u32;
+        let x0 = pixel(((left * 0.5 + 0.5) * width).floor() - 1.0, width);
+        let x1 = pixel(((right * 0.5 + 0.5) * width).ceil() + 1.0, width);
+        let y0 = pixel(((0.5 - top * 0.5) * height).floor() - 1.0, height);
+        let y1 = pixel(((0.5 - bottom * 0.5) * height).ceil() + 1.0, height);
+        (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+    }
+}
+
+/// The normalized device rectangle `rect` (least x and y, then greatest)
+/// widened to the box from `min` to `max` projected by `view`; `None` where
+/// the box reaches behind the eye, whose projection is unbounded.
+fn projected_rect(rect: [f32; 4], view: Mat4, min: Vec3, max: Vec3) -> Option<[f32; 4]> {
+    // Corners as the box's least one plus its edges along each axis.
+    let base = view * min.extend(1.0);
+    let size = max - min;
+    let edges = [
+        view.x_axis * size.x,
+        view.y_axis * size.y,
+        view.z_axis * size.z,
+    ];
+    let [mut left, mut bottom, mut right, mut top] = rect;
+    for corner in 0..8 {
+        let mut clip = base;
+        for (axis, edge) in edges.iter().enumerate() {
+            if corner & (1 << axis) != 0 {
+                clip += *edge;
+            }
+        }
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let (x, y) = (clip.x / clip.w, clip.y / clip.w);
+        left = engine_core::math::min(left, x);
+        bottom = engine_core::math::min(bottom, y);
+        right = engine_core::math::max(right, x);
+        top = engine_core::math::max(top, y);
+    }
+    Some([left, bottom, right, top])
 }
 
 /// What a frame draws of every terrain.
@@ -568,10 +620,21 @@ impl TerrainPass {
                 .filter(|(record, ..)| record.holes != NO_HOLES)
                 .count() as u32;
             let mut camera_holes = 0;
+            let mut screen = Some([
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ]);
             for &(record, min, max) in &all {
                 if visible(&camera_planes, relative_origin + min, relative_origin + max) {
                     self.records.push(record);
                     camera_holes += u32::from(record.holes != NO_HOLES);
+                    // As drawn, skirts hanging below the box.
+                    let low = relative_origin + min - Vec3::Y * record.shape[3];
+                    screen = screen.and_then(|rect| {
+                        projected_rect(rect, views.camera, low, relative_origin + max)
+                    });
                 }
             }
             let camera = start..self.records.len() as u32;
@@ -608,6 +671,7 @@ impl TerrainPass {
                 all: all_range,
                 all_holes,
                 maps,
+                screen,
             });
         }
         self.frame.triangles = self.frame.patches * PATCH_TRIANGLES;
