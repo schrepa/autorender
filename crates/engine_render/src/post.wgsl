@@ -192,11 +192,10 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32
 // the center's plane before the filter stops counting it.
 const OCCLUSION_PLANE: f32 = 0.01;
 
-// The inverse distance of a raw occlusion texel: 0 for sky, which lies
+// The inverse distance of raw occlusion `sample`: 0 for sky, which lies
 // infinitely far.
-fn inverse_distance(texel: vec2<i32>) -> f32 {
-    let distance = textureLoad(raw_occlusion, texel, 0).y;
-    return select(0.0, 1.0 / distance, distance > 0.0);
+fn inverse_distance(sample: vec4<f32>) -> f32 {
+    return select(0.0, 1.0 / sample.y, sample.y > 0.0);
 }
 
 // The occlusion and contact shadows (x and y) over each half-resolution
@@ -205,18 +204,33 @@ fn inverse_distance(texel: vec2<i32>) -> f32 {
 // mottling what they shade. Inverse distance changes linearly across a
 // plane on screen, so a neighbor counts while its inverse distance lies near
 // the center's extrapolated by the center's slope toward its nearer
-// neighbor on each axis.
+// neighbor on each axis. Each neighbor is read once, the slope's too.
 fn filtered_occlusion(texel: vec2<i32>) -> vec2<f32> {
     let last = vec2<i32>(textureDimensions(raw_occlusion)) - 1;
     let center = textureLoad(raw_occlusion, texel, 0);
     if !(center.y > 0.0) {
         return center.xz;
     }
-    let inverse = 1.0 / center.y;
-    let right = inverse_distance(min(texel + vec2<i32>(1, 0), last)) - inverse;
-    let left = inverse - inverse_distance(max(texel - vec2<i32>(1, 0), vec2<i32>(0)));
-    let down = inverse_distance(min(texel + vec2<i32>(0, 1), last)) - inverse;
-    let up = inverse - inverse_distance(max(texel - vec2<i32>(0, 1), vec2<i32>(0)));
+    // Row by row from (-2, -2); the center is the thirteenth.
+    var samples: array<vec4<f32>, 25>;
+    var inverses: array<f32, 25>;
+    for (var y = -2; y <= 2; y++) {
+        for (var x = -2; x <= 2; x++) {
+            let index = (y + 2) * 5 + x + 2;
+            var sample = center;
+            if x != 0 || y != 0 {
+                sample = textureLoad(raw_occlusion, clamp(texel + vec2<i32>(x, y), vec2<i32>(0),
+                    last), 0);
+            }
+            samples[index] = sample;
+            inverses[index] = inverse_distance(sample);
+        }
+    }
+    let inverse = inverses[12];
+    let right = inverses[13] - inverse;
+    let left = inverse - inverses[11];
+    let down = inverses[17] - inverse;
+    let up = inverse - inverses[7];
     let slope = vec2<f32>(
         select(right, left, abs(left) < abs(right)),
         select(down, up, abs(up) < abs(down)),
@@ -226,14 +240,12 @@ fn filtered_occlusion(texel: vec2<i32>) -> vec2<f32> {
     var total = 0.0;
     for (var y = -2; y <= 2; y++) {
         for (var x = -2; x <= 2; x++) {
+            let index = (y + 2) * 5 + x + 2;
             let offset = vec2<i32>(x, y);
-            let neighbor = clamp(texel + offset, vec2<i32>(0), last);
-            let sample = textureLoad(raw_occlusion, neighbor, 0);
-            let sample_inverse = select(0.0, 1.0 / sample.y, sample.y > 0.0);
             let expected = inverse + dot(slope, vec2<f32>(offset));
-            let plane = saturate(1.25 - abs(sample_inverse - expected) / tolerance);
+            let plane = saturate(1.25 - abs(inverses[index] - expected) / tolerance);
             let weight = exp(-f32(x * x + y * y) / 8.0) * plane;
-            sum += sample.xz * weight;
+            sum += samples[index].xz * weight;
             total += weight;
         }
     }
@@ -526,7 +538,11 @@ fn fs_reflections_filter(@builtin(position) position: vec4<f32>) -> @location(0)
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
             let neighbor = clamp(texel + vec2<i32>(x, y), vec2<i32>(0), last);
-            let neighbor_depth = textureLoad(depth_texture, traced_pixel(neighbor), 0);
+            // The center's depth is already read.
+            var neighbor_depth = depth;
+            if x != 0 || y != 0 {
+                neighbor_depth = textureLoad(depth_texture, traced_pixel(neighbor), 0);
+            }
             // Reversed depth is about inversely proportional to distance:
             // relative differences of the two agree.
             let same = abs(neighbor_depth - depth) <= 0.02 * max(depth, neighbor_depth);
