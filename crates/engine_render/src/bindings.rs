@@ -261,6 +261,33 @@ pub(crate) const CAMERA: Table = Table {
     ],
 };
 
+/// Group 0 of terrain's resolves (decision 123): the main passes' without
+/// what glass refracts, which keeps them within the 16 sampled textures a
+/// fragment stage may bind.
+pub(crate) const CAMERA_TERRAIN: Table = Table {
+    label: "engine/camera-terrain-layout",
+    bindings: &[
+        uniform_of(0, "camera", size_of::<CameraUniform>(), VF),
+        uniform_of(1, "lighting", size_of::<LightingUniform>(), F),
+        uniform_of(2, "shadow", size_of::<ShadowUniform>(), F),
+        texture(3, "near_shadows", Depth, D2Array, F),
+        texture(4, "kept_shadows", Depth, D2, F),
+        texture(5, "moving_shadows", Depth, D2, F),
+        sampler(6, "shadow_sampler", Comparison, F),
+        sampler(7, "shadow_texels", NonFiltering, F),
+        texture(10, "environment_maps", Float, CubeArray, F),
+        sampler(11, "environment_sampler", Filtering, F),
+        read(12, "probe_words", F),
+        texture(13, "terrain_horizons", Float, D2Array, F),
+        texture(14, "terrain_horizon_records", Unfilterable, D2, F),
+        sampler(15, "terrain_horizon_sampler", Filtering, F),
+        texture(16, "occupancy_coverage", Float, D2Array, F),
+        texture(17, "occupancy_heights", Unfilterable, D2Array, F),
+        texture(18, "kept_levels", Depth, D2Array, F),
+        read_of(19, "cloud_shadows", crate::clouds::CLOUD_SHADOW_BYTES, F),
+    ],
+};
+
 /// Group 1 of mesh pipelines: a material's maps and their samplers and its
 /// map parameters (decision 031); shadow casters bind it as group 2.
 pub(crate) const MATERIAL: Table = Table {
@@ -617,7 +644,7 @@ pub(crate) const TERRAIN: Table = Table {
     label: "engine/terrain-layout",
     bindings: &[
         texture(17, "terrain_heights", Unfilterable, D2Array, V),
-        dynamic_uniform(18, "terrain_view", 80, V),
+        dynamic_uniform(18, "terrain_view", 144, VF),
         dynamic_uniform(
             19,
             "terrain",
@@ -643,6 +670,13 @@ pub(crate) const TERRAIN: Table = Table {
         // Gathers of the control values (nearest).
         sampler(50, "terrain_control_sampler", NonFiltering, F),
     ],
+};
+
+/// Group 2 of terrain's resolves (decision 123): each pixel's terrain and
+/// depth, as its visibility pass wrote them.
+pub(crate) const TERRAIN_RESOLVE: Table = Table {
+    label: "engine/terrain-resolve-layout",
+    bindings: &[texture(62, "terrain_ids_texture", Uint, D2, F)],
 };
 
 /// The clouds' noise volume (decision 084; `clouds.wgsl`), made once.

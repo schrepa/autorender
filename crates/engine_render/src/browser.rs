@@ -196,6 +196,8 @@ pub struct Renderer {
     // The canvas, its surface and the depth buffer at its size.
     display: Display,
     depth: DepthTarget,
+    // Terrain's visibility target and its resolves' group (decision 123).
+    terrain_ids: Option<terrain_draws::TerrainIds>,
     // Resident meshes, in the shared arena's buffers (or their own when it
     // had no room), and a generation that advances whenever a mesh is
     // placed or retired.
@@ -503,6 +505,7 @@ impl Renderer {
             queue,
             display,
             depth,
+            terrain_ids: None,
             meshes: BTreeMap::new(),
             mesh_arena,
             mesh_layout: 0,

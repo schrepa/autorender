@@ -20,6 +20,9 @@
 struct TerrainView {
     relative_view_projection: mat4x4<f32>,
     eye_offset: vec4<f32>,
+    // Its inverse: eye-relative positions of depth-buffer points (decision
+    // 123).
+    inverse_relative_view_projection: mat4x4<f32>,
 }
 @group(1) @binding(18) var<uniform> terrain_view: TerrainView;
 

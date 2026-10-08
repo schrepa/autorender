@@ -95,6 +95,7 @@ const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as 
 struct ViewUniform {
     relative_view_projection: [[f32; 4]; 4],
     eye_offset: [f32; 4],
+    inverse_relative_view_projection: [[f32; 4]; 4],
 }
 
 /// WGSL `TerrainUniform`.
@@ -172,6 +173,9 @@ pub(crate) struct TerrainFrame {
     pub patches: u32,
     pub triangles: u32,
     pub shadow_patches: u32,
+    /// Terrain shows shaded, not a development view: shading may defer
+    /// (decision 123).
+    pub shaded: bool,
 }
 
 /// What `TerrainPass::prepare` needs of the frame's views.
@@ -249,6 +253,12 @@ pub(crate) struct TerrainPass {
     fade_words: u32,
     group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
+    // Deferred shading (decision 123): the visibility pipelines (by
+    // holes), the resolves (by targets and lighting) and the layout of the
+    // resolves' own group.
+    pub(crate) deferred_ids: HashMap<bool, wgpu::RenderPipeline>,
+    pub(crate) resolves: HashMap<(Targets, bool), wgpu::RenderPipeline>,
+    pub(crate) resolve_layout: wgpu::BindGroupLayout,
     probe_pipelines: HashMap<(bool, bool), wgpu::RenderPipeline>,
     shadow: Option<wgpu::RenderPipeline>,
     records: Vec<PatchRecord>,
@@ -344,6 +354,9 @@ impl TerrainPass {
             fade_words: 0,
             group: Cached::default(),
             pipelines: HashMap::new(),
+            deferred_ids: HashMap::new(),
+            resolves: HashMap::new(),
+            resolve_layout: crate::pipelines::layout(device, &crate::bindings::TERRAIN_RESOLVE),
             probe_pipelines: HashMap::new(),
             shadow: None,
             records: Vec::new(),
@@ -450,7 +463,10 @@ impl TerrainPass {
         self.uploads = 0;
         self.controls = 0;
         self.now = views.now;
-        self.frame = TerrainFrame::default();
+        self.frame = TerrainFrame {
+            shaded: terrains.view == engine_core::TerrainView::Shaded,
+            ..TerrainFrame::default()
+        };
         self.eye = views.eye;
         self.sync_tiles(device, queue, terrains, max_layers);
         self.write_fades(queue, views.fades);
@@ -607,6 +623,12 @@ impl TerrainPass {
         let camera = ViewUniform {
             relative_view_projection: views.camera.to_cols_array_2d(),
             eye_offset: [0.0; 4],
+            inverse_relative_view_projection: views
+                .camera
+                .as_dmat4()
+                .inverse()
+                .as_mat4()
+                .to_cols_array_2d(),
         };
         if self.written_views != Some(camera) {
             queue.write_buffer(&self.views, 0, bytemuck::bytes_of(&camera));
@@ -628,6 +650,11 @@ impl TerrainPass {
         center: Vec3,
     ) -> u32 {
         let view = ViewUniform {
+            inverse_relative_view_projection: relative
+                .as_dmat4()
+                .inverse()
+                .as_mat4()
+                .to_cols_array_2d(),
             relative_view_projection: relative.to_cols_array_2d(),
             eye_offset: (eye.as_dvec3() - center.as_dvec3())
                 .as_vec3()
@@ -1670,6 +1697,16 @@ impl TerrainPass {
         1
     }
 
+    /// Binds the terrain group for the view at `view` and the terrain whose
+    /// uniform sits at `uniform`; whether it exists.
+    pub(crate) fn bind(&self, pass: &mut wgpu::RenderPass<'_>, view: u32, uniform: u32) -> bool {
+        let Some(group) = self.group.get() else {
+            return false;
+        };
+        pass.set_bind_group(1, group, &[view, uniform]);
+        true
+    }
+
     /// The opaque pipeline into `targets`, shading local lights when `lit`,
     /// of patches with `holes` or without.
     pub(crate) fn pipeline(
@@ -1713,6 +1750,7 @@ impl TerrainPass {
         (targets, lit, holes): (Targets, bool, bool),
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
+        camera_terrain: &wgpu::BindGroupLayout,
     ) {
         if self.pipelines.contains_key(&(targets, lit, holes)) {
             return;
@@ -1732,6 +1770,89 @@ impl TerrainPass {
             wgpu::FrontFace::Ccw,
         );
         self.pipelines.insert((targets, lit, holes), pipeline);
+        self.ensure_deferred(
+            device,
+            shader,
+            (camera, lights),
+            (targets, lit, holes),
+            depth,
+            camera_terrain,
+        );
+    }
+
+    /// Creates the visibility pipeline of patches with `holes` or without
+    /// and the resolve into `targets` (`lit` or not) of deferred shading
+    /// (decision 123) unless they exist; canvas targets shade forward.
+    fn ensure_deferred(
+        &mut self,
+        device: &wgpu::Device,
+        shader: &wgpu::ShaderModule,
+        (camera, lights): (&wgpu::BindGroupLayout, Option<&wgpu::BindGroupLayout>),
+        (targets, lit, holes): (Targets, bool, bool),
+        depth: wgpu::TextureFormat,
+        camera_terrain: &wgpu::BindGroupLayout,
+    ) {
+        if !self.deferred_ids.contains_key(&holes) {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("engine/terrain-ids-layout"),
+                bind_group_layouts: &[Some(camera), Some(&self.layout)],
+                immediate_size: 0,
+            });
+            let ids = [Some(wgpu::ColorTargetState::from(
+                wgpu::TextureFormat::Rg32Uint,
+            ))];
+            let pipeline = geometry(
+                device,
+                shader,
+                &layout,
+                ("vs_terrain", "fs_terrain_ids", holes),
+                &ids,
+                depth,
+                wgpu::FrontFace::Ccw,
+            );
+            self.deferred_ids.insert(holes, pipeline);
+        }
+        let fragment = match (targets, lit) {
+            (Targets::Post, false) => "fs_terrain_resolve_post",
+            (Targets::Post, true) => "fs_terrain_resolve_post_lit",
+            (Targets::Temporal, false) => "fs_terrain_resolve_temporal",
+            (Targets::Temporal, true) => "fs_terrain_resolve_temporal_lit",
+            (Targets::Canvas, _) => return,
+        };
+        if self.resolves.contains_key(&(targets, lit)) {
+            return;
+        }
+        let mut groups = vec![
+            Some(camera_terrain),
+            Some(&self.layout),
+            Some(&self.resolve_layout),
+        ];
+        if lit {
+            let Some(lights) = lights else {
+                return;
+            };
+            groups.push(Some(lights));
+        }
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("engine/terrain-resolve-layout"),
+            bind_group_layouts: &groups,
+            immediate_size: 0,
+        });
+        let color_targets = targets.color_targets(wgpu::TextureFormat::Bgra8Unorm);
+        let pipeline = crate::pipelines::fullscreen(
+            device,
+            &crate::pipelines::Fullscreen {
+                label: "engine/terrain-resolve",
+                layout: &layout,
+                module: shader,
+                vertex: "vs_terrain_resolve",
+                fragment,
+                constants: &[],
+                targets: &color_targets,
+                depth: None,
+            },
+        );
+        self.resolves.insert((targets, lit), pipeline);
     }
 
     /// Creates the reflection probe faces' pipeline (`lit` or not) unless it
