@@ -1,8 +1,8 @@
 //! Depth pyramids: the farthest depth of each 2x2 block of the depth buffer,
 //! then of each 2x2 block of the level below, which GPU presentation's
-//! occlusion test (decision 040) compares candidates' projected bounds with
+//! occlusion test compares candidates' projected bounds with
 //! after phase one draws; or the nearest depths, which screen-space
-//! reflections (decision 025) walk after the opaque pass.
+//! reflections walk after the opaque pass.
 
 use crate::bindings::{PYRAMID_DOWN, PYRAMID_EXTENT_BYTES, PYRAMID_FIRST};
 use crate::cached::Cached;
@@ -61,7 +61,7 @@ impl DepthPyramid {
         });
         // A level's source and the level written: both kinds of pass map to
         // the same descriptors, and so share one root signature in Direct3D
-        // 12 (decision 049).
+        // 12.
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
         let pipeline = |entry: &str, group: &wgpu::BindGroupLayout| {

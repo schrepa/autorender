@@ -1,10 +1,9 @@
-//! Bind group layouts as data (decision 049): every layout the renderer
+//! Bind group layouts as data: every layout the renderer
 //! builds is a table of the bindings its shaders read, each with its
 //! number, WGSL name, kind and the stages reading it. Layouts and bind
 //! groups are built from the tables (`crate::pipelines::layout` and
 //! `group`), so a binding's number is written once in WGSL and once here,
-//! groups bind resources by name, and a test reflects every shader to check
-//! each table against the entry points of the pipelines using it.
+//! and groups bind resources by name.
 
 use crate::gpu_data::{
     CameraUniform, ColorData, GroundData, LightingUniform, MaterialUniform, PoseData, PostUniform,
@@ -204,8 +203,8 @@ const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
 const V: Stages = Stages::VERTEX;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
-// Bytes of a pose, a slot color, a placed object's ground (decision 096),
-// and of virtual geometry's mesh, cluster and page records (decision 044).
+// Bytes of a pose, a slot color, a placed object's ground,
+// and of virtual geometry's mesh, cluster and page records.
 const POSE: usize = size_of::<PoseData>();
 const COLOR: usize = size_of::<ColorData>();
 const GROUND: usize = size_of::<GroundData>();
@@ -222,8 +221,8 @@ pub(crate) const EMPTY: Table = Table {
 // The mesh shader (`gpu_data::SHADER`).
 
 /// Group 0 of mesh, sky and effect pipelines: the camera, lighting and
-/// shadow lookups (decisions 020 and 028), what glass refracts (decision
-/// 038), the environment maps and reflection probes (decision 043).
+/// shadow lookups, what glass refracts,
+/// the environment maps and reflection probes.
 pub(crate) const CAMERA: Table = Table {
     label: "engine/camera-layout",
     bindings: &[
@@ -235,33 +234,33 @@ pub(crate) const CAMERA: Table = Table {
         texture(4, "kept_shadows", Depth, D2, F),
         texture(5, "moving_shadows", Depth, D2, F),
         sampler(6, "shadow_sampler", Comparison, F),
-        // Receiver-plane lookups read four texels (decision 028).
+        // Receiver-plane lookups read four texels.
         sampler(7, "shadow_texels", NonFiltering, F),
         texture(8, "refraction_source", Float, D2, F),
         sampler(9, "refraction_sampler", Filtering, F),
         texture(10, "environment_maps", Float, CubeArray, F),
         sampler(11, "environment_sampler", Filtering, F),
         read(12, "probe_words", F),
-        // Terrain's long sun shadows (decision 052): each terrain's horizon
+        // Terrain's long sun shadows: each terrain's horizon
         // map, two texels of records per terrain, and the maps' sampler.
         texture(13, "terrain_horizons", Float, D2Array, F),
         texture(14, "terrain_horizon_records", Unfilterable, D2, F),
         sampler(15, "terrain_horizon_sampler", Filtering, F),
-        // What placed objects cover around the camera (decision 059): its
+        // What placed objects cover around the camera: its
         // density, filtered, and the covers' tops and bottoms; the near map
-        // in the first layer, the far one (decision 101) in the second.
+        // in the first layer, the far one in the second.
         texture(16, "occupancy_coverage", Float, D2Array, F),
         texture(17, "occupancy_heights", Unfilterable, D2Array, F),
-        // The kept shadow levels (decision 065), one layer each.
+        // The kept shadow levels, one layer each.
         texture(18, "kept_levels", Depth, D2Array, F),
-        // Clouds' shadows (decision 084): the eighth storage buffer the
+        // Clouds' shadows: the eighth storage buffer the
         // terrain's lit fragments read (a uniform array read at each
         // fragment's own index is many times slower).
         read_of(19, "cloud_shadows", crate::clouds::CLOUD_SHADOW_BYTES, F),
     ],
 };
 
-/// Group 0 of terrain's resolves (decision 123): the main passes' without
+/// Group 0 of terrain's resolves: the main passes' without
 /// what glass refracts, which keeps them within the 16 sampled textures a
 /// fragment stage may bind.
 pub(crate) const CAMERA_TERRAIN: Table = Table {
@@ -289,7 +288,7 @@ pub(crate) const CAMERA_TERRAIN: Table = Table {
 };
 
 /// Group 1 of mesh pipelines: a material's maps and their samplers and its
-/// map parameters (decision 031); shadow casters bind it as group 2.
+/// map parameters; shadow casters bind it as group 2.
 pub(crate) const MATERIAL: Table = Table {
     label: "engine/material-layout",
     bindings: &[
@@ -308,8 +307,7 @@ pub(crate) const MATERIAL: Table = Table {
 };
 
 /// Group 2 of retained mesh pipelines: slot poses, colors, the joint
-/// palettes of skinned slots (decision 036) and placed objects' grounds
-/// (decision 096).
+/// palettes of skinned slots and placed objects' grounds.
 pub(crate) const RETAINED_POSES: Table = Table {
     label: "engine/retained-pose-layout",
     bindings: &[
@@ -320,7 +318,7 @@ pub(crate) const RETAINED_POSES: Table = Table {
     ],
 };
 
-/// Group 2 of temporal mesh pipelines (decision 017): the retained poses
+/// Group 2 of temporal mesh pipelines: the retained poses
 /// and the previous frame's poses and palettes.
 pub(crate) const TEMPORAL_POSES: Table = Table {
     label: "engine/temporal-pose-layout",
@@ -334,7 +332,7 @@ pub(crate) const TEMPORAL_POSES: Table = Table {
     ],
 };
 
-/// Group 2 of virtual geometry's pipelines (decision 044): poses, colors,
+/// Group 2 of virtual geometry's pipelines: poses, colors,
 /// previous poses and the arena's meshes, clusters and pages.
 pub(crate) const VIRTUAL_POSES: Table = Table {
     label: "engine/virtual-pose-layout",
@@ -348,7 +346,7 @@ pub(crate) const VIRTUAL_POSES: Table = Table {
     ],
 };
 
-/// Group 2 of the visibility pass (decision 045): poses, the arena and each
+/// Group 2 of the visibility pass: poses, the arena and each
 /// draw's bin through a dynamic offset.
 pub(crate) const VISIBILITY_PASS: Table = Table {
     label: "engine/visibility-layout",
@@ -361,7 +359,7 @@ pub(crate) const VISIBILITY_PASS: Table = Table {
     ],
 };
 
-/// Group 2 of the visibility buffer's resolves (decision 045): the poses,
+/// Group 2 of the visibility buffer's resolves: the poses,
 /// arena and draw, the selected clusters, the ID target and the tile lists.
 pub(crate) const VISIBILITY_RESOLVE: Table = Table {
     label: "engine/visibility-resolve-layout",
@@ -379,7 +377,7 @@ pub(crate) const VISIBILITY_RESOLVE: Table = Table {
     ],
 };
 
-/// Group 3 of lit pipelines: the clustered local lights (decision 023).
+/// Group 3 of lit pipelines: the clustered local lights.
 pub(crate) const LIGHT_SHADING: Table = Table {
     label: "engine/light-shading-layout",
     bindings: &[
@@ -390,7 +388,7 @@ pub(crate) const LIGHT_SHADING: Table = Table {
     ],
 };
 
-/// Group 2 of decals (decision 039) beside the mesh poses' bindings: the
+/// Group 2 of decals beside the mesh poses' bindings: the
 /// joint palette holds retained frames' decal poses.
 pub(crate) const DECALS: Table = Table {
     label: "engine/decal-layout",
@@ -401,7 +399,7 @@ pub(crate) const DECALS: Table = Table {
     ],
 };
 
-/// Group 1 of impostor cards (decision 048): the records and the four
+/// Group 1 of impostor cards: the records and the four
 /// arrays of baked frames.
 pub(crate) const IMPOSTOR_DRAW: Table = Table {
     label: "engine/impostor-layout",
@@ -416,7 +414,7 @@ pub(crate) const IMPOSTOR_DRAW: Table = Table {
 };
 
 /// Group 2 of impostor bakes: the impostor being baked, and the nearest
-/// depths of its frames (decision 060).
+/// depths of its frames.
 pub(crate) const IMPOSTOR_BAKE: Table = Table {
     label: "engine/impostor-bake-layout",
     bindings: &[
@@ -425,7 +423,7 @@ pub(crate) const IMPOSTOR_BAKE: Table = Table {
     ],
 };
 
-// GPU presentation's families (decision 014; `presentation.wgsl`).
+// GPU presentation's families (`presentation.wgsl`).
 
 /// Parent composition, and skinned slots' palettes from the composed
 /// parents.
@@ -500,7 +498,7 @@ pub(crate) const PRESENTATION_COMPACT: Table = Table {
     ],
 };
 
-/// Levels of detail kept and faded after culling (decision 107): each
+/// Levels of detail kept and faded after culling: each
 /// slot's level as last drawn, and the cards fading over their meshes.
 pub(crate) const PRESENTATION_FADES: Table = Table {
     label: "engine/presentation-fades-layout",
@@ -515,7 +513,7 @@ pub(crate) const PRESENTATION_FADES: Table = Table {
     ],
 };
 
-/// Skinned slots' bounds (decision 036) from their palettes, culled.
+/// Skinned slots' bounds from their palettes, culled.
 pub(crate) const PRESENTATION_SKIN_BOUNDS: Table = Table {
     label: "engine/presentation-skin-bounds-layout",
     bindings: &[
@@ -530,7 +528,7 @@ pub(crate) const PRESENTATION_SKIN_BOUNDS: Table = Table {
     ],
 };
 
-// Virtual geometry's selection (decision 044; `virtual_geometry.wgsl`).
+// Virtual geometry's selection (`virtual_geometry.wgsl`).
 // Passes dispatching from the dispatch arguments (15) never bind them.
 
 /// Seeding, and the dispatch arguments of each level, the work and the
@@ -603,7 +601,7 @@ pub(crate) const VIRTUAL_SHADOW: Table = Table {
     ],
 };
 
-// Shadows (decision 020; `shadows.wgsl`).
+// Shadows (`shadows.wgsl`).
 
 /// Caster selection and counting.
 pub(crate) const SHADOW_SELECT: Table = Table {
@@ -621,7 +619,7 @@ pub(crate) const SHADOW_SELECT: Table = Table {
     ],
 };
 
-/// Skinned casters (decision 036) by their palette bounds: within eight
+/// Skinned casters by their palette bounds: within eight
 /// storage buffers.
 pub(crate) const SHADOW_SKINNED: Table = Table {
     label: "engine/shadow-skinned-layout",
@@ -637,7 +635,7 @@ pub(crate) const SHADOW_SKINNED: Table = Table {
     ],
 };
 
-/// Group 1 of terrain pipelines (decision 051; `meshes/terrain_vertex.wgsl`):
+/// Group 1 of terrain pipelines (`meshes/terrain_vertex.wgsl`):
 /// the height array, each view's eye-relative projection and each
 /// terrain's anchor and material, the uniforms at dynamic offsets.
 pub(crate) const TERRAIN: Table = Table {
@@ -657,29 +655,29 @@ pub(crate) const TERRAIN: Table = Table {
         read(23, "terrain_directory", F),
         texture(24, "terrain_control", Uint, D2Array, F),
         uniform_of(25, "terrain_palette", crate::terrain::PALETTE_BYTES, F),
-        // Surface materials' maps (decision 054) and their sampler.
+        // Surface materials' maps and their sampler.
         texture(26, "terrain_albedo", Float, D2Array, F),
         texture(27, "terrain_material_normals", Float, D2Array, F),
         texture(28, "terrain_orm", Float, D2Array, F),
         sampler(29, "terrain_material_sampler", Filtering, F),
-        // Each terrain's sky visibility map (decision 055), read through
+        // Each terrain's sky visibility map, read through
         // the normals' sampler.
         texture(30, "terrain_sky", Float, D2Array, F),
-        // Runtime deformation's map (decision 083).
+        // Runtime deformation's map.
         read(37, "terrain_deformation", F),
         // Gathers of the control values (nearest).
         sampler(50, "terrain_control_sampler", NonFiltering, F),
     ],
 };
 
-/// Group 2 of terrain's resolves (decision 123): each pixel's terrain and
+/// Group 2 of terrain's resolves: each pixel's terrain and
 /// depth, as its visibility pass wrote them.
 pub(crate) const TERRAIN_RESOLVE: Table = Table {
     label: "engine/terrain-resolve-layout",
     bindings: &[texture(62, "terrain_ids_texture", Uint, D2, F)],
 };
 
-/// Group 2 of the runtime virtual texture's bakes (decision 124): the
+/// Group 2 of the runtime virtual texture's bakes: the
 /// pages to bake, and every resident tile's heights, which the terrain
 /// group gives vertex stages alone.
 pub(crate) const TERRAIN_VT_BAKE: Table = Table {
@@ -690,7 +688,7 @@ pub(crate) const TERRAIN_VT_BAKE: Table = Table {
     ],
 };
 
-/// The runtime virtual texture's feedback (decision 124), a compute pass
+/// The runtime virtual texture's feedback, a compute pass
 /// over terrain's visibility target: the camera (group 0); the view, the
 /// terrain and the directory with the texture's windows and tables (group
 /// 1, as the terrain group binds them); the visibility target and the
@@ -722,13 +720,13 @@ pub(crate) const TERRAIN_VT_FEEDBACK: Table = Table {
     ],
 };
 
-/// The clouds' noise volume (decision 084; `clouds.wgsl`), made once.
+/// The clouds' noise volume (`clouds.wgsl`), made once.
 pub(crate) const CLOUD_NOISE: Table = Table {
     label: "engine/cloud-noise-layout",
     bindings: &[bind(4, "noise_out", Kind::Storage3d(Rgba8Unorm), C)],
 };
 
-/// The clouds' march into their dome (decision 084; `clouds.wgsl`): the
+/// The clouds' march into their dome (`clouds.wgsl`): the
 /// layer, sun and sky, the noise volume and its sampler, and the dome.
 pub(crate) const CLOUD_MARCH: Table = Table {
     label: "engine/cloud-march-layout",
@@ -741,7 +739,7 @@ pub(crate) const CLOUD_MARCH: Table = Table {
     ],
 };
 
-/// The view's march of the clouds (decision 095; `clouds.wgsl`'s
+/// The view's march of the clouds (`clouds.wgsl`'s
 /// `march_view`): the march from the camera, the noise volume and its
 /// sampler, the view, its depth buffer, and the marched blocks' clouds and
 /// their distances.
@@ -759,7 +757,7 @@ pub(crate) const CLOUD_VIEW: Table = Table {
     ],
 };
 
-/// Group 1 of the view's clouds' composite (decision 095;
+/// Group 1 of the view's clouds' composite (
 /// `meshes/sky.wgsl`): the marched blocks' clouds and distances, the depth
 /// buffer and the blocks' sampler.
 pub(crate) const CLOUD_COMPOSITE: Table = Table {
@@ -772,9 +770,9 @@ pub(crate) const CLOUD_COMPOSITE: Table = Table {
     ],
 };
 
-/// Group 1 of the sky's pipelines (decision 084; `meshes/sky.wgsl`): the
+/// Group 1 of the sky's pipelines (`meshes/sky.wgsl`): the
 /// clouds' dome and its sampler; the physically based sky's uniform, its
-/// sky-view and transmittance tables and their sampler (decision 088).
+/// sky-view and transmittance tables and their sampler.
 pub(crate) const CLOUD_SKY: Table = Table {
     label: "engine/cloud-sky-layout",
     bindings: &[
@@ -784,13 +782,13 @@ pub(crate) const CLOUD_SKY: Table = Table {
         texture(41, "sky_view_table", Float, D2, F),
         texture(42, "sky_transmittance_table", Float, D2, F),
         sampler(43, "sky_table_sampler", Filtering, F),
-        // The older shown dome and the domes' uniform (decision 091).
+        // The older shown dome and the domes' uniform.
         texture(44, "sky_clouds_old", Float, D2, F),
         uniform_of(45, "sky_domes", crate::clouds::DOME_UNIFORM_BYTES, F),
     ],
 };
 
-/// The physically based sky's tables and light (decision 088;
+/// The physically based sky's tables and light (
 /// `sky.wgsl`): the sky's uniform, the tables a pass reads, the one it
 /// writes and the light it derives.
 pub(crate) const SKY_TABLES: Table = Table {
@@ -806,7 +804,7 @@ pub(crate) const SKY_TABLES: Table = Table {
     ],
 };
 
-/// Runtime deformation's map (decision 083; `deformation.wgsl`): each job's
+/// Runtime deformation's map (`deformation.wgsl`): each job's
 /// uniform at a dynamic offset, the stamps it presses and the map.
 pub(crate) const DEFORMATION: Table = Table {
     label: "engine/deformation-layout",
@@ -817,7 +815,7 @@ pub(crate) const DEFORMATION: Table = Table {
     ],
 };
 
-/// A tile's normal map (decision 051; `terrain_normals.wgsl`): the height
+/// A tile's normal map (`terrain_normals.wgsl`): the height
 /// array, the job's layer and spacing, and the layer of the normal array
 /// written.
 pub(crate) const TERRAIN_NORMALS: Table = Table {
@@ -829,7 +827,7 @@ pub(crate) const TERRAIN_NORMALS: Table = Table {
     ],
 };
 
-/// A tile's control values from its terrain's surface (decision 118;
+/// A tile's control values from its terrain's surface (
 /// `terrain_control.wgsl`): the height array, the job's uniform, the
 /// surface's data and the control layer it writes.
 pub(crate) const TERRAIN_CONTROL: Table = Table {
@@ -842,7 +840,7 @@ pub(crate) const TERRAIN_CONTROL: Table = Table {
     ],
 };
 
-/// A terrain horizon map's build (decision 052; `terrain_horizon.wgsl`):
+/// A terrain horizon map's build (`terrain_horizon.wgsl`):
 /// the height array, which layer holds each source tile, the build's
 /// uniform and the layer it writes.
 pub(crate) const TERRAIN_HORIZON: Table = Table {
@@ -855,7 +853,7 @@ pub(crate) const TERRAIN_HORIZON: Table = Table {
     ],
 };
 
-/// A terrain sky visibility map's build (decision 055; `terrain_sky.wgsl`):
+/// A terrain sky visibility map's build (`terrain_sky.wgsl`):
 /// the height array, which layer holds each source tile, the build's
 /// uniform and the layer it writes.
 pub(crate) const TERRAIN_SKY: Table = Table {
@@ -868,7 +866,7 @@ pub(crate) const TERRAIN_SKY: Table = Table {
     ],
 };
 
-/// Ground cover's growth (decision 056; `cover_grow.wgsl`): terrain's
+/// Ground cover's growth (`cover_grow.wgsl`): terrain's
 /// height and control arrays, directory, palette and covers, each
 /// terrain's growth at a dynamic offset, the blades and their counts, and
 /// the indirect draw's arguments.
@@ -884,20 +882,20 @@ pub(crate) const COVER_GROW: Table = Table {
         write(6, "blades", C),
         write(7, "counts", C),
         write(8, "args", C),
-        // Runtime deformation's map (decision 083): blades lie down in
+        // Runtime deformation's map: blades lie down in
         // tracks.
         read(9, "deformation", C),
         // The terrains' sky maps: their variety tints blades as it does the
-        // ground (decision 090).
+        // ground.
         texture(10, "sky", Float, D2Array, C),
     ],
 };
 
-/// Group 1 of ground cover's pipelines (decision 056; `meshes/cover.wgsl`):
+/// Group 1 of ground cover's pipelines (`meshes/cover.wgsl`):
 /// the frame's blades and the wind and times they sway with.
-/// Group 1 of water's pipelines (decision 067; `meshes/water.wgsl`): one
+/// Group 1 of water's pipelines (`meshes/water.wgsl`): one
 /// terrain's water surface heights, its depth and flow, and its uniform;
-/// the sea's (decision 076) has placeholder textures.
+/// the sea's has placeholder textures.
 pub(crate) const WATER: Table = Table {
     label: "engine/water-layout",
     bindings: &[
@@ -907,7 +905,7 @@ pub(crate) const WATER: Table = Table {
     ],
 };
 
-/// Group 2 of water's pipelines (decision 074): a copy of the opaque
+/// Group 2 of water's pipelines: a copy of the opaque
 /// scene's depth, the ground behind the water.
 pub(crate) const WATER_DEPTH: Table = Table {
     label: "engine/water-depth-layout",
@@ -922,7 +920,7 @@ pub(crate) const COVER_DRAW: Table = Table {
     ],
 };
 
-/// Placed objects' culling (decision 057; `scatter_cull.wgsl`): the frame,
+/// Placed objects' culling (`scatter_cull.wgsl`): the frame,
 /// every object's record and every draw group, each view's visible lists
 /// and the indirect draws they count in, the views, and the camera's
 /// impostor cards and their draw.
@@ -941,7 +939,7 @@ pub(crate) const SCATTER_CULL: Table = Table {
     ],
 };
 
-/// Placed objects set on the terrain as drawn (decision 057;
+/// Placed objects set on the terrain as drawn (
 /// `scatter_snap.wgsl`): the slots and terrains, every object's record and
 /// pose, each terrain's place in the directory, the directory and the
 /// resident heights.
@@ -957,9 +955,9 @@ pub(crate) const SCATTER_SNAP: Table = Table {
     ],
 };
 
-/// Occupancy (decision 059; `occupancy.wgsl`): the map's area and counts,
+/// Occupancy (`occupancy.wgsl`): the map's area and counts,
 /// and the placed objects' records, poses and draw groups' covers, and how
-/// their layers thin (decision 100), which the far map weighs far objects
+/// their layers thin, which the far map weighs far objects
 /// by.
 pub(crate) const OCCUPANCY: Table = Table {
     label: "engine/occupancy-layout",
@@ -991,7 +989,7 @@ pub(crate) const SHADOW_POSES: Table = Table {
 
 // Other passes.
 
-/// Light binning (decision 023; `lights.wgsl`).
+/// Light binning (`lights.wgsl`).
 pub(crate) const LIGHT_BINNING: Table = Table {
     label: "engine/light-binning-layout",
     bindings: &[
@@ -1007,7 +1005,7 @@ pub(crate) const LIGHT_BINNING: Table = Table {
     ],
 };
 
-/// The screen effects (decision 021; `post.wgsl`), whose passes each read
+/// The screen effects (`post.wgsl`), whose passes each read
 /// some of these. Textures the passes sample with the linear sampler
 /// filter; the others only load.
 pub(crate) const POST: Table = Table {
@@ -1035,7 +1033,7 @@ pub(crate) const POST: Table = Table {
     ],
 };
 
-/// Group 1 of sun shafts (decision 024; `shafts.wgsl`).
+/// Group 1 of sun shafts (`shafts.wgsl`).
 pub(crate) const SHAFTS: Table = Table {
     label: "engine/post-shafts-layout",
     bindings: &[
@@ -1044,7 +1042,7 @@ pub(crate) const SHAFTS: Table = Table {
     ],
 };
 
-/// Temporal antialiasing's resolve (decision 017; `temporal.wgsl`).
+/// Temporal antialiasing's resolve (`temporal.wgsl`).
 pub(crate) const TAA_RESOLVE: Table = Table {
     label: "engine/taa-resolve-layout",
     bindings: &[
@@ -1060,7 +1058,7 @@ pub(crate) const TAA_RESOLVE: Table = Table {
     ],
 };
 
-/// The transparent composite (decision 026; `transparent.wgsl`).
+/// The transparent composite (`transparent.wgsl`).
 pub(crate) const TRANSPARENT_COMPOSITE: Table = Table {
     label: "engine/transparent-composite-layout",
     bindings: &[
@@ -1069,7 +1067,7 @@ pub(crate) const TRANSPARENT_COMPOSITE: Table = Table {
     ],
 };
 
-/// Group 1 of particles (decision 026; `particles.wgsl`).
+/// Group 1 of particles (`particles.wgsl`).
 pub(crate) const PARTICLES: Table = Table {
     label: "engine/particle-layout",
     bindings: &[
@@ -1080,20 +1078,20 @@ pub(crate) const PARTICLES: Table = Table {
     ],
 };
 
-/// The environment maps' sky (decision 043; `environment.wgsl`).
+/// The environment maps' sky (`environment.wgsl`).
 pub(crate) const ENVIRONMENT_SKY: Table = Table {
     label: "engine/environment-sky-layout",
     bindings: &[
         uniform(1, "lighting", F),
-        // The clouds' dome (decision 084).
+        // The clouds' dome.
         texture(38, "environment_clouds", Float, D2, F),
         sampler(39, "environment_cloud_sampler", Filtering, F),
-        // The physically based sky (decision 088).
+        // The physically based sky.
         uniform_of(40, "environment_air", crate::sky::SKY_UNIFORM_BYTES, F),
         texture(41, "environment_view_table", Float, D2, F),
         texture(42, "environment_transmittance_table", Float, D2, F),
         sampler(43, "environment_table_sampler", Filtering, F),
-        // The older shown dome and the domes' uniform (decision 091).
+        // The older shown dome and the domes' uniform.
         texture(44, "environment_clouds_old", Float, D2, F),
         uniform_of(
             45,
@@ -1131,7 +1129,7 @@ pub(crate) const MIPMAPS: Table = Table {
     ],
 };
 
-/// The depth pyramid's first level from the depth buffer (decision 040;
+/// The depth pyramid's first level from the depth buffer (
 /// `depth_pyramid.wgsl`).
 pub(crate) const PYRAMID_FIRST: Table = Table {
     label: "engine/depth-pyramid-first-layout",
@@ -1155,7 +1153,7 @@ pub(crate) const PYRAMID_DOWN: Table = Table {
     ],
 };
 
-/// The visibility buffer's tile classification (decision 045;
+/// The visibility buffer's tile classification (
 /// `visibility.wgsl`).
 pub(crate) const VISIBILITY_CLASSIFY: Table = Table {
     label: "engine/visibility-classify-layout",

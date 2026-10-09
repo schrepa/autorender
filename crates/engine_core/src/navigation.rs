@@ -1,14 +1,14 @@
-//! Navigation agents (decision 089): entities that walk over terrains to a
+//! Navigation agents: entities that walk over terrains to a
 //! destination. When an agent's destination changes, the shortest walk to
-//! it from where it stands is searched over the generated terrain under it
-//! (decision 081), in steps: every agent's search shares the fixed tick's
+//! it from where it stands is searched over the generated terrain under it,
+//! in steps: every agent's search shares the fixed tick's
 //! budget of [`Navigation::samples_per_tick`], so long walks take several
 //! ticks. Each fixed tick a walking agent moves along its walk at its
 //! speed, on the ground (the finest resident tile's height, else the
 //! walk's), turning toward where it walks; it arrives at the walk's end.
 //! Agents walk unparented entities; give them `InterpolateTransform` to
-//! present smoothly between ticks. Where the host runs workers (decision
-//! 110), they search the walks instead, the tick's budget untouched, and
+//! present smoothly between ticks. Where the host runs workers,
+//! they search the walks instead, the tick's budget untouched, and
 //! agents start walking once a worker hands its walk back.
 
 use bevy_ecs::prelude::*;
@@ -21,7 +21,7 @@ use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max};
 use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
 
-/// Navigation (decision 089): whether agents walk, and the samples of
+/// Navigation: whether agents walk, and the samples of
 /// search work each fixed tick does at most over every walk being searched
 /// (at least 1024). Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -68,7 +68,7 @@ impl Navigation {
 }
 
 /// Walks its entity over the terrain under it to `destination`, world x
-/// and z (decision 089): `speed` meters a second (0.01 to 100), turning at
+/// and z: `speed` meters a second (0.01 to 100), turning at
 /// most `turn` degrees a second (1 to 10000), its origin `offset` meters
 /// above the ground; around obstacles within `radius` meters (0 to 100),
 /// up steps no steeper than `max_slope` (rise per meter, 0.01 to 10),
@@ -171,7 +171,7 @@ impl NavAgent {
     }
 }
 
-/// Where an agent is in its walk (decision 089).
+/// Where an agent is in its walk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -186,7 +186,7 @@ pub enum NavStatus {
     Unreachable,
 }
 
-/// An agent's walk (decision 089): its status, the destination it was
+/// An agent's walk: its status, the destination it was
 /// searched for, its points (world, on the ground), the next it walks to,
 /// its length (meters) and the samples its search took.
 #[derive(Component, Clone, Debug, Default)]
@@ -199,7 +199,7 @@ pub struct NavWalk {
     pub searched: usize,
 }
 
-/// What navigation did at the last fixed tick (decision 089): agents, and
+/// What navigation did at the last fixed tick: agents, and
 /// those searching, walking, arrived and unable to reach their
 /// destination; and the samples of search work the tick did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -212,12 +212,12 @@ pub struct NavStats {
     pub work: u64,
 }
 
-/// Agents' walks being searched (decision 089), and what navigation did
+/// Agents' walks being searched, and what navigation did
 /// at the last fixed tick. Inserted by default.
 #[derive(Resource, Default)]
 pub struct NavAgents {
     // Each search: its agent, the terrain's origin and the search; and each
-    // search on a worker (decision 110), with its job.
+    // search on a worker, with its job.
     searches: Vec<(Entity, Vec3, WalkSearch)>,
     walks: Vec<(Entity, Vec3, JobId)>,
     // Where the next tick's searches start, round robin.
@@ -232,7 +232,7 @@ impl NavAgents {
     }
 }
 
-/// Navigation's systems (decision 089).
+/// Navigation's systems.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NavSystems {
     /// Searches walks and moves agents along them, in `FixedSimulation`.
@@ -252,7 +252,7 @@ type Agents<'w, 's> = Query<
 >;
 
 /// Searches the walks of agents whose destination changed, then moves
-/// walking agents along theirs (decision 089).
+/// walking agents along theirs.
 pub(crate) fn walk_agents(
     time: Res<FixedTime>,
     settings: Option<Res<Navigation>>,
@@ -280,7 +280,7 @@ pub(crate) fn walk_agents(
         return;
     }
     // New destinations start searches from where agents stand: on workers
-    // where they run (decision 110).
+    // where they run.
     for (entity, agent, mut walk, transform) in &mut agents {
         let agent = agent.sanitized();
         if walk.destination == agent.destination {
@@ -311,7 +311,7 @@ pub(crate) fn walk_agents(
             .and_then(|jobs| {
                 let (_, origin, input) = terrains.walk_job(from, to, &options)?;
                 let priority = crate::job_priority(crate::GAMEPLAY_JOBS, 0);
-                // Hosts may keep walks (decision 116): their input names
+                // Hosts may keep walks: their input names
                 // the recipe by its content.
                 let identity = input.clone();
                 Some((
@@ -383,7 +383,7 @@ fn search(settings: &Navigation, navigation: &mut NavAgents, agents: &mut Agents
     }
 }
 
-/// Gives agents the walks workers found (decision 110); a walk that failed
+/// Gives agents the walks workers found; a walk that failed
 /// there is searched here instead.
 fn take_walks(
     jobs: &mut Jobs,
@@ -473,8 +473,7 @@ fn step(
         }
     }
     // On the finest resident ground, else the walk's own; and on the walk's
-    // own where it runs above the ground, over a bridge's deck (decision
-    // 111).
+    // own where it runs above the ground, over a bridge's deck.
     let walked = walk_height(walk, position);
     let ground = terrains
         .height_at(position.x, position.z)
@@ -504,7 +503,7 @@ fn step(
 }
 
 /// Meters a walk runs above the ground beneath before agents stand on the
-/// walk's own height, as on a bridge's deck (decision 111): decks clear the
+/// walk's own height, as on a bridge's deck: decks clear the
 /// water below them by more.
 const DECK_ABOVE: f32 = 1.0;
 

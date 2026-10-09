@@ -30,7 +30,7 @@
       "maxItems": 10000
     },
     "environment": {
-      "description": "The scene's atmosphere and rendering effects (decision 022). Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
+      "description": "The scene's atmosphere and rendering effects. Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
       "anyOf": [
         {
           "$ref": "#/$defs/SceneEnvironment"
@@ -187,7 +187,7 @@
       ]
     },
     "SceneAmbientOcclusion": {
-      "description": "Ambient occlusion (decision 021); an intensity of 0 turns it off.",
+      "description": "Ambient occlusion; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -208,7 +208,7 @@
       "additionalProperties": false
     },
     "SceneAtmosphere": {
-      "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
+      "description": "Sun, sky, fog and grade: a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
       "type": "object",
       "properties": {
         "ambient": {
@@ -364,7 +364,7 @@
       "additionalProperties": false
     },
     "SceneBloom": {
-      "description": "Bloom (decision 021); an intensity of 0 turns it off.",
+      "description": "Bloom; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -549,7 +549,7 @@
       ]
     },
     "SceneEnvironment": {
-      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine default; in a development control, omitted sections stay as\nthey are.",
+      "description": "A scene's look. In a document, every omitted section takes\nthe engine default; in a development control, omitted sections stay as\nthey are.",
       "type": "object",
       "properties": {
         "ambient_occlusion": {
@@ -615,7 +615,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "surface": {
-          "description": "How the surface responds to light beyond its color (decision 019).\nRequires version 5; without it the material is matte.",
+          "description": "How the surface responds to light beyond its color.\nRequires version 5; without it the material is matte.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurface"
@@ -784,7 +784,7 @@
       ]
     },
     "SceneShadows": {
-      "description": "Sun shadows (decision 020); omitted fields take the engine defaults.",
+      "description": "Sun shadows; omitted fields take the engine defaults.",
       "type": "object",
       "properties": {
         "bounds": {
@@ -828,7 +828,7 @@
       "additionalProperties": false
     },
     "SceneSurface": {
-      "description": "A material's response to light (decision 019). Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
+      "description": "A material's response to light. Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
       "type": "object",
       "properties": {
         "emission": {

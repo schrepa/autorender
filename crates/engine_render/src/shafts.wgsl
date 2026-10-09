@@ -1,4 +1,4 @@
-// Sun shafts (decision 024), prepended with scene.wgsl and effects.wgsl: at
+// Sun shafts, prepended with scene.wgsl and effects.wgsl: at
 // quarter resolution, each view ray marches through the fog to the depth
 // buffer's surface or the gathering distance, adding the sunlight each step
 // scatters toward the eye where the far shadow maps let the sun through,

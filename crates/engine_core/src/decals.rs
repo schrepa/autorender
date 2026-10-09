@@ -1,4 +1,4 @@
-//! Decals (decision 039): materials projected onto the opaque surfaces inside
+//! Decals: materials projected onto the opaque surfaces inside
 //! an entity's box, drawn after the opaque pass from the depth buffer.
 //!
 //! Extraction reads one record per decal each frame; decals keep no GPU
@@ -37,8 +37,7 @@ pub enum DecalBlend {
     Multiply,
 }
 
-/// Projects a material onto the opaque surfaces inside its entity's box
-/// (decision 039).
+/// Projects a material onto the opaque surfaces inside its entity's box.
 ///
 /// The box is the entity's local `[-0.5, 0.5]` cube placed by its world
 /// pose: scale the entity to size the decal. The material's base color and
@@ -95,7 +94,7 @@ impl Decal {
     }
 }
 
-/// Decal settings (decision 039). Requires version 8.
+/// Decal settings. Requires version 8.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -136,7 +135,7 @@ impl Decals {
     }
 }
 
-/// One decal of a frame (decision 039).
+/// One decal of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderDecal {
     /// World matrix of the decal's box: its prepared pose, or its

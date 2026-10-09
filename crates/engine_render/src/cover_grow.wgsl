@@ -1,8 +1,8 @@
-// Ground cover (decision 056): each frame, the blades around the eye, grown
+// Ground cover: each frame, the blades around the eye, grown
 // from a terrain's control values and heights. Every cell of the terrain's
 // finest level holds the same candidate blades at every distance, each
 // placed, sized and ranked by a hash of the cell and its index, so blades
-// stay where they are as the eye moves (decision 098): its index counts the
+// stay where they are as the eye moves: its index counts the
 // cell's expected blades at which it grows, plus a share of one. A
 // candidate grows where that falls under its material's density at its
 // point times the cell's area (both cover materials of a control value
@@ -13,12 +13,12 @@
 // as wide on screen, until the tiers' ragged reach (`terrain_variety.wgsl`'s
 // `cover_share`); without tiers cover thins out over the radius's outer
 // half. A workgroup takes one cell of a tier's grid: the radius's cells are
-// the finest level's, and each tier beyond (decision 090) has cells twice
+// the finest level's, and each tier beyond has cells twice
 // as wide as the last, trying only the first indices of the finest cells
 // within them that its density can reach, so wherever a blade grows it is
 // the same blade. Candidates near their threshold grow short, so blades
 // rise as the eye nears instead of popping in. Blades stand on the ground
-// as the terrain draws it, morphing between its levels (decision 098).
+// as the terrain draws it, morphing between its levels.
 // Survivors in the view append to the frame's blades; past capacity they
 // are only counted. Blades take the ground's large-scale variety from its
 // sky map, as the ground does (`terrain_variety.wgsl`).
@@ -36,22 +36,22 @@ struct Grow {
     // capacity.
     counts: vec4<u32>,
     // The density scale, how many of each finest cell's candidates this
-    // tier tries (decision 098), and the terrain's sky map's layer plus one
+    // tier tries, and the terrain's sky map's layer plus one
     // (0 until built).
     scale: vec4<f32>,
-    // This tier (decision 090): the meters from the eye it starts at, the
+    // This tier: the meters from the eye it starts at, the
     // radius, where tiers end (0 without tiers), and how many level-0
     // samples wide its cells are.
     tier: vec4<f32>,
     // The view's frustum planes (world).
     planes: array<vec4<f32>, 6>,
-    // Runtime deformation's map (decision 083, `terrain_vertex.wgsl`'s
+    // Runtime deformation's map (`terrain_vertex.wgsl`'s
     // `deform_grid` and `deform`).
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
     // Meters from the eye up to which each of the terrain's first eight
     // levels draws, finest first: each morphs into the next coarser level
-    // over the last quarter of its range (decision 098); 0 for levels that
+    // over the last quarter of its range; 0 for levels that
     // never morph.
     ranges: array<vec4<f32>, 2>,
 }
@@ -147,7 +147,7 @@ fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32 {
 }
 
 // Where `level` stands morphing into the next coarser level `away` meters
-// from the eye: over the last quarter of its range (decision 098).
+// from the eye: over the last quarter of its range.
 fn level_morph(level: u32, away: f32) -> f32 {
     if level >= 8u {
         return 0.0;
@@ -171,7 +171,7 @@ fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32 {
 }
 
 // The ground at terrain-local `local` as the terrain draws it `away` meters
-// from the eye (decision 098, `terrain_vertex.wgsl`): its finest resident
+// from the eye (`terrain_vertex.wgsl`): its finest resident
 // level, or the coarser one it has morphed into, morphing into the next
 // over the last quarter of its range, its odd samples sliding onto the
 // even ones before them as their heights blend into the coarser level's,
@@ -283,7 +283,7 @@ fn ground_at(local: vec2<f32>) -> Ground {
     return ground;
 }
 
-// How deep tracks (decision 083) sink the ground at world `point`
+// How deep tracks sink the ground at world `point`
 // (meters, its texel's, as refilled): 0 beyond the deformation map.
 fn pressed_at(point: vec2<f32>) -> f32 {
     let size = grow.deform_grid.z;
@@ -317,8 +317,8 @@ fn pack_color(color: vec3<f32>, w: f32) -> u32 {
     return pack4x8unorm(vec4<f32>(sqrt(saturate(color)), saturate(w)));
 }
 
-// The ground's large-scale variety at terrain-local `local` (decision
-// 090): its sky map's hollows and ridges, interpolated between texels;
+// The ground's large-scale variety at terrain-local `local`:
+// its sky map's hollows and ridges, interpolated between texels;
 // level ground before the map is built.
 fn variety_at(local: vec2<f32>) -> vec2<f32> {
     let layer = u32(grow.scale.z);
@@ -381,7 +381,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         center.y);
     let center_away = distance(cell_center, grow.eye.xyz);
     let nearest = max(center_away - half_diagonal, 0.0);
-    // Blades join tiers by their distance through the air (decision 102), so
+    // Blades join tiers by their distance through the air, so
     // seen from above a tier's blades stand well within its inner distance
     // across the ground: only cells whose farthest ground (sloping up to
     // twice as steep as level across them) stays nearer than the tier skip.
@@ -439,7 +439,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let rise = saturate((keep - rank) / max(0.25 * keep, 1.0e-4));
-        // Blades lie down in tracks (decision 083), as deep as the ground's
+        // Blades lie down in tracks, as deep as the ground's
         // material lets them sink it.
         let pressed = min(pressed_at(world_xz), palette[entry].relief.y);
         let standing = 1.0 - 0.85 * smoothstep(0.01, 0.06, pressed);

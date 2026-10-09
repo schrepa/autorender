@@ -1,4 +1,4 @@
-//! The color targets of the frame's main passes (decision 050's
+//! The color targets of the frame's main passes (the render graph's
 //! [`Targets`]): the formats every pipeline drawing into them declares, in
 //! pipeline order; and the 2D textures passes draw into and sample.
 
@@ -8,9 +8,8 @@ use crate::temporal::MOTION_FORMAT;
 
 impl Targets {
     /// The color target formats in pipeline order: the canvas's `canvas`
-    /// format; the screen effects' scene, glow and surface targets
-    /// (decision 021); temporal frames' motion target after the scene
-    /// (decision 017).
+    /// format; the screen effects' scene, glow and surface targets;
+    /// temporal frames' motion target after the scene.
     pub(crate) fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
         match self {
             Self::Canvas => vec![canvas],

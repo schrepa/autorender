@@ -1,8 +1,8 @@
-// KTX2 images (decision 037): Basis Universal supercompressed textures,
+// KTX2 images: Basis Universal supercompressed textures,
 // transcoded at scene load (never per frame) to the block-compressed format
 // this device samples, or to RGBA8 without one, and uncompressed RGBA8
 // images read as they are, alpha exact (terrain materials keep height in
-// it, decision 054). The transcoder is the vendored upstream build in
+// it). The transcoder is the vendored upstream build in
 // public/basis, loaded on first use.
 
 import { adapterFeatures } from "./adapter.ts";
@@ -99,7 +99,7 @@ function loadTranscoder(): Promise<BasisModule> {
   return transcoder;
 }
 
-/** The transcoder in a job worker (decision 110), which has no document to
+/** The transcoder in a job worker, which has no document to
  * add its classic script to: its source runs as a function returning the
  * factory it defines. */
 export function workerTranscoder(base: string): Promise<BasisModule> {

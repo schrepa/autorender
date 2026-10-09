@@ -1,4 +1,4 @@
-//! Terrain placement (decision 057): objects standing on a terrain's
+//! Terrain placement: objects standing on a terrain's
 //! surface, layer by layer. A layer lays a grid of candidate squares a
 //! footprint wide over the terrain; each square holds one candidate,
 //! placed, ranked and varied by a hash of the layer and the square, so
@@ -10,18 +10,18 @@
 //! candidate belongs to the tile of the layer's level holding its point.
 //! Coarser levels stay resident farther from the camera, so their layers'
 //! objects show farther away; renderers set objects on the finest heights
-//! resident. A layer may also stand far away (decision 061): a coarser
+//! resident. A layer may also stand far away: a coarser
 //! level's tiles, which stay resident farther still (pinned levels
 //! everywhere), place the share of its candidates whose rank falls under
 //! that share of its density, a subset of its own objects in the same
 //! places, which renderers hide where its own level's tiles are resident.
 //!
-//! Authors stand objects on a surface too (decision 085): each at its own
+//! Authors stand objects on a surface too: each at its own
 //! point, on the tiles of its level (the finest for small things, coarser
 //! for large ones, which then show as far as those tiles stay resident),
 //! drawn, shadowed and collided with as the layers' objects are.
 //!
-//! A tile's objects may be placed in two parts (decision 112): those of
+//! A tile's objects may be placed in two parts: those of
 //! its own level's layers and its authored objects, then those of layers
 //! standing far away at its level, which far tiles hold by the tens of
 //! thousands; [`merge_placed`] puts the parts in the order one pass places
@@ -33,11 +33,11 @@ use serde::{Deserialize, Serialize};
 use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch};
 use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
-/// The placement layer authored objects (decision 085) report collision
+/// The placement layer authored objects report collision
 /// hits in, beside bridges' `u16::MAX`.
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
-/// Which of a tile's objects a generator places (decision 112): all of
+/// Which of a tile's objects a generator places: all of
 /// them; those of layers of its own level and its authored objects; or
 /// those of layers standing far away at its level.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub enum Placing {
     Far,
 }
 
-/// A tile's objects placed in two parts (decision 112), `near` (its own
+/// A tile's objects placed in two parts, `near` (its own
 /// level's layers' objects, then its authored ones) and `far` (layers
 /// standing far away at its level), in the order one pass places them:
 /// layer by layer, authored objects last.
@@ -102,7 +102,7 @@ pub struct PlacementChoice {
 /// down its slope, their x across it and z down it (0 any way, 1 straight
 /// down it); how deep they sink, in meters at scale 1, below the lowest
 /// ground within their bed, how far around them they rest on (meters at
-/// scale 1, 0 by default: the ground at their point; decision 096), so
+/// scale 1, 0 by default: the ground at their point), so
 /// blocks on steep slopes stand in them instead of hanging over them; the
 /// pyramid level whose tiles hold its candidates (0, the finest, by
 /// default); and where it also stands far away.
@@ -140,7 +140,7 @@ pub struct PlacementLayer {
     pub far: Option<FarPlacement>,
 }
 
-/// Where a placement layer also stands far away (decision 061): on the
+/// Where a placement layer also stands far away: on the
 /// tiles of `level`, coarser than its own, a `share` (0 to 1] of its
 /// objects, the candidates ranked first, where its own level's tiles are
 /// not resident.
@@ -170,7 +170,7 @@ fn unit_scale() -> [f32; 2] {
     [1.0, 1.0]
 }
 
-/// An object an author stands on the surface (decision 085): its asset, by
+/// An object an author stands on the surface: its asset, by
 /// ID of the surface's assets; its base's terrain-local point `[x, z]`,
 /// where it stands on the ground; its turn about the vertical (degrees);
 /// its scale (0.001 to 1000); how deep its base sinks, in meters at scale
@@ -262,7 +262,7 @@ pub(crate) fn compile_authored(
         .collect()
 }
 
-/// The authored objects standing on `tile` (decision 085), appended to
+/// The authored objects standing on `tile`, appended to
 /// `out`: those of its level whose point it holds, on its ground; none on
 /// holes. Returns the work it took (samples' worth).
 pub(crate) fn place_authored(
@@ -314,12 +314,12 @@ pub(crate) fn place_authored(
 /// One object a layer placed: its base's terrain-local position, its turn
 /// about the vertical (radians), how its up leans (x and z of its up
 /// vector), its scale, how far its base sinks below the ground (meters),
-/// the ground's normal under it (x and z; decision 096), its asset and
-/// layer indices, for objects standing far away (decision 061) the level
+/// the ground's normal under it (x and z), its asset and
+/// layer indices, for objects standing far away the level
 /// whose resident tiles hold it instead, and its rank under the density at
 /// its point (0 to 1; 0 for authored objects): the share of the density
-/// past which it stands, which renderers thin layers by with distance
-/// (decision 100). Far away, a layer stands the objects ranked first.
+/// past which it stands, which renderers thin layers by with distance.
+/// Far away, a layer stands the objects ranked first.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
     pub position: [f32; 3],
@@ -592,7 +592,7 @@ fn lowest_ground(tile: &Tile, local: [f32; 2], reach: f32, height: f32) -> f32 {
 /// far away at, where only their far share stands; others hold none.
 /// Returns the work it took (samples' worth) and the next row, none after
 /// the last layer's last.
-/// A row of candidates whose masks a row evaluates at once (decision 113),
+/// A row of candidates whose masks a row evaluates at once,
 /// reused row after row: each candidate's square, rank, point, offset in
 /// its tile, ground, material share and its mask's inputs.
 #[derive(Default)]
@@ -607,8 +607,8 @@ pub(crate) struct PlaceScratch {
     path: Vec<crate::PathSample>,
     values: Vec<f32>,
     rows: RowScratch,
-    // Control values the rules gave samples of a tile holding none
-    // (decision 118), packed, `u32::MAX` where not asked yet: each sample's
+    // Control values the rules gave samples of a tile holding none,
+    // packed, `u32::MAX` where not asked yet: each sample's
     // once a tile, however many candidates share it.
     controls: Vec<u32>,
 }
@@ -624,7 +624,7 @@ struct Candidate {
 }
 
 /// The rows of candidate squares layer `layer_index` of `layers` places on
-/// tile `key` at `spacing` with `placing`'s objects (decision 119), as
+/// tile `key` at `spacing` with `placing`'s objects, as
 /// [`place_row`] walks them: none where it places nothing there.
 pub(crate) fn layer_rows(
     layers: &[CompiledPlacement],
@@ -704,8 +704,8 @@ pub(crate) fn place_row(
     ];
     let square_z = first[1] + row as i64;
     // The row's candidates that may stand, with their masks' inputs; then
-    // their masks over the row at once, each as one evaluation reads it
-    // (decision 113); then, in order, those that stand.
+    // their masks over the row at once, each as one evaluation reads it;
+    // then, in order, those that stand.
     let PlaceScratch {
         candidates,
         xs,
@@ -761,7 +761,7 @@ pub(crate) fn place_row(
             (local[0] / spacing).round() as i32,
             (local[1] / spacing).round() as i32,
         ];
-        // Tiles whose control values the GPU gives (decision 118) hold
+        // Tiles whose control values the GPU gives hold
         // none: the rules give the sample's, the same bits.
         let control = match tile.control_at(nearest[0], nearest[1]) {
             Some(control) => control,
@@ -786,7 +786,7 @@ pub(crate) fn place_row(
             continue;
         }
         // The density at most, with the mask at 1: where the rank passes
-        // even that, nothing here can stand (decision 113).
+        // even that, nothing here can stand.
         if rank >= layer.fill * share_of_materials * share {
             continue;
         }
@@ -810,7 +810,7 @@ pub(crate) fn place_row(
         heights.push(sample.height);
         gradients.push(gradient);
         curvatures.push(curvature);
-        // What the mask reads alone (decision 113).
+        // What the mask reads alone.
         waters.push(match water {
             Some(water) if layer.reads.water => {
                 let river = water

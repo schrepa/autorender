@@ -1,4 +1,4 @@
-//! Rivers (decision 092): the channels a hydrology bake (decision 066)
+//! Rivers: the channels a hydrology bake
 //! finds, as lines with water of their own. A bake traces each channel
 //! from its head or a confluence down its receivers to the next
 //! confluence, a lake or the grid's edge, rounds the grid's steps off its
@@ -10,7 +10,7 @@
 //! ground, so ground the bake never saw cannot rise through the water, and
 //! renderers draw the water as ribbons flat across each river.
 //!
-//! Tiles read rivers a row of samples at a time (decision 113): a
+//! Tiles read rivers a row of samples at a time: a
 //! [`RiverSpan`] holds the segments listed in any cell holding one of the
 //! tile's samples, in the grid's order, and each row visits a segment's
 //! samples within its reach alone, in the order reading sample by sample
@@ -36,10 +36,10 @@ const BANK_SLOPE: f32 = 0.6;
 pub(crate) const BANK_REACH: f32 = 12.0;
 const BANK_ROUNDING: f32 = 1.5;
 /// The least water a river holds at its middle (meters): shallower points
-/// are streams' (decision 097).
+/// are streams'.
 pub const MIN_DEPTH: f32 = 0.35;
-/// Meters below the lowest of a stream's ground and banks its water stands
-/// (decision 097), following the ground rather than never rising, and the
+/// Meters below the lowest of a stream's ground and banks its water stands,
+/// following the ground rather than never rising, and the
 /// meters from its edge its banks are cut over: a stream cuts its course a
 /// little into the ground instead of a trench through every rise.
 const STREAM_MARGIN: f32 = 0.12;
@@ -48,8 +48,8 @@ const STREAM_BANK_REACH: f32 = 2.5;
 const SMOOTHING: usize = 3;
 /// Meters across the cells of the grid that finds the rivers near a point.
 pub(crate) const CELL: f32 = 32.0;
-/// How far past a reading's own reach rows still measure a segment
-/// (decision 113): a share and meters, so rounding never skips a sample
+/// How far past a reading's own reach rows still measure a segment:
+/// a share and meters, so rounding never skips a sample
 /// reading sample by sample would take.
 const REACH_SLACK: [f32; 2] = [1.0e-4, 1.0e-3];
 
@@ -59,14 +59,13 @@ fn slack(reach: f32) -> (f32, f32) {
     (reach, reach * reach)
 }
 
-/// One river or stream (decision 097) between confluences: its points
+/// One river or stream between confluences: its points
 /// (terrain-local x and z, from upstream), and at each its water's surface
 /// (terrain-local meters), half its wet width, the water's depth at its
 /// middle and its speed downstream (meters a second). Stretches dropping
-/// steeper than the bake's falls (decision 075) carry no surface, which
+/// steeper than the bake's falls carry no surface, which
 /// waterfalls show instead. A river beginning at a head, where no channel
-/// flows in, rather than at a confluence, is `head`: its water starts there
-/// (decision 097).
+/// flows in, rather than at a confluence, is `head`: its water starts there.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct River {
     pub points: Vec<[f32; 2]>,
@@ -144,7 +143,7 @@ impl Rivers {
                 );
                 let half = max(river.half[segment], river.half[segment + 1]);
                 // Rivers widen to most of a coarse level's sample; streams
-                // keep their width (decision 097), so they reach no further
+                // keep their width, so they reach no further
                 // than a river's banks and list in far fewer cells.
                 let stream = max(river.depth[segment], river.depth[segment + 1]) < MIN_DEPTH;
                 let margin = half + BANK_REACH + if stream { 0.0 } else { 64.0 };
@@ -238,7 +237,7 @@ impl Rivers {
 
     /// Whether `point` lies beyond `reach` (with [`REACH_SLACK`]) of river
     /// `river`'s segment `segment`, measured as [`Self::on_segment`]
-    /// measures it, without its square root (decision 113).
+    /// measures it, without its square root.
     fn beyond(&self, [river, segment]: [u32; 2], point: Vec2, reach: impl Fn(f32) -> f32) -> bool {
         let river = &self.rivers[river as usize];
         let segment = segment as usize;
@@ -280,7 +279,7 @@ impl Rivers {
         (column < self.columns && row < self.rows).then_some((column, row))
     }
 
-    /// The segments near a tile's samples (decision 113), at x positions
+    /// The segments near a tile's samples, at x positions
     /// `xs` and z positions `zs` (both ascending) `spacing` meters apart.
     pub(crate) fn span(&self, xs: &[f32], zs: &[f32], spacing: f32) -> RiverSpan {
         let (Some(&x0), Some(&x1), Some(&z0), Some(&z1)) =
@@ -415,7 +414,7 @@ impl Rivers {
         )
     }
 
-    /// Where row `row` of `span`'s tile reads segment `near` (decision 113):
+    /// Where row `row` of `span`'s tile reads segment `near`:
     /// the range of its samples within `reach` of it, x positions `xs`;
     /// empty off the cells listing it.
     fn span_samples(
@@ -435,7 +434,7 @@ impl Rivers {
         from..to.max(from)
     }
 
-    /// [`Self::cap`] of row `row` of `span`'s tile (decision 113): its
+    /// [`Self::cap`] of row `row` of `span`'s tile: its
     /// samples' `heights`, at x positions `xs` and z position `z`, in place.
     pub(crate) fn cap_row(
         &self,
@@ -480,7 +479,7 @@ impl Rivers {
 
     /// For each sample of row `row` of `span`'s tile at x positions `xs`
     /// and z position `z`, the nearest river within cutting reach as
-    /// [`Self::nearest`] finds it (decision 113): meters from its edge
+    /// [`Self::nearest`] finds it: meters from its edge
     /// (its distance less half its width), `far` where none is.
     pub(crate) fn nearest_row(
         &self,
@@ -525,7 +524,7 @@ impl Rivers {
     /// `ground` at terrain-local `(x, z)` as rivers cut it at a level whose
     /// samples lie `spacing` meters apart: below each river's water within
     /// its width (at least most of a sample wide, so coarse levels keep the
-    /// cut; streams only their own, decision 097), its bed deepest at the
+    /// cut; streams only their own), its bed deepest at the
     /// middle, and its banks rising from the water at most [`BANK_SLOPE`] for
     /// [`BANK_REACH`] meters (streams' `STREAM_BANK_REACH`), the cut easing
     /// back to the ground over their outer half, each cut rounding into the
@@ -534,7 +533,7 @@ impl Rivers {
         let point = Vec2::new(x, z);
         let mut height = ground;
         for &segment in self.near(point) {
-            // Segments beyond any cut's reach leave it alone (decision 113).
+            // Segments beyond any cut's reach leave it alone.
             if self.beyond(segment, point, |half| {
                 max(half, 0.75 * spacing) + BANK_REACH
             }) {
@@ -571,7 +570,7 @@ impl Rivers {
     }
 }
 
-/// The segments a tile's samples read rivers through (decision 113): those
+/// The segments a tile's samples read rivers through: those
 /// the grid lists in any cell holding a sample, in the grid's order; each
 /// x and z position's cell column and row (`None` off the grid); and for
 /// each row of samples, the segments whose reach it crosses.
@@ -583,7 +582,7 @@ pub(crate) struct RiverSpan {
     by_row: Vec<Vec<u32>>,
 }
 
-/// A segment as a tile's rows read it (decision 113): its river and index,
+/// A segment as a tile's rows read it: its river and index,
 /// its first end, run and length as [`Rivers::on_segment`] measures them,
 /// the box its ends span, its widest half width and the cells listing it
 /// (first and last column, then row).
@@ -621,7 +620,7 @@ impl SpanSegment {
 
 /// What [`Rivers::cap`] reads of a segment at a point: its distance, and
 /// there the water's surface, half the river's width and its depth. Streams
-/// (decision 097) keep their own width at every level, too narrow for
+/// keep their own width at every level, too narrow for
 /// coarse samples to carve (their water fades out there), and cut their
 /// banks over a short reach.
 struct RiverCut {
@@ -850,7 +849,7 @@ pub(crate) fn across(points: &[Vec2], index: usize) -> Vec2 {
 /// (`ground`: at its middle and each bank, terrain-local meters): below the
 /// lowest of them by [`BANK_MARGIN`], never rising downstream, starting no
 /// higher than `incoming` (the rivers meeting where it starts); along
-/// streams (points shallower than [`MIN_DEPTH`], decision 097) just below
+/// streams (points shallower than [`MIN_DEPTH`]) just below
 /// the lowest by `STREAM_MARGIN`, rising with the ground. Its speed comes
 /// from the water's fall, and rivers' stretches falling steeper than
 /// `fall_slope` are marked; streams tumble down theirs.
@@ -906,7 +905,7 @@ crate::codec::record!(River {
 });
 // Rivers travel without the grid that finds them, which readers build
 // again from the same rivers, to the same bits: most of a shared stack's
-// bytes otherwise (decision 113).
+// bytes otherwise.
 impl crate::codec::Codec for Rivers {
     fn write(&self, out: &mut crate::codec::Writer) {
         self.rivers.write(out);

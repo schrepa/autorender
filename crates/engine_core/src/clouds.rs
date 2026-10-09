@@ -1,11 +1,11 @@
-//! Clouds (decision 084): a layer of cumulus over the world, drifting with
+//! Clouds: a layer of cumulus over the world, drifting with
 //! the wind and lit by the sun and the sky. Renderers march it from the
 //! camera into a dome of the sky above it, a slice of the dome's rows each
 //! frame (all of them on exact frames), which the sky, its reflections and
 //! the environment maps show; and from above the world toward the sun into
 //! a map of the light it lets through, which shades the ground under it.
 //! The view marches them again a ray per block of pixels after the opaque
-//! scene (decision 095), so they stand in front of mountains, around a
+//! scene, so they stand in front of mountains, around a
 //! camera inside the layer and below one above it.
 
 use bevy_ecs::prelude::*;
@@ -24,7 +24,7 @@ use crate::math::clamp;
 /// (256 to 4096, a multiple of 64; a quarter as many from the horizon up);
 /// the frames over which ordinary frames march the whole dome (1 to 64);
 /// and whether the view marches them a ray per block of `view_block`
-/// pixels along a side (1 to 16) after the opaque scene (decision 095):
+/// pixels along a side (1 to 16) after the opaque scene:
 /// then they stand in front of whatever lies beyond them, all around a
 /// camera inside the layer and below one above it, and the sky's dome
 /// shows them behind every surface only while the camera is under the

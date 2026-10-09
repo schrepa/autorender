@@ -25,9 +25,9 @@ export interface Runtime extends JobRuntime {
   /** Games without action buttons (Orbit, the Stress Lab) declare only the axes; JavaScript drops the rest. */
   frame(timestamp: number, width: number, height: number, forward: number, right: number, up: number, yaw: number, pitch: number, held: number, pressed: number, released: number): void;
   stats(): string;
-  /** Loading work in place of a frame while the GPU compiles pipelines (decision 099). */
+  /** Loading work in place of a frame while the GPU compiles pipelines. */
   work?(width: number, height: number): void;
-  /** Terrain loading for some milliseconds between frames (decision 108); whether tiles remain. */
+  /** Terrain loading for some milliseconds between frames; whether tiles remain. */
   work_between_frames?(milliseconds: number): boolean;
   suspend(): void;
   reset_camera(): void;
@@ -158,14 +158,14 @@ let game: T | undefined;
 const instrumented = import.meta.env.MODE === "profiling" || import.meta.env.MODE === "attribution";
 const development = (import.meta.env.DEV || instrumented) && new URLSearchParams(location.search).get("engine_dev") === "1";
 // ?prepare=1 starts a development session as ordinary sessions start, so
-// agents can inspect loading as players see it (decision 099).
+// agents can inspect loading as players see it.
 const preparedDevelopment = development && new URLSearchParams(location.search).get("prepare") === "1";
 let paused = development && !preparedDevelopment;
-// Pipelines compile when a frame first needs them (decision 049). Ordinary
+// Pipelines compile when a frame first needs them. Ordinary
 // sessions first render their starting state without advancing time behind a
 // hidden canvas (Firefox paints a visible WebGPU canvas by waiting on its GPU
 // process), until rendered frames stop creating pipelines, the GPU has
-// compiled them and terrains have loaded the camera's view (decision 099);
+// compiled them and terrains have loaded the camera's view;
 // then play starts. Development sessions start paused and compile with the
 // frames their commands render.
 let preparing = !development || preparedDevelopment;
@@ -179,10 +179,10 @@ let developmentBusy = false;
 let disposeDevelopment: (() => void) | undefined;
 let failed = false;
 let request = 0;
-// Loading work while pipelines compile (decision 099): browsers stop calling
+// Loading work while pipelines compile: browsers stop calling
 // animation frames while their GPU process compiles, so it runs in tasks.
 let working = 0;
-// Terrain loading between frames (decision 108): after a frame, a task
+// Terrain loading between frames: after a frame, a task
 // loads terrain until shortly before the next frame is due, by the recent
 // frame interval, while the frame found tiles to load. Frames waiting on
 // the GPU leave that time free; frames waiting on the CPU leave none.
@@ -197,7 +197,7 @@ const BETWEEN_MARGIN_MS = 4;
 // ?between=off loads terrain within frames alone, for comparisons.
 const betweenFrames = new URLSearchParams(location.search).get("between") !== "off";
 const hud = new FrameHud(canvas);
-// Job workers (decision 110), for games that hand out jobs.
+// Job workers, for games that hand out jobs.
 let jobs: JobPool | undefined;
 let pixelWidth = 1;
 let pixelHeight = 1;
@@ -256,7 +256,7 @@ function fail(error: unknown) {
   console.error(error);
 }
 
-/** Terrain loading until shortly before the frame due at `due` (decision 108). */
+/** Terrain loading until shortly before the frame due at `due`. */
 function workBetweenFrames(due: number) {
   between = 0;
   if (disposed || !game || paused || document.hidden || failed || preparing || !game.work_between_frames) return;
@@ -278,7 +278,7 @@ function scheduleBetweenFrames(timestamp: number) {
   between = window.setTimeout(() => workBetweenFrames(due), 0);
 }
 
-/** Loading work in tasks while preparation waits on compiles (decision 099). */
+/** Loading work in tasks while preparation waits on compiles. */
 function workWhileCompiling() {
   working = 0;
   if (disposed || !game || paused || document.hidden || failed || !preparing || !game.work) return;
@@ -293,7 +293,7 @@ function prepareFrame(current: T, timestamp: number) {
   const late = performance.now() - preparedSince > PREPARE_LIMIT_MS;
   const compiling = readStats(current).pipelines_compiling;
   // Frames rendered while compiles run would only queue behind them; loading
-  // work goes on meanwhile (decision 099).
+  // work goes on meanwhile.
   if (compiling && !late) {
     if (!working) working = window.setTimeout(workWhileCompiling, 0);
     return;
@@ -401,7 +401,7 @@ async function start() {
   // GPU initialization may finish after teardown even when fetch was aborted.
   if (disposed) { created.free(); return; }
   game = created;
-  // Games handing out jobs run them on the page's workers (decision 110).
+  // Games handing out jobs run them on the page's workers.
   if (created.take_jobs) {
     jobs = jobPool();
     jobs?.attach(created);

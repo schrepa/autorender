@@ -2,15 +2,15 @@
 //! midtown, residential streets, industry, parks, plazas, markets,
 //! construction sites, stadiums, a river and an elevated rail ring) built
 //! with every engine feature: glTF materials with normal, metal-roughness,
-//! emissive and occlusion maps (decision 031) over procedural textures,
-//! optionally BC7-compressed (decision 037); grime through second texture
-//! coordinates and trees and people in vertex colors (decision 034);
+//! emissive and occlusion maps over procedural textures,
+//! optionally BC7-compressed; grime through second texture
+//! coordinates and trees and people in vertex colors;
 //! alpha-masked foliage, fences and lattices with masked shadows; glass that
-//! refracts (decision 038) and blended panes (decision 026); per-object tints
-//! and billboards whose materials are replaced in place (decision 033);
-//! keyframed props (decision 035) and skinned pedestrians (decision 036);
-//! street lamps, headlights, neon and floodlights (decision 023), fountains,
-//! steam, sparks and a few smoking stacks (decision 026).
+//! refracts and blended panes; per-object tints
+//! and billboards whose materials are replaced in place;
+//! keyframed props and skinned pedestrians;
+//! street lamps, headlights, neon and floodlights, fountains,
+//! steam, sparks and a few smoking stacks.
 //!
 //! Static renderables fill 20-unit blocks between 4-unit streets outward from
 //! the center, as in the wild city. With `hierarchy`, each block's parts are
@@ -51,7 +51,7 @@ const DECK_TOP: f32 = 10.4;
 const WATER_TOP: f32 = -0.2;
 /// Static renderables of an average block, for sizing districts.
 const PER_BLOCK: f32 = 42.0;
-/// Reflection probes (decision 043): the height they capture from, and the
+/// Reflection probes: the height they capture from, and the
 /// world distance inside their boxes' faces over which they fade out.
 const PROBE_HEIGHT: f32 = 2.5;
 const PROBE_BLEND: f32 = 2.0;
@@ -145,14 +145,14 @@ struct Node {
 enum Extra {
     Light(LocalLight),
     Emitter(ParticleEmitter),
-    /// Plays `clip` on the `targets` nodes (decision 035).
+    /// Plays `clip` on the `targets` nodes.
     Player {
         clip: Clip,
         targets: Vec<u32>,
         time: f32,
         speed: f32,
     },
-    /// Deforms this node's mesh by the `joints` nodes (decision 036).
+    /// Deforms this node's mesh by the `joints` nodes.
     Skin(Vec<u32>),
     /// A node players move: presented smoothly with interpolation.
     Animated,
@@ -2889,7 +2889,7 @@ fn vehicle(city: &mut Metro, rng: &mut Rng, kind: u32) {
         Some(motion),
         Some(motion),
     );
-    // Headlights from the front, following the drawn pose (decision 023).
+    // Headlights from the front, following the drawn pose.
     let front = v(size.x * 0.5 + 0.05, -size.y * 0.15, 0.0);
     city.extra(
         body,
@@ -3314,7 +3314,7 @@ pub(crate) struct Adverts {
 }
 
 /// Replaces each board slot's material with its next advertisement every
-/// `AD_PERIOD` seconds of simulated time (decision 033).
+/// `AD_PERIOD` seconds of simulated time.
 fn rotate_ads(time: Res<FixedTime>, mut ads: ResMut<Adverts>, mut assets: ResMut<AssetLibrary>) {
     let cycle = (time.elapsed_seconds / AD_PERIOD) as u64;
     if cycle == ads.shown {
@@ -3509,7 +3509,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         slots: pictures,
         shown: u64::MAX,
     });
-    // Reflection probes (decision 043) at every street crossing (blocks'
+    // Reflection probes at every street crossing (blocks'
     // corners lie on multiples of the period), at the
     // height of cars and people: their boxes overlap their neighbors' by
     // twice the blend so one fades out as the next is fully in, and surfaces

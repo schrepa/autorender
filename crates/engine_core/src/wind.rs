@@ -1,4 +1,4 @@
-//! The world's wind (decision 058): one velocity and gust strength that
+//! The world's wind: one velocity and gust strength that
 //! everything swaying in it reads, ground cover's blades and placed
 //! objects alike. Renderers sway them by it at the frame's presentation
 //! time, and temporal frames by the previous frame's for their motion.

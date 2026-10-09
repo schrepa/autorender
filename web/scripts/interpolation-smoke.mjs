@@ -108,10 +108,10 @@ try {
     document.body.append(canvas);
     let game;
     try {
-      // The fixture references no files (decision 030).
+      // The fixture references no files.
       game = await PlaygroundGame.create(canvas, JSON.stringify(fixture), new SceneFileSet());
       // Development commands between these frames would complete a pipelined
-      // tick early (decision 015); this check covers interpolation alone.
+      // tick early; this check covers interpolation alone.
       game.set_tick_pipelining(false);
       const request = command => {
         const reply = JSON.parse(game.dev_command(JSON.stringify({ version: 1, ...command }), 320, 240));

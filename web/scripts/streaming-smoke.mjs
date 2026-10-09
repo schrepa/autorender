@@ -1,10 +1,10 @@
 /**
- * World streaming checks (decision 086): a version 9 playground fixture's
+ * World streaming checks: a version 9 playground fixture's
  * streamed entities bin into grids by their reach and spawn only while
  * their cells are within range of the camera, with hysteresis, a per-frame
  * spawn budget, prefetch along the camera's motion, and freezing and
  * disabling through the `world_streaming` environment section; removals
- * persist and restore (decision 087); grounded entities stand on the
+ * persist and restore; grounded entities stand on the
  * terrain; loaded streamed entities inspect and collide by their authored
  * IDs; prefab placements, parents and animation players stream within
  * their item; reloads remove the old items; and invalid documents are
@@ -73,7 +73,7 @@ try {
   await openPaused(page, url);
   await command("environment", { terrain: { samples_per_frame: 50_000_000 } });
   let rendering = await look(0, 0);
-  // Job workers generate tiles beside the page (decision 110), their
+  // Job workers generate tiles beside the page, their
   // outputs arriving between commands.
   for (let frame = 0; frame < 400 && (rendering.terrain_loading_tiles > 0 || rendering.terrain_fallback_patches > 0); frame++) {
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -163,7 +163,7 @@ try {
   assert.notEqual(await loaded("crate-mid"), null, "the middle crate loads ahead of the camera");
   checks.push({ check: "prefetch", velocity: state.velocity });
 
-  // Removals persist (decision 087): a removed item despawns at once and
+  // Removals persist: a removed item despawns at once and
   // its cell no longer spawns it; restored, it spawns again.
   await look(0, 0);
   const removal = await command("world_changes", { remove: ["streaming-fixture/crate-near"] });

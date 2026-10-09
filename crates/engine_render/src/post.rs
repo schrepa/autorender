@@ -1,5 +1,5 @@
-//! Screen effects: ambient occlusion and bloom (decision 021), sun shafts
-//! (decision 024) and screen-space reflections (decision 025).
+//! Screen effects: ambient occlusion and bloom, sun shafts
+//! and screen-space reflections.
 //!
 //! Frames with an effect draw the scene into a color target whose alpha is the
 //! ambient share of each pixel's light, and a glow target of each pixel's
@@ -10,7 +10,7 @@
 //! Reflections walk a pyramid of the depth buffer's nearest depths at half
 //! resolution and filter the result; bloom filters the glowing light down a
 //! chain of half-resolution levels and back up. Temporally antialiased frames
-//! (decision 017) apply them in their resolve, other frames in a composite
+//! apply them in their resolve, other frames in a composite
 //! that writes the canvas.
 
 use engine_core::{RenderSnapshot, glam::Mat4};
@@ -24,9 +24,9 @@ use crate::profiling::{GpuProfiler, Span};
 
 /// Linear color with 8 perceptual bits; alpha holds the ambient share.
 pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Glow weight (decision 021) and reflectivity (decision 025).
+/// Glow weight and reflectivity.
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
-/// The surface reflections follow (decision 025): the shading normal,
+/// The surface reflections follow: the shading normal,
 /// octahedral, and roughness, 10 bits each.
 pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgb10a2Unorm;
 /// The filtered occlusion's visibility and the sun shafts' light, which the
@@ -48,10 +48,9 @@ fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
 }
 /// The scene's blurred levels: averages of the 8-bit sRGB scene.
 const SCENE_LEVEL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Reflected color, from the scene and its levels, and weight (decision
-/// 025).
+/// Reflected color, from the scene and its levels, and weight.
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-/// Scattered sunlight (decision 024) and the length of the ray that
+/// Scattered sunlight and the length of the ray that
 /// gathered it, at quarter resolution.
 const SHAFT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// Half-resolution bloom levels; each halves the one before.
@@ -66,7 +65,7 @@ pub(crate) struct PostFrame {
     pub bloom: bool,
     pub reflections: bool,
     pub shafts: bool,
-    // Contact shadows (decision 062), traced with the occlusion.
+    // Contact shadows, traced with the occlusion.
     pub contact: bool,
 }
 
@@ -172,7 +171,7 @@ impl PostPass {
             source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
         });
         let bloom_format = bloom_format(device);
-        // Every pass of post.wgsl shares one layout (decision 049).
+        // Every pass of post.wgsl shares one layout.
         let layout = pipelines::layout(device, &POST);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("engine/post-pipeline-layout"),

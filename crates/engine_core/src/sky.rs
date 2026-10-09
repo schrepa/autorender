@@ -1,4 +1,4 @@
-//! A physically based sky (decision 088) and the time of day.
+//! A physically based sky and the time of day.
 //!
 //! [`Sky`] is opt-in. With it the atmosphere is air over a planet:
 //! renderers integrate Rayleigh and Mie scattering and ozone absorption
@@ -22,7 +22,7 @@ use crate::FrameTime;
 use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max, sin_cos};
 
-/// A physically based sky (decision 088): whether it draws; the planet's
+/// A physically based sky: whether it draws; the planet's
 /// radius and the atmosphere's thickness (kilometers); Rayleigh scattering
 /// per kilometer at the ground (red, green, blue) and the height over which
 /// it thins by e (km); Mie scattering and absorption per kilometer, their
@@ -166,7 +166,7 @@ impl Sky {
     }
 }
 
-/// The time of day (decision 088): whether it moves the sun; the hour (0 to
+/// The time of day: whether it moves the sun; the hour (0 to
 /// 24); how many hours pass each second (0 holds it, up to 24); the
 /// minutes of each step the sun moves by (0.1 to 60); the latitude and day
 /// of the year (0 to 365) that set the sun's path; and the yaw of north in
@@ -270,7 +270,7 @@ impl TimeOfDay {
     }
 }
 
-/// Advances the time of day by the frame's time (decision 088).
+/// Advances the time of day by the frame's time.
 pub(crate) fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeOfDay>>) {
     let Some(mut day) = day else {
         return;

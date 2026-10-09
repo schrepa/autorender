@@ -1,13 +1,11 @@
-//! Waterfalls (decision 075): where terrains' hydrology bakes find rivers
-//! falling, the engine spawns what draws them and despawns it as terrains'
-//! bakes finish and terrains go. White water pours down each fall's course
-//! as a translucent ribbon the river's width just over the ground, along
-//! the curve a spline mesh would take (decision 071), every fall of a
-//! terrain in one mesh drawn at once; spray runs down each step of it,
-//! bowed a little by gravity, and mist rises from its foot (particles,
-//! decision 026): the river carries no water surface over the drop, which a
-//! grid of its samples could not follow. Water that does not draw spawns
-//! none.
+//! Waterfalls: where terrains' hydrology bakes find rivers falling, the engine
+//! spawns what draws them and despawns it as terrains' bakes finish and
+//! terrains go. White water pours down each fall's course as a translucent
+//! ribbon the river's width just over the ground, along the curve a spline mesh
+//! would take, every fall of a terrain in one mesh drawn at once; spray runs
+//! down each step of it, bowed a little by gravity, and mist rises from its
+//! foot (particles): the river carries no water surface over the drop, which a
+//! grid of its samples could not follow. Water that does not draw spawns none.
 
 use std::collections::HashMap;
 use std::sync::Arc;

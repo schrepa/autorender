@@ -1,16 +1,16 @@
-// Sun shadows (decision 020): caster selection and depth-only drawing.
+// Sun shadows: caster selection and depth-only drawing.
 //
 // `select_casters` visits every candidate once. It transforms the candidate's
 // mesh bounds into light space and appends its slot to the instance IDs of
-// each shadow map it can darken: the near cascades that follow the camera
-// (decision 028), the far map redrawn every frame, and the tiles of the
+// each shadow map it can darken: the near cascades that follow the camera,
+// the far map redrawn every frame, and the tiles of the
 // kept far map redrawn this frame. GPU-presented frames also track how many frames each slot's
 // pose stayed the same: still slots move into the kept map, which is drawn
 // only when a region of it is dirty, and leave the per-frame map a little
-// later, once the kept map surely holds them. Kept levels (decision 065),
+// later, once the kept map surely holds them. Kept levels,
 // finer kept maps following the camera, take still casters within the
 // region of the one redrawn this frame, and the tiles they leave or come to
-// rest in are marked dirty too. Casters with virtual geometry (decision 044)
+// rest in are marked dirty too. Casters with virtual geometry
 // go to the maps drawn every frame, whose views select their clusters, and
 // never to the kept map.
 
@@ -70,7 +70,7 @@ struct Candidate {
 }
 
 // A draw group (the presentation record, whose padding holds the group;
-// `bounds_min.w` is 1 for meshes with joints, decision 036).
+// `bounds_min.w` is 1 for meshes with joints).
 struct Batch {
     start: u32,
     count: u32,
@@ -80,7 +80,7 @@ struct Batch {
     bounds_max: vec4<f32>,
     // The mesh's first index and base vertex in the mesh arena, and the
     // first instance of its draws (unused here), then its levels of detail
-    // (decision 047; unused here).
+    // (unused here).
     first_index: u32,
     base_vertex: i32,
     first_instance: u32,
@@ -126,7 +126,7 @@ struct Counters {
     starts: array<u32>,
 }
 @group(0) @binding(8) var<storage, read_write> counters: Counters;
-// GPU-presented frames: skinned slots (decision 036), each with its
+// GPU-presented frames: skinned slots, each with its
 // candidate position, draw group and joint count, and their world bounds
 // from their palettes (minimum, then maximum).
 struct Skinned {
@@ -224,7 +224,7 @@ fn append(map: u32, group: u32, slot: u32) {
     ids[map * cull.capacity + group_start(group) + offset] = slot;
 }
 
-// Skinned slots of GPU-presented frames (decision 036): each casts into the
+// Skinned slots of GPU-presented frames: each casts into the
 // near cascades and the moving map its palette bounds overlap, like any
 // moving caster, and never into the kept map.
 @compute @workgroup_size(64)
@@ -283,7 +283,7 @@ fn mark_dirty(packed: u32) {
     }
 }
 
-// Marks dirty each kept level's tiles (decision 065) under light-space
+// Marks dirty each kept level's tiles under light-space
 // `low` to `high`, those of its window: a row's slots at a time.
 fn mark_levels(low: vec2<f32>, high: vec2<f32>) {
     if !(all(abs(low) < vec2<f32>(1.0e9)) && all(abs(high) < vec2<f32>(1.0e9))) {
@@ -331,10 +331,10 @@ fn select_casters(@builtin(global_invocation_id) id: vec3<u32>) {
     if batch.group >= cull.groups {
         return;
     }
-    // Batches drawing virtual geometry (decision 044, flag 2) cast the
+    // Batches drawing virtual geometry (flag 2) cast the
     // clusters each map's view selects; the kept map's are its own detail,
     // whatever the camera sees.
-    // Joints place meshes with joints (decision 036), wherever their slot
+    // Joints place meshes with joints, wherever their slot
     // is: GPU-presented frames select them by their palette bounds
     // (`select_skinned`); others cast them into every map drawn each frame.
     // Neither keeps them.
@@ -470,7 +470,7 @@ fn count_casters(@builtin(local_invocation_index) lane: u32) {
 struct View {
     // World to this map's clip space.
     clip: mat4x4<f32>,
-    // The wind (decision 058): its velocity (x and z), gust strength and the
+    // The wind: its velocity (x and z), gust strength and the
     // presentation time, which placed objects sway in as `scene.wgsl`'s
     // `wind_sway` has them.
     wind: vec4<f32>,
@@ -479,7 +479,7 @@ struct View {
 // Its own binding: the selection pass above owns binding 0.
 @group(0) @binding(9) var<uniform> view: View;
 @group(1) @binding(0) var<storage, read> slot_poses: array<Rows>;
-// Joint palettes of skinned slots (decision 036), as meshes.wgsl reads them.
+// Joint palettes of skinned slots, as meshes.wgsl reads them.
 @group(1) @binding(2) var<storage, read> slot_palette: array<Rows>;
 
 fn project(world: vec3<f32>) -> vec4<f32> {
@@ -490,7 +490,7 @@ fn project(world: vec3<f32>) -> vec4<f32> {
     return clip;
 }
 
-// `scene.wgsl`'s: the wind's push on a swaying object (decision 058).
+// `scene.wgsl`'s: the wind's push on a swaying object.
 fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway: f32,
         time: f32) -> vec3<f32> {
     let speed = length(velocity);
@@ -508,7 +508,7 @@ fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway
 }
 
 // Slot `slot`'s world position of mesh point `position`, swayed by the
-// wind where its flags carry a sway (decision 058; skinned slots' palette
+// wind where its flags carry a sway (skinned slots' palette
 // offsets read as none).
 fn slot_world(slot: u32, position: vec3<f32>) -> vec3<f32> {
     let pose = slot_poses[slot];
@@ -536,7 +536,7 @@ fn vs_clear(@builtin(vertex_index) index: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 1.0, 1.0);
 }
 
-// Alpha-masked casters (decision 031): the base color texture's alpha times
+// Alpha-masked casters: the base color texture's alpha times
 // the object's color alpha, tested against the material's cutoff.
 struct SlotColor {
     color: vec2<u32>,
@@ -574,8 +574,8 @@ fn vs_affine_masked(@location(0) position: vec3<f32>, @location(7) uv: vec2<f32>
     return masked_output(project(slot_world(slot, position)), uv, slot_colors[slot].color);
 }
 
-// A slot's world position of a vertex with joints and weights (decision
-// 036): its palette blend when skinned (flags one more than the palette
+// A slot's world position of a vertex with joints and weights:
+// its palette blend when skinned (flags one more than the palette
 // offset), else its pose.
 fn skinned_world(slot: u32, position: vec3<f32>, joints: vec4<u32>,
         weights: vec4<f32>) -> vec3<f32> {
@@ -612,7 +612,7 @@ fn vs_affine_masked_skinned(@location(0) position: vec3<f32>, @location(7) uv: v
         slot_colors[slot].color);
 }
 
-// Placed objects' impostor cards (decision 060): objects the camera draws
+// Placed objects' impostor cards: objects the camera draws
 // as impostors cast a card through their sphere's center facing the
 // frame nearest the sun, covered as that frame covers it. The impostors'
 // group of meshes.wgsl: records, the albedo and coverage array and its

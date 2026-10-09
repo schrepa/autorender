@@ -1,6 +1,6 @@
-//! The depth pipelines of shadow maps (decisions 020 and 031): caster
+//! The depth pipelines of shadow maps: caster
 //! selection's compute passes, slot casters plain, masked and skinned,
-//! placed objects' impostor cards (decision 060) and the clear of kept-map
+//! placed objects' impostor cards and the clear of kept-map
 //! tiles, with the view matrices and selection uniform they read.
 
 use super::{LEVEL_VIEW, SHADOW_FORMAT, VIEW_STRIDE};
@@ -14,14 +14,14 @@ pub(super) struct ShadowPipelines {
     pub(super) select: wgpu::ComputePipeline,
     pub(super) count: wgpu::ComputePipeline,
     pub(super) select_layout: wgpu::BindGroupLayout,
-    // Skinned casters of GPU-presented frames (decision 036).
+    // Skinned casters of GPU-presented frames.
     pub(super) select_skinned: wgpu::ComputePipeline,
     pub(super) skinned_layout: wgpu::BindGroupLayout,
-    // Slot casters by `masked + 2 * skinned`: plain; alpha-masked (decision
-    // 031), with a material group; and of meshes with joints (decision 036),
+    // Slot casters by `masked + 2 * skinned`: plain; alpha-masked,
+    // with a material group; and of meshes with joints,
     // which read a skin stream and the joint palettes.
     pub(super) casters: [wgpu::RenderPipeline; 4],
-    // Placed objects' impostor cards (decision 060), created once they
+    // Placed objects' impostor cards, created once they
     // have impostors, and what creating them takes.
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
     module: wgpu::ShaderModule,
@@ -63,7 +63,7 @@ fn caster_pipeline(
             buffers,
             // Both faces cast: open and single-sided meshes shadow too.
             primitive: wgpu::PrimitiveState::default(),
-            // Receiver planes (decision 028) keep lit surfaces off
+            // Receiver planes keep lit surfaces off
             // their own depth; a unit of bias covers the sun shafts'
             // plain comparisons.
             depth: Some(wgpu::DepthStencilState {
@@ -119,7 +119,7 @@ impl ShadowPipelines {
             |entry: &str| crate::pipelines::compute_entry(device, &compute_layout, &module, entry);
         let select = compute("select_casters");
         let count = compute("count_casters");
-        // Skinned casters (decision 036) bind their palette bounds instead of
+        // Skinned casters bind their palette bounds instead of
         // candidates, poses and stillness: within eight storage buffers.
         let skinned_layout = layout(device, &SHADOW_SKINNED);
         let skinned_pipeline_layout =
@@ -244,7 +244,7 @@ impl ShadowPipelines {
             true,
         );
         // The clear binds nothing but shares the plain casters' layout: each
-        // distinct layout costs Firefox a root signature (decision 049).
+        // distinct layout costs Firefox a root signature.
         let clear = pipeline(
             "engine/shadow-clear",
             &[Some(&view_layout), Some(&pose_layout)],
@@ -292,7 +292,7 @@ impl ShadowPipelines {
         }
     }
 
-    /// The pipeline of placed objects' impostor cards (decision 060): the
+    /// The pipeline of placed objects' impostor cards: the
     /// view, the objects' poses and `impostor_layout`'s impostors, each
     /// card's slot and record as instance attributes.
     pub(super) fn impostor_caster(

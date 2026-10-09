@@ -1,4 +1,4 @@
-//! Runtime deformation (decision 083): ground that remembers where things
+//! Runtime deformation: ground that remembers where things
 //! went. Each fixed tick every [`Deformer`] within its contact distance of
 //! a terrain presses a stamp into [`Tracks`], the log of every stamp: a
 //! capsule from where it pressed the tick before to where it stands. Frames
@@ -43,7 +43,7 @@ const MERGE_LENGTH: f32 = 32.0;
 /// Refilled shallower than this (meters), a stamp leaves the log.
 const FORGOTTEN: f32 = 5.0e-4;
 
-/// Runtime deformation (decision 083): whether deformers press tracks; the
+/// Runtime deformation: whether deformers press tracks; the
 /// meters of ground the map around the camera spans (8 to 1024) and its
 /// texels along a side (128 to 8192, a multiple of 128; renderers keep
 /// fewer where the device's buffers cannot hold them); the seconds tracks
@@ -140,7 +140,7 @@ impl Deformation {
     }
 }
 
-/// Presses tracks into deformable ground (decision 083) as a scene version
+/// Presses tracks into deformable ground as a scene version
 /// 9 `deformer` field: each fixed tick, while its entity's world position
 /// lies at most `contact` meters above the terrain under it (or below it),
 /// it presses a footprint `radius` meters across, from where it pressed the
@@ -294,7 +294,7 @@ struct Pressing {
     sequence: u64,
 }
 
-/// Every stamp deformers and agents pressed (decision 083), oldest first,
+/// Every stamp deformers and agents pressed, oldest first,
 /// and those pressed since the last frame. Inserted by default; frames and
 /// queries read it, [`Deformation`] bounds it.
 #[derive(Resource, Default)]
@@ -662,7 +662,7 @@ pub(crate) fn press(world: &mut World, deformers: &mut QueryState<(Entity, &Defo
     }
 }
 
-/// Where a frame's deformation map lies (decision 083): the world texel
+/// Where a frame's deformation map lies: the world texel
 /// index of its first texel along x and z (texel `i` covers world meters
 /// `i * texel` to `(i + 1) * texel`), its texels' size (meters) and count
 /// along a side, and the settings renderers shade it with.
@@ -737,7 +737,7 @@ impl DeformationMap {
     }
 }
 
-/// A frame's deformation (decision 083): where the map lies (`None` while
+/// A frame's deformation: where the map lies (`None` while
 /// deformation is off), whether renderers clear it first (it started, its
 /// size changed or the log was cleared), and the stamps to press into it,
 /// oldest first: the log's over ground the map newly covers, then those

@@ -1,14 +1,14 @@
-//! Octahedral impostors (decision 048): the first frame an opaque draw group
+//! Octahedral impostors: the first frame an opaque draw group
 //! whose mesh has enough triangles draws, its mesh is baked with its material
 //! from `IMPOSTOR_FRAMES` x `IMPOSTOR_FRAMES` directions into one layer of
 //! four texture arrays, and GPU-presented frames draw instances too small
 //! for the layer's texels to show as cards blending the three frames around
 //! the view (`meshes/impostors.wgsl`). Plan batches' frames cover the
-//! sphere; placed objects' (decision 057), which stand on the ground, cover
-//! the upper hemisphere at four times the texels in an atlas of their own
-//! (decision 060). Bakes also record how much of the sky each texel's
+//! sphere; placed objects', which stand on the ground, cover
+//! the upper hemisphere at four times the texels in an atlas of their own.
+//! Bakes also record how much of the sky each texel's
 //! surface sees past its own mesh, which shades the sun on cards as the
-//! mesh's own shadows would (decision 060). The GPU side is created with
+//! mesh's own shadows would. The GPU side is created with
 //! the first bake.
 
 use bytemuck::{Pod, Zeroable};
@@ -31,13 +31,13 @@ pub(crate) struct AtlasShape {
 }
 
 impl AtlasShape {
-    /// Plan batches' impostors (decision 048): 16 texels a frame over the
+    /// Plan batches' impostors: 16 texels a frame over the
     /// sphere.
     pub(crate) const SPHERE: Self = Self {
         texels: 16,
         hemisphere: false,
     };
-    /// Placed objects' (decision 060): 64 texels a frame over the upper
+    /// Placed objects': 64 texels a frame over the upper
     /// hemisphere, which views from below see from the horizon.
     pub(crate) const PLACED: Self = Self {
         texels: 64,
@@ -223,7 +223,7 @@ mod gpu {
 
     struct Baked {
         record: ImpostorRecord,
-        // The material baked, to rebake one replaced in place (decision 033).
+        // The material baked, to rebake one replaced in place.
         material: Option<Material>,
     }
 
@@ -398,7 +398,7 @@ mod gpu {
         }
 
         /// Drops impostors `keep` refuses and those whose material changed
-        /// from `material` (decision 033), freeing their layers.
+        /// from `material`, freeing their layers.
         pub(crate) fn retain(
             &mut self,
             mut keep: impl FnMut(&ImpostorKey) -> bool,
@@ -466,7 +466,7 @@ mod gpu {
             let targets = self
                 .targets
                 .get_or_insert_with(|| bake_targets(device, shape));
-            // Bakes are rare: uber variants (decision 049).
+            // Bakes are rare: uber variants.
             let variant = source.variant.with_extended(source.extended).uber();
             let layout = &pipelines.bake_pipeline_layout;
             let pipeline = pipelines
@@ -533,7 +533,7 @@ mod gpu {
                 );
             };
             // Every frame's nearest depths first, which the colors' bake
-            // looks up (decision 060).
+            // looks up.
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("engine/impostor-shade"),

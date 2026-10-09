@@ -23,7 +23,7 @@ const HOLE_WORDS: usize = (HOLE_CELLS * HOLE_CELLS).div_ceil(64);
 /// A tile's samples: heights in meters above the terrain's origin of
 /// samples -1 to 257 along x and z (its samples and a border of one), row
 /// by row along z, with their bounds, where a stamp cut them holes, and
-/// with a surface each sample's control value (decision 054).
+/// with a surface each sample's control value.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     key: TileKey,
@@ -133,7 +133,7 @@ impl Tile {
     }
 
     /// The objects the surface's placement layers of this tile's level
-    /// stand on it (decision 057).
+    /// stand on it.
     pub fn placed(&self) -> &[crate::Placed] {
         self.placed.as_deref().unwrap_or(&[])
     }
@@ -307,8 +307,8 @@ const LANE_WEIGHTS: [Vec4; 4] = {
     ]
 };
 
-/// [`interpolate`] for the four samples of a coarse cell at once (decision
-/// 121), sample `k` in lane `k` with [`QUARTER_WEIGHTS`]`[k]`.
+/// [`interpolate`] for the four samples of a coarse cell at once,
+/// sample `k` in lane `k` with [`QUARTER_WEIGHTS`]`[k]`.
 #[inline(always)]
 fn interpolate4(out: &mut [Vec4], taps: [&[f32]; 4]) {
     let [a, b, c, d] = taps;
@@ -327,11 +327,11 @@ enum Stage {
     Done,
     Place { layer: usize, row: usize },
     Failed,
-    // A band's rows are done (decision 117).
+    // A band's rows are done.
     Banded,
 }
 
-/// Rows of a tile a band of its generation made (decision 117): the tile's
+/// Rows of a tile a band of its generation made: the tile's
 /// key, the first stored row (0 to 258, samples -1 to 257), and those rows'
 /// heights and control values, with the hole bits of the cells starting in
 /// them; [`merge_bands`] joins a tile's bands.
@@ -352,7 +352,7 @@ crate::codec::record!(TileBand {
     control,
 });
 
-/// Tile `key` at `spacing` joined from `bands` (decision 117), each row from
+/// Tile `key` at `spacing` joined from `bands`, each row from
 /// its band: the same tile generating it whole gives, without objects.
 /// `None` unless the bands cover every row once, alike in holes and
 /// control values, with valid heights and control values.
@@ -440,38 +440,37 @@ pub struct Generator {
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
     weights: Vec<(u8, f32)>,
-    // The finished tile while its objects are placed (decision 057), a row
+    // The finished tile while its objects are placed, a row
     // of candidate squares at a time, the objects placed so far and which
-    // of them it places (decision 112).
+    // of them it places.
     tile: Option<Tile>,
     placed: Vec<crate::Placed>,
     placing: Placing,
-    // Each hydrology layer's rivers near the tile, read a row at a time
-    // (decision 113), once a stage needs them, and its stored rows' z; a
+    // Each hydrology layer's rivers near the tile, read a row at a time,
+    // once a stage needs them, and its stored rows' z; a
     // row's inputs to the surface's masks.
     spans: Vec<Option<Arc<crate::rivers::RiverSpan>>>,
     zs: Box<[f32]>,
     inputs: SurfaceInputs,
     places: crate::placement::PlaceScratch,
-    // Whether it hands out the tile's shape before its surface (decision
-    // 114), and the shape until taken.
+    // Whether it hands out the tile's shape before its surface,
+    // and the shape until taken.
     staged: bool,
     shape: Option<Tile>,
-    // The stored rows a band generates alone (decision 117), and its rows
+    // The stored rows a band generates alone, and its rows
     // once done until taken.
     rows: Option<(usize, usize)>,
     banded: Option<TileBand>,
     // Whether it gives its tile control values; the GPU gives them where
-    // not (decision 118).
+    // not.
     materials: bool,
-    // Where a band of placing stops (decision 119): the layer and row it
+    // Where a band of placing stops: the layer and row it
     // leaves to the next band, none for the last, which also places what
     // authors stand on the tile.
     place_end: Option<(usize, usize)>,
 }
 
-/// A row's inputs to a surface's masks, reused row after row (decision
-/// 113).
+/// A row's inputs to a surface's masks, reused row after row.
 #[derive(Default)]
 struct SurfaceInputs {
     zs: Vec<f32>,
@@ -498,7 +497,7 @@ impl Generator {
     pub fn new(layers: Arc<Layers>, pyramid: &Pyramid, key: TileKey) -> Self {
         let level = u32::from(key.level);
         let spacing = pyramid.spacing(level);
-        // Surroundings (decision 094) read their stack where their samples
+        // Surroundings read their stack where their samples
         // lie in the ground it was drawn for.
         let [x, z] = pyramid.first_sample(key);
         let [dx, dz] = layers.offset_samples(spacing);
@@ -569,19 +568,18 @@ impl Generator {
         }
     }
 
-    /// The generator leaving its tile without control values (decision
-    /// 118), which the GPU gives to rendering and the rules to gameplay at
+    /// The generator leaving its tile without control values,
+    /// which the GPU gives to rendering and the rules to gameplay at
     /// the samples it asks for; it still places objects.
     pub fn with_materials(mut self, materials: bool) -> Self {
         self.materials = materials;
         self
     }
 
-    /// A generator of stored rows `rows` of tile `key` alone (decision
-    /// 117; 0 to 259, samples -1 to 257): their heights, holes and control
-    /// values as generating the whole tile gives them, for [`merge_bands`]
-    /// to join with the tile's other bands ([`Self::take_band`]). `None`
-    /// for rows outside the tile.
+    /// A generator of stored rows `rows` of tile `key` alone (0 to 259, samples
+    /// -1 to 257): their heights, holes and control values as generating the
+    /// whole tile gives them, for [`merge_bands`] to join with the tile's other
+    /// bands ([`Self::take_band`]). `None` for rows outside the tile.
     pub fn band(
         layers: Arc<Layers>,
         pyramid: &Pyramid,
@@ -600,13 +598,13 @@ impl Generator {
         Some(generator)
     }
 
-    /// A band's rows once done (decision 117), taken once.
+    /// A band's rows once done, taken once.
     pub fn take_band(&mut self) -> Option<TileBand> {
         self.banded.take()
     }
 
     /// The sample rows it samples heights of: every row (-1 to 257), or a
-    /// band's (decision 117) with the rows on either side its control
+    /// band's with the rows on either side its control
     /// values read.
     fn height_rows(&self) -> (i32, i32) {
         let end = TILE_SAMPLES as i32 + 1;
@@ -651,14 +649,14 @@ impl Generator {
         self
     }
 
-    /// The generator placing only `placing`'s objects (decision 112).
+    /// The generator placing only `placing`'s objects.
     pub fn with_placing(mut self, placing: Placing) -> Self {
         self.placing = placing;
         self
     }
 
     /// The generator handing out its tile's shape, its heights and holes,
-    /// once they are done (decision 114): [`Self::take_shape`] it while the
+    /// once they are done: [`Self::take_shape`] it while the
     /// surface and objects follow.
     pub fn with_staged(mut self, staged: bool) -> Self {
         self.staged = staged;
@@ -666,23 +664,23 @@ impl Generator {
     }
 
     /// The tile's shape once its heights and holes are done, before its
-    /// surface (decision 114), where staged: a tile without control values
+    /// surface, where staged: a tile without control values
     /// or objects, taken once.
     pub fn take_shape(&mut self) -> Option<Tile> {
         self.shape.take()
     }
 
     /// A generator placing on `tile` (generated from `layers`) the objects
-    /// of `surface`'s layers standing far away at its level (decision
-    /// 112), under the same budget as generation: the tile it returns
+    /// of `surface`'s layers standing far away at its level,
+    /// under the same budget as generation: the tile it returns
     /// holds those alone.
     pub fn far(tile: Tile, layers: Arc<Layers>, surface: Arc<BiomeRules>) -> Self {
         Self::placing(tile, layers, surface, Placing::Far)
     }
 
     /// A generator placing `placing`'s objects of `surface`'s layers on
-    /// `tile`, generated from `layers` without them (decisions 112 and
-    /// 117), under the same budget as generation: the tile it returns
+    /// `tile`, generated from `layers` without them,
+    /// under the same budget as generation: the tile it returns
     /// holds those alone, as generating it whole places them.
     pub fn placing(
         tile: Tile,
@@ -728,7 +726,7 @@ impl Generator {
     }
 
     /// A generator placing on `tile` as [`Self::placing`] does, from
-    /// layer and row `start` up to `end` alone (decision 119), the rows
+    /// layer and row `start` up to `end` alone, the rows
     /// [`crate::BiomeRules::place_rows`] counts: bands of a tile's placing
     /// on several workers, their objects joined in order giving the tile's.
     /// The band without an end also places what authors stand on it.
@@ -747,7 +745,7 @@ impl Generator {
         generator
     }
 
-    /// Hydrology layer `index`'s rivers near the tile (decision 113), made
+    /// Hydrology layer `index`'s rivers near the tile, made
     /// the first time a stage reads them; `None` without rivers.
     fn span(&mut self, index: usize) -> Option<Arc<crate::rivers::RiverSpan>> {
         let rivers = self.layers.rivers_of(index)?;
@@ -778,14 +776,14 @@ impl Generator {
     }
 
     /// Whether generation stopped without a tile: its heights or control
-    /// values were invalid (decision 112).
+    /// values were invalid.
     pub fn failed(&self) -> bool {
         matches!(self.stage, Stage::Failed)
     }
 
     /// The stage after the samples and holes: the surface's control values
-    /// unless the GPU gives them (decision 118), else done; the tile's shape
-    /// handed out first where staged and more follows (decision 114), its
+    /// unless the GPU gives them, else done; the tile's shape
+    /// handed out first where staged and more follows, its
     /// control values or its objects.
     fn after_holes(&mut self) -> Stage {
         let next = match &self.surface {
@@ -818,7 +816,7 @@ impl Generator {
         let Some(surface) = self.surface.clone() else {
             return;
         };
-        // Inputs the masks never read are left unread (decision 113); each
+        // Inputs the masks never read are left unread; each
         // sample's meters to the nearest river's edge are read along the row
         // at once.
         let reads = surface.reads();
@@ -844,8 +842,7 @@ impl Generator {
         let heights = &self.heights;
         let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
         let z = (self.first[1] + row as i64 - 1) as f32 * spacing;
-        // The row's inputs, then its control values all at once (decision
-        // 113).
+        // The row's inputs, then its control values all at once.
         let inputs = &mut self.inputs;
         inputs.clear(stride);
         for (column, &river) in rivers.iter().enumerate() {
@@ -861,7 +858,7 @@ impl Generator {
             let gx = (east - west) / (2.0 * spacing);
             let gz = (south - north) / (2.0 * spacing);
             let x = self.xs[column];
-            // Surroundings (decision 094) lose the masks of the bakes and
+            // Surroundings lose the masks of the bakes and
             // roads they fade out.
             let shown = self.layers.shown(x, z);
             let water = match self.layers.hydrology() {
@@ -938,7 +935,7 @@ impl Generator {
                     let x = |column: usize| {
                         (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing
                     };
-                    // Four columns at once (decision 121), the rest one by
+                    // Four columns at once, the rest one by
                     // one, to the same bits.
                     let mut column = 0;
                     while column < GRID {
@@ -1010,7 +1007,7 @@ impl Generator {
                         Stage::Done
                     };
                 }
-                // A band hands out its own rows (decision 117).
+                // A band hands out its own rows.
                 Stage::Done if self.rows.is_some() => {
                     let (first, end) = self.control_rows();
                     let stride = TILE_STRIDE as usize;
@@ -1035,8 +1032,8 @@ impl Generator {
                         None => tile,
                     };
                     self.stage = Stage::Done;
-                    // Objects stand on the tiles of their layers' levels
-                    // (decision 057), placed in the stage after.
+                    // Objects stand on the tiles of their layers' levels,
+                    // placed in the stage after.
                     match &self.surface {
                         Some(surface) if surface.places(self.key.level, self.placing) => {
                             self.tile = Some(tile);
@@ -1058,14 +1055,14 @@ impl Generator {
                         (&self.layers, self.placing, &mut self.places),
                     );
                     *budget = budget.saturating_sub(cost);
-                    // A band stops where the next starts (decision 119).
+                    // A band stops where the next starts.
                     let band_ends = next.is_some() && next == self.place_end;
                     match next {
                         Some((layer, row)) if !band_ends => {
                             self.stage = Stage::Place { layer, row }
                         }
                         _ => {
-                            // Then what authors stand on it (decision 085),
+                            // Then what authors stand on it,
                             // with its own level's objects.
                             if self.placing != Placing::Far && !band_ends {
                                 *budget = budget
@@ -1116,7 +1113,7 @@ impl Generator {
                 interpolate(sum, vertical, taps);
             }
             // Then along x for every sample, which sums every octave: the
-            // four samples of a coarse cell at once (decision 121), the
+            // four samples of a coarse cell at once, the
             // rest one by one, to the same bits.
             let sum = &mut self.state[..len];
             let lanes = &mut self.lanes[..len];

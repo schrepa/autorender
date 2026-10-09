@@ -12,7 +12,7 @@ profiling = ["engine_profile/enabled"]
 # Profiling only: hot helpers out of line for sampling attribution.
 attribution = []
 # JSON schemas of the settings types, for authoring tools (engine_scene's
-# `schema`): they are a scene's environment sections (decision 022).
+# `schema`): they are a scene's environment sections.
 schema = ["dep:schemars", "engine_terrain/schema"]
 
 [dependencies]

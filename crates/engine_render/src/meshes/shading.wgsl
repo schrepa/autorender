@@ -2,7 +2,7 @@
 // sun, environment and local lights, fog and grading, and the targets
 // each kind of pass writes.
 
-// Wave normals of liquid surfaces (decision 019): three directional waves
+// Wave normals of liquid surfaces: three directional waves
 // scrolling with presentation time tilt the normal by their slopes.
 fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
     let time = camera.position.w;
@@ -40,17 +40,17 @@ struct SurfacePoint {
     world_dy: vec3<f32>,
     distance: f32,
     // Where the sun's shadow is looked up from `world`: zero but for
-    // impostors (decision 048), whose rebuilt surfaces look from outside
+    // impostors, whose rebuilt surfaces look from outside
     // their own meshes' shadows.
     shadow_offset: vec3<f32>,
-    // Whether the point is terrain's (decision 052), which lies on the
+    // Whether the point is terrain's, which lies on the
     // ground of terrain's horizon maps.
     on_terrain: bool,
     // Light from surfaces around the point where they hide the sky, per
-    // unit diffuse color: terrain's (decision 055), zero elsewhere.
+    // unit diffuse color: terrain's, zero elsewhere.
     bounce: vec3<f32>,
-    // The share of the sun the point's own mesh hides: impostors' (decision
-    // 060), zero elsewhere.
+    // The share of the sun the point's own mesh hides: impostors',
+    // zero elsewhere.
     sun_shade: f32,
 }
 
@@ -84,7 +84,7 @@ fn map_uv(index: u32, uv: vec2<f32>, uv1: vec2<f32>) -> vec2<f32> {
 const SPECULAR_VARIANCE: f32 = 0.15;
 const SPECULAR_LIMIT: f32 = 0.2;
 
-// Normal mapping without stored tangents (decision 031): the tangent frame
+// Normal mapping without stored tangents: the tangent frame
 // from screen derivatives of the position and of the normal map's texture
 // coordinates. glTF normal maps point green up the image, toward decreasing v.
 fn mapped_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: vec2<f32>,
@@ -112,10 +112,10 @@ struct MaterialTexels {
     normal_dy: vec2<f32>,
     // What masked tests scale the base color's alpha by.
     coverage: f32,
-    // World-mapped normal maps' normal (decision 093), world space.
+    // World-mapped normal maps' normal, world space.
     world_normal: vec3<f32>,
-    // The metallic-roughness map's alpha, heights where its maps keep them
-    // (decision 093); 1 without one.
+    // The metallic-roughness map's alpha, heights where its maps keep them;
+    // 1 without one.
     height: f32,
 }
 
@@ -188,7 +188,7 @@ fn material_texels(uv: vec2<f32>, uv1: vec2<f32>) -> MaterialTexels {
     return texels;
 }
 
-// Coordinates on axis `axis`'s plane of world-mapped maps (decision 093),
+// Coordinates on axis `axis`'s plane of world-mapped maps,
 // as terrain's maps lie (`meshes/terrain.wgsl`'s `terrain_project`): x
 // sees (z, -y), y sees (x, z) and z sees (x, -y), so on the sides the maps'
 // up is the world's.
@@ -238,11 +238,11 @@ fn world_plane_normal(sampled: vec3<f32>, axis: u32, normal: vec3<f32>, scale: f
     return stable_normalize(vec3<f32>(n.x + normal.x, abs(n.z) * normal.y, normal.z - n.y));
 }
 
-// How much of a world-mapped material's maps (decision 093) show where a
+// How much of a world-mapped material's maps show where a
 // pixel spans `footprint` repeats of them: all while a repeat spans 16
 // pixels or more, none from 8 down, where their mipmaps' last levels would
 // show little but their strata as even stripes and their means stand in,
-// as terrains' do (decisions 090 and 102).
+// as terrains' do.
 fn world_map_detail(footprint: f32) -> f32 {
     return 1.0 - smoothstep(0.0625, 0.125, footprint);
 }
@@ -282,7 +282,7 @@ fn world_mean_texels(texels: MaterialTexels, detail: f32, normal: vec3<f32>) -> 
     return result;
 }
 
-// The texels of a world-mapped material (decision 093) at `world` on a
+// The texels of a world-mapped material at `world` on a
 // surface of `normal`, changing by `dx` across and `dy` down a pixel: each
 // map blended over the projections the surface faces, its normal map's
 // normal in world space, as much of them as a repeat's size on screen
@@ -365,7 +365,7 @@ fn map_gradient(index: u32, d: vec2<f32>, d1: vec2<f32>) -> vec2<f32> {
 }
 
 // `material_texels` with explicit derivatives, for pixels shading triangles
-// their neighbors may not share (decision 045).
+// their neighbors may not share.
 fn material_texels_grad(uv: vec2<f32>, uv1: vec2<f32>, gradients: UvGradients)
         -> MaterialTexels {
     var texels = untextured();
@@ -474,7 +474,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         texels.normal_dx, texels.normal_dy, surface.w);
     if material_flag(4096u, WORLD_MAPPING) && material_flag(2u, NORMAL_MAP)
         && dot(texels.world_normal, texels.world_normal) > 0.0 {
-        // World-mapped normal maps (decision 093) shade their own normal,
+        // World-mapped normal maps shade their own normal,
         // turned to the side the surface shows.
         var mapped = stable_normalize(texels.world_normal);
         if dot(mapped, point.geometric) < 0.0 {
@@ -483,7 +483,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
         point.normal = mapped;
     }
     if material_flag(8192u, TOP_LAYER) {
-        // The top layer (decision 093) settles on faces turned up.
+        // The top layer settles on faces turned up.
         let breakup = variety_noise(world.xz * 2.3 + vec2<f32>(world.y * 0.7, 3.1)) * 0.6
             + variety_noise(world.xz * 0.55 - vec2<f32>(world.y * 0.4, 7.7)) * 0.4;
         let amount = top_layer_amount(point.normal.y, breakup, texels);
@@ -505,7 +505,7 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     return point;
 }
 
-// How much of the top layer (decision 093) settles on a face turned up by
+// How much of the top layer settles on a face turned up by
 // `up` (its normal's y): broken by noise `breakup` (0 to 1) and gathering
 // in the low parts of the material's height map (its metallic-roughness
 // map's alpha) and the darker hollows of its base color.
@@ -567,7 +567,7 @@ fn box_projected(position: vec3<f32>, direction: vec3<f32>, center: vec3<f32>,
 
 // The environment's light reflected toward `reflected` off a surface of
 // `normal` and `roughness` at `world`: the reflection probes whose boxes
-// hold it (decision 043), smallest first, each fading out toward its faces
+// hold it, smallest first, each fading out toward its faces
 // over its blend distance, and the sky's map for what they leave; each map
 // at the level blurred by that roughness, read along the lobe's dominant
 // direction, which leans toward the normal as the surface roughens (Lagarde
@@ -589,7 +589,7 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
             let list = probe_words[grid.z + u32(cell.y) * grid.x + u32(cell.x)];
             for (var n = 0u; n < list.y && covered < 0.999; n++) {
                 let entry = grid.w + (list.x + n) * 3u;
-                // Interiors not captured yet (decision 079) reflect nothing.
+                // Interiors not captured yet reflect nothing.
                 if probe_words[entry + 2u].w == 0u {
                     continue;
                 }
@@ -618,8 +618,8 @@ fn environment_light(reflected: vec3<f32>, normal: vec3<f32>, roughness: f32,
     return light;
 }
 
-// The shares of the sky's light (x) and the sun's (y) reaching `world`
-// (decision 079): inside interiors' boxes, theirs, blending in over each
+// The shares of the sky's light (x) and the sun's (y) reaching `world`:
+// inside interiors' boxes, theirs, blending in over each
 // box's blend distance inside its faces; all of both elsewhere.
 fn interior_light(world: vec3<f32>) -> vec2<f32> {
     var light = vec2<f32>(1.0);
@@ -700,9 +700,9 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let rim = (grazing * grazing) * (grazing * grazing) * lighting.sun.w
         * (1.0 - abs(point.geometric.y));
     // Occlusion maps darken indirect light only (glTF), as do the covers of
-    // placed objects over the point (decision 059).
+    // placed objects over the point.
     let covered_sky = occupancy_visibility(point.world);
-    // Inside interiors (decision 079) only their shares of the sky and sun
+    // Inside interiors only their shares of the sky and sun
     // reach; what they reflect is their probe's own capture.
     let interior = interior_light(point.world);
     let sky_light = (point.diffuse_color * (sky_average(normal) * lighting.zenith.w
@@ -754,7 +754,7 @@ struct Fragment {
 
 // Meshes without a second stream read their first coordinates as second.
 fn fragment(input: VertexOutput) -> Fragment {
-    // Placed objects fading (decision 104) leave the pixels their fade
+    // Placed objects fading leave the pixels their fade
     // hides.
     if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
         discard;
@@ -909,7 +909,7 @@ fn temporal_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32
     return targets;
 }
 
-// The share of light glass lets through (decision 038); 0 for materials
+// The share of light glass lets through; 0 for materials
 // without transmission.
 fn transmitted_share() -> f32 {
     if TRANSMISSION {
@@ -936,8 +936,8 @@ const GLASS_TAPS = array<vec2<f32>, 8>(
     vec2<f32>(0.0, -1.0), vec2<f32>(0.3535534, -0.3535534),
 );
 
-// Weighted blending of a transparent surface (decision 026). Glass (decision
-// 038) with refraction covers what is behind it with the opaque scene seen
+// Weighted blending of a transparent surface. Glass
+// with refraction covers what is behind it with the opaque scene seen
 // through it: along the ray its index of refraction bends through its
 // thickness, blurred by its roughness and tinted by its color. Without
 // refraction its transmitted share lets what is behind show through.

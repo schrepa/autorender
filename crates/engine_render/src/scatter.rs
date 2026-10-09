@@ -1,4 +1,4 @@
-//! Placed objects (decision 057): what terrains' placement layers stand on
+//! Placed objects: what terrains' placement layers stand on
 //! their tiles, drawn through the mesh pipelines as instances of their own.
 //! Objects hold slots of a pool whose poses and colors are laid out as
 //! slots' are, so the mesh and depth shaders read them unchanged; each
@@ -7,11 +7,11 @@
 //! (`scatter_snap.wgsl`), then culls it against each view (the camera,
 //! then the shadow maps drawn every frame) and picks its level of detail
 //! from the camera (`scatter_cull.wgsl`), appending it to its draw
-//! group's list for that view and level, or to the view's impostor cards
-//! (decisions 048 and 060); each group and level then draws indirectly, and
+//! group's list for that view and level, or to the view's impostor cards;
+//! each group and level then draws indirectly, and
 //! each view's cards. Objects draw in the first opaque phase and cast into
 //! every shadow map: the kept ones as seen from afar, the near cascades as
-//! the camera sees them, cards cast facing the sun (decision 098), and the
+//! the camera sees them, cards cast facing the sun, and the
 //! moving map without the camera's cards. They are never occlusion culled.
 
 use bytemuck::{Pod, Zeroable};
@@ -35,7 +35,7 @@ struct FrameUniform {
     fade: [f32; 4],
 }
 
-/// How the camera shows an object (decision 104; `scatter_cull.wgsl`): its
+/// How the camera shows an object (`scatter_cull.wgsl`): its
 /// levels, its card or nothing, and how far its last switch has faded.
 /// Objects new to the view start showing nothing, so they fade in; those
 /// written again in place take what the camera would show at once.
@@ -45,7 +45,7 @@ pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
 pub(crate) const STATE_ADOPT: u32 = u32::MAX;
 
 /// The share of its distance past a switch the eye goes before the camera
-/// switches an object back (decision 104), so objects near a switch's
+/// switches an object back, so objects near a switch's
 /// distance do not flicker between two ways as the eye wavers.
 const FADE_MARGIN: f32 = 0.1;
 
@@ -60,7 +60,7 @@ struct ViewData {
 
 /// The shadow maps placed objects cast into: those drawn every frame
 /// (their world-to-clip matrices), this frame's redraws of the kept map and
-/// of a kept level (decision 065), and the far maps' texels a side.
+/// of a kept level, and the far maps' texels a side.
 pub(crate) type ShadowViews<'a> = (
     &'a [(usize, Mat4)],
     Option<KeptRefresh>,
@@ -74,10 +74,10 @@ pub(crate) const DEAD: u32 = u32::MAX;
 /// A record's terrain word: the index this frame of the terrain the object
 /// stands on, nine bits (`TERRAIN_INDEX` itself: none); its placement
 /// layer, seven bits from `LAYER_SHIFT` (`NO_LAYER`: authored, or none);
-/// for objects standing far away (decision 061), one more than the level
+/// for objects standing far away, one more than the level
 /// whose resident tiles hold them instead, five bits from
-/// `NEAR_LEVEL_SHIFT`; its rank under the density where it stands
-/// (decision 100), ten bits from `RANK_SHIFT`; and the top bit (the
+/// `NEAR_LEVEL_SHIFT`; its rank under the density where it stands,
+/// ten bits from `RANK_SHIFT`; and the top bit (the
 /// shaders' `HIDDEN`) while tiles holding it instead are resident where it
 /// stands, which setting it on the terrain marks and culling skips.
 pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
@@ -87,7 +87,7 @@ pub(crate) const NEAR_LEVEL_SHIFT: u32 = 16;
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_SHIFT: u32 = 21;
 pub(crate) const RANK_MAX: f32 = 1023.0;
-/// Entries of the thinning table (decision 100) each terrain takes: one
+/// Entries of the thinning table each terrain takes: one
 /// per placement layer a surface may have (a validity bound).
 pub(crate) const THIN_LAYERS: usize = 64;
 
@@ -166,7 +166,7 @@ struct DrawArgs {
 /// One draw group as the renderer lays it out: each level's index count,
 /// first index and base vertex, the levels the camera draws, the coarser
 /// levels' errors, and its impostor's error (mesh units; 0 without one)
-/// and record (decision 048).
+/// and record.
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
     pub camera: u32,
@@ -206,7 +206,7 @@ pub(crate) struct ScatterPass {
     poses: wgpu::Buffer,
     colors: wgpu::Buffer,
     palette: wgpu::Buffer,
-    // What lies under each object (decision 096).
+    // What lies under each object.
     grounds: wgpu::Buffer,
     // Each view's impostor cards (each one's slot and impostor record, as
     // many as objects a view) and their draws.
@@ -214,8 +214,8 @@ pub(crate) struct ScatterPass {
     card_args: wgpu::Buffer,
     // Advances when buffers are replaced.
     generation: u64,
-    // How each terrain's placement layers thin with distance (decision
-    // 100), as last written.
+    // How each terrain's placement layers thin with distance,
+    // as last written.
     thins: wgpu::Buffer,
     thins_written: Vec<[f32; 4]>,
     cull_group: Cached<u64, wgpu::BindGroup>,
@@ -230,7 +230,7 @@ pub(crate) struct ScatterPass {
     objects: u32,
     group_count: u32,
     // The IDs each view's lists take, and the view whose lists hold the
-    // camera's fading objects (decision 104): the one after the last.
+    // camera's fading objects: the one after the last.
     ids_per_view: u32,
     fading_view: usize,
     // The shadow map each view after the camera's draws into.
@@ -474,7 +474,7 @@ impl ScatterPass {
     }
 
     /// Creates the pipelines objects are set on the ground and culled with
-    /// unless they exist (decision 099).
+    /// unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.pipeline
             .get_or_insert_with(|| pipeline(device, &self.layout));
@@ -483,7 +483,7 @@ impl ScatterPass {
     }
 
     /// Writes how each terrain's placement layers thin with distance
-    /// (decision 100) when it changed: `THIN_LAYERS` entries a terrain.
+    /// when it changed: `THIN_LAYERS` entries a terrain.
     pub(crate) fn set_thinning(
         &mut self,
         device: &wgpu::Device,
@@ -511,14 +511,14 @@ impl ScatterPass {
     /// `view_projection` (world) and eye, those of the shadow `maps`
     /// drawn every frame (their world-to-clip matrices, `resolution` texels
     /// square), where objects smaller than half a texel cast nothing, and
-    /// the regions of the kept map and of a kept level (decision 065)
+    /// the regions of the kept map and of a kept level
     /// redrawn this frame, if any. Levels are picked within `pixel_error`
     /// pixels of a viewport `height` pixels tall (no error: finest levels
     /// only); maps draw a coarser level where a texel hides its error, and
     /// the camera draws impostors within the error when `impostors`, which
-    /// kept maps draw wherever their texels are no finer than an impostor's
-    /// (decision 060). The camera's switches fade `fade` of their way this
-    /// frame (decision 104), or stand still where it is negative. Returns
+    /// kept maps draw wherever their texels are no finer than an impostor's.
+    /// The camera's switches fade `fade` of their way this
+    /// frame, or stand still where it is negative. Returns
     /// whether any object draws.
     pub(crate) fn prepare(
         &mut self,
@@ -548,7 +548,7 @@ impl ScatterPass {
             planes[4] = [0.0, 0.0, 0.0, 1.0];
             planes[5] = [0.0, 0.0, 0.0, 1.0];
             let half_texel = half_texel(clip);
-            // Near cascades cast the camera's cards (decision 098).
+            // Near cascades cast the camera's cards.
             let cascade = if map < crate::shadows::MOVING_MAP {
                 1.0
             } else {
@@ -807,8 +807,7 @@ impl ScatterPass {
         self.shadow_group.get()
     }
 
-    /// The view whose lists hold the camera's fading objects this frame
-    /// (decision 104).
+    /// The view whose lists hold the camera's fading objects this frame.
     pub(crate) fn fading_view(&self) -> usize {
         self.fading_view
     }

@@ -1,18 +1,18 @@
-//! Highlands (decision 051): an 8 km terrain the engine generates from a
+//! Highlands: an 8 km terrain the engine generates from a
 //! layer stack (eroded mountains, then hand-placed stamps: a plateau
 //! leveled for a hamlet, a flat valley floor and a cave mouth cut as a
 //! hole), streamed around the camera, with the scene's renderables standing
-//! on the plateau as the tower field does. Its ground (decision 054) is
+//! on the plateau as the tower field does. Its ground is
 //! meadow, dry grass, dirt, scree, rock and snow, each textured by maps
 //! built offline (`cargo run -p engine_assetc --release --bin
 //! terrain_materials`) and fetched by the page, or in plain colors without
 //! them. Boulders lie on its meadows, stones on its scree and outcrops on
-//! its rock, and spruce forests cover the lower slopes (decision 057).
-//! Gravel roads (decision 069) wind from the plateau down to the crater
-//! lake, west over a river on a stone bridge (decision 072) and east
-//! through a ridge in a tunnel (decision 073). Lanterns line the road to
-//! the lake, streamed (decision 086): they exist only near the camera. A
-//! hiker walks the road's first stretch and back (decision 089).
+//! its rock, and spruce forests cover the lower slopes.
+//! Gravel roads wind from the plateau down to the crater
+//! lake, west over a river on a stone bridge and east
+//! through a ridge in a tunnel. Lanterns line the road to
+//! the lake, streamed: they exist only near the camera. A
+//! hiker walks the road's first stretch and back.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -70,9 +70,9 @@ const CLIFF_SCAN_TILING: f32 = 2.5;
 /// another's); its linear color and roughness without maps, and the color
 /// its maps' colors are multiplied by; the meters its maps repeat over; how
 /// sharply its heights win where it blends; how it lies on steep ground;
-/// the cover growing where it lies (decision 056); the meters its
-/// heights sink between its stones and tufts (decision 082); and the
-/// meters tracks sink it at most (decision 083).
+/// the cover growing where it lies; the meters its
+/// heights sink between its stones and tufts; and the
+/// meters tracks sink it at most.
 struct Look {
     name: &'static str,
     maps: &'static str,
@@ -193,7 +193,7 @@ const LOOKS: [Look; 10] = [
         relief: 0.06,
         deform: 0.05,
     },
-    // Grass where water gathers (decision 066): deeper green, taller and
+    // Grass where water gathers: deeper green, taller and
     // denser, in hollows and along streams.
     Look {
         name: "wet_grass",
@@ -228,7 +228,7 @@ const LOOKS: [Look; 10] = [
         relief: 0.1,
         deform: 0.03,
     },
-    // Roads (decision 069): packed gravel, the scree's stones finer and
+    // Roads: packed gravel, the scree's stones finer and
     // warmer, where no grass grows.
     Look {
         name: "road",
@@ -249,22 +249,22 @@ const LOOKS: [Look; 10] = [
 const TILES: u32 = 32;
 const SPACING: f32 = 1.0;
 const SIZE: f32 = TILES as f32 * 256.0 * SPACING;
-/// Meters the terrain's surroundings (decision 094) reach past its edges:
+/// Meters the terrain's surroundings reach past its edges:
 /// the farthest whose tiles still align with it, 65 km across in all.
 const SURROUNDINGS: f32 = 28_672.0;
 /// The plateau's center, where the hamlet stands.
 const PLATEAU: [f32; 2] = [0.0, 0.0];
 
 /// The road east from the plateau's rim (world meters): straight on a
-/// highway's grade, over the valley beyond on a viaduct (decision 072) and
-/// through the ridge after it in a tunnel (decision 073).
+/// highway's grade, over the valley beyond on a viaduct and
+/// through the ridge after it in a tunnel.
 const EAST_ROAD: [[f32; 2]; 3] = [[150.0, 55.0], [376.0, 137.0], [1128.0, 410.0]];
 
-/// The road west from the plateau's rim into the western valleys
-/// (decision 069), terrain-local: the route `terrain_route` found over the
+/// The road west from the plateau's rim into the western valleys,
+/// terrain-local: the route `terrain_route` found over the
 /// default seed's ground from world (-130, 40) to (-1500, 400) with its
 /// default costs, 2.1 kilometers. It crosses a river four meters deep,
-/// which it bridges (decision 072).
+/// which it bridges.
 const WEST_ROAD: [[f32; 2]; 181] = [
     [3968.0, 4136.0],
     [4015.7, 4265.48],
@@ -449,8 +449,8 @@ const WEST_ROAD: [[f32; 2]; 181] = [
     [2600.0, 4496.0],
 ];
 
-/// The road from the plateau's rim down to the lake in the valley (decision
-/// 069), terrain-local: the route `terrain_route` found over the default
+/// The road from the plateau's rim down to the lake in the valley,
+/// terrain-local: the route `terrain_route` found over the default
 /// seed's ground from world (113, -98) toward the valley's center (1500,
 /// -1300) with a grade cost of 100, up to where it reaches the lake's
 /// shore and a few meters into the water: 1.8 kilometers with a hairpin,
@@ -576,7 +576,7 @@ pub(crate) fn populate(
         falloff: 220.0,
         op: StampOp::Flatten(level),
     });
-    // The cave's mouth (decision 079): the hillside nearest a thirty degree
+    // The cave's mouth: the hillside nearest a thirty degree
     // slope within reach of the plateau, as the mountains and the plateau
     // shape it before the bakes wear it a little.
     let cave_mouth = {
@@ -588,7 +588,7 @@ pub(crate) fn populate(
         mountains,
         plateau_stamp.clone(),
         // Rivers wear valleys into the mountains and slopes creep toward
-        // them (decision 068), baked over the sixteen-meter tiles, so most
+        // them, baked over the sixteen-meter tiles, so most
         // basins drain.
         Layer::Erosion(ErosionStage {
             layer: ErosionLayer {
@@ -606,10 +606,10 @@ pub(crate) fn populate(
             falloff: 700.0,
             op: StampOp::Flatten(60.0),
         }),
-        // Streams and rivers (decision 066) carved where water gathers off
+        // Streams and rivers carved where water gathers off
         // the mountains, baked over the sixteen-meter tiles erosion shaped;
         // streams a meter or so wide run down to them from a sixth of a
-        // river's head (decision 097).
+        // river's head.
         Layer::Hydrology(HydrologyStage {
             layer: HydrologyLayer {
                 level: 4,
@@ -623,7 +623,7 @@ pub(crate) fn populate(
             baked: None,
         }),
         plateau_stamp,
-        // The road down into the valley (decision 069), leveled to its own
+        // The road down into the valley, leveled to its own
         // profile across six meters, its shoulders easing into the ground.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
@@ -637,7 +637,7 @@ pub(crate) fn populate(
             baked: None,
         }),
         // The road east, straight through the ridge beyond the plateau in a
-        // tunnel (decision 073).
+        // tunnel.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
                 points: EAST_ROAD.map(local).to_vec(),
@@ -651,7 +651,7 @@ pub(crate) fn populate(
             }),
             baked: None,
         }),
-        // The road west, bridging the river it crosses (decision 072).
+        // The road west, bridging the river it crosses.
         Layer::Path(PathStage {
             layer: Arc::new(PathLayer {
                 points: WEST_ROAD.to_vec(),
@@ -663,7 +663,7 @@ pub(crate) fn populate(
             }),
             baked: None,
         }),
-        // A cave's mouth in the slope beyond the plateau (decision 079),
+        // A cave's mouth in the slope beyond the plateau,
         // the cave behind it opened once the bakes are done.
         Layer::Stamp(Stamp {
             center: cave_mouth,
@@ -678,14 +678,14 @@ pub(crate) fn populate(
         cave_mouth[1] - half,
     )));
     // A ring of megaliths authors stood round the hamlet just inside
-    // its plateau's edge (decision 085), open where the roads come through.
+    // its plateau's edge, open where the roads come through.
     let roads = [
         ROAD.to_vec(),
         WEST_ROAD.to_vec(),
         EAST_ROAD.map(local).to_vec(),
     ];
     let surface = surface(world, files, plateau_ring(plateau, hamlet - 8.0, &roads))?;
-    // Mountains go on past the edges to the horizon (decision 094), the
+    // Mountains go on past the edges to the horizon, the
     // bakes easing into them over a few hundred meters, so channels running
     // off the edges end soon after.
     world.spawn(
@@ -707,8 +707,7 @@ pub(crate) fn populate(
     ))
 }
 
-/// Moss settling on boulders' tops and lichen on cliffs' ledges (decision
-/// 093).
+/// Moss settling on boulders' tops and lichen on cliffs' ledges.
 const MOSS: TopLayer = TopLayer {
     color: [0.055, 0.07, 0.03],
     coverage: 0.36,
@@ -721,7 +720,7 @@ const LICHEN: TopLayer = TopLayer {
 };
 
 /// Soil staining boulders' bases, and the damper rock at cliffs' feet,
-/// where the terrain places them (decision 096): a few centimeters up a
+/// where the terrain places them: a few centimeters up a
 /// meter-wide boulder, a meter or so up a cliff.
 const SOIL: Grounding = Grounding {
     color: [0.6, 0.53, 0.43],
@@ -732,9 +731,9 @@ const FOOT: Grounding = Grounding {
     height: 0.05,
 };
 
-/// A hiker walking between two points (decision 089): the ends (world x
+/// A hiker walking between two points: the ends (world x
 /// and z), the one it walks toward, and the seconds it rests before
-/// setting off again after finding no way (decision 111).
+/// setting off again after finding no way.
 #[derive(Component)]
 struct Hiker {
     ends: [[f32; 2]; 2],
@@ -744,12 +743,12 @@ struct Hiker {
 
 /// Seconds a hiker that found no way waits before turning back: searches
 /// are not free, so a walk that cannot be found is not searched again and
-/// again (decision 111).
+/// again.
 const HIKER_REST: f32 = 10.0;
 
 /// A hiker in a red jacket walking from `road`'s start (terrain-local, the
 /// terrain's corner at `-half`) to the first of its points 350 meters away
-/// and back (decision 089).
+/// and back.
 fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
     let world_point = |[x, z]: [f32; 2]| [x - half, z - half];
     let start = world_point(road[0]);
@@ -790,8 +789,8 @@ fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> 
     Ok(())
 }
 
-/// Turns each hiker back when it arrives (decision 089), or after a rest
-/// when it finds no way (decision 111).
+/// Turns each hiker back when it arrives, or after a rest
+/// when it finds no way.
 fn hike(time: Res<FixedTime>, mut hikers: Query<(&mut NavAgent, &NavWalk, &mut Hiker)>) {
     for (mut agent, walk, mut hiker) in &mut hikers {
         if walk.destination != agent.destination {
@@ -817,7 +816,7 @@ const LANTERN_SIDE: f32 = 5.0;
 /// A lantern's warm light: its color, intensity and range (meters).
 const LANTERN_LIGHT: ([f32; 3], f32, f32) = ([1.0, 0.66, 0.34], 14.0, 12.0);
 
-/// A lantern by a road (decision 086): a post with a glowing lamp and its
+/// A lantern by a road: a post with a glowing lamp and its
 /// light on top, standing on the ground wherever its cell loads it.
 struct Lantern {
     position: Vec3,
@@ -882,7 +881,7 @@ impl Streamed for Lantern {
 }
 
 /// Registers lanterns along `road` (terrain-local, the terrain's corner at
-/// `-half`) as streamed items (decision 086), every
+/// `-half`) as streamed items, every
 /// [`LANTERN_SPACING`] meters on its left.
 fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), String> {
     let error = |error: AssetError| error.to_string();
@@ -935,8 +934,8 @@ fn lanterns(world: &mut World, road: &[[f32; 2]], half: f32) -> Result<(), Strin
     Ok(())
 }
 
-/// Stones authors stand round `center` (terrain-local) `radius` meters out
-/// (decision 085): a block of the cliffs' rock every seven meters, turned
+/// Stones authors stand round `center` (terrain-local) `radius` meters out:
+/// a block of the cliffs' rock every seven meters, turned
 /// along the ring and varied in size, none within twelve meters of a road
 /// in `roads`.
 fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<AuthoredPlacement> {
@@ -973,8 +972,7 @@ fn plateau_ring(center: [f32; 2], radius: f32, roads: &[Vec<[f32; 2]>]) -> Vec<A
 }
 
 /// The highlands' surface: its rules over [`LOOKS`], each material textured
-/// by its maps when `files` holds them, and the objects authors stand on it
-/// (decision 085).
+/// by its maps when `files` holds them, and the objects authors stand on it.
 fn surface(
     world: &mut World,
     files: &HashMap<String, StressFile>,
@@ -1030,7 +1028,7 @@ fn surface(
                     .map_err(error)?;
             }
             // Laid from the world's axes, a repeat every three meters, and
-            // mossed on top (decision 093).
+            // mossed on top.
             material
                 .with_world_mapping(3.0)
                 .and_then(|material| material.with_top_layer(MOSS))
@@ -1061,8 +1059,7 @@ fn surface(
         let lods = (1..=crate::rocks::COARSER)
             .map(&mut mesh)
             .collect::<Result<Vec<_>, _>>()?;
-        // Boulders collide as spheres a little inside their faces
-        // (decision 064).
+        // Boulders collide as spheres a little inside their faces.
         placed.push(PlacementAsset {
             mesh: full,
             material: rock,
@@ -1107,7 +1104,7 @@ fn surface(
                 error,
             });
         }
-        // Spruces bend in the wind (decision 058): a third of a meter at ten
+        // Spruces bend in the wind: a third of a meter at ten
         // meters up in full wind.
         // Their trunks collide, up to where the lowest whorls spread.
         placed.push(PlacementAsset {
@@ -1158,7 +1155,7 @@ fn surface(
                     .and_then(|material| material.with_occlusion_texture(map, 1.0))
                     .map_err(error)?;
             }
-            // As the terrain's rock lies (decision 093): a repeat every four
+            // As the terrain's rock lies: a repeat every four
             // meters whatever a block's size, lichen on its ledges.
             let material = material
                 .with_world_mapping(4.0)
@@ -1196,7 +1193,7 @@ fn surface(
             )),
         });
     }
-    // The cave (decision 079) is hewn in the cliffs' rock, its walls seen
+    // The cave is hewn in the cliffs' rock, its walls seen
     // from both sides, and framed by their blocks.
     let cave_wall = assets
         .material(cliff_rock)
@@ -1209,7 +1206,7 @@ fn surface(
         material: cliff_rock,
         wall: cave_wall,
     });
-    // Bridges (decision 072) are built of the boulders' weathered stone.
+    // Bridges are built of the boulders' weathered stone.
     TerrainSurface::new(
         &Biomes {
             placed: authored,
@@ -1225,7 +1222,7 @@ fn surface(
     .map_err(|error| error.to_string())
 }
 
-/// The cave's mouth (decision 079): the world point at its center, and the
+/// The cave's mouth: the world point at its center, and the
 /// meters around it its hole reaches.
 #[derive(Resource)]
 struct CaveMouth(Vec2);
@@ -1271,14 +1268,14 @@ fn steepest_hillside(layers: &Layers, pyramid: &Pyramid, center: Vec2, inner: f3
 }
 
 /// The highlands' systems: the cave opening once the terrain is baked, and
-/// a sled and a walker making tracks in the snow (decision 083).
+/// a sled and a walker making tracks in the snow.
 pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(Presentation, (open_cave, place_track_makers))
         .add_systems(FixedSimulation, make_tracks)
         .add_systems(FixedSimulation, hike.after(NavSystems::Walk));
 }
 
-/// Marks the snow searched for the sled and the walker (decision 083), and
+/// Marks the snow searched for the sled and the walker, and
 /// counts the frames searched so far.
 #[derive(Resource)]
 struct Snowfield;
@@ -1311,7 +1308,7 @@ const STRIDE: f32 = 0.75;
 const SNOW_SEARCH_FRAMES: u32 = 600;
 const SNOW_SEARCH_EVERY: u32 = 60;
 
-/// Sets a sled and a walker making tracks (decision 083) on the snow
+/// Sets a sled and a walker making tracks on the snow
 /// nearest the plateau, once the terrain's bakes are done: the first level
 /// snow within four kilometers mostly snowy and gently sloping for twenty
 /// meters around.
@@ -1480,7 +1477,7 @@ fn place_track_makers(world: &mut World) {
     let _ = set_parents(world, &parents);
 }
 
-/// The sled and the walker each tick (decision 083): around their circles
+/// The sled and the walker each tick: around their circles
 /// over the ground, facing where they go; the walker presses a footprint
 /// each stride, beside its path, the feet taking turns.
 fn make_tracks(
@@ -1538,7 +1535,7 @@ fn make_tracks(
     }
 }
 
-/// Opens the cave (decision 079) once its terrain's bakes are done, from
+/// Opens the cave once its terrain's bakes are done, from
 /// the ground they leave:
 /// - its tube from just below the mouth cut in the slope up into the hill,
 ///   descending as steeply as it must to stay under two meters of rock
@@ -1739,7 +1736,7 @@ fn maps(
 /// under `rocks/`), when the page supplied all three of its maps: laid
 /// from the world's axes, one repeat every `tiling` meters, its roughness,
 /// metalness and occlusion from its packed map, with `top` settling on its
-/// faces turned up (decision 093). Its colors stand as scanned.
+/// faces turned up. Its colors stand as scanned.
 fn scanned(
     assets: &mut AssetLibrary,
     files: &HashMap<String, StressFile>,
@@ -1806,8 +1803,8 @@ fn rules() -> Biomes {
         mask,
         opacity: 1.0,
     };
-    // Rivers' and streams' beds and a meter and a half of their banks
-    // (decisions 092 and 097), along their lines.
+    // Rivers' and streams' beds and a meter and a half of their banks,
+    // along their lines.
     let channels = || Mask::River([1.5, 0.0]);
     // Where spruces stand in broad stands below the tree line on gentle
     // ground, thinning at their edges and kept out of stream beds; their
@@ -1825,8 +1822,8 @@ fn rules() -> Biomes {
             Mask::Invert(Box::new(Mask::Height([560.0, 640.0]))),
             Mask::Invert(Box::new(Mask::Slope([24.0, 34.0]))),
             Mask::Invert(Box::new(Mask::Flow([4.95, 5.15]))),
-            // Nor where lakes stand (decision 067), nor on roads and their
-            // verges (decision 069).
+            // Nor where lakes stand, nor on roads and their
+            // verges.
             Mask::Invert(Box::new(Mask::Lake([0.1, 0.6]))),
             Mask::Invert(Box::new(Mask::Path([10.0, 4.0]))),
         ])
@@ -1846,7 +1843,7 @@ fn rules() -> Biomes {
             .chain((0..CLIFFS).map(|index| format!("cliff{index}")))
             .collect(),
         // Boulders in clumps over the meadows, resting on the lowest ground
-        // under them (decision 096), stones strewn on scree, outcrops on
+        // under them, stones strewn on scree, outcrops on
         // rock, and spruce forests in broad stands below the tree line on
         // gentle ground, thinning at their edges: placed on two-kilometer
         // tiles, which stay resident farther away.
@@ -1876,10 +1873,9 @@ fn rules() -> Biomes {
                 bed: 0.0,
                 level: 3,
                 // A third of them stand on the pinned four-kilometer tiles
-                // too, so forests reach the horizon (decision 061), the rest
-                // thinning out before the two-kilometer tiles end (decision
-                // 100), where the far occupancy map darkens their floors
-                // (decision 101).
+                // too, so forests reach the horizon, the rest
+                // thinning out before the two-kilometer tiles end,
+                // where the far occupancy map darkens their floors.
                 far: Some(FarPlacement {
                     level: 4,
                     share: 0.3,
@@ -1903,7 +1899,7 @@ fn rules() -> Biomes {
                 level: 0,
                 // Two in five stand on the kilometer tiles too, so boulders
                 // thin out toward the horizon instead of ending where the
-                // finest tiles do (decision 100).
+                // finest tiles do.
                 far: Some(FarPlacement {
                     level: 2,
                     share: 0.4,
@@ -1926,7 +1922,7 @@ fn rules() -> Biomes {
             },
             // Cliffs rise in bands from the steepest rock, overlapping where
             // the ground stays steep, sunk a little below the lowest ground
-            // under them (decision 096), so their faces stand in the slope
+            // under them, so their faces stand in the slope
             // instead of over it; standing on two-kilometer tiles and half
             // of them on the pinned four-kilometer ones, so cliff bands show
             // from afar.
@@ -2040,7 +2036,7 @@ fn rules() -> Biomes {
                         0.75,
                     ),
                 ),
-                // Roads (decision 069), their edges soft over a meter and a
+                // Roads, their edges soft over a meter and a
                 // half and ragged where the gravel's stones win.
                 layer("road", Mask::Path([1.0, -0.5])),
                 layer(

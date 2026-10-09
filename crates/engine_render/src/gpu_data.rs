@@ -9,19 +9,19 @@ use engine_core::{
 /// WGSL `Camera` uniform: three column-major mat4x4<f32> and three
 /// vec4<f32>, alignment 16, size 240. `view_projection` is the rasterized
 /// projection.
-/// Temporally antialiased frames (decision 017) jitter it by `jitter.xy` clip
+/// Temporally antialiased frames jitter it by `jitter.xy` clip
 /// units per w, and their motion vectors use the previous frame's unjittered
 /// `previous_view_projection` and `jitter.zw`, two over the viewport size in
 /// pixels. Other frames repeat the view-projection and keep the jitter zero.
 /// The unjittered `inverse_view_projection` turns pixels into sky rays and
-/// `position` (xyz) is the eye, for view-dependent lighting (decision 018);
-/// its w is presentation time in seconds, for animated surfaces (decision
-/// 019). `options.x` is 1 while a reflection probe captures a cube face
-/// (decision 043): its surfaces read shadows from the far maps alone, which
+/// `position` (xyz) is the eye, for view-dependent lighting;
+/// its w is presentation time in seconds, for animated surfaces.
+/// `options.x` is 1 while a reflection probe captures a cube face:
+/// its surfaces read shadows from the far maps alone, which
 /// hold every caster whatever the main camera sees; `options.y` is the angle
-/// a pixel spans at the view's center ([`pixel_angle`], decision 098);
-/// `options.z` turns fades' dither each temporally antialiased frame
-/// (decision 104). The
+/// a pixel spans at the view's center ([`pixel_angle`]);
+/// `options.z` turns fades' dither each temporally antialiased frame.
+/// The
 /// GPU buffer starts at offset zero; only these 240 initialized bytes are
 /// copied into it.
 #[repr(C)]
@@ -34,7 +34,7 @@ pub(crate) struct CameraUniform {
     pub jitter: [f32; 4],
     pub options: [f32; 4],
     /// The wind's velocity (x and z), gust strength and the previous
-    /// frame's presentation time (decision 058).
+    /// frame's presentation time.
     pub wind: [f32; 4],
 }
 
@@ -55,7 +55,7 @@ impl CameraUniform {
     }
 
     /// A reflection probe's cube face `size` texels a side seen from
-    /// `position` through `view_projection` (decision 043), at presentation
+    /// `position` through `view_projection`, at presentation
     /// time `seconds`.
     pub(crate) fn probe(
         view_projection: Mat4,
@@ -101,14 +101,14 @@ impl CameraUniform {
 
 /// The angle (radians) a pixel spans at the center of a view `height`
 /// pixels tall seen through `view_projection`, which shading measures
-/// pixels' footprints by (decision 098).
+/// pixels' footprints by.
 pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
     2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
-/// WGSL `Lighting` uniform of the scene's atmosphere (decision 018) and
-/// grade (decision 027): ten vec4<f32>, 160 bytes. Scalars ride in the fourth
+/// WGSL `Lighting` uniform of the scene's atmosphere and
+/// grade: ten vec4<f32>, 160 bytes. Scalars ride in the fourth
 /// components.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -125,42 +125,42 @@ pub(crate) struct LightingUniform {
     pub ground: [f32; 4],
     /// Start, density, height falloff and maximum.
     pub fog: [f32; 4],
-    /// Emission scale, the exposed brightness above which light glows
-    /// (decision 021), the roughness beyond which surfaces reflect only the
-    /// sky, and 1 when screen-space reflections run (decision 025).
+    /// Emission scale, the exposed brightness above which light glows,
+    /// the roughness beyond which surfaces reflect only the
+    /// sky, and 1 when screen-space reflections run.
     pub effects: [f32; 4],
-    /// The contrast curve's weight (see [`contrast_weight`]) and vibrance
-    /// (decision 027); 1 with the physically based sky (decision 088); w
+    /// The contrast curve's weight (see [`contrast_weight`]) and vibrance;
+    /// 1 with the physically based sky; w
     /// unused.
     pub grade: [f32; 4],
     /// Luminance-normalized split-toning gains of shadows and highlights; w
     /// unused.
     pub shadow_tint: [f32; 4],
     pub highlight_tint: [f32; 4],
-    /// Refraction through glass (decision 038): the bend's strength (0
+    /// Refraction through glass: the bend's strength (0
     /// without refraction) and the blur radius in pixels of fully rough
     /// glass; zw unused.
     pub refraction: [f32; 4],
-    /// Aerial perspective (decision 053): start, density at height zero,
+    /// Aerial perspective: start, density at height zero,
     /// height falloff and the sun's glow; the air's color (w unused).
     pub aerial: [f32; 4],
     pub aerial_color: [f32; 4],
-    /// Occupancy (decision 059): the map's center (x and z), the inverse of
+    /// Occupancy: the map's center (x and z), the inverse of
     /// its side in meters and the strength covers darken by (0 without a
     /// map); then the reference height its heights are above and its texels
     /// a side.
     pub occupancy: [f32; 4],
     pub occupancy_heights: [f32; 4],
     pub occupancy_far: [f32; 4],
-    /// Under the sea (decision 077): the light its water scatters toward
+    /// Under the sea: the light its water scatters toward
     /// the eye (rgb) and the meters through which half the light passes
     /// (w); zero above it.
     pub underwater: [f32; 4],
-    /// The sea (decision 077): its still level, the meters through which
+    /// The sea: its still level, the meters through which
     /// half the light passes, and 1 while it stands (0 without one); w
     /// unused.
     pub sea: [f32; 4],
-    /// Clouds' shadows (decision 084): the grid's first cell's corner (x
+    /// Clouds' shadows: the grid's first cell's corner (x
     /// and z), cells per meter and the shadows' strength (0 without
     /// clouds); then the clouds' base height.
     pub cloud_shadow: [f32; 4],
@@ -198,7 +198,7 @@ impl LightingUniform {
         let reflections = reflections.sanitized();
         let refraction = refraction.sanitized();
         let sky = sky.sanitized();
-        // With the physically based sky (decision 088) the air hazes what
+        // With the physically based sky the air hazes what
         // lies far away by its own extinction, thinning with height as its
         // scattering does; no fog. Its colors come from the sky's tables.
         let (fog, aerial, physical) = if sky.enabled {
@@ -273,7 +273,7 @@ impl LightingUniform {
     }
 }
 
-/// A surface (decision 019) as four unsigned 8-bit fractions: roughness,
+/// A surface as four unsigned 8-bit fractions: roughness,
 /// metalness, emission over [`Surface::MAX_EMISSION`], and ripples. Any
 /// values pack: out-of-range ones clamp and NaN reads as matte.
 pub(crate) fn pack_surface(surface: Surface) -> u32 {
@@ -288,7 +288,7 @@ pub(crate) fn pack_surface(surface: Surface) -> u32 {
         | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
-/// Linear color and opacity (decision 026) as four 16-bit fractions in two
+/// Linear color and opacity as four 16-bit fractions in two
 /// words: red and green, then blue and opacity (WGSL `unpack2x16unorm`, or a
 /// `Unorm16x4` vertex attribute). Out-of-range values clamp; NaN color reads
 /// as 0 and NaN opacity as opaque.
@@ -330,7 +330,7 @@ pub(crate) struct ColorData {
     pub flags: u32,
 }
 
-/// WGSL `grounds` of `meshes/declarations.wgsl` (decision 096): what lies
+/// WGSL `grounds` of `meshes/declarations.wgsl`: what lies
 /// under a placed object, x and z of the ground's normal as two signed
 /// 16-bit fractions, the meters its base sinks below the ground, the meters
 /// up its stain reaches (0: none) and the stain's linear color as four
@@ -367,8 +367,8 @@ impl From<&RenderInstance> for ColorData {
         Self {
             color: pack_color(instance.color),
             surface: pack_surface(instance.surface),
-            // One more than the offset of a skinned slot's joint palette
-            // (decision 036); 0 draws rigidly.
+            // One more than the offset of a skinned slot's joint palette;
+            // 0 draws rigidly.
             flags: instance.skin.map_or(0, |offset| offset + 1),
         }
     }
@@ -396,7 +396,7 @@ impl From<&MeshVertex> for Vertex {
 }
 
 /// The second vertex stream of meshes with vertex colors or second texture
-/// coordinates (decision 034), 16 bytes: linear RGBA as four 16-bit
+/// coordinates, 16 bytes: linear RGBA as four 16-bit
 /// fractions (white without colors) and the second coordinates (the first
 /// without them).
 #[repr(C)]
@@ -408,7 +408,7 @@ pub(crate) struct ExtraVertex {
 
 impl ExtraVertex {
     /// The extra stream of `mesh`, or `None` without colors, second
-    /// coordinates or joints: skinned meshes' entry points (decision 036)
+    /// coordinates or joints: skinned meshes' entry points
     /// read it too.
     pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
         if mesh.colors().is_none() && mesh.uv1().is_none() && mesh.joints().is_none() {
@@ -431,7 +431,7 @@ impl ExtraVertex {
     }
 }
 
-/// The skin stream of meshes with joints (decision 036), 16 bytes: four
+/// The skin stream of meshes with joints, 16 bytes: four
 /// joint indices and their weights as 16-bit fractions, which the shaders
 /// renormalize.
 #[repr(C)]
@@ -497,15 +497,15 @@ pub(crate) const SHADER: &str = concat!(
     include_str!("meshes/water.wgsl"),
     include_str!("meshes/ocean.wgsl"),
 );
-/// Terrain normal maps (decision 051).
+/// Terrain normal maps.
 pub(crate) const TERRAIN_NORMALS_SHADER: &str = include_str!("terrain_normals.wgsl");
-/// Terrain control values from the surface's rules (decision 118).
+/// Terrain control values from the surface's rules.
 pub(crate) const TERRAIN_CONTROL_SHADER: &str = include_str!("terrain_control.wgsl");
-/// Terrain horizon map builds (decision 052).
+/// Terrain horizon map builds.
 pub(crate) const TERRAIN_HORIZON_SHADER: &str = include_str!("terrain_horizon.wgsl");
-/// Terrain sky visibility map builds (decision 055).
+/// Terrain sky visibility map builds.
 pub(crate) const TERRAIN_SKY_SHADER: &str = include_str!("terrain_sky.wgsl");
-/// Ground cover's growth (decision 056).
+/// Ground cover's growth.
 pub(crate) const COVER_GROW_SHADER: &str = concat!(
     include_str!("terrain_variety.wgsl"),
     include_str!("cover_grow.wgsl")
@@ -514,64 +514,64 @@ pub(crate) const COVER_GROW_SHADER: &str = concat!(
 pub(crate) const DEFORMATION_SHADER: &str = include_str!("deformation.wgsl");
 
 pub(crate) const CLOUDS_SHADER: &str = include_str!("clouds.wgsl");
-/// The physically based sky's tables and light (decision 088).
+/// The physically based sky's tables and light.
 pub(crate) const SKY_SHADER: &str =
     concat!(include_str!("sky_common.wgsl"), include_str!("sky.wgsl"));
-/// Placed objects' culling (decision 057).
+/// Placed objects' culling.
 pub(crate) const SCATTER_CULL_SHADER: &str = include_str!("scatter_cull.wgsl");
 
 pub(crate) const SCATTER_SNAP_SHADER: &str = include_str!("scatter_snap.wgsl");
 
 pub(crate) const OCCUPANCY_SHADER: &str = include_str!("occupancy.wgsl");
-/// Terrain's depth drawing into shadow maps (decision 051).
+/// Terrain's depth drawing into shadow maps.
 pub(crate) const TERRAIN_SHADOW_SHADER: &str = concat!(
     include_str!("meshes/terrain_vertex.wgsl"),
     include_str!("terrain_shadow.wgsl")
 );
-/// Compute passes of GPU presentation (decision 014).
+/// Compute passes of GPU presentation.
 pub(crate) const PRESENTATION_SHADER: &str = include_str!("presentation.wgsl");
-/// The depth pyramid of occlusion culling (decision 040).
+/// The depth pyramid of occlusion culling.
 pub(crate) const DEPTH_PYRAMID_SHADER: &str = include_str!("depth_pyramid.wgsl");
-/// Cluster selection of virtual geometry (decision 044).
+/// Cluster selection of virtual geometry.
 pub(crate) const VIRTUAL_SHADER: &str = include_str!("virtual_geometry.wgsl");
-/// Tile classification of the visibility buffer (decision 045).
+/// Tile classification of the visibility buffer.
 pub(crate) const VISIBILITY_SHADER: &str = include_str!("visibility.wgsl");
-/// Temporal antialiasing resolve (decision 017), after the shared effects.
+/// Temporal antialiasing resolve, after the shared effects.
 pub(crate) const TEMPORAL_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("temporal.wgsl"));
 /// Mip generation of base color textures.
 pub(crate) const MIPMAP_SHADER: &str = include_str!("mipmaps.wgsl");
-/// Local light binning into view clusters (decision 023).
+/// Local light binning into view clusters.
 pub(crate) const LIGHT_SHADER: &str = include_str!("lights.wgsl");
-/// Stateless particles after the shared scene declarations (decision 026).
+/// Stateless particles after the shared scene declarations.
 pub(crate) const PARTICLE_SHADER: &str =
     concat!(include_str!("scene.wgsl"), include_str!("particles.wgsl"));
-/// The composite of weighted blended transparency (decision 026).
+/// The composite of weighted blended transparency.
 pub(crate) const TRANSPARENT_SHADER: &str = include_str!("transparent.wgsl");
-/// Sun shafts (decision 024) after the scene declarations and effects.
+/// Sun shafts after the scene declarations and effects.
 pub(crate) const SHAFTS_SHADER: &str = concat!(
     include_str!("scene.wgsl"),
     include_str!("effects.wgsl"),
     include_str!("shafts.wgsl")
 );
-/// Shadow caster selection and depth drawing (decision 020).
+/// Shadow caster selection and depth drawing.
 pub(crate) const SHADOW_SHADER: &str = concat!(
     include_str!("shadows.wgsl"),
     include_str!("impostor_frames.wgsl")
 );
-/// Ambient occlusion, bloom and their composite (decision 021).
+/// Ambient occlusion, bloom and their composite.
 pub(crate) const POST_SHADER: &str =
     concat!(include_str!("effects.wgsl"), include_str!("post.wgsl"));
-/// Environment maps (decision 043) after the scene declarations.
+/// Environment maps after the scene declarations.
 pub(crate) const ENVIRONMENT_SHADER: &str = concat!(
     include_str!("scene.wgsl"),
     include_str!("sky_common.wgsl"),
     include_str!("environment.wgsl")
 );
 
-/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl` (decision 031), 224 bytes:
+/// WGSL `MaterialMaps` uniform of `meshes/declarations.wgsl`, 224 bytes:
 /// each map's texture coordinate transform, the emissive color and the map
-/// parameters of one material, and its top layer (decision 093).
+/// parameters of one material, and its top layer.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct MaterialUniform {
@@ -579,16 +579,16 @@ pub(crate) struct MaterialUniform {
     /// normal, occlusion and emissive), w unused.
     pub transforms: [[f32; 4]; 10],
     /// Linear emissive color; w the meters one repeat of world-mapped maps
-    /// covers (decision 093), 0 for texture coordinates.
+    /// covers, 0 for texture coordinates.
     pub emissive: [f32; 4],
     /// Normal scale, occlusion strength, alpha cutoff, and the maps reading
     /// the second texture coordinates as bits in map order.
     pub params: [f32; 4],
-    /// Transmission (decision 038): its share, index of refraction and
+    /// Transmission: its share, index of refraction and
     /// thickness; w the material's variant bits as `f32` bits, which uber
-    /// pipelines read (decision 049).
+    /// pipelines read.
     pub volume: [f32; 4],
-    /// The top layer (decision 093): its linear color and coverage, then its
+    /// The top layer: its linear color and coverage, then its
     /// roughness.
     pub top: [f32; 4],
     pub layer: [f32; 4],
@@ -672,7 +672,7 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
     ]
 }
 
-/// A material's pipeline variant (decision 031): the `meshes/declarations.wgsl` override
+/// A material's pipeline variant: the `meshes/declarations.wgsl` override
 /// constants it sets and whether back faces draw. Materials without maps and
 /// plain opaque base color textures use [`Variant::BASIC`], the shading of
 /// every material before glTF maps.
@@ -685,13 +685,13 @@ impl Variant {
     const NORMAL_MAP: u16 = 2;
     const ALPHA_MASK: u16 = 4;
     const DOUBLE_SIDED: u16 = 8;
-    // Meshes with a second vertex stream (decision 034): extended entry
+    // Meshes with a second vertex stream: extended entry
     // points rather than a constant.
     const EXTENDED: u16 = 16;
-    // Skinned slots' meshes (decision 036): skinned entry points, which
+    // Skinned slots' meshes: skinned entry points, which
     // read the second stream and a skin stream.
     const SKINNED: u16 = 32;
-    // Transmissive materials (decision 038): glass shading in the
+    // Transmissive materials: glass shading in the
     // transparent pass.
     const TRANSMISSION: u16 = 64;
     // Maps a material with maps has: the others are not sampled, as the
@@ -702,18 +702,17 @@ impl Variant {
     const OCCLUSION_MAP: u16 = 256;
     const EMISSIVE_MAP: u16 = 512;
     const PACKED_OCCLUSION: u16 = 1024;
-    // Passes drawn rarely (decision 049) read the map bits from the
+    // Passes drawn rarely read the map bits from the
     // material uniform: their pipelines key on pipeline state alone.
     const UBER: u16 = 2048;
-    // Maps laid from the world's axes, and a layer on faces turned up
-    // (decision 093).
+    // Maps laid from the world's axes, and a layer on faces turned up.
     const WORLD_MAPPING: u16 = 4096;
     const TOP_LAYER: u16 = 8192;
-    // Bases the ground stains (decision 096): slot vertex stages read
+    // Bases the ground stains: slot vertex stages read
     // placed objects' grounds.
     const GROUNDING: u16 = 16384;
-    // Placed objects fading between how the camera shows them (decision
-    // 104): their lists' entries carry their fades, which their pixels
+    // Placed objects fading between how the camera shows them:
+    // their lists' entries carry their fades, which their pixels
     // dither by. A draw's, not a material's.
     const FADING: u16 = 32768;
 
@@ -771,7 +770,7 @@ impl Variant {
     }
 
     /// This variant for a pass that reads map presence from the material
-    /// uniform (decision 049): only what its pipeline state needs, vertex
+    /// uniform: only what its pipeline state needs, vertex
     /// streams, culling, alpha masking and transmission.
     pub(crate) fn uber(self) -> Self {
         let state = Self::EXTENDED
@@ -848,7 +847,7 @@ impl Variant {
         self.0 & Self::SKINNED != 0
     }
 
-    /// This variant drawing placed objects' fading lists (decision 104), or
+    /// This variant drawing placed objects' fading lists, or
     /// not.
     pub(crate) fn with_fading(self, fading: bool) -> Self {
         Self(if fading {
@@ -859,12 +858,12 @@ impl Variant {
     }
 }
 
-/// Most near shadow cascades (decision 028).
+/// Most near shadow cascades.
 pub(crate) const MAX_CASCADES: usize = engine_core::MAX_SHADOW_CASCADES as usize;
-/// Most kept shadow levels (decision 065).
+/// Most kept shadow levels.
 pub(crate) const MAX_LEVELS: usize = engine_core::MAX_KEPT_LEVELS as usize;
 
-/// WGSL `Shadow` uniform of `scene.wgsl` (decisions 020, 028 and 065):
+/// WGSL `Shadow` uniform of `scene.wgsl`:
 /// world to each near cascade, to the far shadow maps and to light space,
 /// each kept level's part of it, and their settings, 656 bytes.
 #[repr(C)]
@@ -890,7 +889,7 @@ pub(crate) struct ShadowUniform {
     pub offsets: [f32; 4],
     /// Texels a side of the near cascades and the far maps; zw unused.
     pub sizes: [f32; 4],
-    /// World to light space (decision 065): the sun's right, up and
+    /// World to light space: the sun's right, up and
     /// away-from-sun axes, which every kept level scales.
     pub light: [[f32; 4]; 3],
     /// Each kept level's light space: one over its width (x and y in level
@@ -942,7 +941,7 @@ pub(crate) struct ShadowCullUniform {
     pub cascades: u32,
     /// Skinned slots `select_skinned` visits on GPU-presented frames.
     pub skinned: u32,
-    /// Kept levels in use (decision 065).
+    /// Kept levels in use.
     pub levels: u32,
     pub pad: u32,
     /// The light-space rectangle of the kept level redrawn this frame, and
@@ -964,7 +963,7 @@ pub(crate) struct ShadowCullUniform {
 /// last view depths, those facing the sun.
 pub(crate) const CASTER_PLANES: usize = 8;
 
-/// WGSL `Post` uniform of `effects.wgsl` (decisions 021, 024 and 025): 240
+/// WGSL `Post` uniform of `effects.wgsl`: 240
 /// bytes.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -988,7 +987,7 @@ pub(crate) struct PostUniform {
     pub shafts: [f32; 4],
     /// The sun's exposed color; w unused.
     pub sun: [f32; 4],
-    /// Contact shadows (decision 062): each ray's reach in meters, the
+    /// Contact shadows: each ray's reach in meters, the
     /// share of sunlight a hit takes away, the distance within which
     /// surfaces trace, and 1 when they run.
     pub contact: [f32; 4],
@@ -1070,11 +1069,10 @@ pub(crate) struct PresentationFrame {
     /// Nonzero on temporally antialiased frames with valid previous poses:
     /// visible IDs of moving slots then carry [`MOVED_SLOT`].
     pub motion: u32,
-    /// Joints of skinned slots' palettes (decision 036).
+    /// Joints of skinned slots' palettes.
     pub joints: u32,
     /// Candidate flags compaction gathers: [`FLAG_VISIBLE`] without
-    /// occlusion culling, [`FLAG_PHASE1`] or [`FLAG_PHASE2`] with it
-    /// (decision 040).
+    /// occlusion culling, [`FLAG_PHASE1`] or [`FLAG_PHASE2`] with it.
     pub mask: u32,
     /// Nonzero when occlusion culling splits drawing into two phases.
     pub occlusion: u32,
@@ -1082,22 +1080,21 @@ pub(crate) struct PresentationFrame {
     pub view_projection: [[f32; 4]; 4],
     /// Viewport width and height in pixels, and the depth pyramid's levels.
     pub viewport: [f32; 4],
-    /// Skinned slots (decision 036) whose palette bounds `skin_bounds_pass`
+    /// Skinned slots whose palette bounds `skin_bounds_pass`
     /// computes and culls.
     pub skinned: u32,
-    /// Nonzero when candidates covering no pixel center are left undrawn
-    /// (decision 041).
+    /// Nonzero when candidates covering no pixel center are left undrawn.
     pub subpixel: u32,
     /// Candidates per visible-ID plane: each level of detail's IDs start
-    /// this many entries after the last's (decision 047).
+    /// this many entries after the last's.
     pub plane: u32,
     /// The screen error in pixels levels of detail keep within; 0 draws
-    /// every instance at full detail (decision 047).
+    /// every instance at full detail.
     pub lod_error: f32,
     /// The eye the frame rasterizes from (w unused): levels of detail
-    /// follow the distance to it (decision 047).
+    /// follow the distance to it.
     pub eye: [f32; 4],
-    /// Fades (decision 107): the share of a switch between a mesh and its
+    /// Fades: the share of a switch between a mesh and its
     /// card this frame fades (1 for previews, which keep no level) and the
     /// share of its distance past a switch the eye goes before a candidate
     /// switches back.
@@ -1108,15 +1105,15 @@ pub(crate) struct PresentationFrame {
 pub(crate) const FLAG_VISIBLE: u32 = 1;
 pub(crate) const FLAG_PHASE1: u32 = 8;
 pub(crate) const FLAG_PHASE2: u32 = 16;
-/// Reflection probe captures (decision 043): candidates of the cube face
+/// Reflection probe captures: candidates of the cube face
 /// being captured.
 pub(crate) const FLAG_PROBE: u32 = 128;
 /// Frames in a row a slot must display an unchanged pose before reflection
-/// probes capture it (decision 043).
+/// probes capture it.
 pub(crate) const STILL_FRAMES: u32 = 16;
 
 /// Bit of a visible slot ID marking a slot whose displayed pose can differ
-/// from the previous frame's (decision 017); slot indices stay below it.
+/// from the previous frame's; slot indices stay below it.
 pub(crate) const MOVED_SLOT: u32 = 1 << 31;
 
 /// One candidate slot, its hierarchy node, its draw group and its index in
@@ -1131,9 +1128,9 @@ pub(crate) struct CandidateData {
 }
 
 /// One draw group: its candidate range (also its compacted visible-ID region),
-/// mesh index count, shadow draw group (decision 020), local bounds and
-/// levels of detail (96 bytes). `bounds_min[3]` is 1 for meshes with joints
-/// (decision 036), whose joints place them: GPU-presented frames bound their
+/// mesh index count, shadow draw group, local bounds and
+/// levels of detail (96 bytes). `bounds_min[3]` is 1 for meshes with joints,
+/// whose joints place them: GPU-presented frames bound their
 /// slots by their palettes ([`SkinnedData`]), and they never cast kept
 /// shadows.
 #[repr(C)]
@@ -1152,11 +1149,11 @@ pub(crate) struct BatchData {
     pub first_index: u32,
     pub base_vertex: i32,
     pub first_instance: u32,
-    /// What each coarser level's first instance adds per level (decision
-    /// 047): the visible-ID plane stride where first instances name
+    /// What each coarser level's first instance adds per level:
+    /// the visible-ID plane stride where first instances name
     /// regions, otherwise 0.
     pub first_plane: u32,
-    /// Levels of detail 1 and 2 (decision 047): each one's first index and
+    /// Levels of detail 1 and 2: each one's first index and
     /// index count in the mesh arena.
     pub lod_ranges: [u32; 4],
     /// Levels 1 and 2's geometric errors in mesh units, then the level
@@ -1164,11 +1161,11 @@ pub(crate) struct BatchData {
     pub lod_errors: [f32; 4],
 }
 
-/// Levels of detail a draw group has at most (decision 047): the mesh and two
+/// Levels of detail a draw group has at most: the mesh and two
 /// simplifications, each with its own plane of visible IDs and draws.
 pub(crate) const LOD_LEVELS: usize = 3;
 
-/// A skinned slot of GPU-presented frames (decision 036): its slot, its
+/// A skinned slot of GPU-presented frames: its slot, its
 /// candidate's draw-group position, its draw group and its mesh's joint count
 /// (16 bytes).
 #[repr(C)]
@@ -1185,8 +1182,8 @@ pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
 /// Composed active-parent record of `presentation.wgsl` (112 bytes).
 pub(crate) const COMPOSED_BYTES: u64 = 112;
 
-/// Clip-space depth of the near and far planes: depth is reversed (decision
-/// 042), so nearer is larger and the depth buffer clears to the far plane.
+/// Clip-space depth of the near and far planes: depth is reversed,
+/// so nearer is larger and the depth buffer clears to the far plane.
 pub(crate) const NEAR_DEPTH: f32 = 1.0;
 pub(crate) const FAR_DEPTH: f32 = 0.0;
 

@@ -1,4 +1,4 @@
-//! Worker jobs (decision 110): self-contained work, such as a terrain tile,
+//! Worker jobs: self-contained work, such as a terrain tile,
 //! a walk or a stack's bakes, that hosts run on workers beside the engine's
 //! thread. An owner submits a job's kind and input bytes and takes its
 //! output once a worker hands it back; what many jobs read (a terrain's
@@ -8,13 +8,13 @@
 //! hosts that start none, `0` after a failure) owners do the work in place,
 //! as before. Results never depend on where a job ran.
 //!
-//! Jobs carry a priority (decision 112): workers run a job a slice at a
+//! Jobs carry a priority: workers run a job a slice at a
 //! time and, between slices, the most urgent they hold; a job its owner
 //! cancels stops at its next slice, so its worker takes up wanted work at
-//! once. A job may hand back a part of its output before the rest (decision
-//! 114), as a tile its shape, for its owner to use while it runs.
+//! once. A job may hand back a part of its output before the rest,
+//! as a tile its shape, for its owner to use while it runs.
 //!
-//! Hosts may keep outputs (decision 116): a job submitted with an identity,
+//! Hosts may keep outputs: a job submitted with an identity,
 //! what its output depends on, takes its output from a host's cache when
 //! the same build ran the same identity before, in this session or an
 //! earlier one. Owners name what they share by its content
@@ -37,7 +37,7 @@ pub struct JobId(pub u64);
 
 /// A job to hand a worker: its id, its kind (which work workers run on
 /// it), its input, its priority, lower first ([`job_priority`]), and, where
-/// hosts may keep its output (decision 116), its identity: the same kind
+/// hosts may keep its output, its identity: the same kind
 /// and identity give the same output from the same build.
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
@@ -48,14 +48,14 @@ pub struct JobRequest {
     pub identity: Option<Vec<u8>>,
 }
 
-/// Classes of jobs (decision 112), most urgent first: what a view or its
+/// Classes of jobs, most urgent first: what a view or its
 /// gameplay cannot do without (bakes, the coarsest tiles, the tiles a view
 /// draws and shows, those under focus entities); gameplay's searches; and
 /// the rest of what views load.
 pub const URGENT_JOBS: u8 = 0;
 pub const GAMEPLAY_JOBS: u8 = 1;
 pub const VIEW_JOBS: u8 = 2;
-/// Work ahead of need while nothing else waits (decision 116).
+/// Work ahead of need while nothing else waits.
 pub const IDLE_JOBS: u8 = 3;
 
 /// A job's priority: its `class`, then its `place` among the class's jobs
@@ -70,7 +70,7 @@ pub const fn job_class(priority: u32) -> u8 {
 }
 
 /// A 128-bit hash of `bytes` (MurmurHash3, x64 128-bit, seed 0) naming
-/// content by what it holds (decision 116): shares named so make the jobs
+/// content by what it holds: shares named so make the jobs
 /// reading them the same bytes in every session, which hosts' caches key
 /// outputs by.
 pub fn content_hash(bytes: &[u8]) -> u128 {
@@ -139,11 +139,11 @@ pub enum JobShare {
     Remove { key: String },
 }
 
-/// Workers and their jobs (decision 110): workers running them, jobs
+/// Workers and their jobs: workers running them, jobs
 /// handed out and not done, jobs submitted, completed, failed and cancelled
-/// while running (decision 112), parts handed back early (decision 114),
-/// keys shared and their bytes; and the host's output cache (decision
-/// 116): outputs it handed back instead of running their jobs, jobs it
+/// while running, parts handed back early,
+/// keys shared and their bytes; and the host's output cache:
+/// outputs it handed back instead of running their jobs, jobs it
 /// lacked, the bytes it holds and, verifying, outputs differing from a
 /// fresh run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -163,7 +163,7 @@ pub struct JobStats {
     pub cache_mismatches: u64,
 }
 
-/// Jobs handed to the host's workers (decision 110). Inserted by default,
+/// Jobs handed to the host's workers. Inserted by default,
 /// with no workers until a host says how many it runs.
 #[derive(Resource)]
 pub struct Jobs {
@@ -175,10 +175,10 @@ pub struct Jobs {
     running: HashSet<JobId>,
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
-    // Parts of running jobs' outputs handed back early (decision 114),
+    // Parts of running jobs' outputs handed back early,
     // the latest of each.
     parts: HashMap<JobId, Vec<u8>>,
-    // The host's cache counters (decision 116): hits, misses, bytes and
+    // The host's cache counters: hits, misses, bytes and
     // mismatches.
     cache: [u64; 4],
     // What is shared now, by key: its size.
@@ -235,7 +235,7 @@ impl Jobs {
     }
 
     /// [`Self::submit`] for a job whose output hosts may keep and hand back
-    /// for the same `identity` without running it (decision 116): what its
+    /// for the same `identity` without running it: what its
     /// output depends on, as the same build computes it.
     pub fn submit_cacheable(
         &mut self,
@@ -276,15 +276,15 @@ impl Jobs {
         self.done.remove(&id)
     }
 
-    /// A part of running job `id`'s output handed back before the rest
-    /// (decision 114), taken; parts not taken before the job is done are
+    /// A part of running job `id`'s output handed back before the rest,
+    /// taken; parts not taken before the job is done are
     /// dropped.
     pub fn take_part(&mut self, id: JobId) -> Option<Vec<u8>> {
         self.parts.remove(&id)
     }
 
-    /// Drops job `id`: a worker running it stops at its next slice
-    /// (decision 112), and its output, if any, is thrown away.
+    /// Drops job `id`: a worker running it stops at its next slice,
+    /// and its output, if any, is thrown away.
     pub fn cancel(&mut self, id: JobId) {
         self.parts.remove(&id);
         if self.done.remove(&id).is_some() || !self.running.remove(&id) {
@@ -331,7 +331,7 @@ impl Jobs {
     }
 
     /// Hosts: moves the jobs handed out that their owners cancelled into
-    /// `out` (decision 112): their workers should stop them.
+    /// `out`: their workers should stop them.
     pub fn take_cancels(&mut self, out: &mut Vec<JobId>) {
         out.append(&mut self.cancels);
     }
@@ -345,7 +345,7 @@ impl Jobs {
     }
 
     /// Hosts: a part of running job `id`'s output its worker handed back
-    /// before the rest (decision 114), replacing an earlier one not taken;
+    /// before the rest, replacing an earlier one not taken;
     /// ignored for jobs cancelled or done since.
     pub fn part(&mut self, id: JobId, part: Vec<u8>) {
         if self.running.contains(&id) {
@@ -354,7 +354,7 @@ impl Jobs {
         }
     }
 
-    /// Hosts: their output cache's counters (decision 116): outputs handed
+    /// Hosts: their output cache's counters: outputs handed
     /// back from it, jobs it lacked, its bytes and, verifying, outputs that
     /// differed from a fresh run.
     pub fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {

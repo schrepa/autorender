@@ -316,11 +316,11 @@ pub struct RayHit {
     pub point: Vec3,
     pub normal: Vec3,
     pub started_inside: bool,
-    /// The placed object hit (decision 064), whose terrain is `entity`.
+    /// The placed object hit, whose terrain is `entity`.
     pub placed: Option<PlacedPart>,
 }
 
-/// A placed object (decision 064): its placement layer and asset, by index
+/// A placed object: its placement layer and asset, by index
 /// in its terrain's surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacedPart {
@@ -365,7 +365,7 @@ pub struct ShapeHit {
     pub normal: Vec3,
     /// Includes initial touching or being within the configured skin/tolerance.
     pub started_overlapping: bool,
-    /// The placed object hit (decision 064), whose terrain is `entity`.
+    /// The placed object hit, whose terrain is `entity`.
     pub placed: Option<PlacedPart>,
 }
 
@@ -381,10 +381,9 @@ pub struct CollisionReport {
     pub bvh_nodes: usize,
     pub cache_bytes: usize,
     pub complete: bool,
-    /// Terrain tiles colliding as heightfields (decision 051).
+    /// Terrain tiles colliding as heightfields.
     pub terrain_tiles: usize,
-    /// Placed objects colliding within terrains' collision radius
-    /// (decision 064).
+    /// Placed objects colliding within terrains' collision radius.
     pub placed_colliders: usize,
 }
 

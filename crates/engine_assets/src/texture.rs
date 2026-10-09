@@ -10,7 +10,7 @@ pub enum TextureFormat {
     /// Four bytes per texel, red, green, blue and alpha; one level, whose
     /// mip chain renderers generate.
     Rgba8,
-    /// BC7 blocks of 4 × 4 texels in 16 bytes (decision 037), for devices
+    /// BC7 blocks of 4 × 4 texels in 16 bytes, for devices
     /// with WebGPU's `texture-compression-bc`.
     Bc7,
     /// ETC2 RGBA8 (EAC alpha) blocks of 4 × 4 texels in 16 bytes, for
@@ -35,14 +35,14 @@ impl TextureFormat {
 }
 
 /// Immutable sRGB color pixels in tightly packed row-major RGBA8 order, or
-/// block-compressed levels (decision 037).
+/// block-compressed levels.
 ///
 /// Rows run from top to bottom, matching UV origin (0, 0) at the upper left.
 /// RGBA8 textures store one mip level; compressed ones store theirs, from the
 /// base level down, since renderers cannot generate them. Decoding and
 /// transcoding happen before admission; there are no asynchronous loading
 /// states in this type. Surfaces are opaque: alpha is the linear mask of a
-/// material's emission (decision 019), 255 where it emits fully.
+/// material's emission, 255 where it emits fully.
 #[derive(Debug)]
 pub struct Texture {
     width: u32,
@@ -70,7 +70,7 @@ impl Texture {
     }
 
     /// [`Self::new`] with any alpha: coverage for masked and blended
-    /// materials (decision 031); for opaque ones it masks the emission, from
+    /// materials; for opaque ones it masks the emission, from
     /// 0 (none) to 255 (the material's full emission).
     pub fn with_alpha(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
         Self::with_emission_mask(width, height, rgba8)
@@ -110,7 +110,7 @@ impl Texture {
         })
     }
 
-    /// Block-compressed levels (decision 037) of a `width` × `height`
+    /// Block-compressed levels of a `width` × `height`
     /// texture in a compressed `format`: the base level first, each next
     /// level half as large (rounding down, at least 1), at most down to
     /// 1 × 1, each exactly its whole blocks. Dimensions are multiples of 4,

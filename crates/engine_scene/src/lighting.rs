@@ -1,5 +1,5 @@
-//! Scene version 6 entity fields: local lights (decision 023) and particle
-//! emitters (decision 026). Each mirrors its runtime component field for
+//! Scene version 6 entity fields: local lights and particle
+//! emitters. Each mirrors its runtime component field for
 //! field, so inspected values paste back into scenes; angles are in degrees.
 
 use engine_core::{LocalLight, ParticleBlend, ParticleEmitter, Spot, glam::Vec3};
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::SceneError;
 
-/// A point or spot light on this entity (decision 023). Requires version 6.
+/// A point or spot light on this entity. Requires version 6.
 /// On an entity with a mesh it follows the mesh's displayed pose.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -163,7 +163,7 @@ pub enum SceneParticleBlend {
     Additive,
 }
 
-/// A particle emitter on this entity (decision 026). Requires version 6.
+/// A particle emitter on this entity. Requires version 6.
 /// Omitted fields take the engine's defaults.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

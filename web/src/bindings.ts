@@ -34,7 +34,7 @@ function generationModule(name: string): string | undefined {
   return `/_engine/builds/${generation}/${name}.js`;
 }
 
-/** The job worker module (decision 110) of the build a watched browser is
+/** The job worker module of the build a watched browser is
  * pinned to, for workers to import; none outside watched builds. */
 export function engineWorkerModule(): string | undefined {
   return generationModule("engine_worker");

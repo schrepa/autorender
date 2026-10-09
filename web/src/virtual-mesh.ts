@@ -1,4 +1,4 @@
-/** Streamed files as hosts load them: virtual meshes (decision 044) and terrain files (decision 051). */
+/** Streamed files as hosts load them: virtual meshes and terrain files. */
 
 /**
  * The prefix of the file at `url` whose first `headerBytes` bytes say how
@@ -22,7 +22,7 @@ export async function fetchPrefix(url: string, headerBytes: number, prefixBytes:
   return length <= head.length ? head.slice(0, length) : await range(length);
 }
 
-/** The prefix of the virtual mesh file at `url` (decision 044). */
+/** The prefix of the virtual mesh file at `url`. */
 export function fetchVirtualPrefix(url: string, prefixBytes: (header: Uint8Array) => number | undefined, signal?: AbortSignal) {
   return fetchPrefix(url, 128, prefixBytes, "virtual mesh", signal);
 }

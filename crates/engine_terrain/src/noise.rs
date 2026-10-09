@@ -2,7 +2,7 @@
 //! integer hashing and plain `f32` arithmetic with the engine's branch-free
 //! trigonometry, so every target computes the same bits.
 //!
-//! The functions ending in 4 evaluate four points at once (decision 121):
+//! The functions ending in 4 evaluate four points at once:
 //! Wasm SIMD lanes where the target has them, each lane the scalar
 //! function's IEEE operations in its order (no fused multiply-add, no
 //! relaxed SIMD), so they give the same bits as it at each point.
@@ -39,7 +39,7 @@ const NOISE_SCALE: f32 = std::f32::consts::SQRT_2;
 
 /// The magnitudes of the gradients' components: each component is one of
 /// them, its index and sign bit operations on the gradient's index, which
-/// lanes compute instead of loading from [`GRADIENTS`] (decision 121).
+/// lanes compute instead of loading from [`GRADIENTS`].
 const MAGNITUDES: [f32; 4] = [
     GRADIENTS[0][0],
     GRADIENTS[1][0],
@@ -178,7 +178,7 @@ fn value_in([ga, gb, gc, gd]: [[f32; 2]; 4], fx: f32, fz: f32) -> f32 {
     (top + uz * (bottom - top)) * NOISE_SCALE
 }
 
-/// [`gradient_value`] at each point of `xs` and `zs` (decision 113), into
+/// [`gradient_value`] at each point of `xs` and `zs`, into
 /// `out`: points in the cell of the one before reuse its corners'
 /// gradients, the same values hashed again.
 pub(crate) fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]) {
@@ -197,7 +197,7 @@ pub(crate) fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]
     }
 }
 
-/// [`gradient_noise`] at four points (decision 121), lane by lane its
+/// [`gradient_noise`] at four points, lane by lane its
 /// operations in its order: the same bits.
 #[inline]
 pub(crate) fn gradient_noise4(x: Vec4, z: Vec4, seed: u32) -> [Vec4; 3] {

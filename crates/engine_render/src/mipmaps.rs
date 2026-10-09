@@ -3,7 +3,7 @@
 //! level above. Uploads stay the base level's texels; the chain adds at most a
 //! third of them in GPU memory and costs no CPU work beyond command encoding.
 //! Color textures average in linear light through their sRGB format; data
-//! textures (decision 031) average their stored values.
+//! textures average their stored values.
 
 use crate::bindings::MIPMAPS;
 use crate::gpu_data::MIPMAP_SHADER;
@@ -73,8 +73,8 @@ impl MipGenerator {
         self.record_views(device, encoder, texture, None)
     }
 
-    /// [`Self::record`] for layer `layer` of an array texture: impostors'
-    /// (decision 048), after a bake renders its first level.
+    /// [`Self::record`] for layer `layer` of an array texture: impostors',
+    /// after a bake renders its first level.
     pub(crate) fn record_layer(
         &self,
         device: &wgpu::Device,

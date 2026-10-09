@@ -1,4 +1,4 @@
-//! GPU materials (decision 031): textures uploaded in the color space their
+//! GPU materials: textures uploaded in the color space their
 //! maps read them in, cached samplers, and one bind group per material with
 //! maps. Materials without maps share a default group of white textures.
 
@@ -30,7 +30,7 @@ pub(crate) struct GpuMaterial {
     group: wgpu::BindGroup,
     _uniform: wgpu::Buffer,
     variant: Variant,
-    // The library version the group holds (decision 033): a replaced
+    // The library version the group holds: a replaced
     // material builds its group again.
     version: u64,
 }
@@ -123,8 +123,7 @@ impl MaterialStore {
     }
 
     /// Drops materials and textures `plan`'s snapshot no longer supplies,
-    /// keeping its decals' (decision 039) and its terrains' placed objects'
-    /// (decision 057).
+    /// keeping its decals' and its terrains' placed objects'.
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
         let extra_material = |handle: &MaterialHandle| {
             snapshot
@@ -152,8 +151,8 @@ impl MaterialStore {
 
     /// Uploads the textures and builds the bind groups of `plan`'s used
     /// materials and of `extra` listed ones (masked shadow casters), the
-    /// snapshot's decal materials (decision 039) and its terrains' placed
-    /// objects' (decision 057). New
+    /// snapshot's decal materials and its terrains' placed
+    /// objects'. New
     /// textures' mip levels render from their base level in commands
     /// recorded into `encoder`, created when needed. Returns the uploaded
     /// bytes and generated levels.
@@ -269,7 +268,7 @@ impl MaterialStore {
         self.generation
     }
 
-    /// The mip generator textures and impostors (decision 048) share.
+    /// The mip generator textures and impostors share.
     pub(crate) fn mips(&self) -> &MipGenerator {
         &self.mips
     }
@@ -315,7 +314,7 @@ impl MaterialStore {
     }
 }
 
-/// The materials of `snapshot`'s terrains' placed objects (decision 057).
+/// The materials of `snapshot`'s terrains' placed objects.
 fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
     snapshot
         .terrain
@@ -421,7 +420,7 @@ fn bind_group(
 }
 
 /// The GPU format of a compressed `format` read as sRGB or linear, and the
-/// device feature sampling it (decision 037); `None` for RGBA8.
+/// device feature sampling it; `None` for RGBA8.
 fn compressed_format(
     format: TextureFormat,
     srgb: bool,
@@ -459,7 +458,7 @@ fn compressed_format(
     })
 }
 
-/// Uploads a compressed texture's levels as they are (decision 037); a
+/// Uploads a compressed texture's levels as they are; a
 /// device without its format samples a white texel instead.
 fn create_compressed(
     device: &wgpu::Device,

@@ -1,4 +1,4 @@
-// Weighted blended transparency (decision 026): the composite of the
+// Weighted blended transparency: the composite of the
 // accumulated transparent surfaces and particles over the opaque color.
 // Blending computes average * (1 - revealed) + opaque * revealed, and keeps
 // only the opaque share of the ambient light alpha, which ambient occlusion

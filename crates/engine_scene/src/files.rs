@@ -1,9 +1,8 @@
-//! Files a scene references by relative path (decision 030): images and
+//! Files a scene references by relative path: images and
 //! binary mesh buffers beside the scene. The host reads them and decodes
 //! images with the platform's own decoder before a scene loads, so the
 //! runtime carries no image decoder and scene sources stay small. KTX2
-//! images the host transcodes to a block-compressed format its GPU samples
-//! (decision 037).
+//! images the host transcodes to a block-compressed format its GPU samples.
 
 use std::collections::HashMap;
 
@@ -19,11 +18,11 @@ pub enum SceneFileKind {
     /// An engine buffer, supplied as bytes: a mesh (`EMB1`, `EMB2`) or an
     /// animation (`EAN1`).
     Buffer,
-    /// A virtual mesh (`EVG1`, decision 044): hosts supply its prefix
+    /// A virtual mesh (`EVG1`): hosts supply its prefix
     /// (`VirtualMesh::prefix_bytes` long; the whole file works too) and its
     /// URL, from which renderers stream the other pages.
     VirtualMesh,
-    /// A terrain file (`ETR1`, decision 051): hosts supply its prefix (its
+    /// A terrain file (`ETR1`): hosts supply its prefix (its
     /// header and directory, `FileHeader::prefix_bytes` long; the whole
     /// file works too) and its URL, from which hosts fetch its tiles.
     Terrain,
@@ -37,10 +36,10 @@ pub struct SceneFile {
 }
 
 /// A terrain file's header, the URL its tiles stream from, and the whole
-/// file when supplied whole (decision 051).
+/// file when supplied whole.
 pub(crate) type TerrainFile = (engine_core::FileHeader, Option<String>, Option<Vec<u8>>);
 
-/// Format, width, height and levels of a transcoded image (decision 037).
+/// Format, width, height and levels of a transcoded image.
 type CompressedImage = (TextureFormat, u32, u32, Vec<Vec<u8>>);
 
 /// Contents of a scene's referenced files, supplied by the host.
@@ -67,8 +66,8 @@ impl SceneFiles {
         self.images.insert(uri.to_owned(), (width, height, pixels));
     }
 
-    /// Adds image `uri` transcoded to block-compressed `format` (decision
-    /// 037): `width` × `height`, its levels from the base down. Validated
+    /// Adds image `uri` transcoded to block-compressed `format`:
+    /// `width` × `height`, its levels from the base down. Validated
     /// when a scene uses it; version 8 scenes use it.
     pub fn add_compressed_image(
         &mut self,
@@ -87,14 +86,14 @@ impl SceneFiles {
         self.buffers.insert(uri.to_owned(), bytes);
     }
 
-    /// Adds virtual mesh `uri` (decision 044): its prefix or whole file, and
+    /// Adds virtual mesh `uri`: its prefix or whole file, and
     /// the URL renderers fetch the pages a prefix lacks from.
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
         self.virtual_meshes
             .insert(uri.to_owned(), (bytes, url.map(str::to_owned)));
     }
 
-    /// Adds terrain file `uri` (decision 051): its prefix or whole file, and
+    /// Adds terrain file `uri`: its prefix or whole file, and
     /// the URL hosts fetch the tiles a prefix lacks from.
     pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<&str>) {
         self.terrains
@@ -109,7 +108,7 @@ impl SceneFiles {
             .ok_or_else(|| missing(uri, path))
     }
 
-    /// Terrain file `uri` (decision 051), validated: its header, the URL
+    /// Terrain file `uri`, validated: its header, the URL
     /// its tiles stream from, and the whole file when supplied whole (as a
     /// terrain file or a buffer).
     pub(crate) fn terrain(&self, uri: &str, path: &str) -> Result<TerrainFile, SceneError> {
@@ -180,7 +179,7 @@ impl SceneFiles {
         mesh_buffer(bytes, path)
     }
 
-    /// Virtual mesh `uri` (decision 044), validated: supplied as one, or a
+    /// Virtual mesh `uri`, validated: supplied as one, or a
     /// whole file supplied as a buffer.
     pub(crate) fn virtual_mesh(&self, uri: &str, path: &str) -> Result<VirtualMesh, SceneError> {
         let (bytes, url) = match self.virtual_meshes.get(uri) {
@@ -241,7 +240,7 @@ pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
 
 /// Magic of an engine mesh buffer.
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
-/// Magic of an engine mesh buffer with optional streams (decision 034).
+/// Magic of an engine mesh buffer with optional streams.
 pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 
 /// An engine mesh buffer: `EMB1`, the vertex and index counts (little-endian
@@ -253,8 +252,8 @@ pub fn encode_mesh_buffer<V: Copy + Into<MeshVertex>>(vertices: &[V], indices: &
 }
 
 /// Optional per-vertex streams of a mesh buffer, one entry per vertex each:
-/// vertex colors and second texture coordinates (decision 034), skinning
-/// joints and weights (decision 036, both or neither).
+/// vertex colors and second texture coordinates, skinning
+/// joints and weights (both or neither).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
@@ -339,7 +338,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes
 }
 
-/// Joints and weights of skinned vertices (decision 036).
+/// Joints and weights of skinned vertices.
 pub(crate) type SkinStreams = (Vec<[u16; 4]>, Vec<[f32; 4]>);
 
 /// A decoded mesh buffer.
@@ -465,7 +464,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     })
 }
 
-/// Magic of an engine animation buffer (decision 035).
+/// Magic of an engine animation buffer.
 pub const ANIMATION_BUFFER_MAGIC: [u8; 4] = *b"EAN1";
 
 /// An engine animation buffer: `EAN1` and the channel count (little-endian

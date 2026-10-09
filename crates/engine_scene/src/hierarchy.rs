@@ -38,7 +38,7 @@ impl SceneDocument {
             .collect())
     }
 
-    /// The document's entities and its streamed entities (decision 086),
+    /// The document's entities and its streamed entities,
     /// each list expanded and validated on its own: parents stay within
     /// a list, and expanded IDs are unique across both.
     pub(crate) fn expand(
@@ -186,7 +186,7 @@ fn expand_list(
                 format!("expanded entity ID '{}' is already used", entity.source.id),
             ));
         }
-        // Agents (decision 089) walk unparented.
+        // Agents walk unparented.
         if entity.source.nav_agent.is_some() && entity.source.parent.is_some() {
             return Err(SceneError::new(
                 "invalid_nav_agent",
@@ -194,7 +194,7 @@ fn expand_list(
                 "only roots walk; give the placement or root the agent instead",
             ));
         }
-        // Grounded objects (decision 086) stand on the ground
+        // Grounded objects stand on the ground
         // themselves.
         if entity.source.grounded.is_some() && entity.source.parent.is_some() {
             return Err(SceneError::new(

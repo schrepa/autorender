@@ -44,8 +44,7 @@ pub struct StressFile {
 }
 
 /// [`create_workload`] reading the files a scene needs from `files` (the
-/// dense scene's virtual meshes, decision 044, and the highlands' terrain
-/// materials, decision 054).
+/// dense scene's virtual meshes and the highlands' terrain materials).
 pub fn create_workload_with(
     config: StressConfig,
     files: &HashMap<String, StressFile>,
@@ -97,14 +96,14 @@ pub fn create_workload_with(
                 probes: city.probes,
                 overlap_hits: Vec::with_capacity(if config.queries_per_tick > 0 { 128 } else { 0 }),
             });
-            // Glass refracts what is behind it (decision 038).
+            // Glass refracts what is behind it.
             world.insert_resource(Refraction::default());
             (city.moving_nodes, city.bounds)
         }
         StressScene::Dense => dense::populate(world, &config, files)?,
     };
-    // A brisk wind sways the highlands' grass and spruces (decision 058),
-    // and drives clouds (decision 084) over them twice as fast aloft.
+    // A brisk wind sways the highlands' grass and spruces,
+    // and drives clouds over them twice as fast aloft.
     if config.scene == StressScene::Highlands {
         world.insert_resource(Wind {
             velocity: [5.5, 2.0],
@@ -119,9 +118,9 @@ pub fn create_workload_with(
             ..Clouds::default()
         });
     }
-    // Shadows (decision 020) keep the whole scene in one map, seen from
+    // Shadows keep the whole scene in one map, seen from
     // every view; the highlands' reach across the valleys, and two kept
-    // levels (decision 065) keep still casters sharper within a kilometer
+    // levels keep still casters sharper within a kilometer
     // of the camera: a quarter meter a texel within 256 meters, one beyond.
     world.insert_resource(if config.scene == StressScene::Highlands {
         Shadows {
@@ -142,9 +141,9 @@ pub fn create_workload_with(
             ..Shadows::default()
         }
     });
-    // Sun shafts (decision 024) and screen-space reflections (decision 025)
+    // Sun shafts and screen-space reflections
     // are opt-in engine effects; street lamps near the camera light the
-    // city (decision 023), brighter as the look darkens.
+    // city, brighter as the look darkens.
     world.insert_resource(stress_shafts());
     world.insert_resource(stress_reflections(config.scene));
     world.insert_resource(LocalLights {
@@ -340,7 +339,7 @@ fn create_assets(assets: &mut AssetLibrary, config: &StressConfig) -> Result<Vec
                 )
                 .map_err(|error| error.to_string())?;
             let color = colors[index as usize % colors.len()];
-            // Surfaces (decision 019) from glossy metal to matte; every
+            // Surfaces from glossy metal to matte; every
             // fourth tower's bright stripes light up.
             let lit = config.textured && index % 4 == 1;
             let surface = Surface {
@@ -490,7 +489,7 @@ pub fn stress_shafts() -> SunShafts {
 }
 
 /// Screen-space reflections as `scene` has them: the highlands' lakes
-/// (decision 067) mirror shores kilometers away.
+/// mirror shores kilometers away.
 pub fn stress_reflections(scene: StressScene) -> Reflections {
     if scene == StressScene::Highlands {
         Reflections {
@@ -506,7 +505,7 @@ pub fn stress_reflections(scene: StressScene) -> Reflections {
 type Look = (&'static str, fn() -> Atmosphere, f32);
 
 /// The lighting presets; lamps are off by day. `sky` is the physically
-/// based sky (decision 088) at a time of day, under a neutral grade.
+/// based sky at a time of day, under a neutral grade.
 const LOOKS: [Look; 5] = [
     ("golden", Atmosphere::golden_hour, 0.35),
     ("dusk", Atmosphere::dusk, 0.8),
@@ -515,7 +514,7 @@ const LOOKS: [Look; 5] = [
     ("sky", physical_look, 0.5),
 ];
 
-/// The grade under the physically based sky (decision 088): its light at
+/// The grade under the physically based sky: its light at
 /// full strength, close to authored colors, a little contrast; the sky
 /// gives the sun's and the sky's colors and the haze.
 fn physical_look() -> Atmosphere {
@@ -533,7 +532,7 @@ fn physical_look() -> Atmosphere {
     }
 }
 
-/// Puts the physically based sky (decision 088) and the time of day into
+/// Puts the physically based sky and the time of day into
 /// `world` for `scene`'s look `name`, or takes them out for the others.
 pub fn apply_sky(world: &mut World, scene: StressScene, name: &str) {
     if resolve(scene, name) == "sky" {

@@ -1,9 +1,9 @@
-//! Grounded objects (decision 086): entities standing on the terrain, as
+//! Grounded objects: entities standing on the terrain, as
 //! authors and generators place props by x and z alone. At extraction,
 //! before transforms refresh, a [`Grounded`] entity's translation rises or
 //! sinks to its offset above the ground under it, sampled from the finest
 //! terrain tile resident there; it samples again as finer tiles arrive,
-//! and when its x, z or offset changes. Streamed items (decision 086)
+//! and when its x, z or offset changes. Streamed items
 //! stand on the ground the frame they spawn.
 
 use bevy_ecs::prelude::*;
@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Parent, Terrains, Transform};
 
-/// Stands its entity on the terrain (decision 086): its translation's y is
+/// Stands its entity on the terrain: its translation's y is
 /// kept `offset` meters above the ground under its x and z. Unparented
 /// entities only; without a resident tile under it (or over a hole) the
 /// entity keeps its translation, as walking navigation agents keep theirs:
-/// their walks stand them, on bridges' decks too (decision 111). Requires
+/// their walks stand them, on bridges' decks too. Requires
 /// version 9.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

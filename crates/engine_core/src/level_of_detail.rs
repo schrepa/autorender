@@ -1,7 +1,7 @@
-//! Level of detail settings (decision 047): meshes carry simplified levels
+//! Level of detail settings: meshes carry simplified levels
 //! the renderer builds when they are first uploaded, and GPU-presented frames
 //! draw each instance at the coarsest level whose simplification error stays
-//! within `pixel_error` of the viewport height. Impostors (decision 048) are
+//! within `pixel_error` of the viewport height. Impostors are
 //! the coarsest level: cards showing a draw group's mesh baked from many
 //! directions, for instances too small to show more.
 //!
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_range};
 
-/// Level of detail settings (decisions 047 and 048): whether instances draw
+/// Level of detail settings: whether instances draw
 /// simplified levels of their meshes, and impostors, where the
 /// simplification stays within a pixel error. Requires version 8.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -34,13 +34,13 @@ pub struct LevelOfDetail {
     /// farther away.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 64.0)))]
     pub pixel_error: f32,
-    /// Whether draw groups draw impostors where they fit (decision 048).
+    /// Whether draw groups draw impostors where they fit.
     pub impostors: bool,
     /// The most impostors kept baked; omitted for no budget.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_impostors: Option<u32>,
     /// Seconds placed objects take to fade between how the camera shows
-    /// them, from 0 (at once) to 4 (decision 104).
+    /// them, from 0 (at once) to 4.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub fade_seconds: f32,
 }

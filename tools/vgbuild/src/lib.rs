@@ -1,4 +1,4 @@
-//! Offline virtual geometry (decision 044): cluster LOD hierarchies built with
+//! Offline virtual geometry: cluster LOD hierarchies built with
 //! the vendored meshoptimizer's `clusterlod`, packed into the engine's
 //! GPU-ready virtual mesh format. Native tools only; the browser never runs
 //! this crate.

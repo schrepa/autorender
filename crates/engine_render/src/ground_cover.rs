@@ -1,9 +1,9 @@
-//! Ground cover (decision 056): the blades of every terrain's surface
+//! Ground cover: the blades of every terrain's surface
 //! materials' covers around the eye, grown each frame by a compute pass
 //! (`cover_grow.wgsl`) into one buffer and drawn with one indirect draw of
 //! strips in the opaque pass (`meshes/cover.wgsl`). Within the radius cells
 //! are level-0 samples; past it tiers of cells twice as wide each reach on
-//! (decision 090) while the average blade stands at least the settings'
+//! while the average blade stands at least the settings'
 //! pixels tall on screen. Blades past the buffer's capacity (the most the
 //! tiers and densities can grow, or the settings' budget) drop and count;
 //! cells grow in order outward from the eye's corner of each grid, so the
@@ -128,8 +128,7 @@ impl GroundCoverPass {
         }
     }
 
-    /// Meters from the eye this frame's cover reaches, and its most tiers
-    /// (decision 090).
+    /// Meters from the eye this frame's cover reaches, and its most tiers.
     pub(crate) fn reach(&self) -> (f32, u32) {
         (self.reach, self.tiers)
     }
@@ -201,7 +200,7 @@ impl GroundCoverPass {
         for (index, render) in terrains.terrains.iter().enumerate() {
             let (directory, palette, [densest, blade], sky) = terrain.cover_terrain(index);
             let density = densest * settings.density;
-            // Surroundings (decision 094) grow no blades.
+            // Surroundings grow no blades.
             if density <= 0.0 || render.patches.is_empty() || render.surroundings {
                 continue;
             }
@@ -209,8 +208,8 @@ impl GroundCoverPass {
             let candidates = engine_core::math::max((density * spacing * spacing).ceil(), 1.0);
             let local = eye - render.origin;
             let reach = tier_reach(&settings, blade, pixels_per_meter);
-            // Blades stand on the ground as each level draws it (decision
-            // 098); the coarsest never morphs.
+            // Blades stand on the ground as each level draws it;
+            // the coarsest never morphs.
             let mut ranges = [[0.0_f32; 4]; 2];
             for (level, range) in render.ranges.iter().enumerate().take(8) {
                 if level + 1 < render.ranges.len() {
@@ -234,8 +233,7 @@ impl GroundCoverPass {
             self.tiers = self.tiers.max(tiers.len() as u32);
             for (inner, outer, scale) in tiers {
                 // Each tier past the radius tries the finest cells'
-                // candidates its nearest blades' share reaches (decision
-                // 098).
+                // candidates its nearest blades' share reaches.
                 let tried = if scale > 1.0 {
                     engine_core::math::min(
                         (candidates * cover_share(inner, radius, reach)).ceil(),
@@ -400,7 +398,7 @@ impl GroundCoverPass {
         });
     }
 
-    /// Creates the growth's pipelines unless they exist (decision 099).
+    /// Creates the growth's pipelines unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.compute
             .get_or_insert_with(|| compute(device, &self.grow_layout));
@@ -495,8 +493,8 @@ pub(crate) fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
 }
 
 /// Meters from the eye cover's tiers reach on a terrain whose average
-/// blade stands `blade` meters tall, seen at `pixels_per_meter`
-/// (decision 090): while it stands at least `settings.pixels` pixels tall;
+/// blade stands `blade` meters tall, seen at `pixels_per_meter`:
+/// while it stands at least `settings.pixels` pixels tall;
 /// 0, no tiers, where that falls within the radius or `pixels` is 0.
 pub(crate) fn tier_reach(settings: &GroundCover, blade: f32, pixels_per_meter: f32) -> f32 {
     let reach = if settings.pixels > 0.0 {

@@ -15,7 +15,7 @@ const MAX_COMMAND_BYTES: usize = 16 * 1024;
 pub struct DevBrowser {
     pub tools: DevTools,
     input: InputBatch,
-    // Terrain edits undo took away (decision 080), latest last.
+    // Terrain edits undo took away, latest last.
     terrain_redo: Vec<(
         engine_core::bevy_ecs::prelude::Entity,
         engine_core::TerrainEdit,
@@ -483,7 +483,7 @@ impl DevBrowser {
 
 /// What rendering after `what` came to: a development error when it failed.
 impl DevBrowser {
-    /// Edits, undoes or redoes the terrain `name` names (decision 080), then
+    /// Edits, undoes or redoes the terrain `name` names, then
     /// renders.
     fn terrain_editing(
         &mut self,

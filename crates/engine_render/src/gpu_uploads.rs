@@ -1,4 +1,4 @@
-//! Upload planning for GPU presentation inputs (decision 014). Core stamps each
+//! Upload planning for GPU presentation inputs. Core stamps each
 //! gathered record with the gather sequence that last changed it; the renderer
 //! uploads records newer than the sequence it last uploaded, coalescing small
 //! clean gaps with the same byte/call heuristics as retained uploads.

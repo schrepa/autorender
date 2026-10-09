@@ -1,4 +1,4 @@
-//! The visibility buffer (decision 045): which camera bins it resolves, and
+//! The visibility buffer: which camera bins it resolves, and
 //! the pipelines and groups of its pass and resolves.
 
 use super::*;
@@ -49,7 +49,7 @@ impl VisibilityDraws {
 }
 
 impl Renderer {
-    /// Readies the visibility buffer (decision 045) for this frame's camera
+    /// Readies the visibility buffer for this frame's camera
     /// bins and marks those it resolves: every bin but those of alpha-masked
     /// materials, whose coverage its pass does not test. False when it is
     /// off, resolves no bin, or the device binds too few storage buffers or
@@ -95,7 +95,7 @@ impl Renderer {
         true
     }
 
-    /// The visibility pass's pipelines and `kind`'s resolves (decision 045)
+    /// The visibility pass's pipelines and `kind`'s resolves
     /// for this frame's resolved bins' material variants.
     pub(super) fn ensure_visibility_pipelines(&mut self, kind: PassKind) {
         if self.visibility.pipelines.is_none() {
@@ -188,7 +188,7 @@ impl Renderer {
         }
     }
 
-    /// A resolve of the visibility buffer (decision 045): `vs_resolve`'s
+    /// A resolve of the visibility buffer: `vs_resolve`'s
     /// tiles with `kind`'s resolving fragment stage and targets, testing no
     /// depth.
     pub(super) fn create_resolve(
@@ -232,7 +232,7 @@ impl Renderer {
         )
     }
 
-    /// The visibility buffer's groups (decision 045): its pass's per current
+    /// The visibility buffer's groups: its pass's per current
     /// pose buffer, and the resolves' per current and previous one, as
     /// `virtual_pose_groups`.
     pub(super) fn ensure_visibility_groups(&mut self) {
@@ -313,7 +313,7 @@ impl Renderer {
 }
 
 /// Bindings of slot poses and the virtual arena's meshes, clusters and
-/// pages (decision 044), by their names in `meshes/declarations.wgsl`.
+/// pages, by their names in `meshes/declarations.wgsl`.
 fn arena_entries<'a>(
     poses: &'a wgpu::Buffer,
     [meshes, clusters, pages]: [&'a wgpu::Buffer; 3],

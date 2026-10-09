@@ -26,11 +26,11 @@ pub(crate) struct PreparedScene {
     pub entities: Vec<ExpandedObject>,
     pub clips: Vec<AnimationClip>,
     pub skin_binds: Vec<Arc<[Mat4]>>,
-    /// Streamed entities (decision 086).
+    /// Streamed entities.
     pub streamed: PreparedStreamed,
 }
 
-/// A document's streamed entities (decision 086), expanded: their
+/// A document's streamed entities, expanded: their
 /// transforms, components and parents (indices into this list), and the
 /// items they form.
 #[derive(Default)]
@@ -42,7 +42,7 @@ pub(crate) struct PreparedStreamed {
     pub items: Vec<PreparedItem>,
 }
 
-/// A streamed root with its descendants (decision 086): their indices,
+/// A streamed root with its descendants: their indices,
 /// the root first and the rest in expanded order; where the root stands;
 /// and the meters its content reaches from there.
 pub(crate) struct PreparedItem {
@@ -100,7 +100,7 @@ impl SceneDocument {
         self.prepare(Some(files)).map(|_| ())
     }
 
-    /// The files this document references (decision 030), each once, in
+    /// The files this document references, each once, in
     /// authored order: the host supplies them as [`SceneFiles`].
     pub fn files(&self) -> Vec<SceneFile> {
         let mut files: Vec<SceneFile> = Vec::new();
@@ -129,7 +129,7 @@ impl SceneDocument {
                 add(uri, SceneFileKind::Buffer);
             }
         }
-        // Terrains (decision 051): heightmaps as buffers, and terrain files.
+        // Terrains: heightmaps as buffers, and terrain files.
         let entities = self
             .entities
             .iter()
@@ -198,7 +198,7 @@ impl SceneDocument {
             .iter()
             .map(|entity| self.prepare_entity(entity, &resolve, &rigs))
             .collect::<Result<Vec<_>, _>>()?;
-        // Terrains read their files (decision 051).
+        // Terrains read their files.
         for (entity, component) in expanded.entities.iter().zip(&mut components) {
             component.terrain = entity
                 .source
@@ -247,7 +247,7 @@ impl SceneDocument {
         })
     }
 
-    /// The components of the streamed entities (decision 086), whose
+    /// The components of the streamed entities, whose
     /// animation targets and skin joints resolve within their item. No
     /// terrains: they stream their own tiles.
     fn prepare_streamed(
@@ -288,7 +288,7 @@ impl SceneDocument {
             .collect()
     }
 
-    /// The streamed entities' items (decision 086): each root with its
+    /// The streamed entities' items: each root with its
     /// descendants, standing at the root's position and reaching as far as
     /// their meshes, lights, emitters, decals, probes and splines do.
     fn streamed_items(
@@ -436,7 +436,7 @@ impl SceneDocument {
         }
     }
 
-    /// Animation and skin sources (decisions 035 and 036): their unique IDs,
+    /// Animation and skin sources: their unique IDs,
     /// names, targets and joints, the clips and skins prefab definitions
     /// name, and each skin's inverse bind matrices.
     fn prepare_rigs(&self) -> Result<Rigs<'_>, SceneError> {
@@ -514,7 +514,7 @@ impl SceneDocument {
             .iter()
             .enumerate()
             .map(|(index, texture)| {
-                // Texel alpha is coverage from version 8 (decision 031).
+                // Texel alpha is coverage from version 8.
                 texture.texture(&format!("$.textures[{index}]"), files, self.version >= 8)
             })
             .collect::<Result<Vec<_>, _>>()?;

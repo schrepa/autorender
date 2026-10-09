@@ -1,12 +1,12 @@
-// Octahedral impostors (decision 048): a draw group's mesh baked from
+// Octahedral impostors: a draw group's mesh baked from
 // IMPOSTOR_FRAMES x IMPOSTOR_FRAMES directions over the whole sphere, or
-// over the upper hemisphere for placed objects (decision 060), into one
+// over the upper hemisphere for placed objects, into one
 // layer of four texture arrays, drawn for instances too small for its
 // texels to show as a card facing the viewer that blends the three frames
 // around the view. Texels hold premultiplied coverage: albedo and coverage;
 // emissive color and emission mask; normal and depth; roughness and
 // metalness factors, occlusion and the sky the surface sees past its own
-// mesh (decision 060). Normals are plain vectors, which filter and average
+// mesh. Normals are plain vectors, which filter and average
 // across levels as octahedral ones, folded across the lower hemisphere's
 // seams, cannot.
 //
@@ -30,7 +30,7 @@ struct ImpostorBake {
 }
 @group(2) @binding(20) var<uniform> impostor_bake: ImpostorBake;
 // Each frame's nearest depth toward its viewer, at four times the layer's
-// texels, drawn before the colors (decision 060).
+// texels, drawn before the colors.
 @group(2) @binding(21) var impostor_shade: texture_depth_2d;
 
 fn bake_hemisphere() -> bool {
@@ -40,7 +40,7 @@ fn bake_hemisphere() -> bool {
 // The share of the sky above the horizon that mesh-space `position`, with
 // unit normal `normal`, sees past its own mesh, weighted by how squarely
 // its surface faces each direction: the frames' nearest depths are a depth
-// map from every frame's direction (decision 060). Cards shade the sun by
+// map from every frame's direction. Cards shade the sun by
 // it, as the mesh's own shadows would darken its insides.
 fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
     let size = textureDimensions(impostor_shade).x;
@@ -161,7 +161,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     let local_dx = dpdx(local);
     let local_dy = dpdy(local);
     let geometric = geometric_normal(input.normal_u.xyz, front);
-    // World-mapped maps (decisions 093 and 102) bake through the mesh's own
+    // World-mapped maps bake through the mesh's own
     // coordinates, which repeat about as often as its maker meant it to
     // stand: as much of them as a repeat's texels across a frame show, as
     // fragments show as much as a repeat's pixels do, cards taking over
@@ -195,7 +195,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     bake_mask(texels, color);
     var targets: BakeTargets;
     targets.albedo = vec4<f32>(albedo, 1.0);
-    // Texture alpha masks emission (decision 019).
+    // Texture alpha masks emission.
     targets.emissive = vec4<f32>(emissive, texels.base.a);
     targets.geometry = vec4<f32>(stable_normalize(normal) * 0.5 + 0.5, 0.5 + 0.5 * input.depth);
     targets.surface = vec4<f32>(texels.factors, occlusion,
@@ -203,7 +203,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     return targets;
 }
 
-// The frames' nearest depths alone (decision 060).
+// The frames' nearest depths alone.
 @fragment
 fn fs_impostor_shade(input: BakeOutput) {
     let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
@@ -256,8 +256,8 @@ struct ImpostorOutput {
     // World offset per unit of baked depth toward the viewer, and the
     // card's own depth in those units.
     @location(6) @interpolate(flat) depth_axis: vec4<f32>,
-    // Linear color and opacity as four 16-bit fractions, the packed surface
-    // (decision 019), and the three frames (six bits each).
+    // Linear color and opacity as four 16-bit fractions, the packed surface,
+    // and the three frames (six bits each).
     @location(7) @interpolate(flat) material: vec4<u32>,
     @location(8) @interpolate(flat) batch: u32,
 }
@@ -291,7 +291,7 @@ fn toward_viewer(point: vec3<f32>) -> vec3<f32> {
     if length(w_row) > 0.5 {
         return stable_normalize(camera.position.xyz - point);
     }
-    // Reversed depth (decision 042): the near plane is 1, the far plane 0.
+    // Reversed depth: the near plane is 1, the far plane 0.
     let near = camera.inverse_view_projection * vec4<f32>(0.0, 0.0, 1.0, 1.0);
     let far = camera.inverse_view_projection * vec4<f32>(0.0, 0.0, 0.0, 1.0);
     return stable_normalize(near.xyz / near.w - far.xyz / far.w);
@@ -363,7 +363,7 @@ fn impostor_card(input: ImpostorInput) -> ImpostorCard {
         frames |= frame << (6u * k);
     }
     let color = colors[slot];
-    // Cards sway in the wind as their meshes do (decision 100).
+    // Cards sway in the wind as their meshes do.
     var swayed = world.xyz;
     let sway = slot_sway(color.flags);
     if sway > 0.0 {
@@ -394,7 +394,7 @@ fn vs_impostor_temporal(input: ImpostorInput) -> ImpostorTemporalOutput {
     let card = impostor_card(input);
     let slot = input.slot & ~MOVED_SLOT;
     let point = vec4<f32>(card.local, 1.0);
-    // Only moving slots read their previous poses (decision 017).
+    // Only moving slots read their previous poses.
     var pose = poses[slot];
     if (input.slot & MOVED_SLOT) != 0u {
         pose = previous_poses[slot];
@@ -461,7 +461,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     if coverage * (1.0 + MASK_MIP_SCALE * level) < 0.5 {
         discard;
     }
-    // Fading (decision 104), a card covers the pixels its fade shows, what
+    // Fading, a card covers the pixels its fade shows, what
     // it switches with the rest.
     if (input.batch & IMPOSTOR_FADING) != 0u {
         let shows = fade_noise(input.clip_position.xy) < impostor_fade(input.batch);
@@ -498,7 +498,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
     point.emissive = record.emissive * emissive.rgb * unpremultiply;
     point.occlusion = surface.z * unpremultiply;
-    // The mesh's own shadows inside it (decision 060).
+    // The mesh's own shadows inside it.
     point.sun_shade = 1.0 - saturate(surface.w * unpremultiply);
     point.roughness = max(slot_surface.x * surface.x * unpremultiply, 0.03);
     point.alpha = point.roughness * point.roughness;
@@ -519,7 +519,7 @@ fn impostor_point(input: ImpostorOutput) -> SurfacePoint {
     // that casts its shadow: the sun is looked up a radius toward it, from
     // outside the mesh's own shadow, with a flat receiver plane
     // (`world_dx` and `world_dy` stay zero). Placed objects' impostors
-    // cast cards through their centers instead (decision 060): a quarter
+    // cast cards through their centers instead: a quarter
     // of the radius clears the sunlit half of their own, and neighbors'
     // cards still shade them.
     let reach = select(1.0, 0.25, (record.flags & IMPOSTOR_HEMISPHERE) != 0u);
@@ -545,13 +545,13 @@ fn impostor_output(input: ImpostorTemporalOutput) -> ImpostorOutput {
 // A card fragment's shading and the depth of the surface it shows: cards
 // stand in front of their meshes' bounds, and the ground and their
 // neighbors hide what they would hide of the meshes, so objects sunk into
-// slopes show only what stands out of them (decision 103).
+// slopes show only what stands out of them.
 struct ImpostorShaded {
     shaded: Shaded,
     depth: f32,
 }
 
-// Cards fading over their steady meshes (decision 107) keep their card's
+// Cards fading over their steady meshes keep their card's
 // depth, in front of the mesh.
 fn impostor_shaded(input: ImpostorOutput, point: SurfacePoint, light: vec3<f32>)
         -> ImpostorShaded {

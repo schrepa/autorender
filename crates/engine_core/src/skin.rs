@@ -1,4 +1,4 @@
-//! Skins (decision 036): the joints whose poses deform a mesh, and the joint
+//! Skins: the joints whose poses deform a mesh, and the joint
 //! palettes extraction prepares for renderers.
 
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use glam::Mat4;
 use crate::{MeshHandle, PoseRows, TransformIndex};
 
 /// Deforms this entity's mesh by the displayed world poses of `joints`, as
-/// glTF skins do (decision 036).
+/// glTF skins do.
 ///
 /// Each vertex of a mesh with joints and weights ([`crate::Mesh::with_skin`])
 /// moves by the weighted sum of its joints' world matrices times their
@@ -47,7 +47,7 @@ impl Skin {
     }
 }
 
-/// One joint of a skinned instance's palette (decision 036), in
+/// One joint of a skinned instance's palette, in
 /// [`crate::RenderSnapshot::joints`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderJoint {

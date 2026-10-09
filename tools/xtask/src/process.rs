@@ -24,7 +24,7 @@ pub const CLIENTS: [(&str, &str); 4] = [
     ("orbit-demo", "orbit_demo"),
     ("playground", "playground"),
     ("stress-lab", "stress_lab"),
-    // The job worker pages run beside them (decision 110).
+    // The job worker pages run beside them.
     ("engine_worker", "engine_worker"),
 ];
 

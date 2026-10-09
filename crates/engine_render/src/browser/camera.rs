@@ -1,7 +1,7 @@
 //! The main passes' first group: the camera and lighting uniforms, shadow
-//! lookups (decisions 020 and 028), what glass refracts (decision 038),
-//! what surfaces reflect (decision 043), terrain's horizon maps (decision
-//! 052) and what placed objects cover (decision 059), rebuilt when the
+//! lookups, what glass refracts,
+//! what surfaces reflect, terrain's horizon maps
+//! and what placed objects cover, rebuilt when the
 //! shadow maps, environment maps, reflection probe grid, horizon maps or
 //! occupancy map it binds are replaced.
 
@@ -34,24 +34,24 @@ pub(super) struct CameraBindings {
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) buffer: wgpu::Buffer,
     lighting_buffer: wgpu::Buffer,
-    /// Clouds' shadows (decision 084), copied in by the clouds' pass.
+    /// Clouds' shadows, copied in by the clouds' pass.
     pub(super) cloud_shadows: wgpu::Buffer,
-    // The scene's atmosphere (decision 018), written when it changes.
+    // The scene's atmosphere, written when it changes.
     lighting: Option<LightingUniform>,
     // The group, for the shadow maps, environment maps and probe grid of
     // these generations.
     pub(super) group: wgpu::BindGroup,
     pub(super) key: CameraGroupsKey,
-    // Refraction through glass (decision 038): the white texel bound where
+    // Refraction through glass: the white texel bound where
     // no opaque color is, its sampler, and the group of transparent passes
     // over the opaque color of post target generation `.0`.
     refraction_fallback: wgpu::TextureView,
     refraction_sampler: wgpu::Sampler,
     refraction_group: Cached<(u64, CameraGroupsKey), wgpu::BindGroup>,
-    // Each reflection probe face's group (decision 043), built with the
+    // Each reflection probe face's group, built with the
     // main group's key.
     probe_groups: Vec<wgpu::BindGroup>,
-    // Terrain's resolves' first group (decision 123), the main one without
+    // Terrain's resolves' first group, the main one without
     // what glass refracts, and its layout.
     pub(super) terrain_layout: wgpu::BindGroupLayout,
     pub(super) terrain_group: wgpu::BindGroup,
@@ -120,7 +120,7 @@ impl CameraBindings {
     }
 
     /// The lighting uniform's buffer, which the physically based sky's light
-    /// (decision 088) is copied into.
+    /// is copied into.
     pub(super) fn lighting_buffer(&self) -> &wgpu::Buffer {
         &self.lighting_buffer
     }
@@ -159,7 +159,7 @@ impl CameraBindings {
         self.probe_groups.clear();
     }
 
-    /// The group of transparent passes when glass refracts (decision 038):
+    /// The group of transparent passes when glass refracts:
     /// the main group over `scene`, the opaque color of post target
     /// generation `generation`.
     pub(super) fn prepare_refraction(
@@ -186,7 +186,7 @@ impl CameraBindings {
         self.refraction_group.get()
     }
 
-    /// Each reflection probe face's group (decision 043): the main group
+    /// Each reflection probe face's group: the main group
     /// over the face's camera uniform in `probes`.
     pub(super) fn prepare_probe_groups(
         &mut self,
@@ -219,7 +219,7 @@ impl CameraBindings {
 }
 
 /// [`camera_group`] without what glass refracts, for terrain's resolves
-/// (decision 123; `bindings::CAMERA_TERRAIN`).
+/// (`bindings::CAMERA_TERRAIN`).
 fn camera_terrain_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
@@ -263,10 +263,9 @@ fn camera_terrain_group(
 }
 
 /// The main passes' first group over the `camera` and `lighting` uniforms:
-/// shadow lookups, what glass refracts (decision 038) with its sampler,
-/// what surfaces reflect (decision 043): the environment maps with their
-/// sampler and the reflection probes' grid, and terrain's horizon maps
-/// (decision 052).
+/// shadow lookups, what glass refracts with its sampler,
+/// what surfaces reflect: the environment maps with their
+/// sampler and the reflection probes' grid, and terrain's horizon maps.
 fn camera_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,

@@ -1,9 +1,9 @@
-//! Environment maps (decision 043): cubes surfaces read their reflections
+//! Environment maps: cubes surfaces read their reflections
 //! from at their roughness, each level blurred by the GGX lobe of its
 //! roughness from a radiance cube with its levels averaged down. The first
 //! cube holds the sky, drawn into the radiance cube whenever the atmosphere
 //! changes; the others hold reflection probes, whose captures draw into the
-//! same radiance cube face by face. Screen-space reflections (decision 025)
+//! same radiance cube face by face. Screen-space reflections
 //! fall back to them.
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
@@ -55,8 +55,8 @@ pub(crate) struct Environment {
     layouts: Layouts,
     sky_group: wgpu::BindGroup,
     sampler: wgpu::Sampler,
-    // The lighting uniform the sky reads, the clouds' dome its group binds
-    // (decision 084), and the physically based sky's (decision 088).
+    // The lighting uniform the sky reads, the clouds' dome its group binds,
+    // and the physically based sky's.
     lighting: wgpu::Buffer,
     clouds: (u64, [u8; 2], bool),
     air: (
@@ -147,7 +147,7 @@ impl Environment {
         }
     }
 
-    /// Binds the clouds' domes `clouds` (decision 091) to the sky's group
+    /// Binds the clouds' domes `clouds` to the sky's group
     /// unless they already are.
     pub(crate) fn set_clouds(
         &mut self,
@@ -245,9 +245,9 @@ impl Environment {
     }
 
     /// Records the sky map's redraw when `lighting`'s sky or the clouds'
-    /// key `clouds` (decision 084) differ from those it holds; returns
+    /// key `clouds` differ from those it holds; returns
     /// whether it did and whether more than the clouds changed, which
-    /// reflection probes recapture for (decision 091).
+    /// reflection probes recapture for.
     pub(crate) fn encode_sky(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

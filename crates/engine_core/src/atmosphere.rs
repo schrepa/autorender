@@ -1,7 +1,7 @@
-//! Scene lighting and atmosphere (decision 018): a directional sun, a sky
+//! Scene lighting and atmosphere: a directional sun, a sky
 //! gradient that also colors ambient light, reflections and fog, aerial
-//! perspective (decision 053), and the grade of the final image: exposure,
-//! contrast, saturation, vibrance and split toning (decision 027). Every
+//! perspective, and the grade of the final image: exposure,
+//! contrast, saturation, vibrance and split toning. Every
 //! extracted frame carries a copy.
 
 use bevy_ecs::prelude::Resource;
@@ -36,7 +36,7 @@ pub struct Atmosphere {
     pub fog_falloff: f32,
     /// The most fog can cover, in `[0, 1]`.
     pub fog_max: f32,
-    /// Aerial perspective (decision 053): beyond `aerial_start` from the
+    /// Aerial perspective: beyond `aerial_start` from the
     /// camera, air dims what lies behind it toward the light it scatters,
     /// with `aerial_density` extinction per unit of distance at height zero
     /// (0 turns it off), thinning by `aerial_falloff` per unit of height.
@@ -53,13 +53,13 @@ pub struct Atmosphere {
     /// Scale of sun highlights and sky reflections; 1 is physically based.
     pub specular: f32,
     /// Scale of material emission: how strongly lamps, lit windows and other
-    /// artificial lights show in this light (decision 019).
+    /// artificial lights show in this light.
     pub emission: f32,
     /// Exposure before tone mapping.
     pub exposure: f32,
     /// Saturation after tone mapping; 1 keeps it.
     pub saturation: f32,
-    /// Contrast around mid grey after tone mapping (decision 027): the slope
+    /// Contrast around mid grey after tone mapping: the slope
     /// of an S-curve that keeps black and white, from 0 (flat) through 1
     /// (unchanged) to its steepest at 1.5.
     pub contrast: f32,

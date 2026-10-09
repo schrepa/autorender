@@ -1,4 +1,4 @@
-// The physically based sky's tables and light (decision 088; `sky.rs`),
+// The physically based sky's tables and light (`sky.rs`),
 // after `sky_common.wgsl`. Every pass binds one group: the sky's uniform,
 // the tables to read (a blank texel in place of the one a pass writes), the
 // table it writes and the light it derives.
@@ -287,7 +287,7 @@ fn derive_light() {
         + SKY_PI * luminance(0.5 * (zenith + horizon));
     let noon = air.ozone.w * 1.1;
     let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * 0.75), 1.0, 16.0);
-    // Exposure eases toward its target over about a second (decision 091),
+    // Exposure eases toward its target over about a second,
     // from where it stood last frame, as eyes adapt.
     let wanted = air.sun.w * adapted;
     let previous = derived[6].x;

@@ -1,4 +1,4 @@
-//! Decals (decision 039): one record per decal and the pass drawing their
+//! Decals: one record per decal and the pass drawing their
 //! boxes after the opaque meshes. Everything here is created with the first
 //! frame that has decals.
 
@@ -126,7 +126,7 @@ mod gpu {
     impl DecalPass {
         pub(crate) fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
             // Group 2 beside the mesh poses' bindings: the joint palette
-            // (decision 036) holds retained frames' decal poses.
+            // holds retained frames' decal poses.
             let layout = crate::pipelines::layout(device, &DECALS);
             let limits = device.limits();
             let binding = limits
@@ -304,7 +304,7 @@ mod gpu {
             ("DECAL_MULTIPLY", flag(blend == DecalBlend::Multiply)),
             ("DECAL_CANVAS", flag(canvas)),
         ];
-        // Alpha keeps the scene target's ambient share (decision 021).
+        // Alpha keeps the scene target's ambient share.
         let keep = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::Zero,
             dst_factor: wgpu::BlendFactor::One,

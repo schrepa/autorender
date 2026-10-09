@@ -1,4 +1,4 @@
-// Local light binning (decision 023). One thread per light places it in
+// Local light binning. One thread per light places it in
 // world space, from the displayed pose of its slot when it follows one, and
 // the threads of its workgroup share the view clusters their lights' spheres'
 // screen and depth bounds cover: a tile of the screen by an exponential
@@ -22,11 +22,11 @@ struct Clusters {
     counts: vec4<u32>,
     // Lights, an unused word, the entries `indices` holds, and 1 when only
     // lights without a slot or on still slots are binned (reflection probe
-    // faces, decision 043).
+    // faces).
     lights: vec4<u32>,
 }
 
-// A light as extracted: world position or slot model space (decision 023).
+// A light as extracted: world position or slot model space.
 struct Input {
     position: vec3<f32>,
     range: f32,
@@ -70,7 +70,7 @@ const NO_SLOT: u32 = 0xffffffffu;
 @group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 3>;
 // Per cluster: the first entry of its list in `indices` and its length.
 @group(0) @binding(7) var<storage, read_write> ranges: array<vec2<u32>>;
-// Reflection probe faces (decision 043): per slot, its pose fingerprint and
+// Reflection probe faces: per slot, its pose fingerprint and
 // the frames in a row it displayed that pose (`presentation.wgsl`).
 @group(0) @binding(8) var<storage, read> still_frames: array<vec2<u32>>;
 

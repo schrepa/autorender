@@ -1,15 +1,15 @@
 //! Totals GPU presentation reads back a few frames late: visible, hidden
-//! (decision 040) and sub-pixel (decision 041) instances, instances per
-//! level of detail (decision 047) and the triangles drawn.
+//! and sub-pixel instances, instances per
+//! level of detail and the triangles drawn.
 
 use std::{cell::Cell, rc::Rc};
 
 use crate::buffers::ReadbackRing;
 
 // Totals read back: phase one's (or the only) visible count, phase two's,
-// the candidates phase two found hidden, and those covering no pixel center
-// (decision 041); then phase one's and phase two's drawn counts per level of
-// detail (decision 047); then the triangles both phases' draws submit.
+// the candidates phase two found hidden, and those covering no pixel center;
+// then phase one's and phase two's drawn counts per level of
+// detail; then the triangles both phases' draws submit.
 const TOTALS_BYTES: u64 = 52;
 
 /// One frame's totals: instances visible (drawn in either phase, hidden,

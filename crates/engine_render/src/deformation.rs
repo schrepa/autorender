@@ -1,4 +1,4 @@
-//! Runtime deformation's map (decision 083; `deformation.wgsl`): the tracks
+//! Runtime deformation's map (`deformation.wgsl`): the tracks
 //! frames press around the camera, kept on the GPU between frames. Each
 //! frame's stamps press in dispatches of at most [`CHUNK`], a workgroup per
 //! 8 by 8 texels of a stamp's reach, every texel taking the deepest of its

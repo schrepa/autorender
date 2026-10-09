@@ -219,27 +219,27 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<LocalLight>(
-            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity (decision 023) as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
+            InspectorDescriptor::new("LocalLight", "A point or spot light on this entity as a scene version 6 `light` field; on an entity with a mesh it follows the displayed pose.", schemas["LocalLight"].clone())
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::Floating>(
-            InspectorDescriptor::new("Floating", "Rides the sea (decision 077) as a scene version 9 `floating` field: each fixed tick the entity rises and falls with the sea's surface under it, `draft` meters below the surface, leaning by `tilt` (0 upright, 1 with the surface's normal) about its heading. Unparented entities only; nothing moves without an enabled sea.", schemas["Floating"].clone())
+            InspectorDescriptor::new("Floating", "Rides the sea as a scene version 9 `floating` field: each fixed tick the entity rises and falls with the sea's surface under it, `draft` meters below the surface, leaning by `tilt` (0 upright, 1 with the surface's normal) about its heading. Unparented entities only; nothing moves without an enabled sea.", schemas["Floating"].clone())
                 .with_default(json!(engine_core::Floating::default())),
             |floating| json!(floating),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::TerrainPrefetch>(
-            InspectorDescriptor::new("TerrainPrefetch", "Names a place the camera may be sent to (decision 120) as a scene version 9 `prefetch` field: while the view wants nothing, workers generate the terrain tiles a camera here wants into memory, which keeps them while named; each level's within `reach` times its range, 2 being what a camera loads. The Terrains view counts tiles kept and generating.", schemas["TerrainPrefetch"].clone())
+            InspectorDescriptor::new("TerrainPrefetch", "Names a place the camera may be sent to as a scene version 9 `prefetch` field: while the view wants nothing, workers generate the terrain tiles a camera here wants into memory, which keeps them while named; each level's within `reach` times its range, 2 being what a camera loads. The Terrains view counts tiles kept and generating.", schemas["TerrainPrefetch"].clone())
                 .with_default(json!(engine_core::TerrainPrefetch::default())),
             |prefetch| json!(prefetch),
         ).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::Deformer>(
-            InspectorDescriptor::new("Deformer", "Presses tracks into deformable ground (decision 083) as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.", schemas["Deformer"].clone())
+            InspectorDescriptor::new("Deformer", "Presses tracks into deformable ground as a scene version 9 `deformer` field: each fixed tick, while the entity's world position lies at most `contact` meters above the terrain, it presses a footprint `radius` meters across from where it pressed the tick before, `depth` meters deep (deeper below the ground), round (`flatness` 0) to flat (1). Surface materials' `deform` bounds what shows.", schemas["Deformer"].clone())
                 .with_default(json!(engine_core::Deformer::default())),
             |deformer| json!(deformer),
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Tracks>(
-            InspectorDescriptor::new("Tracks", "The log of runtime deformation's stamps (decision 083): stamps held, pressed and dropped by the deformation budget, and the newest. Read tracks with deformation_query; press one with the deform control.", schemas["Tracks"].clone()),
+            InspectorDescriptor::new("Tracks", "The log of runtime deformation's stamps: stamps held, pressed and dropped by the deformation budget, and the newest. Read tracks with deformation_query; press one with the deform control.", schemas["Tracks"].clone()),
             |tracks| json!(crate::views::TracksView {
                 stamps: tracks.len(),
                 pressed: tracks.pressed(),
@@ -248,7 +248,7 @@ impl DevTools {
             }),
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::WorldCells>(
-            InspectorDescriptor::new("WorldCells", "World streaming (decision 086) at the last extraction: cells holding streamed items, loaded and pending (within range, waiting), items, entities streamed items hold, the frame's spawns and despawns, the camera velocity prefetch followed, each grid's cells and the 32 cells nearest a streaming source. Settings: the world_streaming environment section.", schemas["WorldCells"].clone()),
+            InspectorDescriptor::new("WorldCells", "World streaming at the last extraction: cells holding streamed items, loaded and pending (within range, waiting), items, entities streamed items hold, the frame's spawns and despawns, the camera velocity prefetch followed, each grid's cells and the 32 cells nearest a streaming source. Settings: the world_streaming environment section.", schemas["WorldCells"].clone()),
             |cells| {
                 let stats = cells.stats();
                 let grids = cells.grids();
@@ -280,14 +280,14 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::WorldChanges>(
-            InspectorDescriptor::new("WorldChanges", "What gameplay changed of the streamed world (decision 087), which games save: items removed for good (an item is removed when gameplay despawns its root), by ID (`scene/root` for scenes), which their cells no longer spawn. The count and the first 64 IDs. Change it with the world_changes control.", schemas["WorldChanges"].clone()),
+            InspectorDescriptor::new("WorldChanges", "What gameplay changed of the streamed world, which games save: items removed for good (an item is removed when gameplay despawns its root), by ID (`scene/root` for scenes), which their cells no longer spawn. The count and the first 64 IDs. Change it with the world_changes control.", schemas["WorldChanges"].clone()),
             |changes| json!(crate::views::WorldChangesView {
                 removed: changes.removed().len(),
                 ids: changes.removed().take(64).map(str::to_owned).collect(),
             }),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("NavAgent", "A navigation agent (decision 089) as a scene version 9 `nav_agent` field: it walks over the terrain to its destination (world x, z) at its speed, on the ground, around obstacles widened by its radius, no steeper than max_slope, wading no deeper than max_water; with its walk's status, length, points, next point, meters left and samples searched. Send it with nav_go.", schemas["NavAgent"].clone()),
+            descriptor: InspectorDescriptor::new("NavAgent", "A navigation agent as a scene version 9 `nav_agent` field: it walks over the terrain to its destination (world x, z) at its speed, on the ground, around obstacles widened by its radius, no steeper than max_slope, wading no deeper than max_water; with its walk's status, length, points, next point, meters left and samples searched. Send it with nav_go.", schemas["NavAgent"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::NavAgent>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -317,7 +317,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("NavAgents", "What navigation did at the last fixed tick (decision 089): agents, those searching, walking, arrived and unable to reach their destination, the samples of search work the tick did, and the first 16 agents with their status, position, destination and meters left. Settings: the navigation environment section.", schemas["NavAgents"].clone()),
+            descriptor: InspectorDescriptor::new("NavAgents", "What navigation did at the last fixed tick: agents, those searching, walking, arrived and unable to reach their destination, the samples of search work the tick did, and the first 16 agents with their status, position, destination and meters left. Settings: the navigation environment section.", schemas["NavAgents"].clone()),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<engine_core::NavAgents>().is_some()),
             read: Box::new(|world, _, _| {
@@ -359,11 +359,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<engine_core::StreamedId>(
-            InspectorDescriptor::new("StreamedId", "The streamed item (decision 087) whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it.", schemas["StreamedId"].clone()),
+            InspectorDescriptor::new("StreamedId", "The streamed item whose root this entity is: its ID. Despawning the entity removes the item for good (WorldChanges); its cell no longer spawns it.", schemas["StreamedId"].clone()),
             |id| json!(crate::views::StreamedIdView { id: id.0.to_string() }),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Grounded", "Stands on the terrain (decision 086) as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only.", schemas["Grounded"].clone()),
+            descriptor: InspectorDescriptor::new("Grounded", "Stands on the terrain as a scene version 9 `grounded` field: the entity's translation's y is kept `offset` meters above the ground under it, from the finest terrain tile resident there, sampling again as finer tiles arrive and when its x, z or offset changes; with the level of the tile it last stood on. Unparented entities only.", schemas["Grounded"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Grounded>(entity).is_some())),
             read: Box::new(|world, entity, _scene| {
@@ -377,12 +377,12 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<Tint>(
-            InspectorDescriptor::new("Tint", "Per-object color factors (decision 033) as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
+            InspectorDescriptor::new("Tint", "Per-object color factors as a scene version 8 `tint` field: red, green, blue and opacity multiply this object's material or cube color, each in [0, 1]. Changing it uploads only this object's color.", schemas["Tint"].clone())
                 .with_default(json!(Tint::WHITE.0)),
             |tint| json!(tint.0),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity (decision 039) as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
+            descriptor: InspectorDescriptor::new("Decal", "A decal on this entity as a scene version 8 `decal` field: its material projected down the entity's local y onto the opaque surfaces inside its unit box, fading on surfaces turning away beyond `fade_degrees`.", schemas["Decal"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Decal>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -400,7 +400,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity (decision 071) as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 256 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
+            descriptor: InspectorDescriptor::new("SplineMesh", "A mesh bent along a curve on this entity as a scene version 9 `spline` field: copies of the mesh end to end along a centripetal Catmull-Rom curve through `points` (entity space), its x along the curve, y up and z across, drawn by child entities a chunk of at most 256 m each; with the curve's length, copies, chunks and vertices once built, or the error that stopped it.", schemas["SplineMesh"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -422,11 +422,11 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_component::<ReflectionProbe>(
-            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity (decision 043) as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
+            InspectorDescriptor::new("ReflectionProbe", "A reflection probe on this entity as a scene version 8 `reflection_probe` field: surfaces inside the world-axis box reaching `extent` from the entity's world position reflect the still objects and lights it captured from there, fading out over `blend` inside its faces.", schemas["ReflectionProbe"].clone()),
             |probe| json!(SceneReflectionProbe::from(probe)),
         ).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity (decision 051) as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material, collision and surroundings, with its streaming state: resident tiles by level, and its surroundings' (decision 094) once they stream.", schemas["Terrain"].clone()),
+            descriptor: InspectorDescriptor::new("Terrain", "A heightfield terrain on this entity as a scene version 9 `terrain` field: its origin, tiles, spacing, layers or file, material, collision and surroundings, with its streaming state: resident tiles by level, and its surroundings' once they stream.", schemas["Terrain"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<engine_core::Terrain>(entity).is_some())),
             read: Box::new(|world, entity, scene| {
@@ -459,7 +459,7 @@ impl DevTools {
                             falls: stats.map(|stats| stats.falls),
                         });
                     }
-                    // Each path layer's profile (decision 069), once baked.
+                    // Each path layer's profile, once baked.
                     if let Some(layers) = terrains.layers(entity) {
                         for (index, layer) in layers.layers().iter().enumerate() {
                             if let engine_core::Layer::Path(stage) = layer {
@@ -527,7 +527,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Terrains>(
-            InspectorDescriptor::new("Terrains", "Terrain streaming (decision 051) at the last extraction: terrains; resident, loading, shape-only (decision 114), waiting (decision 115), kept, restored and idle (decision 116), banded (decision 117) and dropped tiles; patches drawn and those standing in for finer levels; and the surroundings' (decision 094). Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
+            InspectorDescriptor::new("Terrains", "Terrain streaming at the last extraction: terrains; resident, loading, shape-only, waiting, kept, restored and idle, banded and dropped tiles; patches drawn and those standing in for finer levels; and the surroundings'. Query heights with terrain_height, compare queries, collision and layers with terrain_sweep, and find routes for path layers with terrain_route.", schemas["Terrains"].clone()),
             |terrains| {
                 let stats = terrains.stats();
                 json!(crate::views::TerrainsView {
@@ -554,7 +554,7 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_resource::<engine_core::Jobs>(
-            InspectorDescriptor::new("Jobs", "The host's job workers (decision 110): workers (none keeps bakes, tiles and walks on the engine's thread), jobs in flight, submitted, completed, failed and cancelled (decision 112), parts handed back early (decision 114), keys shared and their bytes, and the page's output cache (decision 116). Workers run their most urgent job a slice at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.", schemas["Jobs"].clone()),
+            InspectorDescriptor::new("Jobs", "The host's job workers: workers (none keeps bakes, tiles and walks on the engine's thread), jobs in flight, submitted, completed, failed and cancelled, parts handed back early, keys shared and their bytes, and the page's output cache. Workers run their most urgent job a slice at a time. Pages take ?workers=N or off, and ?jobcache=off, verify or a budget in MiB.", schemas["Jobs"].clone()),
             |jobs| {
                 let stats = jobs.stats();
                 json!(crate::views::JobsView {
@@ -575,16 +575,16 @@ impl DevTools {
             },
         ).expect("built-in descriptor is bounded");
         self.register_component::<ParticleEmitter>(
-            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity (decision 026) as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
+            InspectorDescriptor::new("ParticleEmitter", "A particle emitter on this entity as a scene version 6 `particles` field; particles are a function of presentation time.", schemas["ParticleEmitter"].clone())
                 .with_default(json!(SceneEmitter::default())),
             |emitter| json!(SceneEmitter::from(emitter)),
         ).expect("built-in descriptor is bounded");
     }
 
-    /// Animation players and skins (decisions 035 and 036), naming clips and
+    /// Animation players and skins, naming clips and
     /// entities by their authored IDs.
     fn register_animation(&mut self, schemas: &Value) {
-        // Animation (decisions 035 and 036): players and skins name clips
+        // Animation: players and skins name clips
         // and entities by their authored IDs.
         let authored = |world: &World, entity: Option<Entity>| {
             entity
@@ -592,7 +592,7 @@ impl DevTools {
                 .map(|source| source.authored_id.clone())
         };
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player (decision 035) as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
+            descriptor: InspectorDescriptor::new("AnimationPlayer", "An animation player as a scene version 8 `animation` field with its clip's duration and its targets: every fixed tick it advances `time` by the tick times `speed`, wrapping when `loop` is set, and poses its targets' transforms.", schemas["AnimationPlayer"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<AnimationPlayer>(entity).is_some())),
             read: Box::new(move |world, entity, scene| {
@@ -610,7 +610,7 @@ impl DevTools {
             }),
         }).expect("built-in descriptor is bounded");
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh (decision 036), as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
+            descriptor: InspectorDescriptor::new("Skin", "The joints deforming this entity's mesh, as a scene version 8 `skin` names them: each vertex moves by its weighted joints' displayed world matrices times their inverse bind matrices.", schemas["Skin"].clone()),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| entity.is_some_and(|entity| world.get::<Skin>(entity).is_some())),
             read: Box::new(move |world, entity, _scene| {
@@ -622,18 +622,18 @@ impl DevTools {
         }).expect("built-in descriptor is bounded");
     }
 
-    /// The look (decision 022): the atmosphere, every effect section and the
+    /// The look: the atmosphere, every effect section and the
     /// whole environment.
     fn register_environment(&mut self, schemas: &Value) {
-        // The environment (decision 022): each resource serializes as its
+        // The environment: each resource serializes as its
         // scene section, so values copy into controls and v5 scenes as is.
         self.register_resource::<Atmosphere>(
-            InspectorDescriptor::new("Atmosphere", "Sun, sky colors, fog and grade of every frame (decision 018), every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.", schemas["Atmosphere"].clone())
+            InspectorDescriptor::new("Atmosphere", "Sun, sky colors, fog and grade of every frame, every field set over the golden_hour preset. Change it with the environment control or a v5 scene environment.", schemas["Atmosphere"].clone())
                 .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
             |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
         ).expect("built-in descriptor is bounded");
         // Every effect section of a scene environment as its resource, in
-        // the section's shape (decision 022).
+        // the section's shape.
         struct Sections<'t> {
             tools: &'t mut DevTools,
             schemas: &'t Value,
@@ -658,7 +658,7 @@ impl DevTools {
         // which carries its fields, so it stays within bounds as sections
         // grow.
         self.insert(Inspector {
-            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment (decisions 022 to 026): paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", sections_schema()),
+            descriptor: InspectorDescriptor::new("Environment", "The whole current look as a scene environment: paste it into a scene to persist it, or send sections to the environment control. Missing effect resources read as off. Each section's inspector describes its fields.", sections_schema()),
             kind: InspectorKind::Resource,
             has: Box::new(|_, _| true),
             read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
@@ -703,81 +703,79 @@ fn sections_schema() -> Value {
 fn section_description(name: &str) -> &'static str {
     match name {
         "shadows" => {
-            "Sun shadows (decision 020): kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws."
+            "Sun shadows: kept-map bounds, fade distance, near-map distance and resolution. Missing means no shadows. The rendering observation reports per-map casters and kept-map redraws."
         }
         "ambient_occlusion" => {
-            "Screen-space ambient occlusion (decision 021); intensity 0 or a missing resource turns it off."
+            "Screen-space ambient occlusion; intensity 0 or a missing resource turns it off."
         }
-        "bloom" => {
-            "Glow beyond bright pixels (decision 021); intensity 0 or a missing resource turns it off."
-        }
+        "bloom" => "Glow beyond bright pixels; intensity 0 or a missing resource turns it off.",
         "local_lights" => {
-            "Local lighting settings (decision 023): whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow."
+            "Local lighting settings: whether point and spot lights shade, the per-frame light budget (nearest to the camera win) and an intensity scale. Missing means no local lights. The rendering observation reports lights shaded, visible and cluster overflow."
         }
         "sun_shafts" => {
-            "Sunlight scattered by the fog between shadow casters (decision 024). Opt-in: missing or intensity 0 means off; it needs shadows."
+            "Sunlight scattered by the fog between shadow casters. Opt-in: missing or intensity 0 means off; it needs shadows."
         }
         "reflections" => {
-            "Screen-space reflections in glossy surfaces (decision 025), falling back to the sky off screen. Opt-in: missing or intensity 0 means off."
+            "Screen-space reflections in glossy surfaces, falling back to the sky off screen. Opt-in: missing or intensity 0 means off."
         }
         "particles" => {
-            "Particle settings (decision 026): whether emitters draw and the per-frame particle budget. Missing means no particles."
+            "Particle settings: whether emitters draw and the per-frame particle budget. Missing means no particles."
         }
         "refraction" => {
-            "Refraction through glass (decision 038): transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency."
+            "Refraction through glass: transmissive materials show the opaque scene behind them, bent by their index of refraction through their thickness and blurred by their roughness. Opt-in: missing or strength 0 means glass blends as plain transparency."
         }
         "decals" => {
-            "Decal settings (decision 039): whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped."
+            "Decal settings: whether decals draw and the per-frame decal budget (nearest to the camera win). Missing means no decals. The rendering observation reports decals drawn and dropped."
         }
         "reflection_probes" => {
-            "Reflection probe settings (decision 043): whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped."
+            "Reflection probe settings: whether probes capture and reflect, the texels across each environment map face, the budget of probes kept captured (nearest to the camera win) and the cube faces captured per frame. Missing means no probes. The rendering observation reports probes reflected, faces captured and probes dropped."
         }
         "virtual_geometry" => {
-            "Virtual geometry settings (decision 044): whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections."
+            "Virtual geometry settings: whether meshes built as cluster hierarchies draw the clusters each view needs (otherwise their fallback cut), and the largest simplification error a drawn cluster may show in pixels of the viewport height. Missing means fallback cuts. The rendering observation reports clusters and triangles drawn for the camera and shadow maps, occluded clusters and dropped selections."
         }
         "terrain" => {
-            "Terrain settings (decision 051): whether terrains draw, their level of detail's pixel error, the coarsest levels kept resident everywhere, an optional tile budget, per-frame tile work, and the collision radius around the camera and focus entities. Missing means no terrain draws. The rendering observation reports terrain patches, triangles and shadow patches, and resident, loading and dropped tiles."
+            "Terrain settings: whether terrains draw, their level of detail's pixel error, the coarsest levels kept resident everywhere, an optional tile budget, per-frame tile work, and the collision radius around the camera and focus entities. Missing means no terrain draws. The rendering observation reports terrain patches, triangles and shadow patches, and resident, loading and dropped tiles."
         }
         "ground_cover" => {
-            "Ground cover settings (decisions 056, 090): whether surface materials' covers grow, the radius they grow densest within, the on-screen height in pixels where sparser tiers of wider blades past it end (0: none; ground beyond shows as canopy), a density scale, and an optional per-frame blade budget (farthest drop first). Blades sway in the wind section. Missing means no cover. Rendering reports blades drawn, dropped, reach and tiers."
+            "Ground cover settings: whether surface materials' covers grow, the radius they grow densest within, the on-screen height in pixels where sparser tiers of wider blades past it end (0: none; ground beyond shows as canopy), a density scale, and an optional per-frame blade budget (farthest drop first). Blades sway in the wind section. Missing means no cover. Rendering reports blades drawn, dropped, reach and tiers."
         }
         "occupancy" => {
-            "Occupancy settings (decision 059): a top-down map around the camera of what placed objects cover, their tops and bottoms, which darkens the sky light of what lies under or within them: forest floors, the lower crowns of trees and the ground at a boulder's foot. Its reach from the camera, texels a side, and how much sky light full cover takes away. Missing means no darkening. The rendering observation reports the map's redraws and the objects drawn into it."
+            "Occupancy settings: a top-down map around the camera of what placed objects cover, their tops and bottoms, which darkens the sky light of what lies under or within them: forest floors, the lower crowns of trees and the ground at a boulder's foot. Its reach from the camera, texels a side, and how much sky light full cover takes away. Missing means no darkening. The rendering observation reports the map's redraws and the objects drawn into it."
         }
         "contact_shadows" => {
-            "Contact shadow settings (decision 062): short rays toward the sun through the depth buffer shade what shadow maps are too coarse to hold, such as grass on the ground, the feet of small objects and the gaps between stones. Whether they trace, each ray's reach in meters, how much of the sun's light a hit takes away, and the distance from the camera within which surfaces trace. Missing means none. The rendering observation reports whether a frame traced them."
+            "Contact shadow settings: short rays toward the sun through the depth buffer shade what shadow maps are too coarse to hold, such as grass on the ground, the feet of small objects and the gaps between stones. Whether they trace, each ray's reach in meters, how much of the sun's light a hit takes away, and the distance from the camera within which surfaces trace. Missing means none. The rendering observation reports whether a frame traced them."
         }
         "water" => {
-            "Water settings (decision 067): terrains' lakes and rivers, which their hydrology bakes find (decision 066), drawn where they stand. Whether water draws, the color deep water scatters back, the meters of water through which half the light passes, how strongly ripples tilt the surface and the meters across the largest ripples. Missing means none. The rendering observation reports water chunks drawn."
+            "Water settings: terrains' lakes and rivers, which their hydrology bakes find, drawn where they stand. Whether water draws, the color deep water scatters back, the meters of water through which half the light passes, how strongly ripples tilt the surface and the meters across the largest ripples. Missing means none. The rendering observation reports water chunks drawn."
         }
         "ocean" => {
-            "The sea (decision 076): an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
+            "The sea: an endless surface at its still level raised by Gerstner waves, the same on the CPU and the GPU. Whether it draws, its level, the wind that raised it (its speed sets the waves' height and length), how sharply crests stand, its waves and their seed, deep water's color, the meters through which half the light passes, foam, and its reach. Missing or disabled means none. water_query reports its surface; the rendering observation, sectors and triangles drawn."
         }
         "clouds" => {
-            "Clouds (decision 084): a layer of cumulus over the world, drifting with the wind. Whether it draws, how much of the sky it covers, its base height and thickness, density, wind, the meters across its largest shapes, seed, how much sun its shadows take, the dome's texels around the horizon and the frames over which ordinary frames march the dome (exact frames march all of it). Opt-in: missing means a clear sky. The rendering observation reports the dome's rows marched."
+            "Clouds: a layer of cumulus over the world, drifting with the wind. Whether it draws, how much of the sky it covers, its base height and thickness, density, wind, the meters across its largest shapes, seed, how much sun its shadows take, the dome's texels around the horizon and the frames over which ordinary frames march the dome (exact frames march all of it). Opt-in: missing means a clear sky. The rendering observation reports the dome's rows marched."
         }
         "deformation" => {
-            "Runtime deformation (decision 083): deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
+            "Runtime deformation: deformers press tracks into terrain surface materials with a deform depth. Whether they press, the meters the map around the camera spans and its texels along a side, the seconds tracks take to refill (0 never), the rim's height for a track's depth, an optional budget of stamps the log keeps, and whether the log keeps tracks the map leaves. Missing or disabled means none. deformation_query reads the log; the rendering observation reports stamps pressed into the map."
         }
         "sky" => {
-            "Physically based sky (decision 088): air over a planet, Rayleigh and Mie scattering and ozone absorption integrated into lookup tables the sky, reflections and aerial perspective read; the sun's color after its path through the air and the sky's ambient color light the scene. Radii in km, coefficients per km, ground albedo, sun intensity and angular radius, aerial distance scale, the origin's altitude. Opt-in: missing keeps the atmosphere's colors and haze."
+            "Physically based sky: air over a planet, Rayleigh and Mie scattering and ozone absorption integrated into lookup tables the sky, reflections and aerial perspective read; the sun's color after its path through the air and the sky's ambient color light the scene. Radii in km, coefficients per km, ground albedo, sun intensity and angular radius, aerial distance scale, the origin's altitude. Opt-in: missing keeps the atmosphere's colors and haze."
         }
         "navigation" => {
-            "Navigation (decision 089): whether navigation agents walk, and the samples of search work each fixed tick does at most over every agent's walk being searched (long walks take several ticks). Inspect NavAgents for what the last tick did."
+            "Navigation: whether navigation agents walk, and the samples of search work each fixed tick does at most over every agent's walk being searched (long walks take several ticks). Inspect NavAgents for what the last tick did."
         }
         "time_of_day" => {
-            "Time of day (decision 088): the sun's direction from the hour for a latitude and day of the year, north's yaw in the world, advancing `speed` hours a second in steps of `step` minutes (kept shadows redraw once a step). Opt-in: missing keeps the atmosphere's sun direction."
+            "Time of day: the sun's direction from the hour for a latitude and day of the year, north's yaw in the world, advancing `speed` hours a second in steps of `step` minutes (kept shadows redraw once a step). Opt-in: missing keeps the atmosphere's sun direction."
         }
         "world_streaming" => {
-            "World streaming (decision 086): streamed items spawn in cells near the camera, terrain focus entities and where the camera's motion leads in `prefetch` seconds, and despawn past `unload` times the range. Grids by reach: 256 m cells within 512 m, 1 km within 2 km, 4 km within 8 km, scaled by `distance`. Off unloads all; `spawns_per_frame` paces loads (cells spawn whole); `frozen` holds cells as they are. See WorldCells and the rendering observation's cell counts."
+            "World streaming: streamed items spawn in cells near the camera, terrain focus entities and where the camera's motion leads in `prefetch` seconds, and despawn past `unload` times the range. Grids by reach: 256 m cells within 512 m, 1 km within 2 km, 4 km within 8 km, scaled by `distance`. Off unloads all; `spawns_per_frame` paces loads (cells spawn whole); `frozen` holds cells as they are. See WorldCells and the rendering observation's cell counts."
         }
         "wind" => {
-            "The wind (decision 058): its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
+            "The wind: its horizontal velocity in meters per second and how strongly gusts traveling with it vary its push. Ground cover's blades and placed objects with a sway bend in it; temporal frames move them by the previous frame's time. Missing means still air."
         }
         "level_of_detail" => {
-            "Level of detail settings (decisions 047 and 048): GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
+            "Level of detail settings: GPU-presented frames draw each instance at the coarsest level of its mesh whose error stays within the pixel error of the viewport height, the coarsest being its draw group's impostor unless impostors are off; max_impostors budgets baked impostors. Missing means every instance draws its mesh. The rendering observation reports instances per level, impostors baked and those left out."
         }
-        _ => "An environment section (decision 022).",
+        _ => "An environment section.",
     }
 }
 
@@ -1027,7 +1025,7 @@ impl DevTools {
                 )))
                 .expect("generated schemas are JSON");
                 Ok(
-                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; mutations, capture and benchmark require a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096 (decision 051). Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals, tiles, materials, sky or detail. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
+                    json!({"name": name, "kind": "protocol", "schema": schemas[name], "constraints": "version=1; mutations, capture and benchmark require a paused host; reload revisions must fit u64. Spatial queries need CollisionPlugin but no pause: positions/endpoints within +/-1e6; nonzero finite directions; distance[0,2e6]; shape dimensions[1e-4,1e4]; normalized XYZW rotation. Symmetric layer filtering; sensors include/exclude/only. Raycast/cast return closest complete hit, terrain heightfields included; casts translate with fixed orientation. Terrain height takes 1..256 [x,z] points (null where no tile is resident); terrain sweep compares queries, collision rays and layers over samples2..64 per side within half_extent0..4096. Overlap limit1..100; budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, paged1..100, with attempted and committed ticks. Present/capture alpha finite[0,1]; preview preserves clocks/input. The terrain control sets pixel_error1..64, freezes streaming at the camera's position, and shows shaded, levels, normals, tiles, materials, sky or detail. Ordinary render/step/capture show current poses. Benchmark warmup0..120, samples1..240; step advances one tick, present samples alpha0.5 without ticks; clears input. Controls do not save source."}),
                 )
             }
             _ => {
@@ -1302,7 +1300,7 @@ fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Er
 }
 
 /// The entity of authored ID `id` in `scene`: one it spawned, or else a
-/// loaded streamed entity (decision 086) it owns.
+/// loaded streamed entity it owns.
 pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
     scene.entity(id).or_else(|| {
         scene.streamed()?;

@@ -101,7 +101,7 @@ pub struct Selection {
 }
 
 /// How far below and above the eye ground of unknown height is taken to
-/// reach (decision 112): any ground at all.
+/// reach: any ground at all.
 const UNKNOWN_GROUND: f32 = 1.0e6;
 
 /// The squared distance from `point` to the box from `min` to `max`.
@@ -111,7 +111,7 @@ fn distance_squared(point: Vec3, min: Vec3, max: Vec3) -> f32 {
 }
 
 /// Whether the square from `low` to `high` lies within `cutout`, the
-/// ground a terrain's surroundings (decision 094) leave to it.
+/// ground a terrain's surroundings leave to it.
 fn cut_out(cutout: Option<(Vec2, Vec2)>, low: Vec2, high: Vec2) -> bool {
     cutout.is_some_and(|(first, last)| {
         low.x >= first.x && low.y >= first.y && high.x <= last.x && high.y <= last.y
@@ -138,7 +138,7 @@ fn patch_tile(level: u32, x: u32, z: u32) -> (TileKey, u32, u32) {
 /// within the children's level's range and their tile is resident. They
 /// come out nearest the eye first, so nearer ground hides what lies behind
 /// it before it is shaded. Patches within `cutout` (terrain-local) never
-/// draw: surroundings (decision 094) leave that ground to the terrain they
+/// draw: surroundings leave that ground to the terrain they
 /// surround, whose edges every level's patches align with.
 pub fn select_patches<'a>(
     pyramid: &Pyramid,
@@ -223,13 +223,13 @@ pub fn select_patches<'a>(
     }
 }
 
-/// A tile a view wants resident, with its importance (decision 108): the
+/// A tile a view wants resident, with its importance: the
 /// pinned levels' first, coarser first; then by the distance to the eye in
 /// units of its level's range, ahead of the eye before behind, so the
 /// tiles that show the most of the view's detail load first whatever their
 /// level, a tile's parent (twice as far in range, half as far in its
 /// units) before it. And whether the view draws it, within its level's
-/// range, and whether its ground shows in the view (decision 112).
+/// range, and whether its ground shows in the view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WantedTile {
     pub key: TileKey,
@@ -238,7 +238,7 @@ pub struct WantedTile {
     pub seen: bool,
 }
 
-/// How a view sees a terrain (decision 112): its eye (terrain-local) and
+/// How a view sees a terrain: its eye (terrain-local) and
 /// horizontal view direction, the lowest and highest ground a tile can
 /// hold (`None` where unknown), and whether a terrain-local box shows in
 /// the view.
@@ -251,8 +251,8 @@ pub struct WantedView<'a> {
 
 /// Appends the tiles of every level within `reach` times its range of
 /// `view`'s eye, and every tile of the coarsest `pinned` levels, to `out`,
-/// most important first; none wholly within `cutout` (decision 094).
-/// Distances run to a tile's ground (decision 112): a high eye wants fine
+/// most important first; none wholly within `cutout`.
+/// Distances run to a tile's ground: a high eye wants fine
 /// tiles only as far as it is from their ground, as patches draw and
 /// ground shades by those distances.
 pub fn wanted_tiles(

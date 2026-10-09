@@ -24,7 +24,7 @@ const ROTATION_VOLUME: f32 = 0.9939;
 
 /// Bounds of a stored, admitted parent global P that prove, without composing
 /// it, that `P * child.matrix()` passes the common admission gate below for
-/// every child accepted by [`Certificate::admits`] (decision 016).
+/// every child accepted by [`Certificate::admits`].
 ///
 /// With u = 2^-24, write the child's scale s, translation t and quaternion q
 /// with n = ‖q‖² (|n − 1| ≤ 1.0003e-3 once the f32 check passed). glam's

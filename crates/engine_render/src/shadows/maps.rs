@@ -1,4 +1,4 @@
-//! The shadow maps (decisions 020, 028 and 065) and what the main passes
+//! The shadow maps and what the main passes
 //! bind to look them up: the near cascades as layers of one texture, the
 //! moving and kept far maps, the kept levels as layers of another, the
 //! lookup uniform and the samplers, with placeholders while shadows (or
@@ -16,7 +16,7 @@ pub(super) struct MapTextures {
     cascades: u32,
     levels: u32,
     // The near cascades as layers of one texture, the moving and kept far
-    // maps, and the kept levels (decision 065) as layers of another.
+    // maps, and the kept levels as layers of another.
     textures: [wgpu::Texture; 3],
     level_texture: Option<wgpu::Texture>,
     // The near cascades as one array (lookups) and each layer (drawing).
@@ -113,7 +113,7 @@ pub(super) struct ShadowMaps {
     uniform: wgpu::Buffer,
     written: Option<ShadowUniform>,
     sampler: wgpu::Sampler,
-    // Reads the four texels around a receiver-plane lookup (decision 028).
+    // Reads the four texels around a receiver-plane lookup.
     texel_sampler: wgpu::Sampler,
     _placeholder: wgpu::Texture,
     placeholder_view: wgpu::TextureView,

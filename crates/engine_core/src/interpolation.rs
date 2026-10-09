@@ -107,7 +107,7 @@ pub struct PresentationState {
 
 impl PresentationState {
     /// Whether the last extraction left blending and composition to the GPU
-    /// (decision 014) and [`PresentedTransforms`] still hold earlier
+    /// and [`PresentedTransforms`] still hold earlier
     /// CPU-prepared values. [`crate::Engine::prepare_presented_transforms`]
     /// materializes that frame while its inputs are unchanged.
     pub fn gpu_pending(&self) -> bool {
@@ -343,7 +343,7 @@ impl FromWorld for PresentedTransforms {
 }
 
 impl PresentedTransforms {
-    /// Inputs of the latest GPU-prepared frame (decision 014).
+    /// Inputs of the latest GPU-prepared frame.
     pub(crate) fn gpu_presentation<'a>(
         &'a self,
         hierarchy: &'a HierarchyScratch,
@@ -1166,7 +1166,7 @@ pub(crate) fn prepare(world: &mut World, mode: PresentationMode) {
     });
 }
 
-/// Prepares inputs for GPU blending/composition of `alpha` (decision 014)
+/// Prepares inputs for GPU blending/composition of `alpha`
 /// instead of CPU presented poses; the CPU store keeps its previous values
 /// until [`prepare_pending`] or another CPU preparation.
 pub(crate) fn prepare_gpu(world: &mut World, alpha: f32) {

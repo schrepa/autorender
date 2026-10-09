@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{SceneError, SceneFiles, files::valid_uri};
 
 /// Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as
-/// base64, or (version 7, decision 030) an image file beside the scene that
+/// base64, or (version 7) an image file beside the scene that
 /// the host decodes with the platform's own decoder when the scene loads.
 ///
 /// Decoding never happens in simulation or rendering. Scenes store one level;
@@ -69,7 +69,7 @@ impl SceneTexture {
     /// The texture at authored path `path`. Without `files` (structural
     /// validation) a file texture reads as one white texel. With `alpha`
     /// (version 8) texels may be translucent: coverage for masked and
-    /// blended materials (decision 031).
+    /// blended materials.
     pub(crate) fn texture(
         &self,
         path: &str,

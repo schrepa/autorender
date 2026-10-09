@@ -137,8 +137,8 @@ impl Camera {
         }
     }
 
-    /// Builds a WebGPU-compatible projection with reversed depth (decision
-    /// 042): the near plane maps to depth 1 and the far plane to 0, which a
+    /// Builds a WebGPU-compatible projection with reversed depth:
+    /// the near plane maps to depth 1 and the far plane to 0, which a
     /// floating-point depth buffer resolves about evenly at every distance.
     /// Invalid aspect/lens values fall back to sensible defaults; a coincident
     /// target looks down -Z and a vertical direction uses Z as the up axis.
@@ -218,7 +218,7 @@ pub struct InputState {
     pub look_pitch: f32,
 }
 
-/// Multiplies one object's color channel by channel (decision 033): its
+/// Multiplies one object's color channel by channel: its
 /// material's base color and opacity, or its cube's color. Factors are in
 /// `[0, 1]`; others read as the nearest bound, and non-finite ones as 1.
 /// Objects keep their material's draw groups, and changing a tint uploads
@@ -256,20 +256,20 @@ impl Default for Tint {
 #[derive(Debug, Clone, Copy)]
 pub struct RenderInstance {
     pub mesh: MeshHandle,
-    /// For materials with maps ([`Material::has_maps`], decision 031), the
+    /// For materials with maps ([`Material::has_maps`]), the
     /// material whose maps the renderer binds: the first extracted material
     /// with an equal [`Material::binding`], listed in
     /// [`RenderSnapshot::materials`], so materials differing only in color
     /// and surface draw together. `None` draws from color and surface alone.
     pub material: Option<MaterialHandle>,
     pub model: Mat4,
-    /// Linear color; alpha is the opacity (decision 026), 1 for opaque.
+    /// Linear color; alpha is the opacity, 1 for opaque.
     /// Without a material, an opacity below 1 draws transparent; a
     /// material's alpha mode decides otherwise.
     pub color: [f32; 4],
     /// The material's surface response; cubes are [`Surface::MATTE`].
     pub surface: Surface,
-    /// Skinned instances (decision 036): the offset in
+    /// Skinned instances: the offset in
     /// [`RenderSnapshot::joints`] of the first joint of their palette, which
     /// then positions their vertices instead of `model`. `None` draws rigidly.
     pub skin: Option<u32>,
@@ -289,7 +289,7 @@ pub struct RenderTexture {
     pub texture: Arc<Texture>,
 }
 
-/// One referenced material with maps (decision 031), copied so it outlives
+/// One referenced material with maps, copied so it outlives
 /// its library entry; its textures are in [`RenderSnapshot::textures`].
 /// `version` is its [`engine_assets::AssetLibrary::material_version`]: renderers
 /// keep what they built from a handle while its version stands.
@@ -303,7 +303,7 @@ pub struct RenderMaterial {
 impl RenderInstance {
     /// Whether this instance draws in the transparent pass: its material's
     /// alpha mode decides, `material` being the instance's listed material;
-    /// without one, an opacity below 1 (decision 026).
+    /// without one, an opacity below 1.
     pub fn is_transparent(&self, material: Option<&Material>) -> bool {
         match material {
             Some(material) => material.is_transparent(),
@@ -323,22 +323,22 @@ pub struct RenderSnapshot {
     pub elapsed_seconds: f32,
     /// The simulation time the frame presents ([`crate::PresentedTime`]),
     /// for what must line up with simulated objects, such as the sea's
-    /// waves (decision 077).
+    /// waves.
     pub presented_seconds: f64,
-    /// The scene's atmosphere and every effect's settings (decision 022),
+    /// The scene's atmosphere and every effect's settings,
     /// sanitized ([`crate::Environment::current`]): a missing atmosphere
     /// reads as the default one and a missing effect resource as off.
     pub environment: crate::Environment,
-    /// This frame's local lights (decision 023), within the settings' budget.
+    /// This frame's local lights, within the settings' budget.
     pub lights: Vec<crate::RenderLight>,
     /// Usable lights beyond the budget, or without a valid pose.
     pub dropped_lights: usize,
-    /// This frame's particle emitters (decision 026), within the particle
+    /// This frame's particle emitters, within the particle
     /// budget.
     pub emitters: Vec<crate::RenderEmitter>,
     /// Particles of emitters skipped beyond the budget.
     pub dropped_particles: usize,
-    /// This frame's decals (decision 039), within the settings' budget.
+    /// This frame's decals, within the settings' budget.
     pub decals: Vec<crate::RenderDecal>,
     /// Materials with maps that decals draw with, each once, and their
     /// textures; they may repeat [`Self::materials`] and [`Self::textures`].
@@ -346,32 +346,31 @@ pub struct RenderSnapshot {
     pub decal_textures: Vec<RenderTexture>,
     /// Usable decals beyond the budget.
     pub dropped_decals: usize,
-    /// This frame's usable reflection probes (decision 043), nearest the
+    /// This frame's usable reflection probes, nearest the
     /// camera first, within the settings' budget.
     pub reflection_probes: Vec<crate::RenderReflectionProbe>,
     /// Usable probes beyond the budget.
     pub dropped_reflection_probes: usize,
-    /// This frame's terrains (decision 051): their resident tiles and the
+    /// This frame's terrains: their resident tiles and the
     /// patches the camera draws.
     pub terrain: crate::RenderTerrains,
-    /// This frame's deformation map and the stamps it presses (decision
-    /// 083).
+    /// This frame's deformation map and the stamps it presses.
     pub deformation: crate::RenderDeformation,
-    /// World streaming's state at this frame (decision 086).
+    /// World streaming's state at this frame.
     pub cells: crate::CellStats,
-    /// Every instance's `color[3]` is its opacity (decision 026); see
+    /// Every instance's `color[3]` is its opacity; see
     /// [`RenderInstance::is_transparent`].
     pub instances: Vec<RenderInstance>,
-    /// Joint palettes of skinned instances (decision 036), each a skin's
+    /// Joint palettes of skinned instances, each a skin's
     /// joints in order from its instance's [`RenderInstance::skin`] offset,
-    /// followed by decals' poses (decision 039).
+    /// followed by decals' poses.
     pub joints: Vec<crate::RenderJoint>,
     /// Unique sources used by emitted or frustum-culled valid instances.
     /// Culled sources allow the renderer to retain already resident resources;
     /// they do not request uploads by themselves.
     pub meshes: Vec<RenderMesh>,
     /// Unique materials with maps used by emitted or frustum-culled valid
-    /// instances (decision 031).
+    /// instances.
     pub materials: Vec<RenderMaterial>,
     /// Unique textures of those materials.
     pub textures: Vec<RenderTexture>,

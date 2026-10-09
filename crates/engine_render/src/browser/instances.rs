@@ -1,7 +1,7 @@
-//! Instance storage (decisions 013 and 014): retained slots' poses and
+//! Instance storage: retained slots' poses and
 //! colors at their core slot positions, the slot IDs CPU-prepared frames
-//! draw, joint palettes (decision 036), and the pose buffer temporal frames
-//! alternate with (decision 017). Storage grows with the frame's slots up to
+//! draw, joint palettes, and the pose buffer temporal frames
+//! alternate with. Storage grows with the frame's slots up to
 //! what one binding holds.
 
 use super::*;
@@ -16,7 +16,7 @@ pub(super) struct Instances {
     colors: wgpu::Buffer,
     pub(super) color_staging: Vec<ColorData>,
     // Group 2 of retained mesh pipelines: poses, colors, palettes, and
-    // grounds (decision 096) none of the slots stand on.
+    // grounds none of the slots stand on.
     pub(super) pose_layout: wgpu::BindGroupLayout,
     pose_group: wgpu::BindGroup,
     grounds: wgpu::Buffer,
@@ -32,7 +32,7 @@ pub(super) struct Instances {
     pub(super) slot_capacity: usize,
     pub(super) slot_staging: Vec<u32>,
     pub(super) slot_revision: Option<(u64, u64)>,
-    // Joint palettes of skinned slots (decision 036), one per pose buffer,
+    // Joint palettes of skinned slots, one per pose buffer,
     // with room for `palette_capacity` joints.
     pub(super) palettes: [wgpu::Buffer; 2],
     palette_capacity: usize,
@@ -104,7 +104,7 @@ impl Instances {
             self.retained_uploads.invalidate();
             self.alternate = None;
         }
-        // Joint palettes (decision 036) grow with the frame's joints.
+        // Joint palettes grow with the frame's joints.
         let palettes_grew = joints > self.palette_capacity;
         if palettes_grew {
             self.palette_capacity = joints.next_power_of_two();
@@ -133,7 +133,7 @@ impl Instances {
     /// Stages the slot IDs of a CPU-prepared retained frame drawing
     /// `ordered`, unless already staged for `key` (its identity and
     /// structure revision); returns whether they need writing. Virtual
-    /// geometry's selection (decision 044) reads them too.
+    /// geometry's selection reads them too.
     pub(super) fn stage_slots(
         &mut self,
         device: &wgpu::Device,
@@ -187,7 +187,7 @@ impl Instances {
         }
     }
 
-    /// GPU presentation's inputs (decision 014) for frames of temporal
+    /// GPU presentation's inputs for frames of temporal
     /// `parity`: the staging ring of pose uploads, and the pose storage.
     pub(super) fn presentation_inputs(
         &mut self,
@@ -234,7 +234,7 @@ impl Instances {
         &self.colors
     }
 
-    /// Grounds of retained slots (decision 096): none stand on terrain.
+    /// Grounds of retained slots: none stand on terrain.
     pub(super) fn grounds(&self) -> &wgpu::Buffer {
         &self.grounds
     }
@@ -273,12 +273,11 @@ impl Instances {
     }
 }
 
-/// The pose storage of a retained frame, which GPU presentation (decision
-/// 014) culls into and every pass drawing or lighting slots reads: both
-/// pose buffers (the second while temporal antialiasing alternates them,
-/// decision 017), the joint palette written with each (decision 036), the
-/// slot colors, which buffer the frame's poses are in, and the generation
-/// that advances when any of them is replaced.
+/// The pose storage of a retained frame, which GPU presentation culls into and
+/// every pass drawing or lighting slots reads: both pose buffers (the second
+/// while temporal antialiasing alternates them), the joint palette written with
+/// each, the slot colors, which buffer the frame's poses are in, and the
+/// generation that advances when any of them is replaced.
 #[derive(Clone, Copy)]
 pub(crate) struct FramePoses<'a> {
     pub buffers: [Option<&'a wgpu::Buffer>; 2],
@@ -306,7 +305,7 @@ impl<'a> FramePoses<'a> {
 }
 
 /// Group 2 of retained mesh pipelines: slot poses, colors, the joint
-/// palettes of skinned slots (decision 036) and grounds (decision 096).
+/// palettes of skinned slots and grounds.
 fn pose_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,

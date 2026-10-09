@@ -1,4 +1,4 @@
-//! Reflection probe captures (decision 043): each cube face's cull and
+//! Reflection probe captures: each cube face's cull and
 //! compaction over the poses this frame's culling wrote, after the frame's
 //! own drawing, and the still frames of every slot, which captures wait
 //! for.
@@ -128,8 +128,8 @@ impl ProbeFaces {
 }
 
 impl GpuPresentationPass {
-    /// Records the cull and compaction of reflection probe cube face `face`
-    /// (decision 043), `size` texels across, seen through `view_projection`,
+    /// Records the cull and compaction of reflection probe cube face `face`,
+    /// `size` texels across, seen through `view_projection`,
     /// over `poses` (this frame's culling wrote them), after the frame's own
     /// drawing; returns whether [`Self::probe_draw_source`] can draw it.
     #[allow(clippy::too_many_arguments)]
@@ -157,7 +157,7 @@ impl GpuPresentationPass {
         uniform.culling = 1;
         uniform.mask = FLAG_PROBE;
         uniform.occlusion = 0;
-        // Candidates covering no texel center draw nothing (decision 041).
+        // Candidates covering no texel center draw nothing.
         uniform.subpixel = 1;
         uniform.viewport = [size as f32, size as f32, 0.0, 0.0];
         uniform.motion = 0;
@@ -243,7 +243,7 @@ impl GpuPresentationPass {
     }
 
     /// Visible IDs and indirect arguments of plan batch `index` in the
-    /// reflection probe face last recorded (decision 043).
+    /// reflection probe face last recorded.
     pub(crate) fn probe_draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
@@ -252,14 +252,14 @@ impl GpuPresentationPass {
         self.groups.draw_source(batch, index, PROBE, 0)
     }
 
-    /// Each slot's pose fingerprint and still frames (decision 043), and the
+    /// Each slot's pose fingerprint and still frames, and the
     /// generation of their storage.
     pub(crate) fn still_frames(&self) -> (&wgpu::Buffer, u64) {
         (&self.stillness.frames, self.stillness.generation())
     }
 
     /// Whether culling has counted still frames long enough for reflection
-    /// probe captures to find every still slot (decision 043).
+    /// probe captures to find every still slot.
     pub(crate) fn stillness_settled(&self) -> bool {
         self.stillness.settled()
     }

@@ -1,12 +1,12 @@
-// Water (decision 067): terrains' lakes and rivers where their hydrology
-// bakes found them (decision 066), drawn as chunks of a grid whose vertices
+// Water: terrains' lakes and rivers where their hydrology
+// bakes found them, drawn as chunks of a grid whose vertices
 // read the water's surface, depth and flow at the bake's samples. Water
 // covers the ground below by how little of its light comes back through
 // the water between its surface and the ground behind it, which a copy of
-// the opaque depth gives (decision 074), reflecting the sky, the sun and,
+// the opaque depth gives, reflecting the sky, the sun and,
 // through screen-space reflections, the scene; its ripples ride the wind on
 // lakes and run downstream on rivers, carried along their flow in two
-// phases half a cycle apart (decision 097), and foam gathers where it runs
+// phases half a cycle apart, and foam gathers where it runs
 // shallow along shores and where rivers run fast. Streams narrower than a
 // pixel or two fade out.
 
@@ -16,7 +16,7 @@
 // flow along x and z (y and z, 0.5 still, a unit 16 m/s across).
 @group(1) @binding(34) var water_info: texture_2d<f32>;
 
-// One terrain's water, or the sea (decision 076): the camera's view and
+// One terrain's water, or the sea: the camera's view and
 // projection without its translation; the terrain's origin less the eye
 // (xyz) and the bake's spacing (w); the bake's samples along x and z and
 // quads along each side of a chunk; the color deep water scatters back
@@ -50,7 +50,7 @@ struct WaterUniform {
 @group(2) @binding(36) var water_depth: texture_depth_2d;
 
 // The opaque surface behind the water at `pixel` (its center), less the
-// eye, without the jitter of temporally antialiased frames (decision 017).
+// eye, without the jitter of temporally antialiased frames.
 fn water_ground(pixel: vec2<f32>) -> vec3<f32> {
     let size = vec2<f32>(textureDimensions(water_depth));
     let depth = textureLoad(water_depth, vec2<i32>(pixel), 0);
@@ -89,7 +89,7 @@ const WATER_UNBOUNDED: f32 = 1.0e6;
 
 // The deepest water `water_info` holds (meters, `water.rs`'s
 // `DEPTH_RANGE`): it keeps the square root of each depth's share of it,
-// fine in shallows and reaching deep lakes' middles (decision 102).
+// fine in shallows and reaching deep lakes' middles.
 const WATER_DEPTH_RANGE: f32 = 256.0;
 
 fn water_meters(info: f32) -> f32 {
@@ -147,7 +147,7 @@ fn vs_water(input: WaterChunk) -> WaterOutput {
     return water_output(input);
 }
 
-// A point of a river's ribbon (decision 092): terrain-local, and the
+// A point of a river's ribbon: terrain-local, and the
 // water's depth over the bed there, its flow along x and z and half the
 // river's width.
 struct RiverVertex {
@@ -247,7 +247,7 @@ struct WaterShade {
     coverage: f32,
 }
 
-// Flowing water's ripples and foam (decision 097): two sets, each carried
+// Flowing water's ripples and foam: two sets, each carried
 // along the flow for WATER_FLOW_CYCLE seconds and then starting over, half
 // a cycle apart: the seconds each has run, and how much the second shows,
 // so each restarts unseen before the flow stretches it (Vlachos's flow
@@ -277,7 +277,7 @@ fn shade_water(input: WaterOutput) -> WaterShade {
     let flow = input.water.yz;
     let time = camera.position.w;
     // Rivers' ripples run downstream, carried along their flow in two sets
-    // that cross-fade (decision 097); lakes' drift with the wind, which
+    // that cross-fade; lakes' drift with the wind, which
     // moves them all alike and never stretches them.
     let wind = water.ripples.zw;
     let flowing = dot(flow, flow) > 1.0e-4;
@@ -341,7 +341,7 @@ fn shade_water(input: WaterOutput) -> WaterShade {
             carried.blend) * 0.65;
     }
     grain += water_noise(world.xz * 4.1 + vec2<f32>(time * 0.35, 0.0)).x * 0.35;
-    // Streams narrower than a pixel or two fade out (decision 097): their
+    // Streams narrower than a pixel or two fade out: their
     // width over what a pixel spans.
     let shown = smoothstep(0.75, 2.0, 2.0 * input.water.w / max(footprint, 1.0e-4));
     let foam = water.foam.x * saturate((max(shore, rapids * 0.8) - grain * 0.7) * 2.5)
@@ -376,7 +376,7 @@ fn shade_water(input: WaterOutput) -> WaterShade {
         point.n_v)));
     // Foam covers what lies below, and the water thins out to nothing where
     // it meets the shore and where a stream begins (its depth grows from
-    // nothing, decision 097).
+    // nothing).
     result.coverage = max(1.0 - (1.0 - reflectance) * transmit, foam)
         * smoothstep(0.0, 0.08, below) * smoothstep(0.0, 0.05, depth) * shown;
     return result;

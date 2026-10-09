@@ -9,8 +9,8 @@ use web_sys::HtmlCanvasElement;
 #[path = "browser_profiling.rs"]
 mod profiling;
 
-/// Milliseconds on the page's clock, which terrain times its work by
-/// (decision 099); 0 without one.
+/// Milliseconds on the page's clock, which terrain times its work by;
+/// 0 without one.
 fn page_clock() -> f64 {
     thread_local! {
         static CLOCK: Option<web_sys::Performance> =
@@ -19,8 +19,8 @@ fn page_clock() -> f64 {
     CLOCK.with(|clock| clock.as_ref().map_or(0.0, web_sys::Performance::now))
 }
 
-/// Decoded images and buffers of the files a scene references (decision
-/// 030), filled by the page before the scene loads.
+/// Decoded images and buffers of the files a scene references,
+/// filled by the page before the scene loads.
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct SceneFileSet {
@@ -40,7 +40,7 @@ impl SceneFileSet {
     }
 
     /// Adds image `uri` transcoded to block-compressed `format` (`bc7`,
-    /// `etc2` or `astc`, decision 037): `width` × `height`, its levels
+    /// `etc2` or `astc`): `width` × `height`, its levels
     /// concatenated in `data` from the base down with their byte lengths in
     /// `levels`.
     pub fn add_compressed_image(
@@ -84,14 +84,14 @@ impl SceneFileSet {
         self.files.add_buffer(uri, bytes);
     }
 
-    /// Adds virtual mesh `uri` (decision 044): its prefix
+    /// Adds virtual mesh `uri`: its prefix
     /// ([`virtual_prefix_bytes`] long) and the URL renderers stream its
     /// other pages from.
     pub fn add_virtual_mesh(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_virtual_mesh(uri, bytes, url.as_deref());
     }
 
-    /// Adds terrain file `uri` (decision 051): its prefix
+    /// Adds terrain file `uri`: its prefix
     /// ([`terrain_prefix_bytes`] long) and the URL its tiles stream from.
     pub fn add_terrain(&mut self, uri: &str, bytes: Vec<u8>, url: Option<String>) {
         self.files.add_terrain(uri, bytes, url.as_deref());
@@ -128,7 +128,7 @@ pub fn scene_file_list(source: &str) -> String {
     format!("[{}]", entries.join(","))
 }
 
-/// Bytes of the prefix of the virtual mesh file (decision 044) whose first
+/// Bytes of the prefix of the virtual mesh file whose first
 /// 128 bytes are `header`: what hosts fetch before a scene loads; renderers
 /// stream the rest. `None` when it is not a virtual mesh file of this
 /// engine's version.
@@ -137,8 +137,8 @@ pub fn virtual_prefix_bytes(header: &[u8]) -> Option<u32> {
     engine_core::VirtualMesh::prefix_bytes(header).map(|bytes| bytes as u32)
 }
 
-/// Bytes of the prefix (header and directory) of the terrain file (decision
-/// 051) whose first 64 bytes are `header`: what hosts fetch before a scene
+/// Bytes of the prefix (header and directory) of the terrain file
+/// whose first 64 bytes are `header`: what hosts fetch before a scene
 /// loads; tiles stream by byte range as the camera needs them. `None` when
 /// it is not a terrain file.
 #[wasm_bindgen]
@@ -148,7 +148,7 @@ pub fn terrain_prefix_bytes(header: &[u8]) -> Option<u32> {
         .map(|bytes| bytes as u32)
 }
 
-/// Terrain tiles in flight (decision 051): fetched by byte range from their
+/// Terrain tiles in flight: fetched by byte range from their
 /// files' URLs and handed back to the engine's terrains the next frame.
 #[derive(Default)]
 struct TerrainFetches {
@@ -255,12 +255,12 @@ pub struct FrameStats {
     /// Total simulation time discarded by the fixed-step budget in this session.
     pub dropped_seconds: f64,
     /// Whether the GPU may still be compiling pipelines earlier frames
-    /// created, read when the stats are (decision 049).
+    /// created, read when the stats are.
     pub pipelines_compiling: bool,
     /// Whether terrains have yet to load the camera's view whole, read
-    /// when the stats are (decision 099): hosts keep preparing meanwhile.
+    /// when the stats are: hosts keep preparing meanwhile.
     pub loading: bool,
-    /// The host's workers and their jobs (decision 110), read when the
+    /// The host's workers and their jobs, read when the
     /// stats are.
     pub jobs: engine_core::JobStats,
     #[serde(flatten)]
@@ -281,7 +281,7 @@ pub struct BrowserApp {
     tick_pipelining: bool,
     // The last GPU frame was not submitted, so the renderer missed its gather.
     gpu_inputs_stale: bool,
-    // Terrain tiles fetched by byte range (decision 051).
+    // Terrain tiles fetched by byte range.
     terrain_fetches: TerrainFetches,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
@@ -338,9 +338,8 @@ impl BrowserApp {
     }
 
     fn with(mut engine: Engine, renderer: Renderer, performance: web_sys::Performance) -> Self {
-        // Terrain residency never exceeds the device's texture array layers
-        // (decision 051), and its work runs for the settings' time a frame
-        // (decision 099).
+        // Terrain residency never exceeds the device's texture array layers,
+        // and its work runs for the settings' time a frame.
         if let Some(mut terrains) = engine
             .app
             .world_mut()
@@ -366,7 +365,7 @@ impl BrowserApp {
     }
 
     /// Selects GPU blending, composition and culling for ordinary interpolated
-    /// frames (the default; decision 014) or the exact CPU path. Development
+    /// frames (the default) or the exact CPU path. Development
     /// steps, renders and captures always use the exact CPU path.
     pub fn set_gpu_presentation(&mut self, enabled: bool) {
         self.gpu_presentation = enabled;
@@ -395,7 +394,7 @@ impl BrowserApp {
         self.tick_pipelining
     }
 
-    /// Temporally antialiases ordinary GPU-presented frames (decision 017):
+    /// Temporally antialiases ordinary GPU-presented frames:
     /// each rasterizes with a sub-pixel jitter and blends with the previous
     /// frame's output, reprojected by per-pixel motion. Off by default.
     /// Development steps, renders, previews and captures stay exact, as do
@@ -409,7 +408,7 @@ impl BrowserApp {
         self.renderer.temporal_antialiasing()
     }
 
-    /// Occlusion culling of GPU-presented frames (decision 040), on by
+    /// Occlusion culling of GPU-presented frames, on by
     /// default: frames that cull without an instance budget draw what the
     /// last frame showed, test every other frustum-visible instance against
     /// a depth pyramid of those depths, then draw only what it does not hide.
@@ -422,7 +421,7 @@ impl BrowserApp {
         self.renderer.occlusion_culling()
     }
 
-    /// Sub-pixel culling of GPU-presented frames (decision 041), on by
+    /// Sub-pixel culling of GPU-presented frames, on by
     /// default: frames that cull without an instance budget leave visible
     /// instances whose projected bounds cover no pixel center undrawn.
     /// Output is unchanged; they could produce no fragments.
@@ -435,7 +434,7 @@ impl BrowserApp {
     }
 
     /// Streams terrains for a frame's work time on a `width` × `height`
-    /// canvas without simulating or rendering (decision 099): hosts call it
+    /// canvas without simulating or rendering: hosts call it
     /// in place of frames while the GPU compiles pipelines, which frames
     /// would only queue behind, so loading goes on meanwhile.
     pub fn work(&mut self, width: u32, height: u32) {
@@ -451,7 +450,7 @@ impl BrowserApp {
         self.engine.stream_terrain();
     }
 
-    /// Loads terrain for `milliseconds` between frames (decision 108): hosts
+    /// Loads terrain for `milliseconds` between frames: hosts
     /// call it after a frame with the time left before the next one is due,
     /// while the last frame found tiles to load. Returns whether tiles are
     /// still to load.
@@ -463,7 +462,7 @@ impl BrowserApp {
         self.engine.work_terrain(milliseconds)
     }
 
-    /// Workers the host runs jobs on (decision 110): with any, terrains bake
+    /// Workers the host runs jobs on: with any, terrains bake
     /// and generate tiles and agents search walks there; with none, the
     /// default, that work stays in the engine, which takes back every job
     /// handed out.
@@ -478,9 +477,9 @@ impl BrowserApp {
         }
     }
 
-    /// What to hand workers since the last call, in order (decision 110):
+    /// What to hand workers since the last call, in order:
     /// `{cancel}` for jobs handed out that their owners cancelled, which
-    /// their workers stop (decision 112), `{clear: true}` to drop every
+    /// their workers stop, `{clear: true}` to drop every
     /// share an earlier engine made, `{share, bytes}` to hold bytes as a key
     /// and `{unshare}` to drop one, to every worker, then
     /// `{id, kind, input, priority}` jobs, each to one, lower priorities
@@ -542,7 +541,7 @@ impl BrowserApp {
                 "priority",
                 &JsValue::from_f64(f64::from(request.priority)),
             );
-            // What hosts may keep its output by (decision 116).
+            // What hosts may keep its output by.
             if let Some(identity) = &request.identity {
                 set(
                     &object,
@@ -555,18 +554,18 @@ impl BrowserApp {
         out
     }
 
-    /// Job `id`'s output from its worker (decision 110).
+    /// Job `id`'s output from its worker.
     pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
         self.finish_job(id, Ok(output));
     }
 
-    /// Job `id` failed on its worker, for `error` (decision 110): its owner
+    /// Job `id` failed on its worker, for `error`: its owner
     /// takes the work back.
     pub fn fail_job(&mut self, id: f64, error: String) {
         self.finish_job(id, Err(error));
     }
 
-    /// The host's output cache's counters (decision 116): outputs handed
+    /// The host's output cache's counters: outputs handed
     /// back from it, jobs it lacked, its bytes and, verifying, outputs that
     /// differed from a fresh run.
     pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
@@ -587,8 +586,8 @@ impl BrowserApp {
         }
     }
 
-    /// A part of job `id`'s output its worker handed back before the rest
-    /// (decision 114), such as a tile's shape.
+    /// A part of job `id`'s output its worker handed back before the rest,
+    /// such as a tile's shape.
     pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
         if !(id.is_finite() && id >= 1.0) {
             return;
@@ -771,7 +770,7 @@ impl BrowserApp {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
-            // Terrain level of detail measures pixels (decision 051).
+            // Terrain level of detail measures pixels.
             self.engine
                 .app
                 .world_mut()

@@ -1,4 +1,4 @@
-// Terrain sky visibility (decision 055): one layer per terrain, a grid over
+// Terrain sky visibility: one layer per terrain, a grid over
 // the whole terrain. Each thread finds, for one texel, the horizon of the
 // terrain around its ground in sixteen directions, marching out in steps
 // that grow by a third from under a texel to the build's reach, and keeps
@@ -6,7 +6,7 @@
 // plane, cosine-weighted about the ground's normal. Heights come from the
 // terrain's finest pinned level, or from a resident ancestor where one of
 // its tiles is missing; beyond the terrain its edge carries on. Each texel
-// also keeps the ground's large-scale variety (decision 090): how far it
+// also keeps the ground's large-scale variety: how far it
 // lies below the ground a couple of texels around (hollows, where water
 // gathers) and below or above the ground a couple of hundred meters around
 // (ridges).

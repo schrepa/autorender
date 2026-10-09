@@ -11,5 +11,5 @@
 /web/pkg-iterations/
 /artifacts/
 *.log
-# Generated dense Stress Lab geometry (decision 044).
+# Generated dense Stress Lab geometry.
 /web/public/stress/

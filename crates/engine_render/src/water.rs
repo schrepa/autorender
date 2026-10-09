@@ -1,5 +1,5 @@
-//! Water (decision 067): terrains' lakes and rivers where their hydrology
-//! bakes found them (decision 066). Each terrain's water grid uploads once
+//! Water: terrains' lakes and rivers where their hydrology
+//! bakes found them. Each terrain's water grid uploads once
 //! as two textures, its surface heights and its depth and flow, and splits
 //! into chunks of [`CHUNK_QUADS`] quads a side, those holding water kept.
 //! Each frame the chunks the camera sees draw, coarser with distance,
@@ -7,14 +7,14 @@
 //! how little light comes back through it and writes the depth and surface
 //! targets, so later passes and screen-space reflections see its surface.
 //! Before it draws, the opaque depth copies into a texture of its own, from
-//! which its pixels find the ground behind them (decision 074): the
+//! which its pixels find the ground behind them: the
 //! distance light travels through the water, and where it runs shallow
 //! enough to foam.
 //!
-//! Rivers (decision 092) draw as ribbons along their lines, flat across,
+//! Rivers draw as ribbons along their lines, flat across,
 //! their edges reaching under the banks, in chunks the camera culls.
 //!
-//! The sea (decision 076) draws first in the same pass, from a grid around
+//! The sea draws first in the same pass, from a grid around
 //! the eye: rings of [`OCEAN_SEGMENTS`] cells, a cell apart near the eye
 //! and then each wider by a cell's share of its circumference, so cells
 //! stay square, out to the sea's reach. Its sectors cull on their own;
@@ -43,8 +43,7 @@ const STRIDES: [(u32, f32); 4] = [(1, 700.0), (2, 1600.0), (4, 3200.0), (8, f32:
 
 /// The deepest water the depth texture holds (meters, `water.wgsl`'s
 /// `WATER_DEPTH_RANGE`): it keeps the square root of each depth's share of
-/// it, so shallows keep centimeters and a deep lake's middle its depth
-/// (decision 102).
+/// it, so shallows keep centimeters and a deep lake's middle its depth.
 const DEPTH_RANGE: f32 = 256.0;
 
 /// Cells around the sea's grid, the sectors it splits into for culling,
@@ -78,7 +77,7 @@ struct WaterUniform {
 /// Bytes of the water group's uniform.
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
-/// The sea on the GPU (decision 076): placeholders for the water group's
+/// The sea on the GPU: placeholders for the water group's
 /// textures, its uniform and group, and this frame's rings and the runs of
 /// sectors the camera sees.
 struct OceanDraw {
@@ -112,7 +111,7 @@ struct TerrainWater {
     uniform: wgpu::Buffer,
     group: wgpu::BindGroup,
     chunks: Vec<Chunk>,
-    // Its rivers' ribbons (decision 092), keyed by its rivers.
+    // Its rivers' ribbons, keyed by its rivers.
     rivers: Option<RiverMesh>,
     // This frame: its instance range for each stride, the rivers' index
     // ranges the camera sees, and whether it draws.
@@ -142,7 +141,7 @@ struct RiverMesh {
 }
 
 /// A chunk of a ribbon: its index range drawing every point, every second,
-/// fourth and eighth (decision 097), and its terrain-local bounds.
+/// fourth and eighth, and its terrain-local bounds.
 struct RibbonChunk {
     ranges: [Range<u32>; 4],
     low: Vec3,
@@ -155,10 +154,10 @@ const RIBBON_ACROSS: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
 const RIBBON_EDGE: f32 = 1.5;
 /// River points a ribbon's chunk holds at most.
 const RIBBON_CHUNK: usize = 48;
-/// Meters from a river's head over which its water deepens from nothing
-/// (decision 097): a stream starts without an edge across it.
+/// Meters from a river's head over which its water deepens from nothing:
+/// a stream starts without an edge across it.
 const RIBBON_HEAD: f32 = 9.0;
-/// Ribbons by distance (decision 097): the points between their rows and
+/// Ribbons by distance: the points between their rows and
 /// the columns across them they keep, within each reach (meters).
 const RIBBON_STRIDES: [(usize, &[u32], f32); 4] = [
     (1, &[0, 1, 2, 3, 4, 5, 6], 300.0),
@@ -167,7 +166,7 @@ const RIBBON_STRIDES: [(usize, &[u32], f32); 4] = [
     (8, &[0, 3, 6], f32::INFINITY),
 ];
 
-/// The opaque depth's copy water reads (decision 074), its group and its
+/// The opaque depth's copy water reads, its group and its
 /// size.
 struct DepthCopy {
     texture: wgpu::Texture,
@@ -208,7 +207,7 @@ impl WaterPass {
         }
     }
 
-    /// Chunks drawn this frame: lakes' and rivers' (decision 092).
+    /// Chunks drawn this frame: lakes' and rivers'.
     pub(crate) fn chunks_drawn(&self) -> u32 {
         self.chunks_drawn
     }
@@ -255,9 +254,9 @@ impl WaterPass {
     }
 
     /// Prepares this frame's water of `terrains` as `settings` shade it and
-    /// the sea `ocean` (decision 076), seen from `eye` with the wind's
+    /// the sea `ocean`, seen from `eye` with the wind's
     /// `wind` velocity, its waves at the simulation time `seconds` the
-    /// frame presents (decision 077); returns whether any of it draws.
+    /// frame presents; returns whether any of it draws.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -331,7 +330,7 @@ impl WaterPass {
         true
     }
 
-    /// Prepares the sea (decision 076) seen through `view` (eye-relative)
+    /// Prepares the sea seen through `view` (eye-relative)
     /// from `eye`, its ripples as `water`'s, its waves at simulation time
     /// `seconds`; returns whether any of it draws.
     fn prepare_ocean(
@@ -467,7 +466,7 @@ impl WaterPass {
             water.draws.clear();
             water.river_draws.clear();
             let relative_origin = terrain.origin - eye;
-            // Rivers' ribbons (decision 092): built when the rivers change,
+            // Rivers' ribbons: built when the rivers change,
             // their chunks culled.
             match &terrain.rivers {
                 Some(rivers) if !rivers.is_empty() => {
@@ -556,7 +555,7 @@ impl WaterPass {
 
     /// Creates the pipelines into `targets` this frame's water and sea
     /// draw with unless they exist, and lakes' and rivers' when `coming`,
-    /// before a bake gives any (decision 099); `camera` is the main passes'
+    /// before a bake gives any; `camera` is the main passes'
     /// first group.
     pub(crate) fn ensure_pipeline(
         &mut self,
@@ -693,7 +692,7 @@ impl WaterPass {
                 draws += 1;
             }
         }
-        // Rivers (decision 092) before lakes: where a river runs into a
+        // Rivers before lakes: where a river runs into a
         // lake below the lake's surface, the lake's water covers it.
         if let Some(pipeline) = self.river_pipelines.get(&targets) {
             pass.set_pipeline(pipeline);
@@ -738,7 +737,7 @@ impl WaterPass {
 }
 
 /// What a water pipeline draws: terrains' lakes from their grids, their
-/// rivers' ribbons (decision 092), or the sea (decision 076).
+/// rivers' ribbons, or the sea.
 #[derive(Clone, Copy)]
 enum Surface {
     Grid,
@@ -862,12 +861,12 @@ fn upload(
     }
 }
 
-/// `rivers`' ribbons on the GPU (decision 092): at each point of each river
+/// `rivers`' ribbons on the GPU: at each point of each river
 /// a row of vertices across it at its water's surface, from beyond one
 /// edge to beyond the other, with the water's depth over its bed, its flow
 /// and half its width; stretches without water (falls) left out; chunks of
-/// `RIBBON_CHUNK` points, each drawn at every one of `RIBBON_STRIDES`
-/// (decision 097). `None` without any water to draw.
+/// `RIBBON_CHUNK` points, each drawn at every one of `RIBBON_STRIDES`.
+/// `None` without any water to draw.
 fn ribbons(device: &wgpu::Device, queue: &wgpu::Queue, rivers: &Arc<Rivers>) -> Option<RiverMesh> {
     let mut vertices: Vec<RiverVertex> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
@@ -1012,8 +1011,8 @@ fn river_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// The light of the sea around an eye at `eye` under its surface (decision
-/// 077), its waves at simulation time `seconds`, as the lighting uniform's
+/// The light of the sea around an eye at `eye` under its surface,
+/// its waves at simulation time `seconds`, as the lighting uniform's
 /// `underwater`: what its water scatters of the sun and sky, dimmed by the
 /// water above the eye (rgb), and the meters through which half the light
 /// passes (w); zero above the sea.

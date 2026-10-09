@@ -1,4 +1,4 @@
-//! Placed objects' slots (decision 057): every resident tile's objects hold
+//! Placed objects' slots: every resident tile's objects hold
 //! a range of slots of their own, written when the tile arrives and marked
 //! dead when it leaves, so streaming tiles uploads only theirs. Freed ranges
 //! are reused first fit; the pool starts over when its assets change or
@@ -14,7 +14,7 @@ use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
 
 /// A tile's objects as the pool takes them: poses, colors, records and
-/// grounds (decision 096).
+/// grounds.
 pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>, Vec<GroundData>);
 
 #[derive(Default)]
@@ -25,8 +25,7 @@ pub(super) struct ScatterPool {
     pub(super) colors: Vec<ColorData>,
     pub(super) records: Vec<Record>,
     pub(super) grounds: Vec<GroundData>,
-    /// Live objects of each draw group, and of those standing far away
-    /// (decision 061).
+    /// Live objects of each draw group, and of those standing far away.
     pub(super) counts: Vec<u32>,
     pub(super) far: u32,
     // Each resident tile's identity (its pointer) and slots, by terrain and
@@ -42,7 +41,7 @@ pub(super) struct ScatterPool {
     counts_changed: bool,
     moved: Vec<(Vec3, Vec3)>,
     // Whether the pool was emptied since its last upload: the objects it
-    // takes again show at once instead of fading in (decision 104).
+    // takes again show at once instead of fading in.
     refilling: bool,
 }
 
@@ -131,7 +130,7 @@ impl ScatterPool {
     }
 
     /// Marks `slots`, just uploaded, as shown however the camera shows them
-    /// should they upload again (decision 104): written again beside slots
+    /// should they upload again: written again beside slots
     /// that changed, objects keep what the GPU made of them but for a fade
     /// under way.
     pub(super) fn uploaded(&mut self, slots: Range<u32>) {
@@ -227,7 +226,7 @@ fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
         .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
 }
 
-/// Whether `record`'s object stands far away (decision 061).
+/// Whether `record`'s object stands far away.
 fn stands_far(record: &Record) -> bool {
     record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
 }

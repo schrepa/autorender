@@ -1,9 +1,9 @@
-// Occupancy (decision 059): every placed object's footprint drawn into a
+// Occupancy: every placed object's footprint drawn into a
 // top-down map around the camera, a disc as wide as its draw group's
 // footprint at its scale, softening at its rim. One target keeps the
 // densest cover over each texel; the other the highest top and lowest
 // bottom over it, as heights above the map's reference height. The far
-// map (decision 101) adds up covers instead, each footprint at least a
+// map adds up covers instead, each footprint at least a
 // texel wide carrying its share of the texel, so its texels keep how much
 // of their ground covers hide.
 
@@ -47,14 +47,14 @@ struct Cover {
 
 const DEAD: u32 = 0xffffffffu;
 // Objects standing far away while tiles holding them instead are resident
-// (decision 061; `scatter.rs`).
+// (`scatter.rs`).
 const HIDDEN: u32 = 0x80000000u;
 
 @group(0) @binding(0) var<uniform> splat: Splat;
 @group(0) @binding(1) var<storage, read> records: array<Record>;
 @group(0) @binding(2) var<storage, read> poses: array<Pose>;
 @group(0) @binding(3) var<storage, read> covers: array<Cover>;
-// How each terrain's placement layers thin (decision 100; `scatter_cull.wgsl`):
+// How each terrain's placement layers thin (`scatter_cull.wgsl`):
 // the far map weighs an object standing far away by the share standing
 // there, as it stands for the rest of its layer's objects.
 @group(0) @binding(4) var<storage, read> thins: array<vec4<f32>>;

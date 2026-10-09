@@ -16,9 +16,9 @@
 //! The port keeps meshoptimizer's structure, constants, tables and float
 //! operation order. Rust never fuses multiply-adds, so it reproduces the C++
 //! library's indices and error bit for bit wherever that is compiled without
-//! floating-point contraction (`tools/vgbuild`'s parity tests compare them),
-//! and gives the same bits on every target. Unlike the C++, it validates its
-//! input instead of asserting it, and does not limit the attribute count.
+//! floating-point contraction, and gives the same bits on every target. Unlike
+//! the C++, it validates its input instead of asserting it, and does not limit
+//! the attribute count.
 //!
 //! Based on Garland and Heckbert, "Surface simplification using quadric
 //! error metrics" (1997), Hoppe, "New quadric metric for simplifying meshes

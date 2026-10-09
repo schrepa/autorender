@@ -12,6 +12,6 @@ License 2.0 in `LICENSE`.
 | `basis_transcoder.wasm` | `a0f65d4a30ecb3269d01ead7d0a3477d2b0208146d083625a90623f473f6c139` |
 
 Pages load it only when a scene references a KTX2 image, and transcode at
-load, never per frame (`web/src/ktx2.ts`, decision 037). To update, replace
+load, never per frame (`web/src/ktx2.ts`). To update, replace
 both files from one upstream commit, record the commit and hashes here, and
 run the texture smoke check.

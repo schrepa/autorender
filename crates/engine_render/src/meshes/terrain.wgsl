@@ -1,8 +1,8 @@
-// Terrain (decision 051) in the mesh passes, after `terrain_vertex.wgsl`:
-// vertex stages into the frame's targets, the ground's surface (decision
-// 054) and the forward fragment stages.
+// Terrain in the mesh passes, after `terrain_vertex.wgsl`:
+// vertex stages into the frame's targets, the ground's surface
+// and the forward fragment stages.
 
-// Hole bits of the tiles with holes (decision 051), each tile's cells
+// Hole bits of the tiles with holes, each tile's cells
 // starting at samples 0 to 256 row by row, 32 to a word.
 @group(1) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
@@ -19,7 +19,7 @@ override TERRAIN_HOLES: bool = false;
 // the meters from the eye its tiles load within, as bits); then the entries,
 // row by row, each the layer of a resident tile or all ones.
 @group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
-// Each tile's control values (decision 054), in the same layers as its
+// Each tile's control values, in the same layers as its
 // heights: per sample, its two strongest surface materials (bits 0 to 7
 // and 8 to 15), the second's share (16 to 23) and its strongest biome.
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
@@ -37,12 +37,12 @@ struct TerrainPaletteEntry {
     params: vec4<f32>,
     maps: vec4<f32>,
     far: vec4<f32>,
-    // The meters its heights span where the ground's relief shows (decision
-    // 082), the meters tracks sink it at most (decision 083), and the
+    // The meters its heights span where the ground's relief shows,
+    // the meters tracks sink it at most, and the
     // variance of its normal maps' slopes at their scale, which its
-    // roughness takes over where they fade (decision 098).
+    // roughness takes over where they fade.
     relief: vec4<f32>,
-    // Its cover's canopy (decision 090): the linear color its blades show
+    // Its cover's canopy: the linear color its blades show
     // seen from afar, and their leaves' area per square meter of ground (0
     // without cover).
     canopy: vec4<f32>,
@@ -59,10 +59,10 @@ const TERRAIN_PALETTE_ENTRIES: u32 = 170u;
 @group(1) @binding(27) var terrain_material_normals: texture_2d_array<f32>;
 @group(1) @binding(28) var terrain_orm: texture_2d_array<f32>;
 @group(1) @binding(29) var terrain_material_sampler: sampler;
-// Each terrain's sky visibility map (decision 055): over the whole terrain,
+// Each terrain's sky visibility map: over the whole terrain,
 // the share of the sky its ground sees about its normal (red).
 @group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;
-// Runtime deformation's map (decision 083; `deformation.wgsl`), in its
+// Runtime deformation's map (`deformation.wgsl`), in its
 // reference units: each block's deepest track or highest rim, widened by a
 // block; each texel's track depth and rim height; and each texel's slopes.
 @group(1) @binding(37) var<storage, read> terrain_deformation: array<u32>;
@@ -172,7 +172,7 @@ const TERRAIN_LEVEL_COLORS = array<vec3<f32>, 8>(
     vec3<f32>(0.7, 0.35, 0.95), vec3<f32>(0.85, 0.85, 0.85),
 );
 
-// The albedo of terrain's development views (decision 051): 1 its levels,
+// The albedo of terrain's development views: 1 its levels,
 // 2 its normals, 3 its tiles and patches outlined; `albedo` otherwise.
 fn terrain_view_albedo(albedo: vec3<f32>, normal: vec3<f32>, spacing: f32, cell: vec2<f32>)
         -> vec3<f32> {
@@ -200,7 +200,7 @@ fn terrain_view_albedo(albedo: vec3<f32>, normal: vec3<f32>, spacing: f32, cell:
 }
 
 // How much of the next coarser level's normals (x) and surface materials
-// (y) still show over layer `layer`'s tile (decision 114): fading in after
+// (y) still show over layer `layer`'s tile: fading in after
 // it arrived, and wholly the coarser level's materials until its own
 // arrive. The first words of `terrain_holes` hold them, two layers a word.
 fn terrain_layer_fades(layer: u32) -> vec2<f32> {
@@ -210,7 +210,7 @@ fn terrain_layer_fades(layer: u32) -> vec2<f32> {
 
 // The normal at terrain-local `local` in `level`'s normal maps, or in the
 // nearest coarser level's where its tile is not resident; a tile fading in
-// shows the next resident coarser level's under it (decision 114).
+// shows the next resident coarser level's under it.
 fn terrain_level_normal(local: vec2<f32>, level: u32) -> vec3<f32> {
     let base = terrain.directory.x;
     let levels = terrain.directory.y;
@@ -332,7 +332,7 @@ fn terrain_control_blend(blend: ptr<function, TerrainBlend>, control: u32, weigh
 // control values, or the nearest coarser level's where its tile is not
 // resident: the four samples around it, bilinearly. A tile fading in, or
 // without its own materials yet, shows the next resident coarser level's
-// under it (decision 114).
+// under it.
 fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level: u32,
         weight: f32) {
     let base = terrain.directory.x;
@@ -387,7 +387,7 @@ fn terrain_level_blend(blend: ptr<function, TerrainBlend>, local: vec2<f32>, lev
 
 // What a terrain fragment's ground shows: its linear albedo, roughness,
 // occlusion and metalness, its normal, and the share of it that has maps;
-// for its variety and detail (decision 090), the shares of it growing
+// for its variety and detail, the shares of it growing
 // cover, showing as canopy, showing all its maps and showing their color.
 struct TerrainGround {
     albedo: vec3<f32>,
@@ -401,7 +401,7 @@ struct TerrainGround {
     full: f32,
     colored: f32,
     // The cover's canopy colors and leaves, each weighted by its material's
-    // share, which the runtime virtual texture (decision 124) keeps.
+    // share, which the runtime virtual texture keeps.
     canopy_color: vec3<f32>,
     leaves: f32,
 }
@@ -589,11 +589,11 @@ fn terrain_lattice_share(second: f32, first: f32, raised: f32, contrast: f32) ->
 
 // Where a fragment is and how it is seen, as the ground's passes read it:
 // its world position and how that changes per pixel on the terrain's smooth
-// surface (decision 098), a pixel's footprint there (meters, its long
+// surface, a pixel's footprint there (meters, its long
 // side), the footprint the maps' anisotropic filtering resolves (its short
 // side, or a sixteenth of its long side where filtering runs out), the
 // terrain's normal, the way toward the eye and the meters to it, and the
-// share of its cover's leaves blades no longer show there (decision 098).
+// share of its cover's leaves blades no longer show there.
 struct TerrainSite {
     world: vec3<f32>,
     world_dx: vec3<f32>,
@@ -607,7 +607,7 @@ struct TerrainSite {
 }
 
 // The share of the cover's leaves blades no longer show `distance` meters
-// from the eye at `world` by their law (`terrain.cover`, decision 098): all
+// from the eye at `world` by their law (`terrain.cover`): all
 // of them where a terrain's surroundings show its cover as canopy from the
 // eye on; none without cover.
 fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
@@ -628,15 +628,15 @@ fn terrain_thinned(world: vec3<f32>, distance: f32) -> f32 {
     return 1.0 - cover_shown(distance, share, cover.x);
 }
 
-// How much light reaches blades on average, which their canopy takes
-// (decision 105): their occlusion rises from 0.35 at the root to 1 at the
+// How much light reaches blades on average, which their canopy takes:
+// their occlusion rises from 0.35 at the root to 1 at the
 // tip (`meshes/cover.wgsl`), 0.675 over their height, and the half of them
 // seen through from the side away from the sun shows 0.8 of its color.
 const TERRAIN_CANOPY_OCCLUSION: f32 = 0.6;
 
 // How bright blades seen at `sine` (the sine of the view's angle over the
-// ground) show their color on average, which their canopy shows too
-// (decision 105): seen along the ground their lit tops give way to their
+// ground) show their color on average, which their canopy shows too:
+// seen along the ground their lit tops give way to their
 // sides and the shade among them. Measured against blades under the low
 // and the high sun alike: about 0.6 along the ground, 0.7 from 25 degrees
 // up and 0.75 from 45.
@@ -645,7 +645,7 @@ fn terrain_canopy_shown(sine: f32) -> f32 {
 }
 
 // The normal blades standing on ground of normal `ground` light with, on
-// average (decision 090; `meshes/cover.wgsl`): leaning most of the way up
+// average (`meshes/cover.wgsl`): leaning most of the way up
 // from their sides toward the sun, which face it by two over pi on
 // average.
 fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
@@ -654,11 +654,10 @@ fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
     return stable_normalize(mix(side, ground, 0.6));
 }
 
-// How much of the ground at `site` a cover whose leaves' area is `leaves`
-// per square meter shows as its canopy (decision 090): as much of the
-// leaves as its blades no longer show by their law (`terrain.cover`,
-// decision 098) hides of the ground along the view, 1 - exp(-G leaves /
-// sin), all of it at grazing views.
+// How much of the ground at `site` a cover whose leaves' area is `leaves` per
+// square meter shows as its canopy: as much of the leaves as its blades no
+// longer show by their law (`terrain.cover`) hides of the ground along the
+// view, 1 - exp(-G leaves / sin), all of it at grazing views.
 fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
     if site.thinned <= 0.0 || leaves <= 0.0 {
         return 0.0;
@@ -686,7 +685,7 @@ struct TerrainSlot {
 // where its maps show; materials without maps, or too far to show them,
 // lie flat at middle height. All its maps show while a repeat spans enough
 // pixels along the footprint's long side; its color map alone farther out,
-// as long as its filtering keeps it (decision 090).
+// as long as its filtering keeps it.
 fn terrain_slot(material: u32, weight: f32, site: TerrainSite) -> TerrainSlot {
     var slot: TerrainSlot;
     slot.texel = vec4<f32>(1.0, 1.0, 1.0, 0.5);
@@ -766,7 +765,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         color = mix(color, entry.color.rgb * albedo, slot.colored);
     }
     // Normal maps where their deflections still show, fading with the
-    // other maps (decision 098).
+    // other maps.
     let shown = terrain_relief(site.texel, entry.params.x) * slot.detail;
     if slot.detail > 0.0 {
         let mapping = terrain_mapping(entry, site.geometric);
@@ -806,8 +805,8 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
             turned = stable_normalize(mix(site.geometric, mapped, shown));
         }
     }
-    // The slopes normal maps no longer show roughen the surface instead
-    // (decision 098), as their variance widens its highlights.
+    // The slopes normal maps no longer show roughen the surface instead,
+    // as their variance widens its highlights.
     let lost = entry.relief.z * (1.0 - shown);
     if lost > 0.0 {
         let alpha = roughness * roughness;
@@ -819,8 +818,8 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     (*ground).full += weight * slot.detail;
     (*ground).colored += weight * slot.colored;
     if entry.canopy.w > 0.0 {
-        // Ground under cover shows as its canopy where blades thin out
-        // (decision 090): their color, rougher and shaded among the
+        // Ground under cover shows as its canopy where blades thin out:
+        // their color, rougher and shaded among the
         // blades, and lit as blades are, their sides toward the sun.
         let canopy = terrain_canopy(entry.canopy.w, site);
         let shown = terrain_canopy_shown(abs(dot(site.toward, site.geometric)));
@@ -881,8 +880,8 @@ fn terrain_ground(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainGro
 }
 
 // The terrain's sky map at terrain-local `local` once built: the share of
-// the sky the ground sees (red, decision 055), and its large-scale variety
-// (decision 090), hollows (green) and ridges (blue); before, all the sky
+// the sky the ground sees (red), and its large-scale variety,
+// hollows (green) and ridges (blue); before, all the sky
 // and level ground.
 fn terrain_sky_map(local: vec2<f32>) -> vec4<f32> {
     if terrain.directory.w == 0u {
@@ -902,7 +901,7 @@ fn terrain_bounce() -> vec3<f32> {
         + sky_average(vec3<f32>(0.0, 1.0, 0.0)) * (0.5 * lighting.zenith.w);
 }
 
-// One material's part in the ground's relief (decision 082): the meters it
+// One material's part in the ground's relief: the meters it
 // sinks the ground at most, already weighted and faded, and where its
 // maps' heights lie: their scale, layer and the derivatives they are read
 // with.
@@ -1054,11 +1053,11 @@ fn terrain_sink(a: TerrainReliefLayer, b: TerrainReliefLayer, point: vec2<f32>, 
     return sink;
 }
 
-// Where a fragment's view ray meets the ground's relief (decision 082):
+// Where a fragment's view ray meets the ground's relief:
 // within the relief distance, the ray marches down through the heights of
 // its two heaviest top-projected materials, each as deep as its relief
 // reaches and flattening toward the distance's end, and through the
-// tracks deformers pressed (decision 083), from the top of their rims to
+// tracks deformers pressed, from the top of their rims to
 // the bottom of the deepest; the ground shades from where the ray meets
 // them, sunk that deep.
 fn terrain_parallax(site: TerrainSite, shading: TerrainShadingLevel) -> TerrainRelief {
@@ -1184,7 +1183,7 @@ struct TerrainLook {
     ray_dx: vec3<f32>,
     ray_dy: vec3<f32>,
     raw: vec2<bool>,
-    // Whether the runtime virtual texture (decision 124) may stand in for
+    // Whether the runtime virtual texture may stand in for
     // the ground, and how it picks between two mips (`terrain_vt_texels`).
     textured: bool,
     dither: f32,
@@ -1203,7 +1202,7 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     let shading = terrain_shading_level(length(world - terrain.eye.xyz));
     let geometric = terrain_surface_normal(local, shading);
     // How the point moves per pixel on the plane of the terrain's smooth
-    // normal (decision 098): where the rays one pixel over meet that plane,
+    // normal: where the rays one pixel over meet that plane,
     // which change smoothly across the triangles drawn, so fading detail and
     // mipmaps change with them rather than from one triangle to the next.
     let facing = min(dot(geometric, ray), -0.015625);
@@ -1221,13 +1220,12 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     site.distance = away;
     site.toward = -ray;
     site.thinned = terrain_thinned(world, away);
-    // Sunk where the ground's relief and tracks show (decisions 082 and
-    // 083).
+    // Sunk where the ground's relief and tracks show.
     let relief = terrain_parallax(site, shading);
     site.world = relief.world;
     let view = u32(terrain.origin.w);
     // The runtime virtual texture's ground where its pages hold it, its
-    // detail and variety baked in (decision 124); computed here otherwise.
+    // detail and variety baked in; computed here otherwise.
     var ground: TerrainGround;
     var baked = false;
     if look.textured && view == 0u {
@@ -1251,7 +1249,7 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     var normal = ground.normal;
     var occlusion = ground.occlusion;
     if relief.deform > 0.0 {
-        // Tracks (decision 083) tilt the ground along their walls and rims,
+        // Tracks tilt the ground along their walls and rims,
         // and darken it where they press it down.
         let track = terrain_deform_track(site.world.xz);
         let slope = terrain_deform_slope(site.world.xz)
@@ -1279,13 +1277,13 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
     if view < 4u && !baked {
-        // Its large-scale variety (decision 090), as on the blades growing
+        // Its large-scale variety, as on the blades growing
         // on it.
         albedo *= ground_variety(sky_map.gb, world.xz, ground.vegetated);
     }
     albedo = terrain_view_albedo(albedo, normal, relative_spacing.w, cell);
     if view == 6u {
-        // The detail view (decision 090): green where all maps show, yellow
+        // The detail view: green where all maps show, yellow
         // where their color alone does, red where their means stand in,
         // blue where the ground shows as its cover's canopy.
         let mean = 1.0 - ground.colored;
@@ -1328,7 +1326,7 @@ fn terrain_point_seen(relative_spacing: vec4<f32>, cell: vec2<f32>, look: Terrai
     return point;
 }
 
-// Runtime virtual texture (decision 124): the ground of each textured
+// Runtime virtual texture: the ground of each textured
 // terrain baked into pages of VT_PAGE² texels, VT_BORDER more around them so
 // filtering never reaches a neighbor. Pages lie in sheets past the
 // materials' layers of their arrays (`terrain.vt_layout.y` the first), each
@@ -1670,7 +1668,7 @@ fn cs_terrain_vt_feedback(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Deferred shading (decision 123): terrain's visibility pass writes the
+// Deferred shading: terrain's visibility pass writes the
 // terrain and depth of each pixel it covers, then one pass per terrain
 // shades the pixels holding it, once each: forward, the 2x2 quads its small
 // triangles cut shaded half again as many fragments.
@@ -1831,7 +1829,7 @@ fn fs_terrain_temporal_lit(input: TerrainTemporalOutput) -> TemporalTargets {
         input.clip_position, input.previous);
 }
 
-// Reflection probe captures (decision 043): linear light before the grade.
+// Reflection probe captures: linear light before the grade.
 @fragment
 fn fs_terrain_probe(input: TerrainOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(shade_terrain(input).linear, 1.0);

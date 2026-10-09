@@ -1,4 +1,4 @@
-//! Skinned slots' joints (decision 036): each joint's node and inverse bind
+//! Skinned slots' joints: each joint's node and inverse bind
 //! matrix, uploaded when the frame's joints changed, from which the palette
 //! pass composes joint palettes every frame.
 

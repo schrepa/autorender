@@ -58,7 +58,7 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     clip_ids: Vec<String>,
-    /// Its streamed items (decision 086), if it has any.
+    /// Its streamed items, if it has any.
     streamed: Option<StreamSet>,
 }
 
@@ -156,7 +156,7 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    /// The clip of animation `id` (decision 035), for switching what an
+    /// The clip of animation `id`, for switching what an
     /// [`AnimationPlayer`] plays. Handles are weak, like texture handles.
     pub fn clip(&self, id: &str) -> Option<ClipHandle> {
         self.clip_ids
@@ -181,7 +181,7 @@ impl SceneInstance {
             .map(|(id, entity)| (id.as_str(), *entity))
     }
 
-    /// The set its streamed items (decision 086) registered with
+    /// The set its streamed items registered with
     /// [`WorldCells`] as, if it has any. Their entities exist while their
     /// cells are loaded; [`Self::entity`] does not find them.
     pub fn streamed(&self) -> Option<StreamSet> {
@@ -229,7 +229,7 @@ impl SceneDocument {
     }
 
     /// [`Self::instantiate`] with the contents of the files the document
-    /// references (decision 030); a missing or invalid one fails first.
+    /// references; a missing or invalid one fails first.
     pub fn instantiate_with(
         &self,
         world: &mut World,
@@ -281,7 +281,7 @@ impl SceneDocument {
         if let Some(environment) = prepared.environment {
             environment.apply_all(world);
         }
-        // Streamed items (decision 086) load from the next extraction on.
+        // Streamed items load from the next extraction on.
         let streamed = (!prepared.streamed.items.is_empty()).then(|| {
             let scene = Arc::new(StreamedScene {
                 lookups,
@@ -294,7 +294,7 @@ impl SceneDocument {
                 .iter()
                 .enumerate()
                 .map(|(item, prepared)| StreamedItem {
-                    // Removals persist by `scene/root` (decision 087).
+                    // Removals persist by `scene/root`.
                     id: Some(Arc::from(format!(
                         "{}/{}",
                         self.id, scene.prepared.entities[prepared.entities[0]].source.id
@@ -497,7 +497,7 @@ fn spawn_entity(
     if let Some(grounded) = source.grounded {
         entity.insert(grounded);
     }
-    // Agents (decision 089) move each tick: they present smoothly.
+    // Agents move each tick: they present smoothly.
     if let Some(agent) = source.nav_agent {
         entity.insert((agent, InterpolateTransform));
     }
@@ -556,7 +556,7 @@ fn attach_rigs<'a>(
     }
 }
 
-/// An instance's streamed entities (decision 086), ready to spawn item by
+/// An instance's streamed entities, ready to spawn item by
 /// item with its assets' handles.
 struct StreamedScene {
     lookups: Lookups,

@@ -1,5 +1,5 @@
 //! Authored materials: color, surface and opacity, and from version 8 the
-//! glTF 2.0 metallic-roughness texture maps (decision 031).
+//! glTF 2.0 metallic-roughness texture maps.
 
 use engine_core::{
     AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, Transmission, UvTransform,
@@ -12,7 +12,7 @@ use crate::{SceneError, SceneSurface};
 /// One named material; color channels are linear values in `[0, 1]` and
 /// alpha is 1. `opacity` below 1 (version 6) draws it transparent unless
 /// `alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive
-/// color, alpha modes and double-sided surfaces (decision 031); `surface`
+/// color, alpha modes and double-sided surfaces; `surface`
 /// roughness and metalness are glTF's roughness and metallic factors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -29,12 +29,12 @@ pub struct SceneMaterial {
     /// the texture's edges before version 8 and repeat from version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub texture: Option<SceneMap>,
-    /// How the surface responds to light beyond its color (decision 019).
+    /// How the surface responds to light beyond its color.
     /// Requires version 5; without it the material is matte.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneSurface>,
-    /// The fraction of light behind it the surface covers, in `(0, 1]`
-    /// (decision 026). Below 1 it draws transparent, blending in any order,
+    /// The fraction of light behind it the surface covers, in `(0, 1]`.
+    /// Below 1 it draws transparent, blending in any order,
     /// writing no depth and casting no shadow. Requires version 6. With
     /// `alpha_mode` `mask` it is the alpha the cutoff tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -75,7 +75,7 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub double_sided: Option<bool>,
     /// Version 8: the share of light passing through the surface instead of
-    /// diffusing off it, in `[0, 1]`, tinted by its color (decision 038,
+    /// diffusing off it, in `[0, 1]`, tinted by its color (
     /// glTF `KHR_materials_transmission`). Transmissive materials draw in
     /// the transparent pass; the environment's `refraction` bends what shows
     /// through them.
@@ -93,24 +93,23 @@ pub struct SceneMaterial {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub thickness: Option<f32>,
     /// Version 9: lays the maps from the world's axes, one repeat every
-    /// this many meters, instead of by texture coordinates (decision 093):
+    /// this many meters, instead of by texture coordinates:
     /// no seams and one texel density at any size, for surfaces that stay
     /// where they are, such as rocks. In `(0, 10000]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
     pub world_tiling: Option<f32>,
     /// Version 9: a layer settling on faces turned up, such as moss,
-    /// lichen, dust or snow (decision 093).
+    /// lichen, dust or snow.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top: Option<SceneTopLayer>,
-    /// Version 9: the ground staining the base of objects terrains place
-    /// (decision 096).
+    /// Version 9: the ground staining the base of objects terrains place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounding: Option<SceneGrounding>,
 }
 
-/// The ground staining the base of an object standing on terrain (decision
-/// 096): the linear color its color is multiplied by where it meets the
+/// The ground staining the base of an object standing on terrain:
+/// the linear color its color is multiplied by where it meets the
 /// ground, and how many units of its mesh up the stain fades out, from the
 /// ground's slope under it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -122,7 +121,7 @@ pub struct SceneGrounding {
     pub height: f32,
 }
 
-/// A layer settling on a material's faces turned up (decision 093): its
+/// A layer settling on a material's faces turned up: its
 /// linear color, how far from straight up it reaches (0 covers nothing, 1
 /// every face turned up at all) and its roughness (default 0.85).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -195,7 +194,7 @@ pub struct SceneTextureMap {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<[f32; 2]>,
     /// The texture coordinates the map reads: 0, the mesh's first (the
-    /// default), or 1, its second (decision 034).
+    /// default), or 1, its second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tex_coord: Option<u32>,
 }

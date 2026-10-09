@@ -1,4 +1,4 @@
-// Clouds (decision 084): a layer of cumulus marched from the camera into a
+// Clouds: a layer of cumulus marched from the camera into a
 // dome of the sky above it. The dome's texel (u, v) looks toward azimuth
 // 2 pi u and up by the elevation mix(-asin(HORIZON), pi / 2, v), every row
 // as many degrees (`scene.wgsl`'s `cloud_dome_uv`); each holds the light
@@ -25,7 +25,7 @@ struct CloudUniform {
     // clouds fade into.
     zenith: vec4<f32>,
     horizon: vec4<f32>,
-    // The shadows' grid (decision 091): its first cell (world cell indices
+    // The shadows' grid: its first cell (world cell indices
     // along x and z), meters a cell and cells along a side, each cell kept
     // in the slot of its index modulo the cells; then the first row of
     // slots this dispatch marches and the rows between those it marches.
@@ -41,7 +41,7 @@ struct CloudUniform {
 // its base, two cells (along x) a word in half floats.
 @group(0) @binding(5) var<storage, read_write> shadow_cells: array<u32>;
 
-// Clouds in the view (decision 095): its unjittered inverse
+// Clouds in the view: its unjittered inverse
 // view-projection; the marched blocks along x and y, the pixels along a
 // block's side, and whether rays seeing the sky march (1) or leave it to
 // the dome (0).
@@ -69,7 +69,7 @@ const TAU: f32 = 6.2831853;
 const FEWEST_STEPS: f32 = 24.0;
 const MOST_STEPS: f32 = 64.0;
 const STEP_LENGTH: f32 = 150.0;
-// Near the eye (inside the layer, decision 095) steps start this many
+// Near the eye (inside the layer) steps start this many
 // meters long and grow with the distance, by this share of it, up to the
 // ray's even step; no ray takes more than this many.
 const NEAREST_STEP: f32 = 25.0;
@@ -269,7 +269,7 @@ fn march(direction: vec3<f32>, texel: vec2<u32>, limit: f32) -> Marched {
     }
     // A step every few hundred meters, longer on the longest rays, and
     // near the eye a few tens of meters, growing with the distance as the
-    // clouds' detail on screen shrinks (decision 095); each ray starts its
+    // clouds' detail on screen shrinks; each ray starts its
     // steps at its own offset, which hides their banding.
     let even = (far - near) / clamp((far - near) / STEP_LENGTH, FEWEST_STEPS, MOST_STEPS);
     let jitter = hash3(vec3<u32>(texel, 17u)).x;
@@ -376,7 +376,7 @@ fn march_clouds(@builtin(global_invocation_id) id: vec3<u32>) {
         march(dome_direction(uv), vec2<u32>(id.x, row), REACH).cloud);
 }
 
-// The view's clouds (decision 095): each block's ray, through its center,
+// The view's clouds: each block's ray, through its center,
 // marched up to the farthest of its pixels the scene shows; blocks seeing
 // the sky march to the clouds' reach, or leave them to the dome while the
 // camera is under the layer.

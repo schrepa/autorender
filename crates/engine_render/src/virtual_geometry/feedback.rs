@@ -1,4 +1,4 @@
-//! What selection reads back a few frames late (decision 044): the counts
+//! What selection reads back a few frames late: the counts
 //! of clusters and triangles each view selected and of entries dropped for
 //! want of room, and the groups it used and would refine into, whose pages
 //! streaming loads.

@@ -1,6 +1,6 @@
 //! The layer stack: procedural noise with erosion, imported heightmaps,
-//! stamps, what an erosion bake wears away (decision 068), the channels a
-//! hydrology bake carves (decision 066) and roads (decision 069), applied
+//! stamps, what an erosion bake wears away, the channels a
+//! hydrology bake carves and roads, applied
 //! in order to every sample; later layers win.
 
 use std::sync::Arc;
@@ -375,7 +375,7 @@ pub struct HeightmapLayer {
     /// The file the image was read from, for authoring tools.
     pub uri: Option<String>,
     /// Where its heights came from and the credit their data requires, as
-    /// the import tool records them (decision 070).
+    /// the import tool records them.
     pub source: Option<String>,
     pub attribution: Option<String>,
 }
@@ -429,12 +429,12 @@ pub enum Layer {
     Heightmap(HeightmapLayer),
     Stamp(Stamp),
     /// Where water runs over the layers before it and the channels it
-    /// carves (decision 066): nothing until baked.
+    /// carves: nothing until baked.
     Hydrology(HydrologyStage),
-    /// What rivers and creep wear away from the layers before it (decision
-    /// 068): nothing until baked.
+    /// What rivers and creep wear away from the layers before it:
+    /// nothing until baked.
     Erosion(ErosionStage),
-    /// A road leveling the layers before it to its profile (decision 069):
+    /// A road leveling the layers before it to its profile:
     /// nothing until baked.
     Path(PathStage),
 }
@@ -589,7 +589,7 @@ impl Sums {
     }
 }
 
-/// [`Sums`] of four samples (decision 121), lane by lane its operations.
+/// [`Sums`] of four samples, lane by lane its operations.
 struct Sums4 {
     rolling: Vec4,
     ridged: Vec4,
@@ -847,7 +847,7 @@ impl NoiseTables {
         ]);
     }
 
-    /// [`Self::coarse`] at four grid points of row `z` (decision 121), lane
+    /// [`Self::coarse`] at four grid points of row `z`, lane
     /// by lane its operations: the same bits, into `out`, the four states
     /// one after another.
     pub(crate) fn coarse4(
@@ -965,7 +965,7 @@ impl NoiseTables {
         params.offset + params.height * shaped + state[2]
     }
 
-    /// [`Self::finish`] at four samples of row `z` (decision 121), from
+    /// [`Self::finish`] at four samples of row `z`, from
     /// their states value by value in lanes: the same bits.
     #[inline]
     pub(crate) fn finish4(
@@ -1033,14 +1033,14 @@ fn blend_gradient4(rolling: Vec4, ridged: Vec4, ridges: f32) -> Vec4 {
 pub struct Layers {
     layers: Vec<Layer>,
     tables: Vec<Option<NoiseTables>>,
-    // As a terrain's surroundings draw them (decision 094): a point reads
+    // As a terrain's surroundings draw them: a point reads
     // what the stack holds `offset` meters further along x and z, and
     // every layer but noise fades out beyond `fade`'s region.
     pub(crate) offset: Vec2,
     pub(crate) fade: Option<Fade>,
 }
 
-/// Where a stack's layers other than noise show (decision 094): all of
+/// Where a stack's layers other than noise show: all of
 /// them from `low` to `high` (the stack's own ground), fading out over
 /// `blend` meters beyond.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1171,8 +1171,8 @@ impl Layers {
     }
 
     /// Whether its tiles may hold holes: it stamps one, or a road may
-    /// tunnel (decision 073). Renderers prepare to draw them before any
-    /// tile does (decision 099).
+    /// tunnel. Renderers prepare to draw them before any
+    /// tile does.
     pub fn may_hole(&self) -> bool {
         self.layers.iter().any(|layer| match layer {
             Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
@@ -1181,14 +1181,14 @@ impl Layers {
         })
     }
 
-    /// Whether a hydrology layer gives it water once baked (decision 067).
+    /// Whether a hydrology layer gives it water once baked.
     pub fn has_hydrology(&self) -> bool {
         self.layers
             .iter()
             .any(|layer| matches!(layer, Layer::Hydrology(_)))
     }
 
-    /// These layers as a terrain's surroundings draw them (decision 094):
+    /// These layers as a terrain's surroundings draw them:
     /// a point reads what this stack holds `offset` meters further along x
     /// and z, and every layer but noise (stamps, heightmaps, bakes and
     /// roads, and the masks they feed) shows from `low` to `high` of this
@@ -1209,7 +1209,7 @@ impl Layers {
     }
 
     /// How much of the layers other than noise shows at `(x, z)` of this
-    /// stack's ground (decision 094): all of them without a fade.
+    /// stack's ground: all of them without a fade.
     pub(crate) fn shown(&self, x: f32, z: f32) -> f32 {
         let Some(fade) = self.fade else {
             return 1.0;
@@ -1230,7 +1230,7 @@ impl Layers {
     }
 
     /// The samples `spacing` meters apart the stack's offset spans along x
-    /// and z (decision 094).
+    /// and z.
     pub(crate) fn offset_samples(&self, spacing: f32) -> [i64; 2] {
         [
             (self.offset.x / spacing).round() as i64,
@@ -1238,7 +1238,7 @@ impl Layers {
         ]
     }
 
-    /// These layers with `stamps` over them (decision 080): the same layers,
+    /// These layers with `stamps` over them: the same layers,
     /// bakes and noise tables, and the stamps validated as [`Self::new`]
     /// validates them.
     pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, LayerError> {
@@ -1290,7 +1290,7 @@ impl Layers {
             })
     }
 
-    /// The rivers of hydrology layer `index`, once baked (decision 113).
+    /// The rivers of hydrology layer `index`, once baked.
     pub(crate) fn rivers_of(&self, index: usize) -> Option<&crate::Rivers> {
         match self.layers.get(index) {
             Some(Layer::Hydrology(HydrologyStage {
@@ -1303,7 +1303,7 @@ impl Layers {
     /// The baked road whose edge lies nearest terrain-local `(x, z)`: meters
     /// from its line and half its width; far beyond every path's masks'
     /// reach.
-    /// Its roads' baked profiles, in layer order (decision 118).
+    /// Its roads' baked profiles, in layer order.
     pub(crate) fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
         self.layers.iter().filter_map(|layer| match layer {
             Layer::Path(PathStage {
@@ -1338,7 +1338,7 @@ impl Layers {
         self.tables.get(index).and_then(Option::as_ref)
     }
 
-    /// Whether a hole stamp or a tunnel's portal (decision 073) reaches the
+    /// Whether a hole stamp or a tunnel's portal reaches the
     /// square from `min` to `max`.
     pub(crate) fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
         self.layers.iter().any(|layer| match layer {
@@ -1380,8 +1380,8 @@ impl Layers {
     /// Applies layer `index` other than noise to `row`, heights at
     /// terrain-local x positions `xs` and z position `z`; layers that reach
     /// no point between `min` and `max` are skipped. Hydrology layers' rivers
-    /// read the row through `span`'s row, where a tile has one (decision
-    /// 113), as they read sample by sample.
+    /// read the row through `span`'s row, where a tile has one,
+    /// as they read sample by sample.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_local(
         &self,
@@ -1404,7 +1404,7 @@ impl Layers {
                     return;
                 }
                 for (height, &x) in row.iter_mut().zip(xs) {
-                    // Bridges (decision 072) leave the ground under them.
+                    // Bridges leave the ground under them.
                     if let Some((distance, road, false)) = profile.nearest(Vec2::new(x, z)) {
                         *height += (road - *height) * profile.weight(distance) * self.shown(x, z);
                     }
@@ -1426,7 +1426,7 @@ impl Layers {
                 for (height, &x) in row.iter_mut().zip(xs) {
                     *height -= baked.carve_at(x, z, level) * self.shown(x, z);
                 }
-                // Rivers (decision 092) cut their beds below their water and
+                // Rivers cut their beds below their water and
                 // ease their banks to the ground at every level.
                 let (low, high) = baked.rivers.bounds();
                 if baked.rivers.is_empty()
@@ -1506,7 +1506,7 @@ fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }
 
-// Binary encoding (decision 110).
+// Binary encoding.
 use crate::codec::{Codec, CodecError, Reader, Writer, record};
 
 impl Codec for Blend {

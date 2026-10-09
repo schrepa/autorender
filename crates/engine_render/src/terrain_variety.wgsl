@@ -1,9 +1,9 @@
-// Ground variety (decision 090): the tint a terrain's large-scale map gives
+// Ground variety: the tint a terrain's large-scale map gives
 // its ground at every distance and the blades growing on it, the same in
 // both (`meshes/terrain.wgsl`, `cover_grow.wgsl`). The map holds where the
 // ground lies in a hollow (0.5 on level ground, toward 1 in hollows) and on
 // a ridge (0.5 level, toward 1 on ridges); broad patches vary it further.
-// Ground cover's density, which both read too (decision 098), follows.
+// Ground cover's density, which both read too, follows.
 
 fn variety_hash(cell: vec2<i32>) -> f32 {
     var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u);
@@ -38,10 +38,10 @@ fn ground_variety(map: vec2<f32>, world: vec2<f32>, vegetated: f32) -> vec3<f32>
     return mix(weather, growth, vegetated);
 }
 
-// Ground cover's density (decision 056) as a share of its densest, `away`
+// Ground cover's density as a share of its densest, `away`
 // meters from the eye, for cover growing densest within `radius` and in
-// tiers out to `reach` (0 without tiers; decision 090), the same for its
-// blades and the canopy shown where they thin (decision 098): all of it
+// tiers out to `reach` (0 without tiers), the same for its
+// blades and the canopy shown where they thin: all of it
 // within a fifth of the radius, then the fifth over the distance; past the
 // radius, a fifth of the radius's cube over the distance's, which meets it
 // there. Without tiers it thins to none over the radius's outer half; with
@@ -61,14 +61,14 @@ fn cover_share(away: f32, radius: f32, reach: f32, end: f32) -> f32 {
 }
 
 // Where cover's tiers end at world `world` (x and z): their reach, drawn in
-// by up to a fifth in patches tens of meters across (decision 098), so
+// by up to a fifth in patches tens of meters across, so
 // cover ends raggedly instead of in a circle around the eye.
 fn cover_end(world: vec2<f32>, reach: f32) -> f32 {
     return reach * (0.8 + 0.2 * variety_noise(world / 37.0 + vec2<f32>(5.3, -8.1)));
 }
 
 // How much of the leaves the densest cover would show blades growing at
-// `share` of it, `away` meters from the eye, show (decision 098): blades
+// `share` of it, `away` meters from the eye, show: blades
 // widen as they thin within the radius, so there all of it, and past it
 // they thin faster than they widen. The ground shows the rest as its
 // canopy.

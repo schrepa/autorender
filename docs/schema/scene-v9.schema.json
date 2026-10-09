@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SceneDocument",
-  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget (decision 029); bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
+  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget; bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
   "type": "object",
   "properties": {
     "animations": {
-      "description": "Keyframed clips that entity `animation` players play (decision 035).\nVersion 8.",
+      "description": "Keyframed clips that entity `animation` players play.\nVersion 8.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneAnimation"
@@ -36,7 +36,7 @@
       }
     },
     "environment": {
-      "description": "The scene's atmosphere and rendering effects (decision 022). Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
+      "description": "The scene's atmosphere and rendering effects. Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
       "anyOf": [
         {
           "$ref": "#/$defs/SceneEnvironment"
@@ -77,14 +77,14 @@
       "minimum": 0
     },
     "skins": {
-      "description": "Joint lists that deform skinned meshes (decision 036). Version 8.",
+      "description": "Joint lists that deform skinned meshes. Version 8.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneSkin"
       }
     },
     "streamed": {
-      "description": "Entities that exist only near the camera (decision 086): each root\nwith its descendants is one item, which world streaming spawns when\nits cell comes within range and despawns when it leaves. Parents,\nanimation targets and skin joints stay within an item; IDs differ\nfrom `entities`'. No terrains. Requires version 9.",
+      "description": "Entities that exist only near the camera: each root\nwith its descendants is one item, which world streaming spawns when\nits cell comes within range and despawns when it leaves. Parents,\nanimation targets and skin joints stay within an item; IDs differ\nfrom `entities`'. No terrains. Requires version 9.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneObject"
@@ -125,7 +125,7 @@
       ]
     },
     "AuthoredPlacement": {
-      "description": "An object an author stands on the surface (decision 085): its asset, by\nID of the surface's assets; its base's terrain-local point `[x, z]`,\nwhere it stands on the ground; its turn about the vertical (degrees);\nits scale (0.001 to 1000); how deep its base sinks, in meters at scale\n1; how far it leans with the ground (0 upright, 1 along its normal);\nand the pyramid level whose tiles hold it (0, the finest, by default;\ncoarser for objects seen from farther away).",
+      "description": "An object an author stands on the surface: its asset, by\nID of the surface's assets; its base's terrain-local point `[x, z]`,\nwhere it stands on the ground; its turn about the vertical (degrees);\nits scale (0.001 to 1000); how deep its base sinks, in meters at scale\n1; how far it leans with the ground (0 upright, 1 along its normal);\nand the pyramid level whose tiles hold it (0, the finest, by default;\ncoarser for objects seen from farther away).",
       "type": "object",
       "properties": {
         "align": {
@@ -229,7 +229,7 @@
       ]
     },
     "Cover": {
-      "description": "The cover growing where a surface material lies (decision 056): blades\nper square meter where the material lies alone, the shortest and\ntallest blades and their width at the root (meters), the linear color\nof their tips (roots take the ground's), and how far they lean in the\nwind (0 stiff, 1 the most).",
+      "description": "The cover growing where a surface material lies: blades\nper square meter where the material lies alone, the shortest and\ntallest blades and their width at the root (meters), the linear color\nof their tips (roots take the ground's), and how far they lean in the\nwind (0 stiff, 1 the most).",
       "type": "object",
       "properties": {
         "color": {
@@ -284,7 +284,7 @@
       "additionalProperties": false
     },
     "Deformer": {
-      "description": "Presses tracks into deformable ground (decision 083) as a scene version\n9 `deformer` field: each fixed tick, while its entity's world position\nlies at most `contact` meters above the terrain under it (or below it),\nit presses a footprint `radius` meters across, from where it pressed the\ntick before, sinking ground as deformable as that `depth` meters along\nits middle (deeper by however far it lies below the ground), round\n(`flatness` 0, deepest along its middle like a wheel's rut) to flat (1,\na foot's or a plate's level floor). Put it where an object meets the\nground: a wheel's or a foot's lowest point. Radius 0.01 to 50, depth\nand contact 0 to 10, flatness 0 to 1.",
+      "description": "Presses tracks into deformable ground as a scene version\n9 `deformer` field: each fixed tick, while its entity's world position\nlies at most `contact` meters above the terrain under it (or below it),\nit presses a footprint `radius` meters across, from where it pressed the\ntick before, sinking ground as deformable as that `depth` meters along\nits middle (deeper by however far it lies below the ground), round\n(`flatness` 0, deepest along its middle like a wheel's rut) to flat (1,\na foot's or a plate's level floor). Put it where an object meets the\nground: a wheel's or a foot's lowest point. Radius 0.01 to 50, depth\nand contact 0 to 10, flatness 0 to 1.",
       "type": "object",
       "properties": {
         "contact": {
@@ -319,7 +319,7 @@
       "additionalProperties": false
     },
     "ErosionLayer": {
-      "description": "A layer that erodes the layers below it (decision 068).",
+      "description": "A layer that erodes the layers below it.",
       "type": "object",
       "properties": {
         "creep": {
@@ -358,7 +358,7 @@
       "additionalProperties": false
     },
     "FarPlacement": {
-      "description": "Where a placement layer also stands far away (decision 061): on the\ntiles of `level`, coarser than its own, a `share` (0 to 1] of its\nobjects, the candidates ranked first, where its own level's tiles are\nnot resident.",
+      "description": "Where a placement layer also stands far away: on the\ntiles of `level`, coarser than its own, a `share` (0 to 1] of its\nobjects, the candidates ranked first, where its own level's tiles are\nnot resident.",
       "type": "object",
       "properties": {
         "level": {
@@ -381,7 +381,7 @@
       ]
     },
     "Grounded": {
-      "description": "Stands its entity on the terrain (decision 086): its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too (decision 111). Requires\nversion 9.",
+      "description": "Stands its entity on the terrain: its translation's y is\nkept `offset` meters above the ground under its x and z. Unparented\nentities only; without a resident tile under it (or over a hole) the\nentity keeps its translation, as walking navigation agents keep theirs:\ntheir walks stand them, on bridges' decks too. Requires\nversion 9.",
       "type": "object",
       "properties": {
         "offset": {
@@ -393,7 +393,7 @@
       "additionalProperties": false
     },
     "HydrologyLayer": {
-      "description": "A layer that bakes where water runs over the layers below it and carves\nchannels into them (decision 066).",
+      "description": "A layer that bakes where water runs over the layers below it and carves\nchannels into them.",
       "type": "object",
       "properties": {
         "channel_area": {
@@ -435,7 +435,7 @@
           "minimum": 0.1
         },
         "stream_area": {
-          "description": "Square meters of upstream area where streams begin (decision 097):\nchannels draining less than `channel_area` run as streams down to\nthe rivers they join, their width falling with the area they drain\nbelow a river's at its head and their depth with its square root,\ncut a little into the ground. 0, the default, has none, as has\n`channel_area` or more; at most 1e10.",
+          "description": "Square meters of upstream area where streams begin:\nchannels draining less than `channel_area` run as streams down to\nthe rivers they join, their width falling with the area they drain\nbelow a river's at its head and their depth with its square root,\ncut a little into the ground. 0, the default, has none, as has\n`channel_area` or more; at most 1e10.",
           "type": "number",
           "format": "float",
           "maximum": 10000000000.0,
@@ -452,7 +452,7 @@
       "additionalProperties": false
     },
     "Interior": {
-      "description": "An interior's light (decision 079): the shares of the sky's light and of\nthe sun's that reach surfaces inside its probe's box, each 0 to 1,\nblending in over the probe's blend distance inside its faces. Requires\nversion 9.",
+      "description": "An interior's light: the shares of the sky's light and of\nthe sun's that reach surfaces inside its probe's box, each 0 to 1,\nblending in over the probe's blend distance inside its faces. Requires\nversion 9.",
       "type": "object",
       "properties": {
         "sky": {
@@ -549,7 +549,7 @@
           ]
         },
         {
-          "description": "A ramp over the base-10 logarithm of the area draining through the\nground, in square meters, as the terrain's hydrology bake found it\n(decision 066): channels begin near its channel area. 0 without one.",
+          "description": "A ramp over the base-10 logarithm of the area draining through the\nground, in square meters, as the terrain's hydrology bake found it:\nchannels begin near its channel area. 0 without one.",
           "type": "object",
           "properties": {
             "flow": {
@@ -606,7 +606,7 @@
           ]
         },
         {
-          "description": "A ramp over meters from the nearest river's edge (decision 092),\nnegative in its water: `[2, 0]` covers river beds with two meters of\nbanks. Beyond every river's reach (sixteen meters past its edge),\nand without rivers, it reads 1e9.",
+          "description": "A ramp over meters from the nearest river's edge,\nnegative in its water: `[2, 0]` covers river beds with two meters of\nbanks. Beyond every river's reach (sixteen meters past its edge),\nand without rivers, it reads 1e9.",
           "type": "object",
           "properties": {
             "river": {
@@ -625,7 +625,7 @@
           ]
         },
         {
-          "description": "A ramp over meters from the nearest road's edge (decision 069),\nnegative on roads: `[1, 0]` covers roads with a meter of soft edge.\nIt averages the ramp across each sample's footprint, so roads\nnarrower than coarse levels' samples fade there instead of breaking\ninto dashes. Further than 32 meters beyond every road's shoulders,\nand without roads, it reads 1e9.",
+          "description": "A ramp over meters from the nearest road's edge,\nnegative on roads: `[1, 0]` covers roads with a meter of soft edge.\nIt averages the ramp across each sample's footprint, so roads\nnarrower than coarse levels' samples fade there instead of breaking\ninto dashes. Further than 32 meters beyond every road's shoulders,\nand without roads, it reads 1e9.",
           "type": "object",
           "properties": {
             "path": {
@@ -844,7 +844,7 @@
           ]
         },
         {
-          "description": "A virtual mesh file (`EVG1`, decision 044) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
+          "description": "A virtual mesh file (`EVG1`) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
           "type": "object",
           "properties": {
             "fallback_triangles": {
@@ -875,7 +875,7 @@
       ]
     },
     "NavAgent": {
-      "description": "Walks its entity over the terrain under it to `destination`, world x\nand z (decision 089): `speed` meters a second (0.01 to 100), turning at\nmost `turn` degrees a second (1 to 10000), its origin `offset` meters\nabove the ground; around obstacles within `radius` meters (0 to 100),\nup steps no steeper than `max_slope` (rise per meter, 0.01 to 10),\nthrough water no deeper than `max_water` meters (0 to 100), over the\npyramid level `level` (0 the finest, up to 15). Changing the\ndestination searches anew; none stands still. Requires version 9.",
+      "description": "Walks its entity over the terrain under it to `destination`, world x\nand z: `speed` meters a second (0.01 to 100), turning at\nmost `turn` degrees a second (1 to 10000), its origin `offset` meters\nabove the ground; around obstacles within `radius` meters (0 to 100),\nup steps no steeper than `max_slope` (rise per meter, 0.01 to 10),\nthrough water no deeper than `max_water` meters (0 to 100), over the\npyramid level `level` (0 the finest, up to 15). Changing the\ndestination searches anew; none stands still. Requires version 9.",
       "type": "object",
       "properties": {
         "destination": {
@@ -1060,11 +1060,11 @@
       ]
     },
     "PathLayer": {
-      "description": "A road or track along the ground (decision 069).",
+      "description": "A road or track along the ground.",
       "type": "object",
       "properties": {
         "bridge_fill": {
-          "description": "Meters the road would fill above the ground beyond which it bridges\ninstead, as it does over rivers and lakes (decision 072), 0 to 1000;\n0 never bridges.",
+          "description": "Meters the road would fill above the ground beyond which it bridges\ninstead, as it does over rivers and lakes, 0 to 1000;\n0 never bridges.",
           "type": "number",
           "format": "float",
           "default": 4.0,
@@ -1101,7 +1101,7 @@
           "minimum": 0.0
         },
         "tunnel_cut": {
-          "description": "Meters the road would cut into the ground beyond which it tunnels\ninstead (decision 073), 0 to 2000; 0 never tunnels.",
+          "description": "Meters the road would cut into the ground beyond which it tunnels\ninstead, 0 to 2000; 0 never tunnels.",
           "type": "number",
           "format": "float",
           "default": 25.0,
@@ -1142,7 +1142,7 @@
       ]
     },
     "PlacementLayer": {
-      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how far they turn to face\ndown its slope, their x across it and z down it (0 any way, 1 straight\ndown it); how deep they sink, in meters at scale 1, below the lowest\nground within their bed, how far around them they rest on (meters at\nscale 1, 0 by default: the ground at their point; decision 096), so\nblocks on steep slopes stand in them instead of hanging over them; the\npyramid level whose tiles hold its candidates (0, the finest, by\ndefault); and where it also stands far away.",
+      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how far they turn to face\ndown its slope, their x across it and z down it (0 any way, 1 straight\ndown it); how deep they sink, in meters at scale 1, below the lowest\nground within their bed, how far around them they rest on (meters at\nscale 1, 0 by default: the ground at their point), so\nblocks on steep slopes stand in them instead of hanging over them; the\npyramid level whose tiles hold its candidates (0, the finest, by\ndefault); and where it also stands far away.",
       "type": "object",
       "properties": {
         "align": {
@@ -1271,7 +1271,7 @@
       ]
     },
     "SceneAmbientOcclusion": {
-      "description": "Ambient occlusion (decision 021); an intensity of 0 turns it off.",
+      "description": "Ambient occlusion; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -1335,7 +1335,7 @@
       ]
     },
     "SceneAtmosphere": {
-      "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
+      "description": "Sun, sky, fog and grade: a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
       "type": "object",
       "properties": {
         "aerial_color": {
@@ -1372,7 +1372,7 @@
           "format": "float"
         },
         "aerial_start": {
-          "description": "Aerial perspective (decision 053), version 9: beyond this distance,\nair of `aerial_density` per unit at height zero (0: off), thinning by\n`aerial_falloff` per unit up, dims toward `aerial_color` and, toward\nthe sun, an `aerial_glow` of its color.",
+          "description": "Aerial perspective, version 9: beyond this distance,\nair of `aerial_density` per unit at height zero (0: off), thinning by\n`aerial_falloff` per unit up, dims toward `aerial_color` and, toward\nthe sun, an `aerial_glow` of its color.",
           "type": [
             "number",
             "null"
@@ -1388,7 +1388,7 @@
           "format": "float"
         },
         "contrast": {
-          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6\n(decision 027), like the grade fields below.",
+          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6,\nlike the grade fields below.",
           "type": [
             "number",
             "null"
@@ -1574,7 +1574,7 @@
       "additionalProperties": false
     },
     "SceneBloom": {
-      "description": "Bloom (decision 021); an intensity of 0 turns it off.",
+      "description": "Bloom; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -1722,7 +1722,7 @@
       ]
     },
     "SceneClouds": {
-      "description": "The cloud layer: whether it draws; how much of the sky it covers (0,\nclear, to 1, overcast); the world height of its base and how thick it\nis (meters, base -10000 to 30000, thickness 50 to 10000); how dense its\nclouds are (0.01 to 4); the wind it drifts in (meters per second along x\nand z, each -100 to 100); the meters across its largest shapes (200 to\n50000); the seed of its shapes; how much of the sun's light its shadows\ntake from the ground (0 to 1); the dome's texels around the horizon\n(256 to 4096, a multiple of 64; a quarter as many from the horizon up);\nthe frames over which ordinary frames march the whole dome (1 to 64);\nand whether the view marches them a ray per block of `view_block`\npixels along a side (1 to 16) after the opaque scene (decision 095):\nthen they stand in front of whatever lies beyond them, all around a\ncamera inside the layer and below one above it, and the sky's dome\nshows them behind every surface only while the camera is under the\nlayer. Opt-in: a scene without a `clouds` section has none. Requires\nversion 9.",
+      "description": "The cloud layer: whether it draws; how much of the sky it covers (0,\nclear, to 1, overcast); the world height of its base and how thick it\nis (meters, base -10000 to 30000, thickness 50 to 10000); how dense its\nclouds are (0.01 to 4); the wind it drifts in (meters per second along x\nand z, each -100 to 100); the meters across its largest shapes (200 to\n50000); the seed of its shapes; how much of the sun's light its shadows\ntake from the ground (0 to 1); the dome's texels around the horizon\n(256 to 4096, a multiple of 64; a quarter as many from the horizon up);\nthe frames over which ordinary frames march the whole dome (1 to 64);\nand whether the view marches them a ray per block of `view_block`\npixels along a side (1 to 16) after the opaque scene:\nthen they stand in front of whatever lies beyond them, all around a\ncamera inside the layer and below one above it, and the sky's dome\nshows them behind every surface only while the camera is under the\nlayer. Opt-in: a scene without a `clouds` section has none. Requires\nversion 9.",
       "type": "object",
       "properties": {
         "base": {
@@ -1898,7 +1898,7 @@
       ]
     },
     "SceneContactShadows": {
-      "description": "Contact shadow settings: whether they trace, how far each ray reaches\ntoward the sun in meters (0.05 to 4), how much of the sun's light a hit\ntakes away (0 to 1; 0 turns them off), and the meters from the camera\nwithin which surfaces trace, their shadows fading out over its last\nthird (decision 098; 1 to 1000). Requires version 9.",
+      "description": "Contact shadow settings: whether they trace, how far each ray reaches\ntoward the sun in meters (0.05 to 4), how much of the sun's light a hit\ntakes away (0 to 1; 0 turns them off), and the meters from the camera\nwithin which surfaces trace, their shadows fading out over its last\nthird (1 to 1000). Requires version 9.",
       "type": "object",
       "properties": {
         "distance": {
@@ -1930,7 +1930,7 @@
       "additionalProperties": false
     },
     "SceneDecal": {
-      "description": "A decal on this entity (decision 039). Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
+      "description": "A decal on this entity. Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
       "properties": {
         "blend": {
@@ -1982,7 +1982,7 @@
       ]
     },
     "SceneDecals": {
-      "description": "Decal settings (decision 039). Requires version 8.",
+      "description": "Decal settings. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2002,7 +2002,7 @@
       "additionalProperties": false
     },
     "SceneDeformation": {
-      "description": "Runtime deformation (decision 083): whether deformers press tracks; the\nmeters of ground the map around the camera spans (8 to 1024) and its\ntexels along a side (128 to 8192, a multiple of 128; renderers keep\nfewer where the device's buffers cannot hold them); the seconds tracks\ntake to refill to about a third of their depth (0, never, to 86400);\nhow high the ground rises beside a track for its depth (0 to 1); an\noptional budget of stamps the log keeps, the oldest dropping beyond it;\nand whether the log keeps the stamps the map moves away from, so tracks\nare there when the camera returns. Requires version 9.",
+      "description": "Runtime deformation: whether deformers press tracks; the\nmeters of ground the map around the camera spans (8 to 1024) and its\ntexels along a side (128 to 8192, a multiple of 128; renderers keep\nfewer where the device's buffers cannot hold them); the seconds tracks\ntake to refill to about a third of their depth (0, never, to 86400);\nhow high the ground rises beside a track for its depth (0 to 1); an\noptional budget of stamps the log keeps, the oldest dropping beyond it;\nand whether the log keeps the stamps the map moves away from, so tracks\nare there when the camera returns. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2053,7 +2053,7 @@
       "additionalProperties": false
     },
     "SceneEmitter": {
-      "description": "A particle emitter on this entity (decision 026). Requires version 6.\nOmitted fields take the engine's defaults.",
+      "description": "A particle emitter on this entity. Requires version 6.\nOmitted fields take the engine's defaults.",
       "type": "object",
       "properties": {
         "acceleration": {
@@ -2212,7 +2212,7 @@
       "additionalProperties": false
     },
     "SceneEnvironment": {
-      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
+      "description": "A scene's look. In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
       "type": "object",
       "properties": {
         "ambient_occlusion": {
@@ -2246,7 +2246,7 @@
           ]
         },
         "clouds": {
-          "description": "A layer of clouds over the world (decision 084).",
+          "description": "A layer of clouds over the world.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneClouds"
@@ -2257,7 +2257,7 @@
           ]
         },
         "contact_shadows": {
-          "description": "Short rays toward the sun shade what shadow maps cannot hold\n(decision 062).",
+          "description": "Short rays toward the sun shade what shadow maps cannot hold.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneContactShadows"
@@ -2278,7 +2278,7 @@
           ]
         },
         "deformation": {
-          "description": "Tracks deformers press into deformable ground (decision 083).",
+          "description": "Tracks deformers press into deformable ground.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDeformation"
@@ -2309,7 +2309,7 @@
           ]
         },
         "local_lights": {
-          "description": "Version 6 sections (decisions 023 to 026).",
+          "description": "Version 6 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLocalLights"
@@ -2320,7 +2320,7 @@
           ]
         },
         "navigation": {
-          "description": "How agents search their walks (decision 089).",
+          "description": "How agents search their walks.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneNavigation"
@@ -2331,7 +2331,7 @@
           ]
         },
         "occupancy": {
-          "description": "What placed objects cover darkens the sky light under them\n(decision 059).",
+          "description": "What placed objects cover darkens the sky light under them.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOccupancy"
@@ -2342,7 +2342,7 @@
           ]
         },
         "ocean": {
-          "description": "The sea (decision 076).",
+          "description": "The sea.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOcean"
@@ -2383,7 +2383,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decisions 038, 039, 043, 044 and 047).",
+          "description": "Version 8 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -2404,7 +2404,7 @@
           ]
         },
         "sky": {
-          "description": "A physically based sky, and the time of day moving the sun\n(decision 088).",
+          "description": "A physically based sky, and the time of day moving the sun.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSky"
@@ -2425,7 +2425,7 @@
           ]
         },
         "terrain": {
-          "description": "Version 9: terrain streaming and level of detail (decision 051),\nand ground cover (decision 056).",
+          "description": "Version 9: terrain streaming and level of detail,\nand ground cover.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainSettings"
@@ -2456,7 +2456,7 @@
           ]
         },
         "water": {
-          "description": "How terrains' lakes and rivers look (decision 067).",
+          "description": "How terrains' lakes and rivers look.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWater"
@@ -2467,7 +2467,7 @@
           ]
         },
         "wind": {
-          "description": "The wind ground cover and placed objects sway in (decision 058).",
+          "description": "The wind ground cover and placed objects sway in.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWind"
@@ -2478,7 +2478,7 @@
           ]
         },
         "world_streaming": {
-          "description": "How streamed content loads around the camera (decision 086).",
+          "description": "How streamed content loads around the camera.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneWorldStreaming"
@@ -2499,7 +2499,7 @@
       ]
     },
     "SceneFloating": {
-      "description": "Rides the sea (decision 077): each fixed tick the entity rises and falls\nwith the sea's surface under it, `draft` meters of it below the surface\n(-100 to 100), and leans by `tilt` (0, upright, to 1, with the\nsurface's normal) about its own heading. Unparented entities only;\nnothing moves without an enabled sea. Requires version 9.",
+      "description": "Rides the sea: each fixed tick the entity rises and falls\nwith the sea's surface under it, `draft` meters of it below the surface\n(-100 to 100), and leans by `tilt` (0, upright, to 1, with the\nsurface's normal) about its own heading. Unparented entities only;\nnothing moves without an enabled sea. Requires version 9.",
       "type": "object",
       "properties": {
         "draft": {
@@ -2520,11 +2520,11 @@
       "additionalProperties": false
     },
     "SceneGroundCover": {
-      "description": "Ground cover settings (decision 056). Requires version 9.",
+      "description": "Ground cover settings. Requires version 9.",
       "type": "object",
       "properties": {
         "density": {
-          "description": "Scales every cover's density, 0 to 4. Blades sway in the world's\n`Wind` (decision 058).",
+          "description": "Scales every cover's density, 0 to 4. Blades sway in the world's\n`Wind`.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -2553,7 +2553,7 @@
           "minimum": 0.0
         },
         "radius": {
-          "description": "Meters from the camera within which cover grows densest, 2 to 200.\nPast it the ground shows as its cover's canopy, and sparser tiers\nof wider blades reach on (decision 090).",
+          "description": "Meters from the camera within which cover grows densest, 2 to 200.\nPast it the ground shows as its cover's canopy, and sparser tiers\nof wider blades reach on.",
           "type": "number",
           "format": "float",
           "default": 40.0,
@@ -2564,7 +2564,7 @@
       "additionalProperties": false
     },
     "SceneGrounding": {
-      "description": "The ground staining the base of an object standing on terrain (decision\n096): the linear color its color is multiplied by where it meets the\nground, and how many units of its mesh up the stain fades out, from the\nground's slope under it.",
+      "description": "The ground staining the base of an object standing on terrain:\nthe linear color its color is multiplied by where it meets the\nground, and how many units of its mesh up the stain fades out, from the\nground's slope under it.",
       "type": "object",
       "properties": {
         "color": {
@@ -2590,7 +2590,7 @@
       ]
     },
     "SceneHeightmap": {
-      "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`. `source` and `attribution` (up to 1024\ncharacters each) record where its heights came from and the credit\ntheir data requires, as the `terrain_import` tool writes them (decision\n070).",
+      "description": "An imported heightmap: a file of little-endian 16-bit samples, row by row\nalong z (`.r16`), `width` by `height` of them, spanning `size` meters\nfrom terrain-local `min` (x and z). Samples 0 to 65535 map to heights\n`low` to `high`; the layer fades in over `falloff` meters inside its\nedges and combines by `blend`. `source` and `attribution` (up to 1024\ncharacters each) record where its heights came from and the credit\ntheir data requires, as the `terrain_import` tool writes them.",
       "type": "object",
       "properties": {
         "attribution": {
@@ -2678,7 +2678,7 @@
       ]
     },
     "SceneLevelOfDetail": {
-      "description": "Level of detail settings (decisions 047 and 048): whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
+      "description": "Level of detail settings: whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2686,7 +2686,7 @@
           "default": true
         },
         "fade_seconds": {
-          "description": "Seconds placed objects take to fade between how the camera shows\nthem, from 0 (at once) to 4 (decision 104).",
+          "description": "Seconds placed objects take to fade between how the camera shows\nthem, from 0 (at once) to 4.",
           "type": "number",
           "format": "float",
           "default": 0.5,
@@ -2694,7 +2694,7 @@
           "minimum": 0.0
         },
         "impostors": {
-          "description": "Whether draw groups draw impostors where they fit (decision 048).",
+          "description": "Whether draw groups draw impostors where they fit.",
           "type": "boolean",
           "default": true
         },
@@ -2719,7 +2719,7 @@
       "additionalProperties": false
     },
     "SceneLight": {
-      "description": "A point or spot light on this entity (decision 023). Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
+      "description": "A point or spot light on this entity. Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
       "type": "object",
       "properties": {
         "color": {
@@ -2781,7 +2781,7 @@
       "additionalProperties": false
     },
     "SceneLocalLights": {
-      "description": "Local lighting settings (decision 023). Requires version 6.",
+      "description": "Local lighting settings. Requires version 6.",
       "type": "object",
       "properties": {
         "distance": {
@@ -2837,7 +2837,7 @@
       ]
     },
     "SceneMaterial": {
-      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces (decision 031); `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
+      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces; `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
       "type": "object",
       "properties": {
         "alpha_cutoff": {
@@ -2901,7 +2901,7 @@
           ]
         },
         "grounding": {
-          "description": "Version 9: the ground staining the base of objects terrains place\n(decision 096).",
+          "description": "Version 9: the ground staining the base of objects terrains place.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneGrounding"
@@ -2979,7 +2979,7 @@
           ]
         },
         "opacity": {
-          "description": "The fraction of light behind it the surface covers, in `(0, 1]`\n(decision 026). Below 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
+          "description": "The fraction of light behind it the surface covers, in `(0, 1]`.\nBelow 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
           "type": [
             "number",
             "null"
@@ -2989,7 +2989,7 @@
           "minimum": 0.001
         },
         "surface": {
-          "description": "How the surface responds to light beyond its color (decision 019).\nRequires version 5; without it the material is matte.",
+          "description": "How the surface responds to light beyond its color.\nRequires version 5; without it the material is matte.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurface"
@@ -3020,7 +3020,7 @@
           "minimum": 0.0
         },
         "top": {
-          "description": "Version 9: a layer settling on faces turned up, such as moss,\nlichen, dust or snow (decision 093).",
+          "description": "Version 9: a layer settling on faces turned up, such as moss,\nlichen, dust or snow.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTopLayer"
@@ -3031,7 +3031,7 @@
           ]
         },
         "transmission": {
-          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (decision 038,\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
+          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
           "type": [
             "number",
             "null"
@@ -3041,7 +3041,7 @@
           "minimum": 0.0
         },
         "world_tiling": {
-          "description": "Version 9: lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates (decision 093):\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
+          "description": "Version 9: lays the maps from the world's axes, one repeat every\nthis many meters, instead of by texture coordinates:\nno seams and one texel density at any size, for surfaces that stay\nwhere they are, such as rocks. In `(0, 10000]`.",
           "type": [
             "number",
             "null"
@@ -3086,7 +3086,7 @@
       ]
     },
     "SceneNavigation": {
-      "description": "Navigation (decision 089): whether agents walk, and the samples of\nsearch work each fixed tick does at most over every walk being searched\n(at least 1024). Requires version 9.",
+      "description": "Navigation: whether agents walk, and the samples of\nsearch work each fixed tick does at most over every walk being searched\n(at least 1024). Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3107,7 +3107,7 @@
       "type": "object",
       "properties": {
         "animation": {
-          "description": "Plays an animation on its targets (decision 035). Requires version 8.",
+          "description": "Plays an animation on its targets. Requires version 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/ScenePlayer"
@@ -3129,7 +3129,7 @@
           ]
         },
         "decal": {
-          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox (decision 039). Requires version 8.",
+          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox. Requires version 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecal"
@@ -3140,7 +3140,7 @@
           ]
         },
         "deformer": {
-          "description": "Presses tracks into deformable ground (decision 083). Requires\nversion 9.",
+          "description": "Presses tracks into deformable ground. Requires\nversion 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/Deformer"
@@ -3151,7 +3151,7 @@
           ]
         },
         "floating": {
-          "description": "Rides the sea (decision 077). Requires version 9.",
+          "description": "Rides the sea. Requires version 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFloating"
@@ -3162,7 +3162,7 @@
           ]
         },
         "grounded": {
-          "description": "Stands on the terrain (decision 086): its translation's y becomes\n`offset` meters above the ground under it. Roots only. Requires\nversion 9.",
+          "description": "Stands on the terrain: its translation's y becomes\n`offset` meters above the ground under it. Roots only. Requires\nversion 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/Grounded"
@@ -3179,7 +3179,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "light": {
-          "description": "A point or spot light (decision 023). Requires version 6.",
+          "description": "A point or spot light. Requires version 6.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLight"
@@ -3214,7 +3214,7 @@
           "maxLength": 128
         },
         "nav_agent": {
-          "description": "Walks over the terrain to a destination (decision 089). Roots only.\nRequires version 9.",
+          "description": "Walks over the terrain to a destination. Roots only.\nRequires version 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/NavAgent"
@@ -3235,7 +3235,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "particles": {
-          "description": "A particle emitter (decision 026). Requires version 6.",
+          "description": "A particle emitter. Requires version 6.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneEmitter"
@@ -3256,7 +3256,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "prefetch": {
-          "description": "Names it a place the camera may be sent to (decision 120), whose\nterrain workers generate ahead of need. Requires version 9.",
+          "description": "Names it a place the camera may be sent to, whose\nterrain workers generate ahead of need. Requires version 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/TerrainPrefetch"
@@ -3267,7 +3267,7 @@
           ]
         },
         "reflection_probe": {
-          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect (decision 043). Requires\nversion 8.",
+          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect. Requires\nversion 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneReflectionProbe"
@@ -3278,7 +3278,7 @@
           ]
         },
         "skin": {
-          "description": "The skin deforming this object's mesh (decision 036). Requires\nversion 8 and a mesh with joints and weights.",
+          "description": "The skin deforming this object's mesh. Requires\nversion 8 and a mesh with joints and weights.",
           "type": [
             "string",
             "null"
@@ -3288,7 +3288,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "spline": {
-          "description": "One of this document's meshes bent along a curve (decision 071).\nRequires version 9.",
+          "description": "One of this document's meshes bent along a curve.\nRequires version 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSpline"
@@ -3308,7 +3308,7 @@
           "maxItems": 16
         },
         "terrain": {
-          "description": "A heightfield terrain whose tiles stream around the camera (decision\n051). Requires version 9.",
+          "description": "A heightfield terrain whose tiles stream around the camera.\nRequires version 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrain"
@@ -3319,7 +3319,7 @@
           ]
         },
         "tint": {
-          "description": "Multiplies this object's color and opacity channel by channel\n(decision 033), each factor finite and in `[0, 1]`. Requires version 8.",
+          "description": "Multiplies this object's color and opacity channel by channel,\neach factor finite and in `[0, 1]`. Requires version 8.",
           "type": [
             "array",
             "null"
@@ -3358,7 +3358,7 @@
       ]
     },
     "SceneOccupancy": {
-      "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(decision 098; 64 to 4096), the map's texels a side (128 to 4096), how\nmuch of the sky light full cover takes away (0 to 1), and the meters\nthe coarser far map reaches (decision 101; 0, none, or the radius to\n65536), its texels as many. Requires version 9.",
+      "description": "Occupancy settings: whether the map is drawn, the meters around the\ncamera within which covers darken, less over the outer two fifths\n(64 to 4096), the map's texels a side (128 to 4096), how\nmuch of the sky light full cover takes away (0 to 1), and the meters\nthe coarser far map reaches (0, none, or the radius to\n65536), its texels as many. Requires version 9.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3498,7 +3498,7 @@
       ]
     },
     "SceneParticles": {
-      "description": "Particle settings (decision 026). Requires version 6.",
+      "description": "Particle settings. Requires version 6.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3518,7 +3518,7 @@
       "additionalProperties": false
     },
     "ScenePlayer": {
-      "description": "Plays a clip on its targets from this entity (decision 035).",
+      "description": "Plays a clip on its targets from this entity.",
       "type": "object",
       "properties": {
         "clip": {
@@ -3577,7 +3577,7 @@
       ]
     },
     "SceneReflectionProbe": {
-      "description": "A reflection probe on this entity (decision 043). Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
+      "description": "A reflection probe on this entity. Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
       "type": "object",
       "properties": {
         "blend": {
@@ -3598,7 +3598,7 @@
           "minItems": 3
         },
         "interior": {
-          "description": "Makes the box an interior (decision 079): a cave or a hall letting in\nonly these shares of the sky's light and the sun's. Requires\nversion 9.",
+          "description": "Makes the box an interior: a cave or a hall letting in\nonly these shares of the sky's light and the sun's. Requires\nversion 9.",
           "anyOf": [
             {
               "$ref": "#/$defs/Interior"
@@ -3615,7 +3615,7 @@
       ]
     },
     "SceneReflectionProbes": {
-      "description": "Reflection probe settings (decision 043). Requires version 8.",
+      "description": "Reflection probe settings. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -3650,7 +3650,7 @@
       "additionalProperties": false
     },
     "SceneReflections": {
-      "description": "Screen-space reflections (decision 025). Requires version 6; an intensity\nof 0 turns them off.",
+      "description": "Screen-space reflections. Requires version 6; an intensity\nof 0 turns them off.",
       "type": "object",
       "properties": {
         "distance": {
@@ -3680,7 +3680,7 @@
       "additionalProperties": false
     },
     "SceneRefraction": {
-      "description": "Refraction through glass (decision 038). Requires version 8; a strength\nof 0 turns it off.",
+      "description": "Refraction through glass. Requires version 8; a strength\nof 0 turns it off.",
       "type": "object",
       "properties": {
         "blur": {
@@ -3703,7 +3703,7 @@
       "additionalProperties": false
     },
     "SceneShadows": {
-      "description": "Sun shadows (decision 020); omitted fields take the engine defaults.",
+      "description": "Sun shadows; omitted fields take the engine defaults.",
       "type": "object",
       "properties": {
         "bounds": {
@@ -3718,7 +3718,7 @@
           ]
         },
         "cascades": {
-          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6\n(decision 028).",
+          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6.",
           "type": [
             "integer",
             "null"
@@ -3745,7 +3745,7 @@
           "minimum": 0.001
         },
         "levels": {
-          "description": "Kept levels (decision 065): maps of still casters following the\ncamera, sharper than the far maps where they reach, each with half\nthe far maps' `resolution` per side; 0 to 3, none when omitted.\nWorlds larger than their shadows' sharpness give them two or three.",
+          "description": "Kept levels: maps of still casters following the\ncamera, sharper than the far maps where they reach, each with half\nthe far maps' `resolution` per side; 0 to 3, none when omitted.\nWorlds larger than their shadows' sharpness give them two or three.",
           "type": "integer",
           "format": "uint32",
           "maximum": 3,
@@ -3770,7 +3770,7 @@
       "additionalProperties": false
     },
     "SceneSkin": {
-      "description": "A named skin (decision 036): the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
+      "description": "A named skin: the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
       "type": "object",
       "properties": {
         "id": {
@@ -3807,7 +3807,7 @@
       ]
     },
     "SceneSky": {
-      "description": "A physically based sky (decision 088): whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); the height of the world's origin\nabove the ground of the planet (meters); and how far exposure adapts to\nthe sky's light (0 not at all, 1 fully), so that dawn, dusk and night\nstay readable. Defaults are Earth's. Opt-in. Requires version 9.",
+      "description": "A physically based sky: whether it draws; the planet's\nradius and the atmosphere's thickness (kilometers); Rayleigh scattering\nper kilometer at the ground (red, green, blue) and the height over which\nit thins by e (km); Mie scattering and absorption per kilometer, their\nscale height and the forward lobe of their phase (0 to 0.99); ozone\nabsorption per kilometer at its densest, 25 km up; the ground's albedo;\nthe sun's intensity (its color's scale above the air) and angular radius\n(degrees); how far air hazes what lies away from the camera, as a\nmultiple of real distance (0 none); the height of the world's origin\nabove the ground of the planet (meters); and how far exposure adapts to\nthe sky's light (0 not at all, 1 fully), so that dawn, dusk and night\nstay readable. Defaults are Earth's. Opt-in. Requires version 9.",
       "type": "object",
       "properties": {
         "adaptation": {
@@ -3944,7 +3944,7 @@
       "additionalProperties": false
     },
     "SceneSpline": {
-      "description": "A mesh bent along a curve on this entity (decision 071). Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
+      "description": "A mesh bent along a curve on this entity. Requires\nversion 9.\n\nThe curve passes through `points` (2 to 4096, in the entity's space),\njoined by a centripetal Catmull-Rom spline. Copies of the mesh lie end\nto end along it, the mesh's x axis along the curve, its y up and its z\nacross, each stretched along x so a whole number of them spans it; the\ncurve's frames keep y up. Chunks of at most 256 meters of curve draw\nwith the material.",
       "type": "object",
       "properties": {
         "material": {
@@ -4022,7 +4022,7 @@
       "additionalProperties": false
     },
     "SceneSunShafts": {
-      "description": "Sun shafts (decision 024): sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
+      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
       "type": "object",
       "properties": {
         "anisotropy": {
@@ -4052,7 +4052,7 @@
       "additionalProperties": false
     },
     "SceneSurface": {
-      "description": "A material's response to light (decision 019). Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
+      "description": "A material's response to light. Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
       "type": "object",
       "properties": {
         "emission": {
@@ -4091,7 +4091,7 @@
       "additionalProperties": false
     },
     "SceneSurroundings": {
-      "description": "Ground generated past a terrain's edges to the horizon (decision 094):\na coarser terrain around it from the same layers, its samples four\ntimes as far apart as the terrain's finest, reaching about `reach`\nmeters past every edge (the terrain's inspection reports how far: its\ntiles align with the terrain's sample grids). The terrain's stamps,\nheightmaps, bakes and roads fade into its noise over `blend` meters past\nits edges (1024 when omitted), so the two meet where it ends. It never\ncollides, places objects, grows blades or holds water.",
+      "description": "Ground generated past a terrain's edges to the horizon:\na coarser terrain around it from the same layers, its samples four\ntimes as far apart as the terrain's finest, reaching about `reach`\nmeters past every edge (the terrain's inspection reports how far: its\ntiles align with the terrain's sample grids). The terrain's stamps,\nheightmaps, bakes and roads fade into its noise over `blend` meters past\nits edges (1024 when omitted), so the two meet where it ends. It never\ncollides, places objects, grows blades or holds water.",
       "type": "object",
       "properties": {
         "blend": {
@@ -4113,7 +4113,7 @@
       ]
     },
     "SceneTerrain": {
-      "description": "A heightfield terrain on this entity (decision 051). Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
+      "description": "A heightfield terrain on this entity. Requires version 9.\n\nIts first corner (least x and z) lies at `origin` in world space,\nwhatever the entity's transform; heights rise from the origin's y. Its\nheights come from `layers`, applied in order to every sample (later\nlayers win), or from an `ETR1` `file` beside the scene, whose tiles\nstream by byte range. Level-0 tiles span 256 samples `spacing` meters\napart; coarser levels halve the tiles up to one.",
       "type": "object",
       "properties": {
         "collision": {
@@ -4163,7 +4163,7 @@
           ]
         },
         "surroundings": {
-          "description": "Ground generated around it to the horizon (decision 094); terrains\nread from files have none.",
+          "description": "Ground generated around it to the horizon; terrains\nread from files have none.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurroundings"
@@ -4194,11 +4194,11 @@
       ]
     },
     "SceneTerrainAsset": {
-      "description": "An object placement layers stand on a terrain (decision 057): a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), and how far it sways in the wind (decision 058): meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
+      "description": "An object placement layers stand on a terrain: a `mesh`\nand a `material` of this document, by ID, up to four coarser meshes it\ndraws at a distance, finest first (otherwise the mesh's automatic levels\nof detail), and how far it sways in the wind: meters at\nten meters up in full wind, 0 (rigid, the default) to 10.",
       "type": "object",
       "properties": {
         "collider": {
-          "description": "Its objects' collider (decision 064); without one they never\ncollide.",
+          "description": "Its objects' collider; without one they never\ncollide.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainCollider"
@@ -4238,7 +4238,7 @@
       ]
     },
     "SceneTerrainCollider": {
-      "description": "The collider of a placement asset's objects (decision 064), in its\nmesh's space at scale 1: its shape about `center` (the origin by\ndefault), and the collision layers its objects belong to (the first by\ndefault) and collide with (every one by default). Objects within\nterrains' collision radius collide; those standing far away never do.",
+      "description": "The collider of a placement asset's objects, in its\nmesh's space at scale 1: its shape about `center` (the origin by\ndefault), and the collision layers its objects belong to (the first by\ndefault) and collide with (every one by default). Objects within\nterrains' collision radius collide; those standing far away never do.",
       "type": "object",
       "properties": {
         "center": {
@@ -4272,7 +4272,7 @@
       ]
     },
     "SceneTerrainLayer": {
-      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake (decision 068) of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake (decision 066) of them, which\ncarves channels where water gathers, fills lakes and rivers with water\n(decision 067) and feeds the `flow`, `wetness` and `lake` masks, or a\npath (decision 069): a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
+      "description": "One layer of a terrain's stack: procedural noise with erosion, a stamp\n(raise, lower, flatten or cut holes), an imported heightmap, an erosion\nbake of the layers before it, where rivers wear valleys\nand slopes creep, a hydrology bake of them, which\ncarves channels where water gathers, fills lakes and rivers with water\nand feeds the `flow`, `wetness` and `lake` masks, or a\npath: a road leveling the layers before it along its\nline, which feeds the `path` mask (the `terrain_route` request finds\nroutes for them). Terrains load no tiles until their bakes are done.",
       "oneOf": [
         {
           "type": "object",
@@ -4367,7 +4367,7 @@
       ]
     },
     "SceneTerrainMaterial": {
-      "description": "How one surface material looks: a `material` of this document whose\nmaps and factors shade it, or a linear `color` and `roughness`; the\nmeters its textures repeat over (0.01 to 1000); how sharply its height\nmap wins where it blends with another (0 to 1); whether steep ground\nprojects it from the side; and the cover growing where it lies\n(decision 056).",
+      "description": "How one surface material looks: a `material` of this document whose\nmaps and factors shade it, or a linear `color` and `roughness`; the\nmeters its textures repeat over (0.01 to 1000); how sharply its height\nmap wins where it blends with another (0 to 1); whether steep ground\nprojects it from the side; and the cover growing where it lies.",
       "type": "object",
       "properties": {
         "color": {
@@ -4395,7 +4395,7 @@
           ]
         },
         "deform": {
-          "description": "Meters tracks sink it at most (decision 083): 0, rigid, to 2.",
+          "description": "Meters tracks sink it at most: 0, rigid, to 2.",
           "type": "number",
           "format": "float",
           "maximum": 2.0,
@@ -4422,7 +4422,7 @@
           "default": "top"
         },
         "relief": {
-          "description": "Meters its maps' heights span where the ground's relief shows\n(decision 082): 0, flat, to 1; top projections only.",
+          "description": "Meters its maps' heights span where the ground's relief shows:\n0, flat, to 1; top projections only.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
@@ -4449,7 +4449,7 @@
       ]
     },
     "SceneTerrainMotionDetail": {
-      "description": "How terrain loads while the camera moves fast (decision 115): the\nfinest levels' tiles in its view wait, more of them the faster it\nmoves, and tiles out of its view wait until it settles. The coarsest\npinned levels, collision's tiles and those under focus entities never\nwait, and tiles resident stay.",
+      "description": "How terrain loads while the camera moves fast: the\nfinest levels' tiles in its view wait, more of them the faster it\nmoves, and tiles out of its view wait until it settles. The coarsest\npinned levels, collision's tiles and those under focus entities never\nwait, and tiles resident stay.",
       "type": "object",
       "properties": {
         "fastest": {
@@ -4488,11 +4488,11 @@
       "additionalProperties": false
     },
     "SceneTerrainSettings": {
-      "description": "Terrain settings (decision 051). Requires version 9.",
+      "description": "Terrain settings. Requires version 9.",
       "type": "object",
       "properties": {
         "cache_bytes": {
-          "description": "Bytes of tiles kept in memory after the view leaves them (decision\n116), about 600 KB each, to return at once when it comes back: the\nleast recently used beyond drop, and 0 keeps none.",
+          "description": "Bytes of tiles kept in memory after the view leaves them,\nabout 600 KB each, to return at once when it comes back: the\nleast recently used beyond drop, and 0 keeps none.",
           "type": "integer",
           "format": "uint64",
           "default": 268435456,
@@ -4511,12 +4511,12 @@
           "default": true
         },
         "gpu_materials": {
-          "description": "Tiles' surface materials from the GPU (decision 118): tiles generate\nwithout control values, which a compute pass gives each as it\nuploads, the rules' own but where GPU rounding crosses a threshold;\ngameplay reads the rules at the points it asks. Off, the CPU gives\nthem.",
+          "description": "Tiles' surface materials from the GPU: tiles generate\nwithout control values, which a compute pass gives each as it\nuploads, the rules' own but where GPU rounding crosses a threshold;\ngameplay reads the rules at the points it asks. Off, the CPU gives\nthem.",
           "type": "boolean",
           "default": true
         },
         "idle_reach": {
-          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing (decision\n116), 0 to 8; within the keeping reach (2.5) none.",
+          "description": "Multiples of each level's range within which workers generate tiles\nahead of the view into memory while nothing is missing,\n0 to 8; within the keeping reach (2.5) none.",
           "type": "number",
           "format": "float",
           "default": 3.0,
@@ -4524,7 +4524,7 @@
           "minimum": 0.0
         },
         "loading_work_ms": {
-          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole (decision 099), and after, 0.1 to 1000 each: loading\ntakes large slices of frames, play small ones.",
+          "description": "Milliseconds a frame works on terrain until the camera's view first\nloads whole, and after, 0.1 to 1000 each: loading\ntakes large slices of frames, play small ones.",
           "type": "number",
           "format": "float",
           "default": 50.0,
@@ -4532,7 +4532,7 @@
           "minimum": 0.1
         },
         "max_bands": {
-          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free (decision 117), 1 (whole\ntiles) to 16.",
+          "description": "The most bands of rows a tile under the view generates in at once\non workers the other such tiles leave free, 1 (whole\ntiles) to 16.",
           "type": "integer",
           "format": "uint32",
           "default": 4,
@@ -4549,7 +4549,7 @@
           "minimum": 1
         },
         "motion_detail": {
-          "description": "Detail lowered while the camera moves fast (decision 115): off by\ndefault, as it lowers detail in motion on purpose.",
+          "description": "Detail lowered while the camera moves fast: off by\ndefault, as it lowers detail in motion on purpose.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneTerrainMotionDetail"
@@ -4576,7 +4576,7 @@
           "minimum": 1.0
         },
         "relief_distance": {
-          "description": "Meters from the camera within which the ground's relief (decision\n082) shows, its view rays marching through its materials' heights,\n0 (none) to 200; and the most steps a ray takes, 2 to 64.",
+          "description": "Meters from the camera within which the ground's relief\nshows, its view rays marching through its materials' heights,\n0 (none) to 200; and the most steps a ray takes, 2 to 64.",
           "type": "number",
           "format": "float",
           "default": 24.0,
@@ -4622,29 +4622,29 @@
           "minimum": 64
         },
         "sky_visibility": {
-          "description": "Ambient light on terrain scaled by how much sky its ground sees\n(decision 055): each terrain's sky visibility map, built once its\nfinest pinned level is resident, where valleys and hollows see less\nsky and take their own light back instead.",
+          "description": "Ambient light on terrain scaled by how much sky its ground sees:\neach terrain's sky visibility map, built once its\nfinest pinned level is resident, where valleys and hollows see less\nsky and take their own light back instead.",
           "type": "boolean",
           "default": true
         },
         "sun_shadows": {
-          "description": "Long sun shadows through each terrain's horizon map (decision 052),\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
+          "description": "Long sun shadows through each terrain's horizon map,\nwith shadows on; shadow maps then draw terrain near the camera only.\nOff, terrain casts into the shadow maps alone.",
           "type": "boolean",
           "default": true
         },
         "surroundings": {
-          "description": "Ground generated around terrains with surroundings (decision 094)\nstreams and draws; off, every terrain ends at its edges.",
+          "description": "Ground generated around terrains with surroundings\nstreams and draws; off, every terrain ends at its edges.",
           "type": "boolean",
           "default": true
         },
         "upload_bytes": {
-          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame (decision 116), about 540 KB a tile: tiles beyond wait for\nthe next, though each frame's first arrives whatever its size; at\nleast 1.",
+          "description": "Bytes of tiles becoming resident in a frame, which the GPU takes in\nthat frame, about 540 KB a tile: tiles beyond wait for\nthe next, though each frame's first arrives whatever its size; at\nleast 1.",
           "type": "integer",
           "format": "uint32",
           "default": 8388608,
           "minimum": 1
         },
         "virtual_texture": {
-          "description": "The runtime virtual texture (decision 124): the ground's materials\nbaked into pages the views ask for, which pixels read in place of\ncomputing them; ground finer than its texels, steep ground and pages\nnot baked yet compute theirs.",
+          "description": "The runtime virtual texture: the ground's materials\nbaked into pages the views ask for, which pixels read in place of\ncomputing them; ground finer than its texels, steep ground and pages\nnot baked yet compute theirs.",
           "type": "boolean",
           "default": true
         },
@@ -4675,11 +4675,11 @@
       "additionalProperties": false
     },
     "SceneTerrainSurface": {
-      "description": "A terrain's surface (decision 054): up to 255 materials, which biome\nlayers name by ID, and up to 255 biomes. Later biomes paint over earlier\nones where they fit; the first covers wherever none of the others do.",
+      "description": "A terrain's surface: up to 255 materials, which biome\nlayers name by ID, and up to 255 biomes. Later biomes paint over earlier\nones where they fit; the first covers wherever none of the others do.",
       "type": "object",
       "properties": {
         "assets": {
-          "description": "What placement layers stand on the terrain (decision 057).",
+          "description": "What placement layers stand on the terrain.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/SceneTerrainAsset"
@@ -4692,7 +4692,7 @@
           }
         },
         "bridge": {
-          "description": "ID of the document material its roads' bridges (decision 072) draw\nwith; omitted, a weathered stone.",
+          "description": "ID of the document material its roads' bridges draw\nwith; omitted, a weathered stone.",
           "type": [
             "string",
             "null"
@@ -4705,7 +4705,7 @@
           }
         },
         "placed": {
-          "description": "Objects authors stand on it (decision 085), each at its own point.",
+          "description": "Objects authors stand on it, each at its own point.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/AuthoredPlacement"
@@ -4725,7 +4725,7 @@
       ]
     },
     "SceneTexture": {
-      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7, decision 030) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
+      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
       "type": "object",
       "properties": {
         "height": {
@@ -4850,7 +4850,7 @@
           "minItems": 2
         },
         "tex_coord": {
-          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second (decision 034).",
+          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second.",
           "type": [
             "integer",
             "null"
@@ -4885,7 +4885,7 @@
       ]
     },
     "SceneTimeOfDay": {
-      "description": "The time of day (decision 088): whether it moves the sun; the hour (0 to\n24); how many hours pass each second (0 holds it, up to 24); the\nminutes of each step the sun moves by (0.1 to 60); the latitude and day\nof the year (0 to 365) that set the sun's path; and the yaw of north in\nthe world (degrees from -z toward +x). Opt-in. Requires version 9.",
+      "description": "The time of day: whether it moves the sun; the hour (0 to\n24); how many hours pass each second (0 holds it, up to 24); the\nminutes of each step the sun moves by (0.1 to 60); the latitude and day\nof the year (0 to 365) that set the sun's path; and the yaw of north in\nthe world (degrees from -z toward +x). Opt-in. Requires version 9.",
       "type": "object",
       "properties": {
         "day": {
@@ -4938,7 +4938,7 @@
       "additionalProperties": false
     },
     "SceneTopLayer": {
-      "description": "A layer settling on a material's faces turned up (decision 093): its\nlinear color, how far from straight up it reaches (0 covers nothing, 1\nevery face turned up at all) and its roughness (default 0.85).",
+      "description": "A layer settling on a material's faces turned up: its\nlinear color, how far from straight up it reaches (0 covers nothing, 1\nevery face turned up at all) and its roughness (default 0.85).",
       "type": "object",
       "properties": {
         "color": {
@@ -5026,7 +5026,7 @@
       "type": "object",
       "properties": {
         "color": {
-          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor (decision 034). Every vertex of a mesh has one or none does.",
+          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor. Every vertex of a mesh has one or none does.",
           "type": [
             "array",
             "null"
@@ -5039,7 +5039,7 @@
           "minItems": 4
         },
         "joints": {
-          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex (decision 036). Every vertex of\na mesh has joints and weights or none does.",
+          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex. Every vertex of\na mesh has joints and weights or none does.",
           "type": [
             "array",
             "null"
@@ -5115,7 +5115,7 @@
       ]
     },
     "SceneVirtualGeometry": {
-      "description": "Virtual geometry settings (decision 044): whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
+      "description": "Virtual geometry settings: whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -5140,14 +5140,14 @@
           "minimum": 0.25
         },
         "visibility_buffer": {
-          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
+          "description": "Whether the camera's clusters shade through the visibility buffer,\neach pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
           "type": "boolean"
         }
       },
       "additionalProperties": false
     },
     "SceneWater": {
-      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); the\nmeters across its largest ripples (0.1 to 100); how much foam shores and\nrapids gather (decision 074; 0, none, to 1); and the meters of water\nshallower than which shores foam (0.05 to 10). Requires version 9.",
+      "description": "Water settings: whether water draws; the color deep water scatters back\n(linear, each 0 to 1); the meters of water through which half the light\npasses (0.1 to 100); how strongly ripples tilt its surface (0 to 1); the\nmeters across its largest ripples (0.1 to 100); how much foam shores and\nrapids gather (0, none, to 1); and the meters of water\nshallower than which shores foam (0.05 to 10). Requires version 9.",
       "type": "object",
       "properties": {
         "clarity": {
@@ -5234,7 +5234,7 @@
       "additionalProperties": false
     },
     "SceneWorldStreaming": {
-      "description": "World streaming (decision 086): whether streamed items load at all\n(off unloads every cell); how far cells load, as a multiple of each\ngrid's range (0.05 to 20); how much farther than that every source must\nbe before a loaded cell unloads, as a multiple (1 to 4); the seconds\nahead along the camera's motion cells load early for (0 to 10); the\nentities a frame spawns at most (cells spawn whole, and at least one a\nframe), pacing loads; and whether cells stay as they are, loading and\nunloading nothing (for captures and inspection). Requires version 9.",
+      "description": "World streaming: whether streamed items load at all\n(off unloads every cell); how far cells load, as a multiple of each\ngrid's range (0.05 to 20); how much farther than that every source must\nbe before a loaded cell unloads, as a multiple (1 to 4); the seconds\nahead along the camera's motion cells load early for (0 to 10); the\nentities a frame spawns at most (cells spawn whole, and at least one a\nframe), pacing loads; and whether cells stay as they are, loading and\nunloading nothing (for captures and inspection). Requires version 9.",
       "type": "object",
       "properties": {
         "distance": {
@@ -5377,7 +5377,7 @@
       ]
     },
     "TerrainPrefetch": {
-      "description": "Names a place the camera may be sent to, such as a spawn point\n(decision 120): while the view wants nothing, workers generate the\nterrain tiles a camera there wants into memory, as they do ahead of the\ncamera (decision 116), and those tiles stay there while it is named, so\nthe camera sent there finds them at once. Each level's tiles within\n`reach` times its range, 0 to 8; 2 is what a camera there loads.\nRequires version 9.",
+      "description": "Names a place the camera may be sent to, such as a spawn point:\nwhile the view wants nothing, workers generate the\nterrain tiles a camera there wants into memory, as they do ahead of the\ncamera, and those tiles stay there while it is named, so\nthe camera sent there finds them at once. Each level's tiles within\n`reach` times its range, 0 to 8; 2 is what a camera there loads.\nRequires version 9.",
       "type": "object",
       "properties": {
         "reach": {

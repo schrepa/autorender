@@ -1,10 +1,10 @@
-//! Bakes of a layer stack (decisions 066, 068 and 069): layers whose
+//! Bakes of a layer stack: layers whose
 //! results read the heights the layers below them give, over a whole
 //! pyramid level where rivers and lakes form and what water wears away, or
 //! along a road. A level's bake generates every tile of its level from the
 //! layers below it, gathers their samples into one grid, then computes:
 //! hydrology at once, then its rivers' water from the finest ground along
-//! them a point at a time (decision 092), erosion a round at a time. A
+//! them a point at a time, erosion a round at a time. A
 //! path's bake reads the ground along its line a point at a time. Terrains
 //! load no tiles until their bakes are done; tools bake at once.
 
@@ -71,7 +71,7 @@ pub struct TerrainBake {
     rivers: Option<RiverJob>,
 }
 
-/// A hydrology bake's rivers being read (decision 092): what the bake
+/// A hydrology bake's rivers being read: what the bake
 /// found, the rivers' lines, and the finest ground read at their points so
 /// far (at each line's middle and its banks).
 struct RiverJob {
@@ -193,7 +193,7 @@ impl TerrainBake {
                     (point.y / spacing).round() as i64,
                 ];
                 let ground = self.below.sample_height(pyramid, 0, sample);
-                // Rivers and lakes the hydrology bake (decision 067) found
+                // Rivers and lakes the hydrology bake found
                 // there, on its own grid: streams narrower than its samples
                 // can run below the finest ground's detail.
                 let water = self.below.hydrology().and_then(|hydrology| {
@@ -261,7 +261,7 @@ impl TerrainBake {
             BakeKind::Path(_) => None,
             &BakeKind::Hydrology(layer) => {
                 // Its rivers' water follows from the finest ground along
-                // them, read a point at a time (decision 092).
+                // them, read a point at a time.
                 let (hydrology, lines) = bake(&self.heights, self.width, spacing, &layer);
                 let ground = lines
                     .iter()

@@ -1,6 +1,6 @@
-//! Clouds (decision 084; `clouds.wgsl`): a volume of tiling noise made once,
-//! and domes of the sky's clouds, each marched from one fixed point (decision
-//! 091). Ordinary frames march a back dome a band of rows at a time, over
+//! Clouds (`clouds.wgsl`): a volume of tiling noise made once,
+//! and domes of the sky's clouds, each marched from one fixed point.
+//! Ordinary frames march a back dome a band of rows at a time, over
 //! the settings' slices of frames, from where the camera was when it began;
 //! once whole it blends in over the newer shown dome while the next one
 //! marches, so no displayed frame shows a part-marched dome or marches one
@@ -10,7 +10,7 @@
 //! The sky and the sky's environment map show the domes; frames without
 //! clouds bind a clear one.
 //!
-//! The view marches the clouds again (decision 095), a ray through each
+//! The view marches the clouds again, a ray through each
 //! block of its pixels after the opaque scene and water, up to the farthest
 //! of the block's pixels: the clouds' light, the share of the scene passing
 //! and how far they lie, which a composite lays over the scene where they
@@ -75,7 +75,7 @@ struct DomeUniform {
 /// Bytes of the domes' uniform.
 pub(crate) const DOME_UNIFORM_BYTES: usize = size_of::<DomeUniform>();
 
-/// WGSL `CloudView` (`clouds.wgsl`, decision 095): the view's unjittered
+/// WGSL `CloudView` (`clouds.wgsl`): the view's unjittered
 /// inverse view-projection; its blocks along x and y, pixels along a
 /// block's side, and whether blocks seeing the sky march.
 #[repr(C)]
@@ -88,7 +88,7 @@ struct ViewUniform {
 /// Bytes of the view march's uniform.
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
 
-/// The view's marched blocks (decision 095): their clouds' light and
+/// The view's marched blocks: their clouds' light and
 /// passing share, how far those lie, and the blocks along x and y.
 struct ViewTargets {
     clouds: (wgpu::Texture, wgpu::TextureView),
@@ -166,7 +166,7 @@ pub(crate) struct CloudPass {
     active: bool,
     /// Rows of the dome this frame marched.
     pub(crate) rows: u32,
-    // Clouds in the view (decision 095): the march's and the composite's
+    // Clouds in the view: the march's and the composite's
     // layouts, the march's uniform from the camera and the view's, the
     // marched blocks, the groups binding them (by the depth buffer and the
     // blocks), the march's pipeline and the composite's by target, and the
@@ -402,8 +402,8 @@ impl CloudPass {
         self.sky_group.get().expect("built each frame")
     }
 
-    /// Where the physically based sky's light (decision 088) goes in the
-    /// marches' uniforms, the dome's and the view's (decision 095): the
+    /// Where the physically based sky's light goes in the
+    /// marches' uniforms, the dome's and the view's: the
     /// sun's, the zenith's and the horizon's colors.
     pub(crate) fn sky_copies(&self) -> [crate::sky::SkyCopy<'_>; 6] {
         let at = |offset: usize| offset as u64;
@@ -559,7 +559,7 @@ impl CloudPass {
         self.write_domes(queue, eye, &settings);
     }
 
-    /// Plans this frame's clouds in the view (decision 095) of `settings`
+    /// Plans this frame's clouds in the view of `settings`
     /// from an eye at `eye` at simulation time `seconds`, through
     /// `view_projection` (unjittered) onto a canvas of `canvas` pixels in
     /// `lighting`'s sun and sky; call after [`Self::prepare`]. Nothing
@@ -617,12 +617,12 @@ impl CloudPass {
         self.view_blocks = blocks[0] * blocks[1];
     }
 
-    /// Whether this frame marches clouds in the view (decision 095).
+    /// Whether this frame marches clouds in the view.
     pub(crate) fn marches_view(&self) -> bool {
         self.view_job.is_some()
     }
 
-    /// Records this frame's march of the view's clouds (decision 095) up to
+    /// Records this frame's march of the view's clouds up to
     /// what `depth` (the depth buffer of `depth_generation`) shows, timed
     /// by `profiler` (`cloud_view`); after [`Self::encode`] made the noise.
     pub(crate) fn encode_view(
@@ -759,7 +759,7 @@ impl CloudPass {
 
     /// Writes the domes' uniform: the shown domes' origins and blend, the
     /// eye with the cloud layer's middle, and whether the view's march
-    /// shows the sky's clouds (decision 095).
+    /// shows the sky's clouds.
     fn write_domes(&self, queue: &wgpu::Queue, eye: glam::Vec3, settings: &Clouds) {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
@@ -911,7 +911,7 @@ fn march_uniform(
     }
 }
 
-/// A texture of the view's blocks (decision 095), `size` of them, in
+/// A texture of the view's blocks, `size` of them, in
 /// `format`, which the view's march writes and its composite reads.
 fn view_texture(
     device: &wgpu::Device,
@@ -936,7 +936,7 @@ fn view_texture(
     (texture, view)
 }
 
-/// The view's march (decision 095).
+/// The view's march.
 fn view_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine/clouds.wgsl"),
@@ -950,7 +950,7 @@ fn view_pipeline(device: &wgpu::Device, layout: &wgpu::BindGroupLayout) -> wgpu:
     crate::pipelines::compute_entry(device, &layout, &module, "march_view")
 }
 
-/// The composite of the view's clouds (decision 095) into `format`, the
+/// The composite of the view's clouds into `format`, the
 /// canvas's when `canvas`: their light over the scene, which keeps the
 /// share they pass, and the target's alpha as it was.
 fn composite_pipeline(
@@ -1020,7 +1020,7 @@ fn dome_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::
     (texture, view)
 }
 
-/// The shadows' grid around `eye` (decision 091): its first cell (world
+/// The shadows' grid around `eye`: its first cell (world
 /// cell indices along x and z, as floats) and meters a cell. Cells snap to
 /// whole cells and keep their slots as the grid moves (cell index modulo
 /// the cells along a side), so moving the grid leaves every cell it still

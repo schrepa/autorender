@@ -1,9 +1,9 @@
-//! Water (decision 067): the lakes and rivers terrains' hydrology bakes
-//! find (decision 066), drawn where they stand. Lakes lie still under the
+//! Water: the lakes and rivers terrains' hydrology bakes
+//! find, drawn where they stand. Lakes lie still under the
 //! wind's ripples, rivers run along their channels; light passing through
 //! water fades over the distance it travels to the ground behind it toward
 //! its scattered color, foam gathers where it runs shallow along shores and
-//! where rivers run fast (decision 074), and its surface reflects the sky
+//! where rivers run fast, and its surface reflects the sky
 //! and, through screen-space reflections, the scene.
 
 use bevy_ecs::prelude::Resource;
@@ -15,7 +15,7 @@ use crate::environment::{InvalidSetting, check_range};
 /// (linear, each 0 to 1); the meters of water through which half the light
 /// passes (0.1 to 100); how strongly ripples tilt its surface (0 to 1); the
 /// meters across its largest ripples (0.1 to 100); how much foam shores and
-/// rapids gather (decision 074; 0, none, to 1); and the meters of water
+/// rapids gather (0, none, to 1); and the meters of water
 /// shallower than which shores foam (0.05 to 10). Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(

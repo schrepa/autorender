@@ -1,4 +1,4 @@
-//! Reflection probes (decision 043): the probes nearest the camera hold
+//! Reflection probes: the probes nearest the camera hold
 //! cubes of the environment maps after the sky's, captured face by face
 //! after frames draw and blurred like the sky's; a grid over the ground plane
 //! lists which probes surfaces in each of its cells read.
@@ -97,7 +97,7 @@ impl ProbeSlots {
                 if sky_changed {
                     slot.stale = true;
                 }
-                // A new blend distance or interior (decision 079) needs no
+                // A new blend distance or interior needs no
                 // capture, only the grid.
                 if let Some(probe) = wanted.iter().find(|probe| probe.key == slot.probe.key)
                     && (probe.blend != slot.probe.blend || probe.interior != slot.probe.interior)
@@ -129,7 +129,7 @@ impl ProbeSlots {
             }
         }
         // A capture the sky changed under carries on, and stays stale once
-        // done (decision 091): starting over on every change starved
+        // done: starting over on every change starved
         // probes of captures.
         if sky_changed && self.capturing.is_some() {
             self.changed_during = true;
@@ -210,7 +210,7 @@ impl ProbeSlots {
             .count() as u32
     }
 
-    // The ready probes and their cubes, and interiors (decision 079) not
+    // The ready probes and their cubes, and interiors not
     // captured yet with none (0), once per change.
     fn changed_ready(&mut self) -> Option<Vec<(RenderReflectionProbe, u32)>> {
         if !std::mem::take(&mut self.changed) {
@@ -328,7 +328,7 @@ impl ProbePass {
 const GRID_LABEL: &str = "engine/probe-grid";
 
 /// The view-projection of cube face `face` (in WebGPU's sampling order and
-/// orientation) seen from `center`, with reversed depth (decision 042). Cube
+/// orientation) seen from `center`, with reversed depth. Cube
 /// faces mirror the world, so it flips triangle winding.
 pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     // Each face's image axes and its backward direction (view z).
@@ -389,8 +389,8 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     let entries_at = cells_at + columns * rows;
     words.push([low.x.to_bits(), low.z.to_bits(), cell.to_bits(), count]);
     words.push([columns, rows, cells_at, entries_at]);
-    // Each cell's list, and how many of its probes are interiors (decision
-    // 079), which surfaces elsewhere skip.
+    // Each cell's list, and how many of its probes are interiors,
+    // which surfaces elsewhere skip.
     let mut start = 0;
     for list in &lists {
         let interiors = list

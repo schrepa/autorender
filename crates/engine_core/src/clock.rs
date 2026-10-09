@@ -57,10 +57,10 @@ pub struct FrameTime {
     pub frame: u64,
 }
 
-/// The simulation time the last extracted frame presents (decision 077):
+/// The simulation time the last extracted frame presents:
 /// the fixed clock where its poses stand, between ticks for interpolated
 /// frames. What moves with time and must line up with simulated objects,
-/// such as the sea's waves (decision 076), follows it.
+/// such as the sea's waves, follows it.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct PresentedTime {
     pub seconds: f64,

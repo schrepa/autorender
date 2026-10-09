@@ -1,4 +1,4 @@
-// The resolve of the visibility buffer (decision 045): each material bin
+// The resolve of the visibility buffer: each material bin
 // draws its tiles, and each of their pixels that bin's triangle covers
 // shades as a forward-drawn fragment of that triangle would. The triangle's
 // corners are posed as `vs_virtual` poses them, and its attributes
@@ -163,7 +163,7 @@ fn resolved_point(resolved: Resolved) -> SurfacePoint {
     let x = resolved.partner.x;
     let y = resolved.partner.y;
     if material_flag(4096u, WORLD_MAPPING) {
-        // World-mapped maps (decision 093) turn toward the partners with
+        // World-mapped maps turn toward the partners with
         // the interpolated normal alone.
         let across = stable_normalize(point.normal + resolved.normal_dx * x);
         let down = stable_normalize(point.normal + resolved.normal_dy * y);

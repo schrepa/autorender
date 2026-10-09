@@ -1,4 +1,4 @@
-//! The dense scene (decision 044): boulders and fluted columns strewn over
+//! The dense scene: boulders and fluted columns strewn over
 //! terrain tiles, every mesh a virtual mesh of hundreds of thousands of
 //! triangles built offline (`cargo run -p engine_vgbuild --release --bin
 //! dense_assets`) and fetched by the page.

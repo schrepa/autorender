@@ -1,14 +1,14 @@
-// Terrain (decision 051), the vertex stage every terrain pass shares: patches of one shared grid of 17 x 17 vertices
-// and a skirt, displaced by the heights of their tile's layer of the height
-// atlas. Each vertex morphs toward the next coarser level's vertex over the
-// last quarter of its level's range (continuous distance-dependent level of
-// detail): odd grid vertices slide onto their even neighbors and heights
-// blend into the coarser tile's, so a patch fully morphed at its range's end
-// matches its coarser neighbors exactly. Positions are relative to the eye
-// the terrain streamed for (camera-relative rendering): integer sample
-// counts from an anchor on every level's grid, times the spacing, plus the
-// anchor's offset from the eye. Skirts hang below patch edges and fill gaps
-// where a finer tile is not resident yet.
+// Terrain, the vertex stage every terrain pass shares: patches of one shared
+// grid of 17 x 17 vertices and a skirt, displaced by the heights of their
+// tile's layer of the height atlas. Each vertex morphs toward the next coarser
+// level's vertex over the last quarter of its level's range (continuous
+// distance-dependent level of detail): odd grid vertices slide onto their even
+// neighbors and heights blend into the coarser tile's, so a patch fully morphed
+// at its range's end matches its coarser neighbors exactly. Positions are
+// relative to the eye the terrain streamed for (camera-relative rendering):
+// integer sample counts from an anchor on every level's grid, times the
+// spacing, plus the anchor's offset from the eye. Skirts hang below patch edges
+// and fill gaps where a finer tile is not resident yet.
 
 // Every tile's heights with a border of one sample, one layer each; only
 // loaded.
@@ -20,8 +20,7 @@
 struct TerrainView {
     relative_view_projection: mat4x4<f32>,
     eye_offset: vec4<f32>,
-    // Its inverse: eye-relative positions of depth-buffer points (decision
-    // 123).
+    // Its inverse: eye-relative positions of depth-buffer points.
     inverse_relative_view_projection: mat4x4<f32>,
 }
 @group(1) @binding(18) var<uniform> terrain_view: TerrainView;
@@ -29,28 +28,27 @@ struct TerrainView {
 // One terrain: its anchor less its eye (w: the level-0 spacing), that eye's
 // world position, its origin (w: what it shows), where its levels start in
 // `terrain_directory` and how many there are, where its surface materials
-// start in `terrain_palette` (decision 054), and its layer of
-// `terrain_sky` plus one, 0 until built (decision 055).
+// start in `terrain_palette`, and its layer of
+// `terrain_sky` plus one, 0 until built.
 struct TerrainUniform {
     anchor: vec4<f32>,
     eye: vec4<f32>,
     origin: vec4<f32>,
     directory: vec4<u32>,
-    // The ground's relief (decision 082): meters from the camera it shows
+    // The ground's relief: meters from the camera it shows
     // within and the most steps its rays take.
     relief: vec4<f32>,
-    // Runtime deformation's map (decision 083): its first texel (world
+    // Runtime deformation's map: its first texel (world
     // texel indices along x and z), and its texels and blocks along a side
     // (0 while off); texels per meter, what is left of a track since the
     // map's reference time, and the rim's height for a track's depth.
     deform_grid: vec4<i32>,
     deform: vec4<f32>,
-    // Ground cover's radius and the reach of its tiers on this terrain
-    // (decision 090), whose law the canopy follows as blades thin (decision
-    // 098; a radius of 0 shows it from the eye on), and its density scale;
-    // all 0 without cover.
+    // Ground cover's radius and the reach of its tiers on this terrain, whose
+    // law the canopy follows as blades thin (a radius of 0 shows it from the
+    // eye on), and its density scale; all 0 without cover.
     cover: vec4<f32>,
-    // Its runtime virtual texture (decision 124; `terrain.wgsl`): its index
+    // Its runtime virtual texture (`terrain.wgsl`): its index
     // among the textured terrains, its mips (0 without one), slots along a
     // sheet's side, and this frame's feedback pixel (0 to 63) of each 8x8
     // block; the meters a texel of mip 0 spans and the inverse of a sheet's
@@ -68,7 +66,7 @@ struct TerrainUniform {
 // tile's layer, its parent tile's layer, and its first texel in each (x |
 // z << 16), borders aside; where its tile's hole bits start in
 // `terrain_holes` (0xffffffff without holes); and how far it still stands
-// morphed into its parent since its tile arrived (decision 099).
+// morphed into its parent since its tile arrived.
 struct PatchInput {
     @builtin(vertex_index) vertex: u32,
     @location(0) first: vec2<i32>,
@@ -88,7 +86,7 @@ fn terrain_load(layer: u32, texel: vec2<u32>) -> f32 {
 
 // A vertex relative to the terrain's eye, and where it lies in its tile's
 // cells. Fragments take their normals from the terrain's normal maps, not
-// from the level drawn (decision 051).
+// from the level drawn.
 struct TerrainVertex {
     relative: vec3<f32>,
     cell: vec2<f32>,

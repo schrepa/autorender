@@ -1,4 +1,4 @@
-// The sea (decision 076): an endless surface at a still level that
+// The sea: an endless surface at a still level that
 // Gerstner waves raise, drawn from rings of cells around the eye, a cell
 // apart near it and then each ring wider by a cell's share of its
 // circumference, out to the sea's reach. Vertices move by the waves longer
@@ -109,7 +109,7 @@ fn vs_ocean_temporal(@builtin(vertex_index) vertex: u32,
     return temporal;
 }
 
-// The sea's surface seen from under it (decision 077): within Snell's
+// The sea's surface seen from under it: within Snell's
 // window the sky shows through it, bent; beyond, the surface mirrors the
 // water below. The water between veils it like everything else.
 fn shade_ocean_below(input: OceanOutput) -> WaterShade {

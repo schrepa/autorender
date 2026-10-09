@@ -1,4 +1,4 @@
-// A physically based sky (decision 088), after Hillaire, "A Scalable and
+// A physically based sky, after Hillaire, "A Scalable and
 // Production Ready Sky and Atmosphere Rendering Technique" (2020): air over
 // a planet, integrated into a transmittance table (to the top of the
 // atmosphere by height and zenith angle), a table of multiple scattering's
@@ -24,8 +24,8 @@ struct SkyUniform {
     radii: vec4<f32>,
     // Direction toward the sun, and the authored exposure.
     sun: vec4<f32>,
-    // Seconds since the last frame, over which exposure eases (decision
-    // 091); 0 takes it at once.
+    // Seconds since the last frame, over which exposure eases;
+    // 0 takes it at once.
     frame: vec4<f32>,
 }
 

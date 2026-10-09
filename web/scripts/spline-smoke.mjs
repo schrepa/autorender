@@ -1,5 +1,5 @@
 /**
- * Spline meshes (decision 071): a version 9 playground fixture bends a box
+ * Spline meshes: a version 9 playground fixture bends a box
  * along a curve; the inspector reports what it built and its chunks draw;
  * moving a point rebuilds them, an invalid curve is refused with the scene
  * kept, and removing the field removes the chunks.

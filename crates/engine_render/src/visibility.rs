@@ -1,5 +1,5 @@
-//! The visibility buffer (decision 045): the camera's virtual geometry
-//! clusters (decision 044) rasterize which triangle covers each pixel
+//! The visibility buffer: the camera's virtual geometry
+//! clusters rasterize which triangle covers each pixel
 //! (`meshes/vertex.wgsl`'s `vs_visibility`) into an ID target; compute lists the
 //! 8x8 tiles holding each material bin's pixels (`visibility.wgsl`); and
 //! each bin's resolve (`fs_resolve*`) shades its pixels once, however many

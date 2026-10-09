@@ -6,7 +6,7 @@ const url = devUrl("playground.html");
 const output = await artifacts("culling-smoke");
 const camera = { position: [0, 0.6, 8], target: [0, 0.6, 0], vertical_fov_radians: Math.PI / 3, near: 1, far: 50 };
 // Shadows start off, so residency first follows visibility alone: shadow maps
-// draw off-screen casters too (decision 020).
+// draw off-screen casters too.
 const fixture = {
   version: 5, id: "culling-fixture", revision: 1,
   camera: { position: camera.position, target: camera.target, fov_degrees: 60, near: 1, far: 50 },

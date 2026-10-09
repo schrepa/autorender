@@ -1,4 +1,4 @@
-// Decals (decision 039): a box per decal, drawn after the opaque pass. Its
+// Decals: a box per decal, drawn after the opaque pass. Its
 // fragments rebuild the opaque surface under them from the depth buffer and
 // cover it with the decal's material where it lies inside the box.
 struct DecalRecord {
@@ -91,7 +91,7 @@ fn vs_decal(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
 }
 
 // The opaque surface's world position at `pixel` of depth `depth`, without
-// the jitter of temporally antialiased frames (decision 017).
+// the jitter of temporally antialiased frames.
 fn decal_surface(pixel: vec2<i32>, depth: f32) -> vec3<f32> {
     let size = vec2<f32>(textureDimensions(decal_depth));
     let center = vec2<f32>(pixel) + 0.5;
@@ -125,7 +125,7 @@ fn decal_point(input: DecalOutput) -> SurfacePoint {
     let pixel = vec2<i32>(input.clip_position.xy);
     let depth = textureLoad(decal_depth, pixel, 0);
     // The sky has no surface to cover: it keeps the cleared depth, 0 with
-    // reversed depth (decision 042).
+    // reversed depth.
     if !(depth > 0.0) {
         discard;
     }
@@ -203,7 +203,7 @@ fn fs_decal(input: DecalOutput) -> @location(0) vec4<f32> {
     return decal_output(finish(point, vec3<f32>(0.0)).color, point.opacity);
 }
 
-// Covering decals of frames with local lights (decision 023).
+// Covering decals of frames with local lights.
 @fragment
 fn fs_decal_lit(input: DecalOutput) -> @location(0) vec4<f32> {
     let point = decal_point(input);

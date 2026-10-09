@@ -107,14 +107,6 @@ pub fn docs(root: &Path) -> Result<(), String> {
     )
 }
 
-pub fn test(root: &Path) -> Result<(), String> {
-    run(
-        root,
-        "cargo",
-        &["test", "--workspace", "--all-features", "--locked"],
-    )
-}
-
 pub(crate) fn build_wasm(root: &Path, development: bool) -> Result<(), String> {
     verify_wasm_bindgen(root)?;
     let features = client_dev_features();

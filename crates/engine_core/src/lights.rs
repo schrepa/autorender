@@ -1,4 +1,4 @@
-//! Local lights (decision 023): point and spot lights carried by entities.
+//! Local lights: point and spot lights carried by entities.
 //!
 //! A light on an entity that renders a mesh follows that mesh's displayed
 //! pose, interpolation included: retained frames name the mesh's slot and the
@@ -39,7 +39,7 @@ pub struct Spot {
     pub outer_angle: f32,
 }
 
-/// A point or spot light (decision 023) at its entity's origin plus `offset`.
+/// A point or spot light at its entity's origin plus `offset`.
 ///
 /// Light reaching a surface `d` world units away is `color * intensity /
 /// d²`, smoothly windowed to nothing at `range`. On an entity that renders a
@@ -120,7 +120,7 @@ impl LocalLight {
     }
 }
 
-/// Local lighting settings (decision 023). Requires version 6.
+/// Local lighting settings. Requires version 6.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -197,7 +197,7 @@ impl LocalLights {
     }
 }
 
-/// One light of a frame (decision 023).
+/// One light of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderLight {
     /// World position; with `slot`, the position in that slot's model space.

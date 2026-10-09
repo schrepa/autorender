@@ -1,4 +1,4 @@
-//! Animation clips (decision 035): keyframed translation, rotation and scale
+//! Animation clips: keyframed translation, rotation and scale
 //! of target nodes, sampled as glTF 2.0 animations are.
 
 use glam::{Quat, Vec3};
@@ -367,7 +367,7 @@ fn hermite_weights(t: f32) -> [f32; 4] {
 }
 
 /// An immutable set of channels animating up to [`Self::target_count`]
-/// targets for [`Self::duration`] seconds (decision 035). Players bind the
+/// targets for [`Self::duration`] seconds. Players bind the
 /// targets to nodes, so one clip serves every instance of a model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationClip {

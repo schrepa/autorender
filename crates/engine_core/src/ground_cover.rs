@@ -1,17 +1,16 @@
-//! Ground cover (decision 056): blades of grass and the like standing on a
+//! Ground cover: blades of grass and the like standing on a
 //! terrain's surface materials, which renderers generate every frame around
 //! the camera and never store. A surface material names the cover growing
 //! where it lies ([`Cover`]); the [`GroundCover`] settings place, budget and
 //! sway it. Past its radius cover grows on in tiers as long as blades stay
-//! big enough on screen, and the ground beyond shows as its canopy
-//! (decision 090).
+//! big enough on screen, and the ground beyond shows as its canopy.
 
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
 
-/// The cover growing where a surface material lies (decision 056): blades
+/// The cover growing where a surface material lies: blades
 /// per square meter where the material lies alone, the shortest and
 /// tallest blades and their width at the root (meters), the linear color
 /// of their tips (roots take the ground's), and how far they lean in the
@@ -66,7 +65,7 @@ impl Cover {
     }
 }
 
-/// Ground cover settings (decision 056). Requires version 9.
+/// Ground cover settings. Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -78,7 +77,7 @@ pub struct GroundCover {
     pub enabled: bool,
     /// Meters from the camera within which cover grows densest, 2 to 200.
     /// Past it the ground shows as its cover's canopy, and sparser tiers
-    /// of wider blades reach on (decision 090).
+    /// of wider blades reach on.
     #[cfg_attr(feature = "schema", schemars(range(min = 2.0, max = 200.0)))]
     pub radius: f32,
     /// How tall on screen (pixels) the average blade stands where tiers
@@ -88,7 +87,7 @@ pub struct GroundCover {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 16.0)))]
     pub pixels: f32,
     /// Scales every cover's density, 0 to 4. Blades sway in the world's
-    /// `Wind` (decision 058).
+    /// `Wind`.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4.0)))]
     pub density: f32,
     /// An optional budget of blades a frame; beyond it the farthest drop.

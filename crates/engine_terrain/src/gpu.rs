@@ -1,5 +1,5 @@
-//! What a GPU pass reads to give a terrain's tiles their control values
-//! (decision 118): the surface's rules as one program for an interpreter
+//! What a GPU pass reads to give a terrain's tiles their control values:
+//! the surface's rules as one program for an interpreter
 //! shader, and what their masks read of the bakes and roads, flattened into
 //! words. The pass evaluates what [`BiomeRules::control`] evaluates at each
 //! sample, in the same order, so its control values are the CPU's but where
@@ -69,7 +69,7 @@ pub mod header {
     /// segments, line points, distances along and spans begin, and how many
     /// spans.
     pub const PATHS: usize = 7;
-    /// Surroundings' fade (decision 094): its low and high corners and
+    /// Surroundings' fade: its low and high corners and
     /// blend.
     pub const FADE: usize = 8;
     pub const LEN: usize = 16;
@@ -81,7 +81,7 @@ pub mod header {
 pub const MAX_STACK: u32 = 16;
 pub const MAX_MATERIALS: u32 = 64;
 
-/// A terrain's surface as a GPU pass reads it (decision 118): its words,
+/// A terrain's surface as a GPU pass reads it: its words,
 /// and what places a tile's samples and picks the hydrology images' level
 /// for its spacing.
 #[derive(Clone, Debug, PartialEq)]
@@ -136,7 +136,7 @@ impl SurfaceData {
     }
 
     /// The first sample (x and z) of tile `key` at `spacing` as its
-    /// terrain's layers read it (decision 094): a sample's x and z are
+    /// terrain's layers read it: a sample's x and z are
     /// these plus its column and row less one, times the spacing.
     pub fn first_sample(&self, key: crate::TileKey, spacing: f32) -> [i64; 2] {
         first_sample(self.offset, key, spacing)
@@ -152,7 +152,7 @@ impl SurfaceData {
 }
 
 /// The first sample of tile `key` at `spacing` read through a stack's
-/// offset `offset` (decision 094), as generators place their samples.
+/// offset `offset`, as generators place their samples.
 fn first_sample(offset: [f32; 2], key: crate::TileKey, spacing: f32) -> [i64; 2] {
     let quads = i64::from(crate::TILE_QUADS);
     [
@@ -162,8 +162,8 @@ fn first_sample(offset: [f32; 2], key: crate::TileKey, spacing: f32) -> [i64; 2]
 }
 
 /// The control value of `tile`'s stored sample `(column, row)` (0 to 258,
-/// samples -1 to 257) as generating it over `layers` with `rules` gives it
-/// (decision 118): what gameplay reads where tiles hold none, the GPU
+/// samples -1 to 257) as generating it over `layers` with `rules` gives it:
+/// what gameplay reads where tiles hold none, the GPU
 /// giving them to rendering. The same inputs and evaluation as a tile's
 /// rows, so the same bits.
 pub fn sample_control(

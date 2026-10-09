@@ -1,4 +1,4 @@
-/** Levels of detail and impostors (decisions 047 and 048) in the Stress Lab's metro, in real Chrome. */
+/** Levels of detail and impostors in the Stress Lab's metro, in real Chrome. */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";

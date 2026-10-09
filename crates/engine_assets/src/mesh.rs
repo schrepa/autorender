@@ -38,9 +38,9 @@ impl Aabb {
 }
 
 /// Validated, immutable indexed triangles. Winding is counterclockwise.
-/// Optional vertex colors and second texture coordinates (decision 034) and
-/// skinning joints and weights (decision 036) follow the vertices one to one.
-/// A mesh with virtual geometry (decision 044) is its hierarchy's fallback
+/// Optional vertex colors and second texture coordinates and
+/// skinning joints and weights follow the vertices one to one.
+/// A mesh with virtual geometry is its hierarchy's fallback
 /// cut, which renderers draw where they cannot draw its clusters.
 #[derive(Debug)]
 pub struct Mesh {
@@ -115,7 +115,7 @@ impl Mesh {
         })
     }
 
-    /// A mesh drawn from `geometry`'s cluster hierarchy (decision 044) where
+    /// A mesh drawn from `geometry`'s cluster hierarchy where
     /// renderers can, and as its fallback cut of at most `fallback_triangles`
     /// triangles elsewhere; its bounds hold every level.
     pub fn from_virtual(
@@ -138,7 +138,7 @@ impl Mesh {
     }
 
     /// This mesh deformed by joints: per vertex up to four joint indices
-    /// into the skin an entity binds (decision 036) and their weights, which
+    /// into the skin an entity binds and their weights, which
     /// must be finite, not negative and not all zero; they are normalized to
     /// sum to one. Joints of zero weight are ignored and read as joint 0.
     pub fn with_skin(

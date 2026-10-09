@@ -1,4 +1,4 @@
-//! Heightfield terrain data (decision 051): tile pyramids, the layer stack
+//! Heightfield terrain data: tile pyramids, the layer stack
 //! that generates heights, tiles with their samples, height queries, the
 //! patches a view draws and the `ETR1` tile file format.
 //!

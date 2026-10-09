@@ -33,11 +33,11 @@ pub(crate) struct CollisionSync<'w, 's> {
 
 impl CollisionSync<'_, '_> {
     fn refresh(&mut self) -> CollisionReport {
-        // Terrain heightfields (decision 051) follow the resident tiles.
+        // Terrain heightfields follow the resident tiles.
         if self.collisions.terrain.sync(self.terrains.as_deref()) {
             self.collisions.report.terrain_tiles = self.collisions.terrain.len();
         }
-        // Placed objects (decision 064) within the same radius.
+        // Placed objects within the same radius.
         if self.collisions.placed.sync(self.terrains.as_deref()) {
             self.collisions.report.placed_colliders = self.collisions.placed.len();
         }

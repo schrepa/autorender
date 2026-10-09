@@ -13,7 +13,7 @@ export default defineConfig(({ command, mode }) => ({
   plugins: [{
     name: "explicit-scene-reload",
     // Vite caches public file names. Read scenes and the image, buffer and
-    // virtual mesh files they reference (decisions 030, 037 and 044) directly
+    // virtual mesh files they reference directly
     // so newly authored files work while source changes remain excluded from
     // automatic reload.
     configureServer(server) {
@@ -37,7 +37,7 @@ export default defineConfig(({ command, mode }) => ({
           response.setHeader("Content-Type", types.get(path.split(".").pop()!.toLowerCase()) ?? "application/octet-stream");
           response.setHeader("Cache-Control", "no-store");
           response.setHeader("Accept-Ranges", "bytes");
-          // One byte range (virtual meshes stream their pages, decision 044).
+          // One byte range (virtual meshes stream their pages).
           const range = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
           let [start, end] = [0, limit];
           if (range) {
@@ -70,7 +70,7 @@ export default defineConfig(({ command, mode }) => ({
       find: `../pkg/${name}`, replacement: resolve(import.meta.dirname, `pkg-dev/${name}.js`),
     })) : [],
   },
-  // Job workers (decision 110) are modules: they import the engine's job
+  // Job workers are modules: they import the engine's job
   // worker bindings as the page imports the game's.
   worker: { format: "es" },
   build: {

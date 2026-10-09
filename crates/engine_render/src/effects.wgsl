@@ -1,4 +1,4 @@
-// Screen effects (decisions 021, 024 and 025) shared by the composite of
+// Screen effects shared by the composite of
 // post.wgsl, the sun shafts of shafts.wgsl and the temporal resolve of
 // temporal.wgsl, which are prepended with this source: the frame's effect
 // settings and how the composite and resolve apply ambient occlusion,
@@ -28,7 +28,7 @@ struct Post {
     shafts: vec4<f32>,
     // The sun's exposed color: light the shafts scatter.
     sun: vec4<f32>,
-    // Contact shadows (decision 062): each ray's reach in meters, the share
+    // Contact shadows: each ray's reach in meters, the share
     // of sunlight a hit takes away, the distance within which surfaces
     // trace, and 1 when they run.
     contact: vec4<f32>,
@@ -37,7 +37,7 @@ struct Post {
 }
 
 // The full-resolution pixel quarter-resolution sun shaft texel `texel`
-// traces (decision 024): the second of each 4x4 block's diagonal, centered
+// traces: the second of each 4x4 block's diagonal, centered
 // at 4 * texel + 1.5.
 fn shaft_pixel(texel: vec2<i32>) -> vec2<i32> {
     return texel * 4 + vec2<i32>(1);
@@ -69,7 +69,7 @@ fn occlusion_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
 }
 
 // The factor darkening the rest of that light, the sun's, by the contact
-// shadows' `visible` share (decision 062).
+// shadows' `visible` share.
 fn contact_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
     if settings.contact.w == 0.0 {
         return 1.0;
@@ -77,7 +77,7 @@ fn contact_factor(ambient: f32, visible: f32, settings: Post) -> f32 {
     return 1.0 - (1.0 - ambient) * (1.0 - visible);
 }
 
-// The scene reflected at `uv` (decision 025) replacing the share of `color`
+// The scene reflected at `uv` replacing the share of `color`
 // its reflectivity and confidence give it; misses keep the sky reflection
 // already in `color`.
 fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
@@ -89,7 +89,7 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
     return mix(color, reflection.rgb, saturate(reflection.a * settings.reflections.y));
 }
 
-// Sunlight scattered toward the eye (decision 024), `amount` of it, added as
+// Sunlight scattered toward the eye, `amount` of it, added as
 // a screen blend.
 fn shafted(color: vec3<f32>, amount: f32, settings: Post) -> vec3<f32> {
     if settings.shafts.w == 0.0 {

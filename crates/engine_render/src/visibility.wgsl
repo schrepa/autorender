@@ -1,4 +1,4 @@
-// Tile classification of the visibility buffer (decision 045): which 8x8
+// Tile classification of the visibility buffer: which 8x8
 // tiles hold pixels of each material bin, so each bin's resolve draws only
 // those. A tile lists a bin once, by its first pixel of that bin.
 

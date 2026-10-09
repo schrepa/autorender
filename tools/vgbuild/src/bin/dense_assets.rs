@@ -1,4 +1,4 @@
-//! Writes the Stress Lab's dense virtual geometry (decision 044): procedural
+//! Writes the Stress Lab's dense virtual geometry: procedural
 //! high-poly meshes as `EVG1` files, named as the Stress Lab's
 //! `DENSE_FILES` fetches them, and a manifest of them that the
 //! virtual-geometry smoke check reads.

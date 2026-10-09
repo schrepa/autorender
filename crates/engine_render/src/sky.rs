@@ -1,4 +1,4 @@
-//! A physically based sky (decision 088; `sky_common.wgsl`, `sky.wgsl`):
+//! A physically based sky (`sky_common.wgsl`, `sky.wgsl`):
 //! the air's transmittance and multiple scattering tables, built when the
 //! air changes; the sky-view table around the camera, built when the sun,
 //! the camera's height or the air changes; and every frame the scene's
@@ -20,7 +20,7 @@ const TRANSMITTANCE_SIZE: (u32, u32) = (256, 64);
 const MULTIPLE_SIZE: (u32, u32) = (32, 32);
 const VIEW_SIZE: (u32, u32) = (192, 108);
 /// Meters of the camera's height per redraw of the sky's environment map;
-/// the sky-view table follows the height exactly (decision 091).
+/// the sky-view table follows the height exactly.
 const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
 /// Bytes of the derived light: seven vec4 (`sky.wgsl`'s `derived`), the
 /// last the exposure as it eased to last frame.

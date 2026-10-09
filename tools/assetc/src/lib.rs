@@ -1,6 +1,6 @@
 //! Native conversion of GLB models with glTF 2.0 metallic-roughness
-//! materials, animations and skins into scenes and the files beside them
-//! (decisions 030, 031, 035, 036). No filesystem access, runtime imports, or
+//! materials, animations and skins into scenes and the files beside them.
+//! No filesystem access, runtime imports, or
 //! external resource resolution.
 
 mod animation;
@@ -19,7 +19,7 @@ pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
 /// Changes whenever import behavior or supported settings change.
 pub const IMPORTER_VERSION: &str = "gltf-pbr-9";
 /// Triangles from which an opaque primitive imports as virtual geometry
-/// (decision 044) unless [`ImportOptions`] say otherwise.
+/// unless [`ImportOptions`] say otherwise.
 pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;
 
 /// How a model imports.
@@ -27,7 +27,7 @@ pub const DEFAULT_VIRTUAL_TRIANGLES: u32 = 512;
 pub struct ImportOptions {
     /// Primitives of at least this many triangles, opaque and without vertex
     /// colors, second texture coordinates or joints, import as virtual
-    /// meshes (`EVG1` files, decision 044); `None` imports none.
+    /// meshes (`EVG1` files); `None` imports none.
     pub virtual_triangles: Option<u32>,
 }
 

@@ -1,19 +1,19 @@
-//! Terrain jobs (decision 110): terrain work engines hand workers, as bytes
+//! Terrain jobs: terrain work engines hand workers, as bytes
 //! in and bytes out: a tile generated, a walk searched, a stack baked.
 //! Workers hold once what many jobs read, shared by key: layer stacks with
 //! their bakes, and the recipes generating a terrain's tiles from one. Jobs
 //! run the same code in workers as engines without them run in place, so
 //! their results are the same bits.
 //!
-//! Workers run jobs a slice at a time (decision 112): [`TerrainWorker::start`]
+//! Workers run jobs a slice at a time: [`TerrainWorker::start`]
 //! one, [`TerrainWorker::step`] it within a budget until it is done, and
 //! between slices take up a more urgent one or drop one its engine no longer
 //! wants. A tile's objects of layers standing far away at its level may be
 //! placed by a job of their own after it, as far tiles hold them by the tens
-//! of thousands. A staged tile job hands out the tile's shape as a part
-//! (decision 114), [`TerrainWorker::take_part`], before the rest is done.
-//! A tile may also generate in bands of rows on several workers at once
-//! (decision 117), joined by its engine, with its objects placed by a job
+//! of thousands. A staged tile job hands out the tile's shape as a part,
+//! [`TerrainWorker::take_part`], before the rest is done.
+//! A tile may also generate in bands of rows on several workers at once,
+//! joined by its engine, with its objects placed by a job
 //! after.
 
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ use crate::{
 pub const TILE_JOB: &str = "terrain_tile";
 pub const FAR_JOB: &str = "terrain_far";
 /// A band of a tile's rows, and the objects placed on a tile its bands
-/// made (decision 117).
+/// made.
 pub const BAND_JOB: &str = "terrain_band";
 pub const PLACE_JOB: &str = "terrain_place";
 pub const WALK_JOB: &str = "terrain_walk";
@@ -57,7 +57,7 @@ impl codec::Codec for Placing {
     }
 }
 
-/// How a terrain's surroundings (decision 094) see a stack: as
+/// How a terrain's surroundings see a stack: as
 /// [`Layers::surroundings`] takes them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StackView {
@@ -83,8 +83,7 @@ pub struct TerrainRecipe {
     pub view: Option<StackView>,
     pub pyramid: Pyramid,
     pub surface: Biomes,
-    /// Whether tiles hold control values; without, the GPU gives them
-    /// (decision 118).
+    /// Whether tiles hold control values; without, the GPU gives them.
     pub materials: bool,
 }
 
@@ -115,8 +114,8 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Vec<u8> {
 }
 
 /// The input of a [`TILE_JOB`]: tile `key` of the recipe shared as
-/// `recipe`, with `placing`'s objects (decision 112), its shape handed out
-/// first where `staged` (decision 114).
+/// `recipe`, with `placing`'s objects, its shape handed out
+/// first where `staged`.
 pub fn tile_input(recipe: &str, key: TileKey, placing: Placing, staged: bool) -> Vec<u8> {
     let mut writer = Writer::new();
     writer
@@ -127,13 +126,12 @@ pub fn tile_input(recipe: &str, key: TileKey, placing: Placing, staged: bool) ->
     writer.into_bytes()
 }
 
-/// A [`TILE_JOB`]'s output, and its part: the tile, or its shape alone
-/// (decision 114).
+/// A [`TILE_JOB`]'s output, and its part: the tile, or its shape alone.
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`FAR_JOB`] (decision 112): the objects of the recipe
+/// The input of a [`FAR_JOB`]: the objects of the recipe
 /// shared as `recipe` standing far away on `tile`, one of its tiles.
 pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
     let mut writer = Writer::new();
@@ -141,7 +139,7 @@ pub fn far_input(recipe: &str, tile: &Tile) -> Vec<u8> {
     writer.into_bytes()
 }
 
-/// The input of a [`BAND_JOB`] (decision 117): stored rows `rows` (0 to
+/// The input of a [`BAND_JOB`]: stored rows `rows` (0 to
 /// 259) of tile `key` of the recipe shared as `recipe`.
 pub fn band_input(recipe: &str, key: TileKey, rows: std::ops::Range<u32>) -> Vec<u8> {
     let mut writer = Writer::new();
@@ -159,9 +157,9 @@ pub fn band_output(bytes: &[u8]) -> Result<TileBand, CodecError> {
     codec::decode(bytes)
 }
 
-/// The input of a [`PLACE_JOB`] (decision 117): `placing`'s objects of the
+/// The input of a [`PLACE_JOB`]: `placing`'s objects of the
 /// recipe shared as `recipe` on `tile`, one of its tiles without them,
-/// from layer and row `start` up to `end` (decision 119; none for the
+/// from layer and row `start` up to `end` (none for the
 /// rest, with what authors stand on it). Its output is the objects, as a
 /// [`FAR_JOB`]'s ([`far_output`]).
 pub fn place_input(
@@ -181,7 +179,7 @@ pub fn place_input(
     writer.into_bytes()
 }
 
-/// What a [`PLACE_JOB`]'s output depends on (decision 116): its recipe,
+/// What a [`PLACE_JOB`]'s output depends on: its recipe,
 /// tile, placing and rows.
 pub fn place_identity(
     recipe: &str,
@@ -200,7 +198,7 @@ pub fn place_identity(
     writer.into_bytes()
 }
 
-/// What a [`FAR_JOB`]'s output depends on (decision 116): its recipe and
+/// What a [`FAR_JOB`]'s output depends on: its recipe and
 /// tile, which that recipe generates.
 pub fn far_identity(recipe: &str, key: TileKey) -> Vec<u8> {
     let mut writer = Writer::new();
@@ -259,7 +257,7 @@ struct Recipe {
     materials: bool,
 }
 
-/// A job a worker started (decision 112), to step until done.
+/// A job a worker started, to step until done.
 enum Running {
     Tile(Generator),
     Far(Generator),
@@ -339,7 +337,7 @@ impl TerrainWorker {
         }
     }
 
-    /// Starts job `id` of `kind` on `input` (decision 112), to
+    /// Starts job `id` of `kind` on `input`, to
     /// [`Self::step`] until done; another of the same id stops.
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         let invalid = |error: CodecError| error.to_string();
@@ -493,7 +491,7 @@ impl TerrainWorker {
         output.map(Some)
     }
 
-    /// A part of job `id`'s output ready before the rest (decision 114),
+    /// A part of job `id`'s output ready before the rest,
     /// taken once: a staged tile's shape.
     pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
         match self.running.get_mut(&id)? {
@@ -507,7 +505,7 @@ impl TerrainWorker {
         self.running.remove(&id);
     }
 
-    /// Generates a small fixed tile (decision 113), so a new worker's tile
+    /// Generates a small fixed tile, so a new worker's tile
     /// code reaches its optimized tier before real tiles: what any tile
     /// runs, over a noise layer and a surface of two materials, one on
     /// slopes in noise.

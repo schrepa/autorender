@@ -1,4 +1,4 @@
-//! Particles (decision 026): emitters on entities, simulated on the GPU.
+//! Particles: emitters on entities, simulated on the GPU.
 //!
 //! Every particle is a function of its emitter, its index and presentation
 //! time, so frames keep no particle state: pausing freezes them, captures are
@@ -38,7 +38,7 @@ pub enum ParticleBlend {
     Additive,
 }
 
-/// Emits particles from its entity (decision 026).
+/// Emits particles from its entity.
 ///
 /// Particle `k` is born at `k / rate` seconds of presentation time at the
 /// emitter's position (plus `offset` and a random point within `radius`),
@@ -143,7 +143,7 @@ impl ParticleEmitter {
     }
 }
 
-/// Particle settings (decision 026). Requires version 6.
+/// Particle settings. Requires version 6.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -184,7 +184,7 @@ impl Particles {
     }
 }
 
-/// One emitter of a frame (decision 026), in world space.
+/// One emitter of a frame, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderEmitter {
     /// Birth position and the emitter's velocity.

@@ -1,4 +1,4 @@
-/** Temporal antialiasing (decision 017) in real Chrome: ordinary GPU-presented
+/** Temporal antialiasing in real Chrome: ordinary GPU-presented
  * frames converge to a stable, smoother image, while captures and CPU-presented
  * frames stay exact. */
 import assert from "node:assert/strict";

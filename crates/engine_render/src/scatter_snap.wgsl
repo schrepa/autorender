@@ -1,9 +1,9 @@
-// Placed objects on the terrain as drawn (decision 057): each frame, before
+// Placed objects on the terrain as drawn: each frame, before
 // culling, every live object's base moves onto its terrain's finest
 // resident heights, as ground cover's roots do (`cover_grow.wgsl`), so
 // objects of coarse tiles sit on the finer ground drawn near the camera and
 // settle as finer tiles arrive. Its pose's height and its bounding sphere
-// follow its base. Objects standing far away (decision 061) hide where
+// follow its base. Objects standing far away hide where
 // tiles of the level holding them instead are resident.
 
 struct Snap {
@@ -27,7 +27,7 @@ struct Record {
     scale: f32,
     terrain: u32,
     sink: f32,
-    // How the camera shows it (decision 104; `scatter_cull.wgsl`).
+    // How the camera shows it (`scatter_cull.wgsl`).
     state: u32,
     pad_0: u32,
     pad_1: u32,

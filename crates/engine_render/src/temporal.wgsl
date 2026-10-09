@@ -1,4 +1,4 @@
-// Temporal antialiasing resolve (decision 017), prepended with effects.wgsl.
+// Temporal antialiasing resolve, prepended with effects.wgsl.
 // One full-screen triangle per display frame blends this frame's jittered
 // color with the previous output, reprojected by per-pixel motion. The
 // history is clamped to the box of the current pixel and its four edge
@@ -6,7 +6,7 @@
 // shading and approximate motion. Pixels whose reprojection leaves the
 // viewport, and every pixel after a reset, show this frame's color alone.
 // Ambient occlusion darkens this frame's color before blending, so the
-// history averages its noise; bloom (decision 021) reaches the canvas only.
+// history averages its noise; bloom reaches the canvas only.
 // Writes the canvas and the next history together.
 
 struct Resolve {
@@ -26,12 +26,12 @@ struct Resolve {
 @group(0) @binding(2) var motion: texture_2d<f32>;
 @group(0) @binding(3) var history: texture_2d<f32>;
 @group(0) @binding(4) var history_sampler: sampler;
-// The filtered ambient occlusion's visibility and the sun shafts' light
-// (decision 024), at half resolution.
+// The filtered ambient occlusion's visibility and the sun shafts' light,
+// at half resolution.
 @group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> post: Post;
-// Reflections (decision 025) at half resolution; like bloom and sun shafts,
+// Reflections at half resolution; like bloom and sun shafts,
 // they reach the canvas only.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
 

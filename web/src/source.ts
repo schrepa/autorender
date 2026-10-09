@@ -37,7 +37,7 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
   } finally { reader.releaseLock(); }
 }
 
-/** The generated bindings a scene's file loader needs (decision 030). */
+/** The generated bindings a scene's file loader needs. */
 export interface SceneFileBindings {
   scene_file_list(source: string): string;
   virtual_prefix_bytes(header: Uint8Array): number | undefined;
@@ -56,9 +56,9 @@ export interface SceneFileBindings {
 /**
  * Fetch the image and buffer files a scene references, relative to its URL,
  * decode images with the browser's own decoder into RGBA8 pixels, and
- * transcode KTX2 images to a block-compressed format the GPU samples
- * (decision 037). Runs at load boundaries only, never per frame: on the
- * page's job workers where it runs them (decision 110), several at once,
+ * transcode KTX2 images to a block-compressed format the GPU samples.
+ * Runs at load boundaries only, never per frame: on the
+ * page's job workers where it runs them, several at once,
  * else on the page.
  */
 export async function loadSceneFiles(sceneUrl: string, source: string, bindings: SceneFileBindings, signal: AbortSignal) {
@@ -68,14 +68,14 @@ export async function loadSceneFiles(sceneUrl: string, source: string, bindings:
   const pool = jobPool();
   try {
     await Promise.all(list.map(async ({ uri, kind }) => {
-      // Virtual meshes (decision 044) load their prefix; the renderer
+      // Virtual meshes load their prefix; the renderer
       // streams their other pages from the same URL as views need them.
       if (kind === "virtual_mesh") {
         const url = new URL(uri, base).href;
         files.add_virtual_mesh(uri, await fetchVirtualPrefix(url, bindings.virtual_prefix_bytes, signal), url);
         return;
       }
-      // Terrain files (decision 051) load their header and directory; the
+      // Terrain files load their header and directory; the
       // engine fetches tiles by byte range as the camera needs them.
       if (kind === "terrain") {
         const url = new URL(uri, base).href;

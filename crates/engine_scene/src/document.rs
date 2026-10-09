@@ -14,12 +14,12 @@ pub fn schema_path() -> String {
     format!("docs/schema/scene-v{SCENE_VERSION}.schema.json")
 }
 /// Largest scene source parsed: a sanity bound on JSON, not on content,
-/// which references image and buffer files for bulk data (decision 030).
+/// which references image and buffer files for bulk data.
 pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 /// A persistent scene source. IDs are authored ASCII names, never runtime IDs.
 ///
-/// Loading sets no count budget (decision 029); bulk pixels and geometry
+/// Loading sets no count budget; bulk pixels and geometry
 /// belong in files beside the scene (version 7). Prefabs share scene-wide
 /// assets across their placements.
 /// Unknown fields are rejected to expose authoring mistakes. Arrays retain
@@ -38,7 +38,7 @@ pub struct SceneDocument {
     pub revision: u64,
     #[serde(default)]
     pub camera: SceneCamera,
-    /// The scene's atmosphere and rendering effects (decision 022). Requires
+    /// The scene's atmosphere and rendering effects. Requires
     /// version 5. With it the scene owns the whole look: instantiation sets
     /// every section, omitted ones to the engine defaults. Without it the
     /// game's own settings stay.
@@ -52,15 +52,15 @@ pub struct SceneDocument {
     /// Reusable local entity trees. Definitions share this document's assets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
-    /// Keyframed clips that entity `animation` players play (decision 035).
+    /// Keyframed clips that entity `animation` players play.
     /// Version 8.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub animations: Vec<SceneAnimation>,
-    /// Joint lists that deform skinned meshes (decision 036). Version 8.
+    /// Joint lists that deform skinned meshes. Version 8.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skins: Vec<SceneSkin>,
     pub entities: Vec<SceneObject>,
-    /// Entities that exist only near the camera (decision 086): each root
+    /// Entities that exist only near the camera: each root
     /// with its descendants is one item, which world streaming spawns when
     /// its cell comes within range and despawns when it leaves. Parents,
     /// animation targets and skin joints stay within an item; IDs differ
@@ -217,7 +217,7 @@ impl SceneCamera {
     }
 }
 
-/// A material's response to light (decision 019). Omitted fields keep the
+/// A material's response to light. Omitted fields keep the
 /// matte defaults: roughness 0.8 and no metalness, emission or ripples.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -299,7 +299,7 @@ pub enum MeshSource {
         )]
         uri: String,
     },
-    /// A virtual mesh file (`EVG1`, decision 044) beside the scene: a
+    /// A virtual mesh file (`EVG1`) beside the scene: a
     /// cluster hierarchy renderers draw as the clusters each view needs, and
     /// elsewhere as its most detailed cut of at most `fallback_triangles`
     /// triangles (4096 when omitted). Built by `cargo xtask asset import`
@@ -496,7 +496,7 @@ pub struct SceneVertex {
     #[serde(default, skip_serializing_if = "zero_uv")]
     pub uv: [f32; 2],
     /// Version 8: linear RGBA in `[0, 1]` multiplying the material's base
-    /// color (decision 034). Every vertex of a mesh has one or none does.
+    /// color. Every vertex of a mesh has one or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 4]>,
     /// Version 8: second texture coordinates, which texture maps may read.
@@ -504,7 +504,7 @@ pub struct SceneVertex {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv1: Option<[f32; 2]>,
     /// Version 8: up to four joints (indices into the skin of the entities
-    /// drawing the mesh) moving this vertex (decision 036). Every vertex of
+    /// drawing the mesh) moving this vertex. Every vertex of
     /// a mesh has joints and weights or none does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub joints: Option<[u16; 4]>,
@@ -589,20 +589,20 @@ pub struct SceneObject {
     /// Local collision shape, independent of rendering. Requires version 4.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneCollider>,
-    /// A point or spot light (decision 023). Requires version 6.
+    /// A point or spot light. Requires version 6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<SceneLight>,
-    /// A particle emitter (decision 026). Requires version 6.
+    /// A particle emitter. Requires version 6.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub particles: Option<SceneEmitter>,
-    /// Multiplies this object's color and opacity channel by channel
-    /// (decision 033), each factor finite and in `[0, 1]`. Requires version 8.
+    /// Multiplies this object's color and opacity channel by channel,
+    /// each factor finite and in `[0, 1]`. Requires version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tint: Option<[f32; 4]>,
-    /// Plays an animation on its targets (decision 035). Requires version 8.
+    /// Plays an animation on its targets. Requires version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<ScenePlayer>,
-    /// The skin deforming this object's mesh (decision 036). Requires
+    /// The skin deforming this object's mesh. Requires
     /// version 8 and a mesh with joints and weights.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
@@ -611,39 +611,39 @@ pub struct SceneObject {
     )]
     pub skin: Option<String>,
     /// Projects a material onto the opaque surfaces inside this entity's
-    /// box (decision 039). Requires version 8.
+    /// box. Requires version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decal: Option<crate::SceneDecal>,
     /// Captures this entity's surroundings into an environment map that
-    /// surfaces inside its world box reflect (decision 043). Requires
+    /// surfaces inside its world box reflect. Requires
     /// version 8.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reflection_probe: Option<crate::SceneReflectionProbe>,
-    /// A heightfield terrain whose tiles stream around the camera (decision
-    /// 051). Requires version 9.
+    /// A heightfield terrain whose tiles stream around the camera.
+    /// Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terrain: Option<crate::SceneTerrain>,
-    /// One of this document's meshes bent along a curve (decision 071).
+    /// One of this document's meshes bent along a curve.
     /// Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spline: Option<crate::SceneSpline>,
-    /// Rides the sea (decision 077). Requires version 9.
+    /// Rides the sea. Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floating: Option<engine_core::Floating>,
-    /// Presses tracks into deformable ground (decision 083). Requires
+    /// Presses tracks into deformable ground. Requires
     /// version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deformer: Option<engine_core::Deformer>,
-    /// Walks over the terrain to a destination (decision 089). Roots only.
+    /// Walks over the terrain to a destination. Roots only.
     /// Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nav_agent: Option<engine_core::NavAgent>,
-    /// Stands on the terrain (decision 086): its translation's y becomes
+    /// Stands on the terrain: its translation's y becomes
     /// `offset` meters above the ground under it. Roots only. Requires
     /// version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grounded: Option<engine_core::Grounded>,
-    /// Names it a place the camera may be sent to (decision 120), whose
+    /// Names it a place the camera may be sent to, whose
     /// terrain workers generate ahead of need. Requires version 9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefetch: Option<engine_core::TerrainPrefetch>,

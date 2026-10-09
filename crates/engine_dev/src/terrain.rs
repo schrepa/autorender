@@ -1,9 +1,9 @@
-//! Read-only terrain observations (decision 051): heights at points, a
+//! Read-only terrain observations: heights at points, a
 //! sweep comparing what terrain queries, collision rays and generated
-//! terrains' layers say the ground is, routes for paths (decision 069), and
-//! the sea's surface (decision 076) and tracks (decision 083); temporary
-//! edits of generated terrains, with undo and redo (decision 080), and
-//! tracks pressed (decision 083).
+//! terrains' layers say the ground is, routes for paths, and
+//! the sea's surface and tracks; temporary
+//! edits of generated terrains, with undo and redo, and
+//! tracks pressed.
 
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use std::sync::Arc;
@@ -26,7 +26,7 @@ pub(crate) const MAX_POINTS: usize = 256;
 pub(crate) const MAX_SWEEP_SAMPLES: u32 = 64;
 /// The largest coordinate a request names, as collision queries bound them.
 const LIMIT: f64 = 1.0e6;
-/// Hits a sweep ray may meet: placed objects (decision 064) above the
+/// Hits a sweep ray may meet: placed objects above the
 /// ground, and the ground itself.
 const PLACED_RAY_HITS: usize = 16;
 
@@ -42,7 +42,7 @@ pub(crate) fn terrain_request(request: &DevRequest) -> bool {
     )
 }
 
-/// A track an agent presses (decision 083).
+/// A track an agent presses.
 pub struct Press {
     pub from: [f64; 2],
     pub to: Option<[f64; 2]>,
@@ -55,7 +55,7 @@ pub struct Press {
 /// Presses `press` into the log as a deformer would at the fixed clock's
 /// time; its result.
 /// Sends navigation agent `id` in `scene` to `destination` (world x and
-/// z), or stops it (decision 089).
+/// z), or stops it.
 pub fn nav_go(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
@@ -91,7 +91,7 @@ pub fn nav_go(
     Ok(json!({ "temporary": true, "destination": destination }))
 }
 
-/// Removes and restores streamed items (decision 087): `remove` and
+/// Removes and restores streamed items: `remove` and
 /// `restore` name item IDs (at most 256 each, each 1 to 192 bytes);
 /// `clear` restores every item first.
 pub fn change_world(
@@ -177,7 +177,7 @@ pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError>
     }))
 }
 
-/// A terrain edit control (decision 080).
+/// A terrain edit control.
 pub enum TerrainEditing {
     Edit {
         id: String,
@@ -415,9 +415,9 @@ pub(crate) fn execute(
                     let x = coordinate(point[0], &format!("$.points[{index}][0]"))?;
                     let z = coordinate(point[1], &format!("$.points[{index}][1]"))?;
                     Ok(terrains.sample(x, z).map_or(Value::Null, |sample| {
-                        // What its hydrology bake (decision 066) found there,
+                        // What its hydrology bake found there,
                         // as the finest level sees it, and the water standing
-                        // there (decision 067): its surface (world height)
+                        // there: its surface (world height)
                         // and depth.
                         let bake = terrains.layers(sample.terrain).and_then(|layers| {
                             let terrain = terrains.terrain(sample.terrain)?;
@@ -437,8 +437,8 @@ pub(crate) fn execute(
                                 standing,
                             ))
                         });
-                        // Meters from the nearest road's edge (decision
-                        // 069), where a path's masks reach.
+                        // Meters from the nearest road's edge,
+                        // where a path's masks reach.
                         let path = terrains.layers(sample.terrain).and_then(|layers| {
                             let terrain = terrains.terrain(sample.terrain)?;
                             let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
@@ -562,8 +562,7 @@ pub(crate) fn execute(
                 ));
             }
             let world = engine.app.world();
-            // Frames draw the sea at the simulation time they present
-            // (decision 077).
+            // Frames draw the sea at the simulation time they present.
             let seconds = match seconds {
                 Some(seconds) if seconds.is_finite() && seconds.abs() <= 1.0e9 => seconds,
                 Some(_) => {
@@ -784,7 +783,7 @@ fn sweep(
                 continue;
             }
             // Collision holds level-0 tiles around focus points only. Rays
-            // meeting placed objects first (decision 064) count, and the
+            // meeting placed objects first count, and the
             // ground beneath them compares.
             if collision {
                 let mut hits = Vec::new();

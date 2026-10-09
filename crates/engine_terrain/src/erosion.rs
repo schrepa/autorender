@@ -1,4 +1,4 @@
-//! Erosion (decision 068): rivers wear valleys into the layers below it and
+//! Erosion: rivers wear valleys into the layers below it and
 //! slopes creep toward them, baked at one pyramid level. Each round fills
 //! the grid's pits as sediment (Priority-Flood with epsilon), routes every
 //! sample's water to its steepest neighbor the flood reached first, sums
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::hydrology::{Drainage, drainage, image_level};
 use crate::layers::HeightImage;
 
-/// A layer that erodes the layers below it (decision 068).
+/// A layer that erodes the layers below it.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]

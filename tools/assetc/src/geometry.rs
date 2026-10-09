@@ -11,7 +11,7 @@ use gltf::{
 use crate::{ImportError, ImportOptions, ImportedFile, unsupported};
 
 /// Static models bake node transforms into their vertices; models with
-/// animations or skins keep their nodes (decisions 035 and 036).
+/// animations or skins keep their nodes.
 pub(crate) fn import(
     document: &gltf::Document,
     binary: &[u8],
@@ -82,7 +82,7 @@ pub(crate) fn import(
 /// A primitive's entity, mesh and mesh file, its vertices transformed by
 /// `matrix`; with `skinned`, carrying the primitive's joints and weights.
 /// Dense opaque primitives without extra streams become virtual meshes
-/// (decision 044) as `options` say.
+/// as `options` say.
 #[allow(clippy::too_many_arguments)]
 fn import_primitive(
     output: &SceneDocument,
@@ -129,8 +129,8 @@ fn import_primitive(
     }
     let object_id = format!("{id}.node{}.p{}", node.index(), primitive.index());
     let mesh_id = format!("{object_id}.mesh");
-    // Vertex colors, second coordinates (decision 034), joints and weights
-    // (decision 036) ride in an EMB2 buffer's optional streams.
+    // Vertex colors, second coordinates, joints and weights
+    // ride in an EMB2 buffer's optional streams.
     let colors: Option<Vec<[f32; 4]>> = vertices.iter().map(|vertex| vertex.color).collect();
     let uv1: Option<Vec<[f32; 2]>> = vertices.iter().map(|vertex| vertex.uv1).collect();
     let joints: Option<Vec<[u16; 4]>> = vertices.iter().map(|vertex| vertex.joints).collect();
@@ -418,9 +418,9 @@ fn primitive_data(
         let dimensions = match semantic {
             Semantic::Positions | Semantic::Normals => Dimensions::Vec3,
             Semantic::TexCoords(0) => Dimensions::Vec2,
-            // Normal maps derive their tangent frames (decision 031); maps
-            // read TEXCOORD_0 or TEXCOORD_1, and base colors COLOR_0
-            // (decision 034), skins JOINTS_0 and WEIGHTS_0 (decision 036),
+            // Normal maps derive their tangent frames; maps
+            // read TEXCOORD_0 or TEXCOORD_1, and base colors COLOR_0,
+            // skins JOINTS_0 and WEIGHTS_0,
             // whose formats the reader converts.
             Semantic::Tangents
             | Semantic::TexCoords(_)

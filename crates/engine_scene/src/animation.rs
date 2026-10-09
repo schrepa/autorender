@@ -1,5 +1,5 @@
-//! Authored animation clips and players (decision 035), and skins
-//! (decision 036). Version 8.
+//! Authored animation clips and players, and skins.
+//! Version 8.
 
 use std::sync::Arc;
 
@@ -85,7 +85,7 @@ pub enum SceneInterpolation {
     CubicSpline,
 }
 
-/// Plays a clip on its targets from this entity (decision 035).
+/// Plays a clip on its targets from this entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -118,7 +118,7 @@ fn is_zero(value: &f32) -> bool {
     *value == 0.0
 }
 
-/// A named skin (decision 036): the joint entities that deform skinned meshes
+/// A named skin: the joint entities that deform skinned meshes
 /// and each joint's inverse bind matrix (column-major, sixteen numbers).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

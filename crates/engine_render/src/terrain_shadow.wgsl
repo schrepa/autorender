@@ -1,4 +1,4 @@
-// Terrain (decision 051) in shadow maps, after `meshes/terrain_vertex.wgsl`:
+// Terrain in shadow maps, after `meshes/terrain_vertex.wgsl`:
 // the camera's patches drawn depth-only into each map, at the positions the
 // camera sees, so terrain shadows itself without acne.
 

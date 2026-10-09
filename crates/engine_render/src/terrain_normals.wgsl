@@ -1,4 +1,4 @@
-// Terrain normal maps (decision 051): a tile's normals from its heights,
+// Terrain normal maps: a tile's normals from its heights,
 // once when the tile uploads, into the same layer of the normal array.
 // Fragments read them whatever level of detail the geometry draws at, so
 // the ground's light holds still as levels hand over.

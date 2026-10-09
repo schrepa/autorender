@@ -1225,7 +1225,7 @@ impl Shape {
 }
 
 /// Procedural textures; building façades are 64x256 with a roof band. Alpha
-/// masks emission (decision 019): lit windows, neon and lamp heads.
+/// masks emission: lit windows, neon and lamp heads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tex {
     Office,
@@ -1264,7 +1264,7 @@ impl Tex {
         Tex::Lamp,
     ];
 
-    /// How the surface responds to light (decision 019): glass and metal
+    /// How the surface responds to light: glass and metal
     /// reflect the sky, water ripples, and lit windows, neon and lamp heads
     /// emit where the texture's alpha lets them.
     pub(crate) fn surface(self) -> Surface {
@@ -1538,7 +1538,7 @@ impl Library {
         paint: Paint,
     ) -> Result<Mesh3d, String> {
         let mesh = self.meshes[&shape.resolve(self.variety)];
-        // Glass domes are see-through (decision 026).
+        // Glass domes are see-through.
         let opacity: f32 = if shape == Shape::Dome && paint.tex == Tex::Glass {
             0.4
         } else {

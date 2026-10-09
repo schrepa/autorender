@@ -1,4 +1,4 @@
-// The page's job output cache (decision 116): outputs of jobs the engine
+// The page's job output cache: outputs of jobs the engine
 // marks keepable (terrain tiles, their far objects, walks and bakes) and
 // KTX2 textures transcoded on workers, kept in the origin's private file
 // system under a hash of the job worker module, the job's kind and its

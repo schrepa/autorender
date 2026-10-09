@@ -1,6 +1,6 @@
 //! Procedural texture sets of the metro: base color (sRGB, alpha for masked
 //! sets), metallic-roughness (linear: red occlusion, green roughness, blue
-//! metalness), tangent-space normal and emissive maps (decision 031).
+//! metalness), tangent-space normal and emissive maps.
 //! Tiling sets repeat seamlessly; atlases hold uniform regions that meshes
 //! map into. Generation depends on nothing but the set, so one build serves
 //! every workload.

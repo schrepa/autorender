@@ -180,8 +180,8 @@ impl<'a> RenderFrame<'a> {
     }
     /// Slot ownership, draw keys and the listed meshes and materials.
     /// Visibility changes alone preserve this stamp so renderers can retain
-    /// slot buckets, and so do listed materials replaced in place (decision
-    /// 033), which advance only [`Self::structure_revision`].
+    /// slot buckets, and so do listed materials replaced in place,
+    /// which advance only [`Self::structure_revision`].
     pub fn source_revision(self) -> u64 {
         self.owner.source_revision
     }
@@ -242,7 +242,7 @@ impl<'a> RenderFrame<'a> {
         &self.owner.pose_rows
     }
     /// GPU presentation inputs when this frame leaves blending, composition and
-    /// culling to the GPU (decision 014). Then `visible_indices` lists every
+    /// culling to the GPU. Then `visible_indices` lists every
     /// candidate slot, [`Self::model`] and `pose_rows` are not prepared, and
     /// the renderer culls with [`Self::culling`] and [`Self::instance_budget`].
     pub fn gpu(self) -> Option<GpuPresentation<'a>> {
@@ -437,20 +437,20 @@ struct Sources {
     meshes: Vec<RenderMesh>,
     // Local bounds of each mesh source, read by culling through slot indices.
     bounds: Vec<Aabb>,
-    // Meshes with joints (decision 036): their joints place them, so their
+    // Meshes with joints: their joints place them, so their
     // bounds never cull.
     skinned: Vec<bool>,
-    // Materials with maps (decision 031) and the textures they read.
+    // Materials with maps and the textures they read.
     materials: Vec<RenderMaterial>,
     textures: Vec<RenderTexture>,
     mesh_indices: HandleMap<MeshHandle, usize>,
     // Materials with maps to their binding's index in `materials`, which
-    // holds the first material of each binding (decision 031).
+    // holds the first material of each binding.
     material_indices: HandleMap<MaterialHandle, usize>,
     binding_indices: HandleMap<MaterialBinding, usize>,
     texture_indices: HandleMap<TextureHandle, usize>,
-    // The version each object's material resolved at, with maps or not
-    // (decision 033): a replacement re-resolves only its objects.
+    // The version each object's material resolved at, with maps or not:
+    // a replacement re-resolves only its objects.
     versions: HandleMap<MaterialHandle, u64>,
     mesh_used: Vec<bool>,
     material_used: Vec<bool>,
@@ -562,7 +562,7 @@ impl Sources {
         })
     }
 
-    /// Materials replaced since their objects resolved (decision 033). A
+    /// Materials replaced since their objects resolved. A
     /// replaced material alone drawing as its binding is updated in place
     /// when its draw class stands; every other one forgets its binding, and
     /// a binding it held forgets the materials drawing as it. Returns the
@@ -944,8 +944,8 @@ impl RetainedRender {
         Some(index)
     }
 
-    /// Fills this frame's local lights and particle emitters (decisions 023
-    /// and 026). A light on an entity whose slot draws a mesh stays in that
+    /// Fills this frame's local lights and particle emitters.
+    /// A light on an entity whose slot draws a mesh stays in that
     /// slot's model space, following the pose the renderer already has.
     pub(crate) fn extract_lights_and_particles(
         &mut self,
@@ -975,7 +975,7 @@ impl RetainedRender {
         self.emitters_revision = particles.revision;
     }
 
-    /// Gives skinned slots (decision 036) their joint palettes in
+    /// Gives skinned slots their joint palettes in
     /// `snapshot.joints`, rebuilt every frame: on `gpu` frames each joint's
     /// node, otherwise its displayed world matrix times its inverse bind
     /// matrix. A slot whose palette offset changes counts as a color change,
@@ -1110,7 +1110,7 @@ impl RetainedRender {
         engine_profile::counter("extraction.joints", self.snapshot.joints.len() as f64);
     }
 
-    /// Fills this frame's decals (decision 039), their materials and
+    /// Fills this frame's decals, their materials and
     /// textures, and their poses after the skins' joints.
     pub(crate) fn extract_decals(
         &mut self,
@@ -1123,18 +1123,17 @@ impl RetainedRender {
         }
     }
 
-    /// Lists the frame's reflection probes (decision 043).
+    /// Lists the frame's reflection probes.
     pub(crate) fn extract_probes(&mut self, world: &World, probes: &mut ProbeExtraction) {
         probes.extract(world, &mut self.snapshot);
     }
 
-    /// Records world streaming's state at this frame (decision 086).
+    /// Records world streaming's state at this frame.
     pub(crate) fn set_cells(&mut self, cells: crate::CellStats) {
         self.snapshot.cells = cells;
     }
 
-    /// Lays the frame's deformation map and lists its stamps (decision
-    /// 083).
+    /// Lays the frame's deformation map and lists its stamps.
     pub(crate) fn extract_deformation(
         &mut self,
         world: &mut World,
@@ -1143,7 +1142,7 @@ impl RetainedRender {
         deformation.extract(world, &mut self.snapshot.deformation);
     }
 
-    /// Lists the frame's terrains (decision 051).
+    /// Lists the frame's terrains.
     pub(crate) fn extract_terrain(
         &mut self,
         world: &World,
@@ -1448,7 +1447,7 @@ impl RetainedRender {
             return;
         };
         let record = &mut self.snapshot.instances[index];
-        // Opacity decides the pass of materials without maps (decision 026):
+        // Opacity decides the pass of materials without maps:
         // switching between opaque and transparent regroups draws. Materials
         // are immutable, so their alpha modes change only with their handles.
         let keys_changed = record.mesh != mesh

@@ -76,7 +76,7 @@ pub use engine_assets::{
     CLUSTER_TRIANGLES, CLUSTER_VERTICES, CLUSTER_WORDS, DEFAULT_FALLBACK_TRIANGLES, GROUP_WORDS,
     NODE_WORDS, PAGE_WORDS, VIRTUAL_MESH_MAGIC, VirtualMesh,
 };
-/// Heightfield terrain data (decision 051): tile pyramids, layer stacks,
+/// Heightfield terrain data: tile pyramids, layer stacks,
 /// tiles, patches and the `ETR1` format.
 pub use engine_terrain as terrain_data;
 pub use engine_terrain::{
@@ -233,7 +233,7 @@ pub struct Engine {
     clock: FixedClock,
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
-    // Local lights (decision 023) and particle emitters (decision 026) of
+    // Local lights and particle emitters of
     // each extraction.
     lights: lights::LightExtraction,
     particles: particles::ParticleExtraction,
@@ -241,11 +241,11 @@ pub struct Engine {
     decals: decals::DecalExtraction,
     probes: probes::ProbeExtraction,
     terrain: terrain::TerrainExtraction,
-    // Runtime deformation (decision 083): the deformers pressing each tick,
+    // Runtime deformation: the deformers pressing each tick,
     // and each frame's map.
     deformers: QueryState<(Entity, &'static Deformer)>,
     deformation: deformation::DeformationExtraction,
-    // World streaming (decision 086) and grounded objects.
+    // World streaming and grounded objects.
     streaming: streaming::StreamingExtraction,
     grounding: grounded::Grounding,
     plugins_finalized: bool,
@@ -305,9 +305,9 @@ impl Engine {
                 animation::animate.in_set(AnimationSystems::Animate),
             )
             .add_systems(FixedSimulation, ocean::float.in_set(OceanSystems::Float))
-            // The time of day moves the sun (decision 088).
+            // The time of day moves the sun.
             .add_systems(Presentation, sky::advance_time_of_day)
-            // Navigation agents walk (decision 089).
+            // Navigation agents walk.
             .add_systems(
                 FixedSimulation,
                 navigation::walk_agents.in_set(NavSystems::Walk),
@@ -667,7 +667,7 @@ impl Engine {
             }
             self.refresh_transforms();
         }
-        // Deformers press tracks where the tick left them (decision 083).
+        // Deformers press tracks where the tick left them.
         deformation::press(self.app.world_mut(), &mut self.deformers);
         interpolation::end_tick(self.app.world_mut());
         self.app
@@ -690,14 +690,14 @@ impl Engine {
     }
 
     /// Streams terrains toward the camera for a frame's work time without
-    /// simulating or extracting a frame (decision 099): hosts call it while
+    /// simulating or extracting a frame: hosts call it while
     /// the GPU compiles pipelines, so loading goes on meanwhile.
     pub fn stream_terrain(&mut self) {
         self.terrain.update(self.app.world_mut());
     }
 
     /// Loads terrain tiles the last frame found missing for `milliseconds`
-    /// between frames (decision 108), where frames leave time free while the
+    /// between frames, where frames leave time free while the
     /// GPU draws them; whether tiles are still to load.
     pub fn work_terrain(&mut self, milliseconds: f64) -> bool {
         self.terrain.work(self.app.world_mut(), milliseconds)
@@ -780,9 +780,9 @@ impl Engine {
             PresentationMode::Current => None,
             PresentationMode::Interpolated { alpha } => Some(alpha),
         });
-        // Streamed cells (decision 086) load and unload, grounded objects
-        // stand on the ground, and bridges (decision 072), waterfalls
-        // (decision 075) and spline meshes (decision 071) spawn and build
+        // Streamed cells load and unload, grounded objects
+        // stand on the ground, and bridges, waterfalls
+        // and spline meshes spawn and build
         // before transforms refresh, so paused frames draw them too.
         self.streaming.stream(self.app.world_mut());
         self.grounding.settle(self.app.world_mut());
@@ -795,7 +795,7 @@ impl Engine {
     }
 
     /// Prepares a retained frame whose interpolated display poses are blended,
-    /// composed, validated and culled on the GPU (decision 014).
+    /// composed, validated and culled on the GPU.
     ///
     /// Inputs are gathered only when a boundary changed them, normally once per
     /// fixed tick, and the per-renderable pass is skipped while renderables,
@@ -830,10 +830,10 @@ impl Engine {
         Ok(self.extract_retained(aspect, true))
     }
 
-    /// Records the simulation time this frame presents ([`PresentedTime`],
-    /// decision 077): the fixed clock less the part of a step interpolated
-    /// poses at `alpha` stop short of it, and a step more while GPU frames
-    /// present the interval before a tick in flight (decision 015).
+    /// Records the simulation time this frame presents ([`PresentedTime`]): the
+    /// fixed clock less the part of a step interpolated poses at `alpha` stop
+    /// short of it, and a step more while GPU frames present the interval
+    /// before a tick in flight.
     fn mark_presented_time(&mut self, alpha: Option<f32>) {
         let step = self.clock.step_seconds();
         let behind = alpha.map_or(0.0, |alpha| (1.0 - f64::from(alpha)) * step);

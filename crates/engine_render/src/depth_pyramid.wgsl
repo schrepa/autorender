@@ -1,8 +1,8 @@
 // Depth pyramids: level 0 holds the farthest depth of each 2x2 block of the
 // depth buffer, every further level the farthest of each 2x2 block of the
-// level below, for occlusion culling (decision 040); or the nearest depths,
-// for screen-space reflections (decision 025). Depth is reversed (decision
-// 042): the farthest is the smallest, the nearest the largest. Levels have
+// level below, for occlusion culling; or the nearest depths,
+// for screen-space reflections. Depth is reversed:
+// the farthest is the smallest, the nearest the largest. Levels have
 // power-of-two sizes, so each halves the last exactly; only the texels
 // covering the depth buffer are written, and reads past the level below's
 // repeat its edge texel, whose extreme already includes the buffer's edge.

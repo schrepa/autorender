@@ -1,11 +1,11 @@
-//! The engine's job worker (decision 110): a small Wasm module hosts run in
+//! The engine's job worker: a small Wasm module hosts run in
 //! Web Workers beside the engine. It holds what the engine shares with its
 //! workers (terrain stacks and recipes) and runs the jobs the engine hands
 //! out, terrain tiles, walks and bakes, with the code engines without
 //! workers run in place, so outputs are the same bits. Jobs run a slice at a
-//! time (decision 112): hosts start one, step it until done, and between
+//! time: hosts start one, step it until done, and between
 //! steps take up a more urgent one or drop one the engine cancelled; parts
-//! of an output ready early go back before the rest (decision 114).
+//! of an output ready early go back before the rest.
 
 use engine_terrain::jobs::TerrainWorker;
 
@@ -51,13 +51,13 @@ impl Worker {
         self.terrain.step(id, budget)
     }
 
-    /// A part of job `id`'s output ready before the rest (decision 114),
+    /// A part of job `id`'s output ready before the rest,
     /// taken once.
     pub fn take_part(&mut self, id: u64) -> Option<Vec<u8>> {
         self.terrain.take_part(id)
     }
 
-    /// Runs a small fixed job (decision 113), so the module's hot code
+    /// Runs a small fixed job, so the module's hot code
     /// reaches its optimized tier before real jobs.
     pub fn warm(&mut self) {
         self.terrain.warm();

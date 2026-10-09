@@ -1,4 +1,4 @@
-//! Terrain's long sun shadows (decision 052): each terrain's horizon map, a
+//! Terrain's long sun shadows: each terrain's horizon map, a
 //! grid aligned with the sun over the terrain holding at every texel how far
 //! above its ground the sun clears the terrain toward it, how far along the
 //! sun the slope setting that lies, and the ground's height
@@ -151,7 +151,7 @@ impl Horizons {
     }
 
     /// Terrains the records texture holds (two texels each), which the
-    /// main passes' lookups loop over (decision 052).
+    /// main passes' lookups loop over.
     pub(crate) fn record_count(&self) -> u32 {
         self.records.width() / 2
     }

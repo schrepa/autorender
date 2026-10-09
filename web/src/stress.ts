@@ -64,7 +64,7 @@ let latest: Snapshot | undefined, report: StressRecordingReport | undefined;
 let previousTimestamp: number | undefined, recordStarted = 0;
 let profiler: DetailedProfiler | undefined, detailedReport: DetailedProfileReport | undefined;
 let wasmMemory: WebAssembly.Memory | undefined;
-// The dense scene's virtual meshes (decision 044), fetched once: the game
+// The dense scene's virtual meshes, fetched once: the game
 // keeps them for later workloads.
 let filesClass: typeof StressFiles | undefined, denseSupplied = false;
 let prefixBytes: ((header: Uint8Array) => number | undefined) | undefined;
@@ -86,7 +86,7 @@ async function denseFiles(): Promise<StressFiles | undefined> {
   denseSupplied = true;
   return files;
 }
-// The highlands' terrain material maps (decision 054), fetched once: the
+// The highlands' terrain material maps, fetched once: the
 // game keeps them for later workloads. Without them its ground shows plain
 // colors.
 let highlandsSupplied = false;
@@ -309,7 +309,7 @@ const params = new URLSearchParams(location.search);
 // Ordinary frames blend, compose and cull on the GPU unless ?presentation=cpu,
 // GPU-presented frames split fixed ticks across frames unless ?pipeline=off,
 // and ?taa=on temporally antialiases them, as the highlands' do unless
-// ?taa=off (decision 098).
+// ?taa=off.
 const presentation = params.get("presentation") === "cpu" ? "cpu" : "gpu";
 const pipeline = params.get("pipeline") === "off" ? "off" : "on";
 const taa = params.get("taa");
@@ -318,20 +318,20 @@ function temporal(config: Config): "on" | "off" {
   if (taa === "on" || taa === "off") return taa;
   return config.scene === "highlands" ? "on" : "off";
 }
-// ?occlusion=off draws every frustum-visible object (decision 040), and
-// ?subpixel=off also those covering no pixel center (decision 041), for A/B.
+// ?occlusion=off draws every frustum-visible object, and
+// ?subpixel=off also those covering no pixel center, for A/B.
 const occlusion = params.get("occlusion") === "off" ? "off" : "on";
 const subpixel = params.get("subpixel") === "off" ? "off" : "on";
 // ?visibility=on shades virtual geometry through the visibility buffer
-// (decision 045) instead of as it draws, for A/B.
+// instead of as it draws, for A/B.
 const visibility = params.get("visibility") === "on" ? "on" : "off";
 // ?lod=off draws every instance as its mesh instead of at its level of
-// detail (decision 047), for A/B.
+// detail, for A/B.
 const lod = params.get("lod") === "off" ? "off" : "on";
-// ?impostors=off draws no impostors (decision 048), only mesh levels.
+// ?impostors=off draws no impostors, only mesh levels.
 const impostors = params.get("impostors") === "off" ? "off" : "on";
 // ?look=golden|dusk|night|day|sky picks a lighting preset over the scene's own;
-// sky is the physically based sky at a time of day (decision 088).
+// sky is the physically based sky at a time of day.
 const initialLook = options("look").includes(params.get("look") ?? "") ? params.get("look")! : "scene";
 // ?effects=none, or comma-separated no-shadows, no-occlusion, no-bloom,
 // no-lights, no-shafts, no-reflections, no-particles, no-refraction and
@@ -371,7 +371,7 @@ fill(activeConfig);
 
 boot({
   async create(canvas) {
-    // Job workers (decision 110) start while the game's module loads.
+    // Job workers start while the game's module loads.
     jobPool();
     const { default: init, StressGame, StressFiles: files, virtual_prefix_bytes } = await stressBindings();
     filesClass = files;

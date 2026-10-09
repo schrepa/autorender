@@ -1,9 +1,9 @@
-//! Materials: glTF 2.0 metallic-roughness factors and texture maps (decision
-//! 031) with the engine's surface extensions (decision 019).
+//! Materials: glTF 2.0 metallic-roughness factors and texture maps
+//! with the engine's surface extensions.
 
 use crate::{AssetError, TextureHandle};
 
-/// How a surface responds to light beyond its color (decision 019).
+/// How a surface responds to light beyond its color.
 ///
 /// `roughness` and `metalness` are glTF's `roughnessFactor` and
 /// `metallicFactor`: a metallic-roughness texture multiplies them.
@@ -58,7 +58,7 @@ impl Default for Surface {
     }
 }
 
-/// A layer settling on a material's faces turned up (decision 093): moss,
+/// A layer settling on a material's faces turned up: moss,
 /// lichen, dust or snow. It covers faces whose normals point up by more
 /// than one less its `coverage`, broken by noise and gathering in the
 /// darker hollows of the material's color, in its own linear `color` and
@@ -92,11 +92,11 @@ impl TopLayer {
 }
 
 /// The meters one repeat of a world-mapped material's maps may cover at
-/// most (decision 093).
+/// most.
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
-/// The ground staining the base of an object standing on terrain (decision
-/// 096): soil, damp or dust where rock or wood meets the ground. Where the
+/// The ground staining the base of an object standing on terrain:
+/// soil, damp or dust where rock or wood meets the ground. Where the
 /// object meets the ground its color is multiplied by `color`, the stain
 /// fading out `height` units of its mesh higher (so it scales with the
 /// object), measured from the ground's own slope under it. Objects terrains
@@ -111,7 +111,7 @@ pub struct Grounding {
     pub height: f32,
 }
 
-/// The mesh units a ground stain may reach up at most (decision 096).
+/// The mesh units a ground stain may reach up at most.
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
 
 impl Grounding {
@@ -132,8 +132,8 @@ impl Grounding {
     }
 }
 
-/// Light passing through a surface instead of diffusing off it (decision
-/// 038): glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
+/// Light passing through a surface instead of diffusing off it:
+/// glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
 /// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
 /// validates the ranges.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -334,16 +334,16 @@ pub enum AlphaMode {
     Opaque,
     /// Surfaces with alpha below `cutoff` are not drawn; the rest are opaque.
     Mask { cutoff: f32 },
-    /// Drawn transparent (decision 026): alpha is the fraction of light behind
+    /// Drawn transparent: alpha is the fraction of light behind
     /// the surface it covers.
     Blend,
 }
 
-/// A glTF 2.0 metallic-roughness material (decision 031): a linear base color
+/// A glTF 2.0 metallic-roughness material: a linear base color
 /// factor, [`Surface`] factors and extensions, and optional texture maps.
 ///
 /// Materials are opaque unless given an opacity below 1
-/// ([`Material::with_opacity`], decision 026) or another [`AlphaMode`]; the
+/// ([`Material::with_opacity`]) or another [`AlphaMode`]; the
 /// color's alpha is that opacity. Renderers draw materials without maps
 /// ([`Material::has_maps`]) from their color and surface alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -396,7 +396,7 @@ impl Material {
         })
     }
 
-    /// This material with alpha `opacity` in `(0, 1]` (decision 026): the
+    /// This material with alpha `opacity` in `(0, 1]`: the
     /// fraction of light behind it that it covers. Below 1, an opaque
     /// material becomes [`AlphaMode::Blend`]. Transparent surfaces blend in
     /// any order, write no depth and cast no shadow.
@@ -437,12 +437,12 @@ impl Material {
     }
 
     /// Whether this material draws in the transparent pass: it blends, or
-    /// light passes through it (decision 038).
+    /// light passes through it.
     pub fn is_transparent(&self) -> bool {
         self.alpha_mode == AlphaMode::Blend || self.transmission.factor > 0.0
     }
 
-    /// This material letting light through (decision 038). Transmissive
+    /// This material letting light through. Transmissive
     /// materials draw in the transparent pass; with the `Refraction`
     /// resource they show the opaque scene behind them, bent and blurred,
     /// and without it they blend as plain transparency.
@@ -457,8 +457,8 @@ impl Material {
     }
 
     /// This material with its maps laid from the world's axes, one repeat
-    /// every `tiling` meters, rather than by texture coordinates (decision
-    /// 093): each map blends its projections along the axes the surface
+    /// every `tiling` meters, rather than by texture coordinates:
+    /// each map blends its projections along the axes the surface
     /// faces most, so meshes need no coordinates, show no seams and keep
     /// one texel density at any size. Map transforms still apply. For
     /// surfaces that stay where they are, such as rocks and cliffs: maps
@@ -479,8 +479,7 @@ impl Material {
         self.world_tiling
     }
 
-    /// This material with `top` settling on its faces turned up (decision
-    /// 093).
+    /// This material with `top` settling on its faces turned up.
     pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
         top.validate()?;
         self.top = Some(top);
@@ -492,7 +491,7 @@ impl Material {
     }
 
     /// This material with the ground staining its base where it stands on
-    /// terrain (decision 096).
+    /// terrain.
     pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
         grounding.validate()?;
         self.grounding = Some(grounding);

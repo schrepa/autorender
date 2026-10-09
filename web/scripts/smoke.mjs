@@ -66,7 +66,7 @@ try {
   assert.equal(initial.total, 6);
   assert.equal(initial.collected, 0);
   // Six draw groups, each drawing its mesh's nonempty levels of detail
-  // (decision 047) on GPU-presented frames.
+  // on GPU-presented frames.
   assert.equal(await page.locator("#draws").textContent(), "11");
   assert.equal(await page.locator("canvas").getAttribute("data-resident-textures"), "1");
   const residency = await page.locator("canvas").getAttribute("data-resident-mesh-bytes");

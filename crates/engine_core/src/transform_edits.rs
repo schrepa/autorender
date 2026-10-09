@@ -1,4 +1,4 @@
-//! Immediate edits of an existing local pose (decision 011).
+//! Immediate edits of an existing local pose.
 
 use crate::{Transform, hierarchy::same_local_bits};
 use bevy_ecs::prelude::*;

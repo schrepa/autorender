@@ -1,4 +1,4 @@
-//! The frame as a render graph (decision 050): the passes a frame runs, in
+//! The frame as a render graph: the passes a frame runs, in
 //! order, each declaring the resources it reads and writes and how it draws
 //! into its attachments. Compiling the graph culls passes whose results no
 //! later pass uses, derives every attachment's load and store operations,
@@ -16,52 +16,46 @@
 pub(crate) enum Resource {
     /// The canvas texture the frame presents.
     Canvas,
-    /// The depth buffer (reversed, decision 042).
+    /// The depth buffer (reversed).
     Depth,
-    /// The screen effects' scene color, glow and surface targets (decision
-    /// 021).
+    /// The screen effects' scene color, glow and surface targets.
     Scene,
     Glow,
     Surface,
-    /// Temporal antialiasing's motion target and history (decision 017).
+    /// Temporal antialiasing's motion target and history.
     Motion,
     History,
-    /// The visibility buffer's triangle IDs and per-bin tile lists
-    /// (decision 045).
+    /// The visibility buffer's triangle IDs and per-bin tile lists.
     Ids,
     Tiles,
-    /// Transparent surfaces' accumulated color and revealage (decision 026).
+    /// Transparent surfaces' accumulated color and revealage.
     Accumulated,
     Revealed,
-    /// Retained slots' poses and colors (decisions 013 and 014).
+    /// Retained slots' poses and colors.
     Poses,
     /// GPU presentation's visible IDs and indirect draws, which the next
-    /// frame's first phase starts from (decisions 014 and 040).
+    /// frame's first phase starts from.
     Visible,
-    /// Placed objects' lists and draws for the camera and the shadow maps
-    /// (decision 057).
+    /// Placed objects' lists and draws for the camera and the shadow maps.
     Placed,
-    /// What placed objects cover around the camera, kept between its draws
-    /// (decision 059).
+    /// What placed objects cover around the camera, kept between its draws.
     Occupancy,
     /// Shadow casters each map draws, and the maps (the kept map is kept
-    /// between frames, decision 020).
+    /// between frames).
     Casters,
     ShadowMaps,
-    /// Virtual geometry's selected clusters and the pages they request
-    /// (decision 044).
+    /// Virtual geometry's selected clusters and the pages they request.
     Clusters,
-    /// Local lights binned into view clusters (decision 023).
+    /// Local lights binned into view clusters.
     Lights,
     /// The depth pyramid occlusion culling tests against, which the next
-    /// frame's cluster selection retests with (decisions 040 and 044).
+    /// frame's cluster selection retests with.
     Pyramid,
-    /// Ambient occlusion, bloom, reflections and sun shafts (decisions 021,
-    /// 024 and 025).
+    /// Ambient occlusion, bloom, reflections and sun shafts.
     Effects,
-    /// Environment maps and reflection probes' cubes (decision 043).
+    /// Environment maps and reflection probes' cubes.
     Probes,
-    /// The view's marched clouds (decision 095).
+    /// The view's marched clouds.
     CloudView,
 }
 
@@ -205,29 +199,26 @@ pub(crate) struct Ops {
 /// purpose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
-    /// GPU presentation's blending, composition, culling and compaction
-    /// (decision 014).
+    /// GPU presentation's blending, composition, culling and compaction.
     Presentation,
-    /// Placed objects' culling for the camera and the shadow maps
-    /// (decision 057).
+    /// Placed objects' culling for the camera and the shadow maps.
     Scatter,
-    /// What placed objects cover drawn around the camera (decision 059).
+    /// What placed objects cover drawn around the camera.
     Occupancy,
-    /// Shadow caster selection (decision 020).
+    /// Shadow caster selection.
     ShadowSelect,
-    /// Virtual geometry's cluster selection (decision 044).
+    /// Virtual geometry's cluster selection.
     VirtualSelect,
-    /// The shadow maps (decisions 020 and 028).
+    /// The shadow maps.
     ShadowMaps,
-    /// Light binning (decision 023).
+    /// Light binning.
     Lights,
-    /// The opaque pass of `phase` (two around the occlusion test, decision
-    /// 040).
+    /// The opaque pass of `phase` (two around the occlusion test).
     Opaque {
         phase: u8,
     },
     /// The visibility buffer's triangle IDs, tile lists and resolve of
-    /// `phase` (decision 045).
+    /// `phase`.
     VisibilityIds {
         phase: u8,
     },
@@ -237,27 +228,25 @@ pub(crate) enum Pass {
     Resolve {
         phase: u8,
     },
-    /// The depth pyramid and occlusion test between the opaque phases
-    /// (decision 040).
+    /// The depth pyramid and occlusion test between the opaque phases.
     OcclusionTest,
-    /// Decals over the opaque surfaces (decision 039).
+    /// Decals over the opaque surfaces.
     Decals,
-    /// Transparent surfaces and particles accumulated, then composited
-    /// (decision 026).
+    /// Transparent surfaces and particles accumulated, then composited.
     Transparent,
     TransparentComposite,
-    /// The screen effects (decision 021).
+    /// The screen effects.
     Effects,
-    /// The screen effects' composite into the canvas (decision 021).
+    /// The screen effects' composite into the canvas.
     Composite,
-    /// Temporal antialiasing's resolve into the canvas (decision 017).
+    /// Temporal antialiasing's resolve into the canvas.
     TemporalResolve,
-    /// Reflection probe faces captured after the frame (decision 043).
+    /// Reflection probe faces captured after the frame.
     ProbeCaptures,
-    /// Water over the opaque scene (decision 067).
+    /// Water over the opaque scene.
     Water,
     /// The view's clouds marched after the opaque scene and water, then
-    /// laid over it (decision 095).
+    /// laid over it.
     CloudMarch,
     CloudComposite,
 }
@@ -654,22 +643,21 @@ fn load_op(access: Access, written: bool) -> Load {
 pub(crate) enum Targets {
     /// Straight into the canvas.
     Canvas,
-    /// Into the screen effects' targets, composited into the canvas
-    /// (decision 021).
+    /// Into the screen effects' targets, composited into the canvas.
     Post,
     /// Into the screen effects' and motion targets, resolved with the
-    /// history into the canvas (decision 017).
+    /// history into the canvas.
     Temporal,
 }
 
-/// The screen effects a frame runs (decision 021).
+/// The screen effects a frame runs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Effects {
     pub(crate) occlusion: bool,
     pub(crate) bloom: bool,
     pub(crate) reflections: bool,
     pub(crate) shafts: bool,
-    /// Contact shadows (decision 062), traced with the occlusion.
+    /// Contact shadows, traced with the occlusion.
     pub(crate) contact: bool,
 }
 
@@ -682,36 +670,35 @@ impl Effects {
 /// What a frame runs, from which [`plan`] declares its passes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameShape {
-    /// Presented on the GPU (decision 014).
+    /// Presented on the GPU.
     pub(crate) gpu: bool,
     pub(crate) targets: Targets,
     /// The canvas's clear color, which depends on whether it is sRGB.
     pub(crate) canvas_clear: [f64; 4],
-    /// Opaque phases: two around the occlusion test (decision 040).
+    /// Opaque phases: two around the occlusion test.
     pub(crate) phases: u8,
     pub(crate) shadows: bool,
-    /// Placed objects draw (decision 057), and the occupancy map is drawn
-    /// again (decision 059).
+    /// Placed objects draw, and the occupancy map is drawn
+    /// again.
     pub(crate) scatter: bool,
     pub(crate) occupancy: bool,
-    /// Virtual geometry selects clusters (decision 044), the shadow maps
-    /// draw some, and the visibility buffer resolves them in each phase
-    /// (decision 045).
+    /// Virtual geometry selects clusters, the shadow maps
+    /// draw some, and the visibility buffer resolves them in each phase.
     pub(crate) clusters: bool,
     pub(crate) shadow_clusters: bool,
     pub(crate) resolves: [bool; 2],
     pub(crate) lights: bool,
     pub(crate) decals: bool,
-    /// Water draws over the opaque scene (decision 067).
+    /// Water draws over the opaque scene.
     pub(crate) water: bool,
-    /// The view's clouds march and cover the scene (decision 095).
+    /// The view's clouds march and cover the scene.
     pub(crate) clouds: bool,
-    /// Transparent draws or particles (decision 026), and glass reading
-    /// the opaque scene (decision 038).
+    /// Transparent draws or particles, and glass reading
+    /// the opaque scene.
     pub(crate) transparency: bool,
     pub(crate) refraction: bool,
     pub(crate) effects: Effects,
-    /// Reflection probes capture faces after the frame (decision 043).
+    /// Reflection probes capture faces after the frame.
     pub(crate) probes: bool,
 }
 
@@ -721,7 +708,7 @@ pub(crate) const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
-/// The far plane's depth (reversed, decision 042): `gpu_data::FAR_DEPTH`.
+/// The far plane's depth (reversed): `gpu_data::FAR_DEPTH`.
 const FAR: f32 = 0.0;
 
 /// Declares the passes of a frame of `shape` into `graph`.
@@ -846,7 +833,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
             .read_if(shape.lights, Lights)
             .color(scene, Access::Load);
     }
-    // Water (decision 067) blends over the opaque scene and writes its
+    // Water blends over the opaque scene and writes its
     // depth, which transparent surfaces and screen effects then see.
     if shape.water {
         let mut water = graph
@@ -858,7 +845,7 @@ pub(crate) fn plan(graph: &mut RenderGraph, shape: &FrameShape) {
         }
         water.depth(Depth, Access::Load);
     }
-    // The view's clouds (decision 095) march up to what the opaque scene
+    // The view's clouds march up to what the opaque scene
     // and water show, then cover it before transparent surfaces draw.
     if shape.clouds {
         graph.add(Pass::CloudMarch).read(Depth).write(CloudView);

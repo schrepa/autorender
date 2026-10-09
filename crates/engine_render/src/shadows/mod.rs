@@ -1,7 +1,7 @@
-//! Sun shadows (decision 020): depth maps seen from the atmosphere's sun.
+//! Sun shadows: depth maps seen from the atmosphere's sun.
 //!
 //! Near cascades, layers of one texture, cover the first stretch of the view,
-//! each reaching a third as far as the next (decision 028), and are redrawn
+//! each reaching a third as far as the next, and are redrawn
 //! every frame. Two far maps share one projection over the shadow region: the kept
 //! map holds casters whose pose stayed the same for a few frames and is
 //! redrawn only where that changes, a rectangle of its 16x16 tiles per
@@ -11,11 +11,11 @@
 //! indirect draws per mesh; on GPU-presented frames it also keeps each
 //! slot's stillness and marks dirty tiles, read back a few frames later.
 //! CPU-prepared frames draw every caster into the moving map and leave the
-//! kept map unread. Kept levels (decision 065), layers of another texture,
+//! kept map unread. Kept levels, layers of another texture,
 //! hold still casters sharper than the kept map near the camera: each
 //! follows it a tile at a time, and a frame redraws the tiles one level
 //! uncovered, or a region of its dirty tiles; lookups read the finest level
-//! holding a receiver's tile, then the kept map. Casters with virtual geometry (decision 044) are
+//! holding a receiver's tile, then the kept map. Casters with virtual geometry are
 //! selected like the others; virtual geometry selects their clusters for
 //! each map drawn, as the camera sees them in the maps drawn every frame
 //! and within half a texel in the kept map, and draws them after its own
@@ -59,7 +59,7 @@ use regions::{Regions, SelectionCounts};
 use selection::Selection;
 
 // Near cascades are maps 0 to MAX_CASCADES - 1; the far maps follow, then
-// the kept levels (decision 065), one map of selected casters for the one
+// the kept levels, one map of selected casters for the one
 // redrawn.
 pub(crate) const MOVING_MAP: usize = MAX_CASCADES;
 pub(crate) const KEPT_MAP: usize = MAX_CASCADES + 1;
@@ -82,7 +82,7 @@ const LEVEL_REFRESH: u32 = 4;
 pub(crate) const VIRTUAL_SHADOW_PLANES: usize = 12;
 
 /// A shadow map drawn this frame whose virtual casters' clusters virtual
-/// geometry selects (decision 044): its planes around where casters can
+/// geometry selects: its planes around where casters can
 /// darken visible receivers (unused ones hold everything), the camera
 /// distance its receivers start at (`None` at the camera), its texel's
 /// world size, the direction it looks along (away from the sun), the
@@ -115,7 +115,7 @@ pub(crate) struct Presented<'a> {
     pub batches: &'a wgpu::Buffer,
     pub flags: &'a wgpu::Buffer,
     pub count: u32,
-    /// Skinned slots (decision 036) and their world bounds from this
+    /// Skinned slots and their world bounds from this
     /// frame's palettes.
     pub skinned: &'a wgpu::Buffer,
     pub skin_bounds: &'a wgpu::Buffer,
@@ -124,7 +124,7 @@ pub(crate) struct Presented<'a> {
     pub generation: u64,
 }
 
-/// How a caster group's mesh draws (decision 047): its index count, first
+/// How a caster group's mesh draws: its index count, first
 /// index and base vertex, and its coarser levels of detail (first index,
 /// index count and geometric error in mesh units, finest first).
 pub(crate) struct CasterDraw {
@@ -158,7 +158,7 @@ impl CasterDraw {
 
 /// What a frame's shadows select from: its snapshot, GPU presentation's
 /// buffers on GPU-presented frames, the frame's pose storage and the slots
-/// it holds, the mesh arena layout (decision 046) and each mesh's placement
+/// it holds, the mesh arena layout and each mesh's placement
 /// in it.
 pub(crate) struct ShadowInputs<'a> {
     pub snapshot: &'a RenderSnapshot,
@@ -167,18 +167,18 @@ pub(crate) struct ShadowInputs<'a> {
     pub slot_capacity: usize,
     pub mesh_layout: u64,
     pub placement: &'a dyn Fn(MeshHandle) -> CasterDraw,
-    /// Whether terrain casts this frame (decision 051): shadows then run
+    /// Whether terrain casts this frame: shadows then run
     /// without mesh casters too.
     pub terrain: bool,
 }
 
 /// What depth passes draw: each mesh's uploaded draw (and whether it is
 /// skinned), each masked material's group, and the clusters of a map's
-/// virtual casters (decision 044), drawn last in its pass, which returns its
+/// virtual casters, drawn last in its pass, which returns its
 /// draws.
-/// Draws placed objects into a map (decision 057) with the caster pipelines
+/// Draws placed objects into a map with the caster pipelines
 /// (by `masked + 2 * skinned`), and their impostor cards with the cards'
-/// pipeline (decision 060) once prepared; returns the draws.
+/// pipeline once prepared; returns the draws.
 pub(crate) type ScatterDraw<'a> = dyn Fn(
         &mut wgpu::RenderPass<'_>,
         usize,
@@ -187,8 +187,8 @@ pub(crate) type ScatterDraw<'a> = dyn Fn(
     ) -> u32
     + 'a;
 
-/// A redraw of the kept map (decision 060) or of a kept level (decision
-/// 065) for placed objects: the inward world planes around the region
+/// A redraw of the kept map or of a kept level
+/// for placed objects: the inward world planes around the region
 /// redrawn and its texel's world size.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct KeptRefresh {
@@ -200,7 +200,7 @@ pub(crate) struct MapSources<'a> {
     pub meshes: &'a dyn Fn(MeshHandle) -> Option<(MeshDraw<'a>, bool)>,
     pub materials: &'a dyn Fn(MaterialHandle) -> Option<&'a wgpu::BindGroup>,
     pub virtual_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
-    /// Terrain's patches in a map (decision 051), drawn first.
+    /// Terrain's patches in a map, drawn first.
     pub terrain_draw: &'a dyn Fn(&mut wgpu::RenderPass<'_>, usize) -> u32,
     /// Placed objects in a map, drawn next.
     pub scatter_draw: &'a ScatterDraw<'a>,
@@ -224,7 +224,7 @@ pub(crate) struct ShadowFrame {
     // Near cascades drawn and looked up.
     cascades: u32,
     refresh: Option<Refresh>,
-    // The kept level redrawn (decision 065), and the tiles no level holds
+    // The kept level redrawn, and the tiles no level holds
     // yet.
     level_refresh: Option<LevelRefresh>,
     level_pending: u32,
@@ -242,7 +242,7 @@ impl ShadowFrame {
         }
     }
 
-    /// Kept-level tiles this frame redraws (decision 065).
+    /// Kept-level tiles this frame redraws.
     pub(crate) fn level_tiles(&self) -> u32 {
         self.level_refresh.map_or(0, |refresh| {
             let region = refresh.region;
@@ -265,7 +265,7 @@ pub(crate) struct ShadowPass {
     layout: (u64, u64),
     material_layout: wgpu::BindGroupLayout,
     maps: ShadowMaps,
-    // Terrains whose horizon records lookups loop over (decision 052), as
+    // Terrains whose horizon records lookups loop over, as
     // last set, which the lookup uniform carries.
     horizon_records: f32,
     kept: KeptMap,
@@ -277,11 +277,10 @@ pub(crate) struct ShadowPass {
     // Maps drawn this frame that select virtual casters' clusters.
     virtual_views: Vec<VirtualShadowView>,
     // Maps drawn every frame and their world-to-clip matrices, which
-    // terrain's patches are culled by (decision 051).
+    // terrain's patches are culled by.
     drawn_maps: Vec<(usize, Mat4)>,
     // Whether this frame keeps still casters in the kept map (GPU-presented
-    // frames), and its redraws of it and of a kept level, for placed objects
-    // (decisions 060 and 065).
+    // frames), and its redraws of it and of a kept level, for placed objects.
     keeps_still: bool,
     kept_refresh: Option<KeptRefresh>,
     level_refresh: Option<KeptRefresh>,
@@ -357,7 +356,7 @@ impl ShadowPass {
     }
 
     /// Maps drawn this frame whose virtual casters' clusters virtual
-    /// geometry selects (decision 044); empty without such casters.
+    /// geometry selects; empty without such casters.
     pub(crate) fn virtual_views(&self) -> &[VirtualShadowView] {
         &self.virtual_views
     }
@@ -369,7 +368,7 @@ impl ShadowPass {
     }
 
     /// Whether this frame keeps still casters in the kept map rather than
-    /// the moving one: placed objects (decision 060) cast there alone.
+    /// the moving one: placed objects cast there alone.
     pub(crate) fn keeps_still(&self) -> bool {
         self.keeps_still
     }
@@ -381,14 +380,13 @@ impl ShadowPass {
         self.kept_refresh
     }
 
-    /// This frame's redraw of a kept level (decision 065), likewise.
+    /// This frame's redraw of a kept level, likewise.
     pub(crate) fn level_refresh(&self) -> Option<KeptRefresh> {
         self.level_refresh
     }
 
     /// Marks the tiles of the kept map and levels under the world box
-    /// `min`..`max` dirty: placed objects within it appeared or left
-    /// (decision 060).
+    /// `min`..`max` dirty: placed objects within it appeared or left.
     pub(crate) fn dirty_kept(&mut self, min: Vec3, max: Vec3) {
         self.kept.dirty_box(min, max);
         self.levels.dirty_box(min, max);
@@ -518,7 +516,7 @@ impl ShadowPass {
             eye,
             settings.resolution,
         );
-        // Kept levels (decision 065) follow the camera.
+        // Kept levels follow the camera.
         self.levels
             .place(basis, eye, settings.levels, settings.level_extent);
         let classify = source == Source::Presented;
@@ -612,8 +610,8 @@ impl ShadowPass {
         }
         let pipelines = self.pipelines.as_ref().expect("created above");
         let mut views = regions.view_matrices();
-        // After each map's matrix, the wind placed objects sway in (decision
-        // 058) at this frame's time.
+        // After each map's matrix, the wind placed objects sway in
+        // at this frame's time.
         let wind = snapshot.environment.wind;
         let wind = [
             wind.velocity[0],
@@ -723,7 +721,7 @@ impl ShadowPass {
         let (Some(pipelines), Some(_)) = (&self.pipelines, self.maps.textures()) else {
             return;
         };
-        // Terrain alone casts (decision 051): no mesh casters to select.
+        // Terrain alone casts: no mesh casters to select.
         if self.casters.groups().is_empty() {
             return;
         }
@@ -737,11 +735,11 @@ impl ShadowPass {
         );
     }
 
-    /// Creates the pipeline of placed objects' impostor cards (decision
-    /// 060), whose group 2 `impostor_layout` binds, once shadows have
+    /// Creates the pipeline of placed objects' impostor cards,
+    /// whose group 2 `impostor_layout` binds, once shadows have
     /// pipelines.
     /// Sets how many terrains' horizon records the lookups loop over
-    /// (decision 052) once the terrain's horizon maps are prepared, after
+    /// once the terrain's horizon maps are prepared, after
     /// the frame's lookup uniform: written before the frame is submitted.
     pub(crate) fn set_horizon_records(&mut self, queue: &wgpu::Queue, count: u32) {
         self.horizon_records = count as f32;
@@ -797,7 +795,7 @@ impl ShadowPass {
         // Casters in pipeline, vertex buffer and material order,
         // which passes switch once per run: depth alone is written, so the
         // order changes no texel. Virtual geometry draws its casters'
-        // clusters (decision 044), and masked materials without bindings
+        // clusters, and masked materials without bindings
         // draw nothing.
         let mut casters: Vec<Caster<'_>> = if pose_group.is_some() {
             groups
@@ -935,7 +933,7 @@ impl ShadowPass {
             pass.set_bind_group(0, &pipelines.view_group, &[FAR_VIEW as u32]);
             draw_selected(&mut pass, KEPT_MAP);
         }
-        // A region of a kept level (decision 065): cleared, then its still
+        // A region of a kept level: cleared, then its still
         // casters drawn through its page's view; GPU-presented frames
         // alone redraw levels, and bind poses.
         if let (Some(refresh), Some(pose_group)) = (frame.level_refresh, pose_group) {

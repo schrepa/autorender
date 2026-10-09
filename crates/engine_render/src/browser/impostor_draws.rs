@@ -1,10 +1,10 @@
-//! Impostors (decision 048): baking the frame's missing ones and preparing
+//! Impostors: baking the frame's missing ones and preparing
 //! their records and draw pipeline.
 
 use super::*;
 
-/// Impostors (decision 048): the plan batches' baked layers and placed
-/// objects' (decision 060), the pipelines both share, this frame's record
+/// Impostors: the plan batches' baked layers and placed
+/// objects', the pipelines both share, this frame's record
 /// per plan batch (zeroed without an impostor), and the draw groups a
 /// budget or the GPU left without one.
 pub(super) struct ImpostorDraws {
@@ -28,7 +28,7 @@ impl ImpostorDraws {
 }
 
 impl Renderer {
-    /// Impostors (decision 048) of this frame: drops those of retired or
+    /// Impostors of this frame: drops those of retired or
     /// replaced meshes and materials, bakes the missing ones of opaque draw
     /// groups whose meshes have enough triangles into `encoder` (after the
     /// materials' levels) on GPU-presented frames with them, and fills the
@@ -83,7 +83,7 @@ impl Renderer {
             let mesh = &self.meshes[&batch.mesh];
             let source = &snapshot.meshes[batch.source_index].mesh;
             let (group, variant) = self.materials.binding(batch.material);
-            // Virtual geometry (decision 044) bakes its fallback cut: its
+            // Virtual geometry bakes its fallback cut: its
             // camera clusters select only instances not drawn as impostors.
             let eligible = !batch.transparent
                 && !mesh.skinned
@@ -137,8 +137,8 @@ impl Renderer {
         }
     }
 
-    /// Uploads this frame's impostor records (decision 048), the plan
-    /// batches' and placed draw groups' (decision 060) to their atlases, and
+    /// Uploads this frame's impostor records, the plan
+    /// batches' and placed draw groups' to their atlases, and
     /// creates the pipeline drawing them in the opaque pass of `kind`;
     /// returns its key, `None` when impostors cannot draw.
     pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {

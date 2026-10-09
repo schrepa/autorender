@@ -415,7 +415,7 @@ enum Global {
     Stored,
     /// A leaf proven valid by its parent's [`Certificate`] and not composed:
     /// reads compose the parent's stored global with the cached local, the
-    /// same operations and bits as eager evaluation (decision 016).
+    /// same operations and bits as eager evaluation.
     Deferred,
 }
 
@@ -556,7 +556,7 @@ pub struct GlobalTransforms {
     pub(crate) links: Vec<Link>,
     globals: Vec<Mat4>,
     // Admission bounds of each stored global with children, checked by its
-    // leaves instead of composing theirs (decision 016).
+    // leaves instead of composing theirs.
     certificates: Vec<Certificate>,
     revisions: Vec<u64>,
     pub(crate) indices: EntityIndices,
@@ -567,7 +567,7 @@ pub struct GlobalTransforms {
     path: Vec<usize>,
     dirty: Dirty,
     // Nodes whose local or output revision changed since GPU presentation
-    // last gathered (decision 014): its gather visits only these.
+    // last gathered: its gather visits only these.
     pub(crate) changes: ChangeLog,
     last_scan: Option<Tick>,
     incomplete: bool,
@@ -652,7 +652,7 @@ impl Dirty {
 
 /// Nodes whose cached local or output revision changed since the log was
 /// last drained, each listed once. GPU presentation's gather drains it and
-/// visits only these nodes instead of every node (decision 014). Past a
+/// visits only these nodes instead of every node. Past a
 /// quarter of the nodes the log stops listing and reports `overflow`: the
 /// next gather walks every node. Rebuilds and full scans also overflow it.
 pub(crate) struct ChangeLog {

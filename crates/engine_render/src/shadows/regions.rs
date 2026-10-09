@@ -1,4 +1,4 @@
-//! Where a frame's maps look (decisions 020, 028 and 065): the light basis,
+//! Where a frame's maps look: the light basis,
 //! the far region the moving and kept maps share, the near cascades in use
 //! and the kept levels, with what caster selection and lookups read about
 //! them.
@@ -20,7 +20,7 @@ use crate::shadow_fit::{
 };
 
 // Lookups move this many texels along the surface normal. Receiver planes
-// (decision 028) keep tilted surfaces off their own depths; the offset only
+// keep tilted surfaces off their own depths; the offset only
 // covers where a lookup's texels meet another surface.
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
 // Receiver planes steeper than this, in texels of depth per texel (86
@@ -29,21 +29,21 @@ const SLOPE_LIMIT_TEXELS: f32 = 16.0;
 // Shadows fade over the last part of their distance.
 const FADE_START: f32 = 0.85;
 
-/// The casters a frame selects: candidates, skinned slots among them
-/// (decision 036), caster groups, the ID capacity of each map, whether any
-/// group draws virtual geometry (decision 044), and the kept levels.
+/// The casters a frame selects: candidates, skinned slots among them,
+/// caster groups, the ID capacity of each map, whether any
+/// group draws virtual geometry, and the kept levels.
 pub(super) struct SelectionCounts<'a> {
     pub(super) candidates: u32,
     pub(super) skinned: u32,
     pub(super) groups: u32,
     pub(super) capacity: u32,
     pub(super) virtual_geometry: bool,
-    /// The kept levels (decision 065), whose tiles still casters that
+    /// The kept levels, whose tiles still casters that
     /// move or come to rest mark dirty.
     pub(super) levels: &'a KeptLevels,
 }
 
-/// This frame's redraw of a kept level (decision 065): which, its
+/// This frame's redraw of a kept level: which, its
 /// light-space rectangle and the region of its page, which its view maps
 /// onto the level's whole map.
 #[derive(Clone, Copy)]
@@ -63,7 +63,7 @@ pub(super) struct Regions {
     // reaches.
     near: [(f32, MapRegion); MAX_CASCADES],
     cascades: usize,
-    // The finest kept level's texel (decision 065), 0 without levels, and
+    // The finest kept level's texel, 0 without levels, and
     // this frame's level redraw.
     level_texel: f32,
     level_draw: Option<LevelDraw>,
@@ -72,7 +72,7 @@ pub(super) struct Regions {
 impl Regions {
     /// The regions of `settings`' maps in light `basis` around the far
     /// region `far`, seen through `view_projection` from `eye`. Each near
-    /// cascade (decision 028) is the smallest sphere around the view within
+    /// cascade is the smallest sphere around the view within
     /// its reach, nested; a reach inside the camera's near plane covers
     /// nothing and has no cascade.
     pub(super) fn new(
@@ -103,7 +103,7 @@ impl Regions {
         }
     }
 
-    /// Adds the kept levels (decision 065): the finest one's texel, and
+    /// Adds the kept levels: the finest one's texel, and
     /// this frame's `refresh` of one of them.
     pub(super) fn with_levels(
         mut self,
@@ -142,11 +142,11 @@ impl Regions {
         self.resolution / 2
     }
 
-    /// The world error each map's casters may draw with (decision 047):
+    /// The world error each map's casters may draw with:
     /// half a texel, so rasterized depths differ from the mesh's by less
     /// than rounding, and a whole texel in the moving map, whose casters are
     /// drawn every frame: its outlines may then move by one texel, and it
-    /// draws half the geometry. Kept levels (decision 065) draw within half
+    /// draws half the geometry. Kept levels draw within half
     /// the finest one's texel.
     pub(super) fn errors(&self) -> [f32; MAPS] {
         let far = self.far.texel(self.resolution);
@@ -178,7 +178,7 @@ impl Regions {
 
     /// The maps' view matrices at their view offsets: each near cascade's,
     /// then the far maps' at [`FAR_VIEW`] and the redrawn kept level's page
-    /// (decision 065) at [`LEVEL_VIEW`] (the far maps' without one).
+    /// at [`LEVEL_VIEW`] (the far maps' without one).
     pub(super) fn view_matrices(&self) -> [f32; (MAX_CASCADES + 2) * VIEW_STRIDE as usize / 4] {
         let (near, far) = self.clips();
         let level = self.level_clip().unwrap_or(far);
@@ -222,7 +222,7 @@ impl Regions {
     /// The selection pass's uniform for `counts`' casters: each map's
     /// selection region, and the kept map's `refresh`, while keeping
     /// stillness (`classify`). Maps drawn every frame whose virtual casters'
-    /// clusters virtual geometry selects (decision 044) go to
+    /// clusters virtual geometry selects go to
     /// `virtual_views`.
     pub(super) fn selection(
         &self,
@@ -263,7 +263,7 @@ impl Regions {
                 selection(*reach, region, region.texel(self.near_resolution()));
         }
         // The far maps shadow receivers up to the shadow distance, and
-        // sun shafts (decision 024) sample them along view rays.
+        // sun shafts sample them along view rays.
         let shafts = snapshot.environment.sun_shafts.sanitized();
         let far_reach = if shafts.enabled() {
             math::max(settings.distance, shafts.distance)
@@ -295,7 +295,7 @@ impl Regions {
         }
         planes[MAX_CASCADES] = volume(None, far_reach, far.texel(self.resolution));
         // Maps drawn every frame select virtual casters' clusters within
-        // the same regions (decision 044). A cascade's receivers start
+        // the same regions. A cascade's receivers start
         // where the previous one hands over to it, across its last
         // tenth; the far maps' at the last cascade's reach.
         if counts.virtual_geometry {
@@ -334,7 +334,7 @@ impl Regions {
                 view_offset: FAR_VIEW as u32,
                 error: None,
             });
-            // A redrawn kept level (decision 065) likewise, within the error
+            // A redrawn kept level likewise, within the error
             // of its finest level's texels.
             if let Some(draw) = self.level_draw.filter(|_| classify) {
                 let mut kept = [[0.0, 0.0, 0.0, 1.0]; VIRTUAL_SHADOW_PLANES];
@@ -416,7 +416,7 @@ impl Regions {
     }
 
     /// The main passes' lookup uniform, which reads still slots' stillness
-    /// when `classify`, from the far maps and `levels` (decision 065).
+    /// when `classify`, from the far maps and `levels`.
     pub(super) fn lookup_uniform(
         &self,
         settings: &Shadows,
@@ -485,7 +485,7 @@ impl Regions {
                 (0..levels.len())
                     .filter(|&index| levels.has_pending(index))
                     .fold(0, |bits, index| bits | 1 << index) as f32,
-                // The horizon records, which the shadows set (decision 052).
+                // The horizon records, which the shadows set.
                 0.0,
             ],
         }

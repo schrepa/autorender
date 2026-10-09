@@ -1,10 +1,10 @@
-//! Occupancy (decision 059): a top-down map around the camera of what
+//! Occupancy: a top-down map around the camera of what
 //! placed objects cover, drawn from the scatter pass's slots
 //! (`occupancy.wgsl`) and read by the shared shading (`scene.wgsl`'s
 //! `occupancy_visibility`), which darkens the sky light of what lies under
-//! or within a cover, less toward the end of its reach around the eye
-//! (decision 098); and a coarser far map in the targets' second layer
-//! (decision 101), reaching on to the settings' far radius, whose texels
+//! or within a cover, less toward the end of its reach around the eye;
+//! and a coarser far map in the targets' second layer,
+//! reaching on to the settings' far radius, whose texels
 //! keep how much of their ground covers hide. Each map is drawn again only
 //! when it no longer holds the camera's surroundings or the objects
 //! changed.
@@ -23,7 +23,7 @@ const HEIGHTS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 /// What heights hold where nothing covers: no top, no bottom.
 const NOTHING: f64 = -1.0e4;
 
-/// The maps: the near one, and the far one (decision 101), each a layer of
+/// The maps: the near one, and the far one, each a layer of
 /// the targets.
 const NEAR: usize = 0;
 const FAR: usize = 1;
@@ -72,7 +72,7 @@ impl Cover {
 
 /// Where a map lies: its center (x and z), meters a side, reference
 /// height and texels a side, and the meters around the eye covers darken
-/// within (decision 098).
+/// within.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Area {
     pub center: [f32; 2],
@@ -165,7 +165,7 @@ impl OccupancyPass {
     /// all), each map's area around `eye`, drawn again when it moved too
     /// far for the last draw to hold the camera's surroundings, or the
     /// slots or covers changed. Returns the near map's area and the far
-    /// map's, if any (decision 101), with the strength covers darken by;
+    /// map's, if any, with the strength covers darken by;
     /// `None` without maps.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prepare(
@@ -223,7 +223,7 @@ impl OccupancyPass {
 
     /// Plans map `map` reaching `reach` meters around `eye`: covers darken
     /// within it, and the eye strays at most an eighth of the map's side
-    /// from its center before it is drawn again (decision 098), so the map
+    /// from its center before it is drawn again, so the map
     /// reaches a third beyond. The map follows the eye in steps of a
     /// sixteenth of its side.
     fn plan(
@@ -270,7 +270,7 @@ impl OccupancyPass {
         area
     }
 
-    /// Creates the maps' pipelines unless they exist (decision 099).
+    /// Creates the maps' pipelines unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         for map in [NEAR, FAR] {
             self.pipelines[map].get_or_insert_with(|| pipeline(device, &self.layout, map));
@@ -283,7 +283,7 @@ impl OccupancyPass {
     }
 
     /// Draws the maps this frame redraws from the placed objects' `records`
-    /// and `poses`, and how their layers thin (`thins`, decision 100), into
+    /// and `poses`, and how their layers thin (`thins`), into
     /// `encoder`; timed by `profiler` (`occupancy`).
     pub(crate) fn encode(
         &mut self,
@@ -411,7 +411,7 @@ fn targets(
 }
 
 /// Map `map`'s pipeline: the near map keeps each target's maximum, the
-/// far one (decision 101) adds covers up and keeps the heights' maximum.
+/// far one adds covers up and keeps the heights' maximum.
 fn pipeline(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,

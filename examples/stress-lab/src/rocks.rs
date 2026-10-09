@@ -4,7 +4,7 @@
 //! ground. The planes cut softly, so each face rounds over into the
 //! weathered surface across a few vertices and its edge never shows the
 //! steps of the triangles it crosses; the faces undulate a little, as
-//! fractures do (decision 093). Texture coordinates project along the axis
+//! fractures do. Texture coordinates project along the axis
 //! each vertex's normal turns most toward; the highlands lay their rock
 //! maps from the world's axes instead. Each shape comes at a few details,
 //! the coarser with the most they stray from the finest. Cliffs are
@@ -12,8 +12,7 @@
 //! fluted by ridges running down it and broken into ledges along their
 //! strata, whose edges keep their crease. Every vertex's color bakes in
 //! how much the shape around it hides it, darker in hollows and under
-//! ledges; the ground stains their bases where terrains place them
-//! (decision 096).
+//! ledges; the ground stains their bases where terrains place them.
 
 use std::collections::HashMap;
 use std::f32::consts::PI;

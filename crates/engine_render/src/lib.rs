@@ -13,10 +13,10 @@ use serde::Serialize;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct RenderStats {
     /// Draw commands of the camera's mesh passes, each counted once however
-    /// many occlusion phases (decision 040) issue it: each opaque mesh
-    /// group's, one per level of detail on GPU-presented frames (decision
-    /// 047), the impostors' (decision 048), virtual geometry's forward bins
-    /// (decision 044) and the transparent groups'. `shadow_draws` counts the
+    /// many occlusion phases issue it: each opaque mesh
+    /// group's, one per level of detail on GPU-presented frames,
+    /// the impostors', virtual geometry's forward bins
+    /// and the transparent groups'. `shadow_draws` counts the
     /// shadow maps'.
     pub draw_calls: u32,
     /// Actual bytes uploaded or initialized: changed camera/instances and new assets.
@@ -24,22 +24,22 @@ pub struct RenderStats {
     /// Excludes renderer startup resources such as the four-byte white texture.
     pub upload_bytes: u64,
     /// Number of mesh instances submitted (before GPU clipping). GPU-culled
-    /// frames (decision 014) report the read-back visible count limited by the
+    /// frames report the read-back visible count limited by the
     /// instance budget, or the budgeted candidate count before any read-back.
     pub instances: u32,
     /// GPU-culled frames only: the pre-budget visible count read back from the
     /// latest completed frame, a few frames old; `None` before the first one.
     #[serde(skip)]
     pub gpu_visible: Option<u32>,
-    /// GPU-culled frames with occlusion culling (decision 040): visible
+    /// GPU-culled frames with occlusion culling: visible
     /// instances the occlusion test left undrawn, read back with
     /// `gpu_visible`; `None` otherwise.
     pub occluded_instances: Option<u32>,
-    /// GPU-culled frames with sub-pixel culling (decision 041): visible
+    /// GPU-culled frames with sub-pixel culling: visible
     /// instances whose bounds cover no pixel center, left undrawn, read back
     /// with `gpu_visible`; `None` otherwise.
     pub subpixel_instances: Option<u32>,
-    /// GPU-culled frames with levels of detail (decision 047): instances
+    /// GPU-culled frames with levels of detail: instances
     /// drawn as their mesh, its two simplifications and impostors, read
     /// back with `gpu_visible`; `None` otherwise.
     pub lod0_instances: Option<u32>,
@@ -67,7 +67,7 @@ pub struct RenderStats {
     /// surface skips drawing and uploads, which later frames then catch up.
     #[serde(skip)]
     pub submitted: bool,
-    /// Whether the sun cast shadows (decision 020), the indexed draws into
+    /// Whether the sun cast shadows, the indexed draws into
     /// the shadow maps (beside the camera pass's `draw_calls`), and the kept
     /// map's redraw: 0 none, 1 a rectangle of dirty tiles, 2 the whole map
     /// (every still caster).
@@ -80,18 +80,18 @@ pub struct RenderStats {
     pub shadow_near_casters: Option<u32>,
     pub shadow_moving_casters: Option<u32>,
     pub shadow_kept_casters: Option<u32>,
-    /// Kept levels (decision 065): tiles this frame redrew, tiles no level
+    /// Kept levels: tiles this frame redrew, tiles no level
     /// holds yet (lookups read coarser maps there), and casters the levels
     /// drew, read back like the others.
     pub shadow_level_tiles: u32,
     pub shadow_levels_pending: u32,
     pub shadow_level_casters: Option<u32>,
-    /// Whether this frame applied ambient occlusion and bloom (decision 021).
+    /// Whether this frame applied ambient occlusion and bloom.
     pub ambient_occlusion: bool,
-    /// Whether the frame traced contact shadows (decision 062).
+    /// Whether the frame traced contact shadows.
     pub contact_shadows: bool,
     pub bloom: bool,
-    /// Local lights the frame shaded within the budget (decision 023), and
+    /// Local lights the frame shaded within the budget, and
     /// usable lights beyond it or without a valid pose.
     pub local_lights: u32,
     pub dropped_lights: u32,
@@ -100,41 +100,41 @@ pub struct RenderStats {
     /// read-back or without lights.
     pub lights_visible: Option<u32>,
     pub light_cluster_overflow: Option<u32>,
-    /// Whether this frame applied sun shafts (decision 024) and screen-space
-    /// reflections (decision 025).
+    /// Whether this frame applied sun shafts and screen-space
+    /// reflections.
     pub sun_shafts: bool,
     pub reflections: bool,
-    /// Whether this frame's glass refracted the opaque scene (decision 038).
+    /// Whether this frame's glass refracted the opaque scene.
     pub refraction: bool,
     /// Whether the visibility buffer resolved the camera's virtual geometry
-    /// (decision 045) rather than drawing it forward.
+    /// rather than drawing it forward.
     pub visibility_buffer: bool,
-    /// Transparent draws (decision 026), also counted in `draw_calls`, and
+    /// Transparent draws, also counted in `draw_calls`, and
     /// the particles this frame drew; dropped particles are those a budget
     /// or the GPU's bindings left out.
     pub transparent_draws: u32,
     pub particles: u32,
     pub dropped_particles: u32,
-    /// Decals this frame drew (decision 039); dropped decals are those a
+    /// Decals this frame drew; dropped decals are those a
     /// budget or the GPU's binding left out.
     pub decals: u32,
     pub dropped_decals: u32,
-    /// Impostors baked and resident (decision 048), and opaque draw groups
+    /// Impostors baked and resident, and opaque draw groups
     /// that qualified but draw their meshes because a budget or the GPU's
     /// texture array layers left them none.
     pub impostors: u32,
     pub dropped_impostors: u32,
-    /// Reflection probes (decision 043) surfaces could reflect this frame,
+    /// Reflection probes surfaces could reflect this frame,
     /// the cube faces it captured, and probes a budget or the GPU's texture
     /// array layers left out.
     pub reflection_probes: u32,
     pub reflection_probe_faces: u32,
     pub dropped_reflection_probes: u32,
-    /// Pipelines the renderer has created, and those this frame created
-    /// (decision 049): 0 once everything the scene draws is compiled.
+    /// Pipelines the renderer has created, and those this frame created:
+    /// 0 once everything the scene draws is compiled.
     pub pipelines: u32,
     pub pipelines_created: u32,
-    /// Clusters and triangles virtual geometry (decision 044) drew for the
+    /// Clusters and triangles virtual geometry drew for the
     /// camera and into shadow maps, the camera's clusters occlusion culling
     /// left undrawn, and selections dropped while their storage grew, read
     /// back a few frames late.
@@ -144,7 +144,7 @@ pub struct RenderStats {
     pub virtual_shadow_triangles: u32,
     pub virtual_occluded_clusters: u32,
     pub dropped_virtual: u32,
-    /// Streamed pages (decision 044): resident, still loading, wanted and
+    /// Streamed pages: resident, still loading, wanted and
     /// lacking in the last read-back frame (0 once its view had all the
     /// detail it asked for), and those of them (with arrivals since) that
     /// found no room under the budget or the device's limits.
@@ -152,7 +152,7 @@ pub struct RenderStats {
     pub virtual_loading_pages: u32,
     pub virtual_missing_pages: u32,
     pub dropped_virtual_pages: u32,
-    /// Terrain (decision 051): patches and triangles the camera drew, and
+    /// Terrain: patches and triangles the camera drew, and
     /// patches drawn into shadow maps; tiles resident on the GPU, tiles
     /// still generating or loading, and tiles dropped by the tile budget or
     /// the device's texture array layers; patches standing in for finer
@@ -162,19 +162,19 @@ pub struct RenderStats {
     pub terrain_shadow_patches: u32,
     pub terrain_tiles: u32,
     pub terrain_loading_tiles: u32,
-    /// Tiles the GPU gave control values this frame (decision 118).
+    /// Tiles the GPU gave control values this frame.
     pub terrain_gpu_controls: u32,
     pub dropped_terrain_tiles: u32,
     pub terrain_fallback_patches: u32,
-    /// Terrains casting long sun shadows through horizon maps (decision
-    /// 052), and the maps this frame rebuilt.
+    /// Terrains casting long sun shadows through horizon maps,
+    /// and the maps this frame rebuilt.
     pub terrain_horizons: u32,
     pub terrain_horizon_builds: u32,
-    /// Terrains whose sky visibility maps (decision 055) are built, and
+    /// Terrains whose sky visibility maps are built, and
     /// the rows of them this frame built.
     pub terrain_sky_maps: u32,
     pub terrain_sky_rows: u32,
-    /// The runtime virtual texture (decision 124): the pages its sheets
+    /// The runtime virtual texture: the pages its sheets
     /// hold, pages resident, baked this frame (absent or stale), asked for
     /// but absent (in the last feedback read back), asked for with no slot
     /// left under its budget or the device's texture array layers, and
@@ -185,44 +185,44 @@ pub struct RenderStats {
     pub terrain_vt_missing: u32,
     pub dropped_terrain_vt_pages: u32,
     pub terrain_vt_evictions: u32,
-    /// Ground cover (decision 056): blades the last read-back frame drew,
+    /// Ground cover: blades the last read-back frame drew,
     /// and those past the capacity or budget, which dropped.
     pub ground_cover_blades: u32,
     pub dropped_ground_cover: u32,
     /// Meters from the eye ground cover reached this frame (rounded), and
-    /// the most tiers it grew in (decision 090): the radius's and doublings
+    /// the most tiers it grew in: the radius's and doublings
     /// past it.
     pub ground_cover_reach: u32,
     pub ground_cover_tiers: u32,
-    /// Objects terrains' placement layers stand on resident level-0 tiles
-    /// (decision 057), each culled on the GPU every frame.
+    /// Objects terrains' placement layers stand on resident level-0 tiles,
+    /// each culled on the GPU every frame.
     pub placed_objects: u32,
-    /// Of those, objects standing far away (decision 061), which hide where
+    /// Of those, objects standing far away, which hide where
     /// the tiles holding them instead are resident.
     pub placed_far_objects: u32,
-    /// Chunks of terrains' water drawn: lakes' (decision 067) and rivers'
-    /// ribbons (decision 092).
+    /// Chunks of terrains' water drawn: lakes' and rivers'
+    /// ribbons.
     pub water_chunks: u32,
-    /// The sea's sectors drawn (decision 076), and their triangles.
+    /// The sea's sectors drawn, and their triangles.
     pub ocean_sectors: u32,
     pub ocean_triangles: u32,
-    /// Runtime deformation (decision 083): stamps this frame pressed into
+    /// Runtime deformation: stamps this frame pressed into
     /// the map around the camera, and its texels along a side (0 while
     /// off; fewer than the settings' where the device's buffers cannot
     /// hold them).
     pub deformation_stamps: u32,
     pub deformation_texels: u32,
-    /// Rows of the clouds' dome (decision 084) this frame marched: all of
+    /// Rows of the clouds' dome this frame marched: all of
     /// them on exact frames, a slice on ordinary ones, none without clouds.
     pub cloud_rows: u32,
-    /// Blocks of the view whose clouds this frame marched (decision 095):
+    /// Blocks of the view whose clouds this frame marched:
     /// none without clouds or with their march in the view off.
     pub cloud_view_blocks: u32,
-    /// The physically based sky's tables this frame built (decision 088):
+    /// The physically based sky's tables this frame built:
     /// two when its air changed, one more when the sun, the camera's height
     /// or the air changed; none without the sky.
     pub sky_tables: u32,
-    /// World streaming (decision 086): cells holding streamed items, those
+    /// World streaming: cells holding streamed items, those
     /// loaded, and those within range still waiting; entities streamed
     /// items hold spawned; and the entities this frame spawned and
     /// despawned.
@@ -232,19 +232,19 @@ pub struct RenderStats {
     pub streamed_entities: u32,
     pub cell_spawns: u32,
     pub cell_despawns: u32,
-    /// Placed objects' impostors baked (decision 060), which the camera
+    /// Placed objects' impostors baked, which the camera
     /// draws far away and shadow maps cast as cards; counted in
     /// `impostors` too.
     pub placed_impostors: u32,
-    /// Times the occupancy map around the camera was drawn (decision 059):
+    /// Times the occupancy map around the camera was drawn:
     /// it follows the camera in steps and redraws when objects change.
     pub occupancy_redraws: u32,
-    /// Terrain surface materials (decision 054) past the palette's
+    /// Terrain surface materials past the palette's
     /// capacity, or whose maps the shared arrays cannot hold (block
     /// compressed, or sized unlike the first material's), which show a
     /// plain color instead.
     pub dropped_terrain_materials: u32,
-    /// The passes this frame ran, in order (decision 050), named in the
+    /// The passes this frame ran, in order, named in the
     /// JSON.
     #[serde(
         rename = "render_passes",

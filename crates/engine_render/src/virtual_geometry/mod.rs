@@ -1,12 +1,12 @@
-//! Virtual geometry (decision 044): resident virtual meshes' hierarchies,
+//! Virtual geometry: resident virtual meshes' hierarchies,
 //! clusters and pages in one arena, and each frame's selection of the
 //! clusters every view draws (`virtual_geometry.wgsl`). The camera's
 //! clusters go to per-material bins the opaque pass draws 128 triangles a
 //! cluster from (`meshes/vertex.wgsl`'s `vs_virtual`); each shadow map drawn every
-//! frame (decision 020) selects its casters' clusters into a bin of its own,
+//! frame selects its casters' clusters into a bin of its own,
 //! drawn into the map by `vs_shadow`.
 //!
-//! Frames culling occluded instances (decision 040) retest the camera's
+//! Frames culling occluded instances retest the camera's
 //! clusters the last frame's depth pyramid hid against this frame's, after
 //! phase one, and draw those it does not hide in phase two from twin bins.
 //!
@@ -124,7 +124,7 @@ pub(crate) struct VirtualStats {
     pub dropped_pages: u32,
 }
 
-/// The camera's cluster tests of a frame (decisions 040 and 041): the
+/// The camera's cluster tests of a frame: the
 /// projection it rasterizes, the viewport and depth pyramid levels, the
 /// projection the last frame rasterized when its pyramid is this frame's
 /// to reuse, the first phase-two bin when occlusion culling draws two
@@ -193,7 +193,7 @@ pub(crate) struct VirtualGeometryPass {
     arena: VirtualArena,
     storage: SelectionStorage,
     readbacks: Readbacks,
-    // Built with the first arena (decision 049): scenes without virtual
+    // Built with the first arena: scenes without virtual
     // meshes compile none of them.
     module: Option<wgpu::ShaderModule>,
     pipelines: Option<Pipelines>,
@@ -543,8 +543,8 @@ impl VirtualGeometryPass {
         );
     }
 
-    /// Records the retest after phase one and this frame's depth pyramid
-    /// (decision 040): the waiting clusters it does not hide go to phase
+    /// Records the retest after phase one and this frame's depth pyramid:
+    /// the waiting clusters it does not hide go to phase
     /// two's bins, whose draw arguments follow. Nothing on frames drawing
     /// one phase.
     pub(crate) fn encode_retest(

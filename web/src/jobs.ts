@@ -1,4 +1,4 @@
-// Worker jobs (decision 110): a pool of Web Workers beside the page, each
+// Worker jobs: a pool of Web Workers beside the page, each
 // running the engine's job worker module. The engine hands the page, in
 // order, what every worker should hold (terrain stacks and recipes) and jobs
 // (a terrain tile, a walk, a bake); the pool hands each share to every
@@ -8,14 +8,14 @@
 // as Blobs, which every worker reads without the page copying them again.
 // ?workers=N runs N workers and ?workers=off none, so the engine does the
 // work itself; a worker that breaks is replaced once, and the engine takes
-// back its jobs. Jobs carry priorities (decision 112): each goes to the
+// back its jobs. Jobs carry priorities: each goes to the
 // worker with the fewest in flight, among those the one whose most urgent
 // job is least urgent, and workers run their most urgent job a slice at a
 // time; jobs the engine cancels stop at their worker's next slice. Parts of
-// outputs ready early, as a tile's shape (decision 114), go back as they
+// outputs ready early, as a tile's shape, go back as they
 // come. Outputs of jobs the engine marks keepable, and KTX2 textures, come
 // from the page's job cache where the same build made them before
-// (decision 116, job-cache.ts).
+// (job-cache.ts).
 
 import { engineWorkerModule } from "./bindings";
 import { JobCache, jobCacheSettings } from "./job-cache";
@@ -31,8 +31,7 @@ export interface JobRuntime {
   report_job_cache?(hits: number, misses: number, bytes: number, mismatches: number): void;
 }
 
-/** A job `take_jobs` lists: its identity where its output may be kept
- * (decision 116). */
+/** A job `take_jobs` lists: its identity where its output may be kept. */
 interface JobMessage { id: number; kind: string; input: Uint8Array; priority: number; identity?: Uint8Array }
 
 /** What `take_jobs` lists, in order. */
@@ -61,7 +60,7 @@ interface Slot {
   jobs: Map<number, number>;
   tasks: Set<number>;
   broken: boolean;
-  /** Messages held until the worker has its module (decision 113). */
+  /** Messages held until the worker has its module. */
   held?: [unknown, Transferable[]][];
 }
 
@@ -78,13 +77,13 @@ export class JobPool {
   private timer = 0;
   private nextTask = 1;
   private restarts = 0;
-  /** The output cache (decision 116), once open; the keys of jobs whose
+  /** The output cache, once open; the keys of jobs whose
    * outputs it keeps when done; jobs looking it up and those cancelled
    * meanwhile; outputs kept that fresh runs verify; and the counters last
    * reported. */
   private readonly cache: Promise<JobCache | undefined> = workerWasm().then(openCache);
-  /** The job worker module, compiled once for every worker (decision
-   * 113); `undefined` where it did not compile, and each compiles its
+  /** The job worker module, compiled once for every worker;
+   * `undefined` where it did not compile, and each compiles its
    * own. */
   private readonly module: Promise<WebAssembly.Module | undefined> = workerWasm()
     .then(bytes => bytes && WebAssembly.compile(bytes))
@@ -168,7 +167,7 @@ export class JobPool {
     this.post(slot, { type: "run", id: message.id, kind: message.kind, input: message.input, priority: message.priority }, [message.input.buffer as ArrayBuffer]);
   }
 
-  /** Answers a keepable job (decision 116) from the cache, or hands it to
+  /** Answers a keepable job from the cache, or hands it to
    * a worker and keeps its output once done; verifying, runs it anyway
    * and compares. */
   private async cached(runtime: JobRuntime, message: JobMessage, identity: Uint8Array) {
@@ -207,8 +206,8 @@ export class JobPool {
     });
   }
 
-  /** KTX2 image `uri` transcoded to `format` on a worker (decision 037),
-   * or kept from an earlier transcoding by the same build (decision 116). */
+  /** KTX2 image `uri` transcoded to `format` on a worker,
+   * or kept from an earlier transcoding by the same build. */
   async transcodeKtx2(uri: string, bytes: Uint8Array, format: TranscodedImage["format"], basis: string): Promise<TranscodedImage> {
     const cache = await this.cache;
     const key = cache && await cache.key(`ktx2 ${format} ${basis}`, bytes);
@@ -245,7 +244,7 @@ export class JobPool {
     const slot: Slot = { worker, jobs: new Map(), tasks: new Set(), broken: false, held: [] };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
-    // Workers start from the module compiled once (decision 113); what is
+    // Workers start from the module compiled once; what is
     // posted meanwhile follows in order.
     void this.module.then(module => {
       worker.postMessage({ type: "init", bindings: engineWorkerModule(), module });
@@ -269,7 +268,7 @@ export class JobPool {
 
   /** The working slot with the fewest jobs and tasks in flight; among
    * those, the one whose most urgent job is least urgent, where a new job
-   * would wait least (decision 112). */
+   * would wait least. */
   private least(): Slot | undefined {
     let best: Slot | undefined;
     let bestLoad = Infinity;
@@ -362,8 +361,8 @@ export class JobPool {
 let wasm: Promise<ArrayBuffer | undefined> | undefined;
 
 /** The job worker module's bytes, fetched once by a page with workers:
- * compiled once for every worker (decision 113) and hashed for the job
- * cache's version (decision 116); `undefined` where the fetch failed. */
+ * compiled once for every worker and hashed for the job
+ * cache's version; `undefined` where the fetch failed. */
 function workerWasm(): Promise<ArrayBuffer | undefined> {
   wasm ??= fetchWorkerWasm();
   return wasm;
@@ -382,7 +381,7 @@ async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
   }
 }
 
-/** Opens the page's job output cache (decision 116) for the job worker
+/** Opens the page's job output cache for the job worker
  * module `module` (its bytes), unless the page turned it off. */
 async function openCache(module: ArrayBuffer | undefined): Promise<JobCache | undefined> {
   const settings = jobCacheSettings();

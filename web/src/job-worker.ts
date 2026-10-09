@@ -1,12 +1,12 @@
-// A job worker (decision 110): runs in a Web Worker the page's pool starts,
+// A job worker: runs in a Web Worker the page's pool starts,
 // holds what the engine shares with its workers and runs the jobs it hands
 // out with the engine's own code (the engine_worker module); and decodes
 // images and KTX2 textures at load boundaries off the page's thread.
 // Messages take effect in the order they came, so shares come before the
-// jobs reading them. Jobs run a slice at a time (decision 112): between
+// jobs reading them. Jobs run a slice at a time: between
 // slices the worker reads its messages and runs its most urgent job, and
 // a job the engine cancelled stops there. A part of a job's output ready
-// before the rest, as a tile's shape (decision 114), goes back after its
+// before the rest, as a tile's shape, goes back after its
 // slice. A module that traps is unusable:
 // the worker then says it broke, and the pool replaces it.
 
@@ -123,8 +123,8 @@ async function work() {
   }
 }
 
-/** Starts the module, from the page's compilation of it where given
- * (decision 113), and runs a small fixed tile so its hot code reaches
+/** Starts the module, from the page's compilation of it where given,
+ * and runs a small fixed tile so its hot code reaches
  * its optimized tier before real jobs. */
 async function start(bindings?: string, compiled?: WebAssembly.Module) {
   const module = (bindings

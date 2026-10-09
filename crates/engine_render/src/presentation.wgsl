@@ -1,4 +1,4 @@
-// GPU presentation (decision 014): blend, compose, validate and cull displayed
+// GPU presentation: blend, compose, validate and cull displayed
 // poses for frames whose interpolation runs on the GPU, then compact visible
 // slots per draw group for indirect draws. Mirrors the CPU presentation contract
 // in f32: normalized linear rotation blending up to the 0.9995 dot threshold,
@@ -19,13 +19,13 @@ struct Frame {
     blend: u32,
     planes: array<vec4<f32>, 6>,
     absolute_view_projection: mat4x4<f32>,
-    // Nonzero on temporally antialiased frames (decision 017): moving slots'
+    // Nonzero on temporally antialiased frames: moving slots'
     // visible IDs carry MOVED_SLOT, so only they read previous poses.
     motion: u32,
-    // Joints of skinned slots' palettes (decision 036).
+    // Joints of skinned slots' palettes.
     joints: u32,
     // Candidate flags the compaction passes gather: VISIBLE without
-    // occlusion culling; PHASE1, then PHASE2, with it (decision 040).
+    // occlusion culling; PHASE1, then PHASE2, with it.
     mask: u32,
     // Nonzero when occlusion culling splits drawing into two phases.
     occlusion: u32,
@@ -33,21 +33,21 @@ struct Frame {
     view_projection: mat4x4<f32>,
     // Viewport width and height in pixels, and the depth pyramid's levels.
     viewport: vec4<f32>,
-    // Skinned slots (decision 036) whose bounds `skin_bounds` computes.
+    // Skinned slots whose bounds `skin_bounds` computes.
     skinned: u32,
     // Nonzero when frustum-visible candidates whose bounds cover no pixel
-    // center are left undrawn (decision 041).
+    // center are left undrawn.
     subpixel: u32,
     // Candidates per visible-ID plane: each level of detail's IDs start this
-    // many entries after the last's (decision 047).
+    // many entries after the last's.
     plane: u32,
     // The screen error in pixels levels of detail keep within; 0 draws every
     // candidate at full detail.
     lod_error: f32,
     // The eye the frame rasterizes from; w: 1 when draw groups' impostors
-    // (decision 048) may draw.
+    // may draw.
     eye: vec4<f32>,
-    // Fades (decision 107): the share of a switch between a mesh and its
+    // Fades: the share of a switch between a mesh and its
     // card this frame fades (1 or more switches at once, keeping no level
     // past its distance), and the share of its distance past a switch the
     // eye goes before a candidate switches back.
@@ -90,14 +90,14 @@ struct Batch {
     bounds_max: vec4<f32>,
     // The mesh's first index and base vertex in the mesh arena, and the
     // first instance of its draws (`start` or 0), which each coarser level
-    // of detail adds `first_plane` to (decision 047).
+    // of detail adds `first_plane` to.
     first_index: u32,
     base_vertex: i32,
     first_instance: u32,
     first_plane: u32,
-    // Levels 1 and 2 (decision 047): first index and index count each; their
+    // Levels 1 and 2: first index and index count each; their
     // geometric errors in mesh units, the level count, and the error of the
-    // group's impostor (decision 048; 0 without one).
+    // group's impostor (0 without one).
     lod_ranges: vec4<u32>,
     lod_errors: vec4<f32>,
 }
@@ -140,18 +140,18 @@ struct Level {
 // The candidates again, in slot order (close to node order): culling streams
 // pose, node and authority records instead of striding across draw groups.
 @group(0) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
-// Skinned slots' palettes (decision 036): each joint's node (NO_PARENT
+// Skinned slots' palettes: each joint's node (NO_PARENT
 // without a valid pose) and inverse bind matrix, and the palette written.
 @group(0) @binding(15) var<storage, read> joint_nodes: array<u32>;
 @group(0) @binding(16) var<storage, read> inverse_binds: array<Rows>;
 @group(0) @binding(17) var<storage, read_write> palette: array<Rows>;
-// Occlusion culling (decision 040): the farthest depth of each 2x2 block of
+// Occlusion culling: the farthest depth of each 2x2 block of
 // the depth buffer, then of each 2x2 block of the level below, after phase
 // one; and counts: candidates phase two finds hidden, sub-pixel candidates,
 // and the triangles the camera's draws submit.
 @group(0) @binding(18) var depth_pyramid: texture_2d<f32>;
 @group(0) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
-// Skinned slots (decision 036): each slot's palette offset plus one (in
+// Skinned slots: each slot's palette offset plus one (in
 // `flags`), the skinned slots with their candidate position, draw group and
 // joint count, and each one's world bounds (minimum, then maximum).
 struct SlotColor {
@@ -168,14 +168,14 @@ struct Skinned {
 @group(0) @binding(20) var<storage, read> slot_colors: array<SlotColor>;
 @group(0) @binding(21) var<storage, read> skinned: array<Skinned>;
 @group(0) @binding(22) var<storage, read_write> skin_bounds: array<vec4<f32>>;
-// Reflection probes (decision 043): per slot, a fingerprint of the pose it
+// Reflection probes: per slot, a fingerprint of the pose it
 // last displayed and the frames in a row it displayed it, up to
 // STILL_FRAMES.
 @group(0) @binding(23) var<storage, read_write> still_frames: array<vec2<u32>>;
-// Impostors (decision 048): each impostor instance's visible ID and draw
+// Impostors: each impostor instance's visible ID and draw
 // group, compacted over every group.
 @group(0) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
-// Fades (decision 107): each slot's level of detail as last drawn
+// Fades: each slot's level of detail as last drawn
 // (`LOD_STATE`), and the cards fading over their meshes: the arguments of
 // their non-indexed draw, then each card's slot and batch word, as
 // `impostor_ids` holds them.
@@ -193,30 +193,30 @@ const MOVED_SLOT: u32 = 0x80000000u;
 const VISIBLE: u32 = 1u;
 const MOVING: u32 = 2u;
 const VALID: u32 = 4u;
-// Occlusion culling (decision 040): candidates drawn before the depth
+// Occlusion culling: candidates drawn before the depth
 // pyramid, candidates the pyramid does not hide drawn after it, and the
 // persistent mark of a candidate the last test found hidden.
 const PHASE1: u32 = 8u;
 const PHASE2: u32 = 16u;
 const OCCLUDED: u32 = 32u;
-// Sub-pixel culling (decision 041): a frustum-visible candidate whose
+// Sub-pixel culling: a frustum-visible candidate whose
 // projected bounds cover no pixel center, counted visible and never drawn.
 const SUBPIXEL: u32 = 64u;
-// Reflection probes (decision 043): a still, opaque candidate inside the
+// Reflection probes: a still, opaque candidate inside the
 // cube face being captured, marked afresh for each face.
 const PROBE: u32 = 128u;
 // Frames in a row a slot must display the same pose before probes capture
 // it.
 const STILL_FRAMES: u32 = 16u;
-// Levels of detail (decision 047): the level a camera candidate draws at, in
+// Levels of detail: the level a camera candidate draws at, in
 // two flag bits from this one; draw groups have at most LOD_LEVELS, and
-// level IMPOSTOR draws the group's impostor (decision 048).
+// level IMPOSTOR draws the group's impostor.
 const LOD_SHIFT: u32 = 8u;
 const LOD_LEVELS: u32 = 3u;
 const IMPOSTOR: u32 = 3u;
 // Vertices of an impostor card: two triangles.
 const IMPOSTOR_VERTICES: u32 = 6u;
-// A slot's level of detail as last drawn (decision 107): the level (bits 0
+// A slot's level of detail as last drawn: the level (bits 0
 // and 1), the one before it (2 and 3) and how far the switch between them
 // has faded, of LOD_FADED (from bit 4); its batch's low byte from bit 23,
 // so a slot another batch takes starts over; and LOD_STATE, which zeroed
@@ -225,7 +225,7 @@ const LOD_STATE: u32 = 0x80000000u;
 const LOD_FADED: u32 = 65535u;
 // A card's batch word while it fades (`impostor_frames.wgsl`): its fade (of
 // 16383) from bit 16, fading out, and drawn over its steady mesh at its
-// card's depth (decision 107).
+// card's depth.
 const CARD_FADING: u32 = 0x80000000u;
 const CARD_FADING_OUT: u32 = 0x40000000u;
 const CARD_OVER: u32 = 0x8000u;
@@ -233,7 +233,7 @@ const CARD_OVER: u32 = 0x8000u;
 // centers: covers the rasterizer's snapping of vertices to its subpixel grid
 // and rounding differences between this projection and the vertex shaders'.
 const SUBPIXEL_MARGIN: f32 = 0.0625;
-// With reversed depth (decision 042) nearer is larger. A box counts as
+// With reversed depth nearer is larger. A box counts as
 // hidden when its nearest depth lies below the pyramid's farthest times this
 // scale: a relative margin (2^-16) well beyond float depth steps and the
 // projection's rounding at every distance, so boxes touching what is in
@@ -244,7 +244,7 @@ const LINEAR_ROTATION_DOT: f32 = 0.9995;
 // Candidates per workgroup of the compaction passes. Their workgroup arrays
 // are zero-initialized before each workgroup runs; Firefox's translation
 // does that as one whole-array store whose compile time grows with the
-// array, about 300 ms per pass at 256 against 70 ms at 64 (decision 049).
+// array, about 300 ms per pass at 256 against 70 ms at 64.
 const GROUP: u32 = 64u;
 // Exact hex literals: browsers reject decimal spellings above f32::MAX.
 // 32 * f32::EPSILON, as the CPU support test; covers model/view rounding.
@@ -253,13 +253,13 @@ const MAX_COEFFICIENT: f32 = 1.0e15;
 // f32::MAX / 8, as the CPU culling bound.
 const MAX_PRODUCT_BOUND: f32 = 0x1.fffffep+124f;
 const F32_MAX: f32 = 0x1.fffffep+127f;
-// The CPU validator's proven common admission path (decision 012).
+// The CPU validator's proven common admission path.
 const MIN_LINEAR_SCALE: f32 = 0x1p-10f;
 const COEFFICIENT_LIMIT: f32 = 0x1p+20f;
 const COMMON_DETERMINANT_MARGIN: f32 = 0x1p-9f;
 
 var<workgroup> shared_values: array<u32, GROUP>;
-// Per-level counts of the compaction passes (decision 047).
+// Per-level counts of the compaction passes.
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
@@ -447,7 +447,7 @@ fn outside(m: mat4x4<f32>, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool
 }
 
 // After one quiet fixed tick the last published current poses are this
-// interval's previous poses (decision 014): copy them on the GPU instead of
+// interval's previous poses: copy them on the GPU instead of
 // uploading them. Only nodes active in the last applied gather published a
 // pose, and `info` still holds that gather's flags: a gather sends every
 // other node's previous pose explicitly before it blends. One node per
@@ -498,7 +498,7 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         }
         poses[candidate.slot] = matrix_rows(model);
         let batch = batches[candidate.batch];
-        // Joints place meshes with joints (decision 036): never culled,
+        // Joints place meshes with joints: never culled,
         // always moving.
         let skinned = batch.bounds_min.w != 0.0;
         if skinned || !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz) {
@@ -529,11 +529,11 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
     scan[candidate.position] = visible;
 }
 
-// The coarsest level of detail of `batch` (decision 047) whose geometric
+// The coarsest level of detail of `batch` whose geometric
 // error, scaled by `model`'s largest axis, projects within the frame's pixel
 // error at the posed bounding sphere's nearest distance from the eye (not its
 // depth, so turning the camera never changes a level): an empty level, which
-// draws nothing, wherever that fits; otherwise its impostor (decision 048)
+// draws nothing, wherever that fits; otherwise its impostor
 // wherever that fits; 0 for groups without levels, frames without them and
 // spheres around the eye.
 fn lod_level(batch: Batch, model: mat4x4<f32>) -> u32 {
@@ -591,7 +591,7 @@ fn level_indices(batch: Batch, level: u32) -> u32 {
     return select(batch.lod_ranges.w, batch.lod_ranges.y, level == 1u);
 }
 
-// Levels of detail kept and faded (decision 107), after culling: a
+// Levels of detail kept and faded, after culling: a
 // candidate drawn this frame keeps its slot's level until the eye goes a
 // margin past the level's distance (so candidates near a switch do not
 // flicker between two levels as the eye wavers), and switching between a
@@ -667,7 +667,7 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // Whether the box `bounds_min` to `bounds_max` mapped by `clip_from_local`
-// covers no pixel center (decision 041): the screen rectangle of its
+// covers no pixel center: the screen rectangle of its
 // projection, widened by SUBPIXEL_MARGIN, holds no pixel center on some
 // axis, so no triangle within it can produce a fragment. Boxes reaching the
 // eye plane or far outside the viewport, and non-finite ones, cover some.
@@ -708,7 +708,7 @@ fn covers_no_pixel(clip_from_local: mat4x4<f32>, bounds_min: vec3<f32>,
 fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
     let clip_from_local = frame.view_projection * rows_matrix(pose);
     var low = vec2<f32>(F32_MAX);
-    // Largest x, y and (reversed, decision 042) nearest depth.
+    // Largest x, y and (reversed) nearest depth.
     var high = vec3<f32>(-F32_MAX);
     for (var corner = 0u; corner < 8u; corner++) {
         let local = vec3<f32>(
@@ -757,7 +757,7 @@ fn hidden(pose: Rows, bounds_min: vec3<f32>, bounds_max: vec3<f32>) -> bool {
     return high.z < farthest * HIDDEN_SCALE;
 }
 
-// Occlusion culling (decision 040) after phase one drew and the depth
+// Occlusion culling after phase one drew and the depth
 // pyramid was built: every frustum-visible candidate that can be hidden is
 // tested. Those phase one skipped draw in phase two unless hidden (and count
 // as hidden); every test's result marks the candidate for the next frame's
@@ -803,7 +803,7 @@ fn pose_key(pose: Rows) -> u32 {
     return mix_row(mix_row(mix_row(0x2545f491u, pose.r0), pose.r1), pose.r2);
 }
 
-// Reflection probes (decision 043), on frames that have them, after
+// Reflection probes, on frames that have them, after
 // culling: each candidate's slot counts the frames in a row it displayed
 // the same pose, this one included, starting over after any change; an
 // invalid pose counts none.
@@ -825,11 +825,11 @@ fn count_still(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// Reflection probe captures (decision 043), after the frame's own drawing:
+// Reflection probe captures, after the frame's own drawing:
 // each valid candidate of an opaque draw group without joints whose slot
 // displayed the same pose for STILL_FRAMES frames, and whose bounds meet the
 // frustum of the cube face being captured (this pass's uniform) and cover a
-// texel center of it (decision 041), is marked PROBE for the compaction that
+// texel center of it, is marked PROBE for the compaction that
 // follows; every other candidate loses the mark.
 @compute @workgroup_size(256)
 fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -840,7 +840,7 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     var flags = scan[candidate.position] & ~PROBE;
     let batch = batches[candidate.batch];
     let still = still_frames[candidate.slot].y >= STILL_FRAMES;
-    // Transparent groups (1) are left out; virtual geometry (decision 044,
+    // Transparent groups (1) are left out; virtual geometry (
     // 2) draws its fallback meshes.
     if (flags & VALID) != 0u && still && batch.bounds_min.w == 0.0
             && batch.bounds_max.w != 1.0 {
@@ -854,7 +854,7 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     scan[candidate.position] = flags;
 }
 
-// Skinned slots' palettes (decision 036): each joint's displayed pose,
+// Skinned slots' palettes: each joint's displayed pose,
 // composed as culling composes slots', times its inverse bind matrix. A
 // joint without a valid pose counts as the identity.
 @compute @workgroup_size(64)
@@ -882,7 +882,7 @@ fn skin_palette(@builtin(global_invocation_id) id: vec3<u32>) {
     palette[id.x] = matrix_rows(model * rows_matrix(inverse_binds[id.x]));
 }
 
-// Meshes with joints (decision 036): each skinned slot's world bounds, the
+// Meshes with joints: each skinned slot's world bounds, the
 // union of its mesh's bounds moved by each joint of its palette (its
 // vertices are weighted averages of those points), then culled against the
 // view like any slot. A slot without a palette draws rigidly by its pose.
@@ -942,7 +942,7 @@ fn skin_bounds_pass(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-// The level bucket a candidate's flags put it in (decision 047): its level
+// The level bucket a candidate's flags put it in: its level
 // of detail on frames with levels, otherwise 0; one-hot when the frame's
 // mask gathers it.
 fn bucket(flags: u32) -> u32 {
@@ -1106,7 +1106,7 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
             atomicAdd(&occlusion_counts[2], triangles);
         }
     }
-    // Every group's impostors (decision 048) draw as one card list, whose
+    // Every group's impostors draw as one card list, whose
     // arguments a non-indexed draw reads: vertices, instances and zeros.
     if id.x == 0u {
         let impostors = load_sums(frame.groups)[IMPOSTOR];

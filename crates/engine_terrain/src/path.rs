@@ -1,4 +1,4 @@
-//! Paths (decision 069): roads and tracks along the ground. A path is a
+//! Paths: roads and tracks along the ground. A path is a
 //! line through terrain-local points with a width, shoulders and a
 //! smoothing distance. Its bake reads the ground the layers below it give
 //! along the line every [`PROFILE_STEP`] meters or so and averages it over
@@ -6,10 +6,10 @@
 //! levels the ground across the road to that profile, easing back into the
 //! ground over the shoulders, and the `path` mask reads how far a sample
 //! lies from the nearest road's edge. Where a road would fill too high
-//! over the ground or cross standing water it bridges instead (decision
-//! 072): its deck runs straight between the points where it meets the
+//! over the ground or cross standing water it bridges instead:
+//! its deck runs straight between the points where it meets the
 //! ground, climbing to clear water, and the ground and water under it stay
-//! as they are. Where it would cut too deep it tunnels (decision 073): it
+//! as they are. Where it would cut too deep it tunnels: it
 //! runs straight between its portals, the ground above stays, and the
 //! terrain opens at the portals. A route finder lays paths for agents and
 //! games: the
@@ -58,7 +58,7 @@ impl PathSample {
     }
 }
 
-/// A road or track along the ground (decision 069).
+/// A road or track along the ground.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -81,13 +81,13 @@ pub struct PathLayer {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 5000.0)))]
     pub smoothing: f32,
     /// Meters the road would fill above the ground beyond which it bridges
-    /// instead, as it does over rivers and lakes (decision 072), 0 to 1000;
+    /// instead, as it does over rivers and lakes, 0 to 1000;
     /// 0 never bridges.
     #[serde(default = "default_bridge_fill")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
     pub bridge_fill: f32,
     /// Meters the road would cut into the ground beyond which it tunnels
-    /// instead (decision 073), 0 to 2000; 0 never tunnels.
+    /// instead, 0 to 2000; 0 never tunnels.
     #[serde(default = "default_tunnel_cut")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2000.0)))]
     pub tunnel_cut: f32,
@@ -139,7 +139,7 @@ const DECK_GRADE: f32 = 0.08;
 const PIER_SPACING: f32 = 24.0;
 const PIER_DEPTH: f32 = 3.0;
 
-/// A bridge (decision 072), or a tunnel (decision 073): its road's
+/// A bridge, or a tunnel: its road's
 /// centerline from one end to the other (terrain-local x and z, the road's
 /// height as y) every few meters, its road's width, its piers (where each
 /// stands on its centerline, terrain-local at the deck's height, and the
@@ -407,7 +407,7 @@ impl PathProfile {
     }
 
     /// Whether its tunnels' portals open the ground at terrain-local
-    /// `point` (decision 073): within the road's width and
+    /// `point`: within the road's width and
     /// [`PORTAL_MARGIN`] of a tunnel's line, where the ground stands less
     /// than [`PORTAL_HEIGHT`] above the road.
     pub(crate) fn portal_hole(&self, point: Vec2) -> bool {
@@ -446,7 +446,7 @@ impl PathProfile {
         self.ground[index] + (self.ground[next] - self.ground[index]) * t
     }
 
-    /// Its bridges (decision 072) and tunnels (decision 073): each road's
+    /// Its bridges and tunnels: each road's
     /// centerline every few meters, and bridges' piers no more than
     /// [`PIER_SPACING`] apart wherever the ground falls [`PIER_DEPTH`] below
     /// the deck.
@@ -787,7 +787,7 @@ impl Layers {
     }
 }
 
-/// How a route finder weighs the ground (decision 069): the pyramid level
+/// How a route finder weighs the ground: the pyramid level
 /// whose samples it walks between, the steepest grade it climbs (rise per
 /// meter), how much a meter's cost grows per squared grade, the meters a
 /// meter through standing water costs on top, and the meters a turn costs
@@ -917,7 +917,7 @@ pub fn route(
     let index = |sample: (i64, i64)| (sample.1 * width + sample.0) as usize;
     let sample_of = |index: usize| (index as i64 % width, index as i64 / width);
     // Where water stands, as the terrain's hydrology bake found it: lakes
-    // and rivers (decision 092).
+    // and rivers.
     let water = layers.hydrology();
     let wet: Vec<bool> = (0..grid.heights.len())
         .map(|at| {

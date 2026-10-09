@@ -1,4 +1,4 @@
-//! Placed objects' draws (decision 057): what terrains' placement layers
+//! Placed objects' draws: what terrains' placement layers
 //! stand on their tiles, held in the scatter pool's slots as tiles arrive
 //! and leave, culled each frame and drawn after terrain in the first opaque
 //! phase. Draw groups, one per terrain asset, follow the assets.
@@ -36,28 +36,27 @@ pub(super) struct ScatterDraws {
     indices: HashMap<(u64, usize), u32>,
     terrains: HashMap<u64, u32>,
     pool: ScatterPool,
-    // Each group's impostor (decision 048), zeroed without one, and whether
+    // Each group's impostor, zeroed without one, and whether
     // the groups' layouts changed since they last uploaded.
     impostors: Vec<ImpostorRecord>,
     changed: bool,
-    // Each group's cover (decision 059).
+    // Each group's cover.
     covers: Vec<Cover>,
 }
 
 impl ScatterDraws {
-    /// Each draw group's impostor record in the placed objects' atlas
-    /// (decision 060), zeroed without one.
+    /// Each draw group's impostor record in the placed objects' atlas,
+    /// zeroed without one.
     pub(super) fn impostors(&self) -> &[ImpostorRecord] {
         &self.impostors
     }
 
-    /// Resident objects standing far away (decision 061).
+    /// Resident objects standing far away.
     pub(super) fn far_objects(&self) -> u32 {
         self.pool.far
     }
 
-    /// Each draw group's cover, which the occupancy map draws (decision
-    /// 059).
+    /// Each draw group's cover, which the occupancy map draws.
     pub(super) fn covers(&self) -> &[Cover] {
         &self.covers
     }
@@ -110,7 +109,7 @@ impl Renderer {
     /// slots and frees those of tiles that left, uploads what changed,
     /// creates the groups' pipelines for `kind`, and plans this frame's
     /// culling, with impostors when `impostors`, advancing how the camera
-    /// shows objects by this frame's fades (decision 104). Returns whether
+    /// shows objects by this frame's fades. Returns whether
     /// any object draws.
     pub(super) fn prepare_scatter(
         &mut self,
@@ -164,8 +163,8 @@ impl Renderer {
                 ],
             })
             .collect();
-        // How each terrain's layers thin with distance this frame (decision
-        // 100): their tiles' reaches follow the view's levels of detail,
+        // How each terrain's layers thin with distance this frame:
+        // their tiles' reaches follow the view's levels of detail,
         // and pinned levels stay resident everywhere.
         let pinned = snapshot.environment.terrain.sanitized().pinned_levels;
         let mut thins = vec![[0.0_f32; 4]; terrains.len() * crate::scatter::THIN_LAYERS];
@@ -195,8 +194,7 @@ impl Renderer {
         self.scatter.set_thinning(&self.device, &self.queue, &thins);
         let draws = &mut self.scatter_draws;
         let (dirty, counts_changed) = draws.pool.take_changes();
-        // The kept shadow map redraws where objects came or went
-        // (decision 060).
+        // The kept shadow map redraws where objects came or went.
         for (min, max) in draws.pool.take_moved() {
             self.shadows.dirty_kept(min, max);
         }
@@ -238,7 +236,7 @@ impl Renderer {
         self.scatter
             .prepare_snap(&self.device, &self.queue, sources);
         // Each group's pipeline variant, and the one its fading objects draw
-        // with (decision 104).
+        // with.
         let variants: Vec<Variant> = self
             .scatter_draws
             .groups
@@ -261,12 +259,11 @@ impl Renderer {
         let pixel_error = level_of_detail
             .enabled
             .then_some(level_of_detail.pixel_error);
-        // How much of their way the camera's switches fade this frame
-        // (decision 104).
+        // How much of their way the camera's switches fade this frame.
         let fade = self.switch_fades.share;
         let height = self.display.size().1 as f32;
-        // Frames keeping still casters cast placed objects into the kept map
-        // (decision 060), not the moving one.
+        // Frames keeping still casters cast placed objects into the kept map,
+        // not the moving one.
         let keeps_still = self.shadows.keeps_still();
         let maps: Vec<(usize, engine_core::glam::Mat4)> = self
             .shadows
@@ -289,10 +286,10 @@ impl Renderer {
         )
     }
 
-    /// The impostors of placed draw groups (decision 057) on GPU-presented
+    /// The impostors of placed draw groups on GPU-presented
     /// frames with impostors: each group's, baked into `encoder` after its
-    /// material's levels where missing into the placed objects' atlas
-    /// (decision 060), zeroed where its material blends, its mesh is too
+    /// material's levels where missing into the placed objects' atlas,
+    /// zeroed where its material blends, its mesh is too
     /// small or the budget the plan batches' leave is spent. The groups'
     /// layouts take their errors and records.
     pub(super) fn prepare_scatter_impostors(
@@ -377,7 +374,7 @@ impl Renderer {
         }
         self.impostors.placed.release_targets();
         // The kept shadow map casts impostors as cards: it redraws whole
-        // when they change (decision 060).
+        // when they change.
         if records != self.scatter_draws.impostors {
             self.shadows.dirty_kept_all();
         }
@@ -443,7 +440,7 @@ impl Renderer {
                 let bounds = asset.mesh.mesh.bounds();
                 let material = &asset.material.material;
                 // Blending materials cast nothing; masked ones test their
-                // texels (decision 031).
+                // texels.
                 let casts = (!material.is_transparent())
                     .then(|| matches!(material.alpha_mode(), engine_core::AlphaMode::Mask { .. }));
                 indices.insert((terrain.id, asset_index), groups.len() as u32);
@@ -452,7 +449,7 @@ impl Renderer {
                     material: asset.material.handle,
                     source: *material,
                     // Swaying objects carry their sway in the flags skinned
-                    // slots keep palettes in (decision 058).
+                    // slots keep palettes in.
                     color: ColorData {
                         color: pack_color(material.color()),
                         surface: pack_surface(material.surface()),
@@ -579,7 +576,7 @@ impl Renderer {
             pass.set_bind_group(1, group, &[]);
             draws += self.draw_scatter_levels(pass, (index, draw), 0, true);
         }
-        // Objects fading between how the camera shows them (decision 104),
+        // Objects fading between how the camera shows them,
         // at the levels the camera draws.
         let fading = self.scatter.fading_view();
         for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
@@ -598,7 +595,7 @@ impl Renderer {
             pass.set_bind_group(1, group, &[]);
             draws += self.draw_scatter_levels(pass, (index, draw), fading, true);
         }
-        // Impostors (decision 048): every group's cards in one draw, over
+        // Impostors: every group's cards in one draw, over
         // the poses and lights the meshes bound.
         if let Some((targets, lit)) = state.passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
@@ -617,7 +614,7 @@ impl Renderer {
     }
 
     /// The engine material of handle `handle` among `snapshot`'s placed
-    /// objects' (decision 057).
+    /// objects'.
     pub(super) fn placed_material(
         snapshot: &RenderSnapshot,
         handle: MaterialHandle,
@@ -633,7 +630,7 @@ impl Renderer {
 
     /// Draws this frame's placed objects culled for shadow map `map` with
     /// the depth passes' caster pipelines `casters`, and their impostor
-    /// cards with `cards` (decision 060); the map's view is bound. Returns
+    /// cards with `cards`; the map's view is bound. Returns
     /// the draws.
     pub(super) fn draw_scatter_shadow(
         &self,
@@ -725,7 +722,7 @@ fn tile_objects(
         Vec::with_capacity(placed.len()),
     );
     // The terrain's index, and for objects standing far away the level
-    // whose tiles hold them instead (decision 061).
+    // whose tiles hold them instead.
     let index = draws
         .terrains
         .get(&terrain.id)
@@ -737,7 +734,7 @@ fn tile_objects(
             continue;
         };
         let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
-        // Its layer and its rank under the density (decision 100), in ten
+        // Its layer and its rank under the density, in ten
         // bits.
         let layer = u32::from(placed.layer).min(NO_LAYER);
         let rank = (engine_core::math::clamp(placed.rank, 0.0, 1.0) * RANK_MAX).round() as u32;

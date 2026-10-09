@@ -27,7 +27,7 @@ const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
 /// cards grow wide enough to keep most of the full tree's needle area,
 /// branches times width over whorl spacing, which overlapping less they
 /// cover about as well: thinner crowns showed between the full trees near
-/// the eye and their impostors far from it (decision 106).
+/// the eye and their impostors far from it.
 struct Detail {
     sides: u32,
     segments: u32,

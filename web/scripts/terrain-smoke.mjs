@@ -1,11 +1,11 @@
 /**
- * Terrain checks (decision 051): a version 9 playground fixture with a
+ * Terrain checks: a version 9 playground fixture with a
  * generated terrain streams, draws, casts shadows, collides and answers
  * height queries; the terrain control and environment section change what
- * draws; its horizon map casts long shadows (decision 052) and aerial
- * perspective hazes it (decision 053); an `ETR1` file baked from the same
+ * draws; its horizon map casts long shadows and aerial
+ * perspective hazes it; an `ETR1` file baked from the same
  * layers streams by byte range and matches; a version 8 scene with terrain
- * or aerial perspective is refused; the import tool (decision 070) brings
+ * or aerial perspective is refused; the import tool brings
  * the dome in as a heightmap of its own and the scene it writes loads.
  *
  * Bakes its file with `cargo run -p engine_assetc --release --bin
@@ -30,58 +30,57 @@ const terrain = {
   origin: [-512, 0, -512], tiles: [4, 4], spacing: 1,
   layers: [
     { noise: { seed: 3, height: 140, wavelength: 600 } },
-    // Decision 068: rivers wear valleys into the hills for a few rounds,
+    // Rivers wear valleys into the hills for a few rounds,
     // baked over the two-meter tiles before any tile loads.
     { erosion: { level: 1, rounds: 6, incision: 0.001953125, creep: 2 } },
-    // Decision 066: water drains off the hills, carving channels, baked
+    // Water drains off the hills, carving channels, baked
     // over the same tiles.
     { hydrology: { level: 1, channel_area: 20000, depth: 1, width: 4, max_depth: 3, max_width: 20 } },
     // A trench across the road's last stretch, twelve meters deep.
     { stamp: { center: [430, 96], radius: 10, falloff: 10, op: { lower: 12 } } },
-    // Decision 069: a road through the south-western hills, leveled to its
-    // own smoothed profile, which gravel covers; it bridges the trench
-    // (decision 072).
+    // A road through the south-western hills, leveled to its
+    // own smoothed profile, which gravel covers; it bridges the trench.
     { path: { points: [[100, 300], [250, 260], [400, 150], [450, 60]], width: 6, shoulder: 6, smoothing: 60, bridge_fill: 4, tunnel_cut: 25 } },
     // A mound forty meters high, and a straight road through it on a long
-    // grade, which tunnels (decision 073).
+    // grade, which tunnels.
     { stamp: { center: [750, 200], radius: 30, falloff: 40, op: { raise: 40 } } },
     { path: { points: [[600, 200], [900, 200]], width: 6, shoulder: 6, smoothing: 400, bridge_fill: 4, tunnel_cut: 15 } },
     { stamp: { center: [512, 512], radius: 40, falloff: 60, op: { flatten: 30 } } },
     { stamp: { center: [560, 512], radius: 4, op: "hole" } },
     { heightmap: { uri: "terrain-smoke/dome.r16", width: 65, height: 65, min: [700, 700], size: [128, 128], low: 0, high: 200, blend: "max" } },
   ],
-  // Decision 054: meadow below, rock on steep ground; a summit biome of
-  // snow above 120 m. The meadow grows grass (decision 056). Tracks sink
-  // snow deepest and rock never (decision 083).
+  // Meadow below, rock on steep ground; a summit biome of
+  // snow above 120 m. The meadow grows grass. Tracks sink
+  // snow deepest and rock never.
   surface: {
     materials: [
       { id: "meadow", color: [0.12, 0.2, 0.06], cover: { density: 60 }, deform: 0.05 },
       { id: "rock", color: [0.3, 0.28, 0.26], roughness: 0.8 },
       { id: "snow", color: [0.85, 0.87, 0.9], roughness: 0.5, deform: 0.3 },
       // Gravel's grain is the first map, which sets the maps' size: two
-      // pages of the runtime virtual texture (decision 124) along a side.
+      // pages of the runtime virtual texture along a side.
       { id: "gravel", material: "grain", color: [0.36, 0.33, 0.28], roughness: 0.9, relief: 0.1, deform: 0.04 },
     ],
     biomes: [
       { id: "lowland", layers: [{ material: "meadow" }, { material: "rock", mask: { slope: [25, 35] } }, { material: "gravel", mask: { path: [1, 0] } }] },
       { id: "summit", fitness: { height: [110, 130] }, layers: [{ material: "snow" }] },
     ],
-    // Decision 057: crates stand on the meadow, a coarser box far away,
-    // with balls, whose impostors far away cast cards (decision 060).
+    // Crates stand on the meadow, a coarser box far away,
+    // with balls, whose impostors far away cast cards.
     assets: [
-      // Both collide near the camera (decision 064): the crate as its
+      // Both collide near the camera: the crate as its
       // box, the ball as a sphere around it.
       { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] } } },
       { id: "ball", mesh: "ball", material: "plain", collider: { shape: { kind: "sphere", radius: 1 } } },
     ],
     // A quarter of them also stand on the pinned level-2 tiles, hidden where
-    // level-0 tiles hold them (decision 061).
+    // level-0 tiles hold them.
     placements: [{ id: "crates", assets: [{ asset: "crate" }, { asset: "ball" }], density: 100, footprint: 4, materials: ["meadow"], scale: [0.5, 1], far: { level: 2, share: 0.25 } }],
-    // Decision 085: an author stands a big crate on the plateau, and a ball
+    // An author stands a big crate on the plateau, and a ball
     // on the level-1 tiles, which stay resident farther away.
     placed: [{ asset: "crate", position: [530, 500], yaw: 30, scale: 3 }, { asset: "ball", position: [500, 530], scale: 2, level: 1 }],
   },
-  // Decision 094: ground generated past its edges to the horizon, its bakes
+  // Ground generated past its edges to the horizon, its bakes
   // eased out over 128 m.
   surroundings: { reach: 3000, blend: 128 },
 };
@@ -141,15 +140,15 @@ const fixture = {
   entities: [
     { id: "player", mesh: "box", material: "plain", tags: ["player"], collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 2, filter: 1, sensor: false }, transform: { translation: [0, 31, 0] } },
     { id: "ground", terrain },
-    // Probes capture terrain on GPU-presented frames (decision 043).
+    // Probes capture terrain on GPU-presented frames.
     { id: "probe", reflection_probe: { extent: [60, 40, 60] }, transform: { translation: [0, 45, 0] } },
-    // Rides the sea once one stands (decision 077).
+    // Rides the sea once one stands.
     { id: "buoy", mesh: "box", material: "plain", floating: { draft: 0.25, tilt: 1 }, transform: { translation: [400, 5, -400] } },
-    // An interior's box lets in a tenth of the sky and sun (decision 079).
+    // An interior's box lets in a tenth of the sky and sun.
     { id: "hall", reflection_probe: { extent: [20, 200, 20], blend: 0.5, interior: { sky: 0.1, sun: 0.1 } }, transform: { translation: [-300, 40, 300] } },
-    // Walks where it is sent (decision 089).
+    // Walks where it is sent.
     { id: "hiker", mesh: "box", material: "plain", nav_agent: { speed: 6, offset: 0.5 }, transform: { translation: [20, 31, 20] } },
-    // Presses a dimple into the plateau's meadow each tick (decision 083).
+    // Presses a dimple into the plateau's meadow each tick.
     { id: "roller", deformer: { radius: 0.5, depth: 0.2, contact: 0.5, flatness: 0.2 }, transform: { translation: [10, 30.2, 10] } },
   ],
 };
@@ -159,9 +158,9 @@ const command = commander(page);
 const scene = routedScene(page, fixture);
 const checks = [];
 
-/** Renders until every wanted tile has been resident for a frame (bakes,
- * decisions 066 and 068, load them all at once); returns the observation.
- * Job workers bake and generate tiles beside the page (decision 110), their
+/** Renders until every wanted tile has been resident for a frame (bakes load
+ * them all at once); returns the observation.
+ * Job workers bake and generate tiles beside the page, their
  * outputs arriving between commands, so renders wait a little for them. */
 async function settle() {
   let rendering;
@@ -238,12 +237,12 @@ try {
   assert.equal(settled.dropped_terrain_tiles, 0);
   assert.equal(settled.dropped_terrain_materials, 0);
   assert.ok(settled.placed_objects > 0, `crates stand on the meadow: ${settled.placed_objects}`);
-  // The pinned tiles stand a share of them everywhere (decision 061).
+  // The pinned tiles stand a share of them everywhere.
   assert.ok(settled.placed_far_objects > 0 && settled.placed_far_objects < settled.placed_objects,
     `far crates: ${settled.placed_far_objects} of ${settled.placed_objects}`);
-  // Occupancy (decision 059): the crates' covers are drawn around the camera.
+  // Occupancy: the crates' covers are drawn around the camera.
   assert.ok(settled.occupancy_redraws > 0, `the occupancy map draws: ${settled.occupancy_redraws}`);
-  // GPU-presented frames bake the balls' impostor (decision 060), which far
+  // GPU-presented frames bake the balls' impostor, which far
   // balls draw and cast as cards.
   let presented;
   for (let frame = 0; frame < 60; frame++) {
@@ -276,7 +275,7 @@ try {
   assert.ok(view.level_errors.slice(0, -1).every(error => error > 0), `measured ${view.level_errors}`);
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
-  // Relief (decision 082): what a material sinks between its stones reads
+  // Relief: what a material sinks between its stones reads
   // back as authored, and its steps take a range.
   assert.ok(Math.abs(view.terrain.surface.materials[3].relief - 0.1) < 1e-6, `relief reads back: ${view.terrain.surface.materials[3].relief}`);
   const stepless = await command("environment", { terrain: { relief_steps: 1 } }, false);
@@ -287,7 +286,7 @@ try {
   assert.deepEqual(view.terrain.surface.placements.map(layer => layer.id), ["crates"]);
   assert.deepEqual(view.terrain.surface.placements[0].far, { level: 2, share: 0.25 });
   checks.push({ check: "inspection", levels: view.levels, resident: view.resident_tiles_by_level, errors: view.level_errors, ranges: view.level_ranges });
-  // Surroundings (decision 094): ground generated past the terrain's edges
+  // Surroundings: ground generated past the terrain's edges
   // from its layers, four meters a sample, meets its edges where both read
   // the same ground and fills the view from on high; queries past the
   // edges read it, it places nothing, and settings turn it off.
@@ -327,7 +326,7 @@ try {
     await settle();
     checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, patches: status.surroundings_patches, pixels: filled.changed });
   }
-  // The hydrology bake (decision 066) read every sample of the two-meter
+  // The hydrology bake read every sample of the two-meter
   // tiles, found channels, and queries report what it found where they ask.
   const water = view.hydrology;
   assert.equal(water.baking, false, "the bake is done once tiles load");
@@ -335,18 +334,18 @@ try {
   assert.ok(water.channel_samples > 0 && water.max_area > 20000, `water gathers into channels: ${JSON.stringify(water)}`);
   const [watered] = (await command("terrain_height", { points: [[-300, -300]] })).result.samples;
   assert.ok(watered.water && watered.water.flow > 0 && Number.isFinite(watered.water.wetness), `queries report water: ${JSON.stringify(watered)}`);
-  // Waterfalls (decision 075) are where its rivers drop steeply; the
+  // Waterfalls are where its rivers drop steeply; the
   // engine spawns what draws each one.
   assert.equal((await command("inspect", { component: "Terrains" })).result.value.falls, water.falls, `falls spawn as found: ${JSON.stringify(water)}`);
   checks.push({ check: "hydrology", samples: water.samples, channels: water.channel_samples, lakes: water.lake_samples, max_area: water.max_area, falls: water.falls });
-  // The erosion bake (decision 068) ran its rounds over the same samples
+  // The erosion bake ran its rounds over the same samples
   // first, wearing ground away.
   const worn = view.erosion;
   assert.equal(worn.baking, false, "erosion is done once tiles load");
   assert.equal(worn.samples, 513 * 513, `erosion reads its level: ${JSON.stringify(worn)}`);
   assert.ok(worn.rounds === 6 && worn.deepest > 0, `erosion wears ground away: ${JSON.stringify(worn)}`);
   checks.push({ check: "erosion", rounds: worn.rounds, deepest: worn.deepest, highest: worn.highest });
-  // The path's bake (decision 069) profiled the ground along its line; the
+  // The path's bake profiled the ground along its line; the
   // road lies level across, and queries report how far its edge is.
   const [road] = view.paths;
   const line = terrain.layers[4].path.points;
@@ -368,7 +367,7 @@ try {
   let tilt = 0, level = 0;
   for (let i = 0; i < sections.length; i += 3) {
     const [center, left, right] = sections.slice(i, i + 3);
-    // Bridges (decision 072) carry the road over the hills' streams.
+    // Bridges carry the road over the hills' streams.
     if (center.path === null) continue;
     assert.ok(Math.abs(center.path + 3) < 0.05, `the centerline lies 3 m inside the road's edges: ${JSON.stringify(center)}`);
     tilt = Math.max(tilt, Math.abs(left.height - right.height));
@@ -378,7 +377,7 @@ try {
   const [away] = await heights([[400, -400]]);
   assert.equal(away.path, null, "far from roads, queries report none");
   checks.push({ check: "path", length: road.length, samples: road.samples, steepest: road.steepest, cut: road.deepest_cut, fill: road.highest_fill, tilt });
-  // Decision 072: where the road would fill over the trench it bridges:
+  // Where the road would fill over the trench it bridges:
   // the ground under the deck stays a trench, which is no road, and rays
   // land on the deck above it.
   assert.ok(road.bridges >= 1 && road.bridged > 15, `the road bridges the trench: ${JSON.stringify(road)}`);
@@ -389,7 +388,7 @@ try {
   const landing = (await command("raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   assert.ok(landing?.placed?.layer === 65535 && landing.point[1] > floor.height + 5, `rays land on the deck: ${JSON.stringify(landing)} over ${floor.height}`);
   checks.push({ check: "bridge", bridged: road.bridged, deck: landing.point[1], floor: floor.height });
-  // Decision 073: the straight road bores through the mound: no road on the
+  // The straight road bores through the mound: no road on the
   // ground above it, which rays land on, and the ground opens at its
   // portals.
   const bore = view.paths[1];
@@ -407,7 +406,7 @@ try {
   const portals = (await heights(bored)).filter(sample => sample?.hole).length;
   assert.ok(portals > 0, "the ground opens at its portals");
   checks.push({ check: "tunnel", tunneled: bore.tunneled, portals, mound: mound.height });
-  // Routes (decision 069) keep within their grade between their ends.
+  // Routes keep within their grade between their ends.
   const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
   assert.equal(routed.terrain, "ground");
   const route = routed.route;
@@ -455,7 +454,7 @@ try {
   const sweep = (await command("terrain_sweep", { center: [0, 0], half_extent: 120, samples: 24 })).result;
   assert.ok(sweep.collision.compared > 100, `sweep compared ${sweep.collision.compared}`);
   assert.ok(sweep.collision.worst.max_difference < 5e-3, `collision differs by ${sweep.collision.worst.max_difference}`);
-  // Placed crates and balls collide (decision 064): some rays meet them
+  // Placed crates and balls collide: some rays meet them
   // above the ground, which still compares beneath them.
   assert.ok(ray.result.snapshot.placed_colliders > 0, `placed colliders: ${ray.result.snapshot.placed_colliders}`);
   assert.ok(sweep.collision.placed_first > 0, `rays meeting placed objects first: ${sweep.collision.placed_first}`);
@@ -486,7 +485,7 @@ try {
   checks.push({ check: "settings section", more: finer.terrain_triangles, terrainPixels: shown.changed });
 
 
-  // Speed-aware detail (decision 115): while the camera moves fast the
+  // Speed-aware detail: while the camera moves fast the
   // finest levels' tiles in view wait, and those out of view until it
   // settles; then they load. Collision's tiles never wait, so collision is
   // off here.
@@ -512,14 +511,14 @@ try {
   await settle();
   checks.push({ check: "motion detail", waited });
 
-  // Decision 116: tiles the view leaves stay in memory and return at once
+  // Tiles the view leaves stay in memory and return at once
   // when it comes back; with nothing missing, workers generate the tiles
   // within the idle reach into memory.
   const inspectTerrains = async () => (await command("inspect", { component: "Terrains" })).result.value;
   const home = await inspectTerrains();
   await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
-  // Decision 117: the few tiles under the view after the move generated in
+  // The few tiles under the view after the move generated in
   // bands of rows across idle workers, and hold the heights the layers
   // give, as whole tiles do.
   const corner = await inspectTerrains();
@@ -551,7 +550,7 @@ try {
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles, banded: corner.banded_tiles, cached: ahead.cached_tiles, bytes: ahead.cached_bytes, generating });
 
-  // Decision 119: tiles generated in bands place their objects in bands
+  // Tiles generated in bands place their objects in bands
   // too, the same objects as whole tiles place: the view of tiles banded
   // draws as many as of the same tiles generated whole.
   const cornerView = { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] };
@@ -571,7 +570,7 @@ try {
   await settle();
   checks.push({ check: "placing bands", objects: bandedObjects });
 
-  // Decision 118: the GPU gives tiles their surface materials, the rules'
+  // The GPU gives tiles their surface materials, the rules'
   // own but where its rounding crosses a threshold: the view drawn with
   // the CPU's differs in few pixels. Back on the GPU, tiles loading at a
   // new place get theirs from it as they upload.
@@ -596,7 +595,7 @@ try {
   await settle();
   checks.push({ check: "gpu materials", differing: materials.changed, controls });
 
-  // Decision 124: the runtime virtual texture bakes the ground into the
+  // The runtime virtual texture bakes the ground into the
   // pages the view asks for, its sheets growing to hold them, and the
   // pixels reading them show the ground as computing it does; turned off,
   // it keeps no sheets. Under a budget too small, the pages asked for
@@ -632,14 +631,14 @@ try {
   await command("terrain", { view: "materials" });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
-  // Ground cover (decision 056): the meadow's grass grows near the eye,
+  // Ground cover: the meadow's grass grows near the eye,
   // counted a few frames late; turned off, none grows.
   await command("camera", { position: [-12, 32, -8], target: [10, 30, 6], vertical_fov_radians: 1, near: 0.1, far: 5000 });
   let grown;
   for (let frame = 0; frame < 60; frame++) {
     grown = (await command("render")).result.rendering;
     if (grown.ground_cover_blades > 0) break;
-    // The tiles around the eye arrive from workers (decision 110).
+    // The tiles around the eye arrive from workers.
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.ok(grown.ground_cover_blades > 0, `grass grows: ${JSON.stringify(grown)}`);
@@ -651,7 +650,7 @@ try {
   assert.equal(bare.ground_cover_blades, 0, "no blades once cover stops");
   await command("environment", { ground_cover: cover });
   checks.push({ check: "ground cover", blades: grown.ground_cover_blades });
-  // The wind (decision 058) blades and swaying crates bend in: its section
+  // The wind blades and swaying crates bend in: its section
   // reads back as set, and refuses speeds out of range.
   const calm = (await command("inspect", { component: "Wind" })).result.value;
   await command("environment", { wind: { velocity: [8, -2], gusts: 0.25 } });
@@ -669,7 +668,7 @@ try {
   assert.equal(coarse.error.path, "$.occupancy.resolution");
   await command("environment", { occupancy });
   checks.push({ check: "occupancy", redraws: settled.occupancy_redraws });
-  // Contact shadows (decision 062) trace with the frame's effects: the
+  // Contact shadows trace with the frame's effects: the
   // blades and crates darken the sun's light where they reach; the section
   // reads back as set and refuses rays out of range.
   const contact = (await command("inspect", { component: "ContactShadows" })).result.value;
@@ -684,7 +683,7 @@ try {
   assert.equal(reaching.error.path, "$.contact_shadows.length");
   await command("environment", { contact_shadows: contact });
   checks.push({ check: "contact shadows", pixels: contactPixels.changed });
-  // Water (decision 067) stands in the bake's lakes: queries find its
+  // Water stands in the bake's lakes: queries find its
   // surface and depth, the overview draws chunks of it, it shades pixels
   // and the section refuses water clearer than its range.
   const grid = [];
@@ -710,7 +709,7 @@ try {
   assert.equal(murky.error.path, "$.water.clarity");
   await command("environment", { water: waterSettings });
   checks.push({ check: "water", lake_samples: lakes.length, chunks: wet.water_chunks, pixels: waterPixels.changed });
-  // The sea (decision 076) stands at its level wherever the ground lies
+  // The sea stands at its level wherever the ground lies
   // lower: queries sum the waves frames draw, which move with time and stay
   // within their height, its sectors draw, and a camera just over the
   // surface the CPU finds sees the sea where one just under it sees the
@@ -740,20 +739,20 @@ try {
     await command("camera", down(-0.3));
     const below = await capture("sea-below");
     const crossing = await differentPixels(page, [above, below], { tolerance: 24 });
-    // Rivers (decision 092) carve their mouths deep under the sea, which
+    // Rivers carve their mouths deep under the sea, which
     // darkens it from above, and the sky's state (how far its clouds have
     // marched) sets how far the two views differ: between a quarter and half
     // of the view changes across the surface, where a surface drawn off the
     // queried one leaves both cameras on one side and the views alike.
     assert.ok(crossing.changed > 0.15 * crossing.total, `the drawn surface lies where queries find it: ${crossing.changed} of ${crossing.total} pixels change across it`);
-    // Floating entities (decision 077) ride the sea each fixed tick at the
+    // Floating entities ride the sea each fixed tick at the
     // tick's time, which frames present: the buoy stands on the surface
     // queries find there.
     await command("step", { ticks: 1 });
     const buoy = (await command("inspect", { entity: "buoy", component: "Transform" })).result.entity.components.Transform;
     const swell = (await command("water_query", { points: [[400, -400]] })).result.samples[0].ocean;
     assert.ok(Math.abs(buoy.translation[1] - (swell.height - 0.25)) < 2e-3, `the buoy floats: ${JSON.stringify(buoy)} on ${JSON.stringify(swell)}`);
-    // Under the sea its water veils everything (decision 077): a camera a
+    // Under the sea its water veils everything: a camera a
     // meter under the surface sees nothing like one a meter over it.
     const level = (await command("water_query", { points: [deepest] })).result.samples[0].ocean.height;
     const across = offset => ({ position: [deepest[0], level + offset, deepest[1]], target: [deepest[0] + 40, level + offset, deepest[1] + 40], vertical_fov_radians: 0.9, near: 0.05, far: 2000 });
@@ -769,7 +768,7 @@ try {
     await command("camera", overview);
     checks.push({ check: "ocean", sectors: afloat.ocean_sectors, triangles: afloat.ocean_triangles, amplitude: tide.amplitude, depth, crossing: crossing.changed, buoy: buoy.translation[1], veiled: veiled.changed });
   }
-  // Inside an interior's box (decision 079) the ground takes a tenth of the
+  // Inside an interior's box the ground takes a tenth of the
   // sky and sun: looking straight down at the box's edge, the half inside
   // is far darker than the half outside.
   {
@@ -802,14 +801,14 @@ try {
     await command("camera", overview);
     checks.push({ check: "interior", inside: dark, outside: light });
   }
-  // Edits (decision 080) stand over a terrain's layers and bakes: the
+  // Edits stand over a terrain's layers and bakes: the
   // ground moves where one reaches once its tiles regenerate, its id
   // repeated leaves it alone, undo takes it away and redo puts it back.
   {
     const spot = [-200, 150];
     const ground = async () => (await heights([spot]))[0].height;
     const until = async (wanted, what) => {
-      // Workers regenerate the tiles under it (decision 110).
+      // Workers regenerate the tiles under it.
       for (let frame = 0; frame < 400; frame++) {
         const height = await ground();
         if (Math.abs(height - wanted) < 0.05) return height;
@@ -836,7 +835,7 @@ try {
     await until(authored, "the fixture is left as authored");
     checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
   }
-  // Walks (decision 081) cross ground an agent stands on: around a hole
+  // Walks cross ground an agent stands on: around a hole
   // cut across the straight line, never into it, and longer than the
   // straight line; options out of range are refused.
   {
@@ -852,7 +851,7 @@ try {
     assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
   }
-  // Navigation agents (decision 089): sent somewhere, an agent's walk is
+  // Navigation agents: sent somewhere, an agent's walk is
   // searched over ticks, then it walks there on the ground and arrives; a
   // destination off the terrain is unreachable; settings out of range are
   // refused.
@@ -862,7 +861,7 @@ try {
     const sent = await command("nav_go", { entity: "hiker", destination: goal });
     assert.deepEqual(sent.result.destination, goal);
     let agent;
-    // Its walk is searched on a job worker beside the page (decision 110),
+    // Its walk is searched on a job worker beside the page,
     // in the page's time, which paused steps outrun; or over ticks.
     for (let attempt = 0; attempt < 400; attempt++) {
       await command("step", { ticks: 1 });
@@ -891,7 +890,7 @@ try {
     await command("nav_go", { entity: "hiker", destination: null });
     checks.push({ check: "agents", length: agent.length, searched: agent.searched, at });
   }
-  // Authored objects (decision 085) stand where authors put them, on the
+  // Authored objects stand where authors put them, on the
   // ground drawn there, and collide in their own layer.
   {
     const [ground] = await heights([[18, -12]]);
@@ -904,7 +903,7 @@ try {
     assert.equal(view.terrain.surface.placed.length, 2, "the inspector lists the authored objects");
     checks.push({ check: "authored placements", top: top.point[1], ground: ground.height });
   }
-  // Tracks (decision 083) press into the ground as deep as its materials
+  // Tracks press into the ground as deep as its materials
   // let them, from the deform control and from deformers each tick: the
   // log answers queries and presses them again where the map returns, they
   // refill over the refill time, the budget drops the oldest, and the map
@@ -963,9 +962,9 @@ try {
     await command("camera", overview);
     checks.push({ check: "deformation", track: inside.track, depth: inside.depth, pixels: trackPixels.changed, replayed: replay.changed, dimple: dimple.track, refilled: later.track });
   }
-  // Clouds (decision 084) are opt-in: the fixture has none until the
+  // Clouds are opt-in: the fixture has none until the
   // environment control adds a layer; exact frames march the whole dome,
-  // which the sky shows; the view marches them too (decision 095), lying
+  // which the sky shows; the view marches them too, lying
   // over the ground from above the layer; no coverage marches nothing, and
   // settings out of range are refused.
   {
@@ -980,7 +979,7 @@ try {
     const cloudy = await capture("sky-clouds");
     const cloudPixels = await differentPixels(page, [clear, cloudy]);
     assert.ok(cloudPixels.changed > 20000, `clouds show in the sky: ${cloudPixels.changed} pixels`);
-    // Their shadows (decision 084) fall on the ground the sun lights.
+    // Their shadows fall on the ground the sun lights.
     await command("camera", { position: [0, 400, 1], target: [0, 30, 0], vertical_fov_radians: 1.0, near: 0.5, far: 4000 });
     const shaded = await capture("cloud-shadows");
     await command("environment", { clouds: { ...layer, shadows: 0 } });
@@ -1008,7 +1007,7 @@ try {
     await command("camera", overview);
     checks.push({ check: "clouds", rows: clouded.cloud_rows, pixels: cloudPixels.changed, shadows: shadowPixels.changed, view_blocks: over.cloud_view_blocks, below: viewPixels.changed });
   }
-  // The physically based sky (decision 088) is opt-in: its tables of the
+  // The physically based sky is opt-in: its tables of the
   // air build once, the sky-view again for each step of the sun, which the
   // time of day moves; it replaces the authored sky, a dusk sky is redder
   // than noon's, and settings out of range are refused.
@@ -1036,7 +1035,7 @@ try {
     await command("camera", overview);
     checks.push({ check: "sky", noon: noonColor.map(Math.round), dusk: duskColor.map(Math.round), replaced: replaced.changed });
   }
-  // Kept levels (decision 065) hold still casters sharper than the kept
+  // Kept levels hold still casters sharper than the kept
   // map around the camera on GPU-presented frames, every tile once built;
   // with cascades out of reach, their shadows differ from the kept map's
   // alone. The section refuses more levels than the engine keeps.
@@ -1063,7 +1062,7 @@ try {
   await command("environment", { shadows: kept });
   checks.push({ check: "kept levels", pixels: levelPixels.changed });
   await command("camera", overview);
-  // The sky visibility map (decision 055) builds a band of rows a frame
+  // The sky visibility map builds a band of rows a frame
   // once the pinned level is resident; its view shows it unlit.
   let sky;
   for (let frame = 0; frame < 200; frame++) {
@@ -1071,7 +1070,7 @@ try {
     if (sky.terrain_sky_maps === 2 && sky.terrain_sky_rows === 0) break;
     if (sky.terrain_sky_maps < 2) await new Promise(resolve => setTimeout(resolve, 25));
   }
-  // One for the terrain and one for its surroundings (decision 094).
+  // One for the terrain and one for its surroundings.
   assert.equal(sky.terrain_sky_maps, 2, `the sky maps build: ${JSON.stringify(sky)}`);
   await command("terrain", { view: "sky" });
   const skyView = await capture("view-sky");
@@ -1095,7 +1094,7 @@ try {
   await settle();
   checks.push({ check: "terrain control", frozenPatches: before, visibleFromAfar: afar.terrain_patches, unfrozenPatches: moved });
 
-  // Long shadows (decision 052): a low sun behind the dome, with shadow maps
+  // Long shadows: a low sun behind the dome, with shadow maps
   // reaching 60 m, shadows the plateau through the horizon map alone. A new
   // sun rebuilds the map, an unchanged one keeps it.
   const current = (await command("inspect", { component: "Environment" })).result.value;
@@ -1103,7 +1102,7 @@ try {
   const shadows = { ...current.shadows, distance: 60, near_distance: 20 };
   // The control renders a frame with the new sun.
   const rebuilt = (await command("environment", { atmosphere, shadows })).result.rendering;
-  // The terrain's and its surroundings' (decision 094).
+  // The terrain's and its surroundings'.
   assert.equal(rebuilt.terrain_horizons, 2);
   assert.ok(rebuilt.terrain_horizon_builds >= 1, `a new sun rebuilds: ${JSON.stringify(rebuilt)}`);
   assert.equal((await command("render")).result.rendering.terrain_horizon_builds, 0, "an unchanged sun keeps the map");
@@ -1119,7 +1118,7 @@ try {
   assert.ok(lengthened.changed > 20_000, `the dome's long shadow covers ${lengthened.changed} pixels`);
   checks.push({ check: "horizon shadows", builds: rebuilt.terrain_horizon_builds, pixels: lengthened.changed });
 
-  // Aerial perspective (decision 053): thick air from the eye hazes the
+  // Aerial perspective: thick air from the eye hazes the
   // terrain; none leaves it as it was.
   await command("environment", { terrain: { samples_per_frame: 50_000_000 }, atmosphere: { ...atmosphere, aerial_start: 0, aerial_density: 0 } });
   await settle();
@@ -1134,7 +1133,7 @@ try {
   await settle();
   checks.push({ check: "aerial perspective", pixels: air.changed });
 
-  // Decision 120: while the view wants nothing, workers generate the
+  // While the view wants nothing, workers generate the
   // terrain a camera at a place a game names wants into memory, with no
   // idle reach around the camera, and the camera sent there finds it.
   const spawnPoint = [380, 90, 380];
@@ -1216,7 +1215,7 @@ try {
   assert.equal(refusedAir.error.path, "$.environment.atmosphere.aerial_density");
   checks.push({ check: "version 9 required" });
 
-  // Decision 070: the import tool reads the dome as a RAW heightmap of its
+  // The import tool reads the dome as a RAW heightmap of its
   // own, centered on its middle without detail noise, and the scene it
   // writes loads with the dome's summit, its source and its attribution.
   execFileSync("cargo", ["run", "-q", "-p", "engine_assetc", "--release", "--bin", "terrain_import", "--",

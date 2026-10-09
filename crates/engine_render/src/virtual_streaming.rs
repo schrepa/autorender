@@ -1,4 +1,4 @@
-//! Streaming of virtual geometry (decision 044): which pages of the resident
+//! Streaming of virtual geometry: which pages of the resident
 //! virtual meshes sit in the GPU's page pool, which groups can draw from
 //! them, and which pages to load, evict and place. Bookkeeping only:
 //! `virtual_geometry` owns the pool and fetches pages.

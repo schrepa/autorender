@@ -1,4 +1,4 @@
-//! Terrain (decision 051): every resident tile's heights in one texture
+//! Terrain: every resident tile's heights in one texture
 //! array, the camera's patches as instances of one shared grid with skirts,
 //! and their pipelines in the opaque passes, the shadow maps drawn every
 //! frame and reflection probe faces.
@@ -9,7 +9,7 @@
 //! camera's patches by their bounds: the camera's frustum, each shadow
 //! map's sides. Every view draws the same vertices, at the positions the
 //! camera sees, so terrain shadows itself without acne. Where terrains cast
-//! long shadows through their horizon maps (decision 052), only the near
+//! long shadows through their horizon maps, only the near
 //! cascades draw terrain, near their receivers.
 //!
 //! Each tile's normals are computed once on upload into a parallel array;
@@ -48,7 +48,7 @@ const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 /// Each tile's normals, filtered.
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Snorm;
-/// Each tile's control values (decision 054): its samples' two strongest
+/// Each tile's control values: its samples' two strongest
 /// materials, their blend and biome, read texel by texel.
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 /// Surface materials every terrain together can show: as many as fit the
@@ -56,8 +56,8 @@ const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>();
 /// Bytes of the palette.
 pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
-/// WGSL `CoverSpec` (`cover_grow.wgsl`): a surface material's cover
-/// (decision 056), at its palette entry's index: blades per square meter,
+/// WGSL `CoverSpec` (`cover_grow.wgsl`): a surface material's cover,
+/// at its palette entry's index: blades per square meter,
 /// the shortest and tallest blades and their root width, then its tip
 /// color and sway.
 type CoverEntry = [f32; 8];
@@ -78,10 +78,10 @@ pub(crate) struct PatchRecord {
     fade: f32,
 }
 
-/// Seconds over which a tile that arrived grows out of its parent level
-/// (decision 099), its patches drawn morphed into the parent's at first, and
-/// its normals and surface materials take over from the coarser level's
-/// (decision 114): the same time however fast frames come.
+/// Seconds over which a tile that arrived grows out of its parent level,
+/// its patches drawn morphed into the parent's at first, and
+/// its normals and surface materials take over from the coarser level's:
+/// the same time however fast frames come.
 const ARRIVAL_SECONDS: f32 = 0.4;
 
 /// `PatchRecord::holes` of tiles without holes.
@@ -123,23 +123,23 @@ pub(crate) const TERRAIN_UNIFORM_BYTES: usize = size_of::<TerrainUniform>();
 /// contrast, projection and maps' layer plus one (0 without maps); its
 /// normal scale, occlusion strength, metalness and mean occlusion; its
 /// maps' mean color and roughness, its factors applied; the meters its
-/// relief spans (decision 082) and tracks sink it at most (decision 083);
-/// and its cover's canopy (decision 090): the linear color its blades show
+/// relief spans and tracks sink it at most;
+/// and its cover's canopy: the linear color its blades show
 /// seen from afar and their leaves' area per square meter of ground.
 type PaletteEntry = [f32; 24];
 
-/// What ground cover's growth reads of the terrain pass (decision 056).
+/// What ground cover's growth reads of the terrain pass.
 pub(crate) struct CoverSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,
     pub directory: &'a wgpu::Buffer,
     pub palette: &'a wgpu::Buffer,
     pub covers: &'a wgpu::Buffer,
-    /// Runtime deformation's map (decision 083) and its shading inputs.
+    /// Runtime deformation's map and its shading inputs.
     pub deformation: &'a wgpu::Buffer,
     pub shading: crate::deformation::DeformationShading,
     /// The terrains' sky maps, whose large-scale variety tints blades as
-    /// it does the ground (decision 090).
+    /// it does the ground.
     pub sky: &'a wgpu::TextureView,
     pub generation: (u64, u64, u64, u64),
     /// Advances whenever the directory's resident tiles change.
@@ -152,7 +152,7 @@ pub(crate) struct CoverSources<'a> {
 /// their own pipelines: as many as `*_holes`. And the rectangle of the
 /// screen the camera's patches cover, in normalized device coordinates
 /// (least x and y, then greatest; `None` where it is unbounded), which its
-/// resolve shades within (decision 123).
+/// resolve shades within.
 pub(crate) struct FrameTerrain {
     pub uniform: u32,
     pub camera: Range<u32>,
@@ -228,8 +228,7 @@ pub(crate) struct TerrainFrame {
     pub patches: u32,
     pub triangles: u32,
     pub shadow_patches: u32,
-    /// Terrain shows shaded, not a development view: shading may defer
-    /// (decision 123).
+    /// Terrain shows shaded, not a development view: shading may defer.
     pub shaded: bool,
 }
 
@@ -248,19 +247,19 @@ pub(crate) struct TerrainViews<'a> {
     /// patch.
     pub probes: bool,
     /// Terrain settings, whether shadows run, and the direction toward the
-    /// sun, for horizon maps (decision 052).
+    /// sun, for horizon maps.
     pub settings: engine_core::TerrainSettings,
     pub shadows: bool,
     pub sun: Vec3,
-    /// Whether tiles that arrive grow out of their parents over a few frames
-    /// (decision 099): ordinary frames; exact ones draw every tile as it
+    /// Whether tiles that arrive grow out of their parents over a few frames:
+    /// ordinary frames; exact ones draw every tile as it
     /// is. And the frame's presentation time in seconds, which their fades
-    /// follow (decision 114).
+    /// follow.
     pub fades: bool,
     pub now: f32,
     /// Ground cover's settings, sanitized, and the pixels a meter spans a
     /// meter from the eye, while cover grows: where blades thin out, the
-    /// ground shows as its canopy (decisions 090 and 098).
+    /// ground shows as its canopy.
     pub cover: Option<(engine_core::GroundCover, f32)>,
 }
 
@@ -279,13 +278,13 @@ pub(crate) struct TerrainPass {
     atlas: Option<Atlas>,
     atlas_generation: u64,
     slots: HashMap<(u64, TileKey), u32>,
-    // When each resident tile arrived (decision 099), and when its surface
-    // materials did (decision 114), in seconds of presentation time; tiles
+    // When each resident tile arrived, and when its surface
+    // materials did, in seconds of presentation time; tiles
     // without them are absent; and this frame's time.
     arrivals: HashMap<(u64, TileKey), f32>,
     surfaced: HashMap<(u64, TileKey), f32>,
     now: f32,
-    // The tile each slot holds: edits (decision 080) replace tiles under the
+    // The tile each slot holds: edits replace tiles under the
     // same key, which upload again into their layers.
     held: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>>,
     free: Vec<u32>,
@@ -298,7 +297,7 @@ pub(crate) struct TerrainPass {
     views: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     uniform_generation: u64,
-    // Each layer's fades (decision 114), then the hole bits of the tiles
+    // Each layer's fades, then the hole bits of the tiles
     // with holes, and where each tile's start; the fades last written and
     // the words they take.
     holes: wgpu::Buffer,
@@ -307,11 +306,11 @@ pub(crate) struct TerrainPass {
     fades_written: Vec<u32>,
     fade_words: u32,
     group: Cached<GroupKey, wgpu::BindGroup>,
-    // The group the runtime virtual texture's bakes bind (decision 124),
+    // The group the runtime virtual texture's bakes bind,
     // its material maps' views leaving out the sheets they draw into.
     bake_group: Cached<GroupKey, wgpu::BindGroup>,
     pipelines: HashMap<(Targets, bool, bool), wgpu::RenderPipeline>,
-    // Deferred shading (decision 123): the visibility pipelines (by
+    // Deferred shading: the visibility pipelines (by
     // holes), the resolves (by targets and lighting) and the layout of the
     // resolves' own group.
     pub(crate) deferred_ids: HashMap<bool, wgpu::RenderPipeline>,
@@ -328,16 +327,16 @@ pub(crate) struct TerrainPass {
     /// of layers.
     pub(crate) uploads: u32,
     pub(crate) dropped: u32,
-    /// Tiles the GPU gave control values this frame (decision 118).
+    /// Tiles the GPU gave control values this frame.
     pub(crate) controls: u32,
-    /// Long sun shadows (decision 052).
+    /// Long sun shadows.
     pub(crate) horizons: Horizons,
     // Normal maps of tiles uploaded this frame (layer, spacing), the pass
     // computing them, and their sampler.
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
-    // Control values the GPU gives tiles uploaded this frame (decision
-    // 118), the pass giving them, and each terrain's surface data there
+    // Control values the GPU gives tiles uploaded this frame,
+    // the pass giving them, and each terrain's surface data there
     // (by the data's address, which changes with it).
     control_jobs: Vec<ControlJob>,
     control_pass: Option<(wgpu::BindGroupLayout, wgpu::ComputePipeline)>,
@@ -352,7 +351,7 @@ pub(crate) struct TerrainPass {
     // Advances whenever the directory's words change.
     directory_revision: u64,
     directory_bases: Vec<u32>,
-    // Every terrain's surface materials (decision 054), where each
+    // Every terrain's surface materials, where each
     // terrain's start, and what the buffer holds.
     palette: wgpu::Buffer,
     palette_bases: Vec<u32>,
@@ -360,19 +359,19 @@ pub(crate) struct TerrainPass {
     /// Surface materials past the palette's capacity, which show the
     /// palette's first instead.
     pub(crate) dropped_materials: u32,
-    /// Surface materials' maps (decision 054).
+    /// Surface materials' maps.
     pub(crate) maps: TerrainMaps,
-    // Every material's cover (decision 056) beside its palette entry,
+    // Every material's cover beside its palette entry,
     // what the buffer holds, and each terrain's densest cover.
     covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     // Each terrain's densest cover and its mean blade height.
     cover_densities: Vec<[f32; 2]>,
-    /// Sky visibility (decision 055).
+    /// Sky visibility.
     pub(crate) sky: SkyMaps,
-    /// Runtime deformation's map (decision 083).
+    /// Runtime deformation's map.
     pub(crate) deformation: crate::deformation::DeformationPass,
-    /// The runtime virtual texture (decision 124), the tiles that arrived,
+    /// The runtime virtual texture, the tiles that arrived,
     /// left, were replaced or finished fading in this frame, whose pages it
     /// drops, and the tiles fading in last frame.
     pub(crate) vt: crate::terrain_vt::VirtualTexture,
@@ -511,7 +510,7 @@ impl TerrainPass {
             + self.vt.capacity_bytes()
     }
 
-    /// Records this frame's horizon map builds (decision 052).
+    /// Records this frame's horizon map builds.
     pub(crate) fn encode_horizons(
         &mut self,
         device: &wgpu::Device,
@@ -562,7 +561,7 @@ impl TerrainPass {
             .prepare(device, queue, terrains, &views.settings, &self.slots);
         let heights = self.atlas.as_ref().map(|atlas| &atlas.view);
         self.sky.build(device, queue, heights);
-        // The runtime virtual texture (decision 124).
+        // The runtime virtual texture.
         let textures = self.vt.prepare(
             device,
             queue,
@@ -611,7 +610,7 @@ impl TerrainPass {
                 self.palette_bases.get(index).copied().unwrap_or(0),
                 self.sky.layer(index),
             ];
-            // The ground's relief (decision 082).
+            // The ground's relief.
             let relief = [
                 views.settings.relief_distance,
                 views.settings.relief_steps as f32,
@@ -626,10 +625,10 @@ impl TerrainPass {
             );
             uniform.cover = match views.cover {
                 None => [0.0; 4],
-                // Surroundings (decision 094) grow no blades: their grassy
+                // Surroundings grow no blades: their grassy
                 // ground shows as canopy from the eye on.
                 Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-                // Elsewhere as blades thin out, by their law (decision 098).
+                // Elsewhere as blades thin out, by their law.
                 Some((cover, pixels)) => {
                     let blade = self.cover_terrain(index).2[1];
                     let reach = crate::ground_cover::tier_reach(&cover, blade, pixels);
@@ -807,7 +806,7 @@ impl TerrainPass {
         } else {
             NO_HOLES
         };
-        // A tile that arrived grows out of its parent (decision 099).
+        // A tile that arrived grows out of its parent.
         let fade = match self.arrivals.get(&(terrain.id, key)) {
             Some(&at) if fades => self.fade_since(at),
             _ => 0.0,
@@ -860,7 +859,7 @@ impl TerrainPass {
         self.held.retain(|key, _| listed.contains_key(key));
         self.arrivals.retain(|key, _| listed.contains_key(key));
         self.surfaced.retain(|key, _| listed.contains_key(key));
-        // Terrains whose tiles' control values the GPU gives (decision 118).
+        // Terrains whose tiles' control values the GPU gives.
         let surfaces: HashMap<u64, &std::sync::Arc<engine_core::terrain_data::gpu::SurfaceData>> =
             terrains
                 .terrains
@@ -869,8 +868,8 @@ impl TerrainPass {
                 .collect();
         self.sync_surfaces(device, queue, &surfaces);
         // Tiles replaced under their keys upload again into their layers; one
-        // whose surface materials arrive with it takes them over gradually
-        // (decision 114), and edits change them in place.
+        // whose surface materials arrive with it takes them over gradually,
+        // and edits change them in place.
         for (key, tile) in &listed {
             let had = self.held.get(key).map(|held| held.control().is_some());
             match (had, tile.control().is_some()) {
@@ -893,8 +892,8 @@ impl TerrainPass {
             })
             .map(|(key, layer)| (*key, *layer))
             .collect();
-        // What they replace, so arrays keep what did not change (decision
-        // 114): a tile arriving whole after its shape, or with its objects
+        // What they replace, so arrays keep what did not change:
+        // a tile arriving whole after its shape, or with its objects
         // standing far away, has the same heights.
         let mut previous: HashMap<(u64, TileKey), std::sync::Arc<engine_core::Tile>> =
             HashMap::new();
@@ -923,7 +922,7 @@ impl TerrainPass {
         let mut edited = false;
         for key in missing {
             // Tiles arriving grow out of their parents; edited ones
-            // (decision 080) change in place.
+            // change in place.
             if !reused.contains_key(&key) {
                 self.arrivals.insert(key, self.now);
                 if listed[&key].control().is_some() {
@@ -983,7 +982,7 @@ impl TerrainPass {
                 self.normal_jobs.push((layer, tile.spacing()));
             }
             // Without control values on a terrain whose surface the GPU
-            // reads (decision 118), the GPU gives them as its heights
+            // reads, the GPU gives them as its heights
             // change, its materials then taking over from the coarser
             // level's.
             let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
@@ -1000,7 +999,7 @@ impl TerrainPass {
                 });
                 self.surfaced.insert(key, self.now);
             }
-            // Its control values; a tile without its own yet (decision 114)
+            // Its control values; a tile without its own yet
             // takes its nearest ancestor's for ground cover, and without a
             // surface, the first material everywhere.
             let control = !gpu
@@ -1044,7 +1043,7 @@ impl TerrainPass {
             .map(|(key, _)| *key)
             .collect();
         holed.sort_unstable();
-        // Each layer's fades come first (decision 114): two layers a word.
+        // Each layer's fades come first: two layers a word.
         let fade_words = max_layers.div_ceil(2).max(1);
         let unchanged = !edited
             && fade_words == self.fade_words
@@ -1084,14 +1083,14 @@ impl TerrainPass {
         }
     }
 
-    /// How much of a coarser level still shows of what arrived at `at`
-    /// (decision 114): 1 then, 0 [`ARRIVAL_SECONDS`] later.
+    /// How much of a coarser level still shows of what arrived at `at`:
+    /// 1 then, 0 [`ARRIVAL_SECONDS`] later.
     fn fade_since(&self, at: f32) -> f32 {
         let since = engine_core::math::max(self.now - at, 0.0);
         1.0 - engine_core::math::min(since / ARRIVAL_SECONDS, 1.0)
     }
 
-    /// Writes each layer's fades before the hole bits (decision 114): how
+    /// Writes each layer's fades before the hole bits: how
     /// much of the next coarser level's normals and surface materials still
     /// show over its tile's, 0 to 255 in two bytes, two layers a word. On
     /// exact frames tiles show as they are, but one without surface
@@ -1099,8 +1098,7 @@ impl TerrainPass {
     fn write_fades(&mut self, queue: &wgpu::Queue, fades: bool) {
         let mut words = vec![0_u32; self.fade_words as usize];
         let byte = |fade: f32| (engine_core::math::clamp(fade, 0.0, 1.0) * 255.0 + 0.5) as u32;
-        // Tiles that finished fading in change what pages over them hold
-        // (decision 124).
+        // Tiles that finished fading in change what pages over them hold.
         let mut fading = std::collections::HashSet::new();
         for (key, &layer) in &self.slots {
             let normals = match self.arrivals.get(key) {
@@ -1130,14 +1128,14 @@ impl TerrainPass {
     }
 
     /// Creates the compute pipelines tiles' normal maps, control values
-    /// and sky maps build with unless they exist (decision 099).
+    /// and sky maps build with unless they exist.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.normal_pass(device);
         self.control_pass(device);
         self.sky.warm(device);
     }
 
-    /// Creates the pipeline giving tiles control values (decision 118) and
+    /// Creates the pipeline giving tiles control values and
     /// its group's layout unless they exist.
     fn control_pass(&mut self, device: &wgpu::Device) {
         self.control_pass.get_or_insert_with(|| {
@@ -1157,7 +1155,7 @@ impl TerrainPass {
         });
     }
 
-    /// Uploads each terrain's surface data for the GPU (decision 118) when
+    /// Uploads each terrain's surface data for the GPU when
     /// it changes, and releases those of terrains without.
     fn sync_surfaces(
         &mut self,
@@ -1187,8 +1185,8 @@ impl TerrainPass {
         }
     }
 
-    /// Gives the tiles uploaded this frame without control values theirs
-    /// (decision 118), after their heights, in a submission of its own.
+    /// Gives the tiles uploaded this frame without control values theirs,
+    /// after their heights, in a submission of its own.
     fn compute_controls(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.atlas.is_none() || self.control_jobs.is_empty() {
             self.control_jobs.clear();
@@ -1417,9 +1415,9 @@ impl TerrainPass {
                         let far_occlusion =
                             means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
                         // The slopes its normal maps lose to distance roughen
-                        // it (decision 098).
+                        // it.
                         let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
-                        // Its cover's canopy (decision 090): the blades' color
+                        // Its cover's canopy: the blades' color
                         // from root (the ground's mean) most of the way to tip,
                         // as their upper parts show from afar, and their
                         // leaves' area: blades a square meter, each about as
@@ -1470,7 +1468,7 @@ impl TerrainPass {
         self.palette_written = entries;
     }
 
-    /// Writes every terrain's materials' covers (decision 056) at their
+    /// Writes every terrain's materials' covers at their
     /// palette indices when they change, and notes each terrain's densest.
     fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
         let mut entries: Vec<CoverEntry> = Vec::new();
@@ -1515,7 +1513,7 @@ impl TerrainPass {
         self.covers_written = entries;
     }
 
-    /// What ground cover's growth reads (decision 056): the height and
+    /// What ground cover's growth reads: the height and
     /// control arrays, the directory, palette and covers, and generations
     /// advancing when any is another buffer or texture; `None` before
     /// tiles arrive.
@@ -1596,8 +1594,8 @@ impl TerrainPass {
                 }
             }
         }
-        // The runtime virtual texture's windows and tables follow (decision
-        // 124), at a multiple of 64 words.
+        // The runtime virtual texture's windows and tables follow,
+        // at a multiple of 64 words.
         self.vt_base = words.len().next_multiple_of(64) as u32;
         let texture_words = crate::terrain_vt::VirtualTexture::words(terrains.terrains.len());
         let bytes = ((self.vt_base as usize + texture_words) * 4) as u64;
@@ -1662,7 +1660,7 @@ impl TerrainPass {
             NORMAL_FORMAT,
             wgpu::TextureUsages::STORAGE_BINDING,
         );
-        // The GPU writes control values (decision 118).
+        // The GPU writes control values.
         let control = array(
             "engine/terrain-control",
             CONTROL_FORMAT,
@@ -1793,7 +1791,7 @@ impl TerrainPass {
         if self.group.stale(&key) {
             let group = build("engine/terrain-group", &self.maps.views);
             // The runtime virtual texture's bakes read the materials' layers
-            // alone while they draw into its sheets (decision 124).
+            // alone while they draw into its sheets.
             let bake = build("engine/terrain-bake-group", &self.maps.material_views);
             self.group.set(key, group);
             self.bake_group.set(key, bake);
@@ -1823,7 +1821,7 @@ impl TerrainPass {
         1
     }
 
-    /// Records the runtime virtual texture's bakes (decision 124) through
+    /// Records the runtime virtual texture's bakes through
     /// the camera's terrain group `camera`.
     pub(crate) fn encode_vt_bakes(
         &mut self,
@@ -1856,7 +1854,7 @@ impl TerrainPass {
         );
     }
 
-    /// Records the runtime virtual texture's feedback (decision 124) over
+    /// Records the runtime virtual texture's feedback over
     /// terrain's visibility target `ids`, `size` pixels, with the camera's
     /// uniform buffer `camera`.
     pub(crate) fn encode_vt_feedback(
@@ -1970,7 +1968,7 @@ impl TerrainPass {
 
     /// Creates the visibility pipeline of patches with `holes` or without
     /// and the resolve into `targets` (`lit` or not) of deferred shading
-    /// (decision 123) unless they exist; canvas targets shade forward.
+    /// unless they exist; canvas targets shade forward.
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
@@ -2195,7 +2193,7 @@ fn geometry(
 
 /// `PatchInput`'s locations 0 to 3.
 /// Control values for tile `key` (of terrain `key.0`, over `pyramid`)
-/// without its own yet (decision 114), for ground cover to grow from: its
+/// without its own yet, for ground cover to grow from: its
 /// nearest listed ancestor's holding some, each sample its nearest sample's
 /// there; the first material everywhere without one.
 fn ancestor_control(
@@ -2234,7 +2232,7 @@ fn ancestor_control(
     out
 }
 
-/// A tile the GPU gives control values (decision 118): its layer, its
+/// A tile the GPU gives control values: its layer, its
 /// terrain, its first sample, spacing and the hydrology images' level its
 /// masks read.
 struct ControlJob {

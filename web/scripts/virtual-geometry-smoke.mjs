@@ -1,4 +1,4 @@
-/** Virtual geometry (decision 044) in the Stress Lab's dense scene, in real Chrome. */
+/** Virtual geometry in the Stress Lab's dense scene, in real Chrome. */
 import assert from "node:assert/strict";
 import { access, readFile, stat } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -93,7 +93,7 @@ try {
     const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
     assert.ok(pixels.changed <= pixels.total * 0.001, `${camera.label}: ${pixels.changed} of ${pixels.total} pixels differ`);
     // Both shade clusters as they draw; resolving them through the
-    // visibility buffer (decision 045) instead shows the same surfaces.
+    // visibility buffer instead shows the same surfaces.
     assert.ok(!cpu.rendering.visibility_buffer && !gpu.rendering.visibility_buffer, `${camera.label}: forward shading`);
     await command("environment", { virtual_geometry: { visibility_buffer: true } });
     const resolved = await capture(`${camera.label}-visibility`, true);

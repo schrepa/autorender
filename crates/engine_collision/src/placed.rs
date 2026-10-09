@@ -1,10 +1,10 @@
-//! Placed objects' colliders (decision 064): what terrains' placement layers
-//! stand within their collision radius (decision 057), each object its
+//! Placed objects' colliders: what terrains' placement layers
+//! stand within their collision radius, each object its
 //! asset's primitive at its pose, its base on the finest resident heights
 //! as renderers set it. Rays, overlaps and shape casts test them after the
 //! colliders; hits report the terrain's entity and the object's placement
-//! layer and asset. Objects standing far away (decision 061) never collide.
-//! Bridges' decks (decision 072) collide as a box a deck segment, reporting
+//! layer and asset. Objects standing far away never collide.
+//! Bridges' decks collide as a box a deck segment, reporting
 //! layer [`BRIDGE_LAYER`] and their bridge's index as the asset.
 
 use std::collections::HashMap;
@@ -22,7 +22,7 @@ use crate::{
     SensorFilter, ShapeCastOptions, ShapeHit,
 };
 
-/// The placement layer bridges' decks (decision 072) report hits in.
+/// The placement layer bridges' decks report hits in.
 pub const BRIDGE_LAYER: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]

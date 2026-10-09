@@ -1,4 +1,4 @@
-//! Interpolation inputs for GPU presentation (decision 014).
+//! Interpolation inputs for GPU presentation.
 //!
 //! Ordinary interpolated browser frames blend and compose displayed poses on
 //! the GPU. This gathers exactly the inputs the CPU presentation pass reads —

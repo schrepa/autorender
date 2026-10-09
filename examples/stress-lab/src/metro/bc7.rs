@@ -1,4 +1,4 @@
-//! A small BC7 encoder for the metro's generated textures (decision 037):
+//! A small BC7 encoder for the metro's generated textures:
 //! every 4 × 4 block in mode 6, one RGBA line of 16 colors between two
 //! endpoints with per-endpoint parity bits. Stylized textures of flat
 //! regions and gentle gradients keep their look; hosts transcoding real

@@ -1,4 +1,4 @@
-// Ground cover (decision 056) in the mesh passes: the blades a compute pass
+// Ground cover in the mesh passes: the blades a compute pass
 // grew this frame (`cover_grow.wgsl`), each a strip curving up from its
 // root, leaning in the wind, its root the ground's color and its tip its
 // cover's.
@@ -141,7 +141,7 @@ fn vs_cover_temporal(@builtin(instance_index) instance: u32,
 
 // The surface a blade fragment shows; darker toward the root, where blades
 // shade each other. Blades are thin and pass light through: either side
-// lights as the side facing the sun does (decision 090), the far side seen
+// lights as the side facing the sun does, the far side seen
 // through the blade a little dimmer, and their normal leans most of the way
 // up, so they light much as the ground they stand on.
 fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {

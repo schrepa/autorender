@@ -4,7 +4,7 @@ import { loadSceneFiles, loadSceneSource } from "./source";
 
 const params = new URLSearchParams(location.search);
 const selected = import.meta.env.DEV ? params.get("scene") : null;
-// ?taa=on antialiases ordinary frames temporally (decision 017).
+// ?taa=on antialiases ordinary frames temporally.
 const taa = params.get("taa") === "on";
 if (selected && !/^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(selected)) throw new Error("Development scene must be a /scenes/<name>.scene.json path.");
 const sourceUrl = selected ?? "/scenes/playground.scene.json";

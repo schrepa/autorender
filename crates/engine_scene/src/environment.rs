@@ -1,6 +1,6 @@
-//! A scene's environment (decision 022): its atmosphere (decision 018) and
-//! rendering effects (decisions 020, 021, 023 to 026, 038, 039, 043, 044 and
-//! 047) and terrain settings (decision 051) as authored data.
+//! A scene's environment: its atmosphere and
+//! rendering effects
+//! and terrain settings as authored data.
 //! Version 5 documents with an `environment` apply it when instantiated
 //! (local lights, particles, sun shafts and reflections need version 6);
 //! development controls apply the same sections temporarily, and inspection
@@ -45,7 +45,7 @@ impl AtmospherePreset {
     }
 }
 
-/// Sun, sky, fog and grade (decision 018): a preset and the fields that
+/// Sun, sky, fog and grade: a preset and the fields that
 /// differ from it. Colors are linear RGB and may exceed 1.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -81,7 +81,7 @@ pub struct SceneAtmosphere {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fog_max: Option<f32>,
-    /// Aerial perspective (decision 053), version 9: beyond this distance,
+    /// Aerial perspective, version 9: beyond this distance,
     /// air of `aerial_density` per unit at height zero (0: off), thinning by
     /// `aerial_falloff` per unit up, dims toward `aerial_color` and, toward
     /// the sun, an `aerial_glow` of its color.
@@ -111,8 +111,8 @@ pub struct SceneAtmosphere {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub saturation: Option<f32>,
     /// Contrast around mid grey after tone mapping: 1 keeps it, and the
-    /// curve, which keeps black and white, is steepest at 1.5. Version 6
-    /// (decision 027), like the grade fields below.
+    /// curve, which keeps black and white, is steepest at 1.5. Version 6,
+    /// like the grade fields below.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contrast: Option<f32>,
     /// Saturation added to muted colors more than to vivid ones; 0 adds none.
@@ -229,7 +229,7 @@ fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
     )
 }
 
-/// An effect section of a scene environment (decision 022): the engine's
+/// An effect section of a scene environment: the engine's
 /// settings resource, which checks itself; the scene version that first
 /// authors it; and whether it is opt-in (off unless named), which a
 /// document's environment removes when it omits the section instead of
@@ -295,7 +295,7 @@ pub trait SectionVisitor {
     fn section<T: EnvironmentSection>(&mut self, name: &'static str, section: Option<T>);
 }
 
-/// A scene's look (decision 022). In a document, every omitted section takes
+/// A scene's look. In a document, every omitted section takes
 /// the engine's default state (sun shafts, reflections and refraction: off);
 /// in a development control, omitted sections stay as they are.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -310,7 +310,7 @@ pub struct SceneEnvironment {
     pub ambient_occlusion: Option<AmbientOcclusion>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bloom: Option<Bloom>,
-    /// Version 6 sections (decisions 023 to 026).
+    /// Version 6 sections.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_lights: Option<LocalLights>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -319,7 +319,7 @@ pub struct SceneEnvironment {
     pub reflections: Option<Reflections>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub particles: Option<Particles>,
-    /// Version 8 sections (decisions 038, 039, 043, 044 and 047).
+    /// Version 8 sections.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refraction: Option<Refraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -330,45 +330,42 @@ pub struct SceneEnvironment {
     pub virtual_geometry: Option<VirtualGeometry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level_of_detail: Option<LevelOfDetail>,
-    /// Version 9: terrain streaming and level of detail (decision 051),
-    /// and ground cover (decision 056).
+    /// Version 9: terrain streaming and level of detail,
+    /// and ground cover.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terrain: Option<TerrainSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ground_cover: Option<GroundCover>,
-    /// The wind ground cover and placed objects sway in (decision 058).
+    /// The wind ground cover and placed objects sway in.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wind: Option<Wind>,
-    /// What placed objects cover darkens the sky light under them
-    /// (decision 059).
+    /// What placed objects cover darkens the sky light under them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub occupancy: Option<Occupancy>,
-    /// Short rays toward the sun shade what shadow maps cannot hold
-    /// (decision 062).
+    /// Short rays toward the sun shade what shadow maps cannot hold.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contact_shadows: Option<ContactShadows>,
-    /// How terrains' lakes and rivers look (decision 067).
+    /// How terrains' lakes and rivers look.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub water: Option<Water>,
-    /// The sea (decision 076).
+    /// The sea.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ocean: Option<Ocean>,
-    /// Tracks deformers press into deformable ground (decision 083).
+    /// Tracks deformers press into deformable ground.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deformation: Option<Deformation>,
-    /// A layer of clouds over the world (decision 084).
+    /// A layer of clouds over the world.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub clouds: Option<Clouds>,
-    /// How streamed content loads around the camera (decision 086).
+    /// How streamed content loads around the camera.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world_streaming: Option<WorldStreaming>,
-    /// A physically based sky, and the time of day moving the sun
-    /// (decision 088).
+    /// A physically based sky, and the time of day moving the sun.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sky: Option<Sky>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_of_day: Option<TimeOfDay>,
-    /// How agents search their walks (decision 089).
+    /// How agents search their walks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigation: Option<Navigation>,
 }
@@ -474,8 +471,9 @@ impl SceneEnvironment {
     }
 
     /// The first version 6 field present, as its path below the environment:
-    /// the grade of decision 027, a shadow cascade count other than the
-    /// default (decision 028) and the sections of decisions 023 to 026.
+    /// the grade's contrast, vibrance and tints, a shadow cascade count other
+    /// than the default, and the local light, sun shaft, reflection and
+    /// particle sections.
     pub(crate) fn version_six_field(&self) -> Option<&'static str> {
         let atmosphere = self.atmosphere.unwrap_or_default();
         let cascades = self
@@ -497,7 +495,7 @@ impl SceneEnvironment {
     }
 
     /// The first version 9 field present, as its path below the environment:
-    /// aerial perspective (decision 053) or terrain settings (decision 051).
+    /// aerial perspective or terrain settings.
     pub(crate) fn version_nine_field(&self) -> Option<&'static str> {
         let atmosphere = self.atmosphere.unwrap_or_default();
         [

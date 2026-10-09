@@ -1,4 +1,4 @@
-// Placed objects (decision 057): each frame, every object's bounding sphere
+// Placed objects: each frame, every object's bounding sphere
 // against each view's frustum (the camera's, then those of the shadow maps
 // drawn this frame), and the level of detail it draws at, chosen from the
 // camera in every view so shadows match what casts them, by the same rule
@@ -7,16 +7,16 @@
 // pixel error. Visible objects append their pose index to their draw
 // group's list for that view and level and count in its indirect draw.
 // Where the camera sees an object's impostor within the pixel error (on
-// frames that draw impostors, decision 048), it appends its pose and
+// frames that draw impostors), it appends its pose and
 // impostor to the camera's cards instead, drawn facing it; the near
-// cascades cast it as a card facing the sun (decision 098), and the moving
+// cascades cast it as a card facing the sun, and the moving
 // map leaves it out. The kept shadow map, redrawn only where objects come
 // and go, holds every object as seen from afar: its impostor, cast as a
-// card facing the sun, or the coarsest level its texels hide (decision
-// 060). The camera switches how it shows an object (a level, its card or
+// card facing the sun, or the coarsest level its texels hide.
+// The camera switches how it shows an object (a level, its card or
 // nothing, past the density its layer keeps) a margin past each switch's
 // distance, and fades every switch over frames: while one fades, the
-// object shows both ways, each on its share of the pixels (decision 104).
+// object shows both ways, each on its share of the pixels.
 
 struct Frame {
     // The camera's eye (world) and pixels per world unit at unit distance
@@ -27,7 +27,7 @@ struct Frame {
     // The IDs and draws each view's lists take, whether the camera's view
     // draws impostors, and the cards each view's list takes.
     strides: vec4<u32>,
-    // Fades (decision 104): the share of a switch this frame fades (1
+    // Fades: the share of a switch this frame fades (1
     // switches at once; negative on exact frames, which show objects as
     // they stand and advance nothing) and the share of its distance past a
     // switch the eye goes before the camera switches back. The camera's
@@ -48,7 +48,7 @@ struct View {
 
 // One object: its bounding sphere's center (world) and radius, its draw
 // group and scale, the terrain it stands on and how far its base sinks
-// (`scatter_snap.wgsl`), and how the camera shows it (decision 104).
+// (`scatter_snap.wgsl`), and how the camera shows it.
 struct Record {
     center: vec3<f32>,
     radius: f32,
@@ -62,7 +62,7 @@ struct Record {
     pad_2: u32,
 }
 
-// How the camera shows an object (decision 104): one of its levels (0 to
+// How the camera shows an object: one of its levels (0 to
 // 4), its card, or nothing; coarser ways number higher.
 const SHOWN_CARD: u32 = 5u;
 const SHOWN_NONE: u32 = 6u;
@@ -102,7 +102,7 @@ struct DrawArgs {
     first_instance: u32,
 }
 
-// How each terrain's placement layers thin with distance (decision 100),
+// How each terrain's placement layers thin with distance,
 // `THIN_LAYERS` entries a terrain: the share standing far away, the meters
 // the layer's own tiles and its far tiles reach (0 where they stay resident
 // everywhere), and 1 where the layer thins at all.
@@ -114,8 +114,8 @@ const LAYER_SHIFT: u32 = 9u;
 const NO_LAYER: u32 = 0x7fu;
 const RANK_SHIFT: u32 = 21u;
 
-// The share of a layer's density `away` meters from the eye (decision
-// 100): all of it within seven tenths of its tiles' reach, falling to its
+// The share of a layer's density `away` meters from the eye:
+// all of it within seven tenths of its tiles' reach, falling to its
 // far share across most of the rest, then to none across the same part of
 // its far tiles' reach unless those stay resident everywhere: objects
 // ranked past it hide before their tiles leave, so density never steps
@@ -149,7 +149,7 @@ const FADING_OUT: u32 = 0x40000000u;
 
 // The draw group of slots no object holds, and the terrain word's flag of
 // objects standing far away hidden where tiles holding them instead are
-// resident (decision 061; `scatter.rs`).
+// resident (`scatter.rs`).
 const DEAD: u32 = 0xffffffffu;
 const HIDDEN: u32 = 0x80000000u;
 
@@ -271,9 +271,9 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let group = groups[record.group];
     let away = distance(record.center, frame.eye.xyz);
-    // Objects ranked past the density their distance allows show nothing
-    // (decision 100), nor do those standing far away where tiles holding
-    // them instead are resident (decision 061).
+    // Objects ranked past the density their distance allows show nothing,
+    // nor do those standing far away where tiles holding
+    // them instead are resident.
     let layer = (record.terrain >> LAYER_SHIFT) & NO_LAYER;
     let thin_index = (record.terrain & TERRAIN_INDEX) * THIN_LAYERS + layer;
     let thinning = layer != NO_LAYER && thin_index < arrayLength(&thins);
@@ -283,7 +283,7 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let rank = f32((record.terrain >> RANK_SHIFT) & 0x3ffu) / 1023.0;
     let hidden = (record.terrain & HIDDEN) != 0u;
-    // How the camera shows it (decision 104). Exact frames show it as it
+    // How the camera shows it. Exact frames show it as it
     // stands, leaving its state; other frames switch a margin past each
     // switch's distance, toward the finer way coming near and the coarser
     // going away, and fade each switch.
@@ -351,9 +351,9 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
         if casts == SHOWN_NONE {
             continue;
         }
-        // Cards near cascades cast too (decision 098) and the moving map
+        // Cards near cascades cast too and the moving map
         // leaves out; kept maps cast one wherever their texels are no finer
-        // than the impostor's (decisions 060 and 065).
+        // than the impostor's.
         let limits = views[view].limits;
         let kept = limits.z > 0.0;
         let impostor = group.impostor * record.scale;

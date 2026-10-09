@@ -1,4 +1,4 @@
-//! A compact binary encoding of terrain data (decision 110): what engines
+//! A compact binary encoding of terrain data: what engines
 //! hand workers and workers hand back. Floats travel as their bits, so a
 //! tile a worker generates is the tile the engine would have generated.
 //! Lengths are checked against the bytes left before anything allocates,

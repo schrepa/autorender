@@ -1,4 +1,4 @@
-//! Terrain surfaces (decision 054): which materials the ground is made of,
+//! Terrain surfaces: which materials the ground is made of,
 //! where. A surface names its materials and lists biomes; each biome has a
 //! fitness mask saying where it applies and layers of materials, each
 //! painted over the layers before it by its own mask. Every tile sample
@@ -42,20 +42,20 @@ pub enum Mask {
     /// meter, positive in hollows and valleys, negative on ridges.
     Curvature([f32; 2]),
     /// A ramp over the base-10 logarithm of the area draining through the
-    /// ground, in square meters, as the terrain's hydrology bake found it
-    /// (decision 066): channels begin near its channel area. 0 without one.
+    /// ground, in square meters, as the terrain's hydrology bake found it:
+    /// channels begin near its channel area. 0 without one.
     Flow([f32; 2]),
     /// A ramp over the bake's wetness index, ln(a / tan b): about 5 on
     /// steep ground, 10 and more in hollows and along streams.
     Wetness([f32; 2]),
     /// A ramp over how deep water would stand in a filled pit, in meters.
     Lake([f32; 2]),
-    /// A ramp over meters from the nearest river's edge (decision 092),
+    /// A ramp over meters from the nearest river's edge,
     /// negative in its water: `[2, 0]` covers river beds with two meters of
     /// banks. Beyond every river's reach (sixteen meters past its edge),
     /// and without rivers, it reads 1e9.
     River([f32; 2]),
-    /// A ramp over meters from the nearest road's edge (decision 069),
+    /// A ramp over meters from the nearest road's edge,
     /// negative on roads: `[1, 0]` covers roads with a meter of soft edge.
     /// It averages the ramp across each sample's footprint, so roads
     /// narrower than coarse levels' samples fade there instead of breaking
@@ -156,14 +156,14 @@ pub struct Biome {
 
 /// A surface as authored: its materials' IDs, in the order control values
 /// index them, its biomes, and the IDs of the assets its placement layers
-/// stand on it (decision 057), in the order placements index them.
+/// stand on it, in the order placements index them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Biomes {
     pub materials: Vec<String>,
     pub biomes: Vec<Biome>,
     pub assets: Vec<String>,
     pub placements: Vec<crate::PlacementLayer>,
-    /// Objects authors stand on it (decision 085).
+    /// Objects authors stand on it.
     pub placed: Vec<crate::AuthoredPlacement>,
 }
 
@@ -182,7 +182,7 @@ impl std::fmt::Display for BiomeError {
 
 impl std::error::Error for BiomeError {}
 
-/// Which of a sample's inputs masks read (decision 113): its water (flow,
+/// Which of a sample's inputs masks read: its water (flow,
 /// wetness, lakes and rivers) and its roads. Inputs no mask reads are not
 /// sampled, which leaves every mask's value as it was.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -200,7 +200,7 @@ impl Reads {
     }
 }
 
-/// A row of samples as masks read it (decision 113): each sample's x and
+/// A row of samples as masks read it: each sample's x and
 /// z, height, gradient, curvature, water and road, at a level whose samples
 /// lie `spacing` meters apart.
 pub(crate) struct RowInputs<'a> {
@@ -214,7 +214,7 @@ pub(crate) struct RowInputs<'a> {
     pub(crate) path: &'a [PathSample],
 }
 
-/// Rows a row's masks evaluate their parts into, reused (decision 113).
+/// Rows a row's masks evaluate their parts into, reused.
 #[derive(Default)]
 pub(crate) struct RowScratch {
     rows: Vec<Vec<f32>>,
@@ -270,10 +270,10 @@ pub struct SampleInputs {
     pub gradient: f32,
     pub curvature: f32,
     pub spacing: f32,
-    /// What the terrain's hydrology bake found there (decision 066); zeros
+    /// What the terrain's hydrology bake found there; zeros
     /// without one.
     pub water: crate::HydrologySample,
-    /// The nearest road (decision 069), as [`crate::Layers::path_at`]
+    /// The nearest road, as [`crate::Layers::path_at`]
     /// reads it.
     pub path: PathSample,
 }
@@ -410,7 +410,7 @@ impl Compiled {
         })
     }
 
-    /// Which of a sample's inputs the mask reads (decision 113).
+    /// Which of a sample's inputs the mask reads.
     pub(crate) fn reads(&self) -> Reads {
         match self {
             Self::Flow(_) | Self::Wetness(_) | Self::Lake(_) | Self::River(_) => Reads {
@@ -453,7 +453,7 @@ impl Compiled {
         }
     }
 
-    /// [`Self::evaluate`] for each sample of `row` (decision 113), into
+    /// [`Self::evaluate`] for each sample of `row`, into
     /// `out`: every node over the whole row at once, each sample's value
     /// computed as one evaluation computes it, so the same bits.
     pub(crate) fn evaluate_row(
@@ -577,7 +577,7 @@ impl Compiled {
         }
     }
 
-    /// Its code for the GPU interpreter (decision 118), in postfix order,
+    /// Its code for the GPU interpreter, in postfix order,
     /// onto `out`: the most values the interpreter's stack then holds.
     pub(crate) fn emit(&self, out: &mut Vec<u32>) -> u32 {
         use crate::gpu::op;
@@ -663,7 +663,7 @@ impl Compiled {
                     // two, as a filtered image's would.
                     let shift = octave as f32 * 17.13;
                     let fade = clamp(0.5 / (scale * inputs.spacing) - 1.0, 0.0, 1.0);
-                    // Octaves faded out add nothing (decision 113): zero
+                    // Octaves faded out add nothing: zero
                     // times the noise's finite value.
                     if fade > 0.0 {
                         sum += amplitude
@@ -838,13 +838,13 @@ impl BiomeRules {
         &self.authored
     }
 
-    /// Which of a sample's inputs the biomes' masks read (decision 113).
+    /// Which of a sample's inputs the biomes' masks read.
     pub(crate) fn reads(&self) -> Reads {
         self.reads
     }
 
     /// These rules choosing materials alone, placing no objects: what a
-    /// terrain's surroundings (decision 094) follow.
+    /// terrain's surroundings follow.
     pub fn without_placements(&self) -> Self {
         let mut rules = self.clone();
         rules.authored.assets.clear();
@@ -855,15 +855,15 @@ impl BiomeRules {
         rules
     }
 
-    /// Whether any placement layer or authored object (decision 085)
+    /// Whether any placement layer or authored object
     /// stands on tiles of `level`.
     pub fn places_on(&self, level: u8) -> bool {
         self.places(level, crate::Placing::All)
     }
 
-    /// Whether `placing`'s objects (decision 112) stand on tiles of `level`.
+    /// Whether `placing`'s objects stand on tiles of `level`.
     /// The rows of candidate squares each placement layer walks on tile
-    /// `key` at `spacing` placing `placing`'s objects (decision 119), none
+    /// `key` at `spacing` placing `placing`'s objects, none
     /// where it places nothing: where placing splits into bands.
     pub fn place_rows(
         &self,
@@ -892,16 +892,16 @@ impl BiomeRules {
         }
     }
 
-    /// The authored objects (decision 085) standing on `tile`, appended to
+    /// The authored objects standing on `tile`, appended to
     /// `out`; returns the work it took.
     pub fn place_authored(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) -> u64 {
         crate::placement::place_authored(&self.placed, tile, out)
     }
 
     /// The objects row `row` of placement layer `layer`'s candidate squares
-    /// stand on `tile` (decision 057), appended to `out`: layers of other
-    /// levels than `tile`'s hold none, nor layers `placing` leaves out
-    /// (decision 112). Returns the work it took (samples' worth) and the
+    /// stand on `tile`, appended to `out`: layers of other
+    /// levels than `tile`'s hold none, nor layers `placing` leaves out.
+    /// Returns the work it took (samples' worth) and the
     /// next row, none after the last layer's last.
     pub(crate) fn place_row(
         &self,
@@ -930,7 +930,7 @@ impl BiomeRules {
         self.cost
     }
 
-    /// Its program for the GPU interpreter (decision 118), onto `words`
+    /// Its program for the GPU interpreter, onto `words`
     /// (where it starts at their length), laid out as
     /// [`crate::gpu::header::PROGRAM`] describes: the most values the
     /// interpreter's stack holds, its biomes, and the materials its control
@@ -982,7 +982,7 @@ impl BiomeRules {
         )
     }
 
-    /// [`Self::control`] packed for each sample of `row` (decision 113),
+    /// [`Self::control`] packed for each sample of `row`,
     /// into `out`: every biome's fitness and layer's mask evaluated over the
     /// row at once, each sample's control value then taken as one sample's
     /// is, from the same values.
@@ -1102,7 +1102,7 @@ impl BiomeRules {
     }
 }
 
-// Binary encoding (decision 110).
+// Binary encoding.
 use crate::codec::{Codec, CodecError, Reader, Writer, record};
 
 impl Codec for Mask {

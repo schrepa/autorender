@@ -1,8 +1,7 @@
-//! Materials of the metro (decision 031) over the generated texture sets,
-//! and the library that admits meshes, textures, materials and clips into a
-//! workload's asset library. Generated texture data (RGBA8 or BC7 levels,
-//! decision 037) is kept for the page's lifetime: workloads rebuild their
-//! assets from it without generating again.
+//! Materials of the metro over the generated texture sets, and the library that
+//! admits meshes, textures, materials and clips into a workload's asset
+//! library. Generated texture data (RGBA8 or BC7 levels) is kept for the page's
+//! lifetime: workloads rebuild their assets from it without generating again.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,7 +13,7 @@ use super::models::Model;
 use super::people;
 use super::textures::{self, Image, Set};
 
-/// Every material. Colors come from per-object tints (decision 033).
+/// Every material. Colors come from per-object tints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Mat {
     // Façades: lit windows, grime over the whole building.
@@ -49,7 +48,7 @@ pub(crate) enum Mat {
     Fence,
     /// Neon in one of six colors.
     Neon(u8),
-    /// Advertisement board `slot`, cycling through the ads (decision 033).
+    /// Advertisement board `slot`, cycling through the ads.
     Ad(u8),
     Fixture,
     Vehicle,
@@ -58,11 +57,11 @@ pub(crate) enum Mat {
     Rails,
     Person,
     Flora,
-    /// Clear glass that bends what is behind it (decision 038).
+    /// Clear glass that bends what is behind it.
     ClearGlass,
     /// Frosted, tinted glass.
     FrostedGlass,
-    /// A plainly blended translucent pane (decision 026).
+    /// A plainly blended translucent pane.
     Pane,
 }
 
@@ -305,7 +304,7 @@ impl Mat {
     }
 }
 
-/// Clips of the city's animated models (decision 035).
+/// Clips of the city's animated models.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Clip {
     Walk,

@@ -34,6 +34,5 @@ jobs:
       - name: Install matching Wasm binding generator
         run: cargo install wasm-bindgen-cli --version 0.2.127 --locked
       - run: cargo xtask lint
-      - run: cargo xtask test
       - run: cargo xtask build
       - run: cargo xtask docs

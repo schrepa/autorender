@@ -1,4 +1,4 @@
-//! Virtual geometry draws (decision 044): the frame's camera bins and shadow
+//! Virtual geometry draws: the frame's camera bins and shadow
 //! views, the selection's bindings, and the pipelines and pose groups
 //! drawing the selected clusters.
 
@@ -6,7 +6,7 @@ use super::*;
 use crate::bindings::VIRTUAL_POSES;
 use crate::entries;
 
-/// Virtual geometry's draws (decision 044): the arena and cluster
+/// Virtual geometry's draws: the arena and cluster
 /// selection; pipelines per pass kind and material variant over their
 /// layouts (unlit, lit) and pose groups (poses, colors, previous poses and
 /// the arena); this frame's camera bins (material and variant), the plan
@@ -48,7 +48,7 @@ impl VirtualDraws {
 }
 
 impl Renderer {
-    /// Plans this frame's virtual geometry (decision 044): the camera's
+    /// Plans this frame's virtual geometry: the camera's
     /// batches of virtual meshes and their bins, each shadow map's virtual
     /// casters and bin, the views, the camera's occlusion and sub-pixel
     /// tests (with `rasterized`, the projection the frame rasterizes, and
@@ -70,7 +70,7 @@ impl Renderer {
             .resize(self.plan.batches.len(), false);
         self.virtual_draws.shadow_bins.clear();
         self.virtual_draws.phase_two = None;
-        // Frames drawing two phases (decision 040) retest the camera's
+        // Frames drawing two phases retest the camera's
         // clusters the last such frame's pyramid hid, if it is this one's.
         let two_phases = gpu_mode && self.gpu_presentation.occlusion();
         let pyramid = self
@@ -145,7 +145,7 @@ impl Renderer {
             cone: Cone::Eye,
         };
         // Shadow maps drawn every frame select their virtual casters'
-        // clusters as the camera sees them (decision 044), from where their
+        // clusters as the camera sees them, from where their
         // receivers start, and where the camera sees nothing within as many
         // of the map's texels as pixels, into a bin each. Closed meshes cast
         // the clusters facing the sun, which hide the rest; others cast both
@@ -267,7 +267,7 @@ impl Renderer {
         true
     }
 
-    /// Pose groups of virtual geometry pipelines (decision 044): each pair
+    /// Pose groups of virtual geometry pipelines: each pair
     /// of this frame's and the previous frame's pose buffers, with the
     /// colors and the arena.
     pub(super) fn ensure_virtual_pose_groups(&mut self) {
@@ -304,7 +304,7 @@ impl Renderer {
         self.virtual_draws.pose_groups.set(key, groups);
     }
 
-    /// The virtual geometry pipelines (decision 044) of `kind` for this
+    /// The virtual geometry pipelines of `kind` for this
     /// frame's bins' material variants.
     pub(super) fn ensure_virtual_pipelines(&mut self, kind: PassKind) {
         let lit = kind.lit;
@@ -342,7 +342,7 @@ impl Renderer {
         }
     }
 
-    /// A virtual geometry pipeline (decision 044): `vs_virtual` (or its
+    /// A virtual geometry pipeline: `vs_virtual` (or its
     /// temporal twin) with `kind`'s fragment stage and targets.
     pub(super) fn create_virtual(
         &self,
@@ -395,8 +395,8 @@ impl Renderer {
     }
 
     /// The stages of `kind`'s virtual geometry pipelines for material
-    /// `variant`: forward (decision 044) or resolving the visibility buffer
-    /// (decision 045), with the targets and constants of `kind`.
+    /// `variant`: forward or resolving the visibility buffer,
+    /// with the targets and constants of `kind`.
     pub(super) fn virtual_stages(
         &self,
         kind: PassKind,
@@ -424,8 +424,7 @@ impl Renderer {
     }
 }
 
-/// A virtual geometry pipeline's entry points, color targets and constants
-/// (decisions 044 and 045).
+/// A virtual geometry pipeline's entry points, color targets and constants.
 pub(super) struct VirtualStages {
     pub(super) vertex: &'static str,
     pub(super) fragment: &'static str,
@@ -433,14 +432,14 @@ pub(super) struct VirtualStages {
     pub(super) constants: Vec<(&'static str, f64)>,
 }
 
-/// The smallest distance virtual geometry's errors project from (decision
-/// 044): a guard for the eye's own position.
+/// The smallest distance virtual geometry's errors project from:
+/// a guard for the eye's own position.
 pub(super) const VIRTUAL_NEAREST: f32 = 0.05;
-/// The distance a kept map's view (decision 020) projects every error
+/// The distance a kept map's view projects every error
 /// from, beyond any scene's: errors then compare in world units.
 const KEPT_DISTANCE: f32 = 1.0e7;
 
-/// Selected clusters of virtual geometry (decision 044): visible ID and
+/// Selected clusters of virtual geometry: visible ID and
 /// cluster, one entry per instance.
 pub(super) const VIRTUAL_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![2 => Uint32, 13 => Uint32];

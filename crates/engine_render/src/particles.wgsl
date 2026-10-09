@@ -1,4 +1,4 @@
-// Particles (decision 026), prepended with scene.wgsl. Every particle is a
+// Particles, prepended with scene.wgsl. Every particle is a
 // function of its emitter, its index and presentation time: particle k of an
 // emitter is born at k / rate seconds, and the emitter's instances draw the
 // latest births, one lane each. Billboards face the camera, or streak along
@@ -207,7 +207,7 @@ struct AddedTargets {
     @location(1) glow: vec2<f32>,
 }
 
-// Screen-effect frames: the light also glows (decision 021).
+// Screen-effect frames: the light also glows.
 @fragment
 fn fs_particle_add_post(input: ParticleOutput) -> AddedTargets {
     if outside(input) {

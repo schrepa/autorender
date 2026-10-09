@@ -1,4 +1,4 @@
-//! Local lights (decision 023): each frame's lights, binned into view
+//! Local lights: each frame's lights, binned into view
 //! clusters on the GPU, and the bind group lit mesh pipelines shade with.
 //!
 //! Lights upload only when their records change. Lights that follow a slot
@@ -46,13 +46,13 @@ pub(crate) struct ClusterUniform {
     pub counts: [u32; 4],
     /// Lights, an unused word, the entries the cluster lists' storage holds,
     /// and 1 when only lights without a slot or on still slots are binned
-    /// (reflection probe faces, decision 043).
+    /// (reflection probe faces).
     pub lights: [u32; 4],
 }
 
 impl ClusterUniform {
     /// Clusters of a `width` x `height` frame seen through the unjittered
-    /// perspective `view_projection` (reversed WebGPU depth, decision 042:
+    /// perspective `view_projection` (reversed WebGPU depth:
     /// near 1, far 0), up to view depth
     /// `distance` where local light fades out, with an optional per-cluster
     /// `budget` and list storage of `capacity` entries. Its fourth row gives
@@ -196,7 +196,7 @@ mod gpu {
         // generation of this pass's own buffers they were built with.
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
         fragment_group: Cached<u64, wgpu::BindGroup>,
-        // Reflection probe faces (decision 043): each face's clusters, their
+        // Reflection probe faces: each face's clusters, their
         // binning and shading groups over the pose, still-frame and list
         // storage they were built for (the last used current), and the
         // still frames main binning leaves unread.
@@ -462,8 +462,8 @@ mod gpu {
                 .record(device, encoder, &self.totals, TOTALS_BYTES, ());
         }
 
-        /// Records the binning of reflection probe cube face `face` (decision
-        /// 043), `size` texels across, seen through `view_projection`: the
+        /// Records the binning of reflection probe cube face `face`,
+        /// `size` texels across, seen through `view_projection`: the
         /// lights of `frame` without a slot or on slots `still` (storage and
         /// generation) counts still, into the lists the frame's own shading
         /// read before; [`Self::probe_fragment_group`] shades with them.

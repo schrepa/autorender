@@ -1,10 +1,10 @@
-//! Reflection probe captures (decision 043): still opaque meshes and the
+//! Reflection probe captures: still opaque meshes and the
 //! sky's haze drawn into probe cube faces after the frame.
 
 use super::*;
 
 impl Renderer {
-    /// Records up to `faces` reflection probe cube faces (decision 043), the
+    /// Records up to `faces` reflection probe cube faces, the
     /// nearest probes waiting first and each face at most once a frame (each
     /// has one camera): this frame's still opaque instances (drawn from the
     /// alternate pose buffer when `odd`) and the sky's haze, in linear light,
@@ -140,7 +140,7 @@ impl Renderer {
                     binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
-                // Terrain (decision 051) stands still: probes capture it.
+                // Terrain stands still: probes capture it.
                 self.draw_terrain_face(&mut pass, face, probe.center, lights.is_some());
                 pass.set_pipeline(self.mesh_pipelines.sky(SkyTargets::Probe));
                 pass.set_bind_group(1, self.clouds.sky_group(), &[]);
@@ -157,8 +157,8 @@ impl Renderer {
         drawn
     }
 
-    /// The reflection probe captures' pipelines (decision 043): the sky's,
-    /// and `kind`'s uber variants (decision 049) for this frame's still
+    /// The reflection probe captures' pipelines: the sky's,
+    /// and `kind`'s uber variants for this frame's still
     /// opaque meshes.
     pub(super) fn ensure_probe_pipelines(&mut self, kind: PassKind) {
         self.ensure_sky(SkyTargets::Probe);

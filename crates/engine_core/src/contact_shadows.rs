@@ -1,4 +1,4 @@
-//! Contact shadows (decision 062): short rays toward the sun through the
+//! Contact shadows: short rays toward the sun through the
 //! depth buffer find what shadow maps are too coarse to hold, such as grass
 //! blades on the ground, a pebble's or a crate's foot and the gaps between
 //! stones, and darken the sun's share of their light.
@@ -12,7 +12,7 @@ use crate::environment::{InvalidSetting, check_range};
 /// toward the sun in meters (0.05 to 4), how much of the sun's light a hit
 /// takes away (0 to 1; 0 turns them off), and the meters from the camera
 /// within which surfaces trace, their shadows fading out over its last
-/// third (decision 098; 1 to 1000). Requires version 9.
+/// third (1 to 1000). Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",

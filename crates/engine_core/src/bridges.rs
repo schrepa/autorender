@@ -1,4 +1,4 @@
-//! Bridges (decision 072) and tunnels (decision 073): what terrains' roads
+//! Bridges and tunnels: what terrains' roads
 //! span instead of filling and bore instead of cutting, drawn by entities
 //! the engine spawns and despawns as terrains' bakes finish and terrains
 //! go. A bridge's deck is a [`SplineMesh`] of a deck section (a slab a

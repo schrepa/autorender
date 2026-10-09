@@ -1,4 +1,4 @@
-// Environment maps (decision 043), prepended with scene.wgsl: the sky drawn
+// Environment maps, prepended with scene.wgsl: the sky drawn
 // into the faces of a radiance cube, its levels averaged down, and each
 // level of an environment map blurred from them by the GGX lobe of its
 // roughness, which surfaces read their reflections from.
@@ -57,13 +57,13 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
     return normalize(direction);
 }
 
-// The clouds' newer and older shown domes (decisions 084 and 091), their
+// The clouds' newer and older shown domes, their
 // sampler and their uniform: clear ones without clouds.
 @group(0) @binding(38) var environment_clouds: texture_2d<f32>;
 @group(0) @binding(39) var environment_cloud_sampler: sampler;
 @group(0) @binding(44) var environment_clouds_old: texture_2d<f32>;
 @group(0) @binding(45) var<uniform> environment_domes: CloudDomes;
-// The physically based sky (decision 088): its uniform, sky-view and
+// The physically based sky: its uniform, sky-view and
 // transmittance tables and their sampler.
 @group(0) @binding(40) var<uniform> environment_air: SkyUniform;
 @group(0) @binding(41) var environment_view_table: texture_2d<f32>;

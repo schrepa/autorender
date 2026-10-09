@@ -1,4 +1,4 @@
-//! Levels of detail kept and faded (decision 107): each slot's level as last
+//! Levels of detail kept and faded: each slot's level as last
 //! drawn, which culling's level gives way to only a margin past its
 //! distance, and the cards fading in or out over their steady meshes, drawn
 //! in one draw.

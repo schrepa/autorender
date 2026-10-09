@@ -51,7 +51,7 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
         .filter(|mesh| matches!(mesh.source, MeshSource::Virtual { .. }))
         .count();
     let counts = json!({"textures":imported.textures.len(),"materials":imported.materials.len(),"meshes":imported.meshes.len(),"virtual_meshes":virtual_meshes,"entities":imported.entities.len(),"prefabs":imported.prefabs.len(),"prefab_entities":imported.prefabs.iter().map(|prefab| prefab.entities.len()).sum::<usize>(),"animations":imported.animations.len(),"skins":imported.skins.len(),"files":result.files.len(),"file_bytes":file_bytes});
-    // Animated and skinned models keep their nodes (decisions 035, 036).
+    // Animated and skinned models keep their nodes.
     let node_transforms = if imported.animations.is_empty() && imported.skins.is_empty() {
         "baked"
     } else {
@@ -105,8 +105,8 @@ struct Options {
     revision: Option<u64>,
     replace: bool,
     as_prefab: bool,
-    // Triangles from which primitives import as virtual meshes (decision
-    // 044); `None` imports none.
+    // Triangles from which primitives import as virtual meshes;
+    // `None` imports none.
     virtual_triangles: Option<u32>,
 }
 

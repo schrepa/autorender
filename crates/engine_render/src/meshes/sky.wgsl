@@ -9,26 +9,26 @@ struct SkyOutput {
 fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
     let ndc = vec2<f32>(f32((index << 1u) & 2u) * 2.0 - 1.0, f32(index & 2u) * 2.0 - 1.0);
     var output: SkyOutput;
-    // The far plane: depth 0 with reversed depth (decision 042).
+    // The far plane: depth 0 with reversed depth.
     output.clip_position = vec4<f32>(ndc, 0.0, 1.0);
     output.ndc = ndc;
     return output;
 }
 
-// The clouds' newer and older shown domes (decisions 084 and 091), their
+// The clouds' newer and older shown domes, their
 // sampler and their uniform: clear ones without clouds.
 @group(1) @binding(38) var sky_clouds: texture_2d<f32>;
 @group(1) @binding(39) var sky_cloud_sampler: sampler;
 @group(1) @binding(44) var sky_clouds_old: texture_2d<f32>;
 @group(1) @binding(45) var<uniform> sky_domes: CloudDomes;
-// The physically based sky (decision 088): its uniform, sky-view and
+// The physically based sky: its uniform, sky-view and
 // transmittance tables and their sampler.
 @group(1) @binding(40) var<uniform> sky_air: SkyUniform;
 @group(1) @binding(41) var sky_view_table: texture_2d<f32>;
 @group(1) @binding(42) var sky_transmittance_table: texture_2d<f32>;
 @group(1) @binding(43) var sky_table_sampler: sampler;
 
-// Whether the sky is the physically based one (decision 088).
+// Whether the sky is the physically based one.
 fn physical_sky() -> bool {
     return lighting.grade.z > 0.5;
 }
@@ -41,7 +41,7 @@ fn air_light_along(ray: vec3<f32>, disc: bool) -> vec3<f32> {
 
 // The clouds along `ray`: their light and the share of the sky passing,
 // the newer dome blending in over the older, each looked up where it sees
-// what the ray does (decision 091).
+// what the ray does.
 fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
     if sky_domes.older.w < 0.5 {
         return textureSampleLevel(sky_clouds, sky_cloud_sampler, cloud_dome_uv(ray), 0.0);
@@ -54,7 +54,7 @@ fn sky_cloud(ray: vec3<f32>) -> vec4<f32> {
 }
 
 // The sky along `ray` behind its clouds; under the sea, the water's light.
-// While the view marches its own clouds (decision 095), they cover it
+// While the view marches its own clouds, they cover it
 // after it draws.
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     if lighting.underwater.w > 0.0 {
@@ -83,7 +83,7 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc)))), 1.0);
 }
 
-// Reflection probe captures (decision 043): the sky's haze without the sun's
+// Reflection probe captures: the sky's haze without the sun's
 // disc, as the sky's environment map holds it (surfaces shade the sun's
 // highlights themselves).
 @fragment
@@ -101,7 +101,7 @@ fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
 // The sky's surface texel: facing up, fully rough (it reflects nothing).
 const SKY_SURFACE = vec4<f32>(0.5, 0.5, 1.0, 0.0);
 
-// Clouds in the view (decision 095; `clouds.wgsl`'s `march_view`): each
+// Clouds in the view (`clouds.wgsl`'s `march_view`): each
 // marched block's light and the share of the scene passing, how far its
 // clouds lie, the depth buffer and the blocks' sampler.
 @group(1) @binding(46) var view_clouds: texture_2d<f32>;

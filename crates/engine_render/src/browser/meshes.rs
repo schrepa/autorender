@@ -1,12 +1,12 @@
 //! Mesh pipelines: the vertex streams of meshes and slots, each pass kind's
-//! material variants (decision 031) over their layouts, the sky, and the
-//! opaque drawing order (decision 046).
+//! material variants over their layouts, the sky, and the
+//! opaque drawing order.
 
 use super::*;
 use crate::bindings::EMPTY;
 use crate::entries::{self, Slots};
 
-/// Mesh pipelines (decision 049): their layouts, unlit and lit, created with
+/// Mesh pipelines: their layouts, unlit and lit, created with
 /// the first variant needing each (temporal frames' come with the temporal
 /// pass); every pass kind's material variants, whose BASIC entries are the
 /// base pipelines; the sky by its targets, built when a pass first draws it;
@@ -21,7 +21,7 @@ pub(super) struct MeshPipelines {
 }
 
 /// The targets a sky draws into: an opaque pass's, or a reflection probe
-/// face's (decision 043).
+/// face's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SkyTargets {
     Frame(Targets),
@@ -66,7 +66,7 @@ impl MeshPipelines {
     }
 }
 
-/// The plan's opaque batches in drawing order (decision 046), and the sort
+/// The plan's opaque batches in drawing order, and the sort
 /// keys ordering them.
 #[derive(Default)]
 pub(super) struct DrawOrder {
@@ -78,10 +78,10 @@ pub(super) struct DrawOrder {
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Snorm16x2, 7 => Float32x2];
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
-// Vertex color and second texture coordinates (decision 034).
+// Vertex color and second texture coordinates.
 const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![9 => Unorm16x4, 10 => Float32x2];
-// Joints and weights of meshes with joints (decision 036).
+// Joints and weights of meshes with joints.
 const SKIN_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![11 => Uint16x4, 12 => Unorm16x4];
 
@@ -133,7 +133,7 @@ pub(super) struct BatchBinds {
 
 impl Renderer {
     /// The material group and pipeline variant a draw of `batch` uses: its
-    /// material's, with the extra streams (decisions 034 and 036) of its
+    /// material's, with the extra streams of its
     /// `mesh`, plain while that is not resident.
     pub(super) fn batch_binding(
         &self,
@@ -148,7 +148,7 @@ impl Renderer {
     }
 
     /// Binds what `batch` draws in a pass of `kind`: its variant's pipeline
-    /// (the uber variant with `uber`, decision 049), switched only when the
+    /// (the uber variant with `uber`), switched only when the
     /// variant changes, its material group and its mesh's streams. Returns
     /// the mesh and its draw.
     pub(super) fn bind_batch(
@@ -242,7 +242,7 @@ impl Renderer {
 
     /// The pipeline layout of `kind`'s mesh variants unless created: the
     /// camera and material groups, the slots' poses, and the lights' group
-    /// for lit ones (decision 023). Temporal frames have their own.
+    /// for lit ones. Temporal frames have their own.
     pub(super) fn ensure_mesh_layout(&mut self, kind: PassKind) {
         if kind.targets() == Some(Targets::Temporal) {
             return;
@@ -384,7 +384,7 @@ fn flat_batch(
 
 /// The sky pass of `fragment` into `targets`: one triangle at the far plane,
 /// tested but not written against depth, over the camera bindings and the
-/// clouds' dome (decision 084).
+/// clouds' dome.
 fn sky_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -429,8 +429,7 @@ struct MeshFragment {
     mirrored: bool,
 }
 
-/// A mesh pipeline of `kind` over `layout`, shading materials of `variant`
-/// (decision 031).
+/// A mesh pipeline of `kind` over `layout`, shading materials of `variant`.
 fn mesh_pipeline(
     device: &wgpu::Device,
     shader: &wgpu::ShaderModule,
@@ -440,8 +439,8 @@ fn mesh_pipeline(
     variant: Variant,
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
-    // Extended meshes (decision 034) read a third vertex buffer through
-    // their own entry points; skinned meshes (decision 036) a fourth.
+    // Extended meshes read a third vertex buffer through
+    // their own entry points; skinned meshes a fourth.
     let extended = variant.extended();
     let skinned = variant.skinned();
     let streams = if skinned {

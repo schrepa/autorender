@@ -1,4 +1,4 @@
-//! Placement of the sun's shadow maps (decision 020), independent of GPU
+//! Placement of the sun's shadow maps, independent of GPU
 //! objects: the light-space basis, the regions each map covers and their
 //! orthographic projections.
 
@@ -245,7 +245,7 @@ pub(crate) fn receivers_from(
     (cosine > 0.0 && plane.is_finite()).then_some(plane)
 }
 
-/// Tiles across each side of the kept far map (decision 020): kept casters
+/// Tiles across each side of the kept far map: kept casters
 /// that move mark the tiles under them dirty, and frames redraw them.
 pub(crate) const TILES: u32 = 16;
 /// Words of the dirty-tile mask, each holding two rows of tiles, as the
@@ -382,7 +382,7 @@ pub(crate) enum Refresh {
 /// Texels of margin around the far region.
 const MARGIN_TEXELS: f32 = 2.0;
 
-/// What the kept far map holds (decision 020): the light basis and region
+/// What the kept far map holds: the light basis and region
 /// it was drawn for, the anchor its region follows the camera with when no
 /// bounds are set, whether it holds the current casters there, and the
 /// tiles that casters moving since dirtied.
@@ -526,7 +526,7 @@ impl TileRegion {
     }
 }
 
-/// A kept level (decision 065): [`TILES`] by [`TILES`] tiles `tile` wide
+/// A kept level: [`TILES`] by [`TILES`] tiles `tile` wide
 /// following the camera in light space. Its map holds the absolute tile
 /// `(a, b)`, whose light-space corner is `(a, b) * tile`, at slot
 /// `(a mod TILES, b mod TILES)`: the window moves a tile at a time and only
@@ -557,7 +557,7 @@ pub(crate) struct LevelRefresh {
     pub page: [i32; 2],
 }
 
-/// The kept levels (decision 065), finest first, each four times wider
+/// The kept levels, finest first, each four times wider
 /// than the one before it, and the light basis and settings they were
 /// placed for: other ones start them over.
 #[derive(Debug, Default)]

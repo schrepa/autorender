@@ -1,4 +1,4 @@
-//! World streaming (decision 086): content that exists only near the
+//! World streaming: content that exists only near the
 //! camera. Items — an entity and its descendants, spawned and despawned as
 //! one — register with [`WorldCells`] at a world position with the meters
 //! their content reaches from there. The engine bins them into cells of
@@ -18,7 +18,7 @@
 //! despawning what its items spawned, once every source is farther than
 //! [`WorldStreaming::unload`] times its range.
 //!
-//! What gameplay removes stays removed (decision 087): an item whose root
+//! What gameplay removes stays removed: an item whose root
 //! (the first entity it spawned) gameplay despawned is gone — streaming
 //! despawns the rest of it and records its ID in [`WorldChanges`], which
 //! games save, and its cell never spawns it again. Removing or restoring
@@ -46,7 +46,7 @@ pub struct StreamingGrid {
     pub reach: f32,
 }
 
-/// The grids (decision 086), smallest first. An item reaching `r` meters
+/// The grids, smallest first. An item reaching `r` meters
 /// shows about as large from its grid's range as one reaching the grid's
 /// most does there: a 128th of the range.
 pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
@@ -71,7 +71,7 @@ pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
 /// a jump, which prefetch ignores.
 const JUMP_SPEED: f32 = 1000.0;
 
-/// World streaming (decision 086): whether streamed items load at all
+/// World streaming: whether streamed items load at all
 /// (off unloads every cell); how far cells load, as a multiple of each
 /// grid's range (0.05 to 20); how much farther than that every source must
 /// be before a loaded cell unloads, as a multiple (1 to 4); the seconds
@@ -149,7 +149,7 @@ impl WorldStreaming {
     }
 }
 
-/// What a streamed item spawns (decision 086).
+/// What a streamed item spawns.
 pub trait Streamed: Send + Sync + 'static {
     /// How many entities [`Self::spawn`] spawns, which spawn budgets count.
     fn entities(&self) -> u32;
@@ -171,12 +171,12 @@ pub struct StreamedItem {
     pub content: Arc<dyn Streamed>,
 }
 
-/// The ID of the streamed item (decision 087) whose root this entity is:
+/// The ID of the streamed item whose root this entity is:
 /// despawning it removes the item for good ([`WorldChanges`]).
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 pub struct StreamedId(pub Arc<str>);
 
-/// What gameplay changed of the streamed world (decision 087), which games
+/// What gameplay changed of the streamed world, which games
 /// save and load: the IDs of the items removed for good, which their cells
 /// no longer spawn. Inserted by default; streaming adds an item's ID when
 /// gameplay despawns its root. Removing or restoring an ID takes effect at
@@ -261,7 +261,7 @@ impl WorldChanges {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StreamSet(u64);
 
-/// World streaming's state after the last extraction (decision 086):
+/// World streaming's state after the last extraction:
 /// cells holding items and those loaded; cells within range still waiting
 /// to load; items registered; entities streamed items hold spawned; and
 /// the entities the frame spawned and despawned.
@@ -409,8 +409,8 @@ struct Motion {
     velocity: Vec3,
 }
 
-/// Every streamed item, binned into cells of [`STREAMING_GRIDS`]
-/// (decision 086), and what loaded at the last extraction. Inserted by
+/// Every streamed item, binned into cells of [`STREAMING_GRIDS`],
+/// and what loaded at the last extraction. Inserted by
 /// default; register items with [`Self::add`].
 #[derive(Resource, Default)]
 pub struct WorldCells {
@@ -578,8 +578,8 @@ impl StreamingExtraction {
         }
     }
 
-    /// Loads cells streaming sources came near and unloads those they left
-    /// (decision 086). Runs at extraction, before transforms refresh.
+    /// Loads cells streaming sources came near and unloads those they left.
+    /// Runs at extraction, before transforms refresh.
     pub(crate) fn stream(&mut self, world: &mut World) {
         if !world.contains_resource::<WorldCells>() {
             return;

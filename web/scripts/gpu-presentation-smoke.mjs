@@ -1,4 +1,4 @@
-/** GPU presentation (decision 014) against the exact CPU reference in real Chrome. */
+/** GPU presentation against the exact CPU reference in real Chrome. */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import { artifacts, commander, devUrl, differentPixels, launch, openPaused } from "./harness.mjs";
@@ -11,8 +11,8 @@ const config = {
 };
 // Without interpolation, moving nodes compose on the GPU from their current
 // locals instead of CPU authority rows; they must match the CPU reference too.
-// A still workload settles first: GPU frames then shadow it from the kept map
-// (decision 020), CPU references from the map redrawn every frame.
+// A still workload settles first: GPU frames then shadow it from the kept map,
+// CPU references from the map redrawn every frame.
 const workloads = [
   { label: "interpolated", config, fractional: true },
   { label: "authoritative", config: { ...config, interpolation: false }, fractional: false },

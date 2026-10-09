@@ -1,4 +1,4 @@
-// Runtime deformation's map (decision 083): around the camera, how deep
+// Runtime deformation's map: around the camera, how deep
 // tracks sink the ground and how high their rims raise it, texel by texel,
 // and the slopes they leave. Texels wrap: world texel `i` lives at slot
 // `i mod resolution` along each axis, so the map follows the camera without

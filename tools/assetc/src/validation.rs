@@ -50,7 +50,7 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
-/// Extensions the importer reads (decisions 031, 037 and 038); other
+/// Extensions the importer reads; other
 /// optional extensions are ignored and reported.
 pub(crate) const SUPPORTED_EXTENSIONS: [&str; 6] = [
     "KHR_texture_transform",

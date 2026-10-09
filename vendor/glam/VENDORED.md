@@ -10,12 +10,12 @@ The only source change is in `src/f32/math.rs`, module `std_math`: `sin` and
 standard library, and `Cargo.toml` depends on `engine_math`. Every `f32`
 rotation constructor (`from_rotation_x/y/z`, `from_axis_angle`, `from_euler`,
 `Vec2::from_angle`, the matrix and affine equivalents) and `Quat::slerp` then
-use the engine's branch-free, deterministic trigonometry (`docs/math.md`);
+use the engine's branch-free, deterministic trigonometry (`engine_math`);
 the SSE2 and NEON `Quat::slerp` keep glam's own SIMD sine (`m128_sin`),
 while the scalar and wasm32 ones call the patched `sin`.
 
 To upgrade: copy the new release's `src`, license files, `README.md` and
 `Cargo.toml` (dropping `[[test]]`, `[[bench]]` and dev-dependencies), reapply the
-two-function change and the dependency, and run `cargo xtask test`: the
-`engine_math` and `engine_core::math` tests check that glam uses the engine
-routine. Review the engine's numerical proofs as for any glam upgrade.
+two-function change and the dependency, and check that glam's `f32` sine
+and cosine call `engine_math`. Review the engine's numerical proofs as for
+any glam upgrade.

@@ -1,4 +1,4 @@
-// Impostors' frames (decisions 048 and 060), which the meshes' and the
+// Impostors' frames, which the meshes' and the
 // shadow maps' shaders share: the grid of frames, each one's direction over
 // the sphere or the upper hemisphere, and the records of baked impostors.
 const IMPOSTOR_FRAMES: u32 = 8u;
@@ -7,7 +7,7 @@ const IMPOSTOR_FRAMES: u32 = 8u;
 const IMPOSTOR_HEMISPHERE: u32 = 0x10000u;
 
 // The flags of a card fading in or out as the camera's view of its object
-// switches (decisions 104 and 107): its record's index in the low 15
+// switches: its record's index in the low 15
 // bits, whether it draws over its steady mesh at its card's depth (bit
 // 15; scene objects' cards), and how far its fade has come (of 16383) in
 // the 14 bits from 16.

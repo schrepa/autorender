@@ -29,7 +29,7 @@ pub struct MaterialHandle(Id);
 pub struct TextureHandle(Id);
 
 /// Weak runtime animation clip reference, valid only in the originating
-/// library (decision 035).
+/// library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClipHandle(Id);
 
@@ -229,8 +229,8 @@ impl AssetLibrary {
         ))
     }
 
-    /// Replaces live material `handle` in place, keeping the handle
-    /// (decision 033): objects using it draw with `material` from their next
+    /// Replaces live material `handle` in place, keeping the handle:
+    /// objects using it draw with `material` from their next
     /// extraction. Its textures must be live in this library. This advances
     /// [`Self::material_revision`] and the material's
     /// [`Self::material_version`], not [`Self::revision`]: renderers

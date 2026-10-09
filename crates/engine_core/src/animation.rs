@@ -1,4 +1,4 @@
-//! Animation playback (decision 035): players sample clips every fixed tick
+//! Animation playback: players sample clips every fixed tick
 //! and write their targets' local transforms, which interpolation then
 //! presents smoothly between ticks.
 
@@ -6,7 +6,7 @@ use bevy_ecs::prelude::{Component, Entity, Local, Query, Res, SystemSet};
 
 use crate::{AnimationSample, AssetLibrary, ClipHandle, FixedTime, Transform};
 
-/// Plays an animation clip on the entities its targets name (decision 035).
+/// Plays an animation clip on the entities its targets name.
 ///
 /// Every fixed tick the player advances `time` by the tick times `speed`,
 /// wrapping when `looping` and holding the last pose otherwise, and writes

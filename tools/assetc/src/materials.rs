@@ -1,6 +1,6 @@
 //! glTF 2.0 metallic-roughness materials, mapped one to one onto scene
-//! version 8 materials (decision 031). Images are written beside the scene
-//! unchanged, for the host to decode (decision 030).
+//! version 8 materials. Images are written beside the scene
+//! unchanged, for the host to decode.
 
 use engine_scene::{
     SceneAlphaMode, SceneDocument, SceneFilter, SceneMap, SceneMaterial, SceneMipmapFilter,
@@ -33,7 +33,7 @@ pub(crate) fn import(
             ));
         };
         // KTX2 images (KHR_texture_basisu) stay supercompressed; hosts
-        // transcode them at load (decision 037).
+        // transcode them at load.
         let extension = match mime_type {
             "image/png" => "png",
             "image/jpeg" => "jpg",
@@ -124,7 +124,7 @@ pub(crate) fn import(
             .as_f64()
             .unwrap_or(1.0) as f32;
         let emissive = material.emissive_factor().map(|value| value * strength);
-        // Glass (decision 038): the transmission factor, with the index of
+        // Glass: the transmission factor, with the index of
         // refraction and the volume's thickness factor that bend it; the
         // thickness counts as world units and transmission textures are
         // not read.
@@ -177,7 +177,7 @@ pub(crate) fn import(
 /// A texture reference of a material: glTF sampler state and
 /// `KHR_texture_transform` placement from its texture info `info`, as a
 /// plain ID when both are glTF's defaults. A `KHR_texture_basisu` image
-/// replaces the texture's own source (decision 037).
+/// replaces the texture's own source.
 fn texture_map(
     root: &Value,
     info: &Value,

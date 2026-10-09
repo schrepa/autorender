@@ -1,4 +1,4 @@
-//! Generates the Stress Lab's terrain surface materials (decision 054):
+//! Generates the Stress Lab's terrain surface materials:
 //! tileable procedural grass, dry grass, dirt, scree, rock and snow, each as
 //! three uncompressed RGBA8 KTX2 maps that hosts load with exact alpha.
 //!

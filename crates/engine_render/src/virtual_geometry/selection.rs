@@ -1,4 +1,4 @@
-//! The storage of each frame's selection (decision 044): batches of both ID
+//! The storage of each frame's selection: batches of both ID
 //! sources, the bins of selected clusters and their regions, the node and
 //! group queues, the retest list, counters, and dispatch and draw
 //! arguments, grown to what frames read back needed, and the uniform of

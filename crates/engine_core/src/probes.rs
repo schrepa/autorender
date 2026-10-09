@@ -1,4 +1,4 @@
-//! Reflection probes (decision 043): boxes whose surroundings the renderer
+//! Reflection probes: boxes whose surroundings the renderer
 //! captures into environment maps, which surfaces inside them reflect in
 //! place of the sky's.
 //!
@@ -11,7 +11,7 @@
 //! `max_probes` the probes nearest the camera win and the rest count as
 //! dropped; without a budget, as many stay as the GPU's texture arrays hold.
 //!
-//! A probe may hold an interior (decision 079): a cave or a hall whose box
+//! A probe may hold an interior: a cave or a hall whose box
 //! lets in only shares of the sky's light and the sun's, so surfaces inside
 //! it darken as the rock or walls around them would make them, and reflect
 //! what the probe captured inside.
@@ -28,7 +28,7 @@ use crate::extraction::Nearest;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 
 /// Captures its surroundings from its entity's world position into an
-/// environment map (decision 043), which surfaces inside its box reflect.
+/// environment map, which surfaces inside its box reflect.
 ///
 /// The box is axis-aligned in world space, centered on the entity's world
 /// position, reaching `extent` from it along each axis. Reflections inside it
@@ -43,11 +43,11 @@ pub struct ReflectionProbe {
     pub extent: Vec3,
     /// World distance inside the box's faces over which the probe fades out.
     pub blend: f32,
-    /// What the box lets in, when it is an interior (decision 079).
+    /// What the box lets in, when it is an interior.
     pub interior: Option<Interior>,
 }
 
-/// An interior's light (decision 079): the shares of the sky's light and of
+/// An interior's light: the shares of the sky's light and of
 /// the sun's that reach surfaces inside its probe's box, each 0 to 1,
 /// blending in over the probe's blend distance inside its faces. Requires
 /// version 9.
@@ -100,7 +100,7 @@ impl ReflectionProbe {
     }
 }
 
-/// Reflection probe settings (decision 043). Requires version 8.
+/// Reflection probe settings. Requires version 8.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -166,7 +166,7 @@ impl ReflectionProbes {
     }
 }
 
-/// One reflection probe of a frame (decision 043).
+/// One reflection probe of a frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RenderReflectionProbe {
     /// The probe's identity across frames (its entity's bits).
@@ -175,7 +175,7 @@ pub struct RenderReflectionProbe {
     pub center: Vec3,
     pub extent: Vec3,
     pub blend: f32,
-    /// What its box lets in, when it is an interior (decision 079).
+    /// What its box lets in, when it is an interior.
     pub interior: Option<Interior>,
 }
 

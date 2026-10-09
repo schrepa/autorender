@@ -1,4 +1,4 @@
-//! The sea (decision 076): an endless water surface at a still level that
+//! The sea: an endless water surface at a still level that
 //! waves raise, the same on the CPU and the GPU. The waves are Gerstner
 //! waves, deep-water waves whose surface points circle so crests sharpen,
 //! drawn from the spectrum of a sea the wind has fully raised and seeded.
@@ -10,10 +10,9 @@
 //! crests the waves compress and along shores, and sunlight glows through
 //! crests seen against it.
 //!
-//! Frames draw the waves at the simulation time they present (decision
-//! 077, [`crate::PresentedTime`]), so entities [`Floating`] on the sea,
-//! which ride it each fixed tick, rise and fall with the waves drawn
-//! around them.
+//! Frames draw the waves at the simulation time they present
+//! ([`crate::PresentedTime`]), so entities [`Floating`] on the sea, which ride
+//! it each fixed tick, rise and fall with the waves drawn around them.
 
 use bevy_ecs::prelude::*;
 use glam::{Quat, Vec3};
@@ -292,7 +291,7 @@ impl Ocean {
     }
 }
 
-/// Rides the sea (decision 077): each fixed tick the entity rises and falls
+/// Rides the sea: each fixed tick the entity rises and falls
 /// with the sea's surface under it, `draft` meters of it below the surface
 /// (-100 to 100), and leans by `tilt` (0, upright, to 1, with the
 /// surface's normal) about its own heading. Unparented entities only;

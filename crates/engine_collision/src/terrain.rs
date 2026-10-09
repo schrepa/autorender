@@ -1,4 +1,4 @@
-//! Terrain collision (decision 051): a heightfield per level-0 terrain tile
+//! Terrain collision: a heightfield per level-0 terrain tile
 //! resident around the camera and focus entities, of terrains that collide,
 //! split into triangles exactly as renderers and terrain queries split them.
 //! Rays, overlaps and shape casts test them after the colliders; hits report
@@ -32,7 +32,7 @@ use crate::{
 };
 
 /// One tile's heightfield: its terrain, key, the tile it was built from
-/// (edits, decision 080, replace tiles under the same key), world center
+/// (edits replace tiles under the same key), world center
 /// (parry centers heightfields) and world bounds.
 struct Field {
     entity: Entity,

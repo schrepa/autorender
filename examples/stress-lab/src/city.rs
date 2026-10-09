@@ -1981,7 +1981,7 @@ pub(crate) struct Spawned {
     pub sensor_nodes: u32,
     pub probes: Vec<Entity>,
     /// World region holding every block and the air above them, for the
-    /// shadows (decision 020).
+    /// shadows.
     pub bounds: (Vec3, Vec3),
 }
 
@@ -2029,7 +2029,7 @@ pub(crate) fn populate(world: &mut World, config: &StressConfig) -> Result<Spawn
         }
         if let (Some(mesh), Some(look)) = (mesh, node.look) {
             entity.insert(mesh);
-            // Engine lights (decision 023) and particles (decision 026) on
+            // Engine lights and particles on
             // the parts that carry them; the renderables stay the same.
             match look.shape {
                 Shape::Lamp => {

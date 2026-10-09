@@ -1,7 +1,7 @@
 // Forward fragment stages of meshes: opaque passes into the canvas, the
 // screen effects' targets and temporal targets, transparent accumulation
 // and reflection probe captures, unlit and lit, for meshes with and without
-// a second vertex stream (decision 034).
+// a second vertex stream.
 
 @fragment
 fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
@@ -54,7 +54,7 @@ fn fs_transparent_lit(input: VertexOutput, @builtin(front_facing) front: bool)
     return transparent_targets(finish(point, local_light(point, values.pixel)), point, values);
 }
 
-// Reflection probe captures (decision 043): the linear light before the
+// Reflection probe captures: the linear light before the
 // grade, which the environment maps hold.
 @fragment
 fn fs_probe(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
@@ -67,7 +67,7 @@ fn fs_probe_lit(input: VertexOutput, @builtin(front_facing) front: bool)
     return vec4<f32>(shade_lit(fragment(input), front).linear, 1.0);
 }
 
-// The same passes for meshes with a second vertex stream (decision 034).
+// The same passes for meshes with a second vertex stream.
 @fragment
 fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {

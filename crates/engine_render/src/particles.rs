@@ -1,4 +1,4 @@
-//! Particles (decision 026): emitter records and the stateless particle
+//! Particles: emitter records and the stateless particle
 //! pipelines. Alpha particles draw into the transparent accumulation targets,
 //! additive ones into the frame's color (and glow) in the transparent
 //! composite pass. Everything here is created with the first frame that has
@@ -472,7 +472,7 @@ mod gpu {
                     topology: wgpu::PrimitiveTopology::TriangleStrip,
                     ..Default::default()
                 },
-                // Reversed depth (decision 042).
+                // Reversed depth.
                 depth: Some(wgpu::DepthStencilState {
                     format: depth_format,
                     depth_write_enabled: Some(false),

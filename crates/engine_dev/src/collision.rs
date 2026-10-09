@@ -348,7 +348,7 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
     Ok(ray)
 }
 
-/// A placed object a hit names (decision 064): its terrain's placement
+/// A placed object a hit names: its terrain's placement
 /// layer and asset indices.
 fn placed_json(part: engine_collision::PlacedPart) -> serde_json::Value {
     json!({"layer": part.layer, "asset": part.asset})
@@ -444,7 +444,7 @@ impl<'a> Identities<'a> {
     fn entity(&self, world: &World, entity: Entity) -> Value {
         let id = self.ids.get(&entity).copied();
         let metadata = world.get::<SceneEntity>(entity);
-        // A loaded streamed entity (decision 086) of the active scene.
+        // A loaded streamed entity of the active scene.
         let streamed = id.is_none()
             && metadata.zip(self.scene).is_some_and(|(metadata, scene)| {
                 scene.streamed().is_some() && metadata.scene_id == scene.id()

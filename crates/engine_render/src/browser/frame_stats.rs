@@ -75,7 +75,7 @@ const STAT_COUNTERS: [StatCounter; 26] = [
     }),
 ];
 
-/// Counters of frames that shade local lights (decision 023).
+/// Counters of frames that shade local lights.
 const LIGHT_COUNTERS: [StatCounter; 3] = [
     ("render.local_lights", |stats| {
         Some(stats.local_lights.into())
@@ -88,8 +88,7 @@ const LIGHT_COUNTERS: [StatCounter; 3] = [
     }),
 ];
 
-/// Counters of frames that read virtual geometry's selection back
-/// (decision 044).
+/// Counters of frames that read virtual geometry's selection back.
 const VIRTUAL_COUNTERS: [StatCounter; 9] = [
     ("render.virtual_clusters", |stats| {
         Some(stats.virtual_clusters.into())
@@ -167,12 +166,12 @@ impl Renderer {
         } else {
             None
         };
-        // Read back a few frames late (decision 044).
+        // Read back a few frames late.
         let virtual_stats = virtual_frame
             .then(|| self.virtual_draws.pass.stats())
             .flatten();
         // Pipelines compile before the work submitted after them runs: this
-        // frame's completion ends their compiles (decision 049).
+        // frame's completion ends their compiles.
         let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
         // Read back a few frames late, like the visible count.
         let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {

@@ -1,4 +1,4 @@
-//! The look as data (decision 022): a world's atmosphere and the settings of
+//! The look as data: a world's atmosphere and the settings of
 //! every rendering effect. Each settings type is a resource, a section of a
 //! scene's `environment` in the same JSON shape (the atmosphere's section is
 //! a preset with overrides), and checks itself with `validate`; frames carry
@@ -74,7 +74,7 @@ pub struct Environment {
 impl Environment {
     /// `world`'s settings as its resources hold them. A missing atmosphere
     /// reads as the default one, and a missing effect resource as that
-    /// effect turned off. An enabled time of day (decision 088) sets the
+    /// effect turned off. An enabled time of day sets the
     /// atmosphere's sun direction.
     pub fn current(world: &World) -> Self {
         fn read<T: Resource + Copy>(world: &World, off: T) -> T {

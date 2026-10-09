@@ -1,4 +1,4 @@
-//! Cluster LOD hierarchies from meshoptimizer's `clusterlod` (decision 044):
+//! Cluster LOD hierarchies from meshoptimizer's `clusterlod`:
 //! the groups of clusters each level simplifies into the next, every cluster
 //! with the group it belongs to and the finer group it came from, and a
 //! bounding volume hierarchy over the groups of each level.

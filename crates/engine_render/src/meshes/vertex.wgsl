@@ -1,5 +1,5 @@
 // Mesh vertex stages: poses and skinning, virtual geometry's clusters and
-// the visibility pass (decisions 036, 044 and 045), and the vertex entry
+// the visibility pass, and the vertex entry
 // points of slots and temporal frames.
 
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
@@ -45,7 +45,7 @@ fn vertex_affine(input: AffineVertexInput) -> VertexOutput {
 }
 
 // Packed color `color` of slot `index`, whose origin is `origin`, at
-// `world`: where its material has grounding (decision 096), multiplied by
+// `world`: where its material has grounding, multiplied by
 // its ground's stain at the plane of the ground under its base, the stain
 // fading out as far up as it reaches.
 fn grounded(color: vec2<u32>, index: u32, origin: vec3<f32>, world: vec3<f32>) -> vec2<u32> {
@@ -67,13 +67,13 @@ fn grounded(color: vec2<u32>, index: u32, origin: vec3<f32>, world: vec3<f32>) -
 }
 
 // The offset the wind gives the vertex at `world` of a slot posed by
-// `model` that sways `sway` (decision 058), at time `time`.
+// `model` that sways `sway`, at time `time`.
 fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3<f32> {
     return wind_sway(camera.wind.xy, camera.wind.z, model[3].xyz, world.y - model[3].y, sway,
         time);
 }
 
-// A selected cluster (decision 044) of a slot: 384 vertices, three per
+// A selected cluster of a slot: 384 vertices, three per
 // triangle of the largest cluster; those past its triangles collapse.
 struct VirtualInput {
     @builtin(vertex_index) vertex: u32,
@@ -162,7 +162,7 @@ fn vs_virtual_temporal(input: VirtualInput) -> TemporalOutput {
     return output;
 }
 
-// The visibility pass (decision 045): a selected cluster's triangles, posed
+// The visibility pass: a selected cluster's triangles, posed
 // and projected as `vs_virtual` does, write which triangle covers each
 // pixel. Its entry is the bin's first this phase plus the instance.
 struct VisibilityOutput {
@@ -198,7 +198,7 @@ fn vs_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
     return vertex_affine_temporal(input);
 }
 
-// Meshes with vertex colors or second texture coordinates (decision 034)
+// Meshes with vertex colors or second texture coordinates
 // read them from a second vertex stream, and their outputs carry both.
 struct ExtendedOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -252,7 +252,7 @@ fn vs_affine_temporal_extended(input: AffineVertexInput, @location(9) color: vec
     return output;
 }
 
-// Linear blend skinning (decision 036): the joints' palette matrices
+// Linear blend skinning: the joints' palette matrices
 // weighted by the vertex's renormalized 16-bit weights.
 fn blend_poses(a: AffinePose, b: AffinePose, c: AffinePose, d: AffinePose,
         weights: vec4<f32>) -> mat4x4<f32> {

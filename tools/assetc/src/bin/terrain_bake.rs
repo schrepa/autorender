@@ -1,4 +1,4 @@
-//! Bakes a scene's generated terrain (decision 051) into an `ETR1` file of
+//! Bakes a scene's generated terrain into an `ETR1` file of
 //! every tile of every level, which scenes then reference with `file` and
 //! stream by byte range instead of generating.
 //!
@@ -69,7 +69,7 @@ fn run() -> Result<(), String> {
     let pyramid = terrain.pyramid;
     let total = pyramid.tile_count();
     let start = Instant::now();
-    // Hydrology (decision 066) bakes before tiles generate from it.
+    // Hydrology bakes before tiles generate from it.
     let layers = &Arc::new(layers.bake_all(&pyramid));
     let mut done = 0;
     let bytes = engine_core::terrain_data::encode_file(&pyramid, step, |key| {

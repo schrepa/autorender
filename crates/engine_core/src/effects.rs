@@ -1,7 +1,7 @@
-//! Rendering effects of the scene: sun shadows (decision 020), ambient
-//! occlusion and bloom (decision 021), sun shafts (decision 024),
-//! screen-space reflections (decision 025) and refraction through glass
-//! (decision 038). Every extracted frame carries sanitized copies with the
+//! Rendering effects of the scene: sun shadows, ambient
+//! occlusion and bloom, sun shafts,
+//! screen-space reflections and refraction through glass.
+//! Every extracted frame carries sanitized copies with the
 //! atmosphere; renderers skip the work of disabled effects.
 //!
 //! Each effect is its own resource: disable one with its settings, or remove
@@ -9,7 +9,7 @@
 //! are inserted by default; sun shafts, reflections and refraction are
 //! opt-in: insert them (their defaults are on). Without an `Atmosphere`
 //! frames use the default one. Each is also a scene environment section in
-//! the same JSON shape (decision 022) and checks itself with `validate`;
+//! the same JSON shape and checks itself with `validate`;
 //! their docs are the sections' schema descriptions, written for authors.
 //!
 //! Shadows: every rendered instance casts and receives them. One map covers
@@ -17,10 +17,10 @@
 //! moves when the camera travels a quarter of it. Instances that stay still
 //! are drawn into that map once and kept; moving ones are drawn every frame.
 //! Sharper maps follow the first `near_distance` of the view, split into
-//! `cascades` (decision 028): each has three times the texel density of the
+//! `cascades`: each has three times the texel density of the
 //! next and is a depth pass per frame over the casters it covers, and each
-//! has half the far maps' `resolution` per side. Kept `levels` (decision
-//! 065) hold still casters sharper than that map near the camera: squares
+//! has half the far maps' `resolution` per side. Kept `levels`
+//! hold still casters sharper than that map near the camera: squares
 //! `level_extent` wide and four times wider each, following the camera a
 //! tile at a time and redrawing only the tiles it uncovers.
 //!
@@ -63,7 +63,7 @@ pub const MAX_SHADOW_CASCADES: u32 = 4;
 /// Most kept shadow levels ([`Shadows::levels`]).
 pub const MAX_KEPT_LEVELS: u32 = 3;
 
-/// Sun shadows (decision 020); omitted fields take the engine defaults.
+/// Sun shadows; omitted fields take the engine defaults.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -85,8 +85,7 @@ pub struct Shadows {
     #[cfg_attr(feature = "schema", schemars(range(min = 0.001)))]
     pub near_distance: f32,
     /// Sharper maps (cascades) splitting `near_distance`, each reaching a
-    /// third as far as the next: 1 to 4, 3 when omitted. Version 6
-    /// (decision 028).
+    /// third as far as the next: 1 to 4, 3 when omitted. Version 6.
     #[serde(
         deserialize_with = "cascades_or_default",
         skip_serializing_if = "is_default_cascades"
@@ -99,7 +98,7 @@ pub struct Shadows {
     /// Texels per side of the far maps: 1024, 2048 or 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 1024, max = 4096)))]
     pub resolution: u32,
-    /// Kept levels (decision 065): maps of still casters following the
+    /// Kept levels: maps of still casters following the
     /// camera, sharper than the far maps where they reach, each with half
     /// the far maps' `resolution` per side; 0 to 3, none when omitted.
     /// Worlds larger than their shadows' sharpness give them two or three.
@@ -291,7 +290,7 @@ impl Shadows {
     }
 }
 
-/// Ambient occlusion (decision 021); an intensity of 0 turns it off.
+/// Ambient occlusion; an intensity of 0 turns it off.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -348,7 +347,7 @@ impl AmbientOcclusion {
     }
 }
 
-/// Bloom (decision 021); an intensity of 0 turns it off.
+/// Bloom; an intensity of 0 turns it off.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -408,7 +407,7 @@ impl Bloom {
     }
 }
 
-/// Sun shafts (decision 024): sunlight scattered by the fog between shadow
+/// Sun shafts: sunlight scattered by the fog between shadow
 /// casters. Requires version 6 and shadows; an intensity of 0 turns them off.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
@@ -486,7 +485,7 @@ impl SunShafts {
     }
 }
 
-/// Screen-space reflections (decision 025). Requires version 6; an intensity
+/// Screen-space reflections. Requires version 6; an intensity
 /// of 0 turns them off.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
@@ -552,7 +551,7 @@ impl Reflections {
     }
 }
 
-/// Refraction through glass (decision 038). Requires version 8; a strength
+/// Refraction through glass. Requires version 8; a strength
 /// of 0 turns it off.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(

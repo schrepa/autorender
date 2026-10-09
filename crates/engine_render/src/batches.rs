@@ -42,15 +42,14 @@ type GroupIds = HashMap<u64, u32, BuildHasherDefault<KeyHasher>>;
 pub(crate) struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
-    /// The material whose maps the batch binds (decision 031).
+    /// The material whose maps the batch binds.
     pub material: Option<MaterialHandle>,
-    /// Transparent instances draw in the transparent pass and cast no shadow
-    /// (decision 026).
+    /// Transparent instances draw in the transparent pass and cast no shadow.
     pub transparent: bool,
     pub instances: Range<u32>,
 }
 
-/// Whether `instance` draws in the transparent pass (decisions 026 and 031):
+/// Whether `instance` draws in the transparent pass:
 /// `transparent` lists the snapshot's transparent materials.
 pub(crate) fn is_transparent(instance: &RenderInstance, transparent: &[MaterialHandle]) -> bool {
     match instance.material {

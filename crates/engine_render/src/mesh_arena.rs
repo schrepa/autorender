@@ -1,10 +1,9 @@
-//! Shared mesh buffers: every mesh's indices live in one buffer, and its
-//! vertex streams in the buffers of its class (positions alone; with vertex
-//! colors and second texture coordinates; with joints too, decisions 034 and
-//! 036), whose streams share one vertex numbering. Passes bind them once and
-//! draws select their mesh's ranges (`first_index`, `base_vertex`) instead
-//! of rebinding buffers per draw, which browsers' WebGPU layers charge per
-//! call.
+//! Shared mesh buffers: every mesh's indices live in one buffer, and its vertex
+//! streams in the buffers of its class (positions alone; with vertex colors and
+//! second texture coordinates; with joints too), whose streams share one vertex
+//! numbering. Passes bind them once and draws select their mesh's ranges
+//! (`first_index`, `base_vertex`) instead of rebinding buffers per draw, which
+//! browsers' WebGPU layers charge per call.
 
 /// A mesh's vertex streams: its class of arena buffers.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]

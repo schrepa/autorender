@@ -1,7 +1,7 @@
-//! The selection's compute pipelines over their shared layouts (decision
-//! 049; `crate::bindings`), each listing every binding its passes read
-//! within the eight storage buffers per stage WebGPU guarantees. And the
-//! depth-only pipeline drawing shadow views' bins.
+//! The selection's compute pipelines over their shared layouts
+//! (`crate::bindings`), each listing every binding its passes read within the
+//! eight storage buffers per stage WebGPU guarantees. And the depth-only
+//! pipeline drawing shadow views' bins.
 
 use super::VISIBLE_BYTES;
 use crate::bindings::{
@@ -101,7 +101,7 @@ impl ShadowDrawing {
                 })],
                 // Both faces cast, as the shadow maps' other casters.
                 primitive: wgpu::PrimitiveState::default(),
-                // The shadow maps' constant unit of bias (decision 028).
+                // The shadow maps' constant unit of bias.
                 depth: Some(wgpu::DepthStencilState {
                     format: SHADOW_FORMAT,
                     depth_write_enabled: Some(true),

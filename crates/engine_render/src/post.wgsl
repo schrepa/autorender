@@ -1,4 +1,4 @@
-// Screen effects (decisions 021 and 025), prepended with effects.wgsl.
+// Screen effects, prepended with effects.wgsl.
 // Ambient occlusion samples the depth buffer at half resolution, and one
 // half-resolution filter smooths it and brings the quarter-resolution sun
 // shafts (shafts.wgsl) up beside it; screen-space reflections trace
@@ -23,10 +23,10 @@
 @group(0) @binding(7) var linear: sampler;
 // Reflected color and its weight at half resolution.
 @group(0) @binding(8) var reflections: texture_2d<f32>;
-// Sun shafts (decision 024) at quarter resolution: scattered light, and the
+// Sun shafts at quarter resolution: scattered light, and the
 // length of the ray that gathered it.
 @group(0) @binding(9) var shafts: texture_2d<f32>;
-// Reflections (decision 025): the nearest depth of each 2x2 block of the
+// Reflections: the nearest depth of each 2x2 block of the
 // depth buffer, then of each block of the level below, which rays skip
 // across; and the traced reflections the filter smooths.
 @group(0) @binding(10) var nearest_depth: texture_2d<f32>;
@@ -34,7 +34,7 @@
 // Ambient occlusion before its filter: visibility, and the distance from
 // the eye (0 where only sky is).
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
-// Reflections (decision 025): the surface the opaque pass shaded (its
+// Reflections: the surface the opaque pass shaded (its
 // shading normal, octahedral in [0, 1], and roughness), and the scene
 // blurred down half-resolution levels for rough surfaces.
 @group(0) @binding(13) var surface_texture: texture_2d<f32>;
@@ -58,7 +58,7 @@ const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
 const MAX_PIXELS: f32 = 96.0;
 
 // World position of a depth-buffer pixel; w is 0 where only sky is (the
-// cleared depth, 0 with reversed depth, decision 042).
+// cleared depth, 0 with reversed depth).
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);
     let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;
@@ -67,16 +67,16 @@ fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(world.xyz / world.w, select(0.0, 1.0, depth > 0.0));
 }
 
-// Steps along each contact shadow ray (decision 062).
+// Steps along each contact shadow ray.
 const CONTACT_STEPS: u32 = 12u;
 
 // How much of the sun reaches `p` (with unit `normal`, `away` meters from
 // the eye) past what the depth buffer holds within `post.contact.x` meters
-// toward the sun (decision 062): a surface counts where the ray passes
+// toward the sun: a surface counts where the ray passes
 // behind it by less than a thickness growing along the ray, so thin things
 // shade and the fronts of distant ones do not. Hits nearer the ray's start
 // shade more, so its reach leaves no edge, and they shade less over the
-// last third of the distance surfaces trace within (decision 098), so its
+// last third of the distance surfaces trace within, so its
 // end leaves none either.
 fn contact_visibility(p: vec3<f32>, normal: vec3<f32>, away: f32, noise: f32) -> f32 {
     let toward = post.sun_direction.xyz;
@@ -256,7 +256,7 @@ fn filtered_occlusion(texel: vec2<i32>) -> vec2<f32> {
 // own, as a share of it, before the filter stops counting it.
 const SHAFT_REACH: f32 = 0.1;
 
-// The sun shafts at half-resolution texel `texel` (decision 024): the four
+// The sun shafts at half-resolution texel `texel`: the four
 // quarter-resolution rays around the pixel it stands for, weighted
 // bilinearly and by how near their lengths are to that pixel's ray, so light
 // gathered past a silhouette does not spill onto the surface in front of it.
@@ -377,7 +377,7 @@ fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     return world.xyz / world.w;
 }
 
-// Screen-space reflections (decision 025) at half resolution: from each
+// Screen-space reflections at half resolution: from each
 // reflective pixel (the glow target's second channel), a ray along the
 // mirror direction of its depth normal crosses the screen as a straight
 // line in pixels and depth. It walks the pyramid of nearest depths: a cell
@@ -610,7 +610,7 @@ fn fs_bloom_down(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
 }
 
 // Frames that both reflect and bloom halve the scene for rough reflections
-// and the bloom's glowing light in the same passes (decisions 021 and 025).
+// and the bloom's glowing light in the same passes.
 struct Levels {
     @location(0) scene: vec4<f32>,
     @location(1) bloom: vec4<f32>,

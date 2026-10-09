@@ -1,8 +1,8 @@
-//! Caster selection (decision 020): one compute pass selects each map's
+//! Caster selection: one compute pass selects each map's
 //! casters from every candidate, visible or culled, into indirect draws per
 //! caster group, from the draw arguments' template. On GPU-presented frames
 //! it also keeps each slot's stillness and marks the dirty tiles of the
-//! kept map and levels (decision 065), read back a few frames later with
+//! kept map and levels, read back a few frames later with
 //! the caster totals.
 
 use std::{cell::Cell, rc::Rc};
@@ -20,7 +20,7 @@ use crate::shadow_fit::TILE_WORDS;
 
 // Bindings need at least one element; exceeds every record stride.
 const MIN_STORAGE_BYTES: u64 = 256;
-// Dirty tiles of the kept map, then of each kept level (decision 065), then
+// Dirty tiles of the kept map, then of each kept level, then
 // the four caster totals, read back together.
 const DIRTY_WORDS: usize = TILE_WORDS * (1 + MAX_LEVELS);
 const READBACK_BYTES: u64 = (DIRTY_WORDS as u64 + 4) * 4;
@@ -75,7 +75,7 @@ pub(super) struct Selection {
     listed: wgpu::Buffer,
     listed_groups: wgpu::Buffer,
     listed_capacity: usize,
-    // The level of detail each map draws each group at (decision 047), as
+    // The level of detail each map draws each group at, as
     // the template holds them, the mesh arena layout it was written for,
     // and whether it must be written again.
     template_levels: Vec<u8>,
@@ -87,7 +87,7 @@ pub(super) struct Selection {
     pub(super) regions_in_args: bool,
     // Advances when this part replaces a buffer.
     generation: u64,
-    // Selection bindings, and skinned selection's (decision 036), by the
+    // Selection bindings, and skinned selection's, by the
     // inputs they were built for.
     // Per pose buffer parity (temporal frames alternate them), and the
     // parity this frame binds.
@@ -175,7 +175,7 @@ impl Selection {
         tiles
     }
 
-    /// Takes each kept level's dirty tiles (decision 065) read back since
+    /// Takes each kept level's dirty tiles read back since
     /// the last call.
     pub(super) fn take_level_tiles(&self) -> [[u32; TILE_WORDS]; MAX_LEVELS] {
         let mut words = self.read_back.get();
@@ -246,7 +246,7 @@ impl Selection {
     }
 
     /// Writes the draw arguments' template when the groups, `levels` (each
-    /// map's level of detail per group, decision 047), the storage or the
+    /// map's level of detail per group), the storage or the
     /// mesh arena `mesh_layout` changed, from each group's `ranges` (its
     /// index count, first index and base vertex at each level), with the
     /// group starts and CPU-prepared frames' casters.
@@ -269,7 +269,7 @@ impl Selection {
         self.mesh_layout = mesh_layout;
         if levels != self.template_levels {
             // Casters drawn at other levels than the kept map holds redraw
-            // it whole, as a moved sun does (decision 047): its levels change
+            // it whole, as a moved sun does: its levels change
             // only with its texel and when levels of detail turn on or off.
             let kept = |levels: &[u8], map: usize| {
                 levels
@@ -454,7 +454,7 @@ impl Selection {
             pass.set_pipeline(&pipelines.select);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(frame.candidates.div_ceil(GROUP), 1, 1);
-            // Skinned casters by their palette bounds (decision 036).
+            // Skinned casters by their palette bounds.
             if frame.skinned != 0
                 && let Some(skinned) = self.skinned_group.get()
             {

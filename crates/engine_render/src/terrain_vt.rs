@@ -1,6 +1,6 @@
-//! The runtime virtual texture of terrain's ground (decision 124).
+//! The runtime virtual texture of terrain's ground.
 //!
-//! Terrain's deferred resolves (decision 123) spend most of their time on
+//! Terrain's deferred resolves spend most of their time on
 //! its surface materials: control values, height blending, every
 //! material's maps over its projection planes and lattices, detail noise
 //! and variety. All of it holds still while the light and the view move,

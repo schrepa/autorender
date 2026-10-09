@@ -1,4 +1,4 @@
-//! Terrain surface materials' maps (decision 054): every terrain's
+//! Terrain surface materials' maps: every terrain's
 //! materials with maps share three texture arrays, base color, normal, and
 //! occlusion, roughness, metalness and height, one layer per material, all
 //! the size of the first material's maps, their mip chains rendered as they
@@ -7,9 +7,9 @@
 //! show their colors instead and count as dropped. Each layer's mean color,
 //! roughness and occlusion stand in for its maps where they repeat too
 //! small on screen to show, and the variance of its normal map's slopes
-//! roughens it there (decision 098). Past the materials' layers, the base
+//! roughens it there. Past the materials' layers, the base
 //! color and normal arrays hold the sheets of the runtime virtual texture
-//! (decision 124; `terrain_vt.rs`): two layers each in the base color
+//! (`terrain_vt.rs`): two layers each in the base color
 //! array and one in the normal array, as many as it asks for (up to the
 //! device's layers), which grow by copying the arrays.
 
@@ -64,7 +64,7 @@ pub(crate) struct TerrainMaps {
 }
 
 /// A layer's mean linear base color, roughness and occlusion texels, and
-/// the mean square of its normal map's slopes at scale 1 (decision 098).
+/// the mean square of its normal map's slopes at scale 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Means {
     pub color: [f32; 3],

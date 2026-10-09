@@ -1,4 +1,4 @@
-// Terrain surface materials on the GPU (decision 118): a tile's control
+// Terrain surface materials on the GPU: a tile's control
 // values from its heights, once when it uploads, into the same layer of the
 // control array. Each sample's inputs are read as the CPU reads them for a
 // tile's rows (height, gradient and curvature from the heights around it;
@@ -375,8 +375,8 @@ fn path_at(point: vec2<f32>) -> vec2<f32> {
     return nearest;
 }
 
-// How much of the stack's bakes and roads surroundings show (decision
-// 094): 1 within the region they were drawn for, fading out beyond.
+// How much of the stack's bakes and roads surroundings show:
+// 1 within the region they were drawn for, fading out beyond.
 fn shown(point: vec2<f32>) -> f32 {
     let section = data[H_FADE];
     if section == NONE {

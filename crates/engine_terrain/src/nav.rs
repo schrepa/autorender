@@ -1,15 +1,15 @@
-//! Navigation over a generated terrain (decision 081): the samples of a
+//! Navigation over a generated terrain: the samples of a
 //! pyramid level an agent can stand on (not holes, not under water deeper
 //! than it wades, not within its radius of a placed obstacle) and the
 //! shortest walk between two points across them, each step between
 //! neighboring samples no steeper than it climbs. Roads' bridges carry
-//! walks at their decks' height over the water and ground below them
-//! (decision 111). A* walks the eight
+//! walks at their decks' height over the water and ground below them.
+//! A* walks the eight
 //! neighbors of each sample without cutting corners; the walk is then
 //! pulled taut wherever a straight stretch stays walkable, and follows the
 //! ground in steps of a few meters. Walks longer than a level's sample
 //! budget walk coarser levels and say which. A [`WalkSearch`] does the
-//! same work in budgeted steps (decision 089), so agents' walks spread
+//! same work in budgeted steps, so agents' walks spread
 //! over frames.
 
 use std::cmp::Reverse;
@@ -137,7 +137,7 @@ pub fn walk(
     }
 }
 
-/// A walk being searched (decision 089): it generates the ground's tiles
+/// A walk being searched: it generates the ground's tiles
 /// one at a time, marks the samples an agent stands on a band of rows at a
 /// time and expands the search's open samples a batch at a time, each
 /// [`Self::step`] doing about its budget's samples of work, so walks spread
@@ -378,8 +378,8 @@ impl WalkSearch {
         }
     }
 
-    /// Lays roads' bridge decks (decision 072) over the grid's ground
-    /// (decision 111): samples within a deck's width read its height, so
+    /// Lays roads' bridge decks over the grid's ground:
+    /// samples within a deck's width read its height, so
     /// walks cross at it, above the water and ground under it. Tunnels
     /// stay below the ground they bore through.
     fn lay_bridges(&mut self) {
@@ -426,7 +426,7 @@ impl WalkSearch {
 
     /// Marks `rows`' samples an agent stands on: not holes, not under water
     /// deeper than it wades. Water stands as deep as its surface rises over
-    /// the ground the walk reads there (decision 111), not over the ground
+    /// the ground the walk reads there, not over the ground
     /// the hydrology bake read: roads, stamps and edits after the bake fill
     /// over its streams and dig below them.
     fn mask_rows(&self, walkable: &mut [bool], rows: std::ops::Range<usize>) {

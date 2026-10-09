@@ -69,7 +69,6 @@ fn execute() -> Result<(), String> {
     match task.as_str() {
         "build" => pipeline::build(&root),
         "lint" => pipeline::lint(&root),
-        "test" => pipeline::test(&root),
         "docs" => pipeline::docs(&root),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_schema(&root),
@@ -94,7 +93,6 @@ fn execute() -> Result<(), String> {
                           Measure fixed browser workloads with culling off/on; --output PATH, --baseline PATH, --max-regression-percent N\n\
                    schema Write the generated versioned scene JSON schema\n\
                    lint   Check source/schema, formatting, native/Wasm Clippy, TypeScript\n\
-                   test   Run native workspace, scene schema, and host input tests\n\
                    docs   Generate native workspace and browser API documentation\n\
                    help   Show this message"
             );

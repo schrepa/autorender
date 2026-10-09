@@ -73,7 +73,7 @@ use virtual_draws::{VIRTUAL_ATTRIBUTES, VirtualDraws, VirtualStages};
 use visibility_draws::VisibilityDraws;
 
 const INITIAL_CAPACITY: usize = 1_024;
-// Reversed depth (decision 042): nearer surfaces keep larger values, which
+// Reversed depth: nearer surfaces keep larger values, which
 // floating-point depth resolves about evenly at every distance. The buffer
 // clears to the far plane's 0 and depth tests keep the greater value.
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -83,12 +83,12 @@ struct GpuMesh {
     // arena had no room.
     placement: Result<Placement, OwnMesh>,
     // Whether it has vertex colors or second texture coordinates (or
-    // joints: decision 034), and joints and weights (decision 036).
+    // joints), and joints and weights.
     extended: bool,
     skinned: bool,
     index_count: u32,
     byte_len: u64,
-    // Coarser levels of detail (decision 047), after the mesh's own indices
+    // Coarser levels of detail, after the mesh's own indices
     // in its range: each one's first index there, index count and geometric
     // error in mesh units, finest first.
     lods: Vec<(u32, u32, f32)>,
@@ -123,8 +123,8 @@ impl GpuMesh {
     }
 }
 
-/// The levels of detail `batch` draws at on GPU-presented frames (decision
-/// 047): its mesh's where it draws the mesh opaquely, otherwise only the
+/// The levels of detail `batch` draws at on GPU-presented frames:
+/// its mesh's where it draws the mesh opaquely, otherwise only the
 /// mesh itself. Batch records and draw loops both follow this.
 fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usize {
     if batch.transparent || virtual_geometry || mesh.skinned {
@@ -134,8 +134,8 @@ fn lod_levels(batch: &DrawBatch, mesh: &GpuMesh, virtual_geometry: bool) -> usiz
     }
 }
 
-/// `source`'s indices followed by `levels` levels of detail at most
-/// (decision 047), and each level's first index in them, index count and
+/// `source`'s indices followed by `levels` levels of detail at most,
+/// and each level's first index in them, index count and
 /// error.
 fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, u32, f32)>) {
     let lods = engine_core::mesh_lods(source, levels);
@@ -148,12 +148,12 @@ fn lod_chain(source: &engine_core::Mesh, levels: usize) -> (Vec<u32>, Vec<(u32, 
 }
 
 /// Generations of the shadow maps, environment maps and reflection probe
-/// grid (decision 043) the camera groups bind.
+/// grid the camera groups bind.
 type CameraGroupsKey = (u64, u64, u64, u64, u64);
 
-/// GPU culling of GPU-presented frames: occlusion culling (decision 040),
-/// on unless turned off, with its depth pyramid, and sub-pixel culling
-/// (decision 041), on unless turned off.
+/// GPU culling of GPU-presented frames: occlusion culling,
+/// on unless turned off, with its depth pyramid, and sub-pixel culling,
+/// on unless turned off.
 struct Culling {
     occlusion: bool,
     subpixel: bool,
@@ -171,10 +171,10 @@ struct StructureKeys {
     // The opaque draw order.
     order: Option<StructureKey>,
     // The material variants' pipelines of the opaque and transparent passes,
-    // and of reflection probe faces (decision 043).
+    // and of reflection probe faces.
     variants: Option<(StructureKey, PassKind, PassKind)>,
     probes: Option<(StructureKey, PassKind)>,
-    // Impostor records (decision 048), by the level of detail settings,
+    // Impostor records, by the level of detail settings,
     // whether the frame was GPU-presented and the atlas generation.
     impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
     // Mesh residency: the plan's rebuild and the caster groups' generation
@@ -196,7 +196,7 @@ pub struct Renderer {
     // The canvas, its surface and the depth buffer at its size.
     display: Display,
     depth: DepthTarget,
-    // Terrain's visibility target and its resolves' group (decision 123).
+    // Terrain's visibility target and its resolves' group.
     terrain_ids: Option<terrain_draws::TerrainIds>,
     // Resident meshes, in the shared arena's buffers (or their own when it
     // had no room), and a generation that advances whenever a mesh is
@@ -205,7 +205,7 @@ pub struct Renderer {
     mesh_arena: MeshArena,
     mesh_layout: u64,
     vertex_staging: Vec<Vertex>,
-    // Material textures, samplers and bind groups (decision 031).
+    // Material textures, samplers and bind groups.
     materials: MaterialStore,
     // The frame's draw batches, and the opaque ones' drawing order.
     plan: BatchPlan,
@@ -215,70 +215,68 @@ pub struct Renderer {
     instances: Instances,
     uploads: UploadCache,
     // The mesh shader, the main passes' first group, and the pipelines of
-    // material variants, created with their first draw (decision 049).
+    // material variants, created with their first draw.
     mesh_shader: wgpu::ShaderModule,
     camera: CameraBindings,
     mesh_pipelines: MeshPipelines,
     pipeline_counts: PipelineCounts,
-    // Blending, composition and culling for GPU-presented frames (decision
-    // 014).
+    // Blending, composition and culling for GPU-presented frames.
     gpu_presentation: GpuPresentationPass,
     culling: Culling,
-    // Sun shadows (decision 020).
+    // Sun shadows.
     shadows: ShadowPass,
-    // Local lights (decision 023): binning and the lit mesh pipeline
+    // Local lights: binning and the lit mesh pipeline
     // layouts, created with the first frame that has lights. Lit
     // public-instance pipelines bind an empty group 2.
     lights: Option<LightPass>,
-    // The environment maps surfaces reflect (decision 043), redrawn when the
+    // The environment maps surfaces reflect, redrawn when the
     // sky changes, and the reflection probes holding their cubes after the
     // sky's.
     environment: Environment,
     probes: ProbePass,
-    // Clouds (decision 084): their dome, which the sky and its environment
+    // Clouds: their dome, which the sky and its environment
     // map show.
     clouds: crate::clouds::CloudPass,
-    // The physically based sky (decision 088).
+    // The physically based sky.
     sky: crate::sky::SkyPass,
-    // Virtual geometry (decision 044) and the visibility buffer resolving
-    // its clusters (decision 045).
+    // Virtual geometry and the visibility buffer resolving
+    // its clusters.
     virtual_draws: VirtualDraws,
     visibility: VisibilityDraws,
-    // Impostors (decision 048).
+    // Impostors.
     impostors: ImpostorDraws,
-    // Terrain (decision 051): heights of resident tiles, patches, pipelines.
+    // Terrain: heights of resident tiles, patches, pipelines.
     terrain: crate::terrain::TerrainPass,
-    // Ground cover grown each frame on terrain (decision 056).
+    // Ground cover grown each frame on terrain.
     ground_cover: crate::ground_cover::GroundCoverPass,
-    // Terrains' lakes and rivers (decision 067).
+    // Terrains' lakes and rivers.
     water: crate::water::WaterPass,
-    // Objects placed on terrain (decision 057): their pass, their meshes
+    // Objects placed on terrain: their pass, their meshes
     // and a counter advancing when that set changes, and their draw groups
     // and slots.
     scatter: crate::scatter::ScatterPass,
     scatter_meshes: (BTreeSet<MeshHandle>, u64),
     scatter_draws: scatter_draws::ScatterDraws,
-    // How far switches between how objects show fade this frame
-    // (decisions 104 and 107).
+    // How far switches between how objects show fade this frame.
     switch_fades: frame::SwitchFades,
-    // What placed objects cover around the camera (decision 059).
+    // What placed objects cover around the camera.
     occupancy: crate::occupancy::OccupancyPass,
     // The presentation time of the last frame written, which temporal
-    // frames sway placed objects by for their motion (decision 058).
+    // frames sway placed objects by for their motion.
     last_seconds: Option<f32>,
     // The screen effects, created with the first frame that has one.
     post: Option<PostPass>,
-    // Temporal antialiasing of GPU-presented display frames (decision 017).
+    // Temporal antialiasing of GPU-presented display frames.
     temporal: Option<TemporalPass>,
-    // Transparent surfaces and particles (decision 026): targets, the
+    // Transparent surfaces and particles: targets, the
     // composite and particle pipelines, created with the first frame that
     // draws them.
     transparent: Option<TransparentPass>,
     particles: Option<ParticlePass>,
-    // Decals (decision 039): records and pipelines, created with the first
+    // Decals: records and pipelines, created with the first
     // frame that draws them.
     decals: Option<DecalPass>,
-    // The frame's passes (decision 050), declared anew each frame.
+    // The frame's passes, declared anew each frame.
     graph: crate::render_graph::RenderGraph,
     // Whether the previous frame was GPU-presented; its poses were GPU-written.
     gpu_frame: bool,
@@ -358,17 +356,17 @@ impl Renderer {
             max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
             max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
             // GPU presentation's cull pass binds eight, the WebGPU default;
-            // the visibility buffer's resolve (decision 045) up to eleven
+            // the visibility buffer's resolve up to eleven
             // where the adapter allows them.
             max_storage_buffers_per_shader_stage: adapter_limits
                 .max_storage_buffers_per_shader_stage
                 .max(8),
-            // Terrain tiles (decision 051), impostors and reflection probes
+            // Terrain tiles, impostors and reflection probes
             // take a layer each.
             max_texture_array_layers: adapter_limits.max_texture_array_layers,
             ..wgpu::Limits::downlevel_defaults()
         };
-        // Block-compressed textures (decision 037) in every format the
+        // Block-compressed textures in every format the
         // adapter samples; hosts transcode to one of them.
         let compression = adapter.features()
             & (wgpu::Features::TEXTURE_COMPRESSION_BC
@@ -376,7 +374,7 @@ impl Renderer {
                 | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
         // Indirect draws name their visible-ID regions as first instances
         // where the adapter allows it, so passes bind each ID buffer once.
-        // Bloom (decision 021) keeps its levels in 32 bits where the device
+        // Bloom keeps its levels in 32 bits where the device
         // renders them.
         let features = compression
             | (adapter.features()
@@ -576,7 +574,7 @@ impl Renderer {
         )
     }
 
-    /// Terrain tiles the device's texture array holds (decision 051).
+    /// Terrain tiles the device's texture array holds.
     pub fn terrain_tile_capacity(&self) -> u32 {
         self.display.max_layers
     }
@@ -599,7 +597,7 @@ impl Renderer {
     /// [`Self::render_frame`] for ordinary display frames. With temporal
     /// antialiasing enabled, GPU-presented frames rasterize with a sub-pixel
     /// jitter and blend with the reprojected output of the previous display
-    /// frame (decision 017). Any other frame ends that history.
+    /// frame. Any other frame ends that history.
     pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, JsValue> {
         self.render_inner(frame, true)
     }
@@ -635,7 +633,7 @@ impl Renderer {
         }
     }
 
-    /// Enables occlusion culling of GPU-presented frames (decision 040), on
+    /// Enables occlusion culling of GPU-presented frames, on
     /// by default: frames that cull without an instance budget draw what the
     /// last frame found visible, test every other visible candidate against
     /// a depth pyramid of those depths, then draw what it does not hide.
@@ -651,7 +649,7 @@ impl Renderer {
         self.culling.occlusion
     }
 
-    /// Enables sub-pixel culling of GPU-presented frames (decision 041), on
+    /// Enables sub-pixel culling of GPU-presented frames, on
     /// by default: frames that cull without an instance budget leave
     /// visible instances whose projected bounds cover no pixel center
     /// undrawn. They could produce no fragments, so output is unchanged.
@@ -722,8 +720,7 @@ impl Renderer {
     }
 
     /// Whether pipelines created by earlier frames may still be compiling:
-    /// the GPU has not yet completed the last frame that created some
-    /// (decision 049).
+    /// the GPU has not yet completed the last frame that created some.
     pub fn pipelines_compiling(&self) -> bool {
         self.pipeline_counts.compiling()
     }

@@ -1,4 +1,4 @@
-//! Imports elevation data into a terrain (decision 070): real ground from
+//! Imports elevation data into a terrain: real ground from
 //! GeoTIFF elevation models (Copernicus DEM, USGS 3DEP and the like;
 //! geographic or projected in meters, 16- or 32-bit samples, tiled or in
 //! strips, compressed or not) and heightmaps from other tools (16-bit
@@ -30,7 +30,7 @@
 //! 65535 at `--range` meters. Data whose licence requires credit needs
 //! `--attribution`, which the layer and report carry.
 //!
-//! With `--sea`, the sea (decision 076) stands at `LEVEL` meters: ground at
+//! With `--sea`, the sea stands at `LEVEL` meters: ground at
 //! or within half a meter above it that joins the import's edges becomes
 //! seabed, falling away from the shore toward a shelf 60 meters down (most
 //! elevation models hold the sea as a flat surface), and the scene's sea
@@ -1077,7 +1077,7 @@ fn scene(
         // gullies.
         layers.push(json!({"noise": {"seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}}));
     }
-    // Its streams and rivers, carved and filled (decisions 066 and 067).
+    // Its streams and rivers, carved and filled.
     layers.push(json!({"hydrology": {"level": 4, "channel_area": 400000.0, "depth": 1.5, "width": 8.0, "max_depth": 6.0, "max_width": 40.0}}));
     json!({
         "version": 9,

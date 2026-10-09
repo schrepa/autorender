@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-/// A terrain as its inspector reports it (decision 051).
+/// A terrain as its inspector reports it.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainView {
@@ -17,24 +17,24 @@ pub struct TerrainView {
     /// measured), and meters from the eye it draws to.
     pub level_errors: Vec<f32>,
     pub level_ranges: Vec<f32>,
-    /// Its hydrology bake (decision 066), when its layers hold one.
+    /// Its hydrology bake, when its layers hold one.
     pub hydrology: Option<HydrologyView>,
-    /// Its erosion bake (decision 068), when its layers hold one.
+    /// Its erosion bake, when its layers hold one.
     pub erosion: Option<ErosionView>,
-    /// Its path layers (decision 069), in stack order.
+    /// Its path layers, in stack order.
     pub paths: Vec<PathView>,
-    /// Its edits (decision 080), in order: each one's `id` and its `stamp`,
+    /// Its edits, in order: each one's `id` and its `stamp`,
     /// terrain-local, which a scene saves as a `{"stamp": ...}` layer after
     /// its others.
     pub edits: Vec<TerrainEditView>,
-    /// Its surroundings (decision 094) once they stream, after its bakes:
+    /// Its surroundings once they stream, after its bakes:
     /// how far they reach past its edges along x and z, their level-0 tiles
     /// along a side and sample spacing, and their resident tiles and the
     /// patches drawn.
     pub surroundings: Option<SurroundingsView>,
 }
 
-/// A terrain's surroundings as they stream (decision 094).
+/// A terrain's surroundings as they stream.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SurroundingsView {
@@ -45,7 +45,7 @@ pub struct SurroundingsView {
     pub patches: u32,
 }
 
-/// One terrain edit (decision 080): its id and its stamp (terrain-local).
+/// One terrain edit: its id and its stamp (terrain-local).
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainEditView {
@@ -53,12 +53,12 @@ pub struct TerrainEditView {
     pub stamp: engine_core::terrain_data::Stamp,
 }
 
-/// A path layer (decision 069): its index in the stack, whether its
+/// A path layer: its index in the stack, whether its
 /// profile is baked, and once baked its length (meters), the points its
 /// profile read the ground at, its steepest grade (rise per meter), the
 /// most it cuts into and fills over the ground along its line off bridges
-/// (meters), its bridges (decision 072) and the meters they span, and its
-/// tunnels (decision 073) and the meters they run.
+/// (meters), its bridges and the meters they span, and its
+/// tunnels and the meters they run.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct PathView {
@@ -75,7 +75,7 @@ pub struct PathView {
     pub tunneled: Option<f32>,
 }
 
-/// A terrain's erosion bake (decision 068): whether a bake is in progress
+/// A terrain's erosion bake: whether a bake is in progress
 /// (tiles wait for it), and once done the samples it eroded, its rounds
 /// and the most it wore away and filled (meters).
 #[derive(Serialize)]
@@ -88,10 +88,10 @@ pub struct ErosionView {
     pub highest: Option<f32>,
 }
 
-/// A terrain's hydrology bake (decision 066): whether it is in progress
+/// A terrain's hydrology bake: whether it is in progress
 /// (tiles wait for it), and once done the samples it read, those channels
 /// run through, those of filled pits, the largest area draining through
-/// one (square meters) and the waterfalls rivers drop over (decision 075).
+/// one (square meters) and the waterfalls rivers drop over.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct HydrologyView {
@@ -103,7 +103,7 @@ pub struct HydrologyView {
     pub falls: Option<usize>,
 }
 
-/// The log of runtime deformation's stamps (decision 083).
+/// The log of runtime deformation's stamps.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TracksView {
@@ -114,7 +114,7 @@ pub struct TracksView {
     pub latest: Option<engine_core::Track>,
 }
 
-/// World streaming at the last extraction (decision 086): cells holding
+/// World streaming at the last extraction: cells holding
 /// items and those loaded, cells within range still waiting, items,
 /// entities streamed items hold spawned, the frame's spawns and despawns,
 /// the camera velocity prefetch followed, each grid's cells, and the
@@ -134,7 +134,7 @@ pub struct WorldCellsView {
     pub nearest: Vec<StreamedCellView>,
 }
 
-/// One streaming grid (decision 086): its cells' side, the meters within
+/// One streaming grid: its cells' side, the meters within
 /// which they load (before the settings' distance), the most an item in
 /// it reaches, and its cells and those loaded.
 #[derive(Serialize)]
@@ -147,7 +147,7 @@ pub struct StreamingGridView {
     pub loaded: u32,
 }
 
-/// One streamed cell (decision 086): its grid (0 small, 1 medium, 2
+/// One streamed cell: its grid (0 small, 1 medium, 2
 /// large), its key along x and z, its items and their entities, whether it
 /// is loaded, and its meters from the nearest streaming source.
 #[derive(Serialize)]
@@ -161,7 +161,7 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
-/// A navigation agent (decision 089) in the shape of a scene version 9
+/// A navigation agent in the shape of a scene version 9
 /// `nav_agent` field, with its walk: its status, the destination it was
 /// searched for, its length and points, the next point it walks to, the
 /// meters left and the samples its search took.
@@ -178,7 +178,7 @@ pub struct NavAgentView {
     pub searched: usize,
 }
 
-/// What navigation did at the last fixed tick (decision 089), and the
+/// What navigation did at the last fixed tick, and the
 /// first 16 agents: each one's authored ID if a scene spawned it, status,
 /// position, destination and meters left.
 #[derive(Serialize)]
@@ -193,9 +193,9 @@ pub struct NavAgentsView {
     pub first: Vec<NavAgentRow>,
 }
 
-/// The host's job workers (decision 110): workers running jobs, jobs handed
+/// The host's job workers: workers running jobs, jobs handed
 /// out and not done, jobs submitted, completed, failed and cancelled while
-/// running (decision 112) since the engine started, and keys shared with
+/// running since the engine started, and keys shared with
 /// every worker and their bytes.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -206,12 +206,12 @@ pub struct JobsView {
     pub completed: u64,
     pub failed: u64,
     pub cancelled: u64,
-    /// Parts of outputs handed back before the rest (decision 114), as
+    /// Parts of outputs handed back before the rest, as
     /// tiles' shapes.
     pub parts: u64,
     pub shares: u32,
     pub shared_bytes: u64,
-    /// The host's output cache (decision 116): outputs it handed back
+    /// The host's output cache: outputs it handed back
     /// instead of running their jobs, jobs it lacked, its bytes and,
     /// verifying, outputs that differed from a fresh run.
     pub cache_hits: u64,
@@ -231,7 +231,7 @@ pub struct NavAgentRow {
     pub left: f32,
 }
 
-/// What gameplay changed of the streamed world (decision 087): how many
+/// What gameplay changed of the streamed world: how many
 /// items are removed for good, and the first 64 of their IDs in order.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -240,7 +240,7 @@ pub struct WorldChangesView {
     pub ids: Vec<String>,
 }
 
-/// The streamed item (decision 087) whose root this entity is: its ID,
+/// The streamed item whose root this entity is: its ID,
 /// which despawning the entity removes for good.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -248,7 +248,7 @@ pub struct StreamedIdView {
     pub id: String,
 }
 
-/// A grounded entity (decision 086) in the shape of a scene version 9
+/// A grounded entity in the shape of a scene version 9
 /// `grounded` field, with the level of the terrain tile it last stood on
 /// (`None` before it sampled, or while no tile answered).
 #[derive(Serialize)]
@@ -258,21 +258,20 @@ pub struct GroundedView {
     pub level: Option<u32>,
 }
 
-/// Terrain streaming at the last extraction (decision 051).
+/// Terrain streaming at the last extraction.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainsView {
     pub terrains: u32,
     pub resident_tiles: u32,
     pub loading_tiles: u32,
-    /// Of the resident tiles, those holding their shape alone so far
-    /// (decision 114): drawn with coarser levels' materials while the rest
+    /// Of the resident tiles, those holding their shape alone so far:
+    /// drawn with coarser levels' materials while the rest
     /// loads.
     pub shaped_tiles: u32,
-    /// Tiles the view wants that wait while the camera moves fast (decision
-    /// 115).
+    /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
-    /// Tiles kept in memory after the view left them (decision 116) and
+    /// Tiles kept in memory after the view left them and
     /// their bytes, tiles returned from there since terrains started, and
     /// tiles generating ahead of the view.
     pub cached_tiles: u32,
@@ -280,25 +279,24 @@ pub struct TerrainsView {
     pub restored_tiles: u64,
     pub idle_tiles: u32,
     /// Tiles that generated in bands of rows on several workers since
-    /// terrains started (decision 117).
+    /// terrains started.
     pub banded_tiles: u64,
     pub dropped_tiles: u32,
     pub patches: u32,
     pub fallback_patches: u32,
-    /// Terrains whose bakes (decisions 066 and 068) are in progress.
+    /// Terrains whose bakes are in progress.
     pub baking: u32,
-    /// Bridges terrains' roads span (decision 072), tunnels they bore
-    /// (decision 073), and waterfalls their rivers drop over (decision 075).
+    /// Bridges terrains' roads span, tunnels they bore,
+    /// and waterfalls their rivers drop over.
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
-    /// Of the resident tiles and patches, those of terrains' surroundings
-    /// (decision 094).
+    /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
 }
 
-/// An animation player (decision 035) in the shape of a scene version 8
+/// An animation player in the shape of a scene version 8
 /// `animation` field, with its clip's duration and its targets.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
@@ -318,7 +316,7 @@ pub struct AnimationPlayerView {
     pub targets: Vec<Option<String>>,
 }
 
-/// A decal (decision 039) in the shape of a scene version 8 `decal` field
+/// A decal in the shape of a scene version 8 `decal` field
 /// (`engine_scene::SceneDecal::from_runtime`), with whether its material is
 /// resident.
 #[derive(Serialize)]
@@ -333,7 +331,7 @@ pub struct DecalView {
     pub fade_degrees: f32,
 }
 
-/// A spline mesh (decision 071) in the shape of a scene version 9 `spline`
+/// A spline mesh in the shape of a scene version 9 `spline`
 /// field (`engine_scene::SceneSpline::from_runtime`), and what it built:
 /// the curve's length in meters, the copies of its mesh along it, its
 /// chunks and their vertices, or why it built nothing.
@@ -352,7 +350,7 @@ pub struct SplineMeshView {
     pub error: Option<String>,
 }
 
-/// A skin (decision 036): its joints' authored entity IDs.
+/// A skin: its joints' authored entity IDs.
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SkinView {
@@ -415,7 +413,7 @@ pub struct PresentationStateView {
     pub mode: PresentationModeView,
     /// Actual fraction used at the last extraction; current mode uses one.
     pub alpha: f32,
-    /// The last extraction was blended on the GPU (decision 014) and CPU
+    /// The last extraction was blended on the GPU and CPU
     /// presented poses still hold earlier values. Inspecting PresentedTransform
     /// materializes that frame first while its inputs are unchanged.
     pub gpu_pending: bool,
@@ -467,9 +465,9 @@ pub struct Mesh3dView {
     pub local_bounds: Option<MeshBoundsView>,
     pub color: Option<[f32; 4]>,
     /// Fraction of light behind the surface it covers; below 1 it draws
-    /// transparent (decision 026).
+    /// transparent.
     pub opacity: Option<f32>,
-    /// The material's response to light (decision 019).
+    /// The material's response to light.
     pub surface: Option<SurfaceView>,
     /// None denotes an untextured material; false denotes a missing dependency.
     pub texture_alive: Option<bool>,
@@ -543,8 +541,7 @@ pub struct CollisionWorldView {
     /// Reserved collision cache payload; not total process memory.
     pub cache_bytes: usize,
     pub complete: bool,
-    /// Placed objects colliding within terrains' collision radius
-    /// (decision 064).
+    /// Placed objects colliding within terrains' collision radius.
     pub placed_colliders: usize,
     pub limits: CollisionLimitsView,
 }

@@ -1,6 +1,6 @@
 //! What the per-feature extractions (lights, particles, decals and
 //! reflection probes) share: where a frame reads world poses, and their
-//! nearest-wins budgets (decision 029).
+//! nearest-wins budgets.
 
 use bevy_ecs::prelude::{Entity, World};
 use glam::Mat4;

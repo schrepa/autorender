@@ -1,4 +1,4 @@
-//! Automatic levels of detail (decision 047): coarser index lists of a mesh
+//! Automatic levels of detail: coarser index lists of a mesh
 //! over its own vertices, each simplified from the last by [`simplify`] with
 //! meshoptimizer's recommended chain settings, then an empty level, and the
 //! geometric error each may show in mesh units. Renderers draw the coarsest

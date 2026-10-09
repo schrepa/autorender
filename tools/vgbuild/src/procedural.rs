@@ -1,5 +1,5 @@
 //! Deterministic procedural high-poly meshes for the Stress Lab's dense
-//! scene (decision 044): a displaced boulder, a fluted column and a terrain
+//! scene: a displaced boulder, a fluted column and a terrain
 //! tile, each hundreds of thousands of triangles.
 
 use std::collections::HashMap;

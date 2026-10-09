@@ -1,4 +1,4 @@
-//! Virtual geometry (decision 044): a mesh as a cluster level-of-detail
+//! Virtual geometry: a mesh as a cluster level-of-detail
 //! hierarchy in a GPU-ready layout.
 //!
 //! An `EVG1` file is little-endian 32-bit words: a header, the bounding
@@ -778,7 +778,7 @@ impl VirtualMesh {
 }
 
 /// Octahedral snorm16 coordinates of a unit normal, as renderers encode
-/// them (decision 032).
+/// them.
 pub fn octahedral_encode(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
     let length = x.abs() + y.abs() + z.abs();
@@ -797,7 +797,7 @@ pub fn octahedral_encode(normal: [f32; 3]) -> [i16; 2] {
 }
 
 /// The unit normal of octahedral snorm16 coordinates, as renderers decode
-/// them (decision 032).
+/// them.
 pub fn octahedral_normal(x: i16, y: i16) -> Vec3 {
     let x = engine_math::clamp(f32::from(x) / 32767.0, -1.0, 1.0);
     let y = engine_math::clamp(f32::from(y) / 32767.0, -1.0, 1.0);

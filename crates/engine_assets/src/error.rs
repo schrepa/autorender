@@ -16,7 +16,7 @@ pub enum AssetError {
     InvalidUv {
         vertex: usize,
     },
-    /// An optional vertex attribute (decision 034) of the wrong length.
+    /// An optional vertex attribute of the wrong length.
     AttributeCount {
         attribute: &'static str,
         expected: usize,
@@ -40,7 +40,7 @@ pub enum AssetError {
     InvalidSurface {
         field: &'static str,
     },
-    /// A texture map parameter outside its range (decision 031).
+    /// A texture map parameter outside its range.
     InvalidMaterialMap {
         field: &'static str,
     },
@@ -58,15 +58,15 @@ pub enum AssetError {
     },
     InvalidTextureHandle,
     InvalidMaterialHandle,
-    /// An animation clip or channel breaking a rule (decision 035).
+    /// An animation clip or channel breaking a rule.
     InvalidAnimation {
         reason: &'static str,
     },
-    /// Block-compressed texture levels breaking a rule (decision 037).
+    /// Block-compressed texture levels breaking a rule.
     InvalidCompressedTexture {
         reason: &'static str,
     },
-    /// A virtual mesh file breaking a rule (decision 044).
+    /// A virtual mesh file breaking a rule.
     InvalidVirtualMesh {
         reason: &'static str,
     },

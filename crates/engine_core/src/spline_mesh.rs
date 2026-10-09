@@ -1,4 +1,4 @@
-//! Spline meshes (decision 071): one mesh repeated end to end and bent
+//! Spline meshes: one mesh repeated end to end and bent
 //! along a curve, for bridges' decks, walls, fences, rails and pipes. The
 //! curve is a centripetal Catmull-Rom spline through the component's
 //! points; copies of the mesh lie along it, stretched so a whole number of
@@ -24,7 +24,7 @@ pub const MAX_SPLINE_POINTS: usize = 4096;
 /// Meters between the points the curve is evaluated at.
 const STEP: f32 = 0.5;
 
-/// A mesh bent along a curve through `points` (decision 071), in the
+/// A mesh bent along a curve through `points`, in the
 /// entity's space: 2 to 4096 of them, joined by a centripetal Catmull-Rom
 /// spline. Copies of `mesh` lie end to end along it, the mesh's x axis
 /// along the curve, its y up and its z across, each stretched along x so a
@@ -39,7 +39,7 @@ pub struct SplineMesh {
     pub material: MaterialHandle,
 }
 
-/// What a spline mesh built (decision 071): its chunks' entities and meshes,
+/// What a spline mesh built: its chunks' entities and meshes,
 /// the curve's length, the copies along it and their vertices, or why it
 /// built nothing.
 #[derive(Component, Clone, Debug, Default)]

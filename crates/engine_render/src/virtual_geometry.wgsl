@@ -1,4 +1,4 @@
-// Virtual geometry (decision 044): each instance of a virtual mesh in a view
+// Virtual geometry: each instance of a virtual mesh in a view
 // selects the clusters it draws there. Views are the camera's and those of
 // the shadow maps drawn every frame; one pass selects for all of them. An
 // instance's bounding volume hierarchy is walked one level per dispatch,
@@ -12,12 +12,11 @@
 // per material, are drawn 128 triangles a cluster by the vertex shaders of
 // `meshes.wgsl`, and each shadow view's bin by `vs_shadow` below.
 //
-// Frames culling occluded instances (decision 040) draw in two phases. The
+// Frames culling occluded instances draw in two phases. The
 // camera's clusters that the last frame's depth pyramid hides wait in a
 // retest list; after phase one and this frame's pyramid, those it does not
 // hide go to phase two's bins, so output stays what it would be without the
-// test. Clusters whose bounds cover no pixel center are left undrawn
-// (decision 041).
+// test. Clusters whose bounds cover no pixel center are left undrawn.
 //
 // Pages stream: a group draws only while it is resident (its pages, and
 // every coarser group made from it); otherwise the clusters it was made
@@ -25,7 +24,7 @@
 //
 // Every view but the kept shadow map's projects errors as the camera sees
 // them, so shadow maps cast the surfaces the camera draws and nothing
-// shadows itself for want of the same detail. The kept map (decision 020)
+// shadows itself for want of the same detail. The kept map
 // holds still casters whatever the camera sees: its view projects every
 // error from beyond any distance, keeping its clusters within half its
 // texel, the error its other casters draw with. A shadow view projects distances below the nearest of its
@@ -148,7 +147,7 @@ struct Rows {
 @group(0) @binding(15) var<storage, read_write> dispatch: array<u32>;
 // Per bin: vertices, instances, first vertex, first instance.
 @group(0) @binding(16) var<storage, read_write> draw_args: array<u32>;
-// The depth pyramid of occlusion culling (decision 040): the last frame's
+// The depth pyramid of occlusion culling: the last frame's
 // during selection, this frame's when retesting.
 @group(0) @binding(19) var depth_pyramid: texture_2d<f32>;
 // Clusters waiting for this frame's pyramid: visible ID, cluster, phase-two
@@ -176,8 +175,7 @@ const BINS: u32 = 12u;
 const TEST_PREVIOUS: u32 = 1u;
 const TEST_SUBPIXEL: u32 = 2u;
 // Pixels the projected bounds are widened by before looking for pixel
-// centers, and the relative depth margin of a hidden box: presentation's
-// (decisions 040 and 041).
+// centers, and the relative depth margin of a hidden box: presentation's.
 const SUBPIXEL_MARGIN: f32 = 0.0625;
 const HIDDEN_SCALE: f32 = 0.9999847412109375;
 // Exact hex literal: browsers reject decimal spellings above f32::MAX.
@@ -263,7 +261,7 @@ fn project_box(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) ->
     return projected;
 }
 
-// Whether the box `low` to `high` covers no pixel center (decision 041):
+// Whether the box `low` to `high` covers no pixel center:
 // its screen rectangle, widened by SUBPIXEL_MARGIN, holds none on some axis.
 // Boxes reaching the eye plane or far outside the viewport cover some.
 fn covers_no_pixel(low: vec3<f32>, high: vec3<f32>) -> bool {
@@ -282,7 +280,7 @@ fn covers_no_pixel(low: vec3<f32>, high: vec3<f32>) -> bool {
 }
 
 // Whether the depth pyramid hides the box `low` to `high` projected by
-// `clip_from_world` (presentation's test, decision 040): its nearest depth
+// `clip_from_world` (presentation's test): its nearest depth
 // lies beyond the farthest depth of every pyramid texel its rectangle
 // touches. Boxes reaching the eye plane, or too large, are not hidden.
 fn hidden(clip_from_world: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
@@ -585,7 +583,7 @@ fn bin_args(@builtin(global_invocation_id) id: vec3<u32>) {
     draw_args[id.x * 4u + 3u] = 0u;
 }
 
-// Depth-only drawing of a shadow view's bin (decision 020): each selected
+// Depth-only drawing of a shadow view's bin: each selected
 // cluster's triangles, posed and projected into the map, casters between the
 // sun and the map's near plane flattened onto it.
 

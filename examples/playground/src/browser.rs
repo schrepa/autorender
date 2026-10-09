@@ -72,52 +72,52 @@ impl PlaygroundGame {
         self.app.set_tick_pipelining(enabled);
     }
 
-    /// Temporal antialiasing of ordinary GPU-presented frames (decision 017);
+    /// Temporal antialiasing of ordinary GPU-presented frames;
     /// see `BrowserApp::set_temporal_antialiasing`.
     pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
         self.app.set_temporal_antialiasing(enabled);
     }
 
-    /// Loading work in place of a frame while the GPU compiles pipelines
-    /// (decision 099); see `BrowserApp::work`.
+    /// Loading work in place of a frame while the GPU compiles pipelines;
+    /// see `BrowserApp::work`.
     pub fn work(&mut self, width: u32, height: u32) {
         self.app.work(width, height);
     }
 
-    /// Terrain loading between frames (decision 108); see
+    /// Terrain loading between frames; see
     /// `BrowserApp::work_between_frames`.
     pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
         self.app.work_between_frames(milliseconds)
     }
 
-    /// Workers the page runs jobs on (decision 110); see
+    /// Workers the page runs jobs on; see
     /// `BrowserApp::set_job_workers`.
     pub fn set_job_workers(&mut self, workers: u32) {
         self.app.set_job_workers(workers);
     }
 
-    /// Shares and jobs to hand workers (decision 110); see
+    /// Shares and jobs to hand workers; see
     /// `BrowserApp::take_jobs`.
     pub fn take_jobs(&mut self) -> JsValue {
         self.app.take_jobs().into()
     }
 
-    /// A worker's output of job `id` (decision 110).
+    /// A worker's output of job `id`.
     pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
         self.app.complete_job(id, output);
     }
 
-    /// Job `id` failed on its worker (decision 110).
+    /// Job `id` failed on its worker.
     pub fn fail_job(&mut self, id: f64, error: String) {
         self.app.fail_job(id, error);
     }
 
-    /// A part of job `id`'s output from its worker (decision 114).
+    /// A part of job `id`'s output from its worker.
     pub fn part_job(&mut self, id: f64, part: Vec<u8>) {
         self.app.part_job(id, part);
     }
 
-    /// The page's job output cache counters (decision 116).
+    /// The page's job output cache counters.
     pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
         self.app.report_job_cache(hits, misses, bytes, mismatches);
     }

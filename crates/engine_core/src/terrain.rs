@@ -1,27 +1,27 @@
-//! Terrain (decision 051): heightfields whose tiles stream around the camera,
+//! Terrain: heightfields whose tiles stream around the camera,
 //! drawn in continuous level of detail and sampled by queries and collision.
 //!
 //! An entity's [`Terrain`] describes one: where it lies, its tile pyramid,
 //! where its tiles come from (generated from a layer stack, or read from an
-//! `ETR1` file by byte ranges) and its surface (decision 054): the rules
+//! `ETR1` file by byte ranges) and its surface: the rules
 //! choosing each sample's materials and how those look. The [`Terrains`] resource
 //! keeps every terrain's resident tiles. Each extraction streams toward the
 //! camera: the coarsest levels stay resident everywhere, so the whole
 //! terrain always draws; finer levels load nearest and ahead of the camera
 //! first, and level-0 tiles load around the camera and [`TerrainFocus`]
 //! entities for collision. Generating, decoding and baking share a frame's
-//! work time (decision 099), larger until the camera's view first loads
+//! work time, larger until the camera's view first loads
 //! whole than after; past a tile budget or the device's capacity the least
 //! important tiles drop and count as dropped. Frames list each terrain's
 //! resident tiles and the patches the camera draws in
 //! [`RenderSnapshot::terrain`].
 //!
-//! Where the host runs workers (decision 110), terrains bake and generate
+//! Where the host runs workers, terrains bake and generate
 //! tiles on them instead: frames share each terrain's layers with them,
 //! hand them the most important missing tiles and make the tiles they
 //! finish resident, which takes frames little time.
 //!
-//! Tiles load in the order the view needs them (decision 112): the pinned
+//! Tiles load in the order the view needs them: the pinned
 //! levels; the tiles the view draws and shows, with those under focus
 //! entities; the tiles it draws out of sight, then collision's; those that
 //! only shade what it shows; where the eye is headed; the rest. Distances
@@ -84,28 +84,28 @@ pub enum TerrainSource {
     },
 }
 
-/// How a terrain's ground looks (decision 054): the rules choosing each
+/// How a terrain's ground looks: the rules choosing each
 /// sample's materials (its biomes), and how each material looks, in the
 /// rules' order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainSurface {
     pub rules: Arc<BiomeRules>,
     pub materials: Vec<SurfaceMaterial>,
-    /// What the rules' placement layers stand on the terrain (decision
-    /// 057), in the rules' order of asset IDs.
+    /// What the rules' placement layers stand on the terrain,
+    /// in the rules' order of asset IDs.
     pub assets: Vec<PlacementAsset>,
-    /// The material its roads' bridges (decision 072) draw with; without
+    /// The material its roads' bridges draw with; without
     /// one, a weathered stone.
     pub bridge: Option<MaterialHandle>,
 }
 
-/// An object placement layers stand on a terrain (decision 057): the mesh
+/// An object placement layers stand on a terrain: the mesh
 /// it draws and the material it draws with, the coarser meshes it draws at
 /// a distance, finest first (without them, the mesh's automatic levels of
-/// detail, decision 047), how far it sways in the wind (decision 058):
+/// detail), how far it sways in the wind:
 /// meters at ten meters up in full wind, its bend growing with the square
-/// of the height, 0 (rigid) to 10, and its objects' collider (decision
-/// 064), if they collide.
+/// of the height, 0 (rigid) to 10, and its objects' collider,
+/// if they collide.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
@@ -115,11 +115,11 @@ pub struct PlacementAsset {
     pub collider: Option<PlacedCollider>,
 }
 
-/// The collider of a placement asset's objects (decision 064), in the
+/// The collider of a placement asset's objects, in the
 /// asset's mesh space at scale 1: its primitive about `center`, and the
 /// collision layers the objects belong to and collide with. Objects within
-/// terrains' collision radius collide; those standing far away (decision
-/// 061) never do.
+/// terrains' collision radius collide; those standing far away
+/// never do.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacedCollider {
     pub shape: PlacedShape,
@@ -199,7 +199,7 @@ impl PlacementLod {
 /// or without one a linear `color` and `roughness`; the meters its
 /// textures repeat over; how sharply its height map wins where it blends
 /// with another (0 even, 1 sharpest); whether steep ground projects it
-/// from the side; and the cover growing where it lies (decision 056).
+/// from the side; and the cover growing where it lies.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceMaterial {
     pub material: Option<MaterialHandle>,
@@ -209,11 +209,11 @@ pub struct SurfaceMaterial {
     pub height_contrast: f32,
     pub projection: SurfaceProjection,
     pub cover: Option<crate::Cover>,
-    /// The meters its maps' heights span where relief (decision 082) sinks
+    /// The meters its maps' heights span where relief sinks
     /// the ground between its stones and tufts: 0, flat, to 1. Top
     /// projections only.
     pub relief: f32,
-    /// The meters tracks (decision 083) sink it at most: 0, rigid, to 2.
+    /// The meters tracks sink it at most: 0, rigid, to 2.
     pub deform: f32,
 }
 
@@ -286,8 +286,7 @@ impl TerrainSurface {
         })
     }
 
-    /// The surface with `assets`, one per asset its rules name, in order
-    /// (decision 057).
+    /// The surface with `assets`, one per asset its rules name, in order.
     pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, BiomeError> {
         let fail = |path: String, rule: &str| {
             Err(BiomeError {
@@ -421,7 +420,7 @@ impl Default for TerrainSurface {
     }
 }
 
-/// A heightfield terrain (decision 051) whose first corner (least x and z)
+/// A heightfield terrain whose first corner (least x and z)
 /// lies at `origin`, heights measured up from it. Its pyramid sets its
 /// level-0 tiles and spacing; its source gives its tiles.
 #[derive(Component, Clone, Debug, PartialEq)]
@@ -432,15 +431,15 @@ pub struct Terrain {
     pub surface: TerrainSurface,
     /// Whether it collides where collision is installed.
     pub collision: bool,
-    /// Edits over its generated layers and their bakes (decision 080), in
+    /// Edits over its generated layers and their bakes, in
     /// order: replacing them regenerates only the tiles under the edits
     /// added or taken away.
     pub edits: Arc<[TerrainEdit]>,
-    /// Ground generated around it to the horizon (decision 094).
+    /// Ground generated around it to the horizon.
     pub surroundings: Option<Surroundings>,
 }
 
-/// Ground generated past a terrain's edges to the horizon (decision 094):
+/// Ground generated past a terrain's edges to the horizon:
 /// a coarser terrain around it from the same layers, its samples four
 /// times as far apart as the terrain's finest, reaching about `reach`
 /// meters past every edge (the terrain's inspection reports how far: its
@@ -512,7 +511,7 @@ impl Surroundings {
     }
 }
 
-/// A terrain's surroundings as they stream (decision 094): how far they
+/// A terrain's surroundings as they stream: how far they
 /// reach past its edges along x and z, their level-0 tiles along a side and
 /// sample spacing, and their resident tiles and the patches drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -524,7 +523,7 @@ pub struct SurroundingsStatus {
     pub patches: u32,
 }
 
-/// One edit of a generated terrain (decision 080): a stamp over its layers
+/// One edit of a generated terrain: a stamp over its layers
 /// and bakes (terrain-local), under an `id` that repeating it with leaves
 /// alone.
 #[derive(Clone, Debug, PartialEq)]
@@ -618,8 +617,7 @@ impl Terrain {
         self
     }
 
-    /// The terrain with ground generated around it to the horizon
-    /// (decision 094).
+    /// The terrain with ground generated around it to the horizon.
     pub fn with_surroundings(mut self, surroundings: Surroundings) -> Self {
         self.surroundings = Some(surroundings);
         self
@@ -631,7 +629,7 @@ impl Terrain {
     }
 }
 
-/// What terrain shows (decision 051): its material, or for development its
+/// What terrain shows: its material, or for development its
 /// levels of detail, normals or tiles and patches.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -644,16 +642,16 @@ pub enum TerrainView {
     Tiles,
     /// Each surface material in its own color, blended as the ground is.
     Materials,
-    /// The share of the sky the ground sees (decision 055), unlit, from
+    /// The share of the sky the ground sees, unlit, from
     /// black (none) to white (all of it).
     Sky,
-    /// How much detail the ground shows (decision 090): green where all
+    /// How much detail the ground shows: green where all
     /// its maps show, yellow where their color alone does, red where their
     /// means stand in, blue where it shows as its cover's canopy.
     Detail,
 }
 
-/// Temporary terrain state for development (decision 051): an eye that
+/// Temporary terrain state for development: an eye that
 /// streaming and level of detail follow instead of the camera's, so agents
 /// can look at the patches it selects from elsewhere, and what terrain
 /// shows. Absent, terrain follows the camera, shaded.
@@ -668,10 +666,10 @@ pub struct TerrainDebug {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerrainFocus;
 
-/// Names a place the camera may be sent to, such as a spawn point
-/// (decision 120): while the view wants nothing, workers generate the
+/// Names a place the camera may be sent to, such as a spawn point:
+/// while the view wants nothing, workers generate the
 /// terrain tiles a camera there wants into memory, as they do ahead of the
-/// camera (decision 116), and those tiles stay there while it is named, so
+/// camera, and those tiles stay there while it is named, so
 /// the camera sent there finds them at once. Each level's tiles within
 /// `reach` times its range, 0 to 8; 2 is what a camera there loads.
 /// Requires version 9.
@@ -707,7 +705,7 @@ impl Default for Viewport {
     }
 }
 
-/// Terrain settings (decision 051). Requires version 9.
+/// Terrain settings. Requires version 9.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "schema",
@@ -737,7 +735,7 @@ pub struct TerrainSettings {
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub samples_per_frame: u32,
     /// Milliseconds a frame works on terrain until the camera's view first
-    /// loads whole (decision 099), and after, 0.1 to 1000 each: loading
+    /// loads whole, and after, 0.1 to 1000 each: loading
     /// takes large slices of frames, play small ones.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
     pub loading_work_ms: f32,
@@ -747,7 +745,7 @@ pub struct TerrainSettings {
     /// tiles load for collision, 0 to 4096.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 4096.0)))]
     pub collision_radius: f32,
-    /// Long sun shadows through each terrain's horizon map (decision 052),
+    /// Long sun shadows through each terrain's horizon map,
     /// with shadows on; shadow maps then draw terrain near the camera only.
     /// Off, terrain casts into the shadow maps alone.
     pub sun_shadows: bool,
@@ -758,55 +756,55 @@ pub struct TerrainSettings {
     /// gives 0.0093).
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 0.2)))]
     pub shadow_softness: f32,
-    /// Ambient light on terrain scaled by how much sky its ground sees
-    /// (decision 055): each terrain's sky visibility map, built once its
+    /// Ambient light on terrain scaled by how much sky its ground sees:
+    /// each terrain's sky visibility map, built once its
     /// finest pinned level is resident, where valleys and hollows see less
     /// sky and take their own light back instead.
     pub sky_visibility: bool,
     /// Texels along a sky visibility map's sides, 64 to 4096 (4 bytes each).
     #[cfg_attr(feature = "schema", schemars(range(min = 64, max = 4096)))]
     pub sky_resolution: u32,
-    /// Meters from the camera within which the ground's relief (decision
-    /// 082) shows, its view rays marching through its materials' heights,
+    /// Meters from the camera within which the ground's relief
+    /// shows, its view rays marching through its materials' heights,
     /// 0 (none) to 200; and the most steps a ray takes, 2 to 64.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 200.0)))]
     pub relief_distance: f32,
     #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 64)))]
     pub relief_steps: u32,
-    /// Ground generated around terrains with surroundings (decision 094)
+    /// Ground generated around terrains with surroundings
     /// streams and draws; off, every terrain ends at its edges.
     pub surroundings: bool,
-    /// Detail lowered while the camera moves fast (decision 115): off by
+    /// Detail lowered while the camera moves fast: off by
     /// default, as it lowers detail in motion on purpose.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub motion_detail: Option<MotionDetail>,
-    /// Bytes of tiles kept in memory after the view leaves them (decision
-    /// 116), about 600 KB each, to return at once when it comes back: the
+    /// Bytes of tiles kept in memory after the view leaves them,
+    /// about 600 KB each, to return at once when it comes back: the
     /// least recently used beyond drop, and 0 keeps none.
     pub cache_bytes: u64,
     /// Bytes of tiles becoming resident in a frame, which the GPU takes in
-    /// that frame (decision 116), about 540 KB a tile: tiles beyond wait for
+    /// that frame, about 540 KB a tile: tiles beyond wait for
     /// the next, though each frame's first arrives whatever its size; at
     /// least 1.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub upload_bytes: u32,
     /// Multiples of each level's range within which workers generate tiles
-    /// ahead of the view into memory while nothing is missing (decision
-    /// 116), 0 to 8; within the keeping reach (2.5) none.
+    /// ahead of the view into memory while nothing is missing,
+    /// 0 to 8; within the keeping reach (2.5) none.
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
     pub idle_reach: f32,
     /// The most bands of rows a tile under the view generates in at once
-    /// on workers the other such tiles leave free (decision 117), 1 (whole
+    /// on workers the other such tiles leave free, 1 (whole
     /// tiles) to 16.
     #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 16)))]
     pub max_bands: u32,
-    /// Tiles' surface materials from the GPU (decision 118): tiles generate
+    /// Tiles' surface materials from the GPU: tiles generate
     /// without control values, which a compute pass gives each as it
     /// uploads, the rules' own but where GPU rounding crosses a threshold;
     /// gameplay reads the rules at the points it asks. Off, the CPU gives
     /// them.
     pub gpu_materials: bool,
-    /// The runtime virtual texture (decision 124): the ground's materials
+    /// The runtime virtual texture: the ground's materials
     /// baked into pages the views ask for, which pixels read in place of
     /// computing them; ground finer than its texels, steep ground and pages
     /// not baked yet compute theirs.
@@ -825,7 +823,7 @@ pub struct TerrainSettings {
     pub virtual_texture_bakes: u32,
 }
 
-/// How terrain loads while the camera moves fast (decision 115): the
+/// How terrain loads while the camera moves fast: the
 /// finest levels' tiles in its view wait, more of them the faster it
 /// moves, and tiles out of its view wait until it settles. The coarsest
 /// pinned levels, collision's tiles and those under focus entities never
@@ -1078,18 +1076,16 @@ pub struct TerrainStats {
     /// Tiles resident now.
     pub resident_tiles: u32,
     /// Tiles being generated, fetched or decoded, and every tile the
-    /// camera's view and collision want that is not resident yet (decision
-    /// 108).
+    /// camera's view and collision want that is not resident yet.
     pub loading_tiles: u32,
     pub missing_tiles: u32,
-    /// Of the resident tiles, those holding their shape alone so far
-    /// (decision 114): heights and holes, drawn with coarser levels'
+    /// Of the resident tiles, those holding their shape alone so far:
+    /// heights and holes, drawn with coarser levels'
     /// materials while the rest loads.
     pub shaped_tiles: u32,
-    /// Tiles the view wants that wait while the camera moves fast (decision
-    /// 115).
+    /// Tiles the view wants that wait while the camera moves fast.
     pub waiting_tiles: u32,
-    /// Tiles kept in memory after the view left them (decision 116) and
+    /// Tiles kept in memory after the view left them and
     /// their bytes, tiles that returned from there since terrains started,
     /// and tiles generating ahead of the view.
     pub cached_tiles: u32,
@@ -1097,7 +1093,7 @@ pub struct TerrainStats {
     pub restored_tiles: u64,
     pub idle_tiles: u32,
     /// Tiles that generated in bands of rows on several workers since
-    /// terrains started (decision 117).
+    /// terrains started.
     pub banded_tiles: u64,
     /// Wanted tiles beyond the tile budget or the device's capacity.
     pub dropped_tiles: u32,
@@ -1105,33 +1101,32 @@ pub struct TerrainStats {
     /// levels not resident yet.
     pub patches: u32,
     pub fallback_patches: u32,
-    /// Terrains whose bakes (decisions 066 and 068) are in progress: they
+    /// Terrains whose bakes are in progress: they
     /// load no tiles until done.
     pub baking: u32,
-    /// Bridges terrains' roads span (decision 072), tunnels they bore
-    /// (decision 073), and waterfalls their rivers drop over (decision 075).
+    /// Bridges terrains' roads span, tunnels they bore,
+    /// and waterfalls their rivers drop over.
     pub bridges: u32,
     pub tunnels: u32,
     pub falls: u32,
-    /// Of the resident tiles and patches, those of terrains' surroundings
-    /// (decision 094).
+    /// Of the resident tiles and patches, those of terrains' surroundings.
     pub surroundings_tiles: u32,
     pub surroundings_patches: u32,
     /// Whether the camera's view has yet to load whole since terrains
-    /// arrived or [`Terrains::begin_loading`] (decision 099): frames work
+    /// arrived or [`Terrains::begin_loading`]: frames work
     /// on terrain for the settings' `loading_work_ms`, then `work_ms`.
     pub loading: bool,
 }
 
-/// A frame's terrain work (decision 099): slices of samples' worth handed
+/// A frame's terrain work: slices of samples' worth handed
 /// out while its time lasts, or a single slice without a clock.
 struct Work {
     slice: u64,
     clock: Option<fn() -> f64>,
     end: f64,
-    /// Bytes tiles may still bring the GPU this frame (decision 116).
+    /// Bytes tiles may still bring the GPU this frame.
     upload: std::cell::Cell<u64>,
-    /// The most bands a tile under the view splits into (decision 117).
+    /// The most bands a tile under the view splits into.
     bands: usize,
 }
 
@@ -1157,7 +1152,7 @@ impl Work {
     }
 
     /// Whether tiles may still become resident within the frame's upload
-    /// budget (decision 116).
+    /// budget.
     fn uploads(&self) -> bool {
         self.upload.get() > 0
     }
@@ -1172,9 +1167,9 @@ impl Work {
 /// time from slices of `budget`: generated after the terrain's bakes,
 /// decoded, or requested and decoded once delivered; `target` is every tile
 /// it loads and `keep` every tile it keeps. Frames load what they find
-/// missing, and hosts what is left between frames (decision 108). Where
-/// `slots` has workers, they bake and generate instead (decision 110), each
-/// tile at its job priority (decision 112). Returns whether a bake is still
+/// missing, and hosts what is left between frames. Where
+/// `slots` has workers, they bake and generate instead, each
+/// tile at its job priority. Returns whether a bake is still
 /// in progress, which nothing loads behind.
 #[allow(clippy::too_many_arguments)]
 fn load_tiles(
@@ -1190,9 +1185,9 @@ fn load_tiles(
     let pyramid = state.terrain.pyramid;
     match state.terrain.source.clone() {
         TerrainSource::Generated(authored) => {
-            // Bakes (decisions 066 and 068) run before any tile loads,
+            // Bakes run before any tile loads,
             // each reading the layers below it, in stack order: on a
-            // worker where workers run (decision 110), unless one failed
+            // worker where workers run, unless one failed
             // there.
             let layers = state.baked.clone().unwrap_or(authored);
             if let Some(unbaked) = layers.unbaked() {
@@ -1232,9 +1227,9 @@ fn load_tiles(
                 }
                 return true;
             }
-            // Edits (decision 080) stand over every bake.
+            // Edits stand over every bake.
             let layers = state.generation(layers);
-            // Workers generate tiles where they run (decision 110), unless
+            // Workers generate tiles where they run, unless
             // they failed it again and again.
             if let Some(slots) = slots.as_deref_mut()
                 && slots.jobs.workers() > 0
@@ -1282,8 +1277,7 @@ fn load_tiles(
                     break;
                 }
                 let rules = &state.terrain.surface.rules;
-                // Tiles not resident hand out their shape first (decision
-                // 114).
+                // Tiles not resident hand out their shape first.
                 let staged = !state.tiles.contains_key(&key);
                 let materials = state.materials;
                 let job = state.jobs.entry(key).or_insert_with(|| {
@@ -1405,8 +1399,8 @@ fn load_tiles(
     false
 }
 
-/// Workers a frame hands terrain jobs to (decision 110): the jobs, and how
-/// many more it may hand out, of any priority and urgent (decision 112).
+/// Workers a frame hands terrain jobs to: the jobs, and how
+/// many more it may hand out, of any priority and urgent.
 struct JobSlots<'a> {
     jobs: &'a mut Jobs,
     slots: usize,
@@ -1449,7 +1443,7 @@ impl JobSlots<'_> {
     }
 }
 
-/// A terrain's recipe as workers hold it (decision 110): its key, the
+/// A terrain's recipe as workers hold it: its key, the
 /// stack it shares (the layers its tiles generate from, which surroundings
 /// see from afar) and its revision, which its tiles' jobs carry.
 struct SharedRecipe {
@@ -1460,8 +1454,8 @@ struct SharedRecipe {
 }
 
 /// Makes `baked` the layers `state`'s tiles generate from: once every bake
-/// is done, with its roads' bridges (decision 072; collision follows the
-/// revision) and its rivers' waterfalls (decision 075).
+/// is done, with its roads' bridges (collision follows the
+/// revision) and its rivers' waterfalls.
 fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     if baked.unbaked().is_none() {
         state.bridges = baked
@@ -1486,14 +1480,14 @@ fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     state.bake = None;
 }
 
-/// Bakes `layers` over `pyramid` on a worker (decision 110): hands it every
+/// Bakes `layers` over `pyramid` on a worker: hands it every
 /// bake at once, then makes what it baked the layers tiles generate from. A
 /// bake that failed there runs in place instead.
 fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, pyramid: &Pyramid) {
     let Some(id) = state.bake_job else {
         let input = engine_terrain::jobs::bake_input(layers, pyramid);
         let priority = job_priority(URGENT_JOBS, 0);
-        // Hosts may keep the baked layers (decision 116), by the input's
+        // Hosts may keep the baked layers, by the input's
         // hash.
         let identity = content_hash(&input).to_le_bytes().to_vec();
         state.bake_job = Some(jobs.submit_cacheable(BAKE_JOB, input, priority, identity));
@@ -1524,13 +1518,13 @@ fn bake_on_worker(state: &mut TerrainState, jobs: &mut Jobs, layers: &Layers, py
     finish_bake(state, Arc::new(baked));
 }
 
-/// Generates `state`'s missing tiles on workers (decision 110), most
+/// Generates `state`'s missing tiles on workers, most
 /// important first, while the frame may hand out jobs; makes the tiles
 /// workers finished resident, the first at once and the rest within
 /// `work`'s time, when still wanted and generated from the layers tiles
 /// generate from now. Tiles that failed are asked for again later. Jobs
-/// for tiles `keep` no longer holds, or from layers since replaced, stop
-/// (decision 112), and tiles of levels with objects standing far away
+/// for tiles `keep` no longer holds, or from layers since replaced, stop,
+/// and tiles of levels with objects standing far away
 /// arrive without them: jobs of their own place those after, merged into
 /// the tile in the order one pass places them.
 fn generate_on_workers(
@@ -1612,8 +1606,7 @@ fn generate_on_workers(
             .and_then(|bytes| engine_terrain::jobs::tile_output(&bytes).ok());
         match tile {
             Some(tile) if made == revision && target.contains(&key) && tile.key() == key => {
-                // After its shape a tile uploads its control values alone
-                // (decision 116).
+                // After its shape a tile uploads its control values alone.
                 work.upload(if state.shaped.contains(&key) {
                     TILE_ARRAY_BYTES
                 } else {
@@ -1637,7 +1630,7 @@ fn generate_on_workers(
             }
         }
     }
-    // Tiles generating in bands (decision 117) join once every band is
+    // Tiles generating in bands join once every band is
     // done: resident at once with their materials, their objects placed by
     // a job after.
     let joining: Vec<TileKey> = state.banded.keys().copied().collect();
@@ -1696,8 +1689,8 @@ fn generate_on_workers(
         state.stale.remove(&key);
         state.failed.remove(&key);
         if rules.places(key.level, banding.placing) {
-            // Its objects in bands of candidate rows across workers too
-            // (decision 119), joined in order.
+            // Its objects in bands of candidate rows across workers too,
+            // joined in order.
             let rows = rules.place_rows(key, spacing, banding.placing);
             let starts: Vec<(u32, u32)> = rows
                 .iter()
@@ -1746,8 +1739,8 @@ fn generate_on_workers(
         state.insert(tile);
         inserted = true;
     }
-    // Then their objects (decision 117), once every band of them is done
-    // (decision 119), joined in order.
+    // Then their objects, once every band of them is done,
+    // joined in order.
     let placing_keys: Vec<TileKey> = state.placements.keys().copied().collect();
     for key in placing_keys {
         if inserted && work.expired() {
@@ -1805,7 +1798,7 @@ fn generate_on_workers(
         state.insert(Tile::clone(&tile).with_placed(objects));
         inserted = true;
     }
-    // Tiles still generating hand out their shape first (decision 114): it
+    // Tiles still generating hand out their shape first: it
     // draws, with coarser levels' materials, and collides until the whole
     // tile arrives.
     let shaping: Vec<(TileKey, JobId, u64)> = state
@@ -1861,7 +1854,7 @@ fn generate_on_workers(
             }
         }
     }
-    // Tiles generated ahead of need go to memory (decision 116); with tiles
+    // Tiles generated ahead of need go to memory; with tiles
     // missing, or out of the idle reach, their jobs stop.
     let idle: Vec<(TileKey, JobId, u64)> = state
         .idle
@@ -1911,7 +1904,7 @@ fn generate_on_workers(
     );
     wanted.sort_by_key(|&(priority, key, far)| (priority, far, key));
     // Tiles under the view split into bands of rows across the slots the
-    // urgent tiles left share (decision 117): each arrives sooner, though
+    // urgent tiles left share: each arrives sooner, though
     // workers do a little more in all.
     let mut urgent_left = wanted
         .iter()
@@ -1935,7 +1928,7 @@ fn generate_on_workers(
         } else {
             // A tile replacing one resident, as after an edit, comes whole,
             // so its objects standing far away never leave the view; one not
-            // resident hands out its shape first (decision 114).
+            // resident hands out its shape first.
             let resident = state.tiles.contains_key(&key);
             let placing = if rules.places(key.level, Placing::Far)
                 && (!resident || state.shaped.contains(&key))
@@ -1987,7 +1980,7 @@ fn generate_on_workers(
                 }
             }
             let input = engine_terrain::jobs::tile_input(&recipe, key, placing, !resident);
-            // Staged or not, the same tile (decision 116).
+            // Staged or not, the same tile.
             let identity = engine_terrain::jobs::tile_input(&recipe, key, placing, false);
             let id = slots
                 .jobs
@@ -1998,7 +1991,7 @@ fn generate_on_workers(
         }
     }
     // With nothing else to hand out, a job a worker generates the nearest
-    // tiles within the idle reach (decision 116), whole, into memory.
+    // tiles within the idle reach, whole, into memory.
     if missing.is_empty()
         && state.dispatched.is_empty()
         && state.banded.is_empty()
@@ -2028,11 +2021,11 @@ fn generate_on_workers(
     }
 }
 
-/// Shares the recipe workers generate `state`'s tiles from (decision 110)
+/// Shares the recipe workers generate `state`'s tiles from
 /// once its bakes are done, and again whenever the layers its tiles
 /// generate from change: their stack, shared once for every terrain seeing
-/// it, and how its terrain sees it. Shares are named by their content
-/// (decision 116), so jobs reading them are the same bytes in every
+/// it, and how its terrain sees it. Shares are named by their content,
+/// so jobs reading them are the same bytes in every
 /// session; `shares` counts recipes for their revisions, and the key of
 /// the recipe replaced goes to `released`.
 fn share_recipe(
@@ -2048,7 +2041,7 @@ fn share_recipe(
     if layers.unbaked().is_some() {
         return;
     }
-    // Surroundings (decision 094) see their terrain's stack from afar.
+    // Surroundings see their terrain's stack from afar.
     let (stack, view) = match &state.around {
         Some(around) => (
             around.base.clone(),
@@ -2107,7 +2100,7 @@ fn share_recipe(
 }
 
 /// Pushes `key` onto `order` after those of its ancestors not yet there,
-/// coarsest first (decision 108): a tile draws only within its parent, so a
+/// coarsest first: a tile draws only within its parent, so a
 /// finer one loaded first would wait unused, while what stands on the
 /// ground (blades, placed objects) already followed its finer heights.
 fn push_with_ancestors(
@@ -2136,7 +2129,7 @@ fn push_with_ancestors(
 
 /// Frames a failed fetch waits before it is requested again.
 const RETRY_AFTER: u64 = 120;
-/// Tiles failing on workers (decision 110) after which a terrain generates
+/// Tiles failing on workers after which a terrain generates
 /// its own, as when the workers' module does not match the engine's.
 const WORKER_FAILURES: u32 = 8;
 /// Ranges, as multiples of each level's, within which tiles load and stay:
@@ -2144,7 +2137,7 @@ const WORKER_FAILURES: u32 = 8;
 /// patches (their normals), so they load further than they draw.
 const LOAD_REACH: f32 = 2.0;
 const KEEP_REACH: f32 = 2.5;
-/// Tiles also load around where the eye is headed (decision 100): its
+/// Tiles also load around where the eye is headed: its
 /// velocity carried this many seconds on, at most this many meters; the
 /// eye moving farther in a frame jumped there.
 const AHEAD_SECONDS: f32 = 2.0;
@@ -2173,79 +2166,79 @@ struct TerrainState {
     errors: Vec<f32>,
     /// The ranges the last selection used.
     ranges: Vec<f32>,
-    /// The layers tiles generate from once its bakes are done (decisions
-    /// 066 and 068), the bake in progress, and what the last hydrology and
+    /// The layers tiles generate from once its bakes are done,
+    /// the bake in progress, and what the last hydrology and
     /// erosion bakes found.
     baked: Option<Arc<Layers>>,
     bake: Option<TerrainBake>,
     hydrology: Option<HydrologyStats>,
     erosion: Option<ErosionStats>,
-    /// Its roads' bridges (decision 072), terrain-local, once every bake
-    /// is done, and its rivers' waterfalls (decision 075).
+    /// Its roads' bridges, terrain-local, once every bake
+    /// is done, and its rivers' waterfalls.
     bridges: Arc<[Bridge]>,
     falls: Arc<[Fall]>,
-    /// The layers its tiles generate from with its edits over them
-    /// (decision 080), and the baked layers they were made over; and the
+    /// The layers its tiles generate from with its edits over them,
+    /// and the baked layers they were made over; and the
     /// resident tiles under edits since, which draw until regenerated.
     edited: Option<(Arc<Layers>, Arc<Layers>)>,
     stale: HashSet<TileKey>,
-    /// Resident tiles holding their shape alone so far (decision 114):
+    /// Resident tiles holding their shape alone so far:
     /// heights and holes, drawn with coarser levels' materials and collided
     /// with while the rest loads.
     shaped: HashSet<TileKey>,
-    /// For a terrain's surroundings (decision 094), what they were drawn
+    /// For a terrain's surroundings, what they were drawn
     /// from.
     around: Option<Around>,
     /// The tiles the last frame found missing, most important first with
-    /// their jobs' priorities (decision 112), every tile it loads and every
-    /// tile it keeps: what loads between frames (decision 108).
+    /// their jobs' priorities, every tile it loads and every
+    /// tile it keeps: what loads between frames.
     missing: Vec<(TileKey, u32)>,
     target: HashSet<TileKey>,
     keep: HashSet<TileKey>,
-    /// Workers' share (decision 110): the recipe they generate its tiles
+    /// Workers' share: the recipe they generate its tiles
     /// from, the tiles generating there (each one's job, the recipe's
     /// revision it generates from and its priority) and its bakes running
     /// there, unless they failed there; and the tiles that failed there.
     recipe: Option<SharedRecipe>,
     dispatched: HashMap<TileKey, (JobId, u64, u32, Placing)>,
-    /// Resident tiles without their objects standing far away (decision
-    /// 112), with their tiles' priorities, and the jobs placing those, each
+    /// Resident tiles without their objects standing far away,
+    /// with their tiles' priorities, and the jobs placing those, each
     /// with the tile it places on.
     far_wanted: HashMap<TileKey, u32>,
     far_jobs: HashMap<TileKey, (JobId, Arc<Tile>)>,
     bake_job: Option<JobId>,
     bake_inline: bool,
     worker_failures: u32,
-    /// Tiles that left whole (decision 116), kept in memory to return at
+    /// Tiles that left whole, kept in memory to return at
     /// once while the layers they generated from stay, and their bytes.
     cache: HashMap<TileKey, CachedTile>,
     cached_bytes: u64,
     /// Tiles generating ahead of the view on workers while nothing is
-    /// missing (decision 116), for memory: each one's job and the recipe's
+    /// missing, for memory: each one's job and the recipe's
     /// revision it generates from; and the tiles to generate so, nearest
     /// first.
     idle: HashMap<TileKey, (JobId, u64)>,
     ahead: Vec<TileKey>,
     /// The most memory one tile kept took: the room each tile generated
-    /// ahead of need is given (decision 120).
+    /// ahead of need is given.
     tile_bytes: u64,
-    /// Tiles generating in bands of rows on several workers (decision
-    /// 117); tiles their bands made whose objects a job places, each with
+    /// Tiles generating in bands of rows on several workers;
+    /// tiles their bands made whose objects a job places, each with
     /// that job, the recipe's revision, its priority and its placing; and
     /// how many tiles generated so.
     banded: HashMap<TileKey, Banding>,
     placements: HashMap<TileKey, Placements>,
     banded_tiles: u64,
     /// The layers its tiles generate from and its surface's data for the
-    /// GPU from them (decision 118), `None` where the program needs more
+    /// GPU from them, `None` where the program needs more
     /// than the GPU's interpreter holds; and whether its tiles hold control
     /// values, as without GPU materials.
     surface: Option<(Arc<Layers>, Option<Arc<engine_terrain::gpu::SurfaceData>>)>,
     materials: bool,
 }
 
-/// The objects of a tile its bands made (decision 117), placed in bands of
-/// candidate rows (decision 119): the recipe's revision, its priority and
+/// The objects of a tile its bands made, placed in bands of
+/// candidate rows: the recipe's revision, its priority and
 /// placing, and each band's job with its objects once done.
 struct Placements {
     made: u64,
@@ -2254,7 +2247,7 @@ struct Placements {
     jobs: Vec<(JobId, Option<Vec<engine_terrain::Placed>>)>,
 }
 
-/// A tile generating in bands of rows (decision 117): the recipe's revision
+/// A tile generating in bands of rows: the recipe's revision
 /// and the priority it generates at, the objects placed after, and its
 /// bands' jobs, each with its band once done.
 struct Banding {
@@ -2264,9 +2257,8 @@ struct Banding {
     jobs: Vec<(JobId, Option<TileBand>)>,
 }
 
-/// A tile kept in memory after it left the view (decision 116): its bytes
-/// there and the frame it left, or the last a place a game names wanted it
-/// (decision 120).
+/// A tile kept in memory after it left the view: its bytes
+/// there and the frame it left, or the last a place a game names wanted it.
 struct CachedTile {
     tile: Arc<Tile>,
     bytes: u64,
@@ -2274,17 +2266,17 @@ struct CachedTile {
 }
 
 /// Bytes of one of a tile's arrays on the GPU, heights or control values:
-/// what a tile arriving uploads, once or twice (decision 116).
+/// what a tile arriving uploads, once or twice.
 const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
-/// Bytes `tile` holds in memory (decision 116).
+/// Bytes `tile` holds in memory.
 fn memory_bytes(tile: &Tile) -> u64 {
     let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
     let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
     (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
 }
 
-/// What a terrain's surroundings (decision 094) were drawn from: the layers
+/// What a terrain's surroundings were drawn from: the layers
 /// its tiles generate from and its settings for them; and the rectangle of
 /// their own ground (local) the terrain covers.
 struct Around {
@@ -2293,7 +2285,7 @@ struct Around {
     cutout: (Vec2, Vec2),
 }
 
-/// A terrain's bakes (decisions 066 and 068): whether one is in progress,
+/// A terrain's bakes: whether one is in progress,
 /// and what its hydrology and erosion bakes found once done.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TerrainBakes {
@@ -2352,7 +2344,7 @@ impl TerrainState {
     }
 
     /// Whether its tiles hold control values, as `gpu` (the settings' GPU
-    /// materials, decision 118) and its surface allow: generated terrains
+    /// materials) and its surface allow: generated terrains
     /// whose surface the GPU's interpreter holds leave them to the GPU.
     /// Tiles resident when that changes regenerate, drawn until they do.
     fn update_materials(&mut self, gpu: bool) {
@@ -2390,7 +2382,7 @@ impl TerrainState {
     }
 
     /// Its workers' jobs and recipe, for the next frame with workers to
-    /// drop (decision 110) once the state is gone.
+    /// drop once the state is gone.
     fn retire(&self, retired: &mut Retired) {
         retired
             .jobs
@@ -2416,13 +2408,13 @@ impl TerrainState {
     }
 
     /// The id renderers key its tiles by: its entity's bits, the top bit
-    /// flipped for surroundings (decision 094).
+    /// flipped for surroundings.
     fn render_id(&self) -> u64 {
         self.entity.to_bits() ^ (u64::from(self.around.is_some()) << 63)
     }
 
     /// Whether terrain-local `local` lies in the ground surroundings
-    /// (decision 094) leave to the terrain they surround.
+    /// leave to the terrain they surround.
     fn cut_out(&self, local: Vec2) -> bool {
         self.around.as_ref().is_some_and(|around| {
             let (low, high) = around.cutout;
@@ -2430,7 +2422,7 @@ impl TerrainState {
         })
     }
 
-    /// Takes `edits` in place of its own (decision 080): the resident tiles
+    /// Takes `edits` in place of its own: the resident tiles
     /// under any edit added or taken away, and two of their samples beyond,
     /// regenerate over the new stack, drawn as they were until then.
     fn edit(&mut self, edits: Arc<[TerrainEdit]>) {
@@ -2472,8 +2464,7 @@ impl TerrainState {
             .collect();
         self.stale.extend(stale);
         self.jobs.retain(|key, _| !under(key));
-        // Tiles kept in memory under the edits are no longer the ground
-        // (decision 116).
+        // Tiles kept in memory under the edits are no longer the ground.
         let gone: Vec<TileKey> = self
             .cache
             .keys()
@@ -2486,7 +2477,7 @@ impl TerrainState {
         self.revision += 1;
     }
 
-    /// The layers its tiles generate from (decision 080): `base`, its layers
+    /// The layers its tiles generate from: `base`, its layers
     /// with their bakes, with its edits over them.
     fn generation(&mut self, base: Arc<Layers>) -> Arc<Layers> {
         if self.terrain.edits.is_empty() {
@@ -2522,7 +2513,7 @@ impl TerrainState {
             Some(tile) => self.insert(tile),
             None => {
                 self.jobs.insert(key, job);
-                // Its shape draws meanwhile (decision 114).
+                // Its shape draws meanwhile.
                 self.shape(tile);
             }
         }
@@ -2542,14 +2533,14 @@ impl TerrainState {
         true
     }
 
-    /// Whether `key` still loads: not resident, resident under edits since
-    /// (decision 080), or resident with its shape alone (decision 114).
+    /// Whether `key` still loads: not resident, resident under edits since,
+    /// or resident with its shape alone.
     fn loads(&self, key: &TileKey) -> bool {
         !self.tiles.contains_key(key) || self.stale.contains(key) || self.shaped.contains(key)
     }
 
     /// Makes `shape`, a tile's heights and holes alone, resident until the
-    /// whole tile arrives (decision 114), unless its key is resident or no
+    /// whole tile arrives, unless its key is resident or no
     /// coarser resident tile holds materials to draw it with; whether it
     /// did.
     fn shape(&mut self, shape: Tile) -> bool {
@@ -2559,7 +2550,7 @@ impl TerrainState {
         }
         let pyramid = self.terrain.pyramid;
         let mut ancestor = pyramid.parent(key);
-        // The GPU gives shapes their materials (decision 118).
+        // The GPU gives shapes their materials.
         if !self.materials {
             self.shaped.insert(key);
             self.insert(shape);
@@ -2589,8 +2580,7 @@ impl TerrainState {
         self.insert_shared(Arc::new(tile));
     }
 
-    /// [`Self::insert`] for a tile already shared, as one kept in memory
-    /// (decision 116).
+    /// [`Self::insert`] for a tile already shared, as one kept in memory.
     fn insert_shared(&mut self, tile: Arc<Tile>) {
         let key = tile.key();
         let pyramid = self.terrain.pyramid;
@@ -2615,7 +2605,7 @@ impl TerrainState {
     }
 
     /// Keeps `tile`, leaving residency at frame `frame`, in memory
-    /// (decision 116) where it is whole: not its shape alone, not under
+    /// where it is whole: not its shape alone, not under
     /// edits since and not waiting for its objects standing far away.
     fn cache_leaving(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
         if !(self.shaped.contains(&key)
@@ -2627,7 +2617,7 @@ impl TerrainState {
         }
     }
 
-    /// Keeps `tile` in memory (decision 116) as of frame `frame`.
+    /// Keeps `tile` in memory as of frame `frame`.
     fn cache_tile(&mut self, key: TileKey, tile: Arc<Tile>, frame: u64) {
         let bytes = memory_bytes(&tile);
         self.uncache(key);
@@ -2650,8 +2640,8 @@ impl TerrainState {
         Some(cached.tile)
     }
 
-    /// Makes the tiles of `missing` kept in memory resident again
-    /// (decision 116), most important first, within `work`'s upload
+    /// Makes the tiles of `missing` kept in memory resident again,
+    /// most important first, within `work`'s upload
     /// budget; how many.
     fn restore(&mut self, missing: &[(TileKey, u32)], work: &Work) -> u64 {
         let mut restored = 0;
@@ -2689,8 +2679,8 @@ impl TerrainState {
         })
     }
 
-    /// The meters tracks sink the ground at terrain-local `local` at most
-    /// (decision 083): its nearest sample's materials' blend, from the
+    /// The meters tracks sink the ground at terrain-local `local` at most:
+    /// its nearest sample's materials' blend, from the
     /// finest resident tile.
     fn deform(&self, local: Vec2) -> Option<f32> {
         if self.cut_out(local) {
@@ -2702,7 +2692,7 @@ impl TerrainState {
             let tile = self.tiles.get(&key)?;
             let at = (local - pyramid.tile_origin(key)) / tile.spacing();
             let (x, z) = (at.x.round() as i32, at.y.round() as i32);
-            // Tiles whose materials the GPU gives (decision 118): the rules'
+            // Tiles whose materials the GPU gives: the rules'
             // at the sample.
             let control = match (tile.control_at(x, z), &self.surface) {
                 (Some(control), _) => control,
@@ -2729,8 +2719,8 @@ impl TerrainState {
     }
 }
 
-/// Every terrain's resident tiles, streaming state and queries (decision
-/// 051). Inserted by default; terrains stream during extraction.
+/// Every terrain's resident tiles, streaming state and queries.
+/// Inserted by default; terrains stream during extraction.
 #[derive(Resource, Default)]
 pub struct Terrains {
     entries: Vec<TerrainState>,
@@ -2738,12 +2728,12 @@ pub struct Terrains {
     frame: u64,
     stats: TerrainStats,
     requests: Vec<TileRequest>,
-    /// Milliseconds now, from the host (decision 099); without one, a
+    /// Milliseconds now, from the host; without one, a
     /// frame works a slice.
     clock: Option<fn() -> f64>,
-    /// The eye last streamed toward and its velocity (decision 100), the
+    /// The eye last streamed toward and its velocity, the
     /// last frame's seconds, and the seconds since the eye last moved faster
-    /// than the settings' motion detail speed (decision 115), `None` when
+    /// than the settings' motion detail speed, `None` when
     /// it has not since they asked for it.
     last_eye: Option<Vec3>,
     velocity: Vec3,
@@ -2751,14 +2741,14 @@ pub struct Terrains {
     fast_ago: Option<f32>,
     /// Whether the camera's view has loaded whole since terrains arrived.
     loaded: bool,
-    /// Workers' share (decision 110): how many ran at the last frame, the
+    /// Workers' share: how many ran at the last frame, the
     /// stacks shared with them and keys handed out so far, and the jobs and
     /// recipes of terrains gone, to drop.
     workers: u32,
     stacks: Vec<(Arc<Layers>, String)>,
     shares: u64,
     retired: Retired,
-    /// Tiles returned from memory since terrains started (decision 116);
+    /// Tiles returned from memory since terrains started;
     /// and bytes of the frame's upload budget left for work between
     /// frames, and spent there since the last frame.
     restored: u64,
@@ -2766,7 +2756,7 @@ pub struct Terrains {
     between: u64,
 }
 
-/// The workers' jobs and recipes of terrains gone (decision 110).
+/// The workers' jobs and recipes of terrains gone.
 #[derive(Default)]
 struct Retired {
     jobs: Vec<JobId>,
@@ -2798,7 +2788,7 @@ impl Terrains {
             .map(|sample| sample.height)
     }
 
-    /// The meters tracks (decision 083) sink the ground under `(x, z)` at
+    /// The meters tracks sink the ground under `(x, z)` at
     /// most, from its surface materials' [`SurfaceMaterial::deform`]; `None`
     /// where no tile with a surface is resident.
     pub fn deform_at(&self, x: f32, z: f32) -> Option<f32> {
@@ -2840,7 +2830,7 @@ impl Terrains {
         self.stats
     }
 
-    /// `entity`'s surroundings (decision 094) while they stream: they start
+    /// `entity`'s surroundings while they stream: they start
     /// once its bakes are done.
     pub fn surroundings(&self, entity: Entity) -> Option<SurroundingsStatus> {
         let state = self
@@ -2857,7 +2847,7 @@ impl Terrains {
         })
     }
 
-    /// Follows each terrain's surroundings (decision 094): drawn, once its
+    /// Follows each terrain's surroundings: drawn, once its
     /// bakes are done, from the layers its tiles generate from, and dropped
     /// with it or when those or its settings for them change. They stream
     /// after every terrain, which take the frame's work first.
@@ -2950,8 +2940,8 @@ impl Terrains {
     }
 
     /// The layers `entity`'s tiles generate from: its own, with their
-    /// hydrology baked once it is (decision 066) and its edits over them
-    /// (decision 080); `None` for terrains read from files.
+    /// hydrology baked once it is and its edits over them;
+    /// `None` for terrains read from files.
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
         let state = self
             .entries
@@ -2976,7 +2966,7 @@ impl Terrains {
     }
 
     /// The shortest walk over `entity`'s generated terrain from world
-    /// `from` to `to` (x and z) as `options` walk (decision 081): around the
+    /// `from` to `to` (x and z) as `options` walk: around the
     /// placed objects that collide on its resident tiles, their footprints
     /// widened by the agent's radius, its points world and following the
     /// ground. `None` for terrains read from files and where no walk
@@ -3015,8 +3005,8 @@ impl Terrains {
     }
 
     /// A walk over the generated terrain under world `from` and `to` (x
-    /// and z) as `options` walk, to search in budgeted steps (decision
-    /// 089): the terrain, its origin, which the search's terrain-local
+    /// and z) as `options` walk, to search in budgeted steps:
+    /// the terrain, its origin, which the search's terrain-local
     /// points are from, and the search. `None` unless both ends lie on one
     /// generated terrain.
     pub fn walk_search(
@@ -3039,7 +3029,7 @@ impl Terrains {
         Some((state.entity, origin, search))
     }
 
-    /// The input of a walk job (decision 110) over the generated terrain
+    /// The input of a walk job over the generated terrain
     /// under world `from` and `to` (x and z) as `options` walk, once workers
     /// hold its recipe for the layers its tiles generate from now: the
     /// terrain, its origin, which the walk's terrain-local points are from,
@@ -3068,7 +3058,7 @@ impl Terrains {
     }
 
     /// The terrain both world `from` and `to` (x and z) lie on, which walks
-    /// between them cross: never surroundings (decision 094), which no one
+    /// between them cross: never surroundings, which no one
     /// walks.
     fn walked(&self, from: Vec2, to: Vec2) -> Option<&TerrainState> {
         self.entries.iter().find(|state| {
@@ -3114,7 +3104,7 @@ impl Terrains {
 
     /// The cheapest route over `entity`'s generated terrain from world
     /// `from` to `to` (x and z), as [`engine_terrain::route`] finds it over
-    /// its layers with their bakes (decision 069): its points are
+    /// its layers with their bakes: its points are
     /// terrain-local, as path layers name them. `None` for terrains read
     /// from files, before their bakes are done, and where no route keeps
     /// within the steepest grade. Its work grows with the square of the
@@ -3147,7 +3137,7 @@ impl Terrains {
         )
     }
 
-    /// `entity`'s bakes (decisions 066 and 068): whether one is in
+    /// `entity`'s bakes: whether one is in
     /// progress, and what its hydrology and erosion bakes found.
     pub fn bakes(&self, entity: Entity) -> TerrainBakes {
         self.entries
@@ -3194,7 +3184,7 @@ impl Terrains {
     }
 
     /// Advances whenever any terrain's resident tiles change.
-    /// The bridges of `entity`'s roads (decision 072), terrain-local, once
+    /// The bridges of `entity`'s roads, terrain-local, once
     /// its bakes are done.
     pub fn bridges(&self, entity: Entity) -> &[Bridge] {
         self.entries
@@ -3215,7 +3205,7 @@ impl Terrains {
         })
     }
 
-    /// The waterfalls of `entity`'s rivers (decision 075), terrain-local,
+    /// The waterfalls of `entity`'s rivers, terrain-local,
     /// once its bakes are done.
     pub fn falls(&self, entity: Entity) -> &[Fall] {
         self.entries
@@ -3231,7 +3221,7 @@ impl Terrains {
             .map(|state| (state.entity, state.falls.clone(), state.terrain.origin))
     }
 
-    /// Colliding terrains' bridges, with their origins (decision 072).
+    /// Colliding terrains' bridges, with their origins.
     pub fn colliding_bridges(&self) -> impl Iterator<Item = (Entity, Vec3, &[Bridge])> {
         self.entries
             .iter()
@@ -3252,14 +3242,14 @@ impl Terrains {
         self.device_tiles = tiles;
     }
 
-    /// The clock frames time their terrain work by (decision 099):
+    /// The clock frames time their terrain work by:
     /// milliseconds, from any origin. Hosts without one work a slice of
     /// `samples_per_frame` a frame.
     pub fn set_clock(&mut self, clock: fn() -> f64) {
         self.clock = Some(clock);
     }
 
-    /// Whether the camera's view has yet to load whole (decision 099);
+    /// Whether the camera's view has yet to load whole;
     /// never without terrains.
     pub fn loading(&self) -> bool {
         !self.loaded && self.entries.iter().any(|state| state.around.is_none())
@@ -3272,13 +3262,13 @@ impl Terrains {
     }
 
     /// Whether the last frame found tiles to load: hosts then load them in
-    /// time frames leave free (decision 108).
+    /// time frames leave free.
     pub fn streaming(&self) -> bool {
         self.entries.iter().any(|state| !state.missing.is_empty())
     }
 
     /// Loads, for `milliseconds`, the tiles the last frame found missing,
-    /// most important first, between frames (decision 108): frames leave
+    /// most important first, between frames: frames leave
     /// time free while the GPU draws them, which terrain otherwise only
     /// takes a few milliseconds of. Patches are selected anew with the next
     /// frame. Returns whether tiles are still to load; nothing without a
@@ -3313,7 +3303,7 @@ impl Terrains {
                 .into_iter()
                 .filter(|(key, _)| state.loads(key))
                 .collect();
-            // Tiles kept in memory return at once (decision 116).
+            // Tiles kept in memory return at once.
             if !state.cache.is_empty() {
                 self.restored += state.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
@@ -3351,14 +3341,14 @@ impl Terrains {
                 break;
             }
         }
-        // What arrived uploads with the next frame (decision 116).
+        // What arrived uploads with the next frame.
         self.between += self.upload_left - work.upload.get();
         self.upload_left = work.upload.get();
         remaining
     }
 
-    /// Where `eye`, moved since the last frame `seconds` ago, is headed
-    /// (decision 100): its velocity, smoothed over frames, carried
+    /// Where `eye`, moved since the last frame `seconds` ago, is headed:
+    /// its velocity, smoothed over frames, carried
     /// `AHEAD_SECONDS` on, at most `AHEAD_MAX` meters; the eye itself after
     /// a jump.
     fn heading(&mut self, eye: Vec3, seconds: f32) -> Vec3 {
@@ -3370,9 +3360,8 @@ impl Terrains {
             0.0
         };
         if moved.length() > JUMP {
-            // A jump loads the view again at the loading budget (decision
-            // 108), as the first view loads, unless workers load it
-            // (decision 110).
+            // A jump loads the view again at the loading budget,
+            // as the first view loads, unless workers load it.
             self.velocity = Vec3::ZERO;
             if self.workers == 0 {
                 self.loaded = false;
@@ -3418,14 +3407,13 @@ impl Terrains {
     ) {
         self.frame += 1;
         self.sync_surroundings();
-        // Jobs of terrains gone are dropped, and so are their recipes
-        // (decision 110).
+        // Jobs of terrains gone are dropped, and so are their recipes.
         let mut slots = jobs.map(JobSlots::of);
         let retired = std::mem::take(&mut self.retired);
         self.workers = slots.as_ref().map_or(0, |slots| slots.jobs.workers());
         let workers = self.workers;
         // Keys no recipe may hold any longer, unshared at the end unless
-        // one does (decision 116).
+        // one does.
         let mut released = Vec::new();
         if let Some(slots) = slots.as_mut() {
             for id in retired.jobs {
@@ -3467,7 +3455,7 @@ impl Terrains {
         } else {
             Camera::default().vertical_fov_radians
         };
-        // The frame's work (decision 099): slices until its time is up.
+        // The frame's work: slices until its time is up.
         let work = Work {
             slice: u64::from(settings.samples_per_frame),
             clock: self.clock,
@@ -3486,7 +3474,7 @@ impl Terrains {
             bands: settings.max_bands as usize,
         };
         let mut budget = work.slice;
-        // Speed-aware detail (decision 115): the finest levels waiting at
+        // Speed-aware detail: the finest levels waiting at
         // the eye's speed, and whether it has yet to settle.
         let (waiting, unsettled) = match settings.motion_detail {
             Some(detail) => {
@@ -3513,7 +3501,7 @@ impl Terrains {
         // Budgets cover every terrain: each takes what is left.
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
-        // Memory's room for tiles generated ahead of need (decision 120).
+        // Memory's room for tiles generated ahead of need.
         let room = settings.cache_bytes.saturating_sub(
             self.entries
                 .iter()
@@ -3524,7 +3512,7 @@ impl Terrains {
             if !state.terrain.is_usable() {
                 continue;
             }
-            // Surroundings (decision 094) leave the ground they surround to
+            // Surroundings leave the ground they surround to
             // their terrain, and stream while settings show them.
             let cutout = state.around.as_ref().map(|around| around.cutout);
             if cutout.is_some() && !settings.surroundings {
@@ -3561,11 +3549,11 @@ impl Terrains {
                 state.collision.sort_unstable();
                 state.collision.dedup();
             }
-            // What the view wants (decision 112), the camera's tiles within
-            // their reach of the eye and where it is headed (decision 100),
+            // What the view wants, the camera's tiles within
+            // their reach of the eye and where it is headed,
             // and what it keeps, within a wider reach; distances run to each
             // tile's ground.
-            // Ahead of need (decision 116), while nothing was missing, nor
+            // Ahead of need, while nothing was missing, nor
             // generating, at the last frame and memory has room.
             let quiet = workers > 0
                 && state.missing.is_empty()
@@ -3611,7 +3599,7 @@ impl Terrains {
                     } else {
                         Vec::new()
                     },
-                    // What places games name want (decision 120), each frame.
+                    // What places games name want, each frame.
                     places
                         .iter()
                         .flat_map(|&(place, reach)| want(place - origin, reach))
@@ -3619,7 +3607,7 @@ impl Terrains {
                 )
             };
             // What to load, most important first, each tile after its
-            // ancestors (decision 112): the pinned levels; the tiles the
+            // ancestors: the pinned levels; the tiles the
             // view draws and shows, then those under focus entities, which
             // jobs take up first; the tiles it draws out of sight, then
             // collision's; those only shading what it shows; where the eye
@@ -3676,7 +3664,7 @@ impl Terrains {
                 .chain(target.iter().copied())
                 .collect();
             let before = state.tiles.len();
-            // Tiles leaving stay in memory (decision 116).
+            // Tiles leaving stay in memory.
             let leaving: Vec<TileKey> = state
                 .tiles
                 .keys()
@@ -3713,11 +3701,11 @@ impl Terrains {
             state.jobs.retain(|key, _| target.contains(key));
             // Load what is missing, most important first; disabled terrains
             // load nothing.
-            // Tiles under edits since they loaded (decision 080) regenerate
+            // Tiles under edits since they loaded regenerate
             // in their turn and draw until they do.
             state.stale.retain(|key| state.tiles.contains_key(key));
             state.shaped.retain(|key| state.tiles.contains_key(key));
-            // While the eye moves fast (decision 115), the finest levels'
+            // While the eye moves fast, the finest levels'
             // tiles wait, and until it settles those it does not show; the
             // pinned levels, collision's tiles and those under focus
             // entities, with their ancestors, never wait.
@@ -3762,20 +3750,20 @@ impl Terrains {
                     (key, job_priority(class, index as u32))
                 })
                 .collect();
-            // Tiles kept in memory return at once (decision 116).
+            // Tiles kept in memory return at once.
             if !state.cache.is_empty() {
                 self.restored += state.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
             }
             // Tiles places games name want stay in memory before those
-            // that only left the view (decision 120).
+            // that only left the view.
             for tile in &named {
                 if let Some(cached) = state.cache.get_mut(&tile.key) {
                     cached.left = frame;
                 }
             }
             // What workers generate ahead of need: the nearest tiles within
-            // the idle reach and that places games name want (decision 120),
+            // the idle reach and that places games name want,
             // not resident, kept or kept in memory, as many as memory has
             // room for, so none it holds goes to make room for another.
             state.ahead.clear();
@@ -3803,15 +3791,14 @@ impl Terrains {
                         .take(fits),
                 );
             }
-            // What the frame found missing loads between frames too
-            // (decision 108).
+            // What the frame found missing loads between frames too.
             state.missing.clone_from(&missing);
             state.target.clone_from(&target);
             state.keep.clone_from(&keep);
-            // GPU materials (decision 118) before the recipe that carries
+            // GPU materials before the recipe that carries
             // them.
             state.update_materials(settings.gpu_materials);
-            // Workers generate from its recipe (decision 110).
+            // Workers generate from its recipe.
             if let Some(slots) = slots.as_mut()
                 && slots.jobs.workers() > 0
             {
@@ -3876,8 +3863,7 @@ impl Terrains {
                 stats.surroundings_patches += state.selection.patches.len() as u32;
             }
         }
-        // Tiles kept in memory beyond its budget go, those that left first
-        // (decision 116).
+        // Tiles kept in memory beyond its budget go, those that left first.
         let cached: u64 = self.entries.iter().map(|state| state.cached_bytes).sum();
         if cached > settings.cache_bytes {
             let mut oldest: Vec<(u64, usize, TileKey)> = self
@@ -3911,8 +3897,8 @@ impl Terrains {
             .map(|state| state.cache.len() as u32)
             .sum();
         self.upload_left = work.upload.get();
-        // Stacks no terrain's recipe shares any longer leave the workers
-        // (decision 110); keys named by content (decision 116) leave once
+        // Stacks no terrain's recipe shares any longer leave the workers;
+        // keys named by content leave once
         // no recipe or stack holds them.
         if let Some(slots) = slots.as_mut() {
             let entries = &self.entries;
@@ -3942,7 +3928,7 @@ impl Terrains {
             }
         }
         // The camera's view has loaded whole once nothing bakes, loads or
-        // stands in for a finer level (decision 099).
+        // stands in for a finer level.
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
@@ -3956,7 +3942,7 @@ impl Terrains {
     }
 }
 
-/// The lowest and highest ground tile `key` can hold (decision 112),
+/// The lowest and highest ground tile `key` can hold,
 /// terrain-local, as distances to it take them: a resident tile's own,
 /// widened by how far its level measured from the next coarser (its
 /// patches morph toward that); else its nearest resident ancestor's over
@@ -4011,8 +3997,8 @@ fn ground_bounds(
     None
 }
 
-/// The view's side planes and near plane, inward, in world space (decision
-/// 112): which boxes show in it, however far away.
+/// The view's side planes and near plane, inward, in world space:
+/// which boxes show in it, however far away.
 struct ViewPlanes(Option<[Vec4; 5]>);
 
 impl ViewPlanes {
@@ -4030,7 +4016,7 @@ impl ViewPlanes {
             rows.w_axis - rows.x_axis,
             rows.w_axis + rows.y_axis,
             rows.w_axis - rows.y_axis,
-            // Reversed depth (decision 042): the near plane is depth 1.
+            // Reversed depth: the near plane is depth 1.
             rows.w_axis - rows.z_axis,
         ];
         Self(
@@ -4083,7 +4069,7 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
     }
 }
 
-/// A surface material's engine material (decision 054): its factors, and
+/// A surface material's engine material: its factors, and
 /// the base color, normal and metallic-roughness textures it names, those
 /// loaded. Terrain reads height from the metallic-roughness map's alpha,
 /// and occlusion from its red where the material's occlusion map is the
@@ -4118,9 +4104,9 @@ impl RenderSurfaceMaps {
     }
 }
 
-/// A placement asset of a frame (decision 057): its mesh, its material
+/// A placement asset of a frame: its mesh, its material
 /// and the material's textures, its coarser meshes with their errors, and
-/// its sway (decision 058).
+/// its sway.
 #[derive(Clone, Debug)]
 pub struct RenderPlacementAsset {
     pub mesh: RenderMesh,
@@ -4181,7 +4167,7 @@ impl RenderPlacementAsset {
     }
 }
 
-/// One terrain of a frame (decision 051).
+/// One terrain of a frame.
 #[derive(Clone, Debug)]
 pub struct RenderTerrain {
     /// The terrain's entity bits, which renderers key its tiles by.
@@ -4194,12 +4180,12 @@ pub struct RenderTerrain {
     /// Each surface material's engine material, where it names one that
     /// exists.
     pub maps: Vec<Option<RenderSurfaceMaps>>,
-    /// What its placement layers stand on it (decision 057), by the asset
+    /// What its placement layers stand on it, by the asset
     /// indices its tiles' placed objects hold; `None` where the mesh or
     /// material is missing.
     pub assets: Vec<Option<RenderPlacementAsset>>,
-    /// How each placement layer's objects thin with distance (decision
-    /// 100), by the layer indices its tiles' placed objects hold: the level
+    /// How each placement layer's objects thin with distance,
+    /// by the layer indices its tiles' placed objects hold: the level
     /// of the tiles holding them, the level they also stand far away at and
     /// the share standing there (their own level and 0 without).
     pub thinning: Vec<(u8, u8, f32)>,
@@ -4216,24 +4202,24 @@ pub struct RenderTerrain {
     /// but the coarsest morphs into the next over its last quarter
     /// ([`LodRanges`]): where renderers find the ground as drawn.
     pub ranges: Vec<f32>,
-    /// Where its hydrology bake found lakes standing (decision 067), and
-    /// its rivers (decision 092).
+    /// Where its hydrology bake found lakes standing, and
+    /// its rivers.
     pub water: Option<Arc<engine_terrain::WaterGrid>>,
     pub rivers: Option<Arc<engine_terrain::Rivers>>,
-    /// Whether it is a terrain's surroundings (decision 094), which grow
+    /// Whether it is a terrain's surroundings, which grow
     /// no blades: their grassy ground shows as canopy at every distance.
     pub surroundings: bool,
     /// Whether its tiles may hold holes and whether a hydrology bake will
     /// give it water: renderers create what draws them before it shows,
-    /// while it loads (decision 099).
+    /// while it loads.
     pub may_hole: bool,
     pub hydrology: bool,
-    /// Its surface for the GPU to give its tiles control values (decision
-    /// 118), which they then hold none of; `None` where they hold them.
+    /// Its surface for the GPU to give its tiles control values,
+    /// which they then hold none of; `None` where they hold them.
     pub gpu_surface: Option<Arc<engine_terrain::gpu::SurfaceData>>,
 }
 
-/// The frame's terrains (decision 051).
+/// The frame's terrains.
 #[derive(Clone, Debug, Default)]
 pub struct RenderTerrains {
     pub terrains: Vec<RenderTerrain>,
@@ -4266,7 +4252,7 @@ impl TerrainExtraction {
     }
 
     /// Loads tiles the last frame found missing for `milliseconds` between
-    /// frames (decision 108); whether tiles are still to load.
+    /// frames; whether tiles are still to load.
     pub(crate) fn work(&mut self, world: &mut World, milliseconds: f64) -> bool {
         let Some(settings) = world
             .get_resource::<TerrainSettings>()
@@ -4316,7 +4302,7 @@ impl TerrainExtraction {
                     self.points.push(point);
                 }
             }
-            // Places games name (decision 120), within their reach.
+            // Places games name, within their reach.
             for (entity, prefetch) in self.prefetch.iter(world) {
                 let reach = prefetch.reach;
                 if reach.is_finite()
@@ -4332,7 +4318,7 @@ impl TerrainExtraction {
             .iter(world)
             .map(|(entity, terrain)| (entity, terrain.clone()))
             .collect();
-        // Workers' jobs (decision 110) stream with the terrains.
+        // Workers' jobs stream with the terrains.
         let mut jobs = world.remove_resource::<Jobs>();
         let Some(mut terrains) = world.get_resource_mut::<Terrains>() else {
             if let Some(jobs) = jobs {
@@ -4364,7 +4350,7 @@ impl TerrainExtraction {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone());
                         }
-                        // Surroundings (decision 094) follow on their own.
+                        // Surroundings follow on their own.
                         state.terrain.surroundings = terrain.surroundings;
                     }
                 }
@@ -4393,7 +4379,7 @@ impl TerrainExtraction {
             }
             return;
         };
-        // Where the eye is headed (decision 100), from its motion since the
+        // Where the eye is headed, from its motion since the
         // last frame.
         let ahead = terrains.heading(eye, seconds);
         terrains.stream(

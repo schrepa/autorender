@@ -1,6 +1,6 @@
-//! Skinned pedestrians (decision 036): a low-poly figure of boxes bound to
+//! Skinned pedestrians: a low-poly figure of boxes bound to
 //! eleven joints, outfits in vertex colors, and walk and idle clips
-//! (decision 035) that turn the joints. Built in meters, facing +X, feet on
+//! that turn the joints. Built in meters, facing +X, feet on
 //! the origin; the city scales each person's root.
 
 use std::f32::consts::TAU;

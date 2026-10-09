@@ -1,4 +1,4 @@
-//! Keyframed clips of the metro's animated models (decision 035): the city
+//! Keyframed clips of the metro's animated models: the city
 //! places each model's parts under a node and a player binds them, so every
 //! clip animates local transforms and serves every copy of its model.
 

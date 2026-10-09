@@ -10,8 +10,8 @@ use crate::post::PostFrame;
 use crate::render_graph::{self, Clear, Effects, FrameShape, Load, Node, Ops, Pass, Resource};
 use crate::shadows::{MapSources, ShadowFrame, ShadowInputs};
 
-/// How far switches between how objects show fade each frame (decisions
-/// 104 and 107): the presentation time of the last displayed GPU-presented
+/// How far switches between how objects show fade each frame:
+/// the presentation time of the last displayed GPU-presented
 /// frame, and this frame's share of a switch's fade.
 #[derive(Default)]
 pub(super) struct SwitchFades {
@@ -44,9 +44,9 @@ impl SwitchFades {
 /// What kind of frame this is, decided before any GPU work.
 #[derive(Clone, Copy)]
 pub(super) struct FrameKind {
-    /// Presented on the GPU (decision 014).
+    /// Presented on the GPU.
     pub(super) gpu_mode: bool,
-    /// Temporally antialiased (decision 017).
+    /// Temporally antialiased.
     pub(super) temporal: bool,
     /// Shown as the page's next frame, not a preview or capture.
     pub(super) display: bool,
@@ -64,7 +64,7 @@ pub(super) struct AssetUploads {
 
 /// How a frame packed its instance storage.
 pub(super) struct Packing {
-    /// This frame's temporal antialiasing (decision 017).
+    /// This frame's temporal antialiasing.
     pub(super) temporal_frame: Option<TemporalFrame>,
     write_slots: bool,
     slot_key: Option<(u64, u64)>,
@@ -92,15 +92,14 @@ pub(super) struct Writes {
 pub(super) struct Features<'s> {
     /// GPU presentation's input copies, submitted before the frame.
     pub(super) input_copies: Option<wgpu::CommandEncoder>,
-    /// The viewport and depth pyramid levels of occlusion culling
-    /// (decision 040).
+    /// The viewport and depth pyramid levels of occlusion culling.
     pub(super) occlusion: Option<(u32, u32, u32)>,
     pub(super) gpu_prepared: Option<GpuPrepared>,
     pub(super) shadow_frame: Option<ShadowFrame>,
-    /// The physically based sky's work (decision 088), submitted first:
+    /// The physically based sky's work, submitted first:
     /// what reads the light it gives follows it.
     pub(super) sky_encoder: Option<wgpu::CommandEncoder>,
-    /// Environment maps' and reflection probes' work (decision 043),
+    /// Environment maps' and reflection probes' work,
     /// submitted before the frame.
     pub(super) environment_encoder: Option<wgpu::CommandEncoder>,
     pub(super) probe_list: &'s [engine_core::RenderReflectionProbe],
@@ -141,20 +140,20 @@ pub(super) struct FrameState<'s> {
     pub(super) writes: Writes,
     pub(super) features: Features<'s>,
     pub(super) passes: Passes,
-    /// Virtual geometry draws its clusters (decision 044), and the
-    /// visibility buffer resolves some of them (decision 045).
+    /// Virtual geometry draws its clusters, and the
+    /// visibility buffer resolves some of them.
     pub(super) virtual_frame: bool,
-    /// Terrain draws (decision 051).
+    /// Terrain draws.
     pub(super) terrain: bool,
-    /// Placed objects draw (decision 057).
+    /// Placed objects draw.
     pub(super) scatter: bool,
     pub(super) resolving: bool,
-    /// What the frame's render graph declares (decision 050).
+    /// What the frame's render graph declares.
     pub(super) shape: FrameShape,
 }
 
 /// What encoding counted: the opaque passes' draws, shadow draws,
-/// reflection probe faces, and the render graph's passes (decision 050).
+/// reflection probe faces, and the render graph's passes.
 #[derive(Default)]
 pub(super) struct EncodeReport {
     pub(super) draws: u32,
@@ -234,9 +233,9 @@ impl Renderer {
             .set_horizon_records(&self.queue, horizon_records);
         let scatter =
             self.prepare_scatter(snapshot, passes.opaque_kind, passes.impostor_pass.is_some());
-        // Water on terrains (decision 067).
+        // Water on terrains.
         let water = self.prepare_water(snapshot, passes.opaque_kind);
-        // Terrain's horizon maps (decision 052) may have been replaced.
+        // Terrain's horizon maps may have been replaced.
         self.refresh_camera_group();
         let mut shape = self.frame_shape(
             kind,
@@ -262,7 +261,7 @@ impl Renderer {
             shape,
         };
         self.prepare_frame_groups(&state);
-        // The frame's passes as a render graph (decision 050): declared,
+        // The frame's passes as a render graph: declared,
         // compiled into attachment operations, then encoded in order.
         let mut graph = std::mem::take(&mut self.graph);
         render_graph::plan(&mut graph, &state.shape);
@@ -349,11 +348,11 @@ impl Renderer {
                 )));
             }
         }
-        // Shadow draw groups (decision 020): CPU-prepared frames also draw
+        // Shadow draw groups: CPU-prepared frames also draw
         // culled casters, whose meshes stay resident and upload with the
         // batches' meshes.
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);
-        // Terrains' placed objects (decision 057) keep their meshes resident.
+        // Terrains' placed objects keep their meshes resident.
         let placed: BTreeSet<MeshHandle> = snapshot
             .terrain
             .terrains
@@ -433,8 +432,7 @@ impl Renderer {
             self.scatter_meshes.1,
         );
         let mesh_uploads = self.structure_keys.uploads != Some(uploads);
-        // The plan's and casters' meshes, and terrains' placed objects'
-        // (decision 057).
+        // The plan's and casters' meshes, and terrains' placed objects'.
         let sources = self
             .plan
             .batches
@@ -475,8 +473,8 @@ impl Renderer {
                 if let Some(skin) = &skin {
                     streams.push(bytemuck::cast_slice(skin));
                 }
-                // Levels of detail (decision 047) follow the mesh's own
-                // indices in its range; placed objects' meshes (decision 057)
+                // Levels of detail follow the mesh's own
+                // indices in its range; placed objects' meshes
                 // simplify further, for shadow maps and distant views. Draw
                 // groups read their first levels alike.
                 let levels = if self.scatter_meshes.0.contains(&handle) {
@@ -565,8 +563,8 @@ impl Renderer {
             shadow_materials,
             &mut mip_encoder,
         );
-        // Impostors (decision 048) bake after their materials' levels, the
-        // plan's and then placed objects' (decision 057).
+        // Impostors bake after their materials' levels, the
+        // plan's and then placed objects'.
         self.prepare_impostors(snapshot, gpu_mode, &mut mip_encoder);
         self.prepare_scatter_impostors(snapshot, gpu_mode, &mut mip_encoder);
         drop(profile_upload);
@@ -588,7 +586,7 @@ impl Renderer {
         let snapshot = frame.snapshot();
 
         let profile_packing = engine_profile::span("render", "instance_buffer_and_packing");
-        // Every slot, and joint palettes (decision 036) as many as the
+        // Every slot, and joint palettes as many as the
         // frame's joints.
         self.instances.reserve(
             &self.device,
@@ -661,7 +659,7 @@ impl Renderer {
         );
         camera.options[1] =
             crate::gpu_data::pixel_angle(snapshot.view_projection, self.display.size().1);
-        // The wind placed objects sway in (decision 058), and the time they
+        // The wind placed objects sway in, and the time they
         // swayed at last frame for temporal frames' motion.
         let seconds = snapshot.elapsed_seconds;
         let previous = self.last_seconds.replace(seconds).unwrap_or(seconds);
@@ -690,7 +688,7 @@ impl Renderer {
             &snapshot.environment.refraction,
             &snapshot.environment.sky,
         );
-        // Under the sea, its water veils everything (decision 077).
+        // Under the sea, its water veils everything.
         lighting.underwater = crate::water::underwater(
             &snapshot.environment,
             snapshot.camera_position,
@@ -700,10 +698,10 @@ impl Renderer {
         if ocean.enabled {
             lighting.sea = [ocean.level, ocean.clarity, 1.0, 0.0];
         }
-        // Clouds' shadows (decision 084) on everything the sun lights.
+        // Clouds' shadows on everything the sun lights.
         (lighting.cloud_shadow, lighting.cloud_layer) =
             crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
-        // What placed objects cover around the camera (decision 059): the
+        // What placed objects cover around the camera: the
         // map shading reads, drawn this frame when it no longer holds the
         // camera's surroundings or the objects changed.
         if let Some((area, far, strength)) = self.occupancy.prepare(
@@ -724,7 +722,7 @@ impl Renderer {
                 area.reach,
                 far.map_or(0.0, |far| far.reference),
             ];
-            // The far map (decision 101).
+            // The far map.
             if let Some(far) = far {
                 lighting.occupancy_far = [far.center[0], far.center[1], 1.0 / far.size, far.reach];
             }
@@ -792,8 +790,8 @@ impl Renderer {
             );
             color_upload_bytes += std::mem::size_of_val(records) as u64;
         }
-        // CPU-prepared frames upload skinned slots' palettes (decision
-        // 036); GPU-presented ones compute them.
+        // CPU-prepared frames upload skinned slots' palettes;
+        // GPU-presented ones compute them.
         if !gpu_mode && !snapshot.joints.is_empty() {
             self.instances.palette_staging.clear();
             self.instances
@@ -848,7 +846,7 @@ impl Renderer {
             gpu_prepared,
         } = self.prepare_presentation(frame, gpu, kind, temporal_frame);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
-        // Clouds (decision 084): this frame's march of their dome, which the
+        // Clouds: this frame's march of their dome, which the
         // sky and its environment map show; exact frames march all of it.
         self.clouds.prepare(
             &self.device,
@@ -861,7 +859,7 @@ impl Renderer {
             lighting,
             !kind.gpu_mode,
         );
-        // And their march in the view (decision 095), after the opaque
+        // And their march in the view, after the opaque
         // scene and water.
         self.clouds.prepare_view(
             &self.device,
@@ -910,8 +908,8 @@ impl Renderer {
         }
     }
 
-    /// Occlusion culling's depth pyramid and GPU presentation's inputs
-    /// (decision 014); returns the input copies to submit first, the
+    /// Occlusion culling's depth pyramid and GPU presentation's inputs;
+    /// returns the input copies to submit first, the
     /// occlusion viewport and levels, and what presentation prepared.
     fn prepare_presentation(
         &mut self,
@@ -924,7 +922,7 @@ impl Renderer {
         let snapshot = frame.snapshot();
 
         let mut input_copies = None;
-        // Occlusion culling (decision 040): the depth pyramid of this frame's
+        // Occlusion culling: the depth pyramid of this frame's
         // depth buffer, sized before presentation plans two phases.
         let occlusion = if gpu_mode && self.culling.occlusion {
             let device = &self.device;
@@ -943,7 +941,7 @@ impl Renderer {
         } else {
             None
         };
-        // Batches drawing virtual geometry (decision 044) instead of their
+        // Batches drawing virtual geometry instead of their
         // fallback meshes, by the arena and whether it draws.
         let virtual_enabled = snapshot.environment.virtual_geometry.enabled;
         let arena = self
@@ -1011,7 +1009,7 @@ impl Renderer {
                     0.0
                 },
                 impostors: snapshot.environment.level_of_detail.impostors,
-                // Reflection probes (decision 043) capture still slots,
+                // Reflection probes capture still slots,
                 // counted while captures wait.
                 stillness: (snapshot.environment.reflection_probes.enabled
                     && !snapshot.reflection_probes.is_empty())
@@ -1050,7 +1048,7 @@ impl Renderer {
         }
     }
 
-    /// The frame's shadow maps (decision 020), selecting from its poses.
+    /// The frame's shadow maps, selecting from its poses.
     fn prepare_shadows(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -1059,7 +1057,7 @@ impl Renderer {
     ) -> Option<ShadowFrame> {
         let gpu_mode = kind.gpu_mode;
 
-        // Shadow maps (decision 020) select from this frame's poses.
+        // Shadow maps select from this frame's poses.
         let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
         let meshes = &self.meshes;
         let arena = &self.mesh_arena;
@@ -1073,7 +1071,7 @@ impl Renderer {
                 },
                 |mesh| {
                     let draw = mesh.draw(arena);
-                    // Levels of detail (decision 047) of meshes without
+                    // Levels of detail of meshes without
                     // joints, which move their vertices.
                     let lods = if mesh.skinned || !snapshot.environment.level_of_detail.enabled {
                         Vec::new()
@@ -1113,10 +1111,10 @@ impl Renderer {
         )
     }
 
-    /// Environment maps and reflection probes (decision 043), and the camera
+    /// Environment maps and reflection probes, and the camera
     /// group binding them; returns the environment's encoder, the probes the
     /// frame keeps and those beyond the GPU's arrays.
-    /// The physically based sky's work this frame (decision 088): its
+    /// The physically based sky's work this frame: its
     /// tables as they need building, then the light it gives, copied over
     /// the authored atmosphere's colors in the lighting uniform and the
     /// clouds' march's uniform.
@@ -1192,7 +1190,7 @@ impl Renderer {
         &'s [engine_core::RenderReflectionProbe],
         u64,
     ) {
-        // Environment maps (decision 043): as many cubes as the reflection
+        // Environment maps: as many cubes as the reflection
         // probes kept need (the nearest first, as many as the GPU's texture
         // arrays hold), the sky's redrawn when it changes, then the probes'
         // cubes assigned and their grid uploaded.
@@ -1255,7 +1253,7 @@ impl Renderer {
         );
     }
 
-    /// Local lights (decision 023), binned from the frame's poses.
+    /// Local lights, binned from the frame's poses.
     fn prepare_lights(
         &mut self,
         frame: RenderFrame<'_>,
@@ -1265,7 +1263,7 @@ impl Renderer {
         let temporal = kind.temporal;
         let snapshot = frame.snapshot();
 
-        // Local lights (decision 023): binned on the GPU from this frame's
+        // Local lights: binned on the GPU from this frame's
         // poses, so slot lights follow GPU-presented meshes.
         if snapshot.environment.local_lights.active() && !snapshot.lights.is_empty() {
             let device = &self.device;
@@ -1295,14 +1293,14 @@ impl Renderer {
         }
     }
 
-    /// Screen effects (decision 021) and refraction's targets (decision
-    /// 038); returns the effects and whether glass refracts.
+    /// Screen effects and refraction's targets;
+    /// returns the effects and whether glass refracts.
     fn prepare_post(
         &mut self,
         snapshot: &RenderSnapshot,
         temporal_frame: &Option<TemporalFrame>,
     ) -> (Option<PostFrame>, bool) {
-        // Screen effects (decision 021); temporal frames apply them in their
+        // Screen effects; temporal frames apply them in their
         // resolve, whose history averages the occlusion noise.
         let effects = snapshot.environment.ambient_occlusion.sanitized().enabled()
             || snapshot.environment.bloom.sanitized().enabled()
@@ -1310,8 +1308,8 @@ impl Renderer {
             || (snapshot.environment.sun_shafts.sanitized().enabled()
                 && snapshot.environment.shadows.enabled)
             || snapshot.environment.contact_shadows.sanitized().traces();
-        // Glass refracts the opaque color of the scene target (decision
-        // 038): frames drawing it render into the target.
+        // Glass refracts the opaque color of the scene target:
+        // frames drawing it render into the target.
         let refraction = snapshot.environment.refraction.enabled()
             && self.plan.batches.iter().any(|batch| {
                 batch.transparent && self.materials.binding(batch.material).1.transmission()
@@ -1346,7 +1344,7 @@ impl Renderer {
         (post_frame, refraction)
     }
 
-    /// Transparent surfaces and particles (decision 026); returns whether
+    /// Transparent surfaces and particles; returns whether
     /// transparent batches draw, the particles, and whether either does.
     /// `emitters` is the frame's stream identity and emitters revision.
     fn prepare_transparency(
@@ -1356,7 +1354,7 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         post_frame: Option<PostFrame>,
     ) -> (bool, Option<ParticleFrame>, bool) {
-        // Transparent surfaces and particles (decision 026). Particles
+        // Transparent surfaces and particles. Particles
         // sample the depth buffer for their soft edges.
         let transparent_draws = self.plan.batches.iter().any(|batch| batch.transparent);
         let particle_frame =
@@ -1409,7 +1407,7 @@ impl Renderer {
         (transparent_draws, particle_frame, transparency)
     }
 
-    /// Decals (decision 039) over the opaque surfaces.
+    /// Decals over the opaque surfaces.
     fn prepare_decals(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -1417,7 +1415,7 @@ impl Renderer {
         light_frame: &Option<LightFrame>,
         post_frame: Option<PostFrame>,
     ) -> Option<DecalFrame> {
-        // Decals (decision 039) cover the opaque surfaces the depth buffer
+        // Decals cover the opaque surfaces the depth buffer
         // holds and read their displayed poses from the joint palette.
         let decal_lights = light_frame
             .as_ref()
@@ -1455,9 +1453,9 @@ impl Renderer {
         }
     }
 
-    /// The pipelines of the material variants (decision 031) the frame's
-    /// mesh passes draw, reflection probe captures' (decision 043) and the
-    /// impostors' (decision 048).
+    /// The pipelines of the material variants the frame's
+    /// mesh passes draw, reflection probe captures' and the
+    /// impostors'.
     fn prepare_pipelines(
         &mut self,
         kind: FrameKind,
@@ -1471,19 +1469,19 @@ impl Renderer {
             features.probe_list,
         );
 
-        // Pipelines of the material variants (decision 031) this frame draws.
+        // Pipelines of the material variants this frame draws.
         let lit_frame = light_frame.is_some() && self.lights.is_some();
         let targets = self.frame_targets(temporal_frame, post_frame);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
         let transparent_kind = PassKind::transparent(lit_frame);
         self.ensure_variants(opaque_kind, transparent_kind);
-        // Reflection probes (decision 043) capture once their slots stand
+        // Reflection probes capture once their slots stand
         // still: their pipelines are prepared with the first frame that has
-        // probes, not in the middle of play (decision 049).
+        // probes, not in the middle of play.
         if gpu_mode && !probe_list.is_empty() {
             self.ensure_probe_pipelines(PassKind::probe(lit_frame));
         }
-        // Impostors (decision 048): this frame's records, group and pipeline.
+        // Impostors: this frame's records, group and pipeline.
         let impostor_pass = if gpu_mode
             && self
                 .impostors
@@ -1496,7 +1494,7 @@ impl Renderer {
         } else {
             None
         };
-        // Placed objects' impostors cast cards (decision 060).
+        // Placed objects' impostors cast cards.
         if impostor_pass.is_some()
             && self
                 .scatter_draws
@@ -1514,8 +1512,8 @@ impl Renderer {
         }
     }
 
-    /// Virtual geometry's selection for the frame (decision 044) and the
-    /// visibility buffer's bins (decision 045); returns whether clusters
+    /// Virtual geometry's selection for the frame and the
+    /// visibility buffer's bins; returns whether clusters
     /// draw and whether the visibility buffer resolves.
     fn prepare_virtual_frame(
         &mut self,
@@ -1531,7 +1529,7 @@ impl Renderer {
             ..
         } = kind;
 
-        // Virtual geometry (decision 044): the clusters the visible
+        // Virtual geometry: the clusters the visible
         // instances of virtual meshes draw this frame.
         let odd = temporal_frame
             .as_ref()
@@ -1549,7 +1547,7 @@ impl Renderer {
             self.ensure_virtual_pipelines(opaque_kind);
             self.ensure_virtual_pose_groups();
         }
-        // The visibility buffer (decision 045) resolves the camera's bins it
+        // The visibility buffer resolves the camera's bins it
         // can shade; the others draw forward.
         let resolving =
             virtual_frame && instance_count > 0 && self.prepare_visibility(snapshot, opaque_kind);
@@ -1561,8 +1559,8 @@ impl Renderer {
     }
 
     /// Where the frame's main passes draw: the temporal targets of temporal
-    /// frames (decision 017), the screen effects' targets of frames with
-    /// effects (decision 021), otherwise the canvas.
+    /// frames, the screen effects' targets of frames with
+    /// effects, otherwise the canvas.
     fn frame_targets(
         &self,
         temporal_frame: &Option<TemporalFrame>,
@@ -1575,7 +1573,7 @@ impl Renderer {
         }
     }
 
-    /// The frame's shape (decision 050): which passes its render graph
+    /// The frame's shape: which passes its render graph
     /// declares, from what each feature prepared.
     fn frame_shape(
         &self,
@@ -1586,7 +1584,7 @@ impl Renderer {
     ) -> FrameShape {
         let post = features.post_frame.filter(|_| self.post.is_some());
         let targets = self.frame_targets(&packing.temporal_frame, features.post_frame);
-        // Occlusion culling (decision 040) draws in two phases: what the
+        // Occlusion culling draws in two phases: what the
         // last test left visible, then, after the depth pyramid of those
         // depths and the test, what the test newly finds visible.
         let phases = if kind.gpu_mode && self.gpu_presentation.occlusion() {
@@ -1625,8 +1623,8 @@ impl Renderer {
         }
     }
 
-    /// Temporal antialiasing's pose groups (decision 017) and the camera
-    /// group of glass refracting the opaque color (decision 038).
+    /// Temporal antialiasing's pose groups and the camera
+    /// group of glass refracting the opaque color.
     fn prepare_frame_groups(&mut self, state: &FrameState<'_>) {
         let (temporal_frame, refraction) =
             (&state.packing.temporal_frame, state.features.refraction);
@@ -1657,7 +1655,7 @@ impl Renderer {
         }
     }
 
-    /// Encodes `node`, a pass the frame's render graph kept (decision 050),
+    /// Encodes `node`, a pass the frame's render graph kept,
     /// into `encoder`; `view` is the canvas's.
     fn encode_pass(
         &mut self,
@@ -1670,7 +1668,7 @@ impl Renderer {
         match node.pass() {
             Pass::Presentation => self.encode_presentation(encoder),
             // Placed objects cull before the shadow maps and the first
-            // opaque phase draw them (decision 057).
+            // opaque phase draw them.
             Pass::Scatter => self.scatter.encode(encoder, &self.profiler),
             Pass::Occupancy => {
                 self.occupancy.encode(
@@ -1685,9 +1683,9 @@ impl Renderer {
             Pass::ShadowMaps => self.encode_shadow_maps(state, encoder, report),
             Pass::Lights => self.encode_light_binning(state, encoder),
             Pass::Opaque { phase } => {
-                // Tracks press into the deformation map (decision 083), and
+                // Tracks press into the deformation map, and
                 // ground cover grows on the terrain, before the first phase
-                // draws them (decision 056).
+                // draws them.
                 if phase == 0 {
                     self.clouds.encode(
                         &self.device,
@@ -1702,7 +1700,7 @@ impl Renderer {
                         &self.profiler,
                     );
                     // The runtime virtual texture's pages bake before the
-                    // resolves read them (decision 124).
+                    // resolves read them.
                     self.terrain.encode_vt_bakes(
                         &self.device,
                         encoder,
@@ -1716,7 +1714,7 @@ impl Renderer {
                 }
                 let draws = self.encode_opaque(state, encoder, view, node, usize::from(phase));
                 // The pages the first phase's terrain resolves wanted of the
-                // runtime virtual texture (decision 124).
+                // runtime virtual texture.
                 if phase == 0
                     && self.terrain_deferred(state)
                     && let Some(ids) = &self.terrain_ids
@@ -1730,7 +1728,7 @@ impl Renderer {
                         (&ids.view, (size.width, size.height)),
                     );
                 }
-                // Phase two (decision 040) issues phase one's draws again for
+                // Phase two issues phase one's draws again for
                 // the instances its test revealed: count each once.
                 if phase == 0 {
                     report.draws += draws;
@@ -1866,14 +1864,13 @@ impl Renderer {
         }
     }
 
-    /// GPU presentation's blending, composition, culling and compaction
-    /// (decision 014).
+    /// GPU presentation's blending, composition, culling and compaction.
     fn encode_presentation(&mut self, encoder: &mut wgpu::CommandEncoder) {
         self.gpu_presentation
             .encode(&self.device, encoder, &self.profiler);
     }
 
-    /// Shadow caster selection (decision 020).
+    /// Shadow caster selection.
     fn encode_shadow_selection(
         &mut self,
         state: &FrameState<'_>,
@@ -1888,7 +1885,7 @@ impl Renderer {
             .encode_selection(&self.device, encoder, shadow_frame, &self.profiler);
     }
 
-    /// Virtual geometry's cluster selection (decision 044) for the camera
+    /// Virtual geometry's cluster selection for the camera
     /// and the shadow maps.
     fn encode_cluster_selection(&mut self, encoder: &mut wgpu::CommandEncoder) {
         let span = self.profiler.span("virtual_selection");
@@ -1901,15 +1898,15 @@ impl Renderer {
         }
     }
 
-    /// The shadow maps (decisions 020 and 028), with the clusters virtual
-    /// geometry selected for them (decision 044).
+    /// The shadow maps, with the clusters virtual
+    /// geometry selected for them.
     fn encode_shadow_maps(
         &mut self,
         state: &FrameState<'_>,
         encoder: &mut wgpu::CommandEncoder,
         report: &mut EncodeReport,
     ) {
-        // Terrain's horizon maps (decision 052) where the sun or terrain
+        // Terrain's horizon maps where the sun or terrain
         // changed, before the passes that read them.
         self.terrain
             .encode_horizons(&self.device, encoder, &self.profiler);
@@ -1944,7 +1941,7 @@ impl Renderer {
                             )
                         })
                 },
-                // Terrain (decision 051): the camera's patches in this map.
+                // Terrain: the camera's patches in this map.
                 terrain_draw: &|pass, map| {
                     let Some(pipeline) = terrain.shadow_pipeline().filter(|_| terrain_frame) else {
                         return 0;
@@ -1963,7 +1960,7 @@ impl Renderer {
                     }
                     draws
                 },
-                // Placed objects (decision 057) culled for this map.
+                // Placed objects culled for this map.
                 scatter_draw: &|pass, map, casters, cards| {
                     if state.scatter {
                         self.draw_scatter_shadow(pass, map, casters, cards)
@@ -1976,7 +1973,7 @@ impl Renderer {
         );
     }
 
-    /// Light binning (decision 023).
+    /// Light binning.
     fn encode_light_binning(&mut self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         if let (Some(frame), Some(lights)) = (&state.features.light_frame, self.lights.as_mut()) {
             lights.encode(
@@ -1988,9 +1985,9 @@ impl Renderer {
         }
     }
 
-    /// The opaque pass of `phase` (two around the occlusion test, decision
-    /// 040), with the sky after the last one unless the visibility buffer
-    /// resolves it (decision 045); returns its draws, the sky's aside.
+    /// The opaque pass of `phase` (two around the occlusion test), with the sky
+    /// after the last one unless the visibility buffer resolves it; returns its
+    /// draws, the sky's aside.
     fn encode_opaque(
         &self,
         state: &FrameState<'_>,
@@ -2001,7 +1998,7 @@ impl Renderer {
     ) -> u32 {
         let phases = usize::from(state.shape.phases);
         let resolve_phase = state.shape.resolves[phase];
-        // The first of this phase's camera bins (decision 044).
+        // The first of this phase's camera bins.
         let virtual_first = match phase {
             0 => Some(0),
             _ => self.virtual_draws.phase_two,
@@ -2010,9 +2007,9 @@ impl Renderer {
         // Profiled frames time both phases as one opaque span, which the
         // visibility buffer's last resolve ends when it resolves this phase.
         let (begins, ends) = (phase == 0, phase + 1 == phases && !resolve_phase);
-        // Terrain (decision 051), the main occluder, draws in the first phase
-        // so occlusion culling's pyramid holds it; shaded deferred (decision
-        // 123) where it can be.
+        // Terrain, the main occluder, draws in the first phase
+        // so occlusion culling's pyramid holds it; shaded deferred
+        // where it can be.
         if phase == 0 && self.terrain_deferred(state) {
             return self.encode_opaque_deferred(
                 state,
@@ -2042,7 +2039,7 @@ impl Renderer {
         } else {
             0
         };
-        // Terrain (decision 051), the main occluder: in the first phase, so
+        // Terrain, the main occluder: in the first phase, so
         // occlusion culling's pyramid holds it.
         if phase == 0 {
             draws += self.draw_terrain(state, &mut pass);
@@ -2055,7 +2052,7 @@ impl Renderer {
         draws
     }
 
-    /// The first opaque phase with terrain shaded deferred (decision 123):
+    /// The first opaque phase with terrain shaded deferred:
     /// the meshes; terrain's visibility, writing each pixel's terrain and
     /// depth; each terrain's resolve, shading its pixels once each; then
     /// its cover, placed objects and the sky; each in a pass of its own.
@@ -2169,10 +2166,10 @@ impl Renderer {
         pass.draw(0..3, 0..1);
     }
 
-    /// Occlusion culling's test between the opaque phases (decision 040): the
+    /// Occlusion culling's test between the opaque phases: the
     /// depth pyramid of phase one's depths, the test and phase two's
     /// compaction, and virtual geometry's retest of the camera's clusters the
-    /// last frame's pyramid hid (decision 044).
+    /// last frame's pyramid hid.
     fn encode_occlusion_test(
         &mut self,
         state: &FrameState<'_>,
@@ -2196,7 +2193,7 @@ impl Renderer {
                 .expect("viewed above")
                 .encode(encoder, span);
             // The camera's clusters the last frame's pyramid hid
-            // (decision 044) are retested against this frame's within
+            // are retested against this frame's within
             // the same span.
             self.gpu_presentation.encode_occlusion(
                 &self.device,
@@ -2215,9 +2212,9 @@ impl Renderer {
     }
 
     /// The opaque meshes of `phase` (GPU-presented frames draw each level of
-    /// detail's visible slots, decision 047), the impostors' cards (decision
-    /// 048), and virtual geometry's bins the visibility buffer leaves to
-    /// forward drawing (decision 044); returns the draws.
+    /// detail's visible slots), the impostors' cards,
+    /// and virtual geometry's bins the visibility buffer leaves to
+    /// forward drawing; returns the draws.
     fn draw_opaque(
         &self,
         state: &FrameState<'_>,
@@ -2262,7 +2259,7 @@ impl Renderer {
         for &index in &self.draw_order.order {
             let index = index as usize;
             let batch = &self.plan.batches[index];
-            // Batches drawing virtual geometry (decision 044) draw its
+            // Batches drawing virtual geometry draw its
             // clusters below.
             if self.virtual_draws.drawn.get(index) == Some(&true) {
                 continue;
@@ -2270,7 +2267,7 @@ impl Renderer {
             let (mesh, draw) = self.bind_batch(pass, &mut binds, (opaque_kind, false), batch);
             if gpu_mode {
                 // Visible slots of this group, compacted and counted
-                // on the GPU, each level of detail (decision 047)
+                // on the GPU, each level of detail
                 // with its own.
                 for level in 0..lod_levels(batch, mesh, false) {
                     // An empty level draws nothing.
@@ -2293,7 +2290,7 @@ impl Renderer {
                 draws += 1;
             }
         }
-        // Impostors (decision 048): every draw group's cards in one
+        // Impostors: every draw group's cards in one
         // draw, over the pose and light groups the meshes bound.
         if gpu_mode
             && let Some((targets, lit)) = impostor_pass
@@ -2308,7 +2305,7 @@ impl Renderer {
             pass.set_vertex_buffer(0, ids.slice(..));
             pass.draw_indirect(args, offset);
             draws += 1;
-            // Cards fading over their meshes (decision 107), once.
+            // Cards fading over their meshes, once.
             if phase == 0 {
                 let (cards, args, offset) = self.gpu_presentation.fading_cards();
                 pass.set_vertex_buffer(0, cards);
@@ -2316,7 +2313,7 @@ impl Renderer {
                 draws += 1;
             }
         }
-        // Virtual geometry (decision 044): each bin's selected
+        // Virtual geometry: each bin's selected
         // clusters, in phase one, then each bin's twin of clusters
         // the retest found visible in phase two; bins the visibility
         // buffer resolves draw below.
@@ -2350,7 +2347,7 @@ impl Renderer {
     }
 
     /// The triangle IDs of `phase`'s camera bins the visibility buffer
-    /// resolves (decision 045).
+    /// resolves.
     fn encode_visibility_ids(
         &self,
         state: &FrameState<'_>,
@@ -2397,7 +2394,7 @@ impl Renderer {
         }
     }
 
-    /// The tiles of each bin the visibility buffer resolves (decision 045).
+    /// The tiles of each bin the visibility buffer resolves.
     fn encode_visibility_tiles(&self, encoder: &mut wgpu::CommandEncoder) {
         self.visibility
             .buffer
@@ -2406,8 +2403,8 @@ impl Renderer {
             .encode_classify(encoder, self.virtual_draws.bins.len());
     }
 
-    /// Each resolved bin's pixels of `phase` shaded into the opaque targets
-    /// (decision 045), and the sky after the last phase.
+    /// Each resolved bin's pixels of `phase` shaded into the opaque targets,
+    /// and the sky after the last phase.
     fn encode_visibility_resolve(
         &self,
         state: &FrameState<'_>,
@@ -2468,7 +2465,7 @@ impl Renderer {
         }
     }
 
-    /// Decals (decision 039) into the frame's color target.
+    /// Decals into the frame's color target.
     fn encode_decals(
         &self,
         state: &FrameState<'_>,
@@ -2500,7 +2497,7 @@ impl Renderer {
         );
     }
 
-    /// Water over the opaque scene (decision 067), writing its depth;
+    /// Water over the opaque scene, writing its depth;
     /// returns its draws.
     fn encode_water(
         &self,
@@ -2509,7 +2506,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         node: &Node,
     ) -> u32 {
-        // The ground behind the water, before it draws (decision 074).
+        // The ground behind the water, before it draws.
         self.water.copy_depth(encoder, &self.depth.texture);
         let (colors, count) = self.color_attachments(node, view);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -2524,7 +2521,7 @@ impl Renderer {
             .draw(&mut pass, &self.camera.group, state.shape.targets)
     }
 
-    /// The view's clouds (decision 095) laid over the scene's color.
+    /// The view's clouds laid over the scene's color.
     fn encode_cloud_composite(
         &self,
         state: &FrameState<'_>,
@@ -2558,7 +2555,7 @@ impl Renderer {
         }
     }
 
-    /// Clouds in the view (decision 095): their composite's pipeline into
+    /// Clouds in the view: their composite's pipeline into
     /// `targets` and its group; whether they draw this frame.
     fn prepare_cloud_composite(&mut self, targets: Targets) -> bool {
         if !self.clouds.marches_view() {
@@ -2575,7 +2572,7 @@ impl Renderer {
         true
     }
 
-    /// Transparent surfaces and alpha particles accumulated (decision 026);
+    /// Transparent surfaces and alpha particles accumulated;
     /// returns the surfaces' draws.
     fn encode_transparent(
         &self,
@@ -2654,7 +2651,7 @@ impl Renderer {
     }
 
     /// The accumulated transparent surfaces composited over the frame's
-    /// color, then additive particles (decision 026).
+    /// color, then additive particles.
     fn encode_transparent_composite(
         &self,
         state: &FrameState<'_>,
@@ -2687,7 +2684,7 @@ impl Renderer {
         }
     }
 
-    /// The screen effects (decision 021): ambient occlusion, bloom,
+    /// The screen effects: ambient occlusion, bloom,
     /// reflections and sun shafts after the opaque and transparent passes.
     fn encode_screen_effects(&self, state: &FrameState<'_>, encoder: &mut wgpu::CommandEncoder) {
         let post_frame = state.features.post_frame.expect("planned with effects");
@@ -2695,7 +2692,7 @@ impl Renderer {
         post.encode_effects(encoder, post_frame, &self.camera.group, &self.profiler);
     }
 
-    /// The screen effects' composite into the canvas (decision 021).
+    /// The screen effects' composite into the canvas.
     fn encode_composite(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -2710,8 +2707,7 @@ impl Renderer {
         post.encode_composite(encoder, view, color_operations(canvas), &self.profiler);
     }
 
-    /// Temporal antialiasing's resolve into the canvas and the next history
-    /// (decision 017).
+    /// Temporal antialiasing's resolve into the canvas and the next history.
     fn encode_temporal_resolve(
         &mut self,
         state: &FrameState<'_>,
@@ -2741,7 +2737,7 @@ impl Renderer {
             );
     }
 
-    /// Reflection probe captures (decision 043) after the frame's own
+    /// Reflection probe captures after the frame's own
     /// drawing, once their slots stand still.
     fn encode_probes(
         &mut self,

@@ -1,5 +1,5 @@
 /**
- * Worker jobs (decision 110): the Stress Lab's highlands load with their
+ * Worker jobs: the Stress Lab's highlands load with their
  * bakes and tiles made on the page's job workers and their hiker's walks
  * searched there, every job's output the engine's own. Heights, normals,
  * holes, the tile levels answering and what the bakes and roads give at
@@ -86,13 +86,13 @@ async function session(name, query, walk) {
 const checks = [];
 try {
   const workers = await session("workers", {}, true);
-  // The page's job cache (decision 116) writes its index a little after
+  // The page's job cache writes its index a little after
   // its last change.
   await delay(3000);
   assert.ok(workers.jobs.workers > 0, `workers run jobs: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.completed > 0 && workers.jobs.failed === 0, `the bakes and tiles ran there: ${JSON.stringify(workers.jobs)}`);
   assert.ok(workers.jobs.shares > 0 && workers.jobs.shared_bytes > 0, `the terrain's layers are shared with them: ${JSON.stringify(workers.jobs)}`);
-  // Decision 114: tiles hand out their shape before the rest.
+  // Tiles hand out their shape before the rest.
   assert.ok(workers.jobs.parts > 0, `tiles hand out their shapes first: ${JSON.stringify(workers.jobs)}`);
   const page_ = await session("page", { workers: "off" }, false);
   assert.equal(page_.jobs.workers, 0, `?workers=off runs none: ${JSON.stringify(page_.jobs)}`);
@@ -103,7 +103,7 @@ try {
   assert.deepEqual(workers.samples, page_.samples, "heights, normals, holes, levels, bakes and roads match bit for bit");
   assert.ok(workers.drawn.placed_objects > 0, `objects stand on the tiles: ${JSON.stringify(workers.drawn)}`);
   assert.deepEqual(workers.drawn, page_.drawn, "an exact frame draws the same tiles, water and placed objects");
-  // Decision 116: the first session kept its jobs' outputs; a session
+  // The first session kept its jobs' outputs; a session
   // verifying them takes them from the cache, runs every job anyway and
   // finds the same bytes, and samples and draws as the first did.
   const kept = await session("kept", { jobcache: "verify" }, true);

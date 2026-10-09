@@ -1,4 +1,4 @@
-//! Each frame's caster groups (decision 020): one per mesh and masked
+//! Each frame's caster groups: one per mesh and masked
 //! material, of the plan's batches (GPU-presented frames) or of a
 //! CPU-prepared frame's casters, each with its ID region in every map.
 
@@ -16,10 +16,10 @@ pub(crate) struct ShadowGroup {
     pub mesh: MeshHandle,
     /// Index of its source in the snapshot's meshes.
     pub source_index: usize,
-    /// The alpha-masked material (decision 031) whose base color alpha
+    /// The alpha-masked material whose base color alpha
     /// these casters test; `None` casts the whole mesh.
     pub material: Option<MaterialHandle>,
-    /// Whether virtual geometry (decision 044) draws its casters' clusters
+    /// Whether virtual geometry draws its casters' clusters
     /// instead of the mesh.
     pub virtual_geometry: bool,
     /// Its ID region's start and size in each map.
@@ -119,7 +119,7 @@ impl CasterGroups {
     /// casters (CPU-prepared frames). Returns whether they changed.
     pub(super) fn plan(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) -> bool {
         let snapshot = frame.snapshot();
-        // Virtual geometry (decision 044) draws where it is enabled.
+        // Virtual geometry draws where it is enabled.
         let clustered = snapshot.environment.virtual_geometry.enabled;
         let (source, key) = if gpu {
             (
@@ -148,7 +148,7 @@ impl CasterGroups {
         self.batch_groups.clear();
         let mut indices = GroupIndices::new();
         let mut counts = Vec::new();
-        // Casters of alpha-masked materials test their texels (decision 031).
+        // Casters of alpha-masked materials test their texels.
         let masked: HashSet<MaterialHandle> = snapshot
             .materials
             .iter()
@@ -168,7 +168,7 @@ impl CasterGroups {
             let instances = &snapshot.instances;
             self.listed.clear();
             for &slot in frame.casters() {
-                // Transparent surfaces cast no shadow (decision 026).
+                // Transparent surfaces cast no shadow.
                 if crate::batches::is_transparent(&instances[slot], &plan.transparent_materials) {
                     continue;
                 }
@@ -193,7 +193,7 @@ impl CasterGroups {
             }
         } else {
             for batch in &plan.batches {
-                // Transparent surfaces cast no shadow (decision 026).
+                // Transparent surfaces cast no shadow.
                 if batch.transparent {
                     self.batch_groups.push(u32::MAX);
                     continue;
@@ -218,8 +218,8 @@ impl CasterGroups {
             start += count;
             let mesh = &snapshot.meshes[group.source_index].mesh;
             let bounds = mesh.bounds();
-            // Meshes with joints (decision 036) cast wherever joints move them;
-            // virtual geometry (decision 044, flag 2) casts clusters.
+            // Meshes with joints cast wherever joints move them;
+            // virtual geometry (flag 2) casts clusters.
             let skinned = if mesh.joint_count() != 0 { 1.0 } else { 0.0 };
             group.virtual_geometry = clustered && mesh.virtual_geometry().is_some();
             self.records.push(BatchData {

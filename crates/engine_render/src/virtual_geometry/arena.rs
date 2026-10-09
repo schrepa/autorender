@@ -1,4 +1,4 @@
-//! The arena of virtual geometry (decision 044): resident virtual meshes'
+//! The arena of virtual geometry: resident virtual meshes'
 //! hierarchies, groups and clusters in one arena with absolute indices,
 //! rebased once at upload, and the page pool their pages stream into
 //! (`virtual_streaming`). Each page lives in a slot found through the

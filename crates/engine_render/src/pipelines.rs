@@ -1,4 +1,4 @@
-//! Pipeline creation (decision 049). Every render and compute pipeline the
+//! Pipeline creation. Every render and compute pipeline the
 //! renderer builds goes through these functions, which count creations so
 //! frames report when compiling ends: a frame that creates none compiles
 //! nothing, and hosts reveal the canvas once frames stop creating them.
@@ -160,7 +160,7 @@ fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
 /// signatures for it, which an integrated Intel GPU's driver compiles in
 /// about 150 ms. Passes of one family therefore share a table listing every
 /// binding any of them reads, and their bind groups fill the bindings a pass
-/// leaves alone with [`Fillers`] (decision 049).
+/// leaves alone with [`Fillers`].
 pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLayout {
     let entries: Vec<wgpu::BindGroupLayoutEntry> = table
         .bindings
@@ -178,7 +178,7 @@ pub(crate) fn layout(device: &wgpu::Device, table: &Table) -> wgpu::BindGroupLay
     })
 }
 
-/// A shared layout (decision 049): its table (`crate::bindings`), group
+/// A shared layout: its table (`crate::bindings`), group
 /// layout, and the pipeline layout of passes binding it first, then `more`.
 pub(crate) struct Family {
     table: &'static Table,

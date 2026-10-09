@@ -1,4 +1,4 @@
-//! glTF skins and animations (decisions 035 and 036): skins keep their joint
+//! glTF skins and animations: skins keep their joint
 //! nodes and inverse bind matrices; animations become clips in `EAN1` files
 //! targeting node entities.
 

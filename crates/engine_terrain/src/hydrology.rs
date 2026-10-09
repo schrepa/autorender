@@ -1,4 +1,4 @@
-//! Hydrology (decision 066): where water runs over a terrain and what it
+//! Hydrology: where water runs over a terrain and what it
 //! carves. A bake reads the heights the layers below it give at one
 //! pyramid level, fills their pits so that every sample drains off the
 //! grid's edge (Priority-Flood with epsilon; Barnes, Lehman and Mulla
@@ -13,7 +13,7 @@
 //! follow from the same grids. Each result is a 16-bit image with coarser
 //! levels, so every terrain level samples it without aliasing, and every
 //! sample is the same on every target: the bake is deterministic. Rivers
-//! (decision 092, `rivers.rs`) follow the channels as lines with water of
+//! (`rivers.rs`) follow the channels as lines with water of
 //! their own; the grid of standing water holds lakes alone.
 
 use std::cmp::Reverse;
@@ -28,7 +28,7 @@ use crate::layers::HeightImage;
 use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace};
 
 /// A layer that bakes where water runs over the layers below it and carves
-/// channels into them (decision 066).
+/// channels into them.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default, deny_unknown_fields)]
@@ -51,7 +51,7 @@ pub struct HydrologyLayer {
     pub max_depth: f32,
     #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
     pub max_width: f32,
-    /// Square meters of upstream area where streams begin (decision 097):
+    /// Square meters of upstream area where streams begin:
     /// channels draining less than `channel_area` run as streams down to
     /// the rivers they join, their width falling with the area they drain
     /// below a river's at its head and their depth with its square root,
@@ -82,7 +82,7 @@ impl Default for HydrologyLayer {
 
 /// What a bake found: samples read, samples channels run through, samples
 /// of filled pits, the largest upstream area (square meters), and the
-/// waterfalls rivers drop over (decision 075).
+/// waterfalls rivers drop over.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct HydrologyStats {
     pub samples: usize,
@@ -92,7 +92,7 @@ pub struct HydrologyStats {
     pub falls: usize,
 }
 
-/// A waterfall (decision 075): where a river drops steeper than
+/// A waterfall: where a river drops steeper than
 /// [`FALL_SLOPE`] over at least [`FALL_HEIGHT`] meters, its surface at its
 /// lip and at its foot (terrain-local meters), the ground along its course
 /// from lip to foot a sample at a time, the meters across the river at its
@@ -138,15 +138,15 @@ pub struct Hydrology {
     pub lakes: HeightImage,
     /// Where lakes stand in filled pits.
     pub water: Arc<WaterGrid>,
-    /// Rivers in the channels (decision 092), their water set from the
+    /// Rivers in the channels, their water set from the
     /// finest ground once the bake reads it.
     pub rivers: Arc<Rivers>,
-    /// Where rivers fall (decision 075).
+    /// Where rivers fall.
     pub falls: Arc<[Fall]>,
     pub stats: HydrologyStats,
 }
 
-/// Where a bake's water stands (decision 067), sample by sample of its
+/// Where a bake's water stands, sample by sample of its
 /// grid: lakes level at their pits' spill heights, rivers part full in
 /// their channels, flat across and falling along them. Surfaces reach a
 /// sample or two past the shore, under the banks, so water meets the
@@ -337,7 +337,7 @@ fn flood(heights: &mut [f32], width: usize) -> (Vec<u32>, Vec<u32>) {
     (order, parents)
 }
 
-/// Where water drains over a grid (decisions 066 and 068): its heights
+/// Where water drains over a grid: its heights
 /// with every pit filled to spill, the samples in the order the flood
 /// reached them, each sample's receiver (`u32::MAX` on the edge, which
 /// drains off the grid) and the slope down to it, and the area draining
@@ -501,7 +501,7 @@ pub(crate) fn bake(
         |drained| {
             let ratio = drained / layer.channel_area;
             if ratio < 1.0 {
-                // Streams (decision 097) narrow with the area they drain
+                // Streams narrow with the area they drain
                 // and grow shallow with its square root, meeting a river's
                 // size at its head.
                 return (0.5 * layer.width * ratio, MIN_DEPTH * ratio.sqrt());
@@ -559,7 +559,7 @@ pub(crate) fn bake(
     (hydrology, lines)
 }
 
-/// Where rivers fall (decision 075): from each channel sample dropping
+/// Where rivers fall: from each channel sample dropping
 /// steeper than [`FALL_SLOPE`] to its receiver that no steep sample drains
 /// into, down its receivers while they stay steep, kept where the ground
 /// falls [`FALL_HEIGHT`] or more; the river's surface at the lip and at the
@@ -631,7 +631,7 @@ fn falls(
 /// What a bake found about one place: the base-10 logarithm of its
 /// upstream area (square meters), its wetness index, how deep water would
 /// stand there in a filled pit and how deep channels carve it (meters), and
-/// meters from the nearest river's edge (decision 092), negative in its
+/// meters from the nearest river's edge, negative in its
 /// water; [`RIVER_FAR`] beyond every river's reach.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct HydrologySample {
@@ -686,7 +686,7 @@ impl Hydrology {
     }
 
     /// [`Self::at`] with the meters to the nearest river's edge, `river`,
-    /// already read (decision 113).
+    /// already read.
     pub(crate) fn at_river(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
         let level = self.level_for(spacing);
         HydrologySample {
@@ -695,7 +695,7 @@ impl Hydrology {
         }
     }
 
-    /// What masks read of [`Self::at`] (decision 113), with `river` read
+    /// What masks read of [`Self::at`], with `river` read
     /// already: everything but the carving, which no mask reads (zero).
     pub(crate) fn masks_at(&self, x: f32, z: f32, spacing: f32, river: f32) -> HydrologySample {
         let level = self.level_for(spacing);
@@ -709,8 +709,8 @@ impl Hydrology {
         }
     }
 
-    /// The water standing at terrain-local `(x, z)`, in a lake or a river
-    /// (decision 092): its surface and depth; `None` where dry.
+    /// The water standing at terrain-local `(x, z)`, in a lake or a river:
+    /// its surface and depth; `None` where dry.
     pub fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
     }
@@ -776,7 +776,7 @@ fn water(
             let along = [rx as f32 - x as f32, rz as f32 - z as f32];
             let length = (along[0] * along[0] + along[1] * along[1]).sqrt();
             let drop = max(heights[sample] - heights[receiver as usize], 0.0);
-            // Where it falls (decision 075) the river carries no surface: a
+            // Where it falls the river carries no surface: a
             // grid of its samples cannot follow a waterfall down its rocks,
             // which its spray shows instead.
             if drop > FALL_SLOPE * length * spacing {

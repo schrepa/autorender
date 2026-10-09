@@ -1,4 +1,4 @@
-//! Virtual geometry settings (decision 044): meshes built from cluster
+//! Virtual geometry settings: meshes built from cluster
 //! hierarchies ([`crate::Mesh::from_virtual`]) draw the clusters each view
 //! needs, selected on the GPU, instead of their fallback cut.
 //!
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::environment::{InvalidSetting, check_budget, check_range};
 
-/// Virtual geometry settings (decision 044): whether meshes built as cluster
+/// Virtual geometry settings: whether meshes built as cluster
 /// hierarchies draw the clusters each view needs, and how coarse those may
 /// be. Requires version 8.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -36,8 +36,8 @@ pub struct VirtualGeometry {
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_resident_pages: Option<u32>,
-    /// Whether the camera's clusters shade through the visibility buffer
-    /// (decision 045), each pixel once; false shades them as they draw,
+    /// Whether the camera's clusters shade through the visibility buffer,
+    /// each pixel once; false shades them as they draw,
     /// which was faster on the integrated GPU measured. Omitted, false.
     #[serde(skip_serializing_if = "is_false")]
     pub visibility_buffer: bool,

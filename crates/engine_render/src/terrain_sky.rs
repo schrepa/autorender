@@ -1,4 +1,4 @@
-//! Terrain sky visibility (decision 055): each terrain's sky map, a grid
+//! Terrain sky visibility: each terrain's sky map, a grid
 //! over the whole terrain holding at every texel the share of the sky its
 //! ground sees about its normal, from the horizons of the terrain around it
 //! in sixteen directions (`terrain_sky.wgsl`). Terrain scales its ambient
@@ -68,7 +68,7 @@ pub(crate) struct SkyMaps {
     built: Vec<Option<Source>>,
     building: Vec<Option<(Source, u32)>>,
     // Builds each layer finished, which pages of the runtime virtual
-    // texture (decision 124) baked from it follow.
+    // texture baked from it follow.
     finished: Vec<u64>,
     // Advances when the bound view is replaced.
     generation: u64,
@@ -168,8 +168,7 @@ impl SkyMaps {
     /// once its source level is wholly resident, with terrain `settings`
     /// asking for sky visibility; `slots` names each resident tile's layer
     /// of the height array. Without it the maps are released.
-    /// Creates the pipeline sky maps build with unless it exists
-    /// (decision 099).
+    /// Creates the pipeline sky maps build with unless it exists.
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
         self.pipeline
             .get_or_insert_with(|| pipeline(device, &self.layout));

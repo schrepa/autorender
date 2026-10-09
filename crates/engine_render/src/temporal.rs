@@ -1,7 +1,7 @@
-//! Temporal antialiasing (decision 017) of GPU-presented display frames.
+//! Temporal antialiasing of GPU-presented display frames.
 //!
 //! Each frame rasterizes with a sub-pixel jitter into the screen effects'
-//! scene and glow targets (decision 021) and a motion target, then one
+//! scene and glow targets and a motion target, then one
 //! full-screen pass blends the scene with the reprojected previous output,
 //! applies ambient occlusion and bloom, and writes both the canvas and the
 //! next history. Culling alternates between two pose buffers, so the previous
@@ -71,9 +71,9 @@ pub(crate) struct TemporalFrame {
 }
 
 pub(crate) struct TemporalPass {
-    // Mesh pipelines live with the renderer's other variants (decision 049);
+    // Mesh pipelines live with the renderer's other variants;
     // the pass owns their layouts, the lit one created with the first lit
-    // temporal frame (decision 023).
+    // temporal frame.
     mesh_layout: wgpu::PipelineLayout,
     lit_layout: Option<wgpu::PipelineLayout>,
     pose_layout: wgpu::BindGroupLayout,

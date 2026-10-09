@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "SceneDocument",
-  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget (decision 029); bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
+  "description": "A persistent scene source. IDs are authored ASCII names, never runtime IDs.\n\nLoading sets no count budget; bulk pixels and geometry\nbelong in files beside the scene (version 7). Prefabs share scene-wide\nassets across their placements.\nUnknown fields are rejected to expose authoring mistakes. Arrays retain\nauthored order when serialized, yielding stable, readable source diffs.",
   "type": "object",
   "properties": {
     "animations": {
-      "description": "Keyframed clips that entity `animation` players play (decision 035).\nVersion 8.",
+      "description": "Keyframed clips that entity `animation` players play.\nVersion 8.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneAnimation"
@@ -36,7 +36,7 @@
       }
     },
     "environment": {
-      "description": "The scene's atmosphere and rendering effects (decision 022). Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
+      "description": "The scene's atmosphere and rendering effects. Requires\nversion 5. With it the scene owns the whole look: instantiation sets\nevery section, omitted ones to the engine defaults. Without it the\ngame's own settings stay.",
       "anyOf": [
         {
           "$ref": "#/$defs/SceneEnvironment"
@@ -77,7 +77,7 @@
       "minimum": 0
     },
     "skins": {
-      "description": "Joint lists that deform skinned meshes (decision 036). Version 8.",
+      "description": "Joint lists that deform skinned meshes. Version 8.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/SceneSkin"
@@ -213,7 +213,7 @@
           ]
         },
         {
-          "description": "A virtual mesh file (`EVG1`, decision 044) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
+          "description": "A virtual mesh file (`EVG1`) beside the scene: a\ncluster hierarchy renderers draw as the clusters each view needs, and\nelsewhere as its most detailed cut of at most `fallback_triangles`\ntriangles (4096 when omitted). Built by `cargo xtask asset import`\nfor dense meshes. Version 8.",
           "type": "object",
           "properties": {
             "fallback_triangles": {
@@ -252,7 +252,7 @@
       ]
     },
     "SceneAmbientOcclusion": {
-      "description": "Ambient occlusion (decision 021); an intensity of 0 turns it off.",
+      "description": "Ambient occlusion; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -316,7 +316,7 @@
       ]
     },
     "SceneAtmosphere": {
-      "description": "Sun, sky, fog and grade (decision 018): a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
+      "description": "Sun, sky, fog and grade: a preset and the fields that\ndiffer from it. Colors are linear RGB and may exceed 1.",
       "type": "object",
       "properties": {
         "ambient": {
@@ -328,7 +328,7 @@
           "format": "float"
         },
         "contrast": {
-          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6\n(decision 027), like the grade fields below.",
+          "description": "Contrast around mid grey after tone mapping: 1 keeps it, and the\ncurve, which keeps black and white, is steepest at 1.5. Version 6,\nlike the grade fields below.",
           "type": [
             "number",
             "null"
@@ -514,7 +514,7 @@
       "additionalProperties": false
     },
     "SceneBloom": {
-      "description": "Bloom (decision 021); an intensity of 0 turns it off.",
+      "description": "Bloom; an intensity of 0 turns it off.",
       "type": "object",
       "properties": {
         "intensity": {
@@ -741,7 +741,7 @@
       ]
     },
     "SceneDecal": {
-      "description": "A decal on this entity (decision 039). Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
+      "description": "A decal on this entity. Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
       "properties": {
         "blend": {
@@ -793,7 +793,7 @@
       ]
     },
     "SceneDecals": {
-      "description": "Decal settings (decision 039). Requires version 8.",
+      "description": "Decal settings. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -813,7 +813,7 @@
       "additionalProperties": false
     },
     "SceneEmitter": {
-      "description": "A particle emitter on this entity (decision 026). Requires version 6.\nOmitted fields take the engine's defaults.",
+      "description": "A particle emitter on this entity. Requires version 6.\nOmitted fields take the engine's defaults.",
       "type": "object",
       "properties": {
         "acceleration": {
@@ -972,7 +972,7 @@
       "additionalProperties": false
     },
     "SceneEnvironment": {
-      "description": "A scene's look (decision 022). In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
+      "description": "A scene's look. In a document, every omitted section takes\nthe engine's default state (sun shafts, reflections and refraction: off);\nin a development control, omitted sections stay as they are.",
       "type": "object",
       "properties": {
         "ambient_occlusion": {
@@ -1026,7 +1026,7 @@
           ]
         },
         "local_lights": {
-          "description": "Version 6 sections (decisions 023 to 026).",
+          "description": "Version 6 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLocalLights"
@@ -1067,7 +1067,7 @@
           ]
         },
         "refraction": {
-          "description": "Version 8 sections (decisions 038, 039, 043, 044 and 047).",
+          "description": "Version 8 sections.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneRefraction"
@@ -1126,7 +1126,7 @@
       ]
     },
     "SceneLevelOfDetail": {
-      "description": "Level of detail settings (decisions 047 and 048): whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
+      "description": "Level of detail settings: whether instances draw\nsimplified levels of their meshes, and impostors, where the\nsimplification stays within a pixel error. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -1134,7 +1134,7 @@
           "default": true
         },
         "impostors": {
-          "description": "Whether draw groups draw impostors where they fit (decision 048).",
+          "description": "Whether draw groups draw impostors where they fit.",
           "type": "boolean",
           "default": true
         },
@@ -1159,7 +1159,7 @@
       "additionalProperties": false
     },
     "SceneLight": {
-      "description": "A point or spot light on this entity (decision 023). Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
+      "description": "A point or spot light on this entity. Requires version 6.\nOn an entity with a mesh it follows the mesh's displayed pose.",
       "type": "object",
       "properties": {
         "color": {
@@ -1221,7 +1221,7 @@
       "additionalProperties": false
     },
     "SceneLocalLights": {
-      "description": "Local lighting settings (decision 023). Requires version 6.",
+      "description": "Local lighting settings. Requires version 6.",
       "type": "object",
       "properties": {
         "distance": {
@@ -1277,7 +1277,7 @@
       ]
     },
     "SceneMaterial": {
-      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces (decision 031); `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
+      "description": "One named material; color channels are linear values in `[0, 1]` and\nalpha is 1. `opacity` below 1 (version 6) draws it transparent unless\n`alpha_mode` says otherwise. Version 8 adds glTF's texture maps, emissive\ncolor, alpha modes and double-sided surfaces; `surface`\nroughness and metalness are glTF's roughness and metallic factors.",
       "type": "object",
       "properties": {
         "alpha_cutoff": {
@@ -1408,7 +1408,7 @@
           ]
         },
         "opacity": {
-          "description": "The fraction of light behind it the surface covers, in `(0, 1]`\n(decision 026). Below 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
+          "description": "The fraction of light behind it the surface covers, in `(0, 1]`.\nBelow 1 it draws transparent, blending in any order,\nwriting no depth and casting no shadow. Requires version 6. With\n`alpha_mode` `mask` it is the alpha the cutoff tests.",
           "type": [
             "number",
             "null"
@@ -1418,7 +1418,7 @@
           "minimum": 0.001
         },
         "surface": {
-          "description": "How the surface responds to light beyond its color (decision 019).\nRequires version 5; without it the material is matte.",
+          "description": "How the surface responds to light beyond its color.\nRequires version 5; without it the material is matte.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSurface"
@@ -1449,7 +1449,7 @@
           "minimum": 0.0
         },
         "transmission": {
-          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (decision 038,\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
+          "description": "Version 8: the share of light passing through the surface instead of\ndiffusing off it, in `[0, 1]`, tinted by its color (\nglTF `KHR_materials_transmission`). Transmissive materials draw in\nthe transparent pass; the environment's `refraction` bends what shows\nthrough them.",
           "type": [
             "number",
             "null"
@@ -1498,7 +1498,7 @@
       "type": "object",
       "properties": {
         "animation": {
-          "description": "Plays an animation on its targets (decision 035). Requires version 8.",
+          "description": "Plays an animation on its targets. Requires version 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/ScenePlayer"
@@ -1520,7 +1520,7 @@
           ]
         },
         "decal": {
-          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox (decision 039). Requires version 8.",
+          "description": "Projects a material onto the opaque surfaces inside this entity's\nbox. Requires version 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneDecal"
@@ -1537,7 +1537,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "light": {
-          "description": "A point or spot light (decision 023). Requires version 6.",
+          "description": "A point or spot light. Requires version 6.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLight"
@@ -1582,7 +1582,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "particles": {
-          "description": "A particle emitter (decision 026). Requires version 6.",
+          "description": "A particle emitter. Requires version 6.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneEmitter"
@@ -1603,7 +1603,7 @@
           "pattern": "^[A-Za-z0-9_.-]+$"
         },
         "reflection_probe": {
-          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect (decision 043). Requires\nversion 8.",
+          "description": "Captures this entity's surroundings into an environment map that\nsurfaces inside its world box reflect. Requires\nversion 8.",
           "anyOf": [
             {
               "$ref": "#/$defs/SceneReflectionProbe"
@@ -1614,7 +1614,7 @@
           ]
         },
         "skin": {
-          "description": "The skin deforming this object's mesh (decision 036). Requires\nversion 8 and a mesh with joints and weights.",
+          "description": "The skin deforming this object's mesh. Requires\nversion 8 and a mesh with joints and weights.",
           "type": [
             "string",
             "null"
@@ -1633,7 +1633,7 @@
           "maxItems": 16
         },
         "tint": {
-          "description": "Multiplies this object's color and opacity channel by channel\n(decision 033), each factor finite and in `[0, 1]`. Requires version 8.",
+          "description": "Multiplies this object's color and opacity channel by channel,\neach factor finite and in `[0, 1]`. Requires version 8.",
           "type": [
             "array",
             "null"
@@ -1687,7 +1687,7 @@
       ]
     },
     "SceneParticles": {
-      "description": "Particle settings (decision 026). Requires version 6.",
+      "description": "Particle settings. Requires version 6.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -1707,7 +1707,7 @@
       "additionalProperties": false
     },
     "ScenePlayer": {
-      "description": "Plays a clip on its targets from this entity (decision 035).",
+      "description": "Plays a clip on its targets from this entity.",
       "type": "object",
       "properties": {
         "clip": {
@@ -1766,7 +1766,7 @@
       ]
     },
     "SceneReflectionProbe": {
-      "description": "A reflection probe on this entity (decision 043). Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
+      "description": "A reflection probe on this entity. Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
       "type": "object",
       "properties": {
         "blend": {
@@ -1793,7 +1793,7 @@
       ]
     },
     "SceneReflectionProbes": {
-      "description": "Reflection probe settings (decision 043). Requires version 8.",
+      "description": "Reflection probe settings. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -1828,7 +1828,7 @@
       "additionalProperties": false
     },
     "SceneReflections": {
-      "description": "Screen-space reflections (decision 025). Requires version 6; an intensity\nof 0 turns them off.",
+      "description": "Screen-space reflections. Requires version 6; an intensity\nof 0 turns them off.",
       "type": "object",
       "properties": {
         "distance": {
@@ -1858,7 +1858,7 @@
       "additionalProperties": false
     },
     "SceneRefraction": {
-      "description": "Refraction through glass (decision 038). Requires version 8; a strength\nof 0 turns it off.",
+      "description": "Refraction through glass. Requires version 8; a strength\nof 0 turns it off.",
       "type": "object",
       "properties": {
         "blur": {
@@ -1881,7 +1881,7 @@
       "additionalProperties": false
     },
     "SceneShadows": {
-      "description": "Sun shadows (decision 020); omitted fields take the engine defaults.",
+      "description": "Sun shadows; omitted fields take the engine defaults.",
       "type": "object",
       "properties": {
         "bounds": {
@@ -1896,7 +1896,7 @@
           ]
         },
         "cascades": {
-          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6\n(decision 028).",
+          "description": "Sharper maps (cascades) splitting `near_distance`, each reaching a\nthird as far as the next: 1 to 4, 3 when omitted. Version 6.\n",
           "type": [
             "integer",
             "null"
@@ -1935,7 +1935,7 @@
       "additionalProperties": false
     },
     "SceneSkin": {
-      "description": "A named skin (decision 036): the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
+      "description": "A named skin: the joint entities that deform skinned meshes\nand each joint's inverse bind matrix (column-major, sixteen numbers).",
       "type": "object",
       "properties": {
         "id": {
@@ -2010,7 +2010,7 @@
       "additionalProperties": false
     },
     "SceneSunShafts": {
-      "description": "Sun shafts (decision 024): sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
+      "description": "Sun shafts: sunlight scattered by the fog between shadow\ncasters. Requires version 6 and shadows; an intensity of 0 turns them off.",
       "type": "object",
       "properties": {
         "anisotropy": {
@@ -2040,7 +2040,7 @@
       "additionalProperties": false
     },
     "SceneSurface": {
-      "description": "A material's response to light (decision 019). Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
+      "description": "A material's response to light. Omitted fields keep the\nmatte defaults: roughness 0.8 and no metalness, emission or ripples.",
       "type": "object",
       "properties": {
         "emission": {
@@ -2079,7 +2079,7 @@
       "additionalProperties": false
     },
     "SceneTexture": {
-      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7, decision 030) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
+      "description": "Opaque RGBA8 sRGB pixels in row-major, top-to-bottom order: inline as\nbase64, or (version 7) an image file beside the scene that\nthe host decodes with the platform's own decoder when the scene loads.\n\nDecoding never happens in simulation or rendering. Scenes store one level;\nthe renderer generates mip levels and samples them trilinearly.",
       "type": "object",
       "properties": {
         "height": {
@@ -2204,7 +2204,7 @@
           "minItems": 2
         },
         "tex_coord": {
-          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second (decision 034).",
+          "description": "The texture coordinates the map reads: 0, the mesh's first (the\ndefault), or 1, its second.",
           "type": [
             "integer",
             "null"
@@ -2292,7 +2292,7 @@
       "type": "object",
       "properties": {
         "color": {
-          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor (decision 034). Every vertex of a mesh has one or none does.",
+          "description": "Version 8: linear RGBA in `[0, 1]` multiplying the material's base\ncolor. Every vertex of a mesh has one or none does.",
           "type": [
             "array",
             "null"
@@ -2305,7 +2305,7 @@
           "minItems": 4
         },
         "joints": {
-          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex (decision 036). Every vertex of\na mesh has joints and weights or none does.",
+          "description": "Version 8: up to four joints (indices into the skin of the entities\ndrawing the mesh) moving this vertex. Every vertex of\na mesh has joints and weights or none does.",
           "type": [
             "array",
             "null"
@@ -2381,7 +2381,7 @@
       ]
     },
     "SceneVirtualGeometry": {
-      "description": "Virtual geometry settings (decision 044): whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
+      "description": "Virtual geometry settings: whether meshes built as cluster\nhierarchies draw the clusters each view needs, and how coarse those may\nbe. Requires version 8.",
       "type": "object",
       "properties": {
         "enabled": {
@@ -2406,7 +2406,7 @@
           "minimum": 0.25
         },
         "visibility_buffer": {
-          "description": "Whether the camera's clusters shade through the visibility buffer\n(decision 045), each pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
+          "description": "Whether the camera's clusters shade through the visibility buffer,\neach pixel once; false shades them as they draw,\nwhich was faster on the integrated GPU measured. Omitted, false.",
           "type": "boolean"
         }
       },

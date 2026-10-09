@@ -1,4 +1,4 @@
-//! Weighted blended order-independent transparency (decision 026).
+//! Weighted blended order-independent transparency.
 //!
 //! Transparent surfaces and alpha particles add their weighted color and
 //! coverage into an accumulation target and multiply what they let through

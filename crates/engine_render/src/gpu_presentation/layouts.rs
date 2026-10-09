@@ -1,7 +1,7 @@
-//! GPU presentation's compute pipelines over their shared layouts (decision
-//! 049; tables in `crate::bindings`): each layout lists every binding its
-//! passes read within the eight storage buffers per stage WebGPU guarantees,
-//! and passes skipping some bind fillers there.
+//! GPU presentation's compute pipelines over their shared layouts (tables in
+//! `crate::bindings`): each layout lists every binding its passes read within
+//! the eight storage buffers per stage WebGPU guarantees, and passes skipping
+//! some bind fillers there.
 
 use std::cell::OnceCell;
 
@@ -12,7 +12,7 @@ use crate::bindings::{
 use crate::gpu_data::PRESENTATION_SHADER;
 use crate::pipelines::{Family, Fillers, layout};
 
-/// The passes' shared layouts; skinned slots' bounds (decision 036) have
+/// The passes' shared layouts; skinned slots' bounds have
 /// theirs created with the first frame drawing skinned slots.
 pub(super) struct Families {
     pub(super) compose: Family,
@@ -24,9 +24,9 @@ pub(super) struct Families {
 }
 
 /// The pipelines every frame runs, and those only some scenes do, created
-/// with the first frame that runs them (decision 049): skinned slots'
-/// palettes and bounds (decision 036) and reflection probes' still frames
-/// and culling (decision 043).
+/// with the first frame that runs them: skinned slots'
+/// palettes and bounds and reflection probes' still frames
+/// and culling.
 pub(super) struct Pipelines {
     pub(super) shift_previous: wgpu::ComputePipeline,
     pub(super) compose_parents: wgpu::ComputePipeline,
@@ -114,13 +114,13 @@ impl Shaders {
         })
     }
 
-    /// Skinned slots' palettes (decision 036).
+    /// Skinned slots' palettes.
     pub(super) fn skin_palette(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.compose;
         self.lazy(device, &self.pipelines.skin_palette, family, "skin_palette")
     }
 
-    /// Skinned slots' bounds from their palettes (decision 036).
+    /// Skinned slots' bounds from their palettes.
     pub(super) fn skin_bounds(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = self.skin_bounds_family(device);
         self.lazy(
@@ -131,13 +131,13 @@ impl Shaders {
         )
     }
 
-    /// Reflection probes' count of slots' still frames (decision 043).
+    /// Reflection probes' count of slots' still frames.
     pub(super) fn count_still(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.tests;
         self.lazy(device, &self.pipelines.count_still, family, "count_still")
     }
 
-    /// The culling of reflection probe faces (decision 043).
+    /// The culling of reflection probe faces.
     pub(super) fn probe_cull(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {
         let family = &self.families.tests;
         self.lazy(device, &self.pipelines.probe_cull, family, "probe_cull")

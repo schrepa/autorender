@@ -1,12 +1,11 @@
 //! The mesh shader's entry points (`gpu_data::SHADER`) as typed keys: what
 //! a pipeline draws names its vertex and fragment stages here, by
-//! exhaustive matches over string literals, and a test checks that the keys
-//! name every entry point of the shader and nothing else.
+//! exhaustive matches over string literals.
 
 use crate::render_graph::Targets;
 
 /// A mesh pass: opaque into the frame's targets, transparent surfaces
-/// accumulated (decision 026), or a reflection probe face (decision 043:
+/// accumulated, or a reflection probe face (
 /// linear light, drawn mirrored).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum MeshPass {
@@ -15,8 +14,7 @@ pub(crate) enum MeshPass {
     Probe,
 }
 
-/// What a mesh pipeline draws: its pass and whether it shades local lights
-/// (decision 023).
+/// What a mesh pipeline draws: its pass and whether it shades local lights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PassKind {
     pub pass: MeshPass,
@@ -24,7 +22,7 @@ pub(crate) struct PassKind {
 }
 
 /// Where a mesh pipeline's slots are posed: as the frame poses them, or
-/// in temporal frames also as the previous frame did (decision 017).
+/// in temporal frames also as the previous frame did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Slots {
     Retained,
@@ -32,9 +30,8 @@ pub(crate) enum Slots {
 }
 
 /// The vertex streams a mesh draws from beyond positions, normals and
-/// coordinates: none, a second one of colors and second coordinates
-/// (decision 034), or that and a skin stream of joints and weights
-/// (decision 036).
+/// coordinates: none, a second one of colors and second coordinates,
+/// or that and a skin stream of joints and weights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Streams {
     Basic,
@@ -125,7 +122,7 @@ impl PassKind {
 pub(crate) const SKY_VERTEX: &str = "vs_sky";
 
 /// The sky's fragment stage into `targets`, or a reflection probe face's
-/// (`None`, decision 043).
+/// (`None`).
 pub(crate) fn sky_fragment(targets: Option<Targets>) -> &'static str {
     match targets {
         Some(Targets::Canvas) => "fs_sky",
@@ -135,7 +132,7 @@ pub(crate) fn sky_fragment(targets: Option<Targets>) -> &'static str {
     }
 }
 
-/// The vertex stage of virtual geometry's clusters (decision 044) drawn
+/// The vertex stage of virtual geometry's clusters drawn
 /// into `targets`; their fragments are the opaque passes'.
 pub(crate) fn virtual_vertex(targets: Targets) -> &'static str {
     match targets {
@@ -144,7 +141,7 @@ pub(crate) fn virtual_vertex(targets: Targets) -> &'static str {
     }
 }
 
-/// The visibility pass's stages (decision 045).
+/// The visibility pass's stages.
 pub(crate) const VISIBILITY_VERTEX: &str = "vs_visibility";
 pub(crate) const VISIBILITY_FRAGMENT: &str = "fs_visibility";
 /// The vertex stage of the visibility buffer's resolve, over each bin's
@@ -163,7 +160,7 @@ pub(crate) fn resolve_fragment(targets: Targets, lit: bool) -> &'static str {
     }
 }
 
-/// The vertex stage of impostor cards (decision 048) drawn into `targets`.
+/// The vertex stage of impostor cards drawn into `targets`.
 pub(crate) fn impostor_vertex(targets: Targets) -> &'static str {
     match targets {
         Targets::Canvas | Targets::Post => "vs_impostor",
@@ -185,7 +182,7 @@ pub(crate) fn impostor_fragment(targets: Targets, lit: bool) -> &'static str {
 
 /// The vertex and fragment stages baking impostors of meshes with a second
 /// vertex stream (`extended`) or without: their colors, or with `shade`
-/// their frames' nearest depths (decision 060).
+/// their frames' nearest depths.
 pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (&'static str, &'static str) {
     match (extended, shade) {
         (false, false) => ("vs_impostor_bake", "fs_impostor_bake"),
@@ -195,7 +192,7 @@ pub(crate) fn impostor_bake(extended: bool, shade: bool) -> (&'static str, &'sta
     }
 }
 
-/// Terrain's vertex and fragment stages (decision 051) into `targets`, or
+/// Terrain's vertex and fragment stages into `targets`, or
 /// a reflection probe face's (`None`), `lit` or not.
 pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (&'static str, &'static str) {
     match (targets, lit) {
@@ -210,7 +207,7 @@ pub(crate) fn terrain(targets: Option<Targets>, lit: bool) -> (&'static str, &'s
     }
 }
 
-/// Water's vertex and fragment stages (decision 067) into `targets`.
+/// Water's vertex and fragment stages into `targets`.
 pub(crate) fn water(targets: Targets) -> (&'static str, &'static str) {
     match targets {
         Targets::Canvas => ("vs_water", "fs_water"),
@@ -219,7 +216,7 @@ pub(crate) fn water(targets: Targets) -> (&'static str, &'static str) {
     }
 }
 
-/// Rivers' vertex and fragment stages (decision 092) into `targets`.
+/// Rivers' vertex and fragment stages into `targets`.
 pub(crate) fn river(targets: Targets) -> (&'static str, &'static str) {
     match targets {
         Targets::Canvas => ("vs_river", "fs_water"),
@@ -228,7 +225,7 @@ pub(crate) fn river(targets: Targets) -> (&'static str, &'static str) {
     }
 }
 
-/// The sea's vertex and fragment stages (decision 076) into `targets`.
+/// The sea's vertex and fragment stages into `targets`.
 pub(crate) fn ocean(targets: Targets) -> (&'static str, &'static str) {
     match targets {
         Targets::Canvas => ("vs_ocean", "fs_ocean"),
@@ -237,7 +234,7 @@ pub(crate) fn ocean(targets: Targets) -> (&'static str, &'static str) {
     }
 }
 
-/// Ground cover's vertex and fragment stages (decision 056) into
+/// Ground cover's vertex and fragment stages into
 /// `targets`, `lit` or not.
 pub(crate) fn cover(targets: Targets, lit: bool) -> (&'static str, &'static str) {
     match (targets, lit) {
@@ -253,7 +250,7 @@ pub(crate) fn cover(targets: Targets, lit: bool) -> (&'static str, &'static str)
 /// Terrain's depth stage in shadow maps (`terrain_shadow.wgsl`).
 pub(crate) const TERRAIN_SHADOW_VERTEX: &str = "vs_terrain_shadow";
 
-/// Decals' boxes (decision 039).
+/// Decals' boxes.
 pub(crate) const DECAL_VERTEX: &str = "vs_decal";
 
 /// Decals' fragment stage, `lit` or not.

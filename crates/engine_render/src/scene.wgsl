@@ -1,20 +1,19 @@
 // Shared scene declarations, prepended to the mesh, particle and sun shaft
-// shaders: the first bind group's camera, atmosphere (decision 018) and sun
-// shadows (decision 020), and the lighting functions every path shades with.
+// shaders: the first bind group's camera, atmosphere and sun
+// shadows, and the lighting functions every path shades with.
 
 // Uniform: three column-major mat4 and four vec4, 16-byte alignment,
 // exactly 256 bytes. `view_projection` is the rasterized projection; temporally
-// antialiased frames (decision 017) jitter it by `jitter.xy` clip units per w.
+// antialiased frames jitter it by `jitter.xy` clip units per w.
 // Their motion uses the previous frame's unjittered `previous_view_projection`
 // and `jitter.zw`, two over the viewport size in pixels. The unjittered
 // inverse turns pixels into sky rays; `position.xyz` is the eye and
-// `position.w` presentation time in seconds (decision 019). `options.x` is 1
-// while a reflection probe captures a cube face (decision 043); `options.y`
+// `position.w` presentation time in seconds. `options.x` is 1
+// while a reflection probe captures a cube face; `options.y`
 // is the angle a pixel spans at the view's center (radians), which
-// `pixel_footprint` measures pixels by (decision 098). `wind` is
+// `pixel_footprint` measures pixels by. `wind` is
 // the wind's velocity (x and z), gust strength and the previous frame's
-// presentation time, which temporal frames' motion sways by (decision
-// 058).
+// presentation time, which temporal frames' motion sways by.
 struct Camera {
     view_projection: mat4x4<f32>,
     previous_view_projection: mat4x4<f32>,
@@ -24,7 +23,7 @@ struct Camera {
     options: vec4<f32>,
     wind: vec4<f32>,
 }
-// The scene's atmosphere (decision 018) in linear color; scalars ride in w.
+// The scene's atmosphere in linear color; scalars ride in w.
 struct Lighting {
     // Toward the sun; w: rim strength.
     sun: vec4<f32>,
@@ -38,46 +37,45 @@ struct Lighting {
     ground: vec4<f32>,
     // Start, density, height falloff and maximum.
     fog: vec4<f32>,
-    // Emission scale (decision 019), the exposed brightness above which
-    // light glows (decision 021), the roughness beyond which surfaces
-    // reflect only the sky, and 1 when screen-space reflections run
-    // (decision 025).
+    // Emission scale, the exposed brightness above which
+    // light glows, the roughness beyond which surfaces
+    // reflect only the sky, and 1 when screen-space reflections run.
     effects: vec4<f32>,
-    // Contrast and vibrance (decision 027).
+    // Contrast and vibrance.
     grade: vec4<f32>,
     // Split toning: luminance-normalized gains of shadows and highlights.
     shadow_tint: vec4<f32>,
     highlight_tint: vec4<f32>,
-    // Refraction through glass (decision 038): the bend's strength (0 without
+    // Refraction through glass: the bend's strength (0 without
     // refraction) and the blur radius in pixels of fully rough glass.
     refraction: vec4<f32>,
-    // Aerial perspective (decision 053): start, density at height zero,
+    // Aerial perspective: start, density at height zero,
     // height falloff and the sun's glow; the air's own color.
     aerial: vec4<f32>,
     aerial_color: vec4<f32>,
-    // Occupancy (decision 059): the map's center (x and z), the inverse of
+    // Occupancy: the map's center (x and z), the inverse of
     // its side and the strength covers darken by (0 without a map); then
     // the reference height its heights are above, its texels a side, the
-    // meters from the eye it fades out by (decision 098) and the far map's
+    // meters from the eye it fades out by and the far map's
     // reference height; the far map's center, the inverse of its side and
-    // its reach (decision 101; 0 without one).
+    // its reach (0 without one).
     occupancy: vec4<f32>,
     occupancy_heights: vec4<f32>,
     occupancy_far: vec4<f32>,
-    // Under the sea (decision 077): the light its water scatters toward the
+    // Under the sea: the light its water scatters toward the
     // eye (rgb) and the meters through which half the light passes (w);
     // zero above it.
     underwater: vec4<f32>,
     // The sea: its still level, the meters through which half the light
     // passes, and 1 while it stands.
     sea: vec4<f32>,
-    // Clouds' shadows (decision 084): the grid's first cell's corner (x and
+    // Clouds' shadows: the grid's first cell's corner (x and
     // z), cells per meter and the shadows' strength (0 without clouds);
     // then the clouds' base height.
     cloud_shadow: vec4<f32>,
     cloud_layer: vec4<f32>,
 }
-// Sun shadows (decisions 020 and 028): world to each near cascade and to both
+// Sun shadows: world to each near cascade and to both
 // far maps (x and y in [-1, 1] across a map, z in [0, 1]).
 struct Shadow {
     near: array<mat4x4<f32>, 4>,
@@ -97,7 +95,7 @@ struct Shadow {
     offsets: vec4<f32>,
     // Texels a side of the near cascades (x) and the far maps (y).
     sizes: vec4<f32>,
-    // World to light space (decision 065): the sun's right, up and
+    // World to light space: the sun's right, up and
     // away-from-sun axes, which every kept level scales.
     light: array<vec4<f32>, 3>,
     // Each kept level's light space: one over its width (x and y in level
@@ -113,7 +111,7 @@ struct Shadow {
     level_valid: array<vec4<u32>, 6>,
     // x: levels in use; y: their texels a side; z: a bit for each level
     // with tiles not yet drawn; w: the terrains whose horizon records
-    // lookups loop over (decision 052).
+    // lookups loop over.
     level_state: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -127,7 +125,7 @@ struct Shadow {
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // Unfiltered reads of four shadow texels, for receiver planes.
 @group(0) @binding(7) var shadow_texels: sampler;
-// Terrain's long sun shadows (decision 052): each terrain's horizon map, a
+// Terrain's long sun shadows: each terrain's horizon map, a
 // grid aligned with the sun: x how far above the ground the sun clears the
 // terrain toward it, y how far toward the sun the slope setting that lies, z
 // the ground's height.
@@ -138,12 +136,12 @@ struct Shadow {
 // meters receivers rise before comparing. One unused texel without any.
 @group(0) @binding(14) var terrain_horizon_records: texture_2d<f32>;
 @group(0) @binding(15) var terrain_horizon_sampler: sampler;
-// What placed objects cover around the camera (decision 059): the densest
+// What placed objects cover around the camera: the densest
 // cover over each texel, and the covers' highest top and lowest bottom
 // (negated), above the map's reference height.
 @group(0) @binding(16) var occupancy_coverage: texture_2d_array<f32>;
 @group(0) @binding(17) var occupancy_heights: texture_2d_array<f32>;
-// The kept shadow levels (decision 065), one layer each.
+// The kept shadow levels, one layer each.
 @group(0) @binding(18) var kept_levels: texture_depth_2d_array;
 
 // How much the covers in occupancy layer `layer` (centered at `center`,
@@ -173,12 +171,12 @@ fn occupancy_cover(world: vec3<f32>, layer: u32, center: vec2<f32>, inverse: f32
     return coverage * saturate((top - height) / max(top - bottom, 0.5));
 }
 
-// The share of the sky light placed objects' covers leave at `world`
-// (decision 059): under a cover, its density's worth less; within it, less
+// The share of the sky light placed objects' covers leave at `world`:
+// under a cover, its density's worth less; within it, less
 // the deeper below its top; above it or outside the maps, all of it. Covers
-// darken less over the outer two fifths of the map's reach around the eye
-// (decision 098), so their edge is never seen, where the far map's take
-// over (decision 101), fading out over the outer two fifths of theirs.
+// darken less over the outer two fifths of the map's reach around the eye,
+// so their edge is never seen, where the far map's take
+// over, fading out over the outer two fifths of theirs.
 fn occupancy_visibility(world: vec3<f32>) -> f32 {
     let strength = lighting.occupancy.w;
     if strength <= 0.0 {
@@ -205,7 +203,7 @@ fn occupancy_visibility(world: vec3<f32>) -> f32 {
 const PI: f32 = 3.14159265;
 
 // The meters a pixel spans on a surface at `world` facing `normal`, the
-// mean of its two sides (decision 098): from the angle a pixel spans
+// mean of its two sides: from the angle a pixel spans
 // (`camera.options.y`), the point's depth along the view and how obliquely
 // the view meets the surface, so it changes smoothly over curved surfaces
 // where screen derivatives step from one triangle to the next. Views more
@@ -219,7 +217,7 @@ fn pixel_footprint(world: vec3<f32>, normal: vec3<f32>) -> f32 {
     return depth * camera.options.y * sqrt(depth / (distance * facing));
 }
 
-// How far the wind (decision 058) pushes a point `height` meters up an
+// How far the wind pushes a point `height` meters up an
 // object standing at `root` that sways `sway` meters at ten meters up in
 // full wind, at time `time`, the wind blowing at `velocity` (x and z,
 // meters per second) with gusts of strength `gusts`: along the wind,
@@ -241,8 +239,8 @@ fn wind_sway(velocity: vec2<f32>, gusts: f32, root: vec3<f32>, height: f32, sway
     return vec3<f32>(toward.x, 0.0, toward.y) * bend;
 }
 
-// Placed objects' sway (decision 058) rides in their slots' flags as a
-// float; skinned slots' joint palette offsets (decision 036) read as none.
+// Placed objects' sway rides in their slots' flags as a
+// float; skinned slots' joint palette offsets read as none.
 fn slot_sway(flags: u32) -> f32 {
     let sway = bitcast<f32>(flags);
     return select(0.0, sway, sway > 1.0e-6 && sway <= 10.0);
@@ -293,7 +291,7 @@ fn haze(direction: vec3<f32>) -> vec3<f32> {
 
 // The sky itself: its haze and the sun's small disc.
 fn sky(direction: vec3<f32>) -> vec3<f32> {
-    // Under the sea, nothing shows past the water (decision 077).
+    // Under the sea, nothing shows past the water.
     if lighting.underwater.w > 0.0 {
         return underwater_light(direction);
     }
@@ -301,7 +299,7 @@ fn sky(direction: vec3<f32>) -> vec3<f32> {
 }
 
 // The light the sea's water scatters toward an eye under it looking along
-// `direction` (decision 077): brightest looking up toward the light coming
+// `direction`: brightest looking up toward the light coming
 // down through it, dim looking down into the deep.
 fn underwater_light(direction: vec3<f32>) -> vec3<f32> {
     let up = saturate(direction.y * 0.5 + 0.5);
@@ -315,7 +313,7 @@ fn open_sky(direction: vec3<f32>) -> vec3<f32> {
 }
 
 // Rays below the horizon by this much (the sine of their elevation) see no
-// clouds (decision 084; `clouds.wgsl`'s `HORIZON`).
+// clouds (`clouds.wgsl`'s `HORIZON`).
 const CLOUD_HORIZON: f32 = 0.05;
 
 // The clouds' dome texel looking along `direction`: around by its azimuth,
@@ -328,11 +326,10 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(fract(around), saturate((elevation - low) / (1.5707963 - low)));
 }
 
-// The clouds' shown domes (decision 091): the older's origin (world) and
+// The clouds' shown domes: the older's origin (world) and
 // whether domes show (1); the newer's origin and its share of the blend;
 // the eye lookups correct for, and the cloud layer's middle (world y);
-// and whether the view's own march shows the sky's clouds (1, decision
-// 095), so the view's sky shows no dome.
+// and whether the view's own march shows the sky's clouds (1), so the view's sky shows no dome.
 struct CloudDomes {
     older: vec4<f32>,
     newer: vec4<f32>,
@@ -344,7 +341,7 @@ struct CloudDomes {
 const CLOUD_PARALLAX_REACH: f32 = 60000.0;
 
 // The direction in which the dome marched from `origin` holds what the view
-// along `direction` from the domes' eye sees of the clouds (decision 091):
+// along `direction` from the domes' eye sees of the clouds:
 // toward where the view meets the cloud layer's middle. Views never
 // reaching it look along themselves.
 fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, direction: vec3<f32>)
@@ -371,7 +368,7 @@ fn behind_clouds(light: vec3<f32>, cloud: vec4<f32>, direction: vec3<f32>) -> ve
 }
 
 // How much of what lies `distance` meters away the sea's water hides from
-// an eye under it (decision 077).
+// an eye under it.
 fn underwater_cover(distance: f32) -> f32 {
     return 1.0 - exp2(-distance / lighting.underwater.w);
 }
@@ -414,8 +411,8 @@ fn fog(eye: vec3<f32>, point: vec3<f32>) -> f32 {
     return min(1.0 - exp(-depth), lighting.fog.w);
 }
 
-// The light air scatters toward the eye looking along `direction`
-// (decision 053): its own color, and toward the sun a glow of the sun's
+// The light air scatters toward the eye looking along `direction`:
+// its own color, and toward the sun a glow of the sun's
 // color, a broad lobe around a narrower one.
 fn air_light(direction: vec3<f32>) -> vec3<f32> {
     let toward = max(dot(direction, lighting.sun.xyz), 0.0);
@@ -425,13 +422,13 @@ fn air_light(direction: vec3<f32>) -> vec3<f32> {
         + lighting.sun_color.rgb * (lighting.aerial.w * lobe * (0.25 + 0.75 * lobe));
 }
 
-// What fog and air (decision 053) leave of light `lit` from `point` seen
+// What fog and air leave of light `lit` from `point` seen
 // from `eye` looking along `direction`, and how much of it they cover
 // together (w).
 fn atmospheric(lit: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
         -> vec4<f32> {
     // Light reaching what lies under the sea dims through the water above
-    // it (decision 077).
+    // it.
     var light = lit;
     if lighting.sea.z > 0.0 && point.y < lighting.sea.x {
         light *= exp2((point.y - lighting.sea.x) / lighting.sea.y);
@@ -481,7 +478,7 @@ fn filmic(x: vec3<f32>) -> vec3<f32> {
     return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
 }
 
-// The grade of every shaded color (decisions 018 and 027): exposure; the
+// The grade of every shaded color: exposure; the
 // filmic curve, half per channel and half on the brightest channel, which
 // keeps the hue and saturation of bright colors; contrast as an S-curve in a
 // perceptual (square root) space that keeps black and white, so dark shade
@@ -505,7 +502,7 @@ fn grade(color: vec3<f32>) -> vec3<f32> {
 }
 
 // Glow weight of light `color`: its exposed brightness above the bloom
-// threshold, as x / (1 + x) (decision 021).
+// threshold, as x / (1 + x).
 fn glow_weight(color: vec3<f32>) -> f32 {
     let bright = max(luminance(color) * lighting.horizon.w - lighting.effects.y, 0.0);
     return bright / (1.0 + bright);
@@ -530,7 +527,7 @@ fn far_visibility(world: vec3<f32>) -> f32 {
     return min(textureSampleCompareLevel(moving_shadows, shadow_sampler, uv, clip.z), kept);
 }
 
-// Receiver planes (decision 028): a surface's lookup compares each of the
+// Receiver planes: a surface's lookup compares each of the
 // four texels around it with the surface's own plane at that texel's center.
 // A tilted surface then matches its own depths, so lookups need no margin
 // that grows with texel size, which would keep every caster's lowest part
@@ -598,8 +595,8 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
     return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
 }
 
-// Visibility of the surface at `world` in near cascade `cascade` (decision
-// 028), looked up `normal` times its offset away; -1 where the cascade does
+// Visibility of the surface at `world` in near cascade `cascade`,
+// looked up `normal` times its offset away; -1 where the cascade does
 // not cover the lookup.
 fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
@@ -614,11 +611,11 @@ fn cascade_visibility(cascade: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec
     return plane_visibility(textureGather(near_shadows, shadow_texels, corner, cascade), point);
 }
 
-// Kept levels (decision 065) hand over to the next coarser map across this
+// Kept levels hand over to the next coarser map across this
 // share of their width inside their windows' edges.
 const LEVEL_HANDOVER: f32 = 0.08;
 // The last near cascade hands over to the far maps across this share of its
-// reach (decision 098).
+// reach.
 const CASCADE_HANDOVER: f32 = 0.3;
 
 // The four depths around `point` in kept level `level`, `size` texels a
@@ -639,10 +636,10 @@ fn level_depths(level: u32, point: MapPoint, size: f32) -> vec4<f32> {
 }
 
 // Visibility of still casters' sun at the surface point `world` in the kept
-// levels (decision 065), each looked up its offset along `normal`: from the
+// levels, each looked up its offset along `normal`: from the
 // finest level whose window and band hold it on a tile holding its casters,
 // handing over to the next across the window's edge and as its texels
-// shrink below a pixel's footprint (decision 098). x: the visibility found,
+// shrink below a pixel's footprint. x: the visibility found,
 // weighted; y: the weight left to coarser maps (1 where no level holds the
 // point).
 fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
@@ -710,8 +707,8 @@ fn level_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
 }
 
 // Visibility of the surface at `world` beyond the near cascades: of the
-// moving map's casters and of still ones, which the kept levels (decision
-// 065) hold where they reach and the kept far map elsewhere. Far maps are
+// moving map's casters and of still ones, which the kept levels
+// hold where they reach and the kept far map elsewhere. Far maps are
 // looked up their offset along `normal` and see nothing outside them.
 fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
@@ -748,7 +745,7 @@ fn far_surface_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
     return min(moving, still);
 }
 
-// The share of the sun terrains leave unblocked at `world` (decision 052):
+// The share of the sun terrains leave unblocked at `world`:
 // below a terrain's horizon there, none; above it, all; between, a soft edge
 // growing with the distance to the slope casting it. Heights count from the
 // map's ground, which terrain's own surfaces (`on_terrain`) lie on whatever
@@ -779,9 +776,9 @@ fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     return visible;
 }
 
-// Visibility of the sun at the surface point `world` (decision 020), whose
+// Visibility of the sun at the surface point `world`, whose
 // position changes by `dx` and `dy` per pixel, looked up a little along the
-// surface normal: what terrains' horizons leave of it (decision 052), and of
+// surface normal: what terrains' horizons leave of it, and of
 // that what the shadow maps leave. `on_terrain`: the point is terrain's.
 fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32, on_terrain: bool) -> f32 {
@@ -792,7 +789,7 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     if terrain <= 0.0 {
         return 0.0;
     }
-    // Clouds shade whatever else does (decision 084): only what the terrain
+    // Clouds shade whatever else does: only what the terrain
     // and the maps leave.
     let visible = min(terrain, map_visibility(world, normal, dx, dy, distance));
     if visible == 0.0 {
@@ -801,7 +798,7 @@ fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
     return visible * cloud_passing(world);
 }
 
-// Clouds' shadows (decision 084): CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS
+// Clouds' shadows: CLOUD_SHADOW_CELLS by CLOUD_SHADOW_CELLS
 // cells of the sunlight passing the cloud layer up from its base, two cells
 // along x a word in half floats.
 const CLOUD_SHADOW_CELLS: u32 = 128u;
@@ -816,7 +813,7 @@ fn cloud_shadow_cell(x: u32, z: u32) -> f32 {
 // grid where the sun's ray from it meets the clouds' base, fading to all of
 // it toward the grid's edges. The grid's first cell is
 // `lighting.cloud_shadow.xy` (world cell indices); each cell keeps the slot
-// of its index modulo the cells (decision 091).
+// of its index modulo the cells.
 fn cloud_passing(world: vec3<f32>) -> f32 {
     let strength = lighting.cloud_shadow.w;
     if strength <= 0.0 || lighting.sun.y <= 0.01 {
@@ -858,16 +855,16 @@ fn far_maps_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: v
 }
 
 // Visibility of the sun at `world` in the shadow maps. Near cascades cover
-// the first stretch of the view, each three times sharper than the next
-// (decision 028), and hand over to the next one across the last tenth of
+// the first stretch of the view, each three times sharper than the next,
+// and hand over to the next one across the last tenth of
 // their reach, the last one to the far maps across `CASCADE_HANDOVER` of
-// its reach (decision 098); the far maps, the kept one for still casters
+// its reach; the far maps, the kept one for still casters
 // and the one redrawn every frame, cover the rest and fade out at the
 // shadow distance. Lookups compare four texels with the surface's plane.
 fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
         distance: f32) -> f32 {
     // The first cascade reaching the fragment. Reflection probe captures
-    // (decision 043) look from elsewhere than the cascades cover and select
+    // look from elsewhere than the cascades cover and select
     // for: they read the far maps alone.
     let beyond = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(distance) >= shadow.reach);
     let cascade = u32(dot(beyond, vec4<f32>(1.0)));
@@ -929,9 +926,9 @@ fn pixel_noise(position: vec2<f32>) -> f32 {
     return fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))));
 }
 
-// Weighted blended order-independent transparency (McGuire and Bavoil;
-// decision 026): premultiplied color and coverage times a depth weight,
-// added; and the product of what each surface lets through.
+// Weighted blended order-independent transparency (McGuire and Bavoil):
+// premultiplied color and coverage times a depth weight, added; and the product
+// of what each surface lets through.
 struct TransparentTargets {
     @location(0) accumulated: vec4<f32>,
     @location(1) revealed: f32,

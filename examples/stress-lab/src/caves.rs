@@ -1,4 +1,4 @@
-//! Caves for the highlands (decision 079): a tube of rough rock around a
+//! Caves for the highlands: a tube of rough rock around a
 //! winding centerline, its floor flattened to walk on, its walls bulging
 //! and receding by layered noise, flaring a little at its mouth, where it
 //! meets the hole cut in the slope, and widening into a chamber at its end

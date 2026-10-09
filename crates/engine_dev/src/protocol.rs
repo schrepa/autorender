@@ -81,11 +81,11 @@ pub enum DevRequest {
         #[serde(default)]
         filter: CollisionFilterRequest,
     },
-    /// Terrain surfaces (decision 051) under world points `[x, z]`, 1 to
+    /// Terrain surfaces under world points `[x, z]`, 1 to
     /// 256: each one's terrain, height, normal, hole and the level of the
     /// resident tile answering, what its hydrology bake found there and the
-    /// water standing there (decisions 066 and 067), and the meters from the
-    /// nearest road's edge (decision 069, negative on roads, null beyond
+    /// water standing there, and the meters from the
+    /// nearest road's edge (negative on roads, null beyond
     /// their masks' reach), or null where no tile is resident.
     TerrainHeight {
         version: u32,
@@ -93,7 +93,7 @@ pub enum DevRequest {
         points: Vec<[f64; 2]>,
     },
     /// The shortest walk over a generated terrain from world `from` to `to`
-    /// `[x, z]` (decision 081): across ground an agent stands on (no holes,
+    /// `[x, z]`: across ground an agent stands on (no holes,
     /// no water deeper than `max_water`, no closer than `radius` to placed
     /// objects that collide on resident tiles), each step no steeper than
     /// `max_slope` (rise per meter), pulled taut and following the ground.
@@ -110,9 +110,9 @@ pub enum DevRequest {
         #[serde(default)]
         options: Option<engine_core::terrain_data::NavOptions>,
     },
-    /// The sea's surface (decision 076) over world points `[x, z]`, 1 to
+    /// The sea's surface over world points `[x, z]`, 1 to
     /// 256, at simulation time `seconds` (by default the time the last frame
-    /// presented, decision 077), as frames draw it: its height, normal, how much the waves
+    /// presented), as frames draw it: its height, normal, how much the waves
     /// compress it there (1 still, toward 0 on sharpening crests, where foam
     /// gathers) and the still sea's point the waves moved there, or null
     /// without a sea; the ground below where a terrain tile is resident,
@@ -124,7 +124,7 @@ pub enum DevRequest {
         #[serde(default)]
         seconds: Option<f64>,
     },
-    /// The tracks deformers and agents pressed (decision 083) at world points
+    /// The tracks deformers and agents pressed at world points
     /// `[x, z]`, 1 to 256, refilled to simulation time `seconds` (by default
     /// the time the last frame presented), as the log holds them: how deep
     /// the deepest sinks deformable ground (`track`) and how high rims raise
@@ -142,7 +142,7 @@ pub enum DevRequest {
     /// Compares, over `samples` by `samples` points across `half_extent`
     /// meters of world `center` `[x, z]`, what terrain queries (the tiles
     /// renderers draw), collision rays and generated terrains' layers say
-    /// the ground is (decision 051): the largest differences and where.
+    /// the ground is: the largest differences and where.
     TerrainSweep {
         version: u32,
         center: [f64; 2],
@@ -154,7 +154,7 @@ pub enum DevRequest {
         samples: u32,
     },
     /// The cheapest route over the generated terrain under world `from`
-    /// `[x, z]` to world `to` (decision 069), over its layers with their
+    /// `[x, z]` to world `to`, over its layers with their
     /// bakes, as a path layer would follow it: walking between the samples
     /// of pyramid `level`, each step's cost growing by `grade_cost` times
     /// its squared grade and by `water_cost` where water stands, each turn
@@ -274,7 +274,7 @@ fn default_sweep_samples() -> u32 {
     16
 }
 
-/// What the terrain control shows (decision 051).
+/// What the terrain control shows.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -330,7 +330,7 @@ pub enum BrowserControl {
         version: u32,
         #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 1.0)))]
         alpha: f64,
-        /// Present through GPU blending/composition/culling (decision 014)
+        /// Present through GPU blending/composition/culling
         /// instead of the exact CPU path; for comparisons.
         #[serde(default)]
         gpu: bool,
@@ -340,7 +340,7 @@ pub enum BrowserControl {
         version: u32,
         enabled: bool,
     },
-    /// Temporarily replace environment sections (decision 022) and render
+    /// Temporarily replace environment sections and render
     /// while paused. Sections are a v5 scene `environment`'s, validated alike;
     /// omitted sections stay. A v5 scene with an environment restores its own
     /// on reload; persist a look by saving it there.
@@ -399,12 +399,12 @@ pub enum BrowserControl {
         #[serde(default)]
         navigation: Option<Navigation>,
     },
-    /// Temporarily set terrain's level of detail and view (decision 051) and
+    /// Temporarily set terrain's level of detail and view and
     /// render while paused: `pixel_error` replaces the settings' (1 to
     /// 64), `freeze` keeps streaming and patches following the camera's
     /// current position while the camera moves on, and `view` shows terrain
     /// shaded or its levels, normals, tiles and patches, materials, sky
-    /// visibility or detail (decision 090). Omitted fields stay as they
+    /// visibility or detail. Omitted fields stay as they
     /// are.
     Terrain {
         version: u32,
@@ -417,7 +417,7 @@ pub enum BrowserControl {
         view: Option<TerrainViewRequest>,
     },
     /// Temporarily edit a generated terrain over its layers and bakes
-    /// (decision 080) and render while paused: `change` raises or lowers the
+    /// and render while paused: `change` raises or lowers the
     /// ground by meters, levels it to a world height or cuts holes in it, at
     /// full strength within `radius` meters of world `center` `[x, z]` and
     /// fading over `falloff` more, under `id` (1 to 64 letters, digits, `_`,
@@ -446,21 +446,21 @@ pub enum BrowserControl {
         falloff: f64,
         change: engine_core::terrain_data::StampOp,
     },
-    /// Take the terrain's last edit away (decision 080) and render while
+    /// Take the terrain's last edit away and render while
     /// paused; `terrain` as for `terrain_edit`.
     TerrainUndo {
         version: u32,
         #[serde(default)]
         terrain: Option<String>,
     },
-    /// Put back the last edit undo took away, unless an edit came since
-    /// (decision 080), and render while paused.
+    /// Put back the last edit undo took away, unless an edit came since,
+    /// and render while paused.
     TerrainRedo {
         version: u32,
         #[serde(default)]
         terrain: Option<String>,
     },
-    /// Press a track (decision 083) as a deformer would, now, and render
+    /// Press a track as a deformer would, now, and render
     /// while paused: a capsule `radius` meters across (0.01 to 50) from world
     /// `from` `[x, z]` to `to` (a footprint at `from` when omitted), sinking
     /// ground as deformable as that `depth` meters along its middle (0 to
@@ -484,7 +484,7 @@ pub enum BrowserControl {
         clear: bool,
     },
     /// Send navigation agent `entity` (authored ID) walking to world
-    /// `destination` `[x, z]`, or stop it with null (decision 089), and
+    /// `destination` `[x, z]`, or stop it with null, and
     /// render while paused; steps then walk it. Not a source change.
     /// Returns its status.
     NavGo {
@@ -493,7 +493,7 @@ pub enum BrowserControl {
         #[serde(default)]
         destination: Option<[f32; 2]>,
     },
-    /// Remove streamed items for good, or restore them (decision 087), by
+    /// Remove streamed items for good, or restore them, by
     /// ID (`scene/root` for scenes; at most 256 each), and render while
     /// paused: `clear` restores every item first. Loaded cells despawn and
     /// spawn them at once. Not a source change: WorldChanges keeps them,
@@ -588,7 +588,7 @@ pub enum BrowserControl {
             schemars(with = "f64", range(min = 0.0, max = 1.0))
         )]
         alpha: Option<f64>,
-        /// With `alpha`, capture GPU presentation (decision 014) instead of
+        /// With `alpha`, capture GPU presentation instead of
         /// the exact CPU path.
         #[serde(default)]
         gpu: bool,

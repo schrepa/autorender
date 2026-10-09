@@ -1,4 +1,4 @@
-//! Node inputs of GPU presentation (decision 014): current and previous
+//! Node inputs of GPU presentation: current and previous
 //! local poses, node records, authoritative world rows, composed parents
 //! and each depth level's parents. They upload when core's gather sequence
 //! advanced, as the changed ranges of each stream: staged together when

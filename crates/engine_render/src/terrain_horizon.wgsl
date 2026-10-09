@@ -1,4 +1,4 @@
-// Terrain horizon maps (decision 052): one layer per terrain, a grid aligned
+// Terrain horizon maps: one layer per terrain, a grid aligned
 // with the sun over the terrain. Each thread sweeps one line of the grid from
 // the sun's side: a texel's horizon is the higher of the terrain one texel
 // toward the sun and the horizon there, each lowered by the sun's rise over

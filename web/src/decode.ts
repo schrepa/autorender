@@ -1,6 +1,6 @@
 /** Image `uri`'s RGBA8 pixels, rows from the top, decoded by the browser's
  * own decoder with color and alpha as stored; on the page or in a job
- * worker (decision 110). `uri` names it in messages. */
+ * worker. `uri` names it in messages. */
 export async function decodeImagePixels(uri: string, blob: Blob): Promise<{ width: number; height: number; pixels: Uint8Array }> {
   const bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
   try {

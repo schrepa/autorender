@@ -1,6 +1,6 @@
-//! Scene version 9 terrain (decision 051): an entity field describing a
+//! Scene version 9 terrain: an entity field describing a
 //! heightfield terrain, generated from a layer stack or read from an `ETR1`
-//! file beside the scene, and its surface (decision 054): the materials its
+//! file beside the scene, and its surface: the materials its
 //! ground is made of and the biomes deciding where each lies.
 
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
-/// A heightfield terrain on this entity (decision 051). Requires version 9.
+/// A heightfield terrain on this entity. Requires version 9.
 ///
 /// Its first corner (least x and z) lies at `origin` in world space,
 /// whatever the entity's transform; heights rise from the origin's y. Its
@@ -51,13 +51,13 @@ pub struct SceneTerrain {
     /// Whether it collides where collision is installed. Omitted, true.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub collision: bool,
-    /// Ground generated around it to the horizon (decision 094); terrains
+    /// Ground generated around it to the horizon; terrains
     /// read from files have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surroundings: Option<SceneSurroundings>,
 }
 
-/// Ground generated past a terrain's edges to the horizon (decision 094):
+/// Ground generated past a terrain's edges to the horizon:
 /// a coarser terrain around it from the same layers, its samples four
 /// times as far apart as the terrain's finest, reaching about `reach`
 /// meters past every edge (the terrain's inspection reports how far: its
@@ -92,7 +92,7 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
-/// A terrain's surface (decision 054): up to 255 materials, which biome
+/// A terrain's surface: up to 255 materials, which biome
 /// layers name by ID, and up to 255 biomes. Later biomes paint over earlier
 /// ones where they fit; the first covers wherever none of the others do.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -101,24 +101,24 @@ fn is_true(value: &bool) -> bool {
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
-    /// ID of the document material its roads' bridges (decision 072) draw
+    /// ID of the document material its roads' bridges draw
     /// with; omitted, a weathered stone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
-    /// What placement layers stand on the terrain (decision 057).
+    /// What placement layers stand on the terrain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<SceneTerrainAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placements: Vec<PlacementLayer>,
-    /// Objects authors stand on it (decision 085), each at its own point.
+    /// Objects authors stand on it, each at its own point.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placed: Vec<engine_core::terrain_data::AuthoredPlacement>,
 }
 
-/// An object placement layers stand on a terrain (decision 057): a `mesh`
+/// An object placement layers stand on a terrain: a `mesh`
 /// and a `material` of this document, by ID, up to four coarser meshes it
 /// draws at a distance, finest first (otherwise the mesh's automatic levels
-/// of detail), and how far it sways in the wind (decision 058): meters at
+/// of detail), and how far it sways in the wind: meters at
 /// ten meters up in full wind, 0 (rigid, the default) to 10.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -132,7 +132,7 @@ pub struct SceneTerrainAsset {
     #[serde(default, skip_serializing_if = "is_zero")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
     pub sway: f32,
-    /// Its objects' collider (decision 064); without one they never
+    /// Its objects' collider; without one they never
     /// collide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneTerrainCollider>,
@@ -142,7 +142,7 @@ fn is_zero(value: &f32) -> bool {
     *value == 0.0
 }
 
-/// The collider of a placement asset's objects (decision 064), in its
+/// The collider of a placement asset's objects, in its
 /// mesh's space at scale 1: its shape about `center` (the origin by
 /// default), and the collision layers its objects belong to (the first by
 /// default) and collide with (every one by default). Objects within
@@ -218,8 +218,7 @@ pub struct SceneTerrainLod {
 /// maps and factors shade it, or a linear `color` and `roughness`; the
 /// meters its textures repeat over (0.01 to 1000); how sharply its height
 /// map wins where it blends with another (0 to 1); whether steep ground
-/// projects it from the side; and the cover growing where it lies
-/// (decision 056).
+/// projects it from the side; and the cover growing where it lies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -242,12 +241,12 @@ pub struct SceneTerrainMaterial {
     pub projection: SurfaceProjection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
-    /// Meters its maps' heights span where the ground's relief shows
-    /// (decision 082): 0, flat, to 1; top projections only.
+    /// Meters its maps' heights span where the ground's relief shows:
+    /// 0, flat, to 1; top projections only.
     #[serde(default, skip_serializing_if = "is_flat")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub relief: f32,
-    /// Meters tracks sink it at most (decision 083): 0, rigid, to 2.
+    /// Meters tracks sink it at most: 0, rigid, to 2.
     #[serde(default, skip_serializing_if = "is_flat")]
     #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2.0)))]
     pub deform: f32,
@@ -279,7 +278,7 @@ fn half() -> f32 {
 pub(crate) struct PreparedTerrain {
     pub terrain: Terrain,
     /// Each surface material's document material, if it names one, and
-    /// the bridges' (decision 072).
+    /// the bridges'.
     pub materials: Vec<Option<usize>>,
     pub bridge: Option<usize>,
     /// Each placement asset's document mesh and material, and its coarser
@@ -323,11 +322,11 @@ impl PreparedTerrain {
 
 /// One layer of a terrain's stack: procedural noise with erosion, a stamp
 /// (raise, lower, flatten or cut holes), an imported heightmap, an erosion
-/// bake (decision 068) of the layers before it, where rivers wear valleys
-/// and slopes creep, a hydrology bake (decision 066) of them, which
+/// bake of the layers before it, where rivers wear valleys
+/// and slopes creep, a hydrology bake of them, which
 /// carves channels where water gathers, fills lakes and rivers with water
-/// (decision 067) and feeds the `flow`, `wetness` and `lake` masks, or a
-/// path (decision 069): a road leveling the layers before it along its
+/// and feeds the `flow`, `wetness` and `lake` masks, or a
+/// path: a road leveling the layers before it along its
 /// line, which feeds the `path` mask (the `terrain_route` request finds
 /// routes for them). Terrains load no tiles until their bakes are done.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -348,8 +347,7 @@ pub enum SceneTerrainLayer {
 /// `low` to `high`; the layer fades in over `falloff` meters inside its
 /// edges and combines by `blend`. `source` and `attribution` (up to 1024
 /// characters each) record where its heights came from and the credit
-/// their data requires, as the `terrain_import` tool writes them (decision
-/// 070).
+/// their data requires, as the `terrain_import` tool writes them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

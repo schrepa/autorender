@@ -1,6 +1,6 @@
-//! Draw groups of GPU presentation (decision 014): the plan's candidates in
-//! draw-group order and in slot order, each batch's record, skinned slots
-//! (decision 036), and where each compaction writes its draws. They upload
+//! Draw groups of GPU presentation: the plan's candidates in
+//! draw-group order and in slot order, each batch's record, skinned slots,
+//! and where each compaction writes its draws. They upload
 //! only when the candidate structure, the node space or what batch records
 //! carry changed.
 
@@ -11,8 +11,8 @@ use crate::mesh_arena::Ids;
 use super::{BatchMeta, PresentationInputs, RecordsKey, SCAN_GROUP, grow, storage};
 
 /// The compactions writing draws: drawing phase one (the only phase
-/// without occlusion culling), phase two (decision 040), and reflection
-/// probe faces (decision 043).
+/// without occlusion culling), phase two, and reflection
+/// probe faces.
 pub(super) const PHASE_ONE: usize = 0;
 pub(super) const PHASE_TWO: usize = 1;
 pub(super) const PROBE: usize = 2;
@@ -36,10 +36,10 @@ pub(super) struct DrawGroups {
     // the impostors') and visible IDs (a plane per level of detail).
     pub(super) draws: [wgpu::Buffer; 3],
     pub(super) visible_ids: [wgpu::Buffer; 3],
-    // Each drawing phase's impostor instances (decision 048); probe faces
+    // Each drawing phase's impostor instances; probe faces
     // write phase one's once the frame drew them.
     pub(super) impostor_ids: [wgpu::Buffer; 2],
-    // Skinned slots among the candidates (decision 036) and their world
+    // Skinned slots among the candidates and their world
     // bounds from this frame's palettes, with each batch's joint count.
     skinned_capacity: usize,
     pub(super) skinned: wgpu::Buffer,
@@ -168,8 +168,7 @@ impl DrawGroups {
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
-            // Flags, four sums per group (one per level of detail, decision
-            // 047), four totals and their sum.
+            // Flags, four sums per group (one per level of detail), four totals and their sum.
             self.scan = storage(
                 device,
                 "engine/presentation-scan",
@@ -191,7 +190,7 @@ impl DrawGroups {
                     wgpu::BufferUsages::VERTEX,
                 )
             });
-            // Impostor instances (decision 048): two words each.
+            // Impostor instances: two words each.
             self.impostor_ids = [
                 "engine/presentation-impostor-ids",
                 "engine/presentation-impostor-ids2",
@@ -216,7 +215,7 @@ impl DrawGroups {
                 wgpu::BufferUsages::empty(),
             );
             // Draw arguments per level of detail and batch, then the
-            // impostors' (decision 048).
+            // impostors'.
             let args = (LOD_LEVELS as u64 * capacity + 1) * DRAW_ARGS_BYTES;
             self.draws = [
                 "engine/presentation-draws",
@@ -307,7 +306,7 @@ impl DrawGroups {
                 *position = u32::MAX;
             }
         }
-        // Skinned slots (decision 036), in slot order.
+        // Skinned slots, in slot order.
         self.skinned_staging.clear();
         self.skinned_staging
             .extend(self.slot_staging.iter().filter_map(|candidate| {
@@ -409,7 +408,7 @@ impl DrawGroups {
         }]
     }
 
-    /// Drawing phase `phase`'s impostor instances (decision 048) and the
+    /// Drawing phase `phase`'s impostor instances and the
     /// arguments of the non-indexed draw of their cards.
     pub(super) fn impostor_source(&self, phase: usize) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
         let args = LOD_LEVELS as u64 * u64::from(self.batch_count);
@@ -471,8 +470,8 @@ fn batch_record(
             .min()
             .extend(if skinned { 1.0 } else { 0.0 })
             .to_array(),
-        // Transparent groups are never occluded (decision 040), nor are
-        // instances drawing virtual geometry (decision 044, 2): their
+        // Transparent groups are never occluded, nor are
+        // instances drawing virtual geometry (2): their
         // clusters draw in phase one.
         bounds_max: meta
             .bounds
