@@ -21,10 +21,16 @@ pub struct SceneTexture {
     pub id: String,
     /// Inline pixel dimensions, with `rgba8`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8192)))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(range(min = 1, max = engine_core::MAX_TEXTURE_DIMENSION))
+    )]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8192)))]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(range(min = 1, max = engine_core::MAX_TEXTURE_DIMENSION))
+    )]
     pub height: Option<u32>,
     /// Inline pixels: canonical padded RFC 4648 base64; each alpha byte must
     /// equal 255.

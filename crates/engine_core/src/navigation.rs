@@ -17,10 +17,9 @@ use engine_terrain::{NavOptions, NavPath, WalkSearch};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max};
-use crate::rules::{ExtraRules, settings};
 use crate::{FixedTime, JobId, Jobs, Parent, Terrains, Transform};
+use engine_settings::{ExtraRules, settings};
 
 settings! {
     /// Navigation. Requires version 9.
@@ -52,98 +51,37 @@ impl Navigation {
     }
 }
 
-/// Walks its entity over the terrain under it to `destination`, world x
-/// and z: `speed` meters a second (0.01 to 100), turning at
-/// most `turn` degrees a second (1 to 10000), its origin `offset` meters
-/// above the ground; around obstacles within `radius` meters (0 to 100),
-/// up steps no steeper than `max_slope` (rise per meter, 0.01 to 10),
-/// through water no deeper than `max_water` meters (0 to 100), over the
-/// pyramid level `level` (0 the finest, up to 15). Changing the
-/// destination searches anew; none stands still. Requires version 9.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[require(NavWalk)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct NavAgent {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destination: Option<[f32; 2]>,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 100.0)))]
-    pub speed: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 10000.0)))]
-    pub turn: f32,
-    pub offset: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub radius: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 10.0)))]
-    pub max_slope: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub max_water: f32,
-    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
-    pub level: u32,
-}
-
-impl Default for NavAgent {
-    fn default() -> Self {
-        Self {
-            destination: None,
-            speed: 1.4,
-            turn: 360.0,
-            offset: 0.0,
-            radius: 0.4,
-            max_slope: 0.8,
-            max_water: 0.6,
-            level: 0,
-        }
+settings! {
+    /// Walks its entity over the terrain under it to `destination`. Changing
+    /// the destination searches anew; none stands still. Requires version 9.
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[require(NavWalk)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct NavAgent {
+        /// Where it walks to: world x and z.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub destination: Option<[f32; 2]> = None => finite,
+        /// Meters a second it walks.
+        pub speed: f32 = 1.4 => range(0.01, 100.0),
+        /// Degrees a second it turns at most.
+        pub turn: f32 = 360.0 => range(1.0, 10_000.0),
+        /// Meters its origin stands above the ground.
+        pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
+        /// Meters around obstacles it keeps.
+        pub radius: f32 = 0.4 => same(engine_terrain::NavOptions::rule_of("radius")),
+        /// The steepest steps it climbs: rise per meter.
+        pub max_slope: f32 = 0.8 => same(engine_terrain::NavOptions::rule_of("max_slope")),
+        /// Meters of water it wades through at most.
+        pub max_water: f32 = 0.6 => same(engine_terrain::NavOptions::rule_of("max_water")),
+        /// The pyramid level it searches over: 0 the finest.
+        pub level: u32 = 0 => same(engine_terrain::NavOptions::rule_of("level")),
     }
 }
+
+impl ExtraRules for NavAgent {}
 
 impl NavAgent {
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        if let Some(destination) = self.destination
-            && !destination.iter().all(|value| value.is_finite())
-        {
-            return Err(InvalidSetting::new("destination", "must be finite"));
-        }
-        check_range("speed", self.speed, 0.01..=100.0)?;
-        check_range("turn", self.turn, 1.0..=10_000.0)?;
-        if !self.offset.is_finite() {
-            return Err(InvalidSetting::new("offset", "must be finite"));
-        }
-        check_range("radius", self.radius, 0.0..=100.0)?;
-        check_range("max_slope", self.max_slope, 0.01..=10.0)?;
-        check_range("max_water", self.max_water, 0.0..=100.0)?;
-        if self.level > 15 {
-            return Err(InvalidSetting::new("level", "must be at most 15"));
-        }
-        Ok(())
-    }
-
-    /// Every value in range: out-of-range values clamp, unusable ones fall
-    /// back to the defaults.
-    pub fn sanitized(self) -> Self {
-        let defaults = Self::default();
-        let within = |value: f32, low: f32, high: f32, fallback: f32| {
-            if value.is_finite() {
-                clamp(value, low, high)
-            } else {
-                fallback
-            }
-        };
-        Self {
-            destination: self
-                .destination
-                .filter(|destination| destination.iter().all(|value| value.is_finite())),
-            speed: within(self.speed, 0.01, 100.0, defaults.speed),
-            turn: within(self.turn, 1.0, 10_000.0, defaults.turn),
-            offset: within(self.offset, -1.0e4, 1.0e4, 0.0),
-            radius: within(self.radius, 0.0, 100.0, defaults.radius),
-            max_slope: within(self.max_slope, 0.01, 10.0, defaults.max_slope),
-            max_water: within(self.max_water, 0.0, 100.0, defaults.max_water),
-            level: self.level.min(15),
-        }
-    }
-
     /// How its walks are searched.
     fn options(&self) -> NavOptions {
         NavOptions {

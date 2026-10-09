@@ -28,6 +28,11 @@ pub struct MaterialHandle(Id);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
+/// Handles name assets; libraries check them as they resolve.
+impl engine_settings::Setting for MeshHandle {}
+impl engine_settings::Setting for MaterialHandle {}
+impl engine_settings::Setting for TextureHandle {}
+
 /// Weak runtime animation clip reference, valid only in the originating
 /// library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

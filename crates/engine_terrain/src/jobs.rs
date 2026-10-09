@@ -427,9 +427,7 @@ impl TerrainWorker {
                 let obstacles: Vec<Obstacle> = reader.get().map_err(invalid)?;
                 let options: NavOptions = reader.get().map_err(invalid)?;
                 reader.finish().map_err(invalid)?;
-                options
-                    .validate()
-                    .map_err(|(field, rule)| format!("{field} {rule}"))?;
+                options.validate().map_err(|invalid| invalid.to_string())?;
                 let recipe = self.recipe(&recipe)?;
                 Running::Walk(Box::new(WalkSearch::new(
                     recipe.layers.clone(),

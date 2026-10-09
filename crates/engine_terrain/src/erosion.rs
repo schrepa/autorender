@@ -10,43 +10,34 @@
 //! finer layers' detail rides the eroded shape. Only exact arithmetic and
 //! square roots enter it: every target bakes the same bits.
 
+use crate::MAX_LEVEL;
 use engine_math::{max, min};
+use engine_settings::{ExtraRules, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::hydrology::{Drainage, drainage, image_level};
 use crate::layers::HeightImage;
 
-/// A layer that erodes the layers below it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct ErosionLayer {
-    /// The pyramid level whose samples it erodes: finer levels wear finer
-    /// valleys and take longer, 0 to 15.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 15)))]
-    pub level: u32,
-    /// Rounds of incision and creep, 1 to 400.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 400)))]
-    pub rounds: u32,
-    /// How fast rivers cut each round: the stream power law's erodibility
-    /// times its time step, 0 to 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub incision: f32,
-    /// Square meters of hillslope creep each round, 0 to 1000.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
-    pub creep: f32,
-}
-
-impl Default for ErosionLayer {
-    fn default() -> Self {
-        Self {
-            level: 4,
-            rounds: 60,
-            incision: 0.002,
-            creep: 20.0,
-        }
+settings! {
+    /// A layer that erodes the layers below it.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct ErosionLayer {
+        /// The pyramid level whose samples it erodes: finer levels wear finer
+        /// valleys and take longer.
+        pub level: u32 = 4 => range(0, MAX_LEVEL),
+        /// Rounds of incision and creep.
+        pub rounds: u32 = 60 => range(1, 400),
+        /// How fast rivers cut each round: the stream power law's erodibility
+        /// times its time step.
+        pub incision: f32 = 0.002 => range(0.0, 1.0),
+        /// Square meters of hillslope creep each round.
+        pub creep: f32 = 20.0 => range(0.0, 1000.0),
     }
 }
+
+impl ExtraRules for ErosionLayer {}
 
 /// What an erosion bake did: samples it eroded, rounds, and the most it
 /// wore away and filled (meters).

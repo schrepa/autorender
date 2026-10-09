@@ -28,7 +28,7 @@ pub(crate) const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneDocument {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 9)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = SCENE_VERSION)))]
     pub version: u32,
     #[cfg_attr(
         feature = "schema",
@@ -177,31 +177,54 @@ impl std::io::Write for BoundedSource {
     }
 }
 
-/// Right-handed, Y-up perspective camera. Lens values are in world units.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct SceneCamera {
-    pub position: [f32; 3],
-    pub target: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 179.0)))]
-    pub fov_degrees: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1_000_000.0)))]
-    pub near: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1_000_000.0)))]
-    pub far: f32,
+/// The engine's default camera, as authored.
+fn default_camera() -> SceneCamera {
+    let camera = Camera::default();
+    SceneCamera {
+        position: camera.position.to_array(),
+        target: camera.target.to_array(),
+        fov_degrees: camera.vertical_fov_radians.to_degrees(),
+        near: camera.near,
+        far: camera.far,
+    }
 }
 
-impl Default for SceneCamera {
-    fn default() -> Self {
-        let camera = Camera::default();
-        Self {
-            position: camera.position.to_array(),
-            target: camera.target.to_array(),
-            fov_degrees: camera.vertical_fov_radians.to_degrees(),
-            near: camera.near,
-            far: camera.far,
+engine_settings::settings! {
+    /// Right-handed, Y-up perspective camera. Lens values are in world units.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct SceneCamera {
+        /// Where the camera stands.
+        pub position: [f32; 3] = default_camera().position => range(-1.0e6, 1.0e6),
+        /// What it looks at, at least 0.001 from its position.
+        pub target: [f32; 3] = default_camera().target => range(-1.0e6, 1.0e6),
+        /// Vertical field of view in degrees.
+        pub fov_degrees: f32 = default_camera().fov_degrees => range(1.0, 179.0),
+        /// The near plane's distance.
+        pub near: f32 = default_camera().near => range(0.001, 1.0e6),
+        /// The far plane's distance, at least 0.001 beyond the near plane's.
+        pub far: f32 = default_camera().far => range(0.001, 1.0e6),
+    }
+}
+
+impl engine_settings::ExtraRules for SceneCamera {
+    /// It looks somewhere, through some depth.
+    fn check_extra(&self) -> Result<(), engine_settings::InvalidSetting> {
+        let camera = self.camera();
+        if (camera.target - camera.position).length_squared() < 0.000_001 {
+            return Err(engine_settings::InvalidSetting::new(
+                "target",
+                "must be at least 0.001 units from the position",
+            ));
         }
+        if self.far - self.near < 0.001 {
+            return Err(engine_settings::InvalidSetting::new(
+                "far",
+                "must be at least 0.001 beyond near",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -220,20 +243,20 @@ impl SceneCamera {
 /// A material's response to light. Omitted fields keep the
 /// matte defaults: roughness 0.8 and no metalness, emission or ripples.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = Surface::state_rules)
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct SceneSurface {
     /// 0 is a mirror, 1 spreads highlights and sky reflections widest.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub roughness: f32,
     /// Metals reflect in their own color and diffuse no light.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub metalness: f32,
     /// Emitted light as a multiple of the material color.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 16.0)))]
     pub emission: f32,
     /// Animated ripples of liquid surfaces.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub ripples: f32,
 }
 
@@ -545,140 +568,142 @@ pub struct ScenePrefab {
     pub entities: Vec<SceneObject>,
 }
 
-/// One local transform, optional renderable, or prefab instance root.
-/// Tags are game-defined startup hook names.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneObject {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub id: String,
-    /// Optional display label, at most 128 UTF-8 bytes without control characters.
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
-    pub name: String,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<String>,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<String>,
-    /// Parent ID in the scene, or in this prefab's local definition.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub parent: Option<String>,
-    /// Named prefab to expand below this transform-only instance root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub prefab: Option<String>,
-    /// Local collision shape, independent of rendering. Requires version 4.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub collider: Option<SceneCollider>,
-    /// A point or spot light. Requires version 6.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub light: Option<SceneLight>,
-    /// A particle emitter. Requires version 6.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub particles: Option<SceneEmitter>,
-    /// Multiplies this object's color and opacity channel by channel,
-    /// each factor finite and in `[0, 1]`. Requires version 8.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tint: Option<[f32; 4]>,
-    /// Plays an animation on its targets. Requires version 8.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub animation: Option<ScenePlayer>,
-    /// The skin deforming this object's mesh. Requires
-    /// version 8 and a mesh with joints and weights.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub skin: Option<String>,
-    /// Projects a material onto the opaque surfaces inside this entity's
-    /// box. Requires version 8.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub decal: Option<crate::SceneDecal>,
-    /// Captures this entity's surroundings into an environment map that
-    /// surfaces inside its world box reflect. Requires
-    /// version 8.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reflection_probe: Option<crate::SceneReflectionProbe>,
-    /// A heightfield terrain whose tiles stream around the camera.
-    /// Requires version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub terrain: Option<crate::SceneTerrain>,
-    /// One of this document's meshes bent along a curve.
-    /// Requires version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spline: Option<crate::SceneSpline>,
-    /// Rides the sea. Requires version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub floating: Option<engine_core::Floating>,
-    /// Presses tracks into deformable ground. Requires
-    /// version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deformer: Option<engine_core::Deformer>,
-    /// Walks over the terrain to a destination. Roots only.
-    /// Requires version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub nav_agent: Option<engine_core::NavAgent>,
-    /// Stands on the terrain: its translation's y becomes
-    /// `offset` meters above the ground under it. Roots only. Requires
-    /// version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grounded: Option<engine_core::Grounded>,
-    /// Names it a place the camera may be sent to, whose
-    /// terrain workers generate ahead of need. Requires version 9.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prefetch: Option<engine_core::TerrainPrefetch>,
-    #[serde(default)]
-    pub transform: SceneTransform,
-    /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
-    pub tags: Vec<String>,
-}
-
-/// Local transform with Euler XYZ rotation expressed in degrees.
-///
-/// Translation is bounded to ±1,000,000 world units and each scale component
-/// to `[0.0001, 10000]`, avoiding singular or overflowing normal transforms.
-/// Parent composition preserves full matrices, including shear. Negative scale
-/// reflection is not authored by this format.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct SceneTransform {
-    pub translation: [f32; 3],
-    pub rotation_degrees: [f32; 3],
-    pub scale: [f32; 3],
-}
-
-impl Default for SceneTransform {
-    fn default() -> Self {
-        Self {
-            translation: [0.0; 3],
-            rotation_degrees: [0.0; 3],
-            scale: [1.0; 3],
-        }
+engine_settings::settings! {
+    /// One local transform, optional renderable, or prefab instance root.
+    /// Tags are game-defined startup hook names.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct SceneObject {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        pub id: String = String::new() => any,
+        /// Optional display label, at most 128 UTF-8 bytes without control characters.
+        #[serde(default)]
+        #[cfg_attr(feature = "schema", schemars(length(max = 128)))]
+        pub name: String = String::new() => any,
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mesh: Option<String> = None => any,
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub material: Option<String> = None => any,
+        /// Parent ID in the scene, or in this prefab's local definition.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        pub parent: Option<String> = None => any,
+        /// Named prefab to expand below this transform-only instance root.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        pub prefab: Option<String> = None => any,
+        /// Local collision shape, independent of rendering. Requires version 4.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub collider: Option<SceneCollider> = None => any,
+        /// A point or spot light. Requires version 6.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub light: Option<SceneLight> = None => any,
+        /// A particle emitter. Requires version 6.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub particles: Option<SceneEmitter> = None => any,
+        /// Multiplies this object's color and opacity channel by channel,
+        /// each factor finite and in `[0, 1]`. Requires version 8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub tint: Option<[f32; 4]> = None => range(0.0, 1.0),
+        /// Plays an animation on its targets. Requires version 8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub animation: Option<ScenePlayer> = None => any,
+        /// The skin deforming this object's mesh. Requires
+        /// version 8 and a mesh with joints and weights.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        pub skin: Option<String> = None => any,
+        /// Projects a material onto the opaque surfaces inside this entity's
+        /// box. Requires version 8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub decal: Option<crate::SceneDecal> = None => any,
+        /// Captures this entity's surroundings into an environment map that
+        /// surfaces inside its world box reflect. Requires
+        /// version 8.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub reflection_probe: Option<crate::SceneReflectionProbe> = None => any,
+        /// A heightfield terrain whose tiles stream around the camera.
+        /// Requires version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub terrain: Option<crate::SceneTerrain> = None => any,
+        /// One of this document's meshes bent along a curve.
+        /// Requires version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub spline: Option<crate::SceneSpline> = None => any,
+        /// Rides the sea. Requires version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub floating: Option<engine_core::Floating> = None => any,
+        /// Presses tracks into deformable ground. Requires
+        /// version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub deformer: Option<engine_core::Deformer> = None => any,
+        /// Walks over the terrain to a destination. Roots only.
+        /// Requires version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub nav_agent: Option<engine_core::NavAgent> = None => any,
+        /// Stands on the terrain: its translation's y becomes
+        /// `offset` meters above the ground under it. Roots only. Requires
+        /// version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub grounded: Option<engine_core::Grounded> = None => any,
+        /// Names it a place the camera may be sent to, whose
+        /// terrain workers generate ahead of need. Requires version 9.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub prefetch: Option<engine_core::TerrainPrefetch> = None => any,
+        #[serde(default)]
+        pub transform: SceneTransform = SceneTransform::default() => any,
+        /// At most 16 distinct authored IDs, each at most 64 ASCII bytes.
+        #[serde(default)]
+        #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
+        pub tags: Vec<String> = Vec::new() => any,
     }
 }
+
+/// Its components keep their own rules; references, names and tags are
+/// checked with the document.
+impl engine_settings::ExtraRules for SceneObject {}
+
+engine_settings::settings! {
+    /// Local transform with Euler XYZ rotation expressed in degrees.
+    ///
+    /// Bounded translations and scales avoid singular or overflowing normal
+    /// transforms. Parent composition preserves full matrices, including
+    /// shear. Negative scale reflection is not authored by this format.
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct SceneTransform {
+        /// Local translation, world units.
+        pub translation: [f32; 3] = [0.0; 3] => range(-1.0e6, 1.0e6),
+        /// Euler XYZ rotation, degrees.
+        pub rotation_degrees: [f32; 3] = [0.0; 3] => range(-360_000.0, 360_000.0),
+        /// Scale on each local axis.
+        pub scale: [f32; 3] = [1.0; 3] => range(0.0001, 10_000.0),
+    }
+}
+
+impl engine_settings::ExtraRules for SceneTransform {}
 
 impl SceneTransform {
     pub(crate) fn transform(self) -> Transform {

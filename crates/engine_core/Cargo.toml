@@ -13,11 +13,12 @@ profiling = ["engine_profile/enabled"]
 attribution = []
 # JSON schemas of the settings types, for authoring tools (engine_scene's
 # `schema`): they are a scene's environment sections.
-schema = ["dep:schemars", "dep:serde_json", "engine_terrain/schema"]
+schema = ["dep:schemars", "engine_assets/schema", "engine_settings/schema", "engine_terrain/schema"]
 
 [dependencies]
 engine_assets.workspace = true
 engine_math.workspace = true
+engine_settings.workspace = true
 engine_terrain.workspace = true
 engine_profile.workspace = true
 bevy_app.workspace = true
@@ -25,7 +26,6 @@ bevy_ecs.workspace = true
 glam.workspace = true
 serde.workspace = true
 schemars = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
 
 [lints]
 workspace = true

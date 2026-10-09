@@ -8,6 +8,7 @@
 //! agree on the samples they share.
 
 use engine_math::{clamp, max, min, sin_cos};
+use engine_settings::{ExtraRules, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::PathSample;
@@ -36,8 +37,11 @@ pub enum Mask {
     Constant(f32),
     /// A ramp over meters above the terrain's origin.
     Height([f32; 2]),
-    /// A ramp over the ground's slope, in degrees from level, 0 to 90.
-    Slope([f32; 2]),
+    /// A ramp over the ground's slope, in degrees from level.
+    Slope(
+        #[cfg_attr(feature = "schema", schemars(inner(range(min = 0.0, max = MAX_SLOPE_DEGREES))))]
+        [f32; 2],
+    ),
     /// A ramp over the ground's curvature: how fast its slope grows per
     /// meter, positive in hollows and valleys, negative on ridges.
     Curvature([f32; 2]),
@@ -78,20 +82,28 @@ pub enum Mask {
     Remap(Remap),
 }
 
-/// Gradient noise from 0 to 1 with features `wavelength` meters across,
-/// summed over `octaves` (1 to 8), each half as long and half as strong.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct NoiseMask {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 1.0e6)))]
-    pub wavelength: f32,
-    #[serde(default)]
-    pub seed: u32,
-    #[serde(default = "one_octave")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 8)))]
-    pub octaves: u32,
+/// The steepest slope a mask names, in degrees: a wall.
+pub const MAX_SLOPE_DEGREES: f32 = 90.0;
+
+settings! {
+    /// Gradient noise from 0 to 1, summed over octaves each half as long and
+    /// half as strong.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct NoiseMask {
+        /// Meters across its largest features.
+        pub wavelength: f32 = 100.0 => range(0.01, 1.0e6),
+        /// Picks the pattern.
+        #[serde(default)]
+        pub seed: u32 = 0 => any,
+        /// Octaves summed.
+        #[serde(default = "one_octave")]
+        pub octaves: u32 = one_octave() => range(1, MAX_NOISE_OCTAVES),
+    }
 }
+
+impl ExtraRules for NoiseMask {}
 
 fn one_octave() -> u32 {
     1
@@ -126,20 +138,25 @@ fn is_unit(value: &f32) -> bool {
     *value == 1.0
 }
 
-/// One layer of a biome's ground: `material` (an ID of the surface's
-/// materials) painted over the layers before it where `mask` allows, at
-/// most `opacity`. A biome's first layer covers its whole ground.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct BiomeLayer {
-    pub material: String,
-    #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
-    pub mask: Mask,
-    #[serde(default = "one", skip_serializing_if = "is_unit")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub opacity: f32,
+settings! {
+    /// One layer of a biome's ground. A biome's first layer covers its whole
+    /// ground.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct BiomeLayer {
+        /// The material painted, an ID of the surface's materials.
+        pub material: String = String::new() => any,
+        /// Where it paints over the layers before it.
+        #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
+        pub mask: Mask = Mask::one() => any,
+        /// The most it covers.
+        #[serde(default = "one", skip_serializing_if = "is_unit")]
+        pub opacity: f32 = one() => range(0.0, 1.0),
+    }
 }
+
+impl ExtraRules for BiomeLayer {}
 
 /// A biome: where it applies (`fitness`, everywhere when omitted) and the
 /// layers of its ground. Later biomes paint over earlier ones where they
@@ -323,11 +340,10 @@ impl Compiled {
                 Self::Height(*ends)
             }
             Mask::Slope(ends) => {
-                if !ends
-                    .iter()
-                    .all(|end| end.is_finite() && (0.0..=90.0).contains(end))
+                if let Err(invalid) =
+                    ends.check("slope", Rule::Range(0.0, MAX_SLOPE_DEGREES as f64))
                 {
-                    return Err(fail("slopes must be in [0, 90] degrees"));
+                    return Err(fail(&invalid.rule));
                 }
                 // As gradients: the tangent of each slope, 90 degrees
                 // standing in for a vertical wall.
@@ -373,11 +389,11 @@ impl Compiled {
                 Self::Path(*ends)
             }
             Mask::Noise(noise) => {
-                if !(noise.wavelength.is_finite() && (0.01..=1.0e6).contains(&noise.wavelength)) {
-                    return Err(fail("noise wavelength must be in [0.01, 1e6] meters"));
-                }
-                if !(1..=MAX_NOISE_OCTAVES).contains(&noise.octaves) {
-                    return Err(fail("noise octaves must be in [1, 8]"));
+                if let Err(invalid) = noise.validate() {
+                    return Err(BiomeError {
+                        path: format!("{path}.noise.{}", invalid.field),
+                        rule: invalid.rule.into_owned(),
+                    });
                 }
                 Self::Noise {
                     frequency: 1.0 / noise.wavelength,
@@ -792,8 +808,8 @@ impl Biomes {
                     .iter()
                     .position(|id| *id == layer.material)
                     .ok_or_else(|| fail(format!("{path}.material"), "must name a material"))?;
-                if !(layer.opacity.is_finite() && (0.0..=1.0).contains(&layer.opacity)) {
-                    return Err(fail(format!("{path}.opacity"), "must be in [0, 1]"));
+                if let Err(invalid) = layer.validate() {
+                    return Err(fail(format!("{path}.{}", invalid.field), &invalid.rule));
                 }
                 layers.push(CompiledLayer {
                     material: material as u8,

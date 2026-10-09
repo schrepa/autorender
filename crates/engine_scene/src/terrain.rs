@@ -13,6 +13,7 @@ use engine_core::{
     TerrainSource, TerrainSurface,
     glam::{Vec2, Vec3},
 };
+use engine_settings::{Rule, Setting};
 use serde::{Deserialize, Serialize};
 
 use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
@@ -30,13 +31,21 @@ use crate::{SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrain {
     pub origin: [f32; 3],
-    /// Level-0 tiles along x and z, 1 to 4096 each. Required with layers;
-    /// a file's own when omitted.
+    /// Level-0 tiles along x and z. Required with layers; a file's own when
+    /// omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(inner(range(min = 1, max = engine_core::Pyramid::MAX_TILES)))
+    )]
     pub tiles: Option<[u32; 2]>,
-    /// Meters between level-0 samples, 1/64 to 1024. Required with layers;
-    /// a file's own when omitted.
+    /// Meters between level-0 samples. Required with layers; a file's own
+    /// when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(range(min = engine_core::Pyramid::MIN_SPACING, max = engine_core::Pyramid::MAX_SPACING))
+    )]
     pub spacing: Option<f32>,
     /// The layers generating its heights, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -66,18 +75,20 @@ pub struct SceneTerrain {
 /// its edges (1024 when omitted), so the two meet where it ends. It never
 /// collides, places objects, grows blades or holds water.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = Surroundings::state_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneSurroundings {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000000.0)))]
     pub reach: f32,
     #[serde(default = "default_blend", skip_serializing_if = "is_default_blend")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000000.0)))]
     pub blend: f32,
 }
 
 fn default_blend() -> f32 {
-    1024.0
+    Surroundings::default().blend
 }
 
 fn is_default_blend(value: &f32) -> bool {
@@ -121,7 +132,11 @@ pub struct SceneTerrainSurface {
 /// of detail), and how far it sways in the wind: meters at
 /// ten meters up in full wind, 0 (rigid, the default) to 10.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = state_asset_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainAsset {
     pub id: String,
@@ -130,12 +145,17 @@ pub struct SceneTerrainAsset {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lods: Vec<SceneTerrainLod>,
     #[serde(default, skip_serializing_if = "is_zero")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
     pub sway: f32,
     /// Its objects' collider; without one they never
     /// collide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneTerrainCollider>,
+}
+
+/// States the rule terrains check on an asset's sway.
+#[cfg(feature = "schema")]
+fn state_asset_rules(schema: &mut schemars::Schema) {
+    engine_settings::state(schema, "sway", PlacementAsset::SWAY);
 }
 
 fn is_zero(value: &f32) -> bool {
@@ -220,7 +240,11 @@ pub struct SceneTerrainLod {
 /// map wins where it blends with another (0 to 1); whether steep ground
 /// projects it from the side; and the cover growing where it lies.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = SurfaceMaterial::state_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainMaterial {
     pub id: String,
@@ -229,13 +253,10 @@ pub struct SceneTerrainMaterial {
     #[serde(default = "gray")]
     pub color: [f32; 3],
     #[serde(default = "rough")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.03, max = 1.0)))]
     pub roughness: f32,
     #[serde(default = "four_meters")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 1000.0)))]
     pub tiling: f32,
     #[serde(default = "half")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub height_contrast: f32,
     #[serde(default)]
     pub projection: SurfaceProjection,
@@ -244,11 +265,9 @@ pub struct SceneTerrainMaterial {
     /// Meters its maps' heights span where the ground's relief shows:
     /// 0, flat, to 1; top projections only.
     #[serde(default, skip_serializing_if = "is_flat")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub relief: f32,
     /// Meters tracks sink it at most: 0, rigid, to 2.
     #[serde(default, skip_serializing_if = "is_flat")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2.0)))]
     pub deform: f32,
 }
 
@@ -257,19 +276,19 @@ fn is_flat(relief: &f32) -> bool {
 }
 
 fn gray() -> [f32; 3] {
-    [0.5; 3]
+    SurfaceMaterial::default().color
 }
 
 fn rough() -> f32 {
-    0.9
+    SurfaceMaterial::default().roughness
 }
 
 fn four_meters() -> f32 {
-    4.0
+    SurfaceMaterial::default().tiling
 }
 
 fn half() -> f32 {
-    0.5
+    SurfaceMaterial::default().height_contrast
 }
 
 /// A validated terrain whose surface materials name this document's
@@ -349,13 +368,17 @@ pub enum SceneTerrainLayer {
 /// characters each) record where its heights came from and the credit
 /// their data requires, as the `terrain_import` tool writes them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = state_heightmap_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneHeightmap {
     pub uri: String,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 16384)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
     pub width: u32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = 16384)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
     pub height: u32,
     pub min: [f32; 2],
     pub size: [f32; 2],
@@ -371,6 +394,16 @@ pub struct SceneHeightmap {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
     pub attribution: Option<String>,
+}
+
+/// States the rules terrains check on a heightmap's placement.
+#[cfg(feature = "schema")]
+fn state_heightmap_rules(schema: &mut schemars::Schema) {
+    for field in ["min", "size", "low", "high", "falloff"] {
+        let rule =
+            engine_core::HeightmapLayer::rule_of(field).expect("heightmaps declare the field");
+        engine_settings::state(schema, field, rule);
+    }
 }
 
 /// The largest heightmap side, in samples.
@@ -426,16 +459,10 @@ impl SceneTerrain {
                 relief: material.relief,
                 deform: material.deform,
             };
-            if let Some(Err(error)) = material.cover.as_ref().map(Cover::validate) {
+            if let Err(error) = look.validate() {
                 return Err(invalid(
-                    format!("{at}.cover.{}", error.field),
+                    format!("{at}.{}", error.field),
                     error.rule.into_owned(),
-                ));
-            }
-            if !look.is_usable() {
-                return Err(invalid(
-                    at,
-                    "color must be in [0, 1], roughness in [0.03, 1], tiling in [0.01, 1000], height_contrast and relief in [0, 1], and deform in [0, 2]".into(),
                 ));
             }
             let document = material
@@ -492,15 +519,13 @@ impl SceneTerrain {
                 };
                 return Err(invalid(field, rule.into()));
             }
-            if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
-                return Err(invalid(format!("{at}.sway"), "must be in [0, 10]".into()));
+            if let Err(error) = asset.sway.check("sway", PlacementAsset::SWAY) {
+                return Err(invalid(format!("{at}.sway"), error.rule.into_owned()));
             }
             let collider = asset.collider.map(SceneTerrainCollider::runtime);
-            if collider.is_some_and(|collider| !collider.is_usable()) {
-                return Err(invalid(
-                    format!("{at}.collider"),
-                    "needs dimensions in [0.0001, 10000] and a finite center".into(),
-                ));
+            if let Some(Err(error)) = collider.map(|collider| collider.check("collider", Rule::Any))
+            {
+                return Err(invalid(format!("{at}.collider"), error.rule.into_owned()));
             }
             assets.push((mesh, material, lods, asset.sway, collider));
         }
@@ -592,10 +617,10 @@ impl SceneTerrain {
             reach: surroundings.reach,
             blend: surroundings.blend,
         });
-        if surroundings.is_some_and(|surroundings| !surroundings.is_usable()) {
+        if let Some(Err(error)) = surroundings.map(|surroundings| surroundings.validate()) {
             return Err(invalid(
-                "surroundings",
-                "needs a reach in (0, 1000000] and a blend in [0, 1000000]".into(),
+                &format!("surroundings.{}", error.field),
+                error.rule.into_owned(),
             ));
         }
         if surroundings.is_some() && self.file.is_some() {
@@ -714,7 +739,7 @@ impl SceneTerrain {
             SceneError::new(
                 "invalid_terrain",
                 format!("{path}.layers[{}].{}", error.layer, error.field),
-                format!("must be finite and in [{}, {}]", error.low, error.high),
+                error.rule,
             )
         })
     }
@@ -890,3 +915,6 @@ impl SceneHeightmap {
         })
     }
 }
+
+/// Validated as the scene prepares its terrains.
+impl engine_settings::Setting for SceneTerrain {}

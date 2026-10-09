@@ -38,3 +38,13 @@ impl fmt::Display for SceneError {
 }
 
 impl Error for SceneError {}
+
+/// The error of a value at authored path `path` breaking its field's rule:
+/// code `code`, the field's own path, and the rule.
+pub(crate) fn broken_rule(
+    code: &'static str,
+    path: &str,
+    invalid: engine_settings::InvalidSetting,
+) -> SceneError {
+    SceneError::new(code, format!("{path}.{}", invalid.field), invalid.rule)
+}

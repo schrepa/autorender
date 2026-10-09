@@ -8,61 +8,47 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_range};
-use crate::rules::{ExtraRules, settings};
+use crate::environment::InvalidSetting;
+use engine_settings::{ExtraRules, settings};
 
-/// The cover growing where a surface material lies: blades
-/// per square meter where the material lies alone, the shortest and
-/// tallest blades and their width at the root (meters), the linear color
-/// of their tips (roots take the ground's), and how far they lean in the
-/// wind (0 stiff, 1 the most).
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct Cover {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 400.0)))]
-    pub density: f32,
-    pub height: [f32; 2],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 0.25)))]
-    pub width: f32,
-    pub color: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub sway: f32,
-}
-
-impl Default for Cover {
-    /// A meadow's grass.
-    fn default() -> Self {
-        Self {
-            density: 90.0,
-            height: [0.12, 0.4],
-            width: 0.025,
-            color: [0.13, 0.2, 0.05],
-            sway: 0.6,
-        }
+settings! {
+    /// The cover growing where a surface material lies.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Cover {
+        /// Blades per square meter where the material lies alone.
+        pub density: f32 = 90.0 => range(0.0, 400.0),
+        /// The shortest and tallest blades, meters, shortest first.
+        pub height: [f32; 2] = [0.12, 0.4] => range(0.01, 4.0),
+        /// Blade width at the root, meters.
+        pub width: f32 = 0.025 => range(0.001, 0.25),
+        /// The linear color of the blades' tips; roots take the ground's.
+        pub color: [f32; 3] = [0.13, 0.2, 0.05] => range(0.0, 1.0),
+        /// How far they lean in the wind: 0 stiff, 1 the most.
+        pub sway: f32 = 0.6 => range(0.0, 1.0),
     }
 }
 
-impl Cover {
-    /// The first field out of range: density 0 to 400 blades per square
-    /// meter, heights 0.01 to 4 meters with the shortest first, width 0.001
-    /// to 0.25 meters, color 0 to 1 and sway 0 to 1.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("density", self.density, 0.0..=400.0)?;
-        for height in self.height {
-            check_range("height", height, 0.01..=4.0)?;
-        }
-        if self.height[0] > self.height[1] {
-            return Err(InvalidSetting::new(
+impl ExtraRules for Cover {
+    /// The shortest blades come first.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.height[0] <= self.height[1] {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new(
                 "height",
                 "must list the shortest first",
-            ));
+            ))
         }
-        check_range("width", self.width, 0.001..=0.25)?;
-        for channel in self.color {
-            check_range("color", channel, 0.0..=1.0)?;
+    }
+
+    fn sanitize_extra(self) -> Self {
+        let [low, high] = self.height;
+        Self {
+            height: [crate::math::min(low, high), crate::math::max(low, high)],
+            ..self
         }
-        check_range("sway", self.sway, 0.0..=1.0)
     }
 }
 

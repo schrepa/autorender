@@ -16,75 +16,38 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
+use crate::MAX_LEVEL;
 use engine_math::{max, min};
+use engine_settings::{ExtraRules, settings};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::layers::{Layer, PathStage};
 use crate::{Generator, Layers, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
-/// How an agent walks: the finest pyramid level it walks (0 by default);
-/// the steepest step it climbs (rise per meter); its radius, by which
-/// obstacles widen (meters); the deepest water it wades (meters); the
-/// meters around the walk's ends it may stray; and the most samples a walk
-/// searches, beyond which it walks a coarser level.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct NavOptions {
-    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
-    pub level: u32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 10.0)))]
-    pub max_slope: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub radius: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub max_water: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
-    pub margin: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 1024)))]
-    pub max_samples: u32,
-}
-
-impl Default for NavOptions {
-    fn default() -> Self {
-        Self {
-            level: 0,
-            max_slope: 0.8,
-            radius: 0.5,
-            max_water: 0.6,
-            margin: 96.0,
-            max_samples: 1 << 20,
-        }
+settings! {
+    /// How an agent walks.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct NavOptions {
+        /// The finest pyramid level it walks.
+        pub level: u32 = 0 => range(0, MAX_LEVEL),
+        /// The steepest step it climbs: rise per meter.
+        pub max_slope: f32 = 0.8 => range(0.01, 10.0),
+        /// Its radius, by which obstacles widen, meters.
+        pub radius: f32 = 0.5 => range(0.0, 100.0),
+        /// The deepest water it wades, meters.
+        pub max_water: f32 = 0.6 => range(0.0, 100.0),
+        /// The meters around the walk's ends it may stray.
+        pub margin: f32 = 96.0 => range(0.0, 10_000.0),
+        /// The most samples a walk searches, beyond which it walks a coarser
+        /// level.
+        pub max_samples: u32 = 1 << 20 => at_least(1024),
     }
 }
 
-impl NavOptions {
-    /// The first field out of range, and its rule.
-    pub fn validate(&self) -> Result<(), (&'static str, &'static str)> {
-        let within =
-            |value: f32, low: f32, high: f32| value.is_finite() && (low..=high).contains(&value);
-        if self.level > 15 {
-            return Err(("level", "must be at most 15"));
-        }
-        if !within(self.max_slope, 0.01, 10.0) {
-            return Err(("max_slope", "must be in [0.01, 10]"));
-        }
-        if !within(self.radius, 0.0, 100.0) {
-            return Err(("radius", "must be in [0, 100]"));
-        }
-        if !within(self.max_water, 0.0, 100.0) {
-            return Err(("max_water", "must be in [0, 100]"));
-        }
-        if !within(self.margin, 0.0, 10_000.0) {
-            return Err(("margin", "must be in [0, 10000]"));
-        }
-        if self.max_samples < 1024 {
-            return Err(("max_samples", "must be at least 1024"));
-        }
-        Ok(())
-    }
-}
+impl ExtraRules for NavOptions {}
 
 /// A placed obstacle's footprint: its terrain-local center and radius.
 #[derive(Clone, Copy, Debug, PartialEq)]

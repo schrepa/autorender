@@ -18,10 +18,9 @@ use bevy_ecs::prelude::*;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_range};
 use crate::math::{clamp, max, min};
-use crate::rules::{ExtraRules, settings};
 use crate::{Camera, FixedTime, GlobalTransforms, Terrains};
+use engine_settings::{ExtraRules, settings};
 
 /// The most meters a stamp sinks the ground.
 pub const MAX_TRACK_DEPTH: f32 = 10.0;
@@ -98,50 +97,30 @@ impl Deformation {
     }
 }
 
-/// Presses tracks into deformable ground as a scene version
-/// 9 `deformer` field: each fixed tick, while its entity's world position
-/// lies at most `contact` meters above the terrain under it (or below it),
-/// it presses a footprint `radius` meters across, from where it pressed the
-/// tick before, sinking ground as deformable as that `depth` meters along
-/// its middle (deeper by however far it lies below the ground), round
-/// (`flatness` 0, deepest along its middle like a wheel's rut) to flat (1,
-/// a foot's or a plate's level floor). Put it where an object meets the
-/// ground: a wheel's or a foot's lowest point. Radius 0.01 to 50, depth
-/// and contact 0 to 10, flatness 0 to 1.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct Deformer {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.01, max = 50.0)))]
-    pub radius: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
-    pub depth: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10.0)))]
-    pub contact: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub flatness: f32,
-}
-
-impl Default for Deformer {
-    fn default() -> Self {
-        Self {
-            radius: 0.3,
-            depth: 0.15,
-            contact: 0.1,
-            flatness: 0.5,
-        }
+settings! {
+    /// Presses tracks into deformable ground as a scene version 9 `deformer`
+    /// field: each fixed tick, while its entity's world position lies at most
+    /// `contact` meters above the terrain under it (or below it), it presses a
+    /// footprint from where it pressed the tick before. Put it where an object
+    /// meets the ground: a wheel's or a foot's lowest point.
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Deformer {
+        /// Meters across the footprint it presses.
+        pub radius: f32 = 0.3 => range(0.01, 50.0),
+        /// Meters it sinks ground as deformable as that along its middle,
+        /// deeper by however far it lies below the ground.
+        pub depth: f32 = 0.15 => range(0.0, MAX_TRACK_DEPTH),
+        /// Meters above the terrain within which it presses.
+        pub contact: f32 = 0.1 => range(0.0, 10.0),
+        /// Its footprint's shape: 0 round, deepest along its middle like a
+        /// wheel's rut; 1 flat, a foot's or a plate's level floor.
+        pub flatness: f32 = 0.5 => range(0.0, 1.0),
     }
 }
 
-impl Deformer {
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("radius", self.radius, 0.01..=50.0)?;
-        check_range("depth", self.depth, 0.0..=MAX_TRACK_DEPTH)?;
-        check_range("contact", self.contact, 0.0..=10.0)?;
-        check_range("flatness", self.flatness, 0.0..=1.0)
-    }
-}
+impl ExtraRules for Deformer {}
 
 /// One stamp: a capsule over the ground from world `from` to `to` (x and
 /// z) of `radius` meters (0.01 to 50), sinking ground as deformable as that

@@ -70,6 +70,10 @@ pub use surface::{
 };
 pub use tile::{Generator, Tile, TileBand, TileSample, merge_bands};
 
+/// The finest-to-coarsest pyramid level any layer, bake, walk, route or
+/// placement names at most.
+pub const MAX_LEVEL: u32 = 15;
+
 /// Quads along each side of a tile.
 pub const TILE_QUADS: u32 = 256;
 /// Samples along each side of a tile, its edges included.

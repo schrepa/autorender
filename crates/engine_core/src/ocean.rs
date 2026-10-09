@@ -18,10 +18,10 @@ use bevy_ecs::prelude::*;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::environment::{InvalidSetting, check_range};
+use crate::environment::InvalidSetting;
 use crate::math::{clamp, max, min, sin_cos};
-use crate::rules::{ExtraRules, settings};
 use crate::{FixedTime, Parent, Transform};
+use engine_settings::{ExtraRules, settings};
 
 /// Most waves a sea holds ([`Ocean::waves`]).
 pub const MAX_OCEAN_WAVES: usize = 16;
@@ -256,41 +256,26 @@ impl Ocean {
     }
 }
 
-/// Rides the sea: each fixed tick the entity rises and falls
-/// with the sea's surface under it, `draft` meters of it below the surface
-/// (-100 to 100), and leans by `tilt` (0, upright, to 1, with the
-/// surface's normal) about its own heading. Unparented entities only;
-/// nothing moves without an enabled sea. Requires version 9.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(rename = "SceneFloating")
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Floating {
-    #[cfg_attr(feature = "schema", schemars(range(min = -100.0, max = 100.0)))]
-    pub draft: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub tilt: f32,
-}
-
-impl Default for Floating {
-    fn default() -> Self {
-        Self {
-            draft: 0.0,
-            tilt: 1.0,
-        }
+settings! {
+    /// Rides the sea: each fixed tick the entity rises and falls with the sea's
+    /// surface under it and leans about its own heading. Unparented entities
+    /// only; nothing moves without an enabled sea. Requires version 9.
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(
+        feature = "schema",
+        derive(schemars::JsonSchema),
+        schemars(rename = "SceneFloating")
+    )]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Floating {
+        /// Meters of it below the surface.
+        pub draft: f32 = 0.0 => range(-100.0, 100.0),
+        /// How far it leans: 0 upright, 1 with the surface's normal.
+        pub tilt: f32 = 1.0 => range(0.0, 1.0),
     }
 }
 
-impl Floating {
-    /// The first field out of range.
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        check_range("draft", self.draft, -100.0..=100.0)?;
-        check_range("tilt", self.tilt, 0.0..=1.0)
-    }
-}
+impl ExtraRules for Floating {}
 
 /// The sea's systems.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]

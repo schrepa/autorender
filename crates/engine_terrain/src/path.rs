@@ -20,7 +20,9 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
+use crate::MAX_LEVEL;
 use engine_math::{max, min};
+use engine_settings::{ExtraRules, InvalidSetting, settings};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -58,39 +60,50 @@ impl PathSample {
     }
 }
 
-/// A road or track along the ground.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct PathLayer {
-    /// Terrain-local meters along x and z the road runs through, 2 to
-    /// 4096 of them.
-    pub points: Vec<[f32; 2]>,
-    /// Meters of level road across, 0.5 to 200.
-    #[serde(default = "default_width")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.5, max = 200.0)))]
-    pub width: f32,
-    /// Meters on each side over which the road eases back into the
-    /// ground, 0 to 500.
-    #[serde(default = "default_shoulder")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 500.0)))]
-    pub shoulder: f32,
-    /// Meters along the road over which its height averages the ground's,
-    /// 0 to 5000: longer is gentler, cutting deeper and filling higher.
-    #[serde(default = "default_smoothing")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 5000.0)))]
-    pub smoothing: f32,
-    /// Meters the road would fill above the ground beyond which it bridges
-    /// instead, as it does over rivers and lakes, 0 to 1000;
-    /// 0 never bridges.
-    #[serde(default = "default_bridge_fill")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
-    pub bridge_fill: f32,
-    /// Meters the road would cut into the ground beyond which it tunnels
-    /// instead, 0 to 2000; 0 never tunnels.
-    #[serde(default = "default_tunnel_cut")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 2000.0)))]
-    pub tunnel_cut: f32,
+settings! {
+    /// A road or track along the ground.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct PathLayer {
+        /// Terrain-local meters along x and z the road runs through.
+        #[cfg_attr(feature = "schema", schemars(length(min = 2, max = MAX_PATH_POINTS)))]
+        pub points: Vec<[f32; 2]> = Vec::new()
+            => range(-crate::Layers::MAX_COORDINATE, crate::Layers::MAX_COORDINATE),
+        /// Meters of level road across.
+        #[serde(default = "default_width")]
+        pub width: f32 = default_width() => range(0.5, 200.0),
+        /// Meters on each side over which the road eases back into the
+        /// ground.
+        #[serde(default = "default_shoulder")]
+        pub shoulder: f32 = default_shoulder() => range(0.0, 500.0),
+        /// Meters along the road over which its height averages the ground's:
+        /// longer is gentler, cutting deeper and filling higher.
+        #[serde(default = "default_smoothing")]
+        pub smoothing: f32 = default_smoothing() => range(0.0, 5000.0),
+        /// Meters the road would fill above the ground beyond which it bridges
+        /// instead, as it does over rivers and lakes; 0 never bridges.
+        #[serde(default = "default_bridge_fill")]
+        pub bridge_fill: f32 = default_bridge_fill() => range(0.0, 1000.0),
+        /// Meters the road would cut into the ground beyond which it tunnels
+        /// instead; 0 never tunnels.
+        #[serde(default = "default_tunnel_cut")]
+        pub tunnel_cut: f32 = default_tunnel_cut() => range(0.0, 2000.0),
+    }
+}
+
+impl ExtraRules for PathLayer {
+    /// It runs through at least two points and at most [`MAX_PATH_POINTS`].
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if (2..=MAX_PATH_POINTS).contains(&self.points.len()) {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new(
+                "points",
+                format!("must hold 2 to {MAX_PATH_POINTS} points"),
+            ))
+        }
+    }
 }
 
 fn default_width() -> f32 {
@@ -787,34 +800,28 @@ impl Layers {
     }
 }
 
-/// How a route finder weighs the ground: the pyramid level
-/// whose samples it walks between, the steepest grade it climbs (rise per
-/// meter), how much a meter's cost grows per squared grade, the meters a
-/// meter through standing water costs on top, and the meters a turn costs
-/// per unit of one less the cosine of its angle (a right angle costs it
-/// once, turning back twice), so switchbacks run long legs.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct RouteOptions {
-    pub level: u32,
-    pub max_grade: f32,
-    pub grade_cost: f32,
-    pub water_cost: f32,
-    pub turn_cost: f32,
-}
-
-impl Default for RouteOptions {
-    fn default() -> Self {
-        Self {
-            level: 3,
-            max_grade: 0.12,
-            grade_cost: 100.0,
-            water_cost: 50.0,
-            turn_cost: 40.0,
-        }
+settings! {
+    /// How a route finder weighs the ground.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct RouteOptions {
+        /// The pyramid level whose samples it walks between.
+        pub level: u32 = 3 => range(0, MAX_LEVEL),
+        /// The steepest grade it climbs: rise per meter.
+        pub max_grade: f32 = 0.12 => range(0.001, 10.0),
+        /// How much a meter's cost grows per squared grade.
+        pub grade_cost: f32 = 100.0 => range(0.0, 1.0e6),
+        /// The meters a meter through standing water costs on top.
+        pub water_cost: f32 = 50.0 => range(0.0, 1.0e6),
+        /// The meters a turn costs per unit of one less the cosine of its
+        /// angle: a right angle costs it once, turning back twice, so
+        /// switchbacks run long legs.
+        pub turn_cost: f32 = 40.0 => range(0.0, 1.0e6),
     }
 }
+
+impl ExtraRules for RouteOptions {}
 
 /// A route found: its terrain-local points, corners rounded, the meters
 /// along its walk between samples, the steepest grade of its steps within

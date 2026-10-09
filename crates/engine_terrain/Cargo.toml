@@ -8,10 +8,11 @@ publish.workspace = true
 [features]
 default = []
 # JSON schemas of the authored terrain types, for scene schemas.
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "engine_settings/schema"]
 
 [dependencies]
 engine_math.workspace = true
+engine_settings.workspace = true
 libm.workspace = true
 glam.workspace = true
 serde.workspace = true

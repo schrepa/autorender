@@ -36,7 +36,6 @@ mod packed;
 mod particles;
 mod probes;
 mod retained_render;
-mod rules;
 mod scene;
 mod skin;
 mod sky;
@@ -121,14 +120,17 @@ pub use jobs::{
     content_hash, job_class, job_priority,
 };
 pub use level_of_detail::LevelOfDetail;
-pub use lights::{LocalLight, LocalLights, RenderLight, Spot};
+pub use lights::{
+    LocalLight, LocalLights, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES, RenderLight, Spot,
+};
 pub use navigation::{NavAgent, NavAgents, NavStats, NavStatus, NavSystems, NavWalk, Navigation};
 pub use occupancy::Occupancy;
 pub use ocean::{
     Floating, MAX_OCEAN_WAVES, Ocean, OceanPoint, OceanSurface, OceanSystems, OceanWave, OceanWaves,
 };
 pub use particles::{
-    MAX_EMITTER_PARTICLES, ParticleBlend, ParticleEmitter, Particles, RenderEmitter,
+    MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter, Particles,
+    RenderEmitter,
 };
 pub use probes::{Interior, ReflectionProbe, ReflectionProbes, RenderReflectionProbe};
 pub use retained_render::{PoseRows, RenderFrame};
@@ -144,11 +146,12 @@ pub use streaming::{
     StreamingGrid, WorldCells, WorldChanges, WorldStreaming, remove_streamed,
 };
 pub use terrain::{
-    MAX_PLACEMENT_LODS, MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
-    RenderPlacementAsset, RenderSurfaceMaps, RenderTerrain, RenderTerrains, SurfaceMaterial,
-    SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug,
-    TerrainEdit, TerrainFocus, TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource,
-    TerrainStats, TerrainSurface, TerrainView, Terrains, TileRequest, Viewport,
+    MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MIN_COLLIDER_EXTENT, MotionDetail, PlacedCollider,
+    PlacedShape, PlacementAsset, PlacementLod, RenderPlacementAsset, RenderSurfaceMaps,
+    RenderTerrain, RenderTerrains, SurfaceMaterial, SurfaceProjection, Surroundings,
+    SurroundingsStatus, Terrain, TerrainBakes, TerrainDebug, TerrainEdit, TerrainFocus,
+    TerrainPrefetch, TerrainSample, TerrainSettings, TerrainSource, TerrainStats, TerrainSurface,
+    TerrainView, Terrains, TileRequest, Viewport,
 };
 pub use transform_edits::{TransformEditError, edit_transform};
 pub use virtual_geometry::VirtualGeometry;

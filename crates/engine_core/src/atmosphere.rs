@@ -8,10 +8,11 @@ use bevy_ecs::prelude::Resource;
 use glam::Vec3;
 
 use crate::environment::InvalidSetting;
-use crate::rules::{Rule, Setting};
+use engine_settings::Setting;
 
 /// Every atmosphere field once: its doc, which authors read too, its type,
-/// the scene version that introduced it and the [`Rule`] its values keep.
+/// the scene version that introduced it and the [`engine_settings::Rule`] its
+/// values keep.
 /// engine_core builds [`Atmosphere`] and its validation from this list, and
 /// engine_scene the authored atmosphere: its fields, schema, overrides and
 /// version checks.
@@ -108,7 +109,7 @@ macro_rules! core_atmosphere {
             /// atmosphere's schema states it, and the sun has a direction;
             /// otherwise the first field breaking one.
             pub fn validate(&self) -> Result<(), InvalidSetting> {
-                $(Setting::check(self.$field, stringify!($field), Rule::$rule($($($arg as f64),*)?))?;)*
+                $(Setting::check(&self.$field, stringify!($field), engine_settings::rule::$rule($($($arg),*)?))?;)*
                 if !self.sun_direction.is_finite() || self.sun_direction.length_squared() == 0.0 {
                     return Err(InvalidSetting::new(
                         "sun_direction",
@@ -123,7 +124,7 @@ macro_rules! core_atmosphere {
         /// atmosphere, whose fields share their names.
         #[cfg(feature = "schema")]
         pub fn state_atmosphere_rules(schema: &mut schemars::Schema) {
-            $(crate::rules::state(schema, stringify!($field), Rule::$rule($($($arg as f64),*)?));)*
+            $(engine_settings::state(schema, stringify!($field), engine_settings::rule::$rule($($($arg),*)?));)*
         }
     };
 }

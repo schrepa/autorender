@@ -17,13 +17,13 @@ use bevy_ecs::{
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
 
-use crate::rules::{ExtraRules, settings};
 use crate::{
     AssetLibrary, MaterialHandle, RenderJoint, RenderMaterial, RenderSnapshot, RenderTexture,
     Surface, TransformIndex,
     extraction::{Nearest, Poses},
     retained_render::{IDENTITY_ROWS, pose_rows},
 };
+use engine_settings::{ExtraRules, Rule, Setting, settings};
 
 /// How a decal combines with the surface it lies on.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -85,12 +85,15 @@ impl Decal {
         self
     }
 
-    /// Whether renderers can draw this decal.
+    /// The rule of [`Self::opacity`].
+    pub const OPACITY: Rule = Rule::Range(0.0, 1.0);
+    /// The widest [`Self::fade_angle`], in degrees: a right angle.
+    pub const MAX_FADE_DEGREES: f32 = 90.0;
+
+    /// Whether renderers can draw this decal: its values keep their rules.
     pub fn is_usable(&self) -> bool {
-        self.opacity.is_finite()
-            && (0.0..=1.0).contains(&self.opacity)
-            && self.fade_angle.is_finite()
-            && (0.0..=std::f32::consts::FRAC_PI_2).contains(&self.fade_angle)
+        self.opacity.check("opacity", Self::OPACITY).is_ok()
+            && (0.0..=Self::MAX_FADE_DEGREES.to_radians()).contains(&self.fade_angle)
     }
 }
 

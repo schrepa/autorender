@@ -28,6 +28,7 @@
 //! them, so the tile holds the same objects either way.
 
 use engine_math::{clamp, max, min, sin_cos};
+use engine_settings::{ExtraRules, InvalidSetting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch};
@@ -78,81 +79,126 @@ pub fn merge_placed(near: &[Placed], far: &[Placed]) -> Vec<Placed> {
 /// widest bed an object rests on (meters at scale 1).
 const MAX_LAYERS: usize = 64;
 const MAX_CHOICES: usize = 64;
-const MAX_LEVEL: u8 = 15;
+const MAX_LEVEL: u8 = crate::MAX_LEVEL as u8;
 const MAX_BED: f32 = 1000.0;
 
-/// An asset a placement layer chooses, by ID of the surface's assets, and
-/// how often against the layer's others.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct PlacementChoice {
-    pub asset: String,
-    #[serde(default = "one")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
-    pub weight: f32,
+settings! {
+    /// An asset a placement layer chooses, by ID of the surface's assets, and
+    /// how often against the layer's others.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct PlacementChoice {
+        /// The asset's ID.
+        pub asset: String = String::new() => any,
+        /// How often it is chosen against the layer's others.
+        #[serde(default = "one")]
+        pub weight: f32 = one() => at_least(0.0),
+    }
 }
 
-/// One layer of objects on a surface: the assets it chooses from; objects
-/// per hectare where everything allows (at most one per footprint
-/// square); the meters between candidates (0.25 to 256); the surface
-/// materials it stands on (IDs; any when empty), weighted by their share;
-/// where its mask allows; its objects' scale range; how far they lean with
-/// the ground (0 upright, 1 along its normal); how far they turn to face
-/// down its slope, their x across it and z down it (0 any way, 1 straight
-/// down it); how deep they sink, in meters at scale 1, below the lowest
-/// ground within their bed, how far around them they rest on (meters at
-/// scale 1, 0 by default: the ground at their point), so
-/// blocks on steep slopes stand in them instead of hanging over them; the
-/// pyramid level whose tiles hold its candidates (0, the finest, by
-/// default); and where it also stands far away.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct PlacementLayer {
-    pub id: String,
-    pub assets: Vec<PlacementChoice>,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
-    pub density: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.25, max = 256.0)))]
-    pub footprint: f32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub materials: Vec<String>,
-    #[serde(default = "Mask::one")]
-    pub mask: Mask,
-    #[serde(default = "unit_scale")]
-    pub scale: [f32; 2],
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub align: f32,
-    #[serde(default, skip_serializing_if = "is_zero_f32")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub face: f32,
-    #[serde(default)]
-    pub sink: f32,
-    #[serde(default, skip_serializing_if = "is_zero_f32")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1000.0)))]
-    pub bed: f32,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
-    pub level: u8,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub far: Option<FarPlacement>,
+impl ExtraRules for PlacementChoice {}
+
+settings! {
+    /// One layer of objects on a surface.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct PlacementLayer {
+        /// The layer's ID.
+        pub id: String = String::new() => any,
+        /// The assets it chooses from.
+        pub assets: Vec<PlacementChoice> = Vec::new() => any,
+        /// Objects per hectare where everything allows, at most one per
+        /// footprint square.
+        pub density: f32 = 0.0 => at_least(0.0),
+        /// The meters between candidates.
+        pub footprint: f32 = 1.0 => range(0.25, 256.0),
+        /// The surface materials it stands on (IDs; any when empty),
+        /// weighted by their share.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub materials: Vec<String> = Vec::new() => any,
+        /// Where it stands.
+        #[serde(default = "Mask::one")]
+        pub mask: Mask = Mask::one() => any,
+        /// Its objects' scale range, the smaller first.
+        #[serde(default = "unit_scale")]
+        pub scale: [f32; 2] = unit_scale() => range(MIN_SCALE, MAX_SCALE),
+        /// How far its objects lean with the ground: 0 upright, 1 along its
+        /// normal.
+        #[serde(default)]
+        pub align: f32 = 0.0 => range(0.0, 1.0),
+        /// How far they turn to face down its slope, their x across it and z
+        /// down it: 0 any way, 1 straight down it.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub face: f32 = 0.0 => range(0.0, 1.0),
+        /// How deep they sink, in meters at scale 1, below the lowest ground
+        /// within their bed.
+        #[serde(default)]
+        pub sink: f32 = 0.0 => finite,
+        /// How far around them they rest on, in meters at scale 1: 0, the
+        /// ground at their point; blocks on steep slopes stand in it instead
+        /// of hanging over it.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub bed: f32 = 0.0 => range(0.0, MAX_BED),
+        /// The pyramid level whose tiles hold its candidates: 0, the finest.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        pub level: u8 = 0 => range(0, MAX_LEVEL),
+        /// Where it also stands far away.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub far: Option<FarPlacement> = None => any,
+    }
 }
 
-/// Where a placement layer also stands far away: on the
-/// tiles of `level`, coarser than its own, a `share` (0 to 1] of its
-/// objects, the candidates ranked first, where its own level's tiles are
-/// not resident.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct FarPlacement {
-    #[cfg_attr(feature = "schema", schemars(range(min = 1, max = 15)))]
-    pub level: u8,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub share: f32,
+impl ExtraRules for PlacementLayer {
+    /// Its objects fit their footprints, its scale range runs smaller
+    /// first, its choices weigh something, and its far placement stands on
+    /// a coarser level.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.density * self.footprint * self.footprint / 10_000.0 > 1.0 {
+            return Err(InvalidSetting::new(
+                "density",
+                "places at most one object per footprint square",
+            ));
+        }
+        if self.scale[0] > self.scale[1] {
+            return Err(InvalidSetting::new("scale", "must list the smaller first"));
+        }
+        if self.assets.iter().map(|choice| choice.weight).sum::<f32>() <= 0.0 {
+            return Err(InvalidSetting::new("assets", "needs a positive weight"));
+        }
+        if self.far.is_some_and(|far| far.level <= self.level) {
+            return Err(InvalidSetting::new(
+                "far.level",
+                "must be coarser than the layer's level",
+            ));
+        }
+        Ok(())
+    }
 }
+
+settings! {
+    /// Where a placement layer also stands far away: on the tiles of a
+    /// coarser level, a share of its objects, the candidates ranked first,
+    /// where its own level's tiles are not resident.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct FarPlacement {
+        /// The coarser level whose tiles hold them.
+        pub level: u8 = 1 => range(1, MAX_LEVEL),
+        /// The share of the layer's objects standing there.
+        pub share: f32 = 1.0 => above_to(0.0, 1.0),
+    }
+}
+
+impl ExtraRules for FarPlacement {}
+
+/// The smallest and largest scale placed objects take.
+const MIN_SCALE: f32 = 0.001;
+const MAX_SCALE: f32 = 1000.0;
+
+impl engine_settings::Setting for Mask {}
 
 fn is_zero(level: &u8) -> bool {
     *level == 0
@@ -170,33 +216,37 @@ fn unit_scale() -> [f32; 2] {
     [1.0, 1.0]
 }
 
-/// An object an author stands on the surface: its asset, by
-/// ID of the surface's assets; its base's terrain-local point `[x, z]`,
-/// where it stands on the ground; its turn about the vertical (degrees);
-/// its scale (0.001 to 1000); how deep its base sinks, in meters at scale
-/// 1; how far it leans with the ground (0 upright, 1 along its normal);
-/// and the pyramid level whose tiles hold it (0, the finest, by default;
-/// coarser for objects seen from farther away).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct AuthoredPlacement {
-    pub asset: String,
-    pub position: [f32; 2],
-    #[serde(default, skip_serializing_if = "is_zero_f32")]
-    pub yaw: f32,
-    #[serde(default = "one", skip_serializing_if = "is_one")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1000.0)))]
-    pub scale: f32,
-    #[serde(default, skip_serializing_if = "is_zero_f32")]
-    pub sink: f32,
-    #[serde(default, skip_serializing_if = "is_zero_f32")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub align: f32,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    #[cfg_attr(feature = "schema", schemars(range(max = 15)))]
-    pub level: u8,
+settings! {
+    /// An object an author stands on the surface.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct AuthoredPlacement {
+        /// Its asset, by ID of the surface's assets.
+        pub asset: String = String::new() => any,
+        /// Its base's terrain-local point `[x, z]`, where it stands on the
+        /// ground.
+        pub position: [f32; 2] = [0.0; 2] => finite,
+        /// Its turn about the vertical, degrees.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub yaw: f32 = 0.0 => finite,
+        /// Its scale.
+        #[serde(default = "one", skip_serializing_if = "is_one")]
+        pub scale: f32 = one() => range(MIN_SCALE, MAX_SCALE),
+        /// How deep its base sinks, in meters at scale 1.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub sink: f32 = 0.0 => finite,
+        /// How far it leans with the ground: 0 upright, 1 along its normal.
+        #[serde(default, skip_serializing_if = "is_zero_f32")]
+        pub align: f32 = 0.0 => range(0.0, 1.0),
+        /// The pyramid level whose tiles hold it: 0, the finest; coarser for
+        /// objects seen from farther away.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        pub level: u8 = 0 => range(0, MAX_LEVEL),
+    }
 }
+
+impl ExtraRules for AuthoredPlacement {}
 
 fn is_one(value: &f32) -> bool {
     *value == 1.0
@@ -231,24 +281,9 @@ pub(crate) fn compile_authored(
                 .iter()
                 .position(|id| *id == object.asset)
                 .ok_or_else(|| fail(format!("{at}.asset"), "must name an asset"))?;
-            if !object.position.iter().all(|value| value.is_finite()) {
-                return Err(fail(format!("{at}.position"), "must be finite"));
-            }
-            if !object.yaw.is_finite() {
-                return Err(fail(format!("{at}.yaw"), "must be finite"));
-            }
-            if !(object.scale.is_finite() && (0.001..=1000.0).contains(&object.scale)) {
-                return Err(fail(format!("{at}.scale"), "must be in [0.001, 1000]"));
-            }
-            if !object.sink.is_finite() {
-                return Err(fail(format!("{at}.sink"), "must be finite"));
-            }
-            if !(object.align.is_finite() && (0.0..=1.0).contains(&object.align)) {
-                return Err(fail(format!("{at}.align"), "must be in [0, 1]"));
-            }
-            if object.level > MAX_LEVEL {
-                return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
-            }
+            object.validate().map_err(|invalid| {
+                (format!("{at}.{}", invalid.field), invalid.rule.into_owned())
+            })?;
             Ok(CompiledAuthored {
                 asset: asset as u16,
                 position: object.position,
@@ -408,6 +443,9 @@ pub(crate) fn compile(
         if layer.assets.is_empty() || layer.assets.len() > MAX_CHOICES {
             return Err(fail(format!("{at}.assets"), "chooses from 1 to 64 assets"));
         }
+        layer
+            .validate()
+            .map_err(|invalid| (format!("{at}.{}", invalid.field), invalid.rule.into_owned()))?;
         let mut choices = Vec::with_capacity(layer.assets.len());
         let mut total = 0.0;
         for (choice_index, choice) in layer.assets.iter().enumerate() {
@@ -416,40 +454,13 @@ pub(crate) fn compile(
                 .iter()
                 .position(|id| *id == choice.asset)
                 .ok_or_else(|| fail(format!("{path}.asset"), "must name an asset"))?;
-            if !(choice.weight.is_finite() && choice.weight >= 0.0) {
-                return Err(fail(
-                    format!("{path}.weight"),
-                    "must be finite and not negative",
-                ));
-            }
             total += choice.weight;
             choices.push((asset as u16, total));
-        }
-        if total <= 0.0 {
-            return Err(fail(format!("{at}.assets"), "needs a positive weight"));
         }
         for choice in &mut choices {
             choice.1 /= total;
         }
-        if !(layer.footprint.is_finite() && (0.25..=256.0).contains(&layer.footprint)) {
-            return Err(fail(
-                format!("{at}.footprint"),
-                "must be in [0.25, 256] meters",
-            ));
-        }
-        if !(layer.density.is_finite() && layer.density >= 0.0) {
-            return Err(fail(
-                format!("{at}.density"),
-                "must be finite and not negative",
-            ));
-        }
         let fill = layer.density * layer.footprint * layer.footprint / 10_000.0;
-        if fill > 1.0 {
-            return Err(fail(
-                format!("{at}.density"),
-                "places at most one object per footprint square",
-            ));
-        }
         let set = if layer.materials.is_empty() {
             None
         } else {
@@ -468,39 +479,6 @@ pub(crate) fn compile(
             }
             Some(set)
         };
-        let [low, high] = layer.scale;
-        if !(low.is_finite() && high.is_finite() && low > 0.0 && low <= high) {
-            return Err(fail(
-                format!("{at}.scale"),
-                "must be positive, the smaller first",
-            ));
-        }
-        if !(layer.align.is_finite() && (0.0..=1.0).contains(&layer.align)) {
-            return Err(fail(format!("{at}.align"), "must be in [0, 1]"));
-        }
-        if !(layer.face.is_finite() && (0.0..=1.0).contains(&layer.face)) {
-            return Err(fail(format!("{at}.face"), "must be in [0, 1]"));
-        }
-        if !layer.sink.is_finite() {
-            return Err(fail(format!("{at}.sink"), "must be finite"));
-        }
-        if !(layer.bed.is_finite() && (0.0..=MAX_BED).contains(&layer.bed)) {
-            return Err(fail(format!("{at}.bed"), "must be in [0, 1000]"));
-        }
-        if layer.level > MAX_LEVEL {
-            return Err(fail(format!("{at}.level"), "must be in [0, 15]"));
-        }
-        if let Some(far) = layer.far {
-            if far.level <= layer.level || far.level > MAX_LEVEL {
-                return Err(fail(
-                    format!("{at}.far.level"),
-                    "must be coarser than the layer's level, at most 15",
-                ));
-            }
-            if !(far.share.is_finite() && far.share > 0.0 && far.share <= 1.0) {
-                return Err(fail(format!("{at}.far.share"), "must be in (0, 1]"));
-            }
-        }
         let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0)
             .map_err(|error| (error.path, error.rule))?;
         compiled.push(CompiledPlacement {

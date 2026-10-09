@@ -20,13 +20,19 @@ use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::extraction::{Nearest, Poses};
-use crate::rules::{ExtraRules, settings};
 use crate::{RenderSnapshot, TransformIndex};
+use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 
 /// Most particles one emitter keeps alive (its rate times its lifetime): a
 /// validity bound far above real effects. Frames draw every emitter unless
 /// [`Particles::max_particles`] sets a budget.
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
+
+/// The widest an emitter's cone of directions opens, in degrees from its
+/// axis: every direction.
+pub const MAX_SPREAD_DEGREES: f32 = 180.0;
+
+impl Setting for ParticleBlend {}
 
 /// How particles combine with what is behind them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -38,65 +44,65 @@ pub enum ParticleBlend {
     Additive,
 }
 
-/// Emits particles from its entity.
-///
-/// Particle `k` is born at `k / rate` seconds of presentation time at the
-/// emitter's position (plus `offset` and a random point within `radius`),
-/// leaves along `direction` within the `spread` cone at `speed`, accelerates
-/// by `acceleration` and dies after `lifetime`. Size and color blend from
-/// their first to their second value over its life. A moving emitter leaves
-/// its particles behind along its path. Unusable values skip the emitter.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct ParticleEmitter {
-    /// Particles born per second.
-    pub rate: f32,
-    /// Seconds each particle lives.
-    pub lifetime: f32,
-    /// Initial speed in world units per second.
-    pub speed: f32,
-    /// Direction of emission in the entity's local space; any nonzero length.
-    pub direction: Vec3,
-    /// Half-angle in radians of the cone of initial directions; π emits
-    /// in every direction.
-    pub spread: f32,
-    /// World acceleration: gravity, buoyancy or wind.
-    pub acceleration: Vec3,
-    /// Diameter at birth and at death, in world units.
-    pub size: [f32; 2],
-    /// Linear RGBA at birth and at death; alpha fades particles.
-    pub color: [[f32; 4]; 2],
-    /// Brightness multiple of the color, for glowing particles.
-    pub emission: f32,
-    pub blend: ParticleBlend,
-    /// Streaks along the motion: particles stretch by this many seconds of
-    /// their travel.
-    pub stretch: f32,
-    /// Birth position in the entity's local space, scaled with it.
-    pub offset: Vec3,
-    /// Radius of the ball around the birth position particles start in.
-    pub radius: f32,
-    /// Varies the random choices between otherwise identical emitters.
-    pub seed: u32,
+settings! {
+    unauthored;
+    /// Emits particles from its entity.
+    ///
+    /// Particle `k` is born at `k / rate` seconds of presentation time at the
+    /// emitter's position (plus `offset` and a random point within `radius`),
+    /// leaves along `direction` within the `spread` cone at `speed`, accelerates
+    /// by `acceleration` and dies after `lifetime`. Size and color blend from
+    /// their first to their second value over its life. A moving emitter leaves
+    /// its particles behind along its path. Emitters breaking their rules are
+    /// skipped.
+    #[derive(Component, Clone, Copy, Debug, PartialEq)]
+    pub struct ParticleEmitter {
+        /// Particles born per second.
+        pub rate: f32 = 20.0 => above_to(0.0, 100_000.0),
+        /// Seconds each particle lives.
+        pub lifetime: f32 = 2.0 => above_to(0.0, 60.0),
+        /// Initial speed in world units per second.
+        pub speed: f32 = 1.0 => range(-10_000.0, 10_000.0),
+        /// Direction of emission in the entity's local space; any nonzero length.
+        pub direction: Vec3 = Vec3::Y => range(-1.0e6, 1.0e6),
+        /// Half-angle in radians of the cone of initial directions; π emits
+        /// in every direction.
+        pub spread: f32 = 0.3 => range(0.0, MAX_SPREAD_DEGREES.to_radians()),
+        /// World acceleration: gravity, buoyancy or wind.
+        pub acceleration: Vec3 = Vec3::ZERO => range(-1.0e6, 1.0e6),
+        /// Diameter at birth and at death, in world units.
+        pub size: [f32; 2] = [0.3, 0.6] => range(0.0, 10_000.0),
+        /// Linear RGBA at birth and at death; alpha fades particles.
+        pub color: [[f32; 4]; 2] = [[1.0, 1.0, 1.0, 0.6], [1.0, 1.0, 1.0, 0.0]] => range(0.0, 1.0),
+        /// Brightness multiple of the color, for glowing particles.
+        pub emission: f32 = 1.0 => range(0.0, 64.0),
+        /// How particles combine with what is behind them.
+        pub blend: ParticleBlend = ParticleBlend::Alpha => any,
+        /// Streaks along the motion: particles stretch by this many seconds of
+        /// their travel.
+        pub stretch: f32 = 0.0 => range(0.0, 10.0),
+        /// Birth position in the entity's local space, scaled with it.
+        pub offset: Vec3 = Vec3::ZERO => range(-1.0e6, 1.0e6),
+        /// Radius of the ball around the birth position particles start in.
+        pub radius: f32 = 0.0 => range(0.0, 10_000.0),
+        /// Varies the random choices between otherwise identical emitters.
+        pub seed: u32 = 0 => any,
+    }
 }
 
-impl Default for ParticleEmitter {
-    fn default() -> Self {
-        Self {
-            rate: 20.0,
-            lifetime: 2.0,
-            speed: 1.0,
-            direction: Vec3::Y,
-            spread: 0.3,
-            acceleration: Vec3::ZERO,
-            size: [0.3, 0.6],
-            color: [[1.0, 1.0, 1.0, 0.6], [1.0, 1.0, 1.0, 0.0]],
-            emission: 1.0,
-            blend: ParticleBlend::Alpha,
-            stretch: 0.0,
-            offset: Vec3::ZERO,
-            radius: 0.0,
-            seed: 0,
+impl ExtraRules for ParticleEmitter {
+    /// It points somewhere, and holds no more particles than the limit.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.direction.length_squared() == 0.0 {
+            return Err(InvalidSetting::new("direction", "must be nonzero"));
         }
+        if f64::from(self.rate) * f64::from(self.lifetime) > f64::from(MAX_EMITTER_PARTICLES) {
+            return Err(InvalidSetting::new(
+                "rate",
+                "rate times lifetime must be at most the particle limit",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -109,37 +115,6 @@ impl ParticleEmitter {
         } else {
             0
         }
-    }
-
-    /// Whether renderers can draw this emitter (see the type's documentation).
-    pub fn is_usable(&self) -> bool {
-        let finite = |value: f32| value.is_finite();
-        let colors = self
-            .color
-            .iter()
-            .flatten()
-            .all(|&value| value.is_finite() && value >= 0.0);
-        self.rate.is_finite()
-            && self.rate > 0.0
-            && self.lifetime.is_finite()
-            && self.lifetime > 0.0
-            && finite(self.speed)
-            && self.direction.is_finite()
-            && self.direction.length_squared() > 0.0
-            && finite(self.spread)
-            && self.acceleration.is_finite()
-            && self
-                .size
-                .iter()
-                .all(|&size| size.is_finite() && size >= 0.0)
-            && colors
-            && self.emission.is_finite()
-            && self.emission >= 0.0
-            && finite(self.stretch)
-            && self.stretch >= 0.0
-            && self.offset.is_finite()
-            && self.radius.is_finite()
-            && self.radius >= 0.0
     }
 }
 
@@ -247,7 +222,7 @@ impl ParticleExtraction {
         self.candidates.clear();
         let mut wanted = 0_u64;
         for (position, (entity, emitter)) in self.query.iter(world).enumerate() {
-            if !emitter.is_usable() {
+            if emitter.validate().is_err() {
                 continue;
             }
             if self.hints.len() <= position {

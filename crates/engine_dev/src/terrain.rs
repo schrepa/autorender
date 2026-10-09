@@ -254,18 +254,7 @@ pub fn edit_terrain(
             }
             let x = coordinate(center[0], "$.center[0]")?;
             let z = coordinate(center[1], "$.center[1]")?;
-            let meters = |value: f64, path: &str| {
-                if value.is_finite() && (0.0..=1.0e5).contains(&value) {
-                    Ok(value as f32)
-                } else {
-                    Err(DevError::new(
-                        "invalid_request",
-                        path,
-                        "must be finite and in [0, 100000] meters",
-                    ))
-                }
-            };
-            let (radius, falloff) = (meters(radius, "$.radius")?, meters(falloff, "$.falloff")?);
+            let (radius, falloff) = (radius as f32, falloff as f32);
             if edits.iter().any(|edit| *edit.id == *id) {
                 let standing = edits.iter().find(|edit| *edit.id == *id).expect("found");
                 return Ok(json!({
@@ -288,6 +277,14 @@ pub fn edit_terrain(
                 falloff,
                 op,
             };
+            // The stamp's own rules, named as the request names its fields.
+            stamp.validate().map_err(|invalid| {
+                let field = match invalid.field.strip_prefix("op") {
+                    Some(rest) => format!("change{rest}"),
+                    None => invalid.field.into_owned(),
+                };
+                DevError::new("invalid_request", format!("$.{field}"), invalid.rule)
+            })?;
             let terrains = world.resource::<Terrains>();
             let before = terrains.layers(entity).ok_or_else(|| {
                 DevError::new("not_generated", "$.terrain", "the terrain holds no layers")
@@ -457,8 +454,12 @@ pub(crate) fn execute(
             );
             let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
             let options = options.unwrap_or_default();
-            options.validate().map_err(|(field, rule)| {
-                DevError::new("invalid_request", format!("$.options.{field}"), rule)
+            options.validate().map_err(|invalid| {
+                DevError::new(
+                    "invalid_request",
+                    format!("$.options.{}", invalid.field),
+                    invalid.rule,
+                )
             })?;
             let world = engine.app.world_mut();
             let entity = world
@@ -643,35 +644,20 @@ pub(crate) fn execute(
             );
             let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
             let defaults = RouteOptions::default();
-            let ranged =
-                |value: Option<f64>, low: f64, high: f64, path: &str, fallback: f32| match value {
-                    None => Ok(fallback),
-                    Some(value) if value.is_finite() && (low..=high).contains(&value) => {
-                        Ok(value as f32)
-                    }
-                    Some(_) => Err(DevError::new(
-                        "invalid_request",
-                        path,
-                        format!("must be in [{low}, {high}]"),
-                    )),
-                };
             let options = RouteOptions {
-                level: match level {
-                    None => defaults.level,
-                    Some(level) if level <= 15 => level,
-                    Some(_) => {
-                        return Err(DevError::new(
-                            "invalid_request",
-                            "$.level",
-                            "must be in [0, 15]",
-                        ));
-                    }
-                },
-                max_grade: ranged(max_grade, 0.001, 10.0, "$.max_grade", defaults.max_grade)?,
-                grade_cost: ranged(grade_cost, 0.0, 1.0e6, "$.grade_cost", defaults.grade_cost)?,
-                water_cost: ranged(water_cost, 0.0, 1.0e6, "$.water_cost", defaults.water_cost)?,
-                turn_cost: ranged(turn_cost, 0.0, 1.0e6, "$.turn_cost", defaults.turn_cost)?,
+                level: level.unwrap_or(defaults.level),
+                max_grade: max_grade.map_or(defaults.max_grade, |value| value as f32),
+                grade_cost: grade_cost.map_or(defaults.grade_cost, |value| value as f32),
+                water_cost: water_cost.map_or(defaults.water_cost, |value| value as f32),
+                turn_cost: turn_cost.map_or(defaults.turn_cost, |value| value as f32),
             };
+            options.validate().map_err(|invalid| {
+                DevError::new(
+                    "invalid_request",
+                    format!("$.{}", invalid.field),
+                    invalid.rule,
+                )
+            })?;
             let world = engine.app.world();
             let terrains = world.resource::<Terrains>();
             let Some(sample) = terrains.sample(from.x, from.y) else {

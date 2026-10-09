@@ -250,24 +250,10 @@ fn validate_object(
             &format!("{path}.decal.material"),
         )?;
     }
-    if let Some(agent) = entity.nav_agent {
-        agent.validate().map_err(|invalid| {
-            SceneError::new(
-                "invalid_nav_agent",
-                format!("{path}.nav_agent.{}", invalid.field),
-                invalid.rule,
-            )
-        })?;
-    }
-    if let Some(deformer) = entity.deformer {
-        deformer.validate().map_err(|invalid| {
-            SceneError::new(
-                "invalid_deformer",
-                format!("{path}.deformer.{}", invalid.field),
-                invalid.rule,
-            )
-        })?;
-    }
+    // Every field keeps its rule, each component its own.
+    entity
+        .validate()
+        .map_err(|invalid| crate::error::broken_rule("invalid_value", path, invalid))?;
     if let Some(spline) = &entity.spline {
         spline.validate(&format!("{path}.spline"))?;
         reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;

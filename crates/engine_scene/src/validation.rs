@@ -6,6 +6,7 @@ use engine_core::{
     glam::{Mat4, Vec3},
 };
 
+use crate::error::broken_rule;
 use crate::{
     MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles, SceneTransform,
     animation::{PreparedPlayer, PreparedSkin},
@@ -722,43 +723,9 @@ impl SceneDocument {
     }
 
     fn validate_camera(&self) -> Result<(), SceneError> {
-        bounded_vector(self.camera.position, "$.camera.position", 1_000_000.0)?;
-        bounded_vector(self.camera.target, "$.camera.target", 1_000_000.0)?;
-        let direction = self.camera.camera().target - self.camera.camera().position;
-        if direction.length_squared() < 0.000_001 {
-            return Err(SceneError::new(
-                "invalid_camera",
-                "$.camera.target",
-                "camera target must be at least 0.001 units from its position",
-            ));
-        }
-        if !self.camera.fov_degrees.is_finite() || !(1.0..=179.0).contains(&self.camera.fov_degrees)
-        {
-            return Err(SceneError::new(
-                "invalid_camera",
-                "$.camera.fov_degrees",
-                "vertical field of view must be finite and between 1 and 179 degrees",
-            ));
-        }
-        if !self.camera.near.is_finite() || !(0.001..1_000_000.0).contains(&self.camera.near) {
-            return Err(SceneError::new(
-                "invalid_camera",
-                "$.camera.near",
-                "near plane must be finite and at least 0.001 but below 1000000",
-            ));
-        }
-        if !self.camera.far.is_finite()
-            || self.camera.far <= self.camera.near
-            || self.camera.far - self.camera.near < 0.001
-            || self.camera.far > 1_000_000.0
-        {
-            return Err(SceneError::new(
-                "invalid_camera",
-                "$.camera.far",
-                "far plane must be finite, at least 0.001 beyond near, and at most 1000000",
-            ));
-        }
-        Ok(())
+        self.camera
+            .validate()
+            .map_err(|invalid| broken_rule("invalid_camera", "$.camera", invalid))
     }
 }
 
@@ -843,24 +810,8 @@ fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Scene
 }
 
 pub(crate) fn transform(source: &SceneTransform, path: &str) -> Result<Transform, SceneError> {
-    bounded_vector(
-        source.translation,
-        &format!("{path}.translation"),
-        1_000_000.0,
-    )?;
-    bounded_vector(
-        source.rotation_degrees,
-        &format!("{path}.rotation_degrees"),
-        360_000.0,
-    )?;
-    for (index, scale) in source.scale.iter().enumerate() {
-        if !scale.is_finite() || !(0.0001..=10_000.0).contains(scale) {
-            return Err(SceneError::new(
-                "invalid_scale",
-                format!("{path}.scale[{index}]"),
-                "scale must be finite and between 0.0001 and 10000 on every axis",
-            ));
-        }
-    }
+    source
+        .validate()
+        .map_err(|invalid| broken_rule("invalid_transform", path, invalid))?;
     Ok(source.transform())
 }

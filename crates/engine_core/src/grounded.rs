@@ -7,23 +7,29 @@
 //! stand on the ground the frame they spawn.
 
 use bevy_ecs::prelude::*;
+use engine_settings::{ExtraRules, settings};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::{Parent, Terrains, Transform};
 
-/// Stands its entity on the terrain: its translation's y is
-/// kept `offset` meters above the ground under its x and z. Unparented
-/// entities only; without a resident tile under it (or over a hole) the
-/// entity keeps its translation, as walking navigation agents keep theirs:
-/// their walks stand them, on bridges' decks too. Requires
-/// version 9.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct Grounded {
-    pub offset: f32,
+settings! {
+    /// Stands its entity on the terrain: its translation's y is
+    /// kept `offset` meters above the ground under its x and z. Unparented
+    /// entities only; without a resident tile under it (or over a hole) the
+    /// entity keeps its translation, as walking navigation agents keep theirs:
+    /// their walks stand them, on bridges' decks too. Requires
+    /// version 9.
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Grounded {
+        /// Meters above the ground its translation stands.
+        pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
+    }
 }
+
+impl ExtraRules for Grounded {}
 
 /// Where a grounded entity last sampled the ground: its x and z, the
 /// offset it applied, the terrains' revision then, and the level of the

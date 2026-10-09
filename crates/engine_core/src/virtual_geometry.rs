@@ -11,7 +11,7 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::rules::{ExtraRules, settings};
+use engine_settings::{ExtraRules, settings};
 
 settings! {
     /// Virtual geometry settings: whether meshes built as cluster

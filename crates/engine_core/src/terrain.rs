@@ -63,12 +63,11 @@ use engine_terrain::{
     decode_tile, merge_placed,
 };
 
-use crate::environment::InvalidSetting;
-use crate::rules::{ExtraRules, settings};
 use crate::{
     Camera, GlobalTransforms, IDLE_JOBS, JobId, Jobs, RenderMaterial, RenderMesh, RenderSnapshot,
     RenderTexture, URGENT_JOBS, VIEW_JOBS, content_hash, job_class, job_priority,
 };
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 
 /// Where a terrain's tiles come from.
 #[derive(Clone, Debug, PartialEq)]
@@ -116,6 +115,12 @@ pub struct PlacementAsset {
     pub collider: Option<PlacedCollider>,
 }
 
+impl PlacementAsset {
+    /// The rule of [`Self::sway`], which terrains check and authored
+    /// placement assets' schemas state.
+    pub const SWAY: Rule = Rule::range(0.0, 10.0);
+}
+
 /// The collider of a placement asset's objects, in the
 /// asset's mesh space at scale 1: its primitive about `center`, and the
 /// collision layers the objects belong to and collide with. Objects within
@@ -129,8 +134,13 @@ pub struct PlacedCollider {
     pub filter: u32,
 }
 
+/// Local dimensions admitted by collision shapes, independent of render
+/// meshes: placed colliders', scenes' and the collision world's.
+pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
+pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
+
 /// A placed collider's primitive: a box's half extents or a sphere's
-/// radius, each 0.0001 to 10000.
+/// radius, each from [`MIN_COLLIDER_EXTENT`] to [`MAX_COLLIDER_EXTENT`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PlacedShape {
     Cuboid { half_extents: [f32; 3] },
@@ -150,13 +160,29 @@ impl PlacedCollider {
     }
 
     /// Whether its dimensions are in range and its center finite.
-    pub fn is_usable(&self) -> bool {
-        let usable = |value: f32| value.is_finite() && (1.0e-4..=1.0e4).contains(&value);
+    fn is_usable(&self) -> bool {
+        let usable = |value: f32| (MIN_COLLIDER_EXTENT..=MAX_COLLIDER_EXTENT).contains(&value);
         let dimensions = match self.shape {
             PlacedShape::Cuboid { half_extents } => half_extents.iter().all(|&half| usable(half)),
             PlacedShape::Sphere { radius } => usable(radius),
         };
         dimensions && self.center.iter().all(|value| value.is_finite())
+    }
+}
+
+/// A placed collider keeps the collision extents, about a finite center.
+impl Setting for PlacedCollider {
+    fn check(&self, field: &'static str, _: Rule) -> Result<(), InvalidSetting> {
+        if self.is_usable() {
+            Ok(())
+        } else {
+            Err(InvalidSetting::new(
+                field,
+                format!(
+                    "needs dimensions in [{MIN_COLLIDER_EXTENT}, {MAX_COLLIDER_EXTENT}] and a finite center"
+                ),
+            ))
+        }
     }
 }
 
@@ -196,27 +222,37 @@ impl PlacementLod {
     }
 }
 
-/// How a surface material looks: an engine material's maps and factors,
-/// or without one a linear `color` and `roughness`; the meters its
-/// textures repeat over; how sharply its height map wins where it blends
-/// with another (0 even, 1 sharpest); whether steep ground projects it
-/// from the side; and the cover growing where it lies.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SurfaceMaterial {
-    pub material: Option<MaterialHandle>,
-    pub color: [f32; 3],
-    pub roughness: f32,
-    pub tiling: f32,
-    pub height_contrast: f32,
-    pub projection: SurfaceProjection,
-    pub cover: Option<crate::Cover>,
-    /// The meters its maps' heights span where relief sinks
-    /// the ground between its stones and tufts: 0, flat, to 1. Top
-    /// projections only.
-    pub relief: f32,
-    /// The meters tracks sink it at most: 0, rigid, to 2.
-    pub deform: f32,
+settings! {
+    unauthored;
+    /// How a surface material looks: an engine material's maps and factors,
+    /// or without one a linear `color` and `roughness`; how its textures
+    /// repeat and blend; and the cover growing where it lies.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct SurfaceMaterial {
+        /// The engine material shading it, if any.
+        pub material: Option<MaterialHandle> = None => any,
+        /// Linear color without a material.
+        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
+        /// Roughness without a material.
+        pub roughness: f32 = 0.9 => range(0.03, 1.0),
+        /// The meters its textures repeat over.
+        pub tiling: f32 = 4.0 => range(0.01, 1000.0),
+        /// How sharply its height map wins where it blends with another: 0
+        /// even, 1 sharpest.
+        pub height_contrast: f32 = 0.5 => range(0.0, 1.0),
+        /// Whether steep ground projects it from the side.
+        pub projection: SurfaceProjection = SurfaceProjection::Top => any,
+        /// The cover growing where it lies.
+        pub cover: Option<crate::Cover> = None => any,
+        /// The meters its maps' heights span where relief sinks the ground
+        /// between its stones and tufts: 0 flat. Top projections only.
+        pub relief: f32 = 0.0 => range(0.0, 1.0),
+        /// The meters tracks sink it at most: 0 rigid.
+        pub deform: f32 = 0.0 => range(0.0, 2.0),
+    }
 }
+
+impl ExtraRules for SurfaceMaterial {}
 
 /// How a surface material's textures lie on the ground: from above, or
 /// on steep ground also from the side, so cliffs don't stretch them.
@@ -229,42 +265,17 @@ pub enum SurfaceProjection {
     Biplanar,
 }
 
+impl Setting for SurfaceProjection {}
+
 impl SurfaceMaterial {
     /// A material of plain linear `color` and `roughness`, its textures (if
-    /// it gains any) repeating every 4 meters.
+    /// it gains any) repeating as the defaults do.
     pub fn color(color: [f32; 3], roughness: f32) -> Self {
         Self {
-            material: None,
             color,
             roughness,
-            tiling: 4.0,
-            height_contrast: 0.5,
-            projection: SurfaceProjection::Top,
-            cover: None,
-            relief: 0.0,
-            deform: 0.0,
+            ..Self::default()
         }
-    }
-
-    /// Whether every value is in range: color 0 to 1, roughness 0.03 to
-    /// 1, tiling 0.01 to 1000 meters, height contrast and relief 0 to 1,
-    /// deform 0 to 2, and its cover's.
-    pub fn is_usable(&self) -> bool {
-        self.cover.is_none_or(|cover| cover.validate().is_ok()) && self.values_usable()
-    }
-
-    fn values_usable(&self) -> bool {
-        self.color
-            .iter()
-            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
-            && self.roughness.is_finite()
-            && (0.03..=1.0).contains(&self.roughness)
-            && self.tiling.is_finite()
-            && (0.01..=1000.0).contains(&self.tiling)
-            && self.height_contrast.is_finite()
-            && (0.0..=1.0).contains(&self.height_contrast)
-            && (0.0..=1.0).contains(&self.relief)
-            && (0.0..=2.0).contains(&self.deform)
     }
 }
 
@@ -299,14 +310,14 @@ impl TerrainSurface {
             return fail("assets".into(), "needs one mesh and material per asset");
         }
         for (index, asset) in assets.iter().enumerate() {
-            if !(asset.sway.is_finite() && (0.0..=10.0).contains(&asset.sway)) {
-                return fail(format!("assets[{index}].sway"), "must be in [0, 10]");
+            if let Err(invalid) = asset.sway.check("sway", PlacementAsset::SWAY) {
+                return fail(format!("assets[{index}].sway"), &invalid.rule);
             }
-            if asset.collider.is_some_and(|collider| !collider.is_usable()) {
-                return fail(
-                    format!("assets[{index}].collider"),
-                    "needs dimensions in [0.0001, 10000] and a finite center",
-                );
+            if let Some(Err(invalid)) = asset
+                .collider
+                .map(|collider| collider.check("collider", Rule::Any))
+            {
+                return fail(format!("assets[{index}].collider"), &invalid.rule);
             }
             let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
             if let Err((level, rule)) = PlacementLod::check(&errors) {
@@ -326,7 +337,10 @@ impl TerrainSurface {
     pub fn is_usable(&self) -> bool {
         self.materials.len() == self.rules.authored().materials.len()
             && self.assets.len() == self.rules.authored().assets.len()
-            && self.materials.iter().all(SurfaceMaterial::is_usable)
+            && self
+                .materials
+                .iter()
+                .all(|material| material.validate().is_ok())
     }
 
     /// The default surface's rules as authored: grass, bare dirt where noise
@@ -440,34 +454,33 @@ pub struct Terrain {
     pub surroundings: Option<Surroundings>,
 }
 
-/// Ground generated past a terrain's edges to the horizon:
-/// a coarser terrain around it from the same layers, its samples four
-/// times as far apart as the terrain's finest, reaching about `reach`
-/// meters past every edge (the terrain's inspection reports how far: its
-/// tiles align with the terrain's sample grids). Its stamps, heightmaps,
-/// bakes and roads fade into its noise over `blend` meters past the edges,
-/// so the two meet where the terrain ends; it never collides, places
-/// objects, grows blades or holds water. Terrains read from files have
-/// none.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Surroundings {
-    pub reach: f32,
-    pub blend: f32,
+settings! {
+    unauthored;
+    /// Ground generated past a terrain's edges to the horizon:
+    /// a coarser terrain around it from the same layers, its samples four
+    /// times as far apart as the terrain's finest, reaching about `reach`
+    /// meters past every edge (the terrain's inspection reports how far: its
+    /// tiles align with the terrain's sample grids). Its stamps, heightmaps,
+    /// bakes and roads fade into its noise over `blend` meters past the edges,
+    /// so the two meet where the terrain ends; it never collides, places
+    /// objects, grows blades or holds water. Terrains read from files have
+    /// none.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Surroundings {
+        /// Meters the ground reaches past every edge.
+        pub reach: f32 = 4096.0 => above_to(0.0, Surroundings::MAX_REACH),
+        /// Meters past the edges over which the terrain's own features fade
+        /// into its noise.
+        pub blend: f32 = 1024.0 => range(0.0, Surroundings::MAX_REACH),
+    }
 }
+
+impl ExtraRules for Surroundings {}
 
 impl Surroundings {
     /// The most meters surroundings reach past a terrain's edges or blend
     /// over.
     pub const MAX_REACH: f32 = 1.0e6;
-
-    /// Whether streaming can use them.
-    pub fn is_usable(&self) -> bool {
-        self.reach.is_finite()
-            && self.reach > 0.0
-            && self.reach <= Self::MAX_REACH
-            && self.blend.is_finite()
-            && (0.0..=Self::MAX_REACH).contains(&self.blend)
-    }
 
     /// Where `terrain`'s surroundings lie: their origin, their pyramid and
     /// the rectangle of their ground (local) the terrain covers. Their
@@ -667,26 +680,23 @@ pub struct TerrainDebug {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerrainFocus;
 
-/// Names a place the camera may be sent to, such as a spawn point:
-/// while the view wants nothing, workers generate the
-/// terrain tiles a camera there wants into memory, as they do ahead of the
-/// camera, and those tiles stay there while it is named, so
-/// the camera sent there finds them at once. Each level's tiles within
-/// `reach` times its range, 0 to 8; 2 is what a camera there loads.
-/// Requires version 9.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct TerrainPrefetch {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 8.0)))]
-    pub reach: f32,
-}
-
-impl Default for TerrainPrefetch {
-    fn default() -> Self {
-        Self { reach: LOAD_REACH }
+settings! {
+    /// Names a place the camera may be sent to, such as a spawn point:
+    /// while the view wants nothing, workers generate the terrain tiles a camera
+    /// there wants into memory, as they do ahead of the camera, and those tiles
+    /// stay there while it is named, so the camera sent there finds them at once.
+    /// Requires version 9.
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct TerrainPrefetch {
+        /// Each level's tiles within this many times its range; 2 is what a
+        /// camera there loads.
+        pub reach: f32 = LOAD_REACH => range(0.0, 8.0),
     }
 }
+
+impl ExtraRules for TerrainPrefetch {}
 
 /// The size in pixels of the viewport frames render to, which terrain level
 /// of detail measures pixels on; hosts set it each frame. Without it,
@@ -2692,7 +2702,10 @@ impl Terrains {
             if state.around.is_some() {
                 continue;
             }
-            let Some(surroundings) = state.terrain.surroundings.filter(Surroundings::is_usable)
+            let Some(surroundings) = state
+                .terrain
+                .surroundings
+                .filter(|surroundings| surroundings.validate().is_ok())
             else {
                 continue;
             };

@@ -3,9 +3,13 @@
 //! box. Angles are in degrees.
 
 use engine_core::{Decal, DecalBlend, MaterialHandle};
+use engine_settings::{ExtraRules, Setting, settings};
 use serde::{Deserialize, Serialize};
 
+use crate::error::broken_rule;
 use crate::{SceneError, SceneMaterial};
+
+impl Setting for SceneDecalBlend {}
 
 /// How a decal combines with the surface it lies on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,34 +24,37 @@ pub enum SceneDecalBlend {
     Multiply,
 }
 
-/// A decal on this entity. Requires version 8.
-///
-/// Its box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):
-/// scale the entity to size it. The material's color, base color map,
-/// roughness, metalness and emission span the box's x and z, projected down
-/// its y onto the opaque surfaces inside it that face its +y.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneDecal {
-    /// ID of the projected material in this document.
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
-    )]
-    pub material: String,
-    #[serde(default)]
-    pub blend: SceneDecalBlend,
-    /// Multiplies the decal's alpha.
-    #[serde(default = "full_opacity")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub opacity: f32,
-    /// Degrees between a surface's normal and the box's +y beyond which the
-    /// decal fades out, gone at 90.
-    #[serde(default = "default_fade")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 90.0)))]
-    pub fade_degrees: f32,
+settings! {
+    /// A decal on this entity. Requires version 8.
+    ///
+    /// Its box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):
+    /// scale the entity to size it. The material's color, base color map,
+    /// roughness, metalness and emission span the box's x and z, projected
+    /// down its y onto the opaque surfaces inside it that face its +y.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct SceneDecal {
+        /// ID of the projected material in this document.
+        #[cfg_attr(
+            feature = "schema",
+            schemars(length(min = 1, max = 64), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
+        pub material: String = String::new() => any,
+        /// How the decal combines with the surface it lies on.
+        #[serde(default)]
+        pub blend: SceneDecalBlend = SceneDecalBlend::Alpha => any,
+        /// Multiplies the decal's alpha.
+        #[serde(default = "full_opacity")]
+        pub opacity: f32 = full_opacity() => same(Some(Decal::OPACITY)),
+        /// Degrees between a surface's normal and the box's +y beyond which
+        /// the decal fades out, gone at 90.
+        #[serde(default = "default_fade")]
+        pub fade_degrees: f32 = default_fade() => range(0.0, Decal::MAX_FADE_DEGREES),
+    }
 }
+
+impl ExtraRules for SceneDecal {}
 
 fn full_opacity() -> f32 {
     1.0
@@ -108,15 +115,11 @@ impl SceneDecal {
         path: &str,
         materials: &[SceneMaterial],
     ) -> Result<PreparedDecal, SceneError> {
+        self.validate()
+            .map_err(|invalid| broken_rule("invalid_decal", path, invalid))?;
         let invalid = |field: &str, rule: &str| {
             SceneError::new("invalid_decal", format!("{path}.{field}"), rule.to_owned())
         };
-        if !(self.opacity.is_finite() && (0.0..=1.0).contains(&self.opacity)) {
-            return Err(invalid("opacity", "must be finite and in [0, 1]"));
-        }
-        if !(self.fade_degrees.is_finite() && (0.0..=90.0).contains(&self.fade_degrees)) {
-            return Err(invalid("fade_degrees", "must be finite and in [0, 90]"));
-        }
         let material = materials
             .iter()
             .position(|material| material.id == self.material)
@@ -128,10 +131,10 @@ impl SceneDecal {
                 SceneDecalBlend::Multiply => DecalBlend::Multiply,
             },
             opacity: self.opacity,
-            // The runtime bound is exactly π/2.
+            // The runtime bound is exactly the widest fade in radians.
             fade_angle: engine_core::math::min(
                 self.fade_degrees.to_radians(),
-                std::f32::consts::FRAC_PI_2,
+                Decal::MAX_FADE_DEGREES.to_radians(),
             ),
         })
     }

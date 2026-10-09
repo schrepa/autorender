@@ -85,6 +85,9 @@ pub enum SceneInterpolation {
     CubicSpline,
 }
 
+/// Validated against its clip as the scene prepares.
+impl engine_settings::Setting for ScenePlayer {}
+
 /// Plays a clip on its targets from this entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

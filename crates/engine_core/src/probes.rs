@@ -24,8 +24,8 @@ use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::extraction::Nearest;
-use crate::rules::{ExtraRules, settings};
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
+use engine_settings::{ExtraRules, settings};
 
 /// Captures its surroundings from its entity's world position into an
 /// environment map, which surfaces inside its box reflect.
@@ -47,26 +47,21 @@ pub struct ReflectionProbe {
     pub interior: Option<Interior>,
 }
 
-/// An interior's light: the shares of the sky's light and of
-/// the sun's that reach surfaces inside its probe's box, each 0 to 1,
-/// blending in over the probe's blend distance inside its faces. Requires
-/// version 9.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct Interior {
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub sky: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub sun: f32,
-}
-
-impl Interior {
-    /// Whether both shares lie in [0, 1].
-    pub fn is_usable(&self) -> bool {
-        (0.0..=1.0).contains(&self.sky) && (0.0..=1.0).contains(&self.sun)
+settings! {
+    /// An interior's light, blending in over the probe's blend distance inside
+    /// its faces. Requires version 9.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct Interior {
+        /// The share of the sky's light that reaches surfaces inside the box.
+        pub sky: f32 = 1.0 => range(0.0, 1.0),
+        /// The share of the sun's light that reaches surfaces inside the box.
+        pub sun: f32 = 1.0 => range(0.0, 1.0),
     }
 }
+
+impl ExtraRules for Interior {}
 
 impl ReflectionProbe {
     /// A probe covering the box `extent` from its entity along each axis,
@@ -96,7 +91,9 @@ impl ReflectionProbe {
             && self.extent.cmpgt(Vec3::ZERO).all()
             && self.blend.is_finite()
             && self.blend >= 0.0
-            && self.interior.is_none_or(|interior| interior.is_usable())
+            && self
+                .interior
+                .is_none_or(|interior| interior.validate().is_ok())
     }
 }
 

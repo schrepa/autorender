@@ -23,43 +23,74 @@ use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::extraction::{Nearest, Poses};
-use crate::rules::{ExtraRules, settings};
 use crate::{GlobalTransforms, RenderSnapshot};
+use engine_settings::{ExtraRules, InvalidSetting, settings};
 
-/// The cone of a spot light.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Spot {
-    /// Direction the cone points, in the entity's local space; any nonzero
-    /// length.
-    pub direction: Vec3,
-    /// Half-angle in radians inside which the light is full.
-    pub inner_angle: f32,
-    /// Half-angle in radians beyond which it is dark: at least
-    /// `inner_angle` and below a quarter turn.
-    pub outer_angle: f32,
+/// The widest a spot's cone opens, in degrees from its axis.
+pub const MAX_SPOT_DEGREES: f32 = 89.0;
+/// The narrowest a spot's outer angle closes, in degrees.
+pub const MIN_SPOT_DEGREES: f32 = 0.1;
+/// The farthest a local light reaches, world units.
+pub const MAX_LIGHT_RANGE: f32 = 10_000.0;
+
+settings! {
+    unauthored;
+    /// The cone of a spot light.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    pub struct Spot {
+        /// Direction the cone points, in the entity's local space; any
+        /// nonzero length.
+        pub direction: Vec3 = Vec3::NEG_Y => finite,
+        /// Half-angle in radians inside which the light is full.
+        pub inner_angle: f32 = 25.0_f32.to_radians() => range(0.0, MAX_SPOT_DEGREES.to_radians()),
+        /// Half-angle in radians beyond which it is dark: at least
+        /// `inner_angle`.
+        pub outer_angle: f32 = 40.0_f32.to_radians()
+            => range(MIN_SPOT_DEGREES.to_radians(), MAX_SPOT_DEGREES.to_radians()),
+    }
 }
 
-/// A point or spot light at its entity's origin plus `offset`.
-///
-/// Light reaching a surface `d` world units away is `color * intensity /
-/// d²`, smoothly windowed to nothing at `range`. On an entity that renders a
-/// mesh the light follows the mesh's displayed pose; elsewhere it follows the
-/// authoritative world pose, so put lights on moving objects on the moving
-/// mesh itself. Unusable values (nonfinite or negative color, intensity or
-/// range that is not positive, a zero spot direction) skip the light.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct LocalLight {
-    /// Linear color.
-    pub color: Vec3,
-    /// Light at one world unit.
-    pub intensity: f32,
-    /// World distance beyond which the light has no effect.
-    pub range: f32,
-    /// Position in the entity's local space, scaled with it.
-    pub offset: Vec3,
-    /// A cone, or `None` for light in every direction.
-    pub spot: Option<Spot>,
+impl ExtraRules for Spot {
+    /// The cone points somewhere, and opens at least as wide outside as in.
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        if self.direction.length_squared() == 0.0 {
+            return Err(InvalidSetting::new("direction", "must be nonzero"));
+        }
+        if self.outer_angle < self.inner_angle {
+            return Err(InvalidSetting::new(
+                "outer_angle",
+                "must be at least the inner angle",
+            ));
+        }
+        Ok(())
+    }
 }
+
+settings! {
+    unauthored;
+    /// A point or spot light at its entity's origin plus `offset`.
+    ///
+    /// Light reaching a surface `d` world units away is `color * intensity /
+    /// d²`, smoothly windowed to nothing at `range`. On an entity that renders
+    /// a mesh the light follows the mesh's displayed pose; elsewhere it
+    /// follows the authoritative world pose, so put lights on moving objects
+    /// on the moving mesh itself. Lights breaking their rules are skipped.
+    #[derive(Component, Clone, Copy, Debug, PartialEq)]
+    pub struct LocalLight {
+        /// Linear color.
+        pub color: Vec3 = Vec3::new(1.0, 0.85, 0.6) => at_least(0.0),
+        /// Light at one world unit.
+        pub intensity: f32 = 20.0 => above(0.0),
+        /// World distance beyond which the light has no effect.
+        pub range: f32 = 12.0 => above_to(0.0, MAX_LIGHT_RANGE),
+        /// Position in the entity's local space, scaled with it.
+        pub offset: Vec3 = Vec3::ZERO => range(-1.0e6, 1.0e6),
+        /// A cone, or `None` for light in every direction.
+        pub spot: Option<Spot> = None => any,
+    }
+}
+
+impl ExtraRules for LocalLight {}
 
 impl LocalLight {
     /// Light in every direction from the entity's origin.
@@ -97,26 +128,6 @@ impl LocalLight {
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
         self
-    }
-
-    /// Whether renderers can shade this light (see the type's documentation).
-    pub fn is_usable(&self) -> bool {
-        let spot_usable = self.spot.is_none_or(|spot| {
-            spot.direction.is_finite()
-                && spot.direction.length_squared() > 0.0
-                && spot.inner_angle.is_finite()
-                && spot.outer_angle.is_finite()
-                && spot.inner_angle >= 0.0
-                && spot.outer_angle > 0.0
-        });
-        self.color.is_finite()
-            && self.color.min_element() >= 0.0
-            && self.intensity.is_finite()
-            && self.intensity > 0.0
-            && self.range.is_finite()
-            && self.range > 0.0
-            && self.offset.is_finite()
-            && spot_usable
     }
 }
 
@@ -299,7 +310,7 @@ impl LightExtraction {
             self.lights.clear();
             self.world_lights.clear();
             for (entity, light) in self.query.iter(world) {
-                if !light.is_usable() {
+                if light.validate().is_err() {
                     continue;
                 }
                 let slot = slot_of(entity);

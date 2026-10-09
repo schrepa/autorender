@@ -1,29 +1,46 @@
 //! Materials: glTF 2.0 metallic-roughness factors and texture maps
 //! with the engine's surface extensions.
 
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
+
 use crate::{AssetError, TextureHandle};
 
-/// How a surface responds to light beyond its color.
-///
-/// `roughness` and `metalness` are glTF's `roughnessFactor` and
-/// `metallicFactor`: a metallic-roughness texture multiplies them.
-/// [`Material::with_surface`] validates the ranges. Renderers quantize each
-/// value to 8 bits.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Surface {
-    /// Microsurface roughness in `[0, 1]`: 0 is a mirror, 1 spreads highlights
-    /// and sky reflections widest.
-    pub roughness: f32,
-    /// In `[0, 1]`: metals reflect in their own color and diffuse no light.
-    pub metalness: f32,
-    /// Emitted light as a multiple of the surface color, in
-    /// `[0, Surface::MAX_EMISSION]`. Base color texture alpha masks it per
-    /// texel. glTF's emissive color is [`Material::with_emissive`].
-    pub emission: f32,
-    /// Animated ripples of liquid surfaces in `[0, 1]`: wave normals that move
-    /// with presentation time. 0 keeps the mesh normals.
-    pub ripples: f32,
+/// The error of material part `part`'s field breaking its rule.
+fn invalid_part(part: Option<&'static str>, invalid: InvalidSetting) -> AssetError {
+    AssetError::InvalidSurface {
+        field: match part {
+            Some(part) => invalid.within(part).field,
+            None => invalid.field,
+        },
+    }
 }
+
+settings! {
+    unauthored;
+    /// How a surface responds to light beyond its color.
+    ///
+    /// `roughness` and `metalness` are glTF's `roughnessFactor` and
+    /// `metallicFactor`: a metallic-roughness texture multiplies them.
+    /// [`Material::with_surface`] checks the rules. Renderers quantize each
+    /// value to 8 bits.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Surface {
+        /// Microsurface roughness: 0 is a mirror, 1 spreads highlights and sky
+        /// reflections widest.
+        pub roughness: f32 = Surface::MATTE.roughness => range(0.0, 1.0),
+        /// Metals reflect in their own color and diffuse no light.
+        pub metalness: f32 = Surface::MATTE.metalness => range(0.0, 1.0),
+        /// Emitted light as a multiple of the surface color. Base color
+        /// texture alpha masks it per texel. glTF's emissive color is
+        /// [`Material::with_emissive`].
+        pub emission: f32 = Surface::MATTE.emission => range(0.0, Surface::MAX_EMISSION),
+        /// Animated ripples of liquid surfaces: wave normals that move with
+        /// presentation time. 0 keeps the mesh normals.
+        pub ripples: f32 = Surface::MATTE.ripples => range(0.0, 1.0),
+    }
+}
+
+impl ExtraRules for Surface {}
 
 impl Surface {
     /// Broad, dim highlights and no emission: the default.
@@ -36,119 +53,78 @@ impl Surface {
 
     /// The largest accepted emission multiple.
     pub const MAX_EMISSION: f32 = 16.0;
+}
 
-    fn validate(&self) -> Result<(), AssetError> {
-        for (field, value, max) in [
-            ("roughness", self.roughness, 1.0),
-            ("metalness", self.metalness, 1.0),
-            ("emission", self.emission, Self::MAX_EMISSION),
-            ("ripples", self.ripples, 1.0),
-        ] {
-            if !value.is_finite() || !(0.0..=max).contains(&value) {
-                return Err(AssetError::InvalidSurface { field });
-            }
-        }
-        Ok(())
+settings! {
+    unauthored;
+    /// A layer settling on a material's faces turned up: moss,
+    /// lichen, dust or snow. It covers faces whose normals point up by more
+    /// than one less its `coverage`, broken by noise and gathering in the
+    /// darker hollows of the material's color, in its own linear `color` and
+    /// `roughness`. [`Material::with_top_layer`] checks the rules.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct TopLayer {
+        /// Linear color.
+        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
+        /// How far from straight up it reaches: 0 covers nothing, 1 every
+        /// face turned up at all.
+        pub coverage: f32 = 0.5 => range(0.0, 1.0),
+        /// Its roughness.
+        pub roughness: f32 = 0.85 => range(0.0, 1.0),
     }
 }
 
-impl Default for Surface {
-    fn default() -> Self {
-        Self::MATTE
-    }
-}
-
-/// A layer settling on a material's faces turned up: moss,
-/// lichen, dust or snow. It covers faces whose normals point up by more
-/// than one less its `coverage`, broken by noise and gathering in the
-/// darker hollows of the material's color, in its own linear `color` and
-/// `roughness`. [`Material::with_top_layer`] validates the ranges.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TopLayer {
-    /// Linear color, each channel in `[0, 1]`.
-    pub color: [f32; 3],
-    /// How far from straight up it reaches, in `[0, 1]`: 0 covers nothing,
-    /// 1 every face turned up at all.
-    pub coverage: f32,
-    /// Its roughness, in `[0, 1]`.
-    pub roughness: f32,
-}
-
-impl TopLayer {
-    fn validate(&self) -> Result<(), AssetError> {
-        for (field, value) in [
-            ("top.color", self.color[0]),
-            ("top.color", self.color[1]),
-            ("top.color", self.color[2]),
-            ("top.coverage", self.coverage),
-            ("top.roughness", self.roughness),
-        ] {
-            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-                return Err(AssetError::InvalidSurface { field });
-            }
-        }
-        Ok(())
-    }
-}
+impl ExtraRules for TopLayer {}
 
 /// The meters one repeat of a world-mapped material's maps may cover at
 /// most.
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
-/// The ground staining the base of an object standing on terrain:
-/// soil, damp or dust where rock or wood meets the ground. Where the
-/// object meets the ground its color is multiplied by `color`, the stain
-/// fading out `height` units of its mesh higher (so it scales with the
-/// object), measured from the ground's own slope under it. Objects terrains
-/// place stand on terrain; others are never stained.
-/// [`Material::with_grounding`] validates the ranges.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Grounding {
-    /// Linear color the stain multiplies by, each channel in `[0, 1]`.
-    pub color: [f32; 3],
-    /// How far up the stain reaches, in mesh units: positive and at most
-    /// [`MAX_GROUNDING_HEIGHT`].
-    pub height: f32,
+settings! {
+    unauthored;
+    /// The ground staining the base of an object standing on terrain:
+    /// soil, damp or dust where rock or wood meets the ground. Where the
+    /// object meets the ground its color is multiplied by `color`, the stain
+    /// fading out `height` units of its mesh higher (so it scales with the
+    /// object), measured from the ground's own slope under it. Objects
+    /// terrains place stand on terrain; others are never stained.
+    /// [`Material::with_grounding`] checks the rules.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Grounding {
+        /// Linear color the stain multiplies by.
+        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
+        /// How far up the stain reaches, in mesh units.
+        pub height: f32 = 1.0 => above_to(0.0, MAX_GROUNDING_HEIGHT),
+    }
 }
+
+impl ExtraRules for Grounding {}
 
 /// The mesh units a ground stain may reach up at most.
 pub const MAX_GROUNDING_HEIGHT: f32 = 10_000.0;
 
-impl Grounding {
-    fn validate(&self) -> Result<(), AssetError> {
-        for value in self.color {
-            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-                return Err(AssetError::InvalidSurface {
-                    field: "grounding.color",
-                });
-            }
-        }
-        if !self.height.is_finite() || self.height <= 0.0 || self.height > MAX_GROUNDING_HEIGHT {
-            return Err(AssetError::InvalidSurface {
-                field: "grounding.height",
-            });
-        }
-        Ok(())
+settings! {
+    unauthored;
+    /// Light passing through a surface instead of diffusing off it:
+    /// glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
+    /// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
+    /// checks the rules.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub struct Transmission {
+        /// The share of light passing through, tinted by the base color; 0 is
+        /// an ordinary surface.
+        pub factor: f32 = Transmission::NONE.factor => range(0.0, 1.0),
+        /// Index of refraction: how far rays bend entering the surface (1.5
+        /// for glass, 1.33 for water).
+        pub ior: f32 = Transmission::NONE.ior => range(1.0, 3.0),
+        /// Depth of the volume beneath the surface, in world units: how far a
+        /// bent ray travels before it leaves. 0 is a thin wall, which does not
+        /// bend what shows through it.
+        pub thickness: f32 = Transmission::NONE.thickness => at_least(0.0),
     }
 }
 
-/// Light passing through a surface instead of diffusing off it:
-/// glTF's `KHR_materials_transmission`, `KHR_materials_ior` and the
-/// thickness of `KHR_materials_volume`. [`Material::with_transmission`]
-/// validates the ranges.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Transmission {
-    /// The share of light passing through, in `[0, 1]`, tinted by the base
-    /// color; 0 is an ordinary surface.
-    pub factor: f32,
-    /// Index of refraction in `[1, 3]`: how far rays bend entering the
-    /// surface (1.5 for glass, 1.33 for water).
-    pub ior: f32,
-    /// Depth of the volume beneath the surface, in world units: how far a
-    /// bent ray travels before it leaves. 0 is a thin wall, which does not
-    /// bend what shows through it.
-    pub thickness: f32,
-}
+impl ExtraRules for Transmission {}
 
 impl Transmission {
     /// No light passes through: the default.
@@ -164,25 +140,6 @@ impl Transmission {
         ior: 1.5,
         thickness: 0.0,
     };
-
-    fn validate(&self) -> Result<(), AssetError> {
-        for (field, value, min, max) in [
-            ("transmission", self.factor, 0.0, 1.0),
-            ("ior", self.ior, 1.0, 3.0),
-            ("thickness", self.thickness, 0.0, f32::MAX),
-        ] {
-            if !value.is_finite() || !(min..=max).contains(&value) {
-                return Err(AssetError::InvalidSurface { field });
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Default for Transmission {
-    fn default() -> Self {
-        Self::NONE
-    }
 }
 
 /// How a texture continues outside `[0, 1]` along one axis (glTF sampler wrap
@@ -367,9 +324,25 @@ pub struct Material {
 }
 
 impl Material {
+    /// The rules of the material's own values, which its builders check and
+    /// authored materials' schemas state: each color channel,
+    pub const COLOR: Rule = Rule::range(0.0, 1.0);
+    /// the opacity,
+    pub const OPACITY: Rule = Rule::above_to(0.0, 1.0);
+    /// a mask's alpha cutoff,
+    pub const ALPHA_CUTOFF: Rule = Rule::at_least(0.0);
+    /// the normal map's scale,
+    pub const NORMAL_SCALE: Rule = Rule::finite();
+    /// the occlusion map's strength,
+    pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
+    /// each emissive channel,
+    pub const EMISSIVE: Rule = Rule::at_least(0.0);
+    /// and the meters one repeat of world-mapped maps covers.
+    pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
+
     pub fn new(color: [f32; 4]) -> Result<Self, AssetError> {
         for (channel, value) in color.iter().enumerate() {
-            if !value.is_finite() || !(0.0..=1.0).contains(value) {
+            if value.check("color", Self::COLOR).is_err() {
                 return Err(AssetError::InvalidColor { channel });
             }
         }
@@ -401,7 +374,7 @@ impl Material {
     /// material becomes [`AlphaMode::Blend`]. Transparent surfaces blend in
     /// any order, write no depth and cast no shadow.
     pub fn with_opacity(mut self, opacity: f32) -> Result<Self, AssetError> {
-        if !opacity.is_finite() || !(opacity > 0.0 && opacity <= 1.0) {
+        if opacity.check("opacity", Self::OPACITY).is_err() {
             return Err(AssetError::InvalidOpacity);
         }
         self.color[3] = opacity;
@@ -416,7 +389,9 @@ impl Material {
     pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Result<Self, AssetError> {
         match mode {
             AlphaMode::Opaque => self.color[3] = 1.0,
-            AlphaMode::Mask { cutoff } if !cutoff.is_finite() || cutoff < 0.0 => {
+            AlphaMode::Mask { cutoff }
+                if cutoff.check("alpha_cutoff", Self::ALPHA_CUTOFF).is_err() =>
+            {
                 return Err(AssetError::InvalidMaterialMap {
                     field: "alpha_cutoff",
                 });
@@ -447,7 +422,9 @@ impl Material {
     /// resource they show the opaque scene behind them, bent and blurred,
     /// and without it they blend as plain transparency.
     pub fn with_transmission(mut self, transmission: Transmission) -> Result<Self, AssetError> {
-        transmission.validate()?;
+        transmission
+            .validate()
+            .map_err(|invalid| invalid_part(None, invalid))?;
         self.transmission = transmission;
         Ok(self)
     }
@@ -465,9 +442,9 @@ impl Material {
     /// slide over moving ones. `tiling` is finite, positive and at most
     /// [`MAX_WORLD_TILING`].
     pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, AssetError> {
-        if !tiling.is_finite() || tiling <= 0.0 || tiling > MAX_WORLD_TILING {
+        if tiling.check("world_tiling", Self::WORLD_TILING).is_err() {
             return Err(AssetError::InvalidSurface {
-                field: "world_tiling",
+                field: "world_tiling".into(),
             });
         }
         self.world_tiling = Some(tiling);
@@ -481,7 +458,8 @@ impl Material {
 
     /// This material with `top` settling on its faces turned up.
     pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
-        top.validate()?;
+        top.validate()
+            .map_err(|invalid| invalid_part(Some("top"), invalid))?;
         self.top = Some(top);
         Ok(self)
     }
@@ -493,7 +471,9 @@ impl Material {
     /// This material with the ground staining its base where it stands on
     /// terrain.
     pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
-        grounding.validate()?;
+        grounding
+            .validate()
+            .map_err(|invalid| invalid_part(Some("grounding"), invalid))?;
         self.grounding = Some(grounding);
         Ok(self)
     }
@@ -504,7 +484,9 @@ impl Material {
 
     /// This material with `surface`, whose values must lie in their ranges.
     pub fn with_surface(mut self, surface: Surface) -> Result<Self, AssetError> {
-        surface.validate()?;
+        surface
+            .validate()
+            .map_err(|invalid| invalid_part(None, invalid))?;
         self.surface = surface;
         Ok(self)
     }
@@ -542,7 +524,7 @@ impl Material {
         texture: TextureRef,
         scale: f32,
     ) -> Result<Self, AssetError> {
-        if !scale.is_finite() {
+        if scale.check("normal_scale", Self::NORMAL_SCALE).is_err() {
             return Err(AssetError::InvalidMaterialMap {
                 field: "normal_scale",
             });
@@ -559,7 +541,10 @@ impl Material {
         texture: TextureRef,
         strength: f32,
     ) -> Result<Self, AssetError> {
-        if !strength.is_finite() || !(0.0..=1.0).contains(&strength) {
+        if strength
+            .check("occlusion_strength", Self::OCCLUSION_STRENGTH)
+            .is_err()
+        {
             return Err(AssetError::InvalidMaterialMap {
                 field: "occlusion_strength",
             });
@@ -572,7 +557,7 @@ impl Material {
     /// This material emitting linear `color` (glTF's emissive factor times
     /// its emissive strength): finite and not negative.
     pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, AssetError> {
-        if color.iter().any(|value| !value.is_finite() || *value < 0.0) {
+        if color.check("emissive", Self::EMISSIVE).is_err() {
             return Err(AssetError::InvalidMaterialMap { field: "emissive" });
         }
         self.emissive = color;

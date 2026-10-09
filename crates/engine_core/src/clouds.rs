@@ -11,7 +11,7 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::rules::{ExtraRules, settings};
+use engine_settings::{ExtraRules, settings};
 
 settings! {
     /// The cloud layer. Opt-in: a scene without a `clouds` section has none.

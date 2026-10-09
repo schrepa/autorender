@@ -41,8 +41,8 @@ use glam::Vec3;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::environment::InvalidSetting;
-use crate::rules::{ExtraRules, settings};
 use crate::{Camera, Environment, FrameTime, RenderSnapshot};
+use engine_settings::{ExtraRules, settings};
 
 /// Copies the camera eye, presentation time and environment of `world`
 /// into `snapshot`, sanitized ([`Environment::current`]): a missing

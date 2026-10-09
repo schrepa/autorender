@@ -15,7 +15,11 @@ use crate::{SceneError, SceneSurface};
 /// color, alpha modes and double-sided surfaces; `surface`
 /// roughness and metalness are glTF's roughness and metallic factors.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = state_material_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneMaterial {
     #[cfg_attr(
@@ -38,7 +42,6 @@ pub struct SceneMaterial {
     /// writing no depth and casting no shadow. Requires version 6. With
     /// `alpha_mode` `mask` it is the alpha the cutoff tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.001, max = 1.0)))]
     pub opacity: Option<f32>,
     /// Version 8: linear green multiplies roughness and blue metalness.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,7 +57,6 @@ pub struct SceneMaterial {
     pub occlusion_texture: Option<SceneMap>,
     /// Version 8: how much the occlusion map darkens, in `[0, 1]`; default 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub occlusion_strength: Option<f32>,
     /// Version 8: emitted linear color, not negative (glTF's emissive factor
     /// times its emissive strength).
@@ -69,7 +71,6 @@ pub struct SceneMaterial {
     pub alpha_mode: Option<SceneAlphaMode>,
     /// Version 8, `mask` only: alpha below it is not drawn; default 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub alpha_cutoff: Option<f32>,
     /// Version 8: draw back faces too, lit from their own side.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,24 +81,20 @@ pub struct SceneMaterial {
     /// the transparent pass; the environment's `refraction` bends what shows
     /// through them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub transmission: Option<f32>,
     /// Version 8, with `transmission`: the index of refraction in `[1, 3]`;
     /// default 1.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 1.0, max = 3.0)))]
     pub ior: Option<f32>,
     /// Version 8, with `transmission`: the depth in world units of the
     /// volume beneath the surface that bends rays; default 0, a thin wall.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
     pub thickness: Option<f32>,
     /// Version 9: lays the maps from the world's axes, one repeat every
     /// this many meters, instead of by texture coordinates:
     /// no seams and one texel density at any size, for surfaces that stay
     /// where they are, such as rocks. In `(0, 10000]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
     pub world_tiling: Option<f32>,
     /// Version 9: a layer settling on faces turned up, such as moss,
     /// lichen, dust or snow.
@@ -108,16 +105,40 @@ pub struct SceneMaterial {
     pub grounding: Option<SceneGrounding>,
 }
 
+/// States the rules the material's builders check on the authored fields
+/// they take.
+#[cfg(feature = "schema")]
+fn state_material_rules(schema: &mut schemars::Schema) {
+    let part = |rule: Option<engine_settings::Rule>| rule.expect("the part declares the field");
+    for (field, rule) in [
+        ("color", Material::COLOR),
+        ("opacity", Material::OPACITY),
+        ("normal_scale", Material::NORMAL_SCALE),
+        ("occlusion_strength", Material::OCCLUSION_STRENGTH),
+        ("emissive", Material::EMISSIVE),
+        ("alpha_cutoff", Material::ALPHA_CUTOFF),
+        ("world_tiling", Material::WORLD_TILING),
+        ("transmission", part(Transmission::rule_of("factor"))),
+        ("ior", part(Transmission::rule_of("ior"))),
+        ("thickness", part(Transmission::rule_of("thickness"))),
+    ] {
+        engine_settings::state(schema, field, rule);
+    }
+}
+
 /// The ground staining the base of an object standing on terrain:
 /// the linear color its color is multiplied by where it meets the
 /// ground, and how many units of its mesh up the stain fades out, from the
 /// ground's slope under it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = engine_core::Grounding::state_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneGrounding {
     pub color: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 10000.0)))]
     pub height: f32,
 }
 
@@ -125,14 +146,16 @@ pub struct SceneGrounding {
 /// linear color, how far from straight up it reaches (0 covers nothing, 1
 /// every face turned up at all) and its roughness (default 0.85).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = engine_core::TopLayer::state_rules)
+)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTopLayer {
     pub color: [f32; 3],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub coverage: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
     pub roughness: Option<f32>,
 }
 

@@ -7,11 +7,12 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars", "engine_core/schema"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
 
 [dependencies]
 base64.workspace = true
 engine_core.workspace = true
+engine_settings.workspace = true
 engine_collision.workspace = true
 serde.workspace = true
 serde_json.workspace = true

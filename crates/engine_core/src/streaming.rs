@@ -32,8 +32,8 @@ use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::math::{max, min};
-use crate::rules::{ExtraRules, settings};
 use crate::{Camera, FrameTime, GlobalTransforms, TerrainFocus};
+use engine_settings::{ExtraRules, settings};
 
 /// One grid items stream in: its cells' side and the meters from a source
 /// within which they load (at [`WorldStreaming::distance`] 1), and the

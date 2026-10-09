@@ -595,7 +595,9 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine_math",
+ "engine_settings",
  "glam 0.30.9",
+ "schemars",
 ]
 
 [[package]]
@@ -619,11 +621,11 @@ dependencies = [
  "engine_assets",
  "engine_math",
  "engine_profile",
+ "engine_settings",
  "engine_terrain",
  "glam 0.30.9",
  "schemars",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -633,6 +635,7 @@ dependencies = [
  "engine_collision",
  "engine_core",
  "engine_scene",
+ "engine_settings",
  "schemars",
  "serde",
  "serde_json",
@@ -676,8 +679,19 @@ dependencies = [
  "base64",
  "engine_collision",
  "engine_core",
+ "engine_settings",
  "schemars",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_settings"
+version = "0.1.0"
+dependencies = [
+ "engine_math",
+ "glam 0.30.9",
+ "schemars",
  "serde_json",
 ]
 
@@ -686,6 +700,7 @@ name = "engine_terrain"
 version = "0.1.0"
 dependencies = [
  "engine_math",
+ "engine_settings",
  "glam 0.30.9",
  "libm",
  "schemars",

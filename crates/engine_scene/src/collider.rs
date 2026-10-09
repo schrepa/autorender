@@ -11,12 +11,19 @@ use crate::SceneError;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SceneColliderShape {
     Cuboid {
-        /// Positive half sizes on local axes, each in [0.0001, 10000].
+        /// Positive half sizes on local axes.
+        #[cfg_attr(
+            feature = "schema",
+            schemars(inner(range(min = engine_core::MIN_COLLIDER_EXTENT, max = engine_core::MAX_COLLIDER_EXTENT)))
+        )]
         half_extents: [f32; 3],
     },
     Sphere {
-        /// Local radius in [0.0001, 10000]. Nonuniform transforms form ellipsoids.
-        #[cfg_attr(feature = "schema", schemars(range(min = 0.0001, max = 10000.0)))]
+        /// Local radius. Nonuniform transforms form ellipsoids.
+        #[cfg_attr(
+            feature = "schema",
+            schemars(range(min = engine_core::MIN_COLLIDER_EXTENT, max = engine_core::MAX_COLLIDER_EXTENT))
+        )]
         radius: f32,
     },
 }
@@ -35,6 +42,9 @@ pub struct SceneCollider {
     #[serde(default)]
     pub sensor: bool,
 }
+
+/// Collision validates colliders as they become components.
+impl engine_settings::Setting for SceneCollider {}
 
 fn default_memberships() -> u32 {
     1

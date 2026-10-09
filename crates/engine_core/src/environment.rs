@@ -4,37 +4,11 @@
 //! a preset with overrides), and checks itself with `validate`; frames carry
 //! them all sanitized as [`crate::RenderSnapshot::environment`].
 
-use std::borrow::Cow;
-
 use bevy_ecs::prelude::{Resource, World};
 
 use crate::Atmosphere;
 
-/// A settings field outside its valid values: its name and the rule it
-/// breaks, such as `must be in [0, 1]`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InvalidSetting {
-    /// The field's name, with its parents' (`motion_detail.speed`).
-    pub field: Cow<'static, str>,
-    pub rule: Cow<'static, str>,
-}
-
-impl InvalidSetting {
-    pub(crate) fn new(field: &'static str, rule: impl Into<Cow<'static, str>>) -> Self {
-        Self {
-            field: Cow::Borrowed(field),
-            rule: rule.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for InvalidSetting {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{} {}", self.field, self.rule)
-    }
-}
-
-impl std::error::Error for InvalidSetting {}
+pub use engine_settings::InvalidSetting;
 
 /// An environment section: the settings of one engine feature, a resource
 /// that is section [`Self::KEY`] of a scene `environment` (from scene version
@@ -189,21 +163,3 @@ macro_rules! core_sections {
 }
 
 environment_sections!(core_sections);
-
-/// The rule of a value that must lie in `range`, as `must be in [a, b]`.
-pub(crate) fn within(range: &std::ops::RangeInclusive<f32>) -> String {
-    format!("must be in [{}, {}]", range.start(), range.end())
-}
-
-/// Checks that `value` lies in `range` (NaN never does).
-pub(crate) fn check_range(
-    field: &'static str,
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> Result<(), InvalidSetting> {
-    if range.contains(&value) {
-        Ok(())
-    } else {
-        Err(InvalidSetting::new(field, within(&range)))
-    }
-}

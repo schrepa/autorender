@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use engine_math::{clamp, max, min};
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use glam::{Vec2, Vec4};
 use serde::{Deserialize, Serialize};
 
@@ -15,7 +16,7 @@ use crate::noise::{
     gradient_noise, gradient_noise4, gradient_value, gradient_value4, gullies, gullies4, max4,
     min4, smooth, smooth4, sqrt4,
 };
-use crate::path::{MAX_PATH_POINTS, PathLayer, PathProfile, PathSample};
+use crate::path::{PathLayer, PathProfile, PathSample};
 
 /// How a layer's heights combine with the heights of the layers before it,
 /// weighted by the layer's coverage: added, the higher or lower of the two,
@@ -31,6 +32,8 @@ pub enum Blend {
     Replace,
 }
 
+impl Setting for Blend {}
+
 impl Blend {
     #[inline(always)]
     fn apply(self, below: f32, value: f32, weight: f32) -> f32 {
@@ -44,68 +47,47 @@ impl Blend {
     }
 }
 
-/// Procedural ground: fractal gradient noise whose fine octaves fade on
-/// slopes (Quilez's derivative damping), optionally folded into ridges and
-/// warped sideways, shaped toward wide valley floors, then cut by the
-/// erosion filter's gullies running down its slopes.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct NoiseLayer {
-    /// Picks the pattern: the same seed gives the same heights everywhere.
-    pub seed: u32,
-    /// Meters from the lowest to the highest ground before gullies, 0 to
-    /// 20000.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 20000.0)))]
-    pub height: f32,
-    /// Meters added to every height of the layer, -20000 to 20000.
-    #[cfg_attr(feature = "schema", schemars(range(min = -20000.0, max = 20000.0)))]
-    pub offset: f32,
-    /// Meters across the largest features, 16 to 1000000.
-    #[cfg_attr(feature = "schema", schemars(range(min = 16.0, max = 1000000.0)))]
-    pub wavelength: f32,
-    /// 0 rolls; 1 folds every octave into sharp ridges.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub ridges: f32,
-    /// How far the ground warps sideways, as a share of the wavelength, 0
-    /// to 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub warp: f32,
-    /// How deep gullies cut down slopes, 0 (none) to 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub erosion: f32,
-    /// How much fine detail fades on slopes, 0 to 1.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub smoothing: f32,
-    /// 0 keeps the heights' spread; 1 widens valley floors and sharpens
-    /// peaks.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub valleys: f32,
-    /// How much each finer octave keeps of the coarser one's height, from
-    /// 0 (smooth slopes up close) through 0.5 (every scale alike) to 1
-    /// (rugged).
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0)))]
-    pub roughness: f32,
-    pub blend: Blend,
-}
-
-impl Default for NoiseLayer {
-    fn default() -> Self {
-        Self {
-            seed: 0,
-            height: 900.0,
-            offset: 0.0,
-            wavelength: 3000.0,
-            ridges: 0.3,
-            warp: 0.35,
-            erosion: 0.7,
-            smoothing: 1.0,
-            valleys: 0.7,
-            roughness: 0.5,
-            blend: Blend::Add,
-        }
+settings! {
+    /// Procedural ground: fractal gradient noise whose fine octaves fade on
+    /// slopes (Quilez's derivative damping), optionally folded into ridges and
+    /// warped sideways, shaped toward wide valley floors, then cut by the
+    /// erosion filter's gullies running down its slopes.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct NoiseLayer {
+        /// Picks the pattern: the same seed gives the same heights everywhere.
+        pub seed: u32 = 0 => any,
+        /// Meters from the lowest to the highest ground before gullies.
+        pub height: f32 = 900.0 => range(0.0, MAX_HEIGHT),
+        /// Meters added to every height of the layer.
+        pub offset: f32 = 0.0 => range(-MAX_HEIGHT, MAX_HEIGHT),
+        /// Meters across the largest features.
+        pub wavelength: f32 = 3000.0 => range(16.0, 1.0e6),
+        /// 0 rolls; 1 folds every octave into sharp ridges.
+        pub ridges: f32 = 0.3 => range(0.0, 1.0),
+        /// How far the ground warps sideways, as a share of the wavelength.
+        pub warp: f32 = 0.35 => range(0.0, 1.0),
+        /// How deep gullies cut down slopes: 0 none.
+        pub erosion: f32 = 0.7 => range(0.0, 1.0),
+        /// How much fine detail fades on slopes.
+        pub smoothing: f32 = 1.0 => range(0.0, 1.0),
+        /// 0 keeps the heights' spread; 1 widens valley floors and sharpens
+        /// peaks.
+        pub valleys: f32 = 0.7 => range(0.0, 1.0),
+        /// How much each finer octave keeps of the coarser one's height, from
+        /// 0 (smooth slopes up close) through 0.5 (every scale alike) to 1
+        /// (rugged).
+        pub roughness: f32 = 0.5 => range(0.0, 1.0),
+        /// How the layer combines with the layers below it.
+        pub blend: Blend = Blend::Add => any,
     }
 }
+
+impl ExtraRules for NoiseLayer {}
+
+/// The most meters a layer raises, lowers or offsets the ground.
+pub const MAX_HEIGHT: f32 = 20_000.0;
 
 /// What a stamp does where it reaches: raise or lower heights by meters,
 /// level them toward a height, or cut holes in the terrain.
@@ -113,29 +95,54 @@ impl Default for NoiseLayer {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum StampOp {
-    Raise(f32),
-    Lower(f32),
-    Flatten(f32),
+    Raise(#[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = MAX_HEIGHT)))] f32),
+    Lower(#[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = MAX_HEIGHT)))] f32),
+    Flatten(
+        #[cfg_attr(feature = "schema", schemars(range(min = -MAX_HEIGHT, max = MAX_HEIGHT)))] f32,
+    ),
     /// Cells whose centers lie within the radius are holes: no surface
     /// draws or collides there.
     Hole,
 }
 
-/// A local edit: full strength within `radius` meters of `center`, fading
-/// out over `falloff` meters beyond.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct Stamp {
-    /// Terrain-local meters along x and z.
-    pub center: [f32; 2],
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
-    pub radius: f32,
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0)))]
-    pub falloff: f32,
-    pub op: StampOp,
+impl Setting for StampOp {
+    fn check(&self, field: &'static str, _: Rule) -> Result<(), InvalidSetting> {
+        let (variant, height, rule) = match *self {
+            Self::Raise(height) => ("raise", height, Rule::Range(0.0, MAX_HEIGHT as f64)),
+            Self::Lower(height) => ("lower", height, Rule::Range(0.0, MAX_HEIGHT as f64)),
+            Self::Flatten(height) => (
+                "flatten",
+                height,
+                Rule::Range(-MAX_HEIGHT as f64, MAX_HEIGHT as f64),
+            ),
+            Self::Hole => return Ok(()),
+        };
+        height
+            .check(variant, rule)
+            .map_err(|invalid| invalid.within(field))
+    }
 }
+
+settings! {
+    /// A local edit: full strength within `radius` meters of `center`, fading
+    /// out over `falloff` meters beyond.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct Stamp {
+        /// Terrain-local meters along x and z.
+        pub center: [f32; 2] = [0.0; 2] => range(-Layers::MAX_COORDINATE, Layers::MAX_COORDINATE),
+        /// Meters around the center at full strength.
+        pub radius: f32 = 1.0 => range(0.0, Layers::MAX_COORDINATE),
+        /// Meters beyond the radius over which it fades out.
+        #[serde(default)]
+        pub falloff: f32 = 0.0 => range(0.0, Layers::MAX_COORDINATE),
+        /// What it does where it reaches.
+        pub op: StampOp = StampOp::Hole => any,
+    }
+}
+
+impl ExtraRules for Stamp {}
 
 impl Stamp {
     /// The stamp's strength at terrain-local `(x, z)`, 0 to 1.
@@ -460,22 +467,33 @@ pub struct HydrologyStage {
     pub baked: Option<Arc<Hydrology>>,
 }
 
-/// A layer's field outside its valid values: the layer's index, the field
-/// and the range it must be finite within.
+/// A layer's field breaking its rule: the layer's index, the field below
+/// the layer (its kind first, as authored: `noise.height`) and the rule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LayerError {
     pub layer: usize,
-    pub field: &'static str,
-    pub low: f32,
-    pub high: f32,
+    pub field: std::borrow::Cow<'static, str>,
+    pub rule: std::borrow::Cow<'static, str>,
+}
+
+impl LayerError {
+    /// The error of layer `layer`, of kind `kind`, breaking `invalid`.
+    fn new(layer: usize, kind: &'static str, invalid: InvalidSetting) -> Self {
+        let invalid = invalid.within(kind);
+        Self {
+            layer,
+            field: invalid.field,
+            rule: invalid.rule,
+        }
+    }
 }
 
 impl std::fmt::Display for LayerError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "layer {} {} must be in [{}, {}]",
-            self.layer, self.field, self.low, self.high
+            "layer {} {} {}",
+            self.layer, self.field, self.rule
         )
     }
 }
@@ -1050,36 +1068,43 @@ pub(crate) struct Fade {
     pub(crate) blend: f32,
 }
 
-/// Checks stamp layer `index`'s center, reach and operation.
+/// Checks stamp layer `index`.
 fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), LayerError> {
-    let limit = Layers::MAX_COORDINATE;
-    check(index, "center", stamp.center[0], -limit, limit)?;
-    check(index, "center", stamp.center[1], -limit, limit)?;
-    check(index, "radius", stamp.radius, 0.0, limit)?;
-    check(index, "falloff", stamp.falloff, 0.0, limit)?;
-    match stamp.op {
-        StampOp::Raise(h) | StampOp::Lower(h) => check(index, "op", h, 0.0, 20_000.0),
-        StampOp::Flatten(h) => check(index, "op", h, -20_000.0, 20_000.0),
-        StampOp::Hole => Ok(()),
-    }
+    stamp
+        .validate()
+        .map_err(|invalid| LayerError::new(index, "stamp", invalid))
 }
 
-fn check(
-    layer: usize,
-    field: &'static str,
-    value: f32,
-    low: f32,
-    high: f32,
-) -> Result<(), LayerError> {
-    if value.is_finite() && (low..=high).contains(&value) {
-        Ok(())
-    } else {
-        Err(LayerError {
-            layer,
-            field,
-            low,
-            high,
-        })
+/// The rules of an imported heightmap's placement: its corner,
+const HEIGHTMAP_MIN: Rule = Rule::Range(
+    -Layers::MAX_COORDINATE as f64,
+    Layers::MAX_COORDINATE as f64,
+);
+/// its size,
+const HEIGHTMAP_SIZE: Rule = Rule::Range(1.0e-3, Layers::MAX_COORDINATE as f64);
+/// the heights its samples span,
+const HEIGHTMAP_HEIGHT: Rule = Rule::Range(-MAX_HEIGHT as f64, MAX_HEIGHT as f64);
+/// and its falloff.
+const HEIGHTMAP_FALLOFF: Rule = Rule::Range(0.0, Layers::MAX_COORDINATE as f64);
+
+impl HeightmapLayer {
+    /// The rule of each placement field, as authored heightmaps name it.
+    pub fn rule_of(field: &str) -> Option<Rule> {
+        match field {
+            "min" => Some(HEIGHTMAP_MIN),
+            "size" => Some(HEIGHTMAP_SIZE),
+            "low" | "high" => Some(HEIGHTMAP_HEIGHT),
+            "falloff" => Some(HEIGHTMAP_FALLOFF),
+            _ => None,
+        }
+    }
+
+    fn validate(&self) -> Result<(), InvalidSetting> {
+        self.min.to_array().check("min", HEIGHTMAP_MIN)?;
+        self.size.to_array().check("size", HEIGHTMAP_SIZE)?;
+        self.low.check("low", HEIGHTMAP_HEIGHT)?;
+        self.high.check("high", HEIGHTMAP_HEIGHT)?;
+        self.falloff.check("falloff", HEIGHTMAP_FALLOFF)
     }
 }
 
@@ -1089,67 +1114,16 @@ impl Layers {
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
     pub fn new(layers: Vec<Layer>) -> Result<Self, LayerError> {
-        let limit = Self::MAX_COORDINATE;
         for (index, layer) in layers.iter().enumerate() {
-            match layer {
-                Layer::Noise(noise) => {
-                    check(index, "height", noise.height, 0.0, 20_000.0)?;
-                    check(index, "offset", noise.offset, -20_000.0, 20_000.0)?;
-                    check(index, "wavelength", noise.wavelength, 16.0, 1.0e6)?;
-                    check(index, "ridges", noise.ridges, 0.0, 1.0)?;
-                    check(index, "warp", noise.warp, 0.0, 1.0)?;
-                    check(index, "erosion", noise.erosion, 0.0, 1.0)?;
-                    check(index, "smoothing", noise.smoothing, 0.0, 1.0)?;
-                    check(index, "valleys", noise.valleys, 0.0, 1.0)?;
-                    check(index, "roughness", noise.roughness, 0.0, 1.0)?;
-                }
-                Layer::Heightmap(map) => {
-                    check(index, "min", map.min.x, -limit, limit)?;
-                    check(index, "min", map.min.y, -limit, limit)?;
-                    check(index, "size", map.size.x, 1.0e-3, limit)?;
-                    check(index, "size", map.size.y, 1.0e-3, limit)?;
-                    check(index, "low", map.low, -20_000.0, 20_000.0)?;
-                    check(index, "high", map.high, -20_000.0, 20_000.0)?;
-                    check(index, "falloff", map.falloff, 0.0, limit)?;
-                }
-                Layer::Stamp(stamp) => check_stamp(index, stamp)?,
-                Layer::Erosion(stage) => {
-                    let erosion = &stage.layer;
-                    check(index, "level", erosion.level as f32, 0.0, 15.0)?;
-                    check(index, "rounds", erosion.rounds as f32, 1.0, 400.0)?;
-                    check(index, "incision", erosion.incision, 0.0, 1.0)?;
-                    check(index, "creep", erosion.creep, 0.0, 1000.0)?;
-                }
-                Layer::Path(stage) => {
-                    let path = &stage.layer;
-                    check(
-                        index,
-                        "points",
-                        path.points.len() as f32,
-                        2.0,
-                        MAX_PATH_POINTS as f32,
-                    )?;
-                    for point in &path.points {
-                        check(index, "points", point[0], -limit, limit)?;
-                        check(index, "points", point[1], -limit, limit)?;
-                    }
-                    check(index, "width", path.width, 0.5, 200.0)?;
-                    check(index, "shoulder", path.shoulder, 0.0, 500.0)?;
-                    check(index, "smoothing", path.smoothing, 0.0, 5000.0)?;
-                    check(index, "bridge_fill", path.bridge_fill, 0.0, 1000.0)?;
-                    check(index, "tunnel_cut", path.tunnel_cut, 0.0, 2000.0)?;
-                }
-                Layer::Hydrology(stage) => {
-                    let water = &stage.layer;
-                    check(index, "level", water.level as f32, 0.0, 15.0)?;
-                    check(index, "channel_area", water.channel_area, 100.0, 1.0e10)?;
-                    check(index, "depth", water.depth, 0.0, 100.0)?;
-                    check(index, "width", water.width, 0.1, 1000.0)?;
-                    check(index, "max_depth", water.max_depth, 0.0, 100.0)?;
-                    check(index, "max_width", water.max_width, 0.1, 1000.0)?;
-                    check(index, "stream_area", water.stream_area, 0.0, 1.0e10)?;
-                }
-            }
+            let (kind, checked) = match layer {
+                Layer::Noise(noise) => ("noise", noise.validate()),
+                Layer::Heightmap(map) => ("heightmap", map.validate()),
+                Layer::Stamp(stamp) => ("stamp", stamp.validate()),
+                Layer::Erosion(stage) => ("erosion", stage.layer.validate()),
+                Layer::Path(stage) => ("path", stage.layer.validate()),
+                Layer::Hydrology(stage) => ("hydrology", stage.layer.validate()),
+            };
+            checked.map_err(|invalid| LayerError::new(index, kind, invalid))?;
         }
         let tables = layers
             .iter()

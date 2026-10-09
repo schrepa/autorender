@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::FrameTime;
 use crate::math::{max, sin_cos};
-use crate::rules::{ExtraRules, settings};
+use engine_settings::{ExtraRules, settings};
 
 settings! {
     /// A physically based sky. Defaults are Earth's. Opt-in. Requires version 9.

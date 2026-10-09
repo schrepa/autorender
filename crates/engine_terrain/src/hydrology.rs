@@ -19,7 +19,9 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use crate::MAX_LEVEL;
 use engine_math::{max, min};
+use engine_settings::{ExtraRules, settings};
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
@@ -27,57 +29,43 @@ use std::sync::Arc;
 use crate::layers::HeightImage;
 use crate::rivers::{Channels, MIN_DEPTH, RiverLine, Rivers, trace};
 
-/// A layer that bakes where water runs over the layers below it and carves
-/// channels into them.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(default, deny_unknown_fields)]
-pub struct HydrologyLayer {
-    /// The pyramid level whose samples the bake reads: finer levels carve
-    /// narrower channels and take longer, 0 to 15.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 15)))]
-    pub level: u32,
-    /// Square meters of upstream area where channels begin, 100 to 1e10.
-    #[cfg_attr(feature = "schema", schemars(range(min = 100.0, max = 1.0e10)))]
-    pub channel_area: f32,
-    /// Meters deep and wide channels are where they begin; downstream their
-    /// depth grows with the fourth root and their width with the square
-    /// root of the area they drain, up to `max_depth` and `max_width`.
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub depth: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
-    pub width: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 100.0)))]
-    pub max_depth: f32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.1, max = 1000.0)))]
-    pub max_width: f32,
-    /// Square meters of upstream area where streams begin:
-    /// channels draining less than `channel_area` run as streams down to
-    /// the rivers they join, their width falling with the area they drain
-    /// below a river's at its head and their depth with its square root,
-    /// cut a little into the ground. 0, the default, has none, as has
-    /// `channel_area` or more; at most 1e10.
-    #[serde(skip_serializing_if = "is_zero")]
-    #[cfg_attr(feature = "schema", schemars(range(min = 0.0, max = 1.0e10)))]
-    pub stream_area: f32,
+settings! {
+    /// A layer that bakes where water runs over the layers below it and carves
+    /// channels into them.
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(default, deny_unknown_fields)]
+    pub struct HydrologyLayer {
+        /// The pyramid level whose samples the bake reads: finer levels carve
+        /// narrower channels and take longer.
+        pub level: u32 = 3 => range(0, MAX_LEVEL),
+        /// Square meters of upstream area where channels begin.
+        pub channel_area: f32 = 200_000.0 => range(100.0, 1.0e10),
+        /// Meters deep channels are where they begin; downstream their depth
+        /// grows with the fourth root of the area they drain, up to `max_depth`.
+        pub depth: f32 = 1.0 => range(0.0, 100.0),
+        /// Meters wide channels are where they begin; downstream their width
+        /// grows with the square root of the area they drain, up to `max_width`.
+        pub width: f32 = 6.0 => range(0.1, 1000.0),
+        /// The deepest channels grow, meters.
+        pub max_depth: f32 = 6.0 => range(0.0, 100.0),
+        /// The widest channels grow, meters.
+        pub max_width: f32 = 60.0 => range(0.1, 1000.0),
+        /// Square meters of upstream area where streams begin: channels
+        /// draining less than `channel_area` run as streams down to the rivers
+        /// they join, their width falling with the area they drain below a
+        /// river's at its head and their depth with its square root, cut a little
+        /// into the ground. 0, the default, has none, as has `channel_area` or
+        /// more.
+        #[serde(skip_serializing_if = "is_zero")]
+        pub stream_area: f32 = 0.0 => range(0.0, 1.0e10),
+    }
 }
+
+impl ExtraRules for HydrologyLayer {}
 
 fn is_zero(value: &f32) -> bool {
     *value == 0.0
-}
-
-impl Default for HydrologyLayer {
-    fn default() -> Self {
-        Self {
-            level: 3,
-            channel_area: 200_000.0,
-            depth: 1.0,
-            width: 6.0,
-            max_depth: 6.0,
-            max_width: 60.0,
-            stream_area: 0.0,
-        }
-    }
 }
 
 /// What a bake found: samples read, samples channels run through, samples

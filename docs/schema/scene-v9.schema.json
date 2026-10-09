@@ -125,25 +125,29 @@
       ]
     },
     "AuthoredPlacement": {
-      "description": "An object an author stands on the surface: its asset, by\nID of the surface's assets; its base's terrain-local point `[x, z]`,\nwhere it stands on the ground; its turn about the vertical (degrees);\nits scale (0.001 to 1000); how deep its base sinks, in meters at scale\n1; how far it leans with the ground (0 upright, 1 along its normal);\nand the pyramid level whose tiles hold it (0, the finest, by default;\ncoarser for objects seen from farther away).",
+      "description": "An object an author stands on the surface.",
       "type": "object",
       "properties": {
         "align": {
+          "description": "How far it leans with the ground: 0 upright, 1 along its normal.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0
         },
         "asset": {
+          "description": "Its asset, by ID of the surface's assets.",
           "type": "string"
         },
         "level": {
+          "description": "The pyramid level whose tiles hold it: 0, the finest; coarser for\nobjects seen from farther away.",
           "type": "integer",
           "format": "uint8",
           "maximum": 15,
           "minimum": 0
         },
         "position": {
+          "description": "Its base's terrain-local point `[x, z]`, where it stands on the\nground.",
           "type": "array",
           "items": {
             "type": "number",
@@ -153,16 +157,19 @@
           "minItems": 2
         },
         "scale": {
+          "description": "Its scale.",
           "type": "number",
           "format": "float",
           "maximum": 1000.0,
           "minimum": 0.001
         },
         "sink": {
+          "description": "How deep its base sinks, in meters at scale 1.",
           "type": "number",
           "format": "float"
         },
         "yaw": {
+          "description": "Its turn about the vertical, degrees.",
           "type": "number",
           "format": "float"
         }
@@ -197,16 +204,19 @@
       ]
     },
     "BiomeLayer": {
-      "description": "One layer of a biome's ground: `material` (an ID of the surface's\nmaterials) painted over the layers before it where `mask` allows, at\nmost `opacity`. A biome's first layer covers its whole ground.",
+      "description": "One layer of a biome's ground. A biome's first layer covers its whole\nground.",
       "type": "object",
       "properties": {
         "mask": {
+          "description": "Where it paints over the layers before it.",
           "$ref": "#/$defs/Mask"
         },
         "material": {
+          "description": "The material painted, an ID of the surface's materials.",
           "type": "string"
         },
         "opacity": {
+          "description": "The most it covers.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
@@ -229,10 +239,11 @@
       ]
     },
     "Cover": {
-      "description": "The cover growing where a surface material lies: blades\nper square meter where the material lies alone, the shortest and\ntallest blades and their width at the root (meters), the linear color\nof their tips (roots take the ground's), and how far they lean in the\nwind (0 stiff, 1 the most).",
+      "description": "The cover growing where a surface material lies.",
       "type": "object",
       "properties": {
         "color": {
+          "description": "The linear color of the blades' tips; roots take the ground's.",
           "type": "array",
           "default": [
             0.12999999523162842,
@@ -241,12 +252,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "density": {
+          "description": "Blades per square meter where the material lies alone.",
           "type": "number",
           "format": "float",
           "default": 90.0,
@@ -254,6 +268,7 @@
           "minimum": 0.0
         },
         "height": {
+          "description": "The shortest and tallest blades, meters, shortest first.",
           "type": "array",
           "default": [
             0.11999999731779099,
@@ -261,12 +276,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.01
           },
           "maxItems": 2,
           "minItems": 2
         },
         "sway": {
+          "description": "How far they lean in the wind: 0 stiff, 1 the most.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -274,6 +292,7 @@
           "minimum": 0.0
         },
         "width": {
+          "description": "Blade width at the root, meters.",
           "type": "number",
           "format": "float",
           "default": 0.02500000037252903,
@@ -284,10 +303,11 @@
       "additionalProperties": false
     },
     "Deformer": {
-      "description": "Presses tracks into deformable ground as a scene version\n9 `deformer` field: each fixed tick, while its entity's world position\nlies at most `contact` meters above the terrain under it (or below it),\nit presses a footprint `radius` meters across, from where it pressed the\ntick before, sinking ground as deformable as that `depth` meters along\nits middle (deeper by however far it lies below the ground), round\n(`flatness` 0, deepest along its middle like a wheel's rut) to flat (1,\na foot's or a plate's level floor). Put it where an object meets the\nground: a wheel's or a foot's lowest point. Radius 0.01 to 50, depth\nand contact 0 to 10, flatness 0 to 1.",
+      "description": "Presses tracks into deformable ground as a scene version 9 `deformer`\nfield: each fixed tick, while its entity's world position lies at most\n`contact` meters above the terrain under it (or below it), it presses a\nfootprint from where it pressed the tick before. Put it where an object\nmeets the ground: a wheel's or a foot's lowest point.",
       "type": "object",
       "properties": {
         "contact": {
+          "description": "Meters above the terrain within which it presses.",
           "type": "number",
           "format": "float",
           "default": 0.10000000149011612,
@@ -295,6 +315,7 @@
           "minimum": 0.0
         },
         "depth": {
+          "description": "Meters it sinks ground as deformable as that along its middle,\ndeeper by however far it lies below the ground.",
           "type": "number",
           "format": "float",
           "default": 0.15000000596046448,
@@ -302,6 +323,7 @@
           "minimum": 0.0
         },
         "flatness": {
+          "description": "Its footprint's shape: 0 round, deepest along its middle like a\nwheel's rut; 1 flat, a foot's or a plate's level floor.",
           "type": "number",
           "format": "float",
           "default": 0.5,
@@ -309,6 +331,7 @@
           "minimum": 0.0
         },
         "radius": {
+          "description": "Meters across the footprint it presses.",
           "type": "number",
           "format": "float",
           "default": 0.30000001192092896,
@@ -323,7 +346,7 @@
       "type": "object",
       "properties": {
         "creep": {
-          "description": "Square meters of hillslope creep each round, 0 to 1000.",
+          "description": "Square meters of hillslope creep each round.",
           "type": "number",
           "format": "float",
           "default": 20.0,
@@ -331,7 +354,7 @@
           "minimum": 0.0
         },
         "incision": {
-          "description": "How fast rivers cut each round: the stream power law's erodibility\ntimes its time step, 0 to 1.",
+          "description": "How fast rivers cut each round: the stream power law's erodibility\ntimes its time step.",
           "type": "number",
           "format": "float",
           "default": 0.0020000000949949026,
@@ -339,7 +362,7 @@
           "minimum": 0.0
         },
         "level": {
-          "description": "The pyramid level whose samples it erodes: finer levels wear finer\nvalleys and take longer, 0 to 15.",
+          "description": "The pyramid level whose samples it erodes: finer levels wear finer\nvalleys and take longer.",
           "type": "integer",
           "format": "uint32",
           "default": 4,
@@ -347,7 +370,7 @@
           "minimum": 0
         },
         "rounds": {
-          "description": "Rounds of incision and creep, 1 to 400.",
+          "description": "Rounds of incision and creep.",
           "type": "integer",
           "format": "uint32",
           "default": 60,
@@ -358,20 +381,22 @@
       "additionalProperties": false
     },
     "FarPlacement": {
-      "description": "Where a placement layer also stands far away: on the\ntiles of `level`, coarser than its own, a `share` (0 to 1] of its\nobjects, the candidates ranked first, where its own level's tiles are\nnot resident.",
+      "description": "Where a placement layer also stands far away: on the tiles of a\ncoarser level, a share of its objects, the candidates ranked first,\nwhere its own level's tiles are not resident.",
       "type": "object",
       "properties": {
         "level": {
+          "description": "The coarser level whose tiles hold them.",
           "type": "integer",
           "format": "uint8",
           "maximum": 15,
           "minimum": 1
         },
         "share": {
+          "description": "The share of the layer's objects standing there.",
           "type": "number",
           "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0
         }
       },
       "additionalProperties": false,
@@ -385,9 +410,12 @@
       "type": "object",
       "properties": {
         "offset": {
+          "description": "Meters above the ground its translation stands.",
           "type": "number",
           "format": "float",
-          "default": 0.0
+          "default": 0.0,
+          "maximum": 10000.0,
+          "minimum": -10000.0
         }
       },
       "additionalProperties": false
@@ -397,7 +425,7 @@
       "type": "object",
       "properties": {
         "channel_area": {
-          "description": "Square meters of upstream area where channels begin, 100 to 1e10.",
+          "description": "Square meters of upstream area where channels begin.",
           "type": "number",
           "format": "float",
           "default": 200000.0,
@@ -405,7 +433,7 @@
           "minimum": 100.0
         },
         "depth": {
-          "description": "Meters deep and wide channels are where they begin; downstream their\ndepth grows with the fourth root and their width with the square\nroot of the area they drain, up to `max_depth` and `max_width`.",
+          "description": "Meters deep channels are where they begin; downstream their depth\ngrows with the fourth root of the area they drain, up to `max_depth`.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -413,7 +441,7 @@
           "minimum": 0.0
         },
         "level": {
-          "description": "The pyramid level whose samples the bake reads: finer levels carve\nnarrower channels and take longer, 0 to 15.",
+          "description": "The pyramid level whose samples the bake reads: finer levels carve\nnarrower channels and take longer.",
           "type": "integer",
           "format": "uint32",
           "default": 3,
@@ -421,6 +449,7 @@
           "minimum": 0
         },
         "max_depth": {
+          "description": "The deepest channels grow, meters.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -428,6 +457,7 @@
           "minimum": 0.0
         },
         "max_width": {
+          "description": "The widest channels grow, meters.",
           "type": "number",
           "format": "float",
           "default": 60.0,
@@ -435,13 +465,14 @@
           "minimum": 0.1
         },
         "stream_area": {
-          "description": "Square meters of upstream area where streams begin:\nchannels draining less than `channel_area` run as streams down to\nthe rivers they join, their width falling with the area they drain\nbelow a river's at its head and their depth with its square root,\ncut a little into the ground. 0, the default, has none, as has\n`channel_area` or more; at most 1e10.",
+          "description": "Square meters of upstream area where streams begin: channels\ndraining less than `channel_area` run as streams down to the rivers\nthey join, their width falling with the area they drain below a\nriver's at its head and their depth with its square root, cut a little\ninto the ground. 0, the default, has none, as has `channel_area` or\nmore.",
           "type": "number",
           "format": "float",
           "maximum": 10000000000.0,
           "minimum": 0.0
         },
         "width": {
+          "description": "Meters wide channels are where they begin; downstream their width\ngrows with the square root of the area they drain, up to `max_width`.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -452,16 +483,18 @@
       "additionalProperties": false
     },
     "Interior": {
-      "description": "An interior's light: the shares of the sky's light and of\nthe sun's that reach surfaces inside its probe's box, each 0 to 1,\nblending in over the probe's blend distance inside its faces. Requires\nversion 9.",
+      "description": "An interior's light, blending in over the probe's blend distance inside\nits faces. Requires version 9.",
       "type": "object",
       "properties": {
         "sky": {
+          "description": "The share of the sky's light that reaches surfaces inside the box.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0
         },
         "sun": {
+          "description": "The share of the sun's light that reaches surfaces inside the box.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
@@ -511,14 +544,16 @@
           ]
         },
         {
-          "description": "A ramp over the ground's slope, in degrees from level, 0 to 90.",
+          "description": "A ramp over the ground's slope, in degrees from level.",
           "type": "object",
           "properties": {
             "slope": {
               "type": "array",
               "items": {
                 "type": "number",
-                "format": "float"
+                "format": "float",
+                "maximum": 90.0,
+                "minimum": 0.0
               },
               "maxItems": 2,
               "minItems": 2
@@ -875,10 +910,11 @@
       ]
     },
     "NavAgent": {
-      "description": "Walks its entity over the terrain under it to `destination`, world x\nand z: `speed` meters a second (0.01 to 100), turning at\nmost `turn` degrees a second (1 to 10000), its origin `offset` meters\nabove the ground; around obstacles within `radius` meters (0 to 100),\nup steps no steeper than `max_slope` (rise per meter, 0.01 to 10),\nthrough water no deeper than `max_water` meters (0 to 100), over the\npyramid level `level` (0 the finest, up to 15). Changing the\ndestination searches anew; none stands still. Requires version 9.",
+      "description": "Walks its entity over the terrain under it to `destination`. Changing\nthe destination searches anew; none stands still. Requires version 9.",
       "type": "object",
       "properties": {
         "destination": {
+          "description": "Where it walks to: world x and z.",
           "type": [
             "array",
             "null"
@@ -891,6 +927,7 @@
           "minItems": 2
         },
         "level": {
+          "description": "The pyramid level it searches over: 0 the finest.",
           "type": "integer",
           "format": "uint32",
           "default": 0,
@@ -898,6 +935,7 @@
           "minimum": 0
         },
         "max_slope": {
+          "description": "The steepest steps it climbs: rise per meter.",
           "type": "number",
           "format": "float",
           "default": 0.800000011920929,
@@ -905,6 +943,7 @@
           "minimum": 0.01
         },
         "max_water": {
+          "description": "Meters of water it wades through at most.",
           "type": "number",
           "format": "float",
           "default": 0.6000000238418579,
@@ -912,11 +951,15 @@
           "minimum": 0.0
         },
         "offset": {
+          "description": "Meters its origin stands above the ground.",
           "type": "number",
           "format": "float",
-          "default": 0.0
+          "default": 0.0,
+          "maximum": 10000.0,
+          "minimum": -10000.0
         },
         "radius": {
+          "description": "Meters around obstacles it keeps.",
           "type": "number",
           "format": "float",
           "default": 0.4000000059604645,
@@ -924,6 +967,7 @@
           "minimum": 0.0
         },
         "speed": {
+          "description": "Meters a second it walks.",
           "type": "number",
           "format": "float",
           "default": 1.399999976158142,
@@ -931,6 +975,7 @@
           "minimum": 0.01
         },
         "turn": {
+          "description": "Degrees a second it turns at most.",
           "type": "number",
           "format": "float",
           "default": 360.0,
@@ -945,11 +990,12 @@
       "type": "object",
       "properties": {
         "blend": {
+          "description": "How the layer combines with the layers below it.",
           "$ref": "#/$defs/Blend",
           "default": "add"
         },
         "erosion": {
-          "description": "How deep gullies cut down slopes, 0 (none) to 1.",
+          "description": "How deep gullies cut down slopes: 0 none.",
           "type": "number",
           "format": "float",
           "default": 0.699999988079071,
@@ -957,7 +1003,7 @@
           "minimum": 0.0
         },
         "height": {
-          "description": "Meters from the lowest to the highest ground before gullies, 0 to\n20000.",
+          "description": "Meters from the lowest to the highest ground before gullies.",
           "type": "number",
           "format": "float",
           "default": 900.0,
@@ -965,7 +1011,7 @@
           "minimum": 0.0
         },
         "offset": {
-          "description": "Meters added to every height of the layer, -20000 to 20000.",
+          "description": "Meters added to every height of the layer.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -996,7 +1042,7 @@
           "minimum": 0
         },
         "smoothing": {
-          "description": "How much fine detail fades on slopes, 0 to 1.",
+          "description": "How much fine detail fades on slopes.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -1012,7 +1058,7 @@
           "minimum": 0.0
         },
         "warp": {
-          "description": "How far the ground warps sideways, as a share of the wavelength, 0\nto 1.",
+          "description": "How far the ground warps sideways, as a share of the wavelength.",
           "type": "number",
           "format": "float",
           "default": 0.3499999940395355,
@@ -1020,7 +1066,7 @@
           "minimum": 0.0
         },
         "wavelength": {
-          "description": "Meters across the largest features, 16 to 1000000.",
+          "description": "Meters across the largest features.",
           "type": "number",
           "format": "float",
           "default": 3000.0,
@@ -1031,10 +1077,11 @@
       "additionalProperties": false
     },
     "NoiseMask": {
-      "description": "Gradient noise from 0 to 1 with features `wavelength` meters across,\nsummed over `octaves` (1 to 8), each half as long and half as strong.",
+      "description": "Gradient noise from 0 to 1, summed over octaves each half as long and\nhalf as strong.",
       "type": "object",
       "properties": {
         "octaves": {
+          "description": "Octaves summed.",
           "type": "integer",
           "format": "uint32",
           "default": 1,
@@ -1042,12 +1089,14 @@
           "minimum": 1
         },
         "seed": {
+          "description": "Picks the pattern.",
           "type": "integer",
           "format": "uint32",
           "default": 0,
           "minimum": 0
         },
         "wavelength": {
+          "description": "Meters across its largest features.",
           "type": "number",
           "format": "float",
           "maximum": 1000000.0,
@@ -1064,7 +1113,7 @@
       "type": "object",
       "properties": {
         "bridge_fill": {
-          "description": "Meters the road would fill above the ground beyond which it bridges\ninstead, as it does over rivers and lakes, 0 to 1000;\n0 never bridges.",
+          "description": "Meters the road would fill above the ground beyond which it bridges\ninstead, as it does over rivers and lakes; 0 never bridges.",
           "type": "number",
           "format": "float",
           "default": 4.0,
@@ -1072,20 +1121,24 @@
           "minimum": 0.0
         },
         "points": {
-          "description": "Terrain-local meters along x and z the road runs through, 2 to\n4096 of them.",
+          "description": "Terrain-local meters along x and z the road runs through.",
           "type": "array",
           "items": {
             "type": "array",
             "items": {
               "type": "number",
-              "format": "float"
+              "format": "float",
+              "maximum": 10000000.0,
+              "minimum": -10000000.0
             },
             "maxItems": 2,
             "minItems": 2
-          }
+          },
+          "maxItems": 4096,
+          "minItems": 2
         },
         "shoulder": {
-          "description": "Meters on each side over which the road eases back into the\nground, 0 to 500.",
+          "description": "Meters on each side over which the road eases back into the\nground.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -1093,7 +1146,7 @@
           "minimum": 0.0
         },
         "smoothing": {
-          "description": "Meters along the road over which its height averages the ground's,\n0 to 5000: longer is gentler, cutting deeper and filling higher.",
+          "description": "Meters along the road over which its height averages the ground's:\nlonger is gentler, cutting deeper and filling higher.",
           "type": "number",
           "format": "float",
           "default": 80.0,
@@ -1101,7 +1154,7 @@
           "minimum": 0.0
         },
         "tunnel_cut": {
-          "description": "Meters the road would cut into the ground beyond which it tunnels\ninstead, 0 to 2000; 0 never tunnels.",
+          "description": "Meters the road would cut into the ground beyond which it tunnels\ninstead; 0 never tunnels.",
           "type": "number",
           "format": "float",
           "default": 25.0,
@@ -1109,7 +1162,7 @@
           "minimum": 0.0
         },
         "width": {
-          "description": "Meters of level road across, 0.5 to 200.",
+          "description": "Meters of level road across.",
           "type": "number",
           "format": "float",
           "default": 6.0,
@@ -1127,9 +1180,11 @@
       "type": "object",
       "properties": {
         "asset": {
+          "description": "The asset's ID.",
           "type": "string"
         },
         "weight": {
+          "description": "How often it is chosen against the layer's others.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -1142,10 +1197,11 @@
       ]
     },
     "PlacementLayer": {
-      "description": "One layer of objects on a surface: the assets it chooses from; objects\nper hectare where everything allows (at most one per footprint\nsquare); the meters between candidates (0.25 to 256); the surface\nmaterials it stands on (IDs; any when empty), weighted by their share;\nwhere its mask allows; its objects' scale range; how far they lean with\nthe ground (0 upright, 1 along its normal); how far they turn to face\ndown its slope, their x across it and z down it (0 any way, 1 straight\ndown it); how deep they sink, in meters at scale 1, below the lowest\nground within their bed, how far around them they rest on (meters at\nscale 1, 0 by default: the ground at their point), so\nblocks on steep slopes stand in them instead of hanging over them; the\npyramid level whose tiles hold its candidates (0, the finest, by\ndefault); and where it also stands far away.",
+      "description": "One layer of objects on a surface.",
       "type": "object",
       "properties": {
         "align": {
+          "description": "How far its objects lean with the ground: 0 upright, 1 along its\nnormal.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -1153,29 +1209,34 @@
           "minimum": 0.0
         },
         "assets": {
+          "description": "The assets it chooses from.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/PlacementChoice"
           }
         },
         "bed": {
+          "description": "How far around them they rest on, in meters at scale 1: 0, the\nground at their point; blocks on steep slopes stand in it instead\nof hanging over it.",
           "type": "number",
           "format": "float",
           "maximum": 1000.0,
           "minimum": 0.0
         },
         "density": {
+          "description": "Objects per hectare where everything allows, at most one per\nfootprint square.",
           "type": "number",
           "format": "float",
           "minimum": 0.0
         },
         "face": {
+          "description": "How far they turn to face down its slope, their x across it and z\ndown it: 0 any way, 1 straight down it.",
           "type": "number",
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0
         },
         "far": {
+          "description": "Where it also stands far away.",
           "anyOf": [
             {
               "$ref": "#/$defs/FarPlacement"
@@ -1186,33 +1247,39 @@
           ]
         },
         "footprint": {
+          "description": "The meters between candidates.",
           "type": "number",
           "format": "float",
           "maximum": 256.0,
           "minimum": 0.25
         },
         "id": {
+          "description": "The layer's ID.",
           "type": "string"
         },
         "level": {
+          "description": "The pyramid level whose tiles hold its candidates: 0, the finest.",
           "type": "integer",
           "format": "uint8",
           "maximum": 15,
           "minimum": 0
         },
         "mask": {
+          "description": "Where it stands.",
           "$ref": "#/$defs/Mask",
           "default": {
             "constant": 1.0
           }
         },
         "materials": {
+          "description": "The surface materials it stands on (IDs; any when empty),\nweighted by their share.",
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "scale": {
+          "description": "Its objects' scale range, the smaller first.",
           "type": "array",
           "default": [
             1.0,
@@ -1220,12 +1287,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001
           },
           "maxItems": 2,
           "minItems": 2
         },
         "sink": {
+          "description": "How deep they sink, in meters at scale 1, below the lowest ground\nwithin their bed.",
           "type": "number",
           "format": "float",
           "default": 0.0
@@ -1659,6 +1729,7 @@
       "type": "object",
       "properties": {
         "far": {
+          "description": "The far plane's distance, at least 0.001 beyond the near plane's.",
           "type": "number",
           "format": "float",
           "default": 500.0,
@@ -1666,6 +1737,7 @@
           "minimum": 0.001
         },
         "fov_degrees": {
+          "description": "Vertical field of view in degrees.",
           "type": "number",
           "format": "float",
           "default": 55.0,
@@ -1673,6 +1745,7 @@
           "minimum": 1.0
         },
         "near": {
+          "description": "The near plane's distance.",
           "type": "number",
           "format": "float",
           "default": 0.10000000149011612,
@@ -1680,6 +1753,7 @@
           "minimum": 0.001
         },
         "position": {
+          "description": "Where the camera stands.",
           "type": "array",
           "default": [
             24.0,
@@ -1688,12 +1762,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "target": {
+          "description": "What it looks at, at least 0.001 from its position.",
           "type": "array",
           "default": [
             0.0,
@@ -1702,7 +1779,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -1901,11 +1980,13 @@
           "type": "object",
           "properties": {
             "half_extents": {
-              "description": "Positive half sizes on local axes, each in [0.0001, 10000].",
+              "description": "Positive half sizes on local axes.",
               "type": "array",
               "items": {
                 "type": "number",
-                "format": "float"
+                "format": "float",
+                "maximum": 10000.0,
+                "minimum": 0.00009999999747378752
               },
               "maxItems": 3,
               "minItems": 3
@@ -1929,11 +2010,11 @@
               "const": "sphere"
             },
             "radius": {
-              "description": "Local radius in [0.0001, 10000]. Nonuniform transforms form ellipsoids.",
+              "description": "Local radius. Nonuniform transforms form ellipsoids.",
               "type": "number",
               "format": "float",
               "maximum": 10000.0,
-              "minimum": 0.0001
+              "minimum": 0.00009999999747378752
             }
           },
           "additionalProperties": false,
@@ -1981,15 +2062,16 @@
       "additionalProperties": false
     },
     "SceneDecal": {
-      "description": "A decal on this entity. Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected down\nits y onto the opaque surfaces inside it that face its +y.",
+      "description": "A decal on this entity. Requires version 8.\n\nIts box is the entity's local unit cube (`[-0.5, 0.5]` on each axis):\nscale the entity to size it. The material's color, base color map,\nroughness, metalness and emission span the box's x and z, projected\ndown its y onto the opaque surfaces inside it that face its +y.",
       "type": "object",
       "properties": {
         "blend": {
+          "description": "How the decal combines with the surface it lies on.",
           "$ref": "#/$defs/SceneDecalBlend",
           "default": "alpha"
         },
         "fade_degrees": {
-          "description": "Degrees between a surface's normal and the box's +y beyond which the\ndecal fades out, gone at 90.",
+          "description": "Degrees between a surface's normal and the box's +y beyond which\nthe decal fades out, gone at 90.",
           "type": "number",
           "format": "float",
           "default": 60.0,
@@ -2126,17 +2208,20 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "blend": {
+          "description": "How particles combine with what is behind them.",
           "$ref": "#/$defs/SceneParticleBlend",
           "default": "alpha"
         },
         "color": {
-          "description": "Linear RGBA at birth and at death, channels in [0, 1]; alpha fades.",
+          "description": "Linear RGBA at birth and at death; alpha fades.",
           "type": "array",
           "default": [
             [
@@ -2156,7 +2241,9 @@
             "type": "array",
             "items": {
               "type": "number",
-              "format": "float"
+              "format": "float",
+              "maximum": 1.0,
+              "minimum": 0.0
             },
             "maxItems": 4,
             "minItems": 4
@@ -2174,7 +2261,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -2188,12 +2277,12 @@
           "minimum": 0.0
         },
         "lifetime": {
-          "description": "Seconds each particle lives; positive.",
+          "description": "Seconds each particle lives.",
           "type": "number",
           "format": "float",
           "default": 2.0,
-          "maximum": 60.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 60.0
         },
         "offset": {
           "description": "Birth position in the entity's local space.",
@@ -2205,7 +2294,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -2215,15 +2306,16 @@
           "type": "number",
           "format": "float",
           "default": 0.0,
+          "maximum": 10000.0,
           "minimum": 0.0
         },
         "rate": {
-          "description": "Particles born per second; positive.",
+          "description": "Particles born per second.",
           "type": "number",
           "format": "float",
           "default": 20.0,
-          "maximum": 100000.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 100000.0
         },
         "seed": {
           "description": "Varies random choices between otherwise identical emitters.",
@@ -2241,7 +2333,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0
           },
           "maxItems": 2,
           "minItems": 2
@@ -2250,7 +2344,9 @@
           "description": "Initial speed in world units per second.",
           "type": "number",
           "format": "float",
-          "default": 1.0
+          "default": 1.0,
+          "maximum": 10000.0,
+          "minimum": -10000.0
         },
         "spread_degrees": {
           "description": "Half-angle of the cone of initial directions, in degrees; 180 emits\nin every direction.",
@@ -2576,10 +2672,11 @@
       ]
     },
     "SceneFloating": {
-      "description": "Rides the sea: each fixed tick the entity rises and falls\nwith the sea's surface under it, `draft` meters of it below the surface\n(-100 to 100), and leans by `tilt` (0, upright, to 1, with the\nsurface's normal) about its own heading. Unparented entities only;\nnothing moves without an enabled sea. Requires version 9.",
+      "description": "Rides the sea: each fixed tick the entity rises and falls with the sea's\nsurface under it and leans about its own heading. Unparented entities\nonly; nothing moves without an enabled sea. Requires version 9.",
       "type": "object",
       "properties": {
         "draft": {
+          "description": "Meters of it below the surface.",
           "type": "number",
           "format": "float",
           "default": 0.0,
@@ -2587,6 +2684,7 @@
           "minimum": -100.0
         },
         "tilt": {
+          "description": "How far it leans: 0 upright, 1 with the surface's normal.",
           "type": "number",
           "format": "float",
           "default": 1.0,
@@ -2649,7 +2747,9 @@
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -2657,8 +2757,8 @@
         "height": {
           "type": "number",
           "format": "float",
-          "maximum": 10000.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 10000.0
         }
       },
       "additionalProperties": false,
@@ -2685,7 +2785,9 @@
         "falloff": {
           "type": "number",
           "format": "float",
-          "default": 0.0
+          "default": 0.0,
+          "maximum": 10000000.0,
+          "minimum": 0.0
         },
         "height": {
           "type": "integer",
@@ -2695,17 +2797,23 @@
         },
         "high": {
           "type": "number",
-          "format": "float"
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0
         },
         "low": {
           "type": "number",
-          "format": "float"
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0
         },
         "min": {
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": -10000000.0
           },
           "maxItems": 2,
           "minItems": 2
@@ -2714,7 +2822,9 @@
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": 0.001
           },
           "maxItems": 2,
           "minItems": 2
@@ -2802,7 +2912,7 @@
       "type": "object",
       "properties": {
         "color": {
-          "description": "Linear color, each channel finite and nonnegative.",
+          "description": "Linear color.",
           "type": "array",
           "default": [
             1.0,
@@ -2811,17 +2921,18 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "intensity": {
-          "description": "Light at one world unit; positive.",
+          "description": "Light at one world unit.",
           "type": "number",
           "format": "float",
           "default": 20.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0
         },
         "offset": {
           "description": "Position in the entity's local space, scaled with it.",
@@ -2833,17 +2944,20 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "range": {
-          "description": "World distance beyond which the light has no effect; positive.",
+          "description": "World distance beyond which the light has no effect.",
           "type": "number",
           "format": "float",
           "default": 12.0,
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0,
+          "maximum": 10000.0
         },
         "spot": {
           "description": "A cone; omitted for light in every direction.",
@@ -2944,7 +3058,9 @@
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 4,
           "minItems": 4
@@ -2964,7 +3080,8 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -3065,8 +3182,8 @@
             "null"
           ],
           "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.001
+          "exclusiveMinimum": 0.0,
+          "maximum": 1.0
         },
         "surface": {
           "description": "How the surface responds to light beyond its color.\nRequires version 5; without it the material is matte.",
@@ -3127,8 +3244,8 @@
             "null"
           ],
           "format": "float",
-          "maximum": 10000.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 10000.0
         }
       },
       "additionalProperties": false,
@@ -3408,7 +3525,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 4,
           "minItems": 4
@@ -3691,22 +3810,23 @@
       ]
     },
     "SceneReflectionProbe": {
-      "description": "A reflection probe on this entity. Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's world\nposition, so the entity's rotation and scale leave it unchanged. Surfaces\ninside it reflect what the probe captured from its center (still objects\nand still lights), fading out over `blend` toward its faces into the\nprobes around it or the sky.",
+      "description": "A reflection probe on this entity. Requires version 8.\n\nIts box is axis-aligned in world space and centered on the entity's\nworld position, so the entity's rotation and scale leave it unchanged.\nSurfaces inside it reflect what the probe captured from its center\n(still objects and still lights), fading out over `blend` toward its\nfaces into the probes around it or the sky.",
       "type": "object",
       "properties": {
         "blend": {
-          "description": "World distance inside the box's faces over which the probe fades out;\nfinite and nonnegative.",
+          "description": "World distance inside the box's faces over which the probe fades\nout.",
           "type": "number",
           "format": "float",
           "default": 1.0,
           "minimum": 0.0
         },
         "extent": {
-          "description": "Half the box's size along each world axis in world units, each\nfinite and positive.",
+          "description": "Half the box's size along each world axis in world units.",
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "exclusiveMinimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -4267,8 +4387,8 @@
         "reach": {
           "type": "number",
           "format": "float",
-          "maximum": 1000000.0,
-          "minimum": 0.0
+          "exclusiveMinimum": 0.0,
+          "maximum": 1000000.0
         }
       },
       "additionalProperties": false,
@@ -4320,12 +4440,14 @@
           "minItems": 3
         },
         "spacing": {
-          "description": "Meters between level-0 samples, 1/64 to 1024. Required with layers;\na file's own when omitted.",
+          "description": "Meters between level-0 samples. Required with layers; a file's own\nwhen omitted.",
           "type": [
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "float",
+          "maximum": 1024.0,
+          "minimum": 0.015625
         },
         "surface": {
           "description": "Its materials and biomes. Omitted, the engine's default: grass,\nbare dirt, rock on steep ground and snow above 650 meters.",
@@ -4350,7 +4472,7 @@
           ]
         },
         "tiles": {
-          "description": "Level-0 tiles along x and z, 1 to 4096 each. Required with layers;\na file's own when omitted.",
+          "description": "Level-0 tiles along x and z. Required with layers; a file's own when\nomitted.",
           "type": [
             "array",
             "null"
@@ -4358,7 +4480,8 @@
           "items": {
             "type": "integer",
             "format": "uint32",
-            "minimum": 0
+            "maximum": 4096,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2
@@ -4555,7 +4678,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -5131,7 +5256,9 @@
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -5159,10 +5286,11 @@
       ]
     },
     "SceneTransform": {
-      "description": "Local transform with Euler XYZ rotation expressed in degrees.\n\nTranslation is bounded to ±1,000,000 world units and each scale component\nto `[0.0001, 10000]`, avoiding singular or overflowing normal transforms.\nParent composition preserves full matrices, including shear. Negative scale\nreflection is not authored by this format.",
+      "description": "Local transform with Euler XYZ rotation expressed in degrees.\n\nBounded translations and scales avoid singular or overflowing normal\ntransforms. Parent composition preserves full matrices, including\nshear. Negative scale reflection is not authored by this format.",
       "type": "object",
       "properties": {
         "rotation_degrees": {
+          "description": "Euler XYZ rotation, degrees.",
           "type": "array",
           "default": [
             0.0,
@@ -5171,12 +5299,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 360000.0,
+            "minimum": -360000.0
           },
           "maxItems": 3,
           "minItems": 3
         },
         "scale": {
+          "description": "Scale on each local axis.",
           "type": "array",
           "default": [
             1.0,
@@ -5185,12 +5316,15 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0001
           },
           "maxItems": 3,
           "minItems": 3
         },
         "translation": {
+          "description": "Local translation, world units.",
           "type": "array",
           "default": [
             0.0,
@@ -5199,7 +5333,9 @@
           ],
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0
           },
           "maxItems": 3,
           "minItems": 3
@@ -5498,23 +5634,30 @@
           "type": "array",
           "items": {
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": -10000000.0
           },
           "maxItems": 2,
           "minItems": 2
         },
         "falloff": {
+          "description": "Meters beyond the radius over which it fades out.",
           "type": "number",
           "format": "float",
           "default": 0.0,
+          "maximum": 10000000.0,
           "minimum": 0.0
         },
         "op": {
+          "description": "What it does where it reaches.",
           "$ref": "#/$defs/StampOp"
         },
         "radius": {
+          "description": "Meters around the center at full strength.",
           "type": "number",
           "format": "float",
+          "maximum": 10000000.0,
           "minimum": 0.0
         }
       },
@@ -5533,7 +5676,9 @@
           "properties": {
             "raise": {
               "type": "number",
-              "format": "float"
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": 0.0
             }
           },
           "additionalProperties": false,
@@ -5546,7 +5691,9 @@
           "properties": {
             "lower": {
               "type": "number",
-              "format": "float"
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": 0.0
             }
           },
           "additionalProperties": false,
@@ -5559,7 +5706,9 @@
           "properties": {
             "flatten": {
               "type": "number",
-              "format": "float"
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": -20000.0
             }
           },
           "additionalProperties": false,
@@ -5583,10 +5732,11 @@
       ]
     },
     "TerrainPrefetch": {
-      "description": "Names a place the camera may be sent to, such as a spawn point:\nwhile the view wants nothing, workers generate the\nterrain tiles a camera there wants into memory, as they do ahead of the\ncamera, and those tiles stay there while it is named, so\nthe camera sent there finds them at once. Each level's tiles within\n`reach` times its range, 0 to 8; 2 is what a camera there loads.\nRequires version 9.",
+      "description": "Names a place the camera may be sent to, such as a spawn point:\nwhile the view wants nothing, workers generate the terrain tiles a camera\nthere wants into memory, as they do ahead of the camera, and those tiles\nstay there while it is named, so the camera sent there finds them at once.\nRequires version 9.",
       "type": "object",
       "properties": {
         "reach": {
+          "description": "Each level's tiles within this many times its range; 2 is what a\ncamera there loads.",
           "type": "number",
           "format": "float",
           "default": 2.0,

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt;
 
 /// Validation or admission failure. No library mutation occurs on failure.
@@ -38,7 +39,7 @@ pub enum AssetError {
     UnsupportedAlpha,
     InvalidOpacity,
     InvalidSurface {
-        field: &'static str,
+        field: Cow<'static, str>,
     },
     /// A texture map parameter outside its range.
     InvalidMaterialMap {

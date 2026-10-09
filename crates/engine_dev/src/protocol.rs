@@ -1,6 +1,22 @@
 use engine_scene::{SceneAtmosphere, SceneEnvironment};
 use serde::{Deserialize, Serialize};
 
+/// The schema transform stating a stamp's `field` rule on the request field
+/// of that name.
+#[cfg(not(target_arch = "wasm32"))]
+fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
+    engine_settings::stated(engine_core::Stamp::rule_of(field).expect("stamps declare the field"))
+}
+
+/// The schema transform stating route option `field`'s rule on the request
+/// field of that name.
+#[cfg(not(target_arch = "wasm32"))]
+fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
+    engine_settings::stated(
+        engine_core::RouteOptions::rule_of(field).expect("route options declare the field"),
+    )
+}
+
 /// The development protocol's version, independent of scene format versions.
 pub const PROTOCOL_VERSION: u32 = 1;
 /// Bytes of one request's JSON.
@@ -187,28 +203,19 @@ pub enum DevRequest {
         from: [f64; 2],
         to: [f64; 2],
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(max = 15)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("level")))]
         level: Option<u32>,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.001, max = 10.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("max_grade")))]
         max_grade: Option<f64>,
         #[serde(default)]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 1000000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("grade_cost")))]
         grade_cost: Option<f64>,
         #[serde(default)]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 1000000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("water_cost")))]
         water_cost: Option<f64>,
         #[serde(default)]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 1000000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = route_rule("turn_cost")))]
         turn_cost: Option<f64>,
     },
     /// Non-consuming page of the latest fixed-tick sensor transition snapshot.
@@ -414,16 +421,10 @@ pub enum BrowserControl {
         terrain: Option<String>,
         id: String,
         center: [f64; 2],
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 100000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("radius")))]
         radius: f64,
         #[serde(default)]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 100000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("falloff")))]
         falloff: f64,
         change: engine_core::terrain_data::StampOp,
     },
