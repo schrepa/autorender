@@ -14,11 +14,13 @@ use engine_core::{
 use engine_scene::{SceneEntity, SceneInstance};
 use serde_json::{Value, json};
 
+use crate::protocol::bounds;
 use crate::{
-    DevError, DevRequest, MAX_PAGE_SIZE, MAX_SCAN_ENTITIES,
+    DevError, DevRequest, MAX_SCAN_ENTITIES, bounded,
     protocol::{CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest},
     views::{ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView},
 };
+use engine_settings::Setting;
 
 pub(crate) fn execute(
     engine: &mut Engine,
@@ -127,13 +129,7 @@ pub(crate) fn execute(
             ..
         } => {
             page(limit)?;
-            if offset > 131_072 {
-                return Err(DevError::new(
-                    "invalid_page",
-                    "$.offset",
-                    "sensor event offset must be in 0..=131072",
-                ));
-            }
+            bounded(offset, bounds::EVENT_OFFSET, "invalid_page", "$.offset")?;
             let entity = entity
                 .as_deref()
                 .map(|id| resolve_entity(engine.app.world(), scene, id, false, "$.entity"))
@@ -230,26 +226,16 @@ pub(crate) fn native_error(error: CollisionError) -> DevError {
 }
 
 fn page(limit: usize) -> Result<(), DevError> {
-    if !(1..=MAX_PAGE_SIZE).contains(&limit) {
-        return Err(DevError::new(
-            "invalid_page",
-            "$.limit",
-            "limit must be in 1..=100",
-        ));
-    }
-    Ok(())
+    bounded(limit, bounds::PAGE, "invalid_page", "$.limit").map(|_| ())
 }
 
 fn shape(source: CollisionShapeRequest) -> Result<ColliderShape, DevError> {
     let dimension = |value: f64| -> Result<f32, DevError> {
-        if !value.is_finite() || !(1.0e-4..=1.0e4).contains(&value) {
-            return Err(DevError::new(
-                "invalid_shape",
-                "$.shape",
-                "shape dimensions must be finite and in [0.0001, 10000]",
-            ));
-        }
-        Ok(value as f32)
+        let extents = engine_settings::rule::range(
+            engine_core::MIN_COLLIDER_EXTENT,
+            engine_core::MAX_COLLIDER_EXTENT,
+        );
+        bounded(value, extents, "invalid_shape", "$.shape").map(|value| value as f32)
     };
     let shape = match source {
         CollisionShapeRequest::Cuboid {
@@ -268,12 +254,12 @@ fn shape(source: CollisionShapeRequest) -> Result<ColliderShape, DevError> {
 fn position(values: [f64; 3], path: &str) -> Result<Vec3, DevError> {
     if values
         .iter()
-        .any(|value| !value.is_finite() || value.abs() > 1.0e6)
+        .any(|value| value.check("value", bounds::COORDINATE).is_err())
     {
         return Err(DevError::new(
             "invalid_position",
             path,
-            "coordinates must be finite and within +/-1000000",
+            bounds::COORDINATE.describe(),
         ));
     }
     Ok(Vec3::from_array(values.map(|value| value as f32)))
@@ -298,13 +284,12 @@ fn pose(translation: [f64; 3], rotation: [f64; 4]) -> Result<Mat4, DevError> {
 
 fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<CollisionRay, DevError> {
     let position = position(origin, "$.origin")?;
-    if !max_distance.is_finite() || !(0.0..=2.0e6).contains(&max_distance) {
-        return Err(DevError::new(
-            "invalid_ray",
-            "$.max_distance",
-            "distance must be finite and in [0, 2000000]",
-        ));
-    }
+    bounded(
+        max_distance,
+        bounds::DISTANCE,
+        "invalid_ray",
+        "$.max_distance",
+    )?;
     let scale = direction
         .iter()
         .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));

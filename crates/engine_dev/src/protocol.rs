@@ -1,6 +1,48 @@
 use engine_scene::{SceneAtmosphere, SceneEnvironment};
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
+use engine_settings::{rule::same, stated};
+
+/// The bounds requests keep: their schemas state them and their handlers
+/// check them, so neither restates a number.
+pub mod bounds {
+    use engine_settings::Rule;
+
+    /// Entries a page holds at most.
+    pub const MAX_PAGE_SIZE: usize = 100;
+    /// A page's size.
+    pub const PAGE: Rule = Rule::Range(1.0, MAX_PAGE_SIZE as f64);
+    /// Points a height, water or deformation query names at most.
+    pub const MAX_POINTS: usize = 256;
+    /// World coordinates requests name, as collision queries bound them.
+    pub const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
+    /// How far a ray or a cast reaches.
+    pub const DISTANCE: Rule = Rule::Range(0.0, 2.0e6);
+    /// Where a page of sensor events starts.
+    pub const EVENT_OFFSET: Rule = Rule::Range(0.0, 131_072.0);
+    /// A terrain sweep's half extent, meters.
+    pub const SWEEP_EXTENT: Rule = Rule::Range(0.0, 4096.0);
+    /// A terrain sweep's samples along a side.
+    pub const SWEEP_SAMPLES: Rule = Rule::Range(2.0, 64.0);
+    /// A presentation fraction.
+    pub const ALPHA: Rule = Rule::Range(0.0, 1.0);
+    /// Benchmark warm-up frames.
+    pub const WARMUP: Rule = Rule::Range(0.0, 120.0);
+    /// Benchmark samples.
+    pub const SAMPLES: Rule = Rule::Range(1.0, 240.0);
+    /// Fixed ticks a step advances.
+    pub const TICKS: Rule = Rule::Range(1.0, engine_core::MAX_DEV_TICKS as f64);
+    /// An input axis.
+    pub const AXIS: Rule = Rule::Range(-1.0, 1.0);
+    /// An input's look delta.
+    pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
+    /// IDs a world change names at most, in each list.
+    pub const MAX_CHANGES: usize = 256;
+    /// Bytes of a terrain edit's ID at most.
+    pub const MAX_EDIT_ID: usize = 64;
+}
+
 /// The schema transform stating a stamp's `field` rule on the request field
 /// of that name.
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,9 +54,15 @@ fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
 /// field of that name.
 #[cfg(not(target_arch = "wasm32"))]
 fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    engine_settings::stated(
-        engine_core::RouteOptions::rule_of(field).expect("route options declare the field"),
-    )
+    let state =
+        stated(engine_core::RouteOptions::rule_of(field).expect("route options declare the field"));
+    let default = serde_json::to_value(engine_core::RouteOptions::default())
+        .expect("route options serialize")[field]
+        .clone();
+    move |schema| {
+        state(schema);
+        schema.insert("default".into(), default.clone());
+    }
 }
 
 /// The development protocol's version, independent of scene format versions.
@@ -54,7 +102,7 @@ pub enum DevRequest {
         #[serde(default)]
         offset: usize,
         #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1, max = 100)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
         limit: usize,
     },
     Assets {
@@ -75,10 +123,7 @@ pub enum DevRequest {
         version: u32,
         origin: [f64; 3],
         direction: [f64; 3],
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 2_000_000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::DISTANCE)))]
         max_distance: f64,
         #[serde(default)]
         filter: CollisionFilterRequest,
@@ -93,7 +138,7 @@ pub enum DevRequest {
         #[serde(default)]
         filter: CollisionFilterRequest,
         #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1, max = 100)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
         limit: usize,
     },
     /// Closest translation-only shape cast; orientation stays fixed along the ray.
@@ -104,23 +149,19 @@ pub enum DevRequest {
         #[serde(default = "identity_rotation")]
         rotation: [f64; 4],
         direction: [f64; 3],
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0, max = 2_000_000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::DISTANCE)))]
         max_distance: f64,
         #[serde(default)]
         filter: CollisionFilterRequest,
     },
-    /// Terrain surfaces under world points `[x, z]`, 1 to
-    /// 256: each one's terrain, height, normal, hole and the level of the
+    /// Terrain surfaces under world points `[x, z]`: each one's terrain, height, normal, hole and the level of the
     /// resident tile answering, what its hydrology bake found there and the
     /// water standing there, and the meters from the
     /// nearest road's edge (negative on roads, null beyond
     /// their masks' reach), or null where no tile is resident.
     TerrainHeight {
         version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
         points: Vec<[f64; 2]>,
     },
     /// The shortest walk over a generated terrain from world `from` to `to`
@@ -132,8 +173,7 @@ pub enum DevRequest {
     /// `margin` meters of the ends holds more than `max_samples` samples,
     /// then the finest level within. Returns its points (world, rounded to
     /// centimeters), length, the level walked and samples searched, or a
-    /// null walk where none reaches. Defaults: max_slope 0.8, radius 0.5,
-    /// max_water 0.6, margin 96, max_samples 1048576.
+    /// null walk where none reaches.
     NavPath {
         version: u32,
         from: [f64; 2],
@@ -141,8 +181,7 @@ pub enum DevRequest {
         #[serde(default)]
         options: Option<engine_core::terrain_data::NavOptions>,
     },
-    /// The sea's surface over world points `[x, z]`, 1 to
-    /// 256, at simulation time `seconds` (by default the time the last frame
+    /// The sea's surface over world points `[x, z]` at simulation time `seconds` (by default the time the last frame
     /// presented), as frames draw it: its height, normal, how much the waves
     /// compress it there (1 still, toward 0 on sharpening crests, where foam
     /// gathers) and the still sea's point the waves moved there, or null
@@ -150,13 +189,13 @@ pub enum DevRequest {
     /// and the water's depth over it.
     WaterQuery {
         version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
         points: Vec<[f64; 2]>,
         #[serde(default)]
         seconds: Option<f64>,
     },
     /// The tracks deformers and agents pressed at world points
-    /// `[x, z]`, 1 to 256, refilled to simulation time `seconds` (by default
+    /// `[x, z]`, refilled to simulation time `seconds` (by default
     /// the time the last frame presented), as the log holds them: how deep
     /// the deepest sinks deformable ground (`track`) and how high rims raise
     /// it (`rim`); where a tile is resident, the most its surface materials
@@ -165,7 +204,7 @@ pub enum DevRequest {
     /// those its budget dropped.
     DeformationQuery {
         version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 256)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = bounds::MAX_POINTS)))]
         points: Vec<[f64; 2]>,
         #[serde(default)]
         seconds: Option<f64>,
@@ -178,10 +217,10 @@ pub enum DevRequest {
         version: u32,
         center: [f64; 2],
         #[serde(default = "default_half_extent")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 4096.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SWEEP_EXTENT)))]
         half_extent: f64,
         #[serde(default = "default_sweep_samples")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 2, max = 64)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SWEEP_SAMPLES)))]
         samples: u32,
     },
     /// The cheapest route over the generated terrain under world `from`
@@ -190,8 +229,7 @@ pub enum DevRequest {
     /// of pyramid `level`, each step's cost growing by `grade_cost` times
     /// its squared grade and by `water_cost` where water stands, each turn
     /// costing `turn_cost` meters per unit of one less its angle's cosine,
-    /// refusing grades steeper than `max_grade` (rise per meter). Defaults:
-    /// level 3, max_grade 0.12, grade_cost 100, water_cost 50, turn_cost 40.
+    /// refusing grades steeper than `max_grade` (rise per meter).
     /// Returns the terrain's origin `[x, z]` and the route's points
     /// terrain-local (a path layer's `points`; add the origin for world
     /// points), its length, its steepest grade within the limit and the
@@ -224,10 +262,10 @@ pub enum DevRequest {
         #[serde(default)]
         entity: Option<String>,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(max = 131072)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::EVENT_OFFSET)))]
         offset: usize,
         #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1, max = 100)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
         limit: usize,
     },
 }
@@ -239,13 +277,14 @@ pub enum DevRequest {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CollisionShapeRequest {
     Cuboid {
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(transform = stated(engine_settings::rule::range(engine_core::MIN_COLLIDER_EXTENT, engine_core::MAX_COLLIDER_EXTENT)))
+        )]
         half_extents: [f64; 3],
     },
     Sphere {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(range(min = 0.0001, max = 10000.0))
-        )]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(engine_settings::rule::range(engine_core::MIN_COLLIDER_EXTENT, engine_core::MAX_COLLIDER_EXTENT))))]
         radius: f64,
     },
 }
@@ -370,7 +409,7 @@ pub enum BrowserControl {
     /// Requires pause; ordinary step/render/capture retain authoritative poses.
     Present {
         version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 1.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::ALPHA)))]
         alpha: f64,
         /// Present through GPU blending/composition/culling
         /// instead of the exact CPU path; for comparisons.
@@ -388,8 +427,8 @@ pub enum BrowserControl {
     /// reload; persist a look by saving it there.
     Environment(EnvironmentControl),
     /// Temporarily set terrain's level of detail and view and
-    /// render while paused: `pixel_error` replaces the settings' (1 to
-    /// 64), `freeze` keeps streaming and patches following the camera's
+    /// render while paused: `pixel_error` replaces the settings', `freeze`
+    /// keeps streaming and patches following the camera's
     /// current position while the camera moves on, and `view` shows terrain
     /// shaded or its levels, normals, tiles and patches, materials, sky
     /// visibility or detail. Omitted fields stay as they
@@ -397,7 +436,7 @@ pub enum BrowserControl {
     Terrain {
         version: u32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1.0, max = 64.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::TerrainSettings::rule_of("pixel_error")))))]
         pixel_error: Option<f32>,
         #[serde(default)]
         freeze: Option<bool>,
@@ -408,8 +447,8 @@ pub enum BrowserControl {
     /// and render while paused: `change` raises or lowers the
     /// ground by meters, levels it to a world height or cuts holes in it, at
     /// full strength within `radius` meters of world `center` `[x, z]` and
-    /// fading over `falloff` more, under `id` (1 to 64 letters, digits, `_`,
-    /// `-` and `.`), which repeating leaves the terrain alone. Only the tiles
+    /// fading over `falloff` more, under `id` (letters, digits, `_`, `-` and
+    /// `.`), which repeating leaves the terrain alone. Only the tiles
     /// under it regenerate. Returns whether it applied, the edits standing,
     /// where tiles regenerate (world `min` and `max` `[x, z]`) and the most
     /// the ground moved (meters). `terrain` names a scene's terrain entity
@@ -419,6 +458,10 @@ pub enum BrowserControl {
         version: u32,
         #[serde(default)]
         terrain: Option<String>,
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(length(min = 1, max = bounds::MAX_EDIT_ID), regex(pattern = r"^[A-Za-z0-9_.-]+$"))
+        )]
         id: String,
         center: [f64; 2],
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("radius")))]
@@ -443,10 +486,10 @@ pub enum BrowserControl {
         terrain: Option<String>,
     },
     /// Press a track as a deformer would, now, and render
-    /// while paused: a capsule `radius` meters across (0.01 to 50) from world
-    /// `from` `[x, z]` to `to` (a footprint at `from` when omitted), sinking
-    /// ground as deformable as that `depth` meters along its middle (0 to
-    /// 10), round (`flatness` 0) to flat (1; 0.5 by default). `clear`
+    /// while paused: a capsule `radius` meters across from world `from`
+    /// `[x, z]` to `to` (a footprint at `from` when omitted), sinking ground
+    /// as deformable as that `depth` meters along its middle, round
+    /// (`flatness` 0) to flat (1). `clear`
     /// forgets every track first. Not a source change: the log and the map
     /// keep it until cleared or refilled. Returns the stamp, the stamps the
     /// log holds and whether deformation is enabled.
@@ -455,12 +498,12 @@ pub enum BrowserControl {
         from: [f64; 2],
         #[serde(default)]
         to: Option<[f64; 2]>,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.01, max = 50.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("radius")))))]
         radius: f64,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 10.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("depth")))))]
         depth: f64,
         #[serde(default = "default_flatness")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0.0, max = 1.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_core::Deformer::rule_of("flatness")))))]
         flatness: f64,
         #[serde(default)]
         clear: bool,
@@ -476,17 +519,17 @@ pub enum BrowserControl {
         destination: Option<[f32; 2]>,
     },
     /// Remove streamed items for good, or restore them, by
-    /// ID (`scene/root` for scenes; at most 256 each), and render while
+    /// ID (`scene/root` for scenes), and render while
     /// paused: `clear` restores every item first. Loaded cells despawn and
     /// spawn them at once. Not a source change: WorldChanges keeps them,
     /// as a game's save would. Returns how many items are removed.
     WorldChanges {
         version: u32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = 256)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_CHANGES)))]
         remove: Vec<String>,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = 256)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_CHANGES)))]
         restore: Vec<String>,
         #[serde(default)]
         clear: bool,
@@ -506,37 +549,38 @@ pub enum BrowserControl {
     Benchmark {
         version: u32,
         #[serde(default = "default_warmup")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 0, max = 120)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::WARMUP)))]
         warmup: u32,
         #[serde(default = "default_samples")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1, max = 240)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SAMPLES)))]
         samples: u32,
         #[serde(default)]
         mode: BenchmarkMode,
     },
-    /// Advance exactly 1–120 fixed ticks, then one presentation/render boundary.
+    /// Advance exactly `ticks` fixed ticks, then one presentation/render
+    /// boundary.
     Step {
         version: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = 1, max = 120)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TICKS)))]
         ticks: u32,
     },
     /// Replace the temporary batch applied on the next explicit step.
     Input {
         version: u32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = -1.0, max = 1.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
         forward: f32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = -1.0, max = 1.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
         right: f32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = -1.0, max = 1.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::AXIS)))]
         up: f32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = -1000.0, max = 1000.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
         yaw: f32,
         #[serde(default)]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(range(min = -1000.0, max = 1000.0)))]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
         pitch: f32,
         #[serde(default)]
         held: u32,
@@ -567,7 +611,7 @@ pub enum BrowserControl {
         )]
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(with = "f64", range(min = 0.0, max = 1.0))
+            schemars(with = "f64", transform = stated(bounds::ALPHA))
         )]
         alpha: Option<f64>,
         /// With `alpha`, capture GPU presentation instead of

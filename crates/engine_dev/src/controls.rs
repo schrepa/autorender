@@ -1,4 +1,5 @@
-use crate::{BrowserControl, DevError, PROTOCOL_VERSION};
+use crate::protocol::bounds;
+use crate::{BrowserControl, DevError, PROTOCOL_VERSION, bounded};
 use engine_core::{Camera, glam::Vec3};
 
 impl BrowserControl {
@@ -19,13 +20,8 @@ impl BrowserControl {
             Self::Benchmark {
                 warmup, samples, ..
             } => {
-                if *warmup > 120 || !(1..=240).contains(samples) {
-                    return Err(DevError::new(
-                        "invalid_benchmark",
-                        "$",
-                        "warmup must be in 0..=120 and samples in 1..=240",
-                    ));
-                }
+                bounded(*warmup, bounds::WARMUP, "invalid_benchmark", "$.warmup")?;
+                bounded(*samples, bounds::SAMPLES, "invalid_benchmark", "$.samples")?;
             }
             Self::Capture { alpha, gpu, .. } => match alpha {
                 Some(alpha) => {
@@ -71,14 +67,13 @@ impl BrowserControl {
 /// Validates a temporary render fraction without mutating clocks or gameplay.
 /// Fractions include both fixed-tick endpoints; no clamping hides bad requests.
 pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
-    if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-        return Err(DevError::new(
-            "invalid_presentation_alpha",
-            "$.alpha",
-            "presentation alpha must be finite and in [0, 1]",
-        ));
-    }
-    Ok(alpha as f32)
+    bounded(
+        alpha,
+        bounds::ALPHA,
+        "invalid_presentation_alpha",
+        "$.alpha",
+    )
+    .map(|alpha| alpha as f32)
 }
 
 /// Validates a temporary camera without invoking fallback behavior or mutating

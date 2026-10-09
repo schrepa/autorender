@@ -324,18 +324,22 @@ impl DevBrowser {
                 released,
                 ..
             } => {
-                if [forward, right, up]
-                    .iter()
-                    .any(|v| !v.is_finite() || v.abs() > 1.0)
-                    || [yaw, pitch]
-                        .iter()
-                        .any(|v| !v.is_finite() || v.abs() > 1000.0)
-                {
-                    return Err(DevError::new(
-                        "invalid_input",
-                        "$",
-                        "axes must be in [-1, 1]; look deltas in [-1000, 1000]",
-                    ));
+                use engine_dev::bounds;
+                use engine_settings::Setting;
+                for (value, field, rule) in [
+                    (forward, "forward", bounds::AXIS),
+                    (right, "right", bounds::AXIS),
+                    (up, "up", bounds::AXIS),
+                    (yaw, "yaw", bounds::TURN),
+                    (pitch, "pitch", bounds::TURN),
+                ] {
+                    if let Err(invalid) = value.check(field, rule) {
+                        return Err(DevError::new(
+                            "invalid_input",
+                            format!("$.{field}"),
+                            invalid.rule,
+                        ));
+                    }
                 }
                 self.input = InputBatch {
                     forward,

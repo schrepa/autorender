@@ -20,12 +20,8 @@ use serde_json::{Value, json};
 
 use crate::{DevError, DevRequest};
 
-/// The most points a height request names, and samples along a sweep's
-/// side.
-pub(crate) const MAX_POINTS: usize = 256;
-pub(crate) const MAX_SWEEP_SAMPLES: u32 = 64;
-/// The largest coordinate a request names, as collision queries bound them.
-const LIMIT: f64 = 1.0e6;
+use crate::bounded;
+use crate::protocol::bounds::{self, MAX_POINTS};
 /// Hits a sweep ray may meet: placed objects above the
 /// ground, and the ground itself.
 const PLACED_RAY_HITS: usize = 16;
@@ -89,8 +85,12 @@ pub fn change_world(
     clear: bool,
 ) -> Result<Value, DevError> {
     for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
-        if ids.len() > 256 {
-            return Err(DevError::new("invalid_request", path, "at most 256 IDs"));
+        if ids.len() > bounds::MAX_CHANGES {
+            return Err(DevError::new(
+                "invalid_request",
+                path,
+                format!("at most {} IDs", bounds::MAX_CHANGES),
+            ));
         }
         if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
             return Err(DevError::new(
@@ -126,18 +126,14 @@ pub fn press_track(engine: &mut Engine, press: Press) -> Result<Value, DevError>
         Some(to) => [coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?],
         None => from,
     };
-    for (value, range, path) in [
-        (press.radius, 0.01..=50.0, "$.radius"),
-        (press.depth, 0.0..=10.0, "$.depth"),
-        (press.flatness, 0.0..=1.0, "$.flatness"),
+    // A press keeps a deformer's rules.
+    for (value, field) in [
+        (press.radius, "radius"),
+        (press.depth, "depth"),
+        (press.flatness, "flatness"),
     ] {
-        if !(value.is_finite() && range.contains(&value)) {
-            return Err(DevError::new(
-                "invalid_request",
-                path,
-                format!("must be in [{}, {}]", range.start(), range.end()),
-            ));
-        }
+        let rule = engine_core::Deformer::rule_of(field).expect("deformers declare the field");
+        bounded(value, rule, "invalid_request", &format!("$.{field}"))?;
     }
     let world = engine.app.world_mut();
     let seconds = world.resource::<FixedTime>().elapsed_seconds;
@@ -178,8 +174,7 @@ pub enum TerrainEditing {
     Redo,
 }
 
-/// The longest edit ID.
-const MAX_EDIT_ID: usize = 64;
+use crate::protocol::bounds::MAX_EDIT_ID;
 /// Samples across an edit's reach along each side for the most the ground
 /// moved.
 const CHANGE_SAMPLES: usize = 9;
@@ -358,15 +353,7 @@ pub fn edit_terrain(
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, DevError> {
-    if value.is_finite() && value.abs() <= LIMIT {
-        Ok(value as f32)
-    } else {
-        Err(DevError::new(
-            "invalid_request",
-            path,
-            "coordinates must be finite and within +/-1e6",
-        ))
-    }
+    bounded(value, bounds::COORDINATE, "invalid_request", path).map(|value| value as f32)
 }
 
 /// A terrain's authored ID, or its entity bits outside scenes.
@@ -612,20 +599,18 @@ pub(crate) fn execute(
         } => {
             let cx = coordinate(center[0], "$.center[0]")?;
             let cz = coordinate(center[1], "$.center[1]")?;
-            if !(half_extent.is_finite() && (0.0..=4096.0).contains(&half_extent)) {
-                return Err(DevError::new(
-                    "invalid_request",
-                    "$.half_extent",
-                    "half_extent must be in [0, 4096] meters",
-                ));
-            }
-            if !(2..=MAX_SWEEP_SAMPLES).contains(&samples) {
-                return Err(DevError::new(
-                    "invalid_request",
-                    "$.samples",
-                    format!("samples must be 2 to {MAX_SWEEP_SAMPLES} along each side"),
-                ));
-            }
+            bounded(
+                half_extent,
+                bounds::SWEEP_EXTENT,
+                "invalid_request",
+                "$.half_extent",
+            )?;
+            bounded(
+                samples,
+                bounds::SWEEP_SAMPLES,
+                "invalid_request",
+                "$.samples",
+            )?;
             sweep(engine, Vec2::new(cx, cz), half_extent as f32, samples)
         }
         DevRequest::TerrainRoute {

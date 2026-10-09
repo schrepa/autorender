@@ -565,6 +565,7 @@ dependencies = [
  "engine_profile",
  "engine_render",
  "engine_scene",
+ "engine_settings",
  "js-sys",
  "serde",
  "serde_json",

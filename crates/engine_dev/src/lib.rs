@@ -18,6 +18,8 @@ pub mod authoring;
 pub use controls::{validated_camera, validated_presentation_alpha};
 pub use error::DevError;
 pub use inspect::{DevTools, InspectorDescriptor, InspectorKind};
+pub use protocol::bounds;
+pub use protocol::bounds::MAX_PAGE_SIZE;
 pub use protocol::{
     BenchmarkMode, BrowserControl, CollisionFilterRequest, CollisionSensorFilter,
     CollisionShapeRequest, DevRequest, Handler, MAX_REQUEST_BYTES, PROTOCOL_VERSION,
@@ -49,4 +51,17 @@ pub const MAX_INSPECTORS: usize = 64;
 /// Bytes of an inspector's description.
 pub const MAX_DESCRIPTION_BYTES: usize = 512;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
-pub const MAX_PAGE_SIZE: usize = 100;
+
+/// `value` checked against request bound `rule`: an error of code `code`
+/// at `path` stating the rule.
+pub(crate) fn bounded<T: engine_settings::Setting>(
+    value: T,
+    rule: engine_settings::Rule,
+    code: &'static str,
+    path: &str,
+) -> Result<T, DevError> {
+    match value.check("value", rule) {
+        Ok(()) => Ok(value),
+        Err(invalid) => Err(DevError::new(code, path, invalid.rule)),
+    }
+}

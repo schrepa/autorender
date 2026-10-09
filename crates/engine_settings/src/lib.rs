@@ -443,6 +443,42 @@ macro_rules! whole_settings {
 
 whole_settings!(u8, u16, u32, u64);
 
+impl Setting for usize {
+    fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
+        (*self as u64).check(field, rule)
+    }
+
+    fn kept(self, rule: Rule, _: Self) -> Self {
+        whole_kept(self as u64, rule) as usize
+    }
+}
+
+impl Setting for f64 {
+    fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
+        let value = *self;
+        let keeps = match rule {
+            Rule::Any => true,
+            Rule::Finite => value.is_finite(),
+            Rule::Range(min, max) => (min..=max).contains(&value),
+            Rule::AboveTo(min, max) => value > min && value <= max,
+            Rule::Above(min) => value.is_finite() && value > min,
+            Rule::AtLeast(min) => value.is_finite() && value >= min,
+            Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
+                panic!("{field}: whole-number rules apply to whole numbers")
+            }
+        };
+        if keeps {
+            Ok(())
+        } else {
+            Err(broken(field, rule))
+        }
+    }
+
+    fn usable(&self) -> bool {
+        self.is_finite()
+    }
+}
+
 impl Setting for bool {}
 impl Setting for String {}
 /// A world box, which its type's extra rules check (`any` here).

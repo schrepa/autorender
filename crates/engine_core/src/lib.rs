@@ -201,7 +201,11 @@ pub struct Presentation;
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransformPropagation;
 
-/// An invalid development step request. Valid requests contain 1–120 ticks.
+/// The most fixed ticks one development step request advances.
+pub const MAX_DEV_TICKS: u32 = 120;
+
+/// An invalid development step request: its ticks lie outside 1 to
+/// [`MAX_DEV_TICKS`].
 #[cfg(feature = "dev")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DevStepError {
@@ -212,7 +216,7 @@ pub struct DevStepError {
 #[cfg(feature = "dev")]
 impl DevStepError {
     /// Maximum fixed ticks in one synchronous development request.
-    pub const MAX_TICKS: u32 = 120;
+    pub const MAX_TICKS: u32 = MAX_DEV_TICKS;
 
     /// Check bounds before preparing inputs or changing a development session.
     pub fn validate(ticks: u32) -> Result<(), Self> {

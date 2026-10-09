@@ -17,6 +17,7 @@ engine_profile.workspace = true
 engine_collision.workspace = true
 engine_scene.workspace = true
 engine_dev = { workspace = true, optional = true }
+engine_settings.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
